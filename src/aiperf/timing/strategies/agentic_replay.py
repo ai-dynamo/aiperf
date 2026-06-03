@@ -248,7 +248,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 await self.credit_issuer.issue_credit(turn)
                 continue
 
-            states = self._materialize_snapshot(trajectory).states
+            states = self._get_snapshot(trajectory).states
             for state in states:
                 if state.waiting_on_children:
                     continue
@@ -523,7 +523,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _dispatch_snapshot_for_profiling(
         self, trajectory: Trajectory, lane: int
     ) -> None:
-        warmup_snapshot = self._materialize_snapshot(trajectory)
+        warmup_snapshot = self._get_snapshot(trajectory)
         snapshot = self._snapshot_continuation_after_warmup(trajectory)
         for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
@@ -589,7 +589,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         child completed its terminal turn during WARMUP, the parent is
         unblocked and its gated turn becomes ready immediately.
         """
-        snapshot = self._materialize_snapshot(trajectory)
+        snapshot = self._get_snapshot(trajectory)
         states: list[ConversationState] = []
         for state in snapshot.states:
             if state.waiting_on_children:
@@ -633,8 +633,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         ]
         return TrajectorySnapshot(t_star_ms=snapshot.t_star_ms, states=tuple(states))
 
-    def _materialize_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
-        """Return the persistent runtime identity graph for a snapshot lane.
+    def _get_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
+        """Return the persistent sampled snapshot for a trajectory lane.
 
         ``TrajectorySource`` constructs each timestamped lane once and is
         shared across WARMUP and PROFILING. Reusing that realized graph keeps
