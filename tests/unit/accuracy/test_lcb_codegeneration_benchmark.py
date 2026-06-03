@@ -309,6 +309,68 @@ class TestPinnedDatasetLoad:
         assert "datasets<4" in msg
         assert "AIPERF_ACCURACY_LCB_RELEASE_TAG" in msg
 
+    @pytest.mark.asyncio
+    async def test_v4_datasets_adds_version_hint(self, monkeypatch) -> None:
+        """When ``datasets >= 4`` is installed, the load-failure remap
+        prepends a version-aware diagnostic naming the installed version
+        so operators don't have to guess whether they're hitting the
+        v4 script-loader removal."""
+        import datasets
+
+        # Force the version check into the v4+ branch regardless of
+        # what's actually installed in the test sandbox.
+        monkeypatch.setattr(datasets, "__version__", "4.8.4")
+        with patch(
+            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
+            side_effect=RuntimeError("simulated script-loader removal"),
+        ):
+            bench = LCBCodeGenerationBenchmark(run=_make_run())
+            with pytest.raises(RuntimeError) as exc:
+                await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
+        msg = str(exc.value)
+        assert "Detected datasets==4.8.4" in msg
+        assert "dropped script-based dataset support" in msg
+
+    @pytest.mark.asyncio
+    async def test_unparseable_datasets_version_omits_hint(self, monkeypatch) -> None:
+        """If ``datasets.__version__`` can't be parsed (malformed string,
+        attribute missing, etc.) the hint helper degrades to an empty
+        string rather than masking the original error with a parser
+        crash. Pins the defensive ``except Exception`` behavior."""
+        import datasets
+
+        monkeypatch.setattr(datasets, "__version__", "not-a-version")
+        with patch(
+            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
+            side_effect=RuntimeError("simulated dataset error"),
+        ):
+            bench = LCBCodeGenerationBenchmark(run=_make_run())
+            with pytest.raises(RuntimeError) as exc:
+                await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
+        msg = str(exc.value)
+        assert "Detected datasets==" not in msg
+        assert "datasets<4" in msg  # generic suffix still emitted
+
+    @pytest.mark.asyncio
+    async def test_v3_datasets_omits_version_hint(self, monkeypatch) -> None:
+        """When ``datasets < 4`` is installed, the v4-specific hint is
+        absent — the generic remap message still appears so users get
+        the actionable next steps."""
+        import datasets
+
+        monkeypatch.setattr(datasets, "__version__", "3.6.0")
+        with patch(
+            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
+            side_effect=RuntimeError("simulated dataset error"),
+        ):
+            bench = LCBCodeGenerationBenchmark(run=_make_run())
+            with pytest.raises(RuntimeError) as exc:
+                await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
+        msg = str(exc.value)
+        assert "Detected datasets==" not in msg
+        # Generic guidance is still surfaced.
+        assert "datasets<4" in msg
+
 
 class TestPathologicalDatasetRows:
     @pytest.mark.asyncio

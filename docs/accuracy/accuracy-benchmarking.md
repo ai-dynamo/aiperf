@@ -80,6 +80,44 @@ system message).
 | `gpqa_diamond` | `lighteval_gpqa` | 0 | `Idavidrein/gpqa` subset `gpqa_diamond` (trt-llm/lighteval reference, simple-evals template with SHA-256-seeded deterministic A/B/C/D shuffling, `gpqa_metric`) |
 | `lcb_codegeneration` | `code_execution` | 0 | `livecodebench/code_generation_lite` (trt-llm/lighteval reference; LCB test-case payload serialized into `BenchmarkProblem.ground_truth` as an orjson blob; `code_execution` grader runs the generated code against the bundled test cases via lighteval's `codegen_metrics`) |
 
+### LiveCodeBench (lcb_codegeneration) version pinning
+
+LiveCodeBench publishes monthly snapshots of `livecodebench/code_generation_lite`
+as configs named `release_v1`, `release_v2`, …, `release_latest`. The loader
+pins a specific release so accuracy numbers are reproducible across runs and
+branches; the default is `release_v1`. Override at runtime via:
+
+```bash
+export AIPERF_ACCURACY_LCB_RELEASE_TAG=release_v6   # or any published snapshot
+```
+
+The env var is read at every `load_problems` call (no module-reload needed)
+and is plumbed through to `load_dataset(..., version_tag=...)`, which LCB's
+HuggingFace dataset script reads to dispatch to the matching parquet files
+on the HF Hub. Nothing is bundled with the aiperf wheel — all releases are
+fetched on-demand and cached under `~/.cache/huggingface/datasets/`.
+
+**Compatibility constraint:** LCB ships its loader as a HuggingFace
+**dataset script**. The `datasets` library removed support for scripted
+datasets in **v4+**. If LCB hasn't migrated to a parquet-only layout by the
+time you upgrade `datasets`, the loader will fail with a `RuntimeError`
+prefixed `lcb_codegeneration: failed to load …`. Two fixes:
+
+1. **Install a compatible `datasets`** (recommended while LCB still ships
+   a script):
+   ```bash
+   uv pip install 'datasets>=3.0,<4'
+   ```
+2. **Bump the pinned release** if LCB renamed/removed the snapshot you
+   were targeting:
+   ```bash
+   export AIPERF_ACCURACY_LCB_RELEASE_TAG=release_latest
+   ```
+
+The error message names which condition fired (it includes the installed
+`datasets` version when ≥ 4) so operators get an actionable next step
+without reading the source.
+
 ## CLI Flags
 
 | Flag | Description | Default |

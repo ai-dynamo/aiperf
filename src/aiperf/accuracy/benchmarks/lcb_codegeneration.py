@@ -87,6 +87,28 @@ _STDIN_INSTRUCTIONS = (
 _STDIN_SCAFFOLD = "```python\n# YOUR CODE HERE\n```\n\n"
 
 
+def _datasets_version_hint() -> str:
+    """Return a version-aware diagnostic suffix for the load-failure
+    remap, naming the installed ``datasets`` version when it crosses
+    the v4 cutoff where script-based dataset loaders were removed.
+
+    Returns an empty string when the version is fine or can't be
+    determined, so the surrounding error message degrades cleanly.
+    """
+    try:
+        import datasets
+
+        major = int(datasets.__version__.split(".", 1)[0])
+    except Exception:
+        return ""
+    if major >= 4:
+        return (
+            f"Detected datasets=={datasets.__version__} which dropped "
+            f"script-based dataset support; LCB's loader is a script. "
+        )
+    return ""
+
+
 def _prepare_prompt(row: dict[str, Any]) -> str:
     """Render the LCB prompt byte-equal to lighteval's ``prepare_prompt``."""
     question_content = row.get(QUESTION_CONTENT_FIELD, "")
@@ -195,7 +217,9 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
         except Exception as e:
             raise RuntimeError(
                 f"{TASK_NAME}: failed to load {DATASET_NAME!r} pinned to "
-                f"version_tag={release_tag!r}. This typically means either "
+                f"version_tag={release_tag!r}. "
+                f"{_datasets_version_hint()}"
+                f"This typically means either "
                 f"(a) the installed ``datasets`` package no longer supports "
                 f"script-based datasets (LCB ships its loader as a script; "
                 f"try ``uv pip install 'datasets<4'`` or use the upstream "
