@@ -121,13 +121,19 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
         """Load LCB problems lighteval-style.
 
         Args:
-            tasks: Ignored — the lighteval reference doesn't filter
-                LCB by difficulty (a per-row ``difficulty`` field is
-                kept in metadata for post-run reporting).
-            n_shots: Ignored — the lighteval reference is zero-shot.
-            enable_cot: Ignored — lighteval's prompt scaffold doesn't
-                add a CoT trigger; the model's natural response will
-                contain reasoning before the code block.
+            tasks: Must be ``None``. The lighteval reference doesn't
+                filter LCB by difficulty (a per-row ``difficulty``
+                field is kept in metadata for post-run reporting), so
+                ``--accuracy-tasks`` has no meaningful effect; the
+                method raises ``NotImplementedError`` rather than
+                silently dropping the user's input.
+            n_shots: Must be ``0``. The lighteval reference is
+                zero-shot. Any non-zero value raises
+                ``NotImplementedError`` so a stray
+                ``--accuracy-n-shots`` flag fails loud.
+            enable_cot: Must be ``False``. lighteval's prompt scaffold
+                has no CoT trigger; ``--accuracy-enable-cot`` would
+                silently no-op without this guard.
 
         Returns:
             One ``BenchmarkProblem`` per dataset row, in dataset order.
@@ -135,7 +141,32 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
             fields (``starter_code``, ``public_test_cases``,
             ``private_test_cases``, ``metadata``) — exactly what
             ``CodeExecutionGrader`` consumes at grade time.
+
+        Raises:
+            NotImplementedError: When ``tasks`` is not ``None``,
+                ``n_shots != 0``, or ``enable_cot`` is ``True``. The
+                error message is prefixed with ``"<TASK_NAME>: "`` per
+                aiperf's validator-gate convention.
         """
+        if tasks is not None:
+            raise NotImplementedError(
+                f"{TASK_NAME}: --accuracy-tasks is not supported; the "
+                "lighteval reference evaluates the full LCB test split "
+                "(difficulty is reported per-row in metadata)."
+            )
+        if n_shots != 0:
+            raise NotImplementedError(
+                f"{TASK_NAME}: --accuracy-n-shots != 0 is not supported; "
+                "the lighteval reference is zero-shot "
+                "(``few_shots_split=None``)."
+            )
+        if enable_cot:
+            raise NotImplementedError(
+                f"{TASK_NAME}: --accuracy-enable-cot is not supported; "
+                "lighteval's LCB prompt scaffold has no CoT trigger — "
+                "the model's natural response carries reasoning before "
+                "the code block."
+            )
         ds: Dataset = await asyncio.to_thread(load_dataset, DATASET_NAME, split="test")
         return await asyncio.to_thread(self._build_problems, ds)
 

@@ -151,34 +151,36 @@ class TestGroundTruthIsOrjsonPayload:
         assert "QUESTION_TEXT" not in problems[0].ground_truth
 
 
-class TestNShotsAndCoTAreIgnored:
-    @pytest.mark.asyncio
-    async def test_n_shots_argument_does_not_affect_prompt(self) -> None:
-        rows = [_make_row()]
-        with patch(
-            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
-            return_value=_make_fake_dataset(rows),
-        ):
-            bench = LCBCodeGenerationBenchmark(run=_make_run())
-            zero_shot = await bench.load_problems(
-                tasks=None, n_shots=0, enable_cot=False
-            )
-            five_shot = await bench.load_problems(
-                tasks=None, n_shots=5, enable_cot=False
-            )
-        assert zero_shot[0].prompt == five_shot[0].prompt
+class TestRejectsUnsupportedOverrides:
+    """``load_problems`` raises ``NotImplementedError`` (with a
+    ``"lcb_codegeneration: "`` prefix per aiperf's validator-gate
+    convention) when called with overrides the lighteval reference
+    doesn't honour. The previous implementation silently dropped
+    these inputs; failing loud is the safer default."""
 
     @pytest.mark.asyncio
-    async def test_enable_cot_does_not_affect_prompt(self) -> None:
-        rows = [_make_row()]
-        with patch(
-            "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
-            return_value=_make_fake_dataset(rows),
+    async def test_tasks_override_raises(self) -> None:
+        bench = LCBCodeGenerationBenchmark(run=_make_run())
+        with pytest.raises(
+            NotImplementedError, match=r"^lcb_codegeneration: .*--accuracy-tasks"
         ):
-            bench = LCBCodeGenerationBenchmark(run=_make_run())
-            no_cot = await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
-            with_cot = await bench.load_problems(tasks=None, n_shots=0, enable_cot=True)
-        assert no_cot[0].prompt == with_cot[0].prompt
+            await bench.load_problems(tasks=["easy"], n_shots=0, enable_cot=False)
+
+    @pytest.mark.asyncio
+    async def test_nonzero_n_shots_raises(self) -> None:
+        bench = LCBCodeGenerationBenchmark(run=_make_run())
+        with pytest.raises(
+            NotImplementedError, match=r"^lcb_codegeneration: .*--accuracy-n-shots"
+        ):
+            await bench.load_problems(tasks=None, n_shots=5, enable_cot=False)
+
+    @pytest.mark.asyncio
+    async def test_enable_cot_true_raises(self) -> None:
+        bench = LCBCodeGenerationBenchmark(run=_make_run())
+        with pytest.raises(
+            NotImplementedError, match=r"^lcb_codegeneration: .*--accuracy-enable-cot"
+        ):
+            await bench.load_problems(tasks=None, n_shots=0, enable_cot=True)
 
 
 class TestLoadProblemsCore:
