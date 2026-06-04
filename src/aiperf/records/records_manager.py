@@ -67,6 +67,10 @@ from aiperf.gpu_telemetry.protocols import (
     GPUTelemetryAccumulatorProtocol,
     GPUTelemetryProcessorProtocol,
 )
+from aiperf.metrics.cache_reporting_hint import (
+    CACHE_REPORTING_HINT,
+    usage_without_cache_in_record,
+)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ResultsProcessorType, UIType
 from aiperf.post_processors.protocols import (
@@ -107,6 +111,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     a final_completed_count, the RecordsManager waits until it has processed that
     many records before finalizing results.
     """
+
+    # The "enable cache reporting" server-knob hint fires at most once per run.
+    _warned_missing_cache_reporting: bool = False
 
     def __init__(
         self,
@@ -228,6 +235,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return
 
         record_data = message.to_data()
+
+        self._maybe_hint_missing_cache_reporting(record_data)
 
         await self._send_results_to_results_processors(record_data)
 
@@ -735,6 +744,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ]
 
         return metric_results
+
+    def _maybe_hint_missing_cache_reporting(
+        self, record_data: MetricRecordsData
+    ) -> None:
+        """Warn once, mid-run, when the server reports token usage but no prompt-cache
+        reads — the signature of a cache-capable server that hasn't been told to
+        report ``cached_tokens``. Fires on the first qualifying record so a long run
+        can be aborted and re-launched with the flag set; the end-of-run console
+        exporter emits the same hint for anyone who only reads the final summary.
+        """
+        if self._warned_missing_cache_reporting:
+            return
+        if usage_without_cache_in_record(record_data.metrics):
+            self._warned_missing_cache_reporting = True
+            self.warning(CACHE_REPORTING_HINT)
 
     def _apply_gpu_efficiency_metrics(
         self,
