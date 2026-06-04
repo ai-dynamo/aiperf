@@ -454,6 +454,7 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
             - labels: Base labels (excluding "le" which is part of bucket structure)
         """
         histograms: dict[tuple, HistogramData] = defaultdict(HistogramData)
+        tainted: set[tuple] = set()
 
         dropped_non_finite = 0
 
@@ -461,15 +462,18 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
             if sample.value is None:
                 # Ordinary missing data — not a corruption signal, skip silently.
                 continue
-            if not math.isfinite(sample.value):
-                # NaN/+Inf/-Inf on a bucket/sum/count line breaks the ZMQ orjson
-                # round-trip (NaN -> null) and fails dict[str, float] validation on
-                # the receiver. Drop the offending line, keep the rest of the
-                # histogram, and count for the warn-once log below.
-                dropped_non_finite += 1
-                continue
             base_labels = {k: v for k, v in sample.labels.items() if k != "le"}
             label_key = tuple(sorted(base_labels.items()))
+
+            if not math.isfinite(sample.value):
+                # NaN/+Inf/-Inf breaks the ZMQ orjson round-trip (NaN -> null) and
+                # fails receiver validation. Drop the ENTIRE histogram for this label
+                # set, not just the offending line: a partial sample stored first
+                # locks a truncated bucket schema in HistogramTimeSeries, which then
+                # ignores the missing bucket on every later valid scrape.
+                dropped_non_finite += 1
+                tainted.add(label_key)
+                continue
 
             if sample.name.endswith("_bucket"):
                 le_value = sample.labels.get("le", "+Inf")
@@ -484,7 +488,7 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         valid_samples: list[MetricSample] = []
         construction_failures = 0
         for label_tuple, hist in histograms.items():
-            if not hist.valid:
+            if label_tuple in tainted or not hist.valid:
                 continue
             try:
                 valid_samples.append(hist.to_metric_sample(label_tuple))

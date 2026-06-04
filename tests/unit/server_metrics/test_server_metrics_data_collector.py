@@ -285,32 +285,45 @@ sglang:cache_hit_rate{model_name="m"} 0.42
         # The NaN-only metric family is dropped entirely (no valid samples → family suppressed).
         assert "sglang:fwd_occupancy" not in record.metrics
 
-    def test_nan_histogram_bucket_is_filtered(self):
-        """A NaN value on a single histogram bucket must be dropped before the
-        sample is constructed. Otherwise it survives into MetricSample.buckets
-        (dict[str, float]), orjson encodes NaN -> null on the ZMQ hop, and the
-        receiver's dict[str, float] validation rejects the entire batch — the
-        same silent-loss bug as the simple-gauge path, via a histogram."""
+    def test_nan_histogram_bucket_drops_whole_label_set_sample(self):
+        """A NaN on any bucket/sum/count line must drop the ENTIRE histogram
+        sample for that label set, not just the offending line.
+
+        Emitting a partial sample is worse than dropping it: HistogramTimeSeries
+        locks its bucket schema from the first stored sample, then ignores any
+        bucket missing from that schema on every later scrape. So a truncated
+        first sample would permanently drop the NaN'd bucket even once the server
+        reports finite values for it. The label set must be dropped wholesale so
+        the first stored sample always carries a complete, finite schema.
+
+        Per-label-set granularity: a sibling label set with all-finite lines is
+        unaffected — only the tainted set is dropped."""
         metrics_text = """# HELP my_hist Latency.
 # TYPE my_hist histogram
 my_hist_bucket{model_name="m",le="0.1"} NaN
 my_hist_bucket{model_name="m",le="+Inf"} 50.0
 my_hist_sum{model_name="m"} 17.494
 my_hist_count{model_name="m"} 50.0
+my_hist_bucket{model_name="ok",le="0.1"} 5.0
+my_hist_bucket{model_name="ok",le="+Inf"} 30.0
+my_hist_sum{model_name="ok"} 9.0
+my_hist_count{model_name="ok"} 30.0
 """
         collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
         record = collector._parse_metrics_to_records(make_fetch_result(metrics_text))
 
         assert record is not None
         assert "my_hist" in record.metrics
-        sample = record.metrics["my_hist"].samples[0]
-        # The NaN bucket is gone; healthy bucket/sum/count survive.
-        assert "0.1" not in sample.buckets
-        assert sample.buckets["+Inf"] == 50.0
-        assert sample.sum == 17.494
-        assert sample.count == 50.0
-        # And no non-finite value leaked into the surviving buckets.
-        assert all(math.isfinite(v) for v in sample.buckets.values())
+        samples = record.metrics["my_hist"].samples
+        # The tainted "m" label set is gone entirely; only the finite "ok" set
+        # survives — no partial sample for "m".
+        assert len(samples) == 1
+        survivor = samples[0]
+        assert survivor.labels == {"model_name": "ok"}
+        assert survivor.buckets == {"0.1": 5.0, "+Inf": 30.0}
+        assert survivor.sum == 9.0
+        assert survivor.count == 30.0
+        assert all(math.isfinite(v) for v in survivor.buckets.values())
 
     def test_nan_sample_logs_warning_once_per_metric(self, caplog):
         """When a NaN sample is filtered, emit a one-time warning naming the
@@ -457,7 +470,9 @@ my_histogram_count{which="good"} 7.0
         alongside healthy metrics. Verifies the full _parse_metrics_to_records path:
           - NaN gauge is dropped (family suppressed since it had only one sample)
           - Healthy gauge survives
-          - Histogram survives with its NaN bucket dropped and healthy buckets/sum/count intact
+          - Histogram label set is dropped wholesale because one bucket is NaN
+            (family suppressed since it had only the one tainted label set) — a
+            partial sample would lock a truncated bucket schema downstream
           - The resulting record can be constructed without raising
         Regression test for the silent-loss bug observed against sglang
         --enable-metrics where sglang:fwd_occupancy emitted NaN, extended to
@@ -488,13 +503,10 @@ sglang:time_to_first_token_seconds_count{model_name="Qwen/Qwen3-0.6B"} 50.0
         assert record.metrics["sglang:cache_hit_rate"].samples[0].value == 0.873
         assert "sglang:num_running_reqs" in record.metrics
         assert record.metrics["sglang:num_running_reqs"].samples[0].value == 4.0
-        # Histogram survives; the NaN bucket is dropped, healthy buckets/sum/count remain.
-        assert "sglang:time_to_first_token_seconds" in record.metrics
-        ttft = record.metrics["sglang:time_to_first_token_seconds"].samples[0]
-        assert ttft.count == 50.0
-        assert "0.05" not in ttft.buckets
-        assert ttft.buckets["0.1"] == 46.0
-        assert all(math.isfinite(v) for v in ttft.buckets.values())
+        # Histogram's only label set had a NaN bucket -> the whole label set is
+        # dropped, suppressing the family. Dropping only the NaN line would emit a
+        # partial sample that locks a truncated bucket schema in HistogramTimeSeries.
+        assert "sglang:time_to_first_token_seconds" not in record.metrics
         # Offender gauge dropped.
         assert "sglang:fwd_occupancy" not in record.metrics
 

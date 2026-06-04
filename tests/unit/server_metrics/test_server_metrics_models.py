@@ -119,6 +119,32 @@ class TestMetricSampleFiniteContract:
         assert sample.value is None
         assert sample.buckets == {"+Inf": 10.0}
 
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+    def test_bucket_value_rejects_non_finite(self, bad):
+        # A non-finite bucket count would orjson-encode to null on the ZMQ hop
+        # and, if it slipped past the producer filter, poison HistogramTimeSeries.
+        with pytest.raises(ValidationError) as exc_info:
+            MetricSample(buckets={"0.1": 5.0, "+Inf": bad}, sum=5.0, count=10.0)
+        assert "finite" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+    def test_sum_rejects_non_finite(self, bad):
+        with pytest.raises(ValidationError) as exc_info:
+            MetricSample(buckets={"+Inf": 10.0}, sum=bad, count=10.0)
+        assert "finite" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+    def test_count_rejects_non_finite(self, bad):
+        with pytest.raises(ValidationError) as exc_info:
+            MetricSample(buckets={"+Inf": 10.0}, sum=5.0, count=bad)
+        assert "finite" in str(exc_info.value).lower()
+
+    def test_histogram_accepts_finite_buckets_sum_count(self):
+        sample = MetricSample(buckets={"0.1": 5.0, "+Inf": 10.0}, sum=5.0, count=10.0)
+        assert sample.buckets == {"0.1": 5.0, "+Inf": 10.0}
+        assert sample.sum == 5.0
+        assert sample.count == 10.0
+
 
 class TestServerMetricsRecordConversion:
     """Test ServerMetricsRecord to slim format conversion."""
