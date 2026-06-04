@@ -626,7 +626,7 @@ Source image generation mode (default `noise`). `noise` generates random noise i
 
 #### `--image-source-sampling` `<str>`
 
-How to sample finite source-image pools. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. Only `random` is valid for `noise`, which has no finite source pool.
+Sampling strategy for finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random` is valid because there is no finite source pool.
 
 **Choices:**
 
@@ -1963,7 +1963,7 @@ Source image generation mode (default `noise`). `noise` generates random noise i
 
 #### `--image-source-sampling` `<str>`
 
-How to sample finite source-image pools. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. Only `random` is valid for `noise`, which has no finite source pool.
+Sampling strategy for finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random` is valid because there is no finite source pool.
 
 **Choices:**
 

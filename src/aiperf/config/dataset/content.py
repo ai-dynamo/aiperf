@@ -289,12 +289,13 @@ class ImageConfig(BaseConfig):
         ImageSourceSamplingStrategy,
         Field(
             default=ImageSourceSamplingStrategy.RANDOM,
-            description="How to sample finite source-image pools. "
+            description="Sampling strategy for finite image sources selected by "
+            "source='assets' or a directory path. "
             "random: sample with replacement. "
             "shuffle: use a random permutation without replacement, then reshuffle "
             "after all source images have been used. "
             "sequential: walk source images in sorted load order, wrapping after exhaustion. "
-            "Only random is valid for noise mode, which has no finite source pool.",
+            "For noise mode, only random is valid because there is no finite source pool.",
         ),
     ]
 

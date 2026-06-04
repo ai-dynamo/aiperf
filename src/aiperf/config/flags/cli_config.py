@@ -1267,10 +1267,11 @@ class CLIConfig(BaseConfig):
     image_source_sampling: Annotated[
         ImageSourceSamplingStrategy,
         Field(
-            description="How to sample finite source-image pools. `random` samples with replacement. "
+            description="Sampling strategy for finite image sources selected by `--image-source assets` "
+            "or `--image-source <directory>`. `random` samples with replacement. "
             "`shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. "
             "`sequential` walks source images in sorted load order and wraps after exhaustion. "
-            "Only `random` is valid for `noise`, which has no finite source pool.",
+            "For `noise`, only `random` is valid because there is no finite source pool.",
         ),
         CLIParameter(
             name=("--image-source-sampling",),

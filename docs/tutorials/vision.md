@@ -37,7 +37,7 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 ## Profile with Synthetic Images
 
-AIPerf can generate synthetic images for benchmarking. By default, images are generated as random noise at the requested dimensions — no on-disk assets required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. Pass `--image-source assets` to instead sample and resize the 4 bundled natural images (smaller payload bytes), or `--image-source <path>` to sample from your own directory. Directory sources are indexed up front and images are loaded lazily only when selected. Use `--image-source-sampling shuffle` to sample every image in an assets/directory source once before reshuffling, or `--image-source-sampling sequential` to walk images in sorted order.
+AIPerf can generate synthetic images for benchmarking. By default, images are generated as random noise at the requested dimensions — no on-disk assets required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. Pass `--image-source assets` to instead sample and resize the 4 bundled natural images (smaller payload bytes), or `--image-source <path>` to sample from your own directory. Directory sources are indexed up front and images are loaded lazily only when selected. `--image-source-sampling` applies only to finite image sources (`assets` or a directory path): use `shuffle` to sample every image once before reshuffling, or `sequential` to walk images in sorted order.
 
 <!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
