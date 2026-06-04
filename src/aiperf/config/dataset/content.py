@@ -222,7 +222,21 @@ class ImageConfig(BaseConfig):
     resizing source images to specified dimensions.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {"properties": {"source": {"const": "noise"}}},
+                    "then": {
+                        "properties": {
+                            "sourceSampling": {"const": "random-with-replacement"}
+                        }
+                    },
+                }
+            ]
+        },
+    )
 
     batch_size: Annotated[
         int,
