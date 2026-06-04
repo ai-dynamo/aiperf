@@ -15,6 +15,7 @@ Includes:
 - StickyCreditRouter: Main router class
 """
 
+import asyncio
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -94,6 +95,17 @@ class CreditRouterProtocol(Protocol):
 
         Args:
             credit: Credit to send to worker
+        """
+        ...
+
+    async def wait_for_workers(self, timeout: float) -> None:
+        """Wait for the router to observe at least one registered worker.
+
+        Best-effort startup gate, not an absolute guarantee: a worker can
+        unregister again after this returns. Raises on timeout.
+
+        Args:
+            timeout: Seconds to wait for the first worker before giving up.
         """
         ...
 
@@ -242,6 +254,10 @@ class StickyCreditRouter(CommunicationMixin):
         # Keep track of the minimum load to avoid recalculating it on every credit sent O(1) vs O(n)
         self._min_load: int = 0
 
+        # Set while >=1 worker is registered; lets wait_for_workers() gate a
+        # phase on worker readiness (see that method for the race it closes).
+        self._worker_available_event: asyncio.Event = asyncio.Event()
+
     # =============================================================================
     # Public Methods
     # =============================================================================
@@ -257,6 +273,31 @@ class StickyCreditRouter(CommunicationMixin):
     ) -> None:
         """Set callback for first token events (enables prefill concurrency release)."""
         self._on_first_token_callback = callback
+
+    async def wait_for_workers(self, timeout: float) -> None:
+        """Close the startup race where a phase issues its first credit before
+        any worker has sent ``WorkerReady`` (which makes ``send_credit`` raise
+        on empty workers). Called once per phase before the first credit.
+
+        Best-effort startup gate, not an absolute postcondition: the last worker
+        can unregister between this returning and the first ``send_credit``, so
+        callers must not treat a non-empty pool as guaranteed afterwards.
+
+        Args:
+            timeout: Seconds to wait for the first worker before giving up.
+
+        Raises:
+            RuntimeError: If no worker registers within ``timeout`` seconds.
+        """
+        if self._workers:
+            return
+        try:
+            await asyncio.wait_for(self._worker_available_event.wait(), timeout)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"No workers registered with the credit router within {timeout}s "
+                "(tunable via AIPERF_SERVICE_START_TIMEOUT); cannot start credit issuance"
+            ) from exc
 
     async def send_credit(self, credit: Credit) -> None:
         """Determine the worker based on sticky sessions or least-loaded and send the credit to the worker.
@@ -433,6 +474,7 @@ class StickyCreditRouter(CommunicationMixin):
             # so we can cheat and just set minimum load to 0 without recalculating.
             self._min_load = 0
             self._workers_by_load[0].add(worker_id)
+            self._worker_available_event.set()
 
     def _unregister_worker(self, worker_id: str) -> None:
         """Unregister worker. Sticky sessions are cleared and reassigned on next access."""
@@ -446,6 +488,8 @@ class StickyCreditRouter(CommunicationMixin):
                     f"Worker unregistered: {worker_id} (remaining={len(self._workers)})"
                 )
             self._workers_by_load[worker_load.in_flight_credits].discard(worker_id)
+            if not self._workers:
+                self._worker_available_event.clear()
 
             # Remove all orphaned sticky sessions now and warn once up front
             orphaned_session_ids = worker_load.active_session_ids

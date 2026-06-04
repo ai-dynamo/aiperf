@@ -847,7 +847,7 @@ class _ServiceSettings(BaseSettings):
         ge=1.0,
         le=100000.0,
         default=30.0,
-        description="Timeout in seconds for service start operations",
+        description="Timeout in seconds for service start operations. Also bounds the per-phase wait for the first worker to register with the credit router before credit issuance begins; exceeding it fails the phase.",
     )
     TASK_CANCEL_TIMEOUT_SHORT: float = Field(
         ge=1.0,
