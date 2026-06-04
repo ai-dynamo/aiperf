@@ -621,8 +621,20 @@ Image file format for generated images. Choose `png` for lossless compression (l
 
 #### `--image-source` `<str>`
 
-Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
+Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and lazily loads them at the requested dimensions. A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
 <br/>_Default: `noise`_
+
+#### `--image-source-sampling` `<str>`
+
+How to sample finite source-image pools. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. Only `random` is valid for `noise`, which has no finite source pool.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `random` | _default_ | Sample source images randomly with replacement. |
+| `shuffle` |  | Sample from a random permutation without replacement, reshuffling after exhaustion. |
+| `sequential` |  | Walk source images in sorted load order, wrapping after exhaustion. |
 
 ### Video Input
 
@@ -1946,8 +1958,20 @@ Image file format for generated images. Choose `png` for lossless compression (l
 
 #### `--image-source` `<str>`
 
-Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
+Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and lazily loads them at the requested dimensions. A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
 <br/>_Default: `noise`_
+
+#### `--image-source-sampling` `<str>`
+
+How to sample finite source-image pools. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. Only `random` is valid for `noise`, which has no finite source pool.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `random` | _default_ | Sample source images randomly with replacement. |
+| `shuffle` |  | Sample from a random permutation without replacement, reshuffling after exhaustion. |
+| `sequential` |  | Walk source images in sorted load order, wrapping after exhaustion. |
 
 ### Video Input
 

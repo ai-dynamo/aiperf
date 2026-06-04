@@ -7416,8 +7416,13 @@
             }
           ],
           "default": "noise",
-          "description": "Source image generation mode (default: noise). noise: generate random noise images on the fly — no files on disk, effectively unbounded variety so servers cannot dedupe identical inputs. assets: load images from the bundled assets/source_images directory and resize them to the requested dimensions. A path string loads images from the given directory (e.g. ./source_images). Random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
+          "description": "Source image generation mode (default: noise). noise: generate random noise images on the fly — no files on disk, effectively unbounded variety so servers cannot dedupe identical inputs. assets: index images from the bundled assets/source_images directory and lazily load them at the requested dimensions. A path string indexes images from the given directory (e.g. ./source_images). Random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
           "title": "Source"
+        },
+        "sourceSampling": {
+          "$ref": "#/$defs/ImageSourceSamplingStrategy",
+          "default": "random",
+          "description": "How to sample finite source-image pools. random: sample with replacement. shuffle: use a random permutation without replacement, then reshuffle after all source images have been used. sequential: walk source images in sorted load order, wrapping after exhaustion. Only random is valid for noise mode, which has no finite source pool."
         }
       },
       "title": "ImageConfig",
@@ -7440,6 +7445,16 @@
         "noise"
       ],
       "title": "ImageSource",
+      "type": "string"
+    },
+    "ImageSourceSamplingStrategy": {
+      "description": "Sampling strategy for finite source-image pools.",
+      "enum": [
+        "random",
+        "shuffle",
+        "sequential"
+      ],
+      "title": "ImageSourceSamplingStrategy",
       "type": "string"
     },
     "IpcCommunicationConfig": {

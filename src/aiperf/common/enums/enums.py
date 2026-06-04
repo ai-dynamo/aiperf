@@ -283,6 +283,19 @@ class ImageSource(CaseInsensitiveStrEnum):
     without requiring files on disk."""
 
 
+class ImageSourceSamplingStrategy(CaseInsensitiveStrEnum):
+    """Sampling strategy for finite source-image pools."""
+
+    RANDOM = "random"
+    """Sample source images randomly with replacement."""
+
+    SHUFFLE = "shuffle"
+    """Sample from a random permutation without replacement, reshuffling after exhaustion."""
+
+    SEQUENTIAL = "sequential"
+    """Walk source images in sorted load order, wrapping after exhaustion."""
+
+
 class IPVersion(CaseInsensitiveStrEnum):
     """IP version for HTTP socket connections."""
 

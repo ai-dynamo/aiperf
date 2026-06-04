@@ -27,6 +27,7 @@ from aiperf.common.enums import (
     AudioFormat,
     ImageFormat,
     ImageSource,
+    ImageSourceSamplingStrategy,
 )
 from aiperf.config.base import BaseConfig
 from aiperf.config.types import (
@@ -276,13 +277,39 @@ class ImageConfig(BaseConfig):
             description="Source image generation mode (default: noise). "
             "noise: generate random noise images on the fly — no files on disk, "
             "effectively unbounded variety so servers cannot dedupe identical inputs. "
-            "assets: load images from the bundled assets/source_images directory and "
-            "resize them to the requested dimensions. "
-            "A path string loads images from the given directory (e.g. ./source_images). "
+            "assets: index images from the bundled assets/source_images directory and "
+            "lazily load them at the requested dimensions. "
+            "A path string indexes images from the given directory (e.g. ./source_images). "
             "Random-noise images are roughly incompressible, so payload bytes are larger "
             "than equivalent natural images.",
         ),
     ]
+
+    source_sampling: Annotated[
+        ImageSourceSamplingStrategy,
+        Field(
+            default=ImageSourceSamplingStrategy.RANDOM,
+            description="How to sample finite source-image pools. "
+            "random: sample with replacement. "
+            "shuffle: use a random permutation without replacement, then reshuffle "
+            "after all source images have been used. "
+            "sequential: walk source images in sorted load order, wrapping after exhaustion. "
+            "Only random is valid for noise mode, which has no finite source pool.",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _validate_source_sampling_source(self) -> Self:
+        if (
+            self.source_sampling != ImageSourceSamplingStrategy.RANDOM
+            and self.images_enabled()
+            and self.source == ImageSource.NOISE
+        ):
+            raise ValueError(
+                "images.source_sampling requires image source 'assets' or a directory "
+                "path unless it is 'random'; noise has no finite source pool"
+            )
+        return self
 
     def images_enabled(self) -> bool:
         """Whether image generation is configured to produce images.

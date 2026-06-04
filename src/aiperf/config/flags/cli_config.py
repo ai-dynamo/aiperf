@@ -45,6 +45,7 @@ from aiperf.common.enums import (
     GPUTelemetryMode,
     ImageFormat,
     ImageSource,
+    ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     RequestContentType,
     ServerMetricsFormat,
@@ -1252,9 +1253,9 @@ class CLIConfig(BaseConfig):
             description="Source image generation mode (default `noise`). "
             "`noise` generates random noise images on the fly at the requested dimensions — no files on disk required, "
             "and the pool is effectively unbounded so servers cannot dedupe on identical inputs. "
-            "`assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
-            "and resizes them to the requested dimensions. "
-            "A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). "
+            "`assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
+            "and lazily loads them at the requested dimensions. "
+            "A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). "
             "Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
         ),
         CLIParameter(
@@ -1262,6 +1263,20 @@ class CLIConfig(BaseConfig):
             group=Groups.IMAGE_INPUT,
         ),
     ]
+
+    image_source_sampling: Annotated[
+        ImageSourceSamplingStrategy,
+        Field(
+            description="How to sample finite source-image pools. `random` samples with replacement. "
+            "`shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. "
+            "`sequential` walks source images in sorted load order and wraps after exhaustion. "
+            "Only `random` is valid for `noise`, which has no finite source pool.",
+        ),
+        CLIParameter(
+            name=("--image-source-sampling",),
+            group=Groups.IMAGE_INPUT,
+        ),
+    ] = ImageSourceSamplingStrategy.RANDOM
 
     ##############################################################################
     # Video Input
