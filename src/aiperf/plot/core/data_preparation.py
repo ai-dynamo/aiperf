@@ -354,6 +354,12 @@ def aggregate_gpu_telemetry(
         )
 
     if output_col != utilization_col:
+        # Drop any stale column already occupying output_col (e.g. a legacy
+        # gpu_utilization alongside the preferred nvidia_gpu_utilization) so the
+        # rename can't produce a duplicate label that turns df[output_col] into a
+        # DataFrame and breaks downstream df[y2_metric] lookups.
+        if output_col in gpu_df.columns:
+            gpu_df = gpu_df.drop(columns=[output_col])
         gpu_df = gpu_df.rename(columns={utilization_col: output_col})
 
     return gpu_df
