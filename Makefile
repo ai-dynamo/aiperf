@@ -25,7 +25,7 @@
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
-		generate-all-docs test-stress stress-tests test-fern-docs fern-preview internal-help help \
+		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
@@ -323,6 +323,9 @@ fern-preview: #? local Fern docs preview (mirrors the CI md_to_mdx conversion in
 	@python3 fern/md_to_mdx.py --dir fern/.local-preview/docs
 	@printf "$(bold)$(green)Starting fern docs dev (Ctrl-C to stop)...$(reset)\n"
 	@cd fern/.local-preview && fern docs dev $(args)
+
+fern-release-dryrun: #? local dry-run of the Fern release-version job: build a versioned snapshot from a tag and run the strict guard (no publish). Usage: make fern-release-dryrun args="v0.9.0".
+	@./tools/fern_release_dryrun.sh $(args)
 
 generate-cli-docs: #? generate the CLI documentation.
 	$(activate_venv) && ./tools/generate_cli_docs.py
