@@ -59,16 +59,21 @@ def test_cli_image_source_sampling_flows_to_synthetic_dataset(
     source_dir.mkdir()
     user = _synthetic_cli(
         image_source=str(source_dir),
-        image_source_sampling=ImageSourceSamplingStrategy.SHUFFLE,
+        image_source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
     )
 
     ds_dict = build_dataset(user)
-    assert ds_dict["images"]["source_sampling"] is ImageSourceSamplingStrategy.SHUFFLE
+    assert (
+        ds_dict["images"]["source_sampling"]
+        is ImageSourceSamplingStrategy.SHUFFLE_CYCLE
+    )
 
     aiperf_config = convert_cli_to_aiperf(user)
     main_dataset = aiperf_config.benchmark.get_default_dataset()
     assert isinstance(main_dataset, SyntheticDataset)
-    assert main_dataset.images.source_sampling is ImageSourceSamplingStrategy.SHUFFLE
+    assert (
+        main_dataset.images.source_sampling is ImageSourceSamplingStrategy.SHUFFLE_CYCLE
+    )
 
 
 def test_cli_image_source_rejected_for_file_dataset(tmp_path: Path) -> None:
@@ -87,7 +92,7 @@ def test_cli_image_source_sampling_rejected_for_file_dataset(
     input_file.write_text("{}\n")
     user = CLIConfig(
         input_file=str(input_file),
-        image_source_sampling=ImageSourceSamplingStrategy.SHUFFLE,
+        image_source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
     )
 
     with pytest.raises(ValueError, match="--image-source-sampling is only supported"):

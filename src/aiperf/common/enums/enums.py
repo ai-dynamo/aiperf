@@ -284,16 +284,16 @@ class ImageSource(CaseInsensitiveStrEnum):
 
 
 class ImageSourceSamplingStrategy(CaseInsensitiveStrEnum):
-    """Sampling strategy for finite source-image pools."""
+    """How source images are selected from a finite source-image pool."""
 
-    RANDOM = "random"
-    """Sample source images randomly with replacement."""
+    RANDOM_WITH_REPLACEMENT = "random-with-replacement"
+    """Draw each source image independently; repeats may occur immediately."""
 
-    SHUFFLE = "shuffle"
-    """Sample from a random permutation without replacement, reshuffling after exhaustion."""
+    SHUFFLE_CYCLE = "shuffle-cycle"
+    """Draw every source image once per shuffled cycle; reshuffle after exhaustion."""
 
-    SEQUENTIAL = "sequential"
-    """Walk source images in sorted load order, wrapping after exhaustion."""
+    SEQUENTIAL_CYCLE = "sequential-cycle"
+    """Walk source images in sorted load order; wrap after exhaustion."""
 
 
 class IPVersion(CaseInsensitiveStrEnum):

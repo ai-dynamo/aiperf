@@ -137,18 +137,21 @@ class ImageGenerator(BaseGenerator):
         )
 
     def _next_source_image_path(self) -> tuple[int, Path]:
-        if self.config.source_sampling == ImageSourceSamplingStrategy.RANDOM:
+        if (
+            self.config.source_sampling
+            == ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
+        ):
             index = self._source_rng.choice(self._available_source_image_indexes)
             return index, self._source_image_paths[index]
 
-        if self.config.source_sampling == ImageSourceSamplingStrategy.SHUFFLE:
+        if self.config.source_sampling == ImageSourceSamplingStrategy.SHUFFLE_CYCLE:
             if not self._source_image_indexes:
                 self._source_image_indexes = list(self._available_source_image_indexes)
                 self._source_rng.shuffle(self._source_image_indexes)
             index = self._source_image_indexes.pop()
             return index, self._source_image_paths[index]
 
-        if self.config.source_sampling == ImageSourceSamplingStrategy.SEQUENTIAL:
+        if self.config.source_sampling == ImageSourceSamplingStrategy.SEQUENTIAL_CYCLE:
             for _ in range(len(self._source_image_paths)):
                 index = self._source_image_index
                 self._source_image_index = (self._source_image_index + 1) % len(

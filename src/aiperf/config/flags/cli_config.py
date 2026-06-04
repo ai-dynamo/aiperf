@@ -1267,17 +1267,17 @@ class CLIConfig(BaseConfig):
     image_source_sampling: Annotated[
         ImageSourceSamplingStrategy,
         Field(
-            description="Sampling strategy for finite image sources selected by `--image-source assets` "
-            "or `--image-source <directory>`. `random` samples with replacement. "
-            "`shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. "
-            "`sequential` walks source images in sorted load order and wraps after exhaustion. "
-            "For `noise`, only `random` is valid because there is no finite source pool.",
+            description="How source images are selected from finite image sources selected by `--image-source assets` "
+            "or `--image-source <directory>`. `random-with-replacement` draws each source image independently; "
+            "repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, "
+            "reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps "
+            "after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.",
         ),
         CLIParameter(
             name=("--image-source-sampling",),
             group=Groups.IMAGE_INPUT,
         ),
-    ] = ImageSourceSamplingStrategy.RANDOM
+    ] = ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
 
     ##############################################################################
     # Video Input

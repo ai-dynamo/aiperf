@@ -288,27 +288,29 @@ class ImageConfig(BaseConfig):
     source_sampling: Annotated[
         ImageSourceSamplingStrategy,
         Field(
-            default=ImageSourceSamplingStrategy.RANDOM,
-            description="Sampling strategy for finite image sources selected by "
-            "source='assets' or a directory path. "
-            "random: sample with replacement. "
-            "shuffle: use a random permutation without replacement, then reshuffle "
-            "after all source images have been used. "
-            "sequential: walk source images in sorted load order, wrapping after exhaustion. "
-            "For noise mode, only random is valid because there is no finite source pool.",
+            default=ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT,
+            description="How source images are selected from finite image sources "
+            "selected by source='assets' or a directory path. "
+            "random-with-replacement: draw each source image independently; repeats "
+            "may occur immediately. "
+            "shuffle-cycle: draw every source image once per shuffled cycle, "
+            "reshuffling after exhaustion. "
+            "sequential-cycle: walk source images in sorted load order and wrap "
+            "after exhaustion. For noise mode, only random-with-replacement is "
+            "valid because there is no finite source pool.",
         ),
     ]
 
     @model_validator(mode="after")
     def _validate_source_sampling_source(self) -> Self:
         if (
-            self.source_sampling != ImageSourceSamplingStrategy.RANDOM
+            self.source_sampling != ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
             and self.images_enabled()
             and self.source == ImageSource.NOISE
         ):
             raise ValueError(
                 "images.source_sampling requires image source 'assets' or a directory "
-                "path unless it is 'random'; noise has no finite source pool"
+                "path unless it is 'random-with-replacement'; noise has no finite source pool"
             )
         return self
 

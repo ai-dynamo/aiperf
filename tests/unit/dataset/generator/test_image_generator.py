@@ -35,7 +35,7 @@ def make_image_config(
     image_format: ImageFormat = ImageFormat.PNG,
     source: ImageSource | Path = ImageSource.ASSETS,
     batch_size: int = 1,
-    source_sampling: ImageSourceSamplingStrategy = ImageSourceSamplingStrategy.RANDOM,
+    source_sampling: ImageSourceSamplingStrategy = ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT,
 ) -> ImageConfig:
     """Build a v2 ImageConfig from mean/stddev parameters.
 
@@ -430,7 +430,7 @@ class TestImageGeneratorCustomDirectory:
         result = generator.generate()
         assert result.startswith("data:image/png;base64,")
 
-    def test_custom_directory_shuffle_sampling_uses_pool_once(self, tmp_path):
+    def test_custom_directory_shuffle_cycle_uses_pool_once(self, tmp_path):
         colors = {
             "blue.png": (0, 0, 255),
             "green.png": (0, 128, 0),
@@ -445,7 +445,7 @@ class TestImageGeneratorCustomDirectory:
             height=ImageHeightConfig(mean=5, stddev=0),
             format=ImageFormat.PNG,
             source=tmp_path,
-            source_sampling=ImageSourceSamplingStrategy.SHUFFLE,
+            source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
         )
         generator = ImageGenerator(config)
 
@@ -458,7 +458,7 @@ class TestImageGeneratorCustomDirectory:
         assert sorted(first_cycle) == sorted(colors.values())
         assert next_image in colors.values()
 
-    def test_custom_directory_sequential_sampling_uses_sorted_order_and_wraps(
+    def test_custom_directory_sequential_cycle_uses_sorted_order_and_wraps(
         self, tmp_path
     ):
         colors = {
@@ -475,7 +475,7 @@ class TestImageGeneratorCustomDirectory:
             height=ImageHeightConfig(mean=5, stddev=0),
             format=ImageFormat.PNG,
             source=tmp_path,
-            source_sampling=ImageSourceSamplingStrategy.SEQUENTIAL,
+            source_sampling=ImageSourceSamplingStrategy.SEQUENTIAL_CYCLE,
         )
         generator = ImageGenerator(config)
 
@@ -498,7 +498,7 @@ class TestImageGeneratorCustomDirectory:
                 width=ImageWidthConfig(mean=5, stddev=0),
                 height=ImageHeightConfig(mean=5, stddev=0),
                 source=ImageSource.NOISE,
-                source_sampling=ImageSourceSamplingStrategy.SHUFFLE,
+                source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
             )
 
     def test_custom_directory_skips_non_image_files(self, tmp_path):
@@ -543,7 +543,7 @@ class TestImageGeneratorCustomDirectory:
             height=ImageHeightConfig(mean=10, stddev=0),
             format=ImageFormat.PNG,
             source=tmp_path,
-            source_sampling=ImageSourceSamplingStrategy.SEQUENTIAL,
+            source_sampling=ImageSourceSamplingStrategy.SEQUENTIAL_CYCLE,
         )
         generator = ImageGenerator(config)
 

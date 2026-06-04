@@ -626,15 +626,15 @@ Source image generation mode (default `noise`). `noise` generates random noise i
 
 #### `--image-source-sampling` `<str>`
 
-Sampling strategy for finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random` is valid because there is no finite source pool.
+How source images are selected from finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random-with-replacement` draws each source image independently; repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
-| `random` | _default_ | Sample source images randomly with replacement. |
-| `shuffle` |  | Sample from a random permutation without replacement, reshuffling after exhaustion. |
-| `sequential` |  | Walk source images in sorted load order, wrapping after exhaustion. |
+| `random-with-replacement` | _default_ | Draw each source image independently; repeats may occur immediately. |
+| `shuffle-cycle` |  | Draw every source image once per shuffled cycle; reshuffle after exhaustion. |
+| `sequential-cycle` |  | Walk source images in sorted load order; wrap after exhaustion. |
 
 ### Video Input
 
@@ -1963,15 +1963,15 @@ Source image generation mode (default `noise`). `noise` generates random noise i
 
 #### `--image-source-sampling` `<str>`
 
-Sampling strategy for finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random` samples with replacement. `shuffle` uses every source image once per shuffled cycle, reshuffling after exhaustion. `sequential` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random` is valid because there is no finite source pool.
+How source images are selected from finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random-with-replacement` draws each source image independently; repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
-| `random` | _default_ | Sample source images randomly with replacement. |
-| `shuffle` |  | Sample from a random permutation without replacement, reshuffling after exhaustion. |
-| `sequential` |  | Walk source images in sorted load order, wrapping after exhaustion. |
+| `random-with-replacement` | _default_ | Draw each source image independently; repeats may occur immediately. |
+| `shuffle-cycle` |  | Draw every source image once per shuffled cycle; reshuffle after exhaustion. |
+| `sequential-cycle` |  | Walk source images in sorted load order; wrap after exhaustion. |
 
 ### Video Input
 

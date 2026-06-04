@@ -7421,8 +7421,8 @@
         },
         "sourceSampling": {
           "$ref": "#/$defs/ImageSourceSamplingStrategy",
-          "default": "random",
-          "description": "Sampling strategy for finite image sources selected by source='assets' or a directory path. random: sample with replacement. shuffle: use a random permutation without replacement, then reshuffle after all source images have been used. sequential: walk source images in sorted load order, wrapping after exhaustion. For noise mode, only random is valid because there is no finite source pool."
+          "default": "random-with-replacement",
+          "description": "How source images are selected from finite image sources selected by source='assets' or a directory path. random-with-replacement: draw each source image independently; repeats may occur immediately. shuffle-cycle: draw every source image once per shuffled cycle, reshuffling after exhaustion. sequential-cycle: walk source images in sorted load order and wrap after exhaustion. For noise mode, only random-with-replacement is valid because there is no finite source pool."
         }
       },
       "title": "ImageConfig",
@@ -7448,11 +7448,11 @@
       "type": "string"
     },
     "ImageSourceSamplingStrategy": {
-      "description": "Sampling strategy for finite source-image pools.",
+      "description": "How source images are selected from a finite source-image pool.",
       "enum": [
-        "random",
-        "shuffle",
-        "sequential"
+        "random-with-replacement",
+        "shuffle-cycle",
+        "sequential-cycle"
       ],
       "title": "ImageSourceSamplingStrategy",
       "type": "string"
