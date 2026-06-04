@@ -102,7 +102,7 @@ class SamplingDimension(BaseConfig):
                 # ...) are intentionally untouched -- choices may legitimately be
                 # categorical labels or nested dicts.
                 if (
-                    isinstance(entry, (int, float))
+                    isinstance(entry, int | float)
                     and not isinstance(entry, bool)
                     and not is_finite_value(entry)
                 ):

@@ -218,6 +218,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/orchestrator/search_planner/multi_tier_planner.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/orchestrator/search_planner/optuna_planner.py",
       ""
     ],

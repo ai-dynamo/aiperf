@@ -123,6 +123,10 @@ def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
     the `search_planner` category) are reachable through the same code path
     as the built-in `bayesian` planner.
 
+    When 2+ SLO tiers are configured (via ``--search-sla-tier``), the
+    ``MultiTierPlanner`` is instantiated instead of the single-tier planner.
+    Single-tier behavior (no ``--search-sla-tier``) remains unchanged.
+
     The planner class is responsible for raising a clear ImportError if an
     explicitly requested optional sampler is unavailable.
     """
@@ -131,8 +135,20 @@ def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
     if not isinstance(plan.sweep, AdaptiveSearchSweep):
         return None
 
+    cfg = plan.sweep
+
+    # Multi-tier override: when 2+ tiers are configured, activate the
+    # MultiTierPlanner regardless of the underlying planner selection.
+    # Single-tier behavior is preserved: existing planners run unmodified.
+    if len(cfg.sla_tiers) >= 2:
+        from aiperf.orchestrator.search_planner.multi_tier_planner import (
+            MultiTierPlanner,
+        )
+
+        return MultiTierPlanner(plan.configs[0], cfg, cfg.sla_tiers)
+
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
-    planner_cls = plugins.get_class(PluginType.SEARCH_PLANNER, str(plan.sweep.planner))
-    return planner_cls(plan.configs[0], plan.sweep)
+    planner_cls = plugins.get_class(PluginType.SEARCH_PLANNER, str(cfg.planner))
+    return planner_cls(plan.configs[0], cfg)
