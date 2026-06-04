@@ -319,6 +319,32 @@ def prepare_timeslice_metrics(
     return plot_df, unit
 
 
+# GPU "activity" columns the dual-axis utilization plot can render, in fallback
+# priority order. NVIDIA SM-occupancy utilization is preferred; AMD GFX activity
+# is the AMD counterpart (different semantics — see resolve_gpu_activity_column);
+# the legacy unprefixed name is the pre-namespacing fallback.
+GPU_ACTIVITY_COLUMN_PRIORITY: tuple[str, ...] = (
+    "nvidia_gpu_utilization",
+    "amd_gfx_activity",
+    "gpu_utilization",
+)
+
+
+def resolve_gpu_activity_column(gpu_df: pd.DataFrame) -> str | None:
+    """Return the GPU-activity column to plot, by vendor fallback priority.
+
+    Picks the first of `GPU_ACTIVITY_COLUMN_PRIORITY` present in `gpu_df`
+    (NVIDIA utilization, then AMD GFX activity, then the legacy name). Returns
+    `None` when none is present. NVIDIA utilization and AMD GFX activity are
+    distinct physical signals and are not comparable across vendors; callers
+    should label the result by the resolved column name.
+    """
+    for col in GPU_ACTIVITY_COLUMN_PRIORITY:
+        if col in gpu_df.columns:
+            return col
+    return None
+
+
 def aggregate_gpu_telemetry(
     run: RunData, output_col: str = "nvidia_gpu_utilization"
 ) -> pd.DataFrame:
@@ -332,19 +358,15 @@ def aggregate_gpu_telemetry(
             so downstream lookups (``df[y2_metric]``) keyed on the spec name match.
 
     Returns:
-        DataFrame with timestamp_s and averaged GPU utilization under ``output_col``
+        DataFrame with timestamp_s and averaged GPU activity under ``output_col``
     """
     if run.gpu_telemetry is None or run.gpu_telemetry.empty:
         return pd.DataFrame()
 
     gpu_df = run.gpu_telemetry.copy()
 
-    utilization_col = (
-        "nvidia_gpu_utilization"
-        if "nvidia_gpu_utilization" in gpu_df.columns
-        else "gpu_utilization"
-    )
-    if utilization_col not in gpu_df.columns:
+    utilization_col = resolve_gpu_activity_column(gpu_df)
+    if utilization_col is None:
         return pd.DataFrame()
 
     # If gpu_index column exists, group by timestamp and average

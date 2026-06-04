@@ -477,6 +477,8 @@ AMD signals are emitted under their own vendor-namespaced field names (not alias
 | `amd_ecc_uncorrectable` | `amdsmi_get_gpu_total_ecc_count().uncorrectable_count` | Cumulative uncorrectable ECC error count. Counter — accumulator computes a delta. |
 | `amd_throttle_status` | `amdsmi_get_gpu_metrics_info().throttle_status` (and `indep_throttle_status`) | 0.0/1.0 snapshot per scrape — 1.0 if any throttle indicator is active. amdsmi exposes a state (bool/bitfield), not a duration counter; a fraction-throttled summary can be derived from the average. Field is left absent when both signals return `'N/A'` (sensor unsupported), so "unsupported" is not silently reported as "not throttled". |
 
+> **Plotting AMD activity:** the dual-axis "throughput + GPU utilization" plot prefers `nvidia_gpu_utilization` and falls back to `amd_gfx_activity` on AMD-only runs, labeling the axis by the actual signal ("AMD GFX Activity"). Because NVIDIA SM-occupancy utilization and AMD GFX activity are distinct physical signals, the plot always carries a subtitle noting the values are not comparable across vendors.
+
 ### Comparing DCGM vs pynvml vs amdsmi
 
 | Feature | DCGM | pynvml | amdsmi |

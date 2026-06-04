@@ -15,11 +15,13 @@ import plotly.graph_objects as go
 
 from aiperf.plot.core.data_loader import RunData
 from aiperf.plot.core.data_preparation import (
+    GPU_ACTIVITY_COLUMN_PRIORITY,
     aggregate_gpu_telemetry,
     calculate_rolling_percentiles,
     calculate_throughput_events,
     prepare_request_timeseries,
     prepare_timeslice_metrics,
+    resolve_gpu_activity_column,
     validate_request_uniformity,
 )
 from aiperf.plot.core.plot_generator import PlotGenerator
@@ -43,6 +45,13 @@ from aiperf.plot.utils import (
 from aiperf.server_metrics.histogram_percentiles import compute_prometheus_percentiles
 
 _logger = logging.getLogger(__name__)
+
+# Shown under the title of the GPU-activity dual-axis plot. NVIDIA SM-occupancy
+# utilization and AMD GFX activity are distinct physical signals, so the series
+# must not be read as a cross-vendor comparison.
+_GPU_ACTIVITY_VENDOR_WARNING = (
+    "GPU activity semantics are vendor-specific and not comparable across vendors."
+)
 
 
 def _is_single_stat_metric(metric) -> bool:
@@ -1039,6 +1048,9 @@ class DualAxisHandler(BaseSingleRunHandler):
         "nvidia_gpu_utilization": lambda self, data: aggregate_gpu_telemetry(
             data, "nvidia_gpu_utilization"
         ),
+        "amd_gfx_activity": lambda self, data: aggregate_gpu_telemetry(
+            data, "amd_gfx_activity"
+        ),
         "gpu_utilization": lambda self, data: aggregate_gpu_telemetry(
             data, "gpu_utilization"
         ),
@@ -1107,6 +1119,40 @@ class DualAxisHandler(BaseSingleRunHandler):
         # Return DataFrame with required columns for dual-axis plot
         return df[["timestamp_s", "value"]].copy() if not df.empty else pd.DataFrame()
 
+    def _resolve_gpu_activity_y2(
+        self, y2_metric: MetricSpec, data: RunData
+    ) -> tuple[str, str | None]:
+        """Resolve a GPU-activity y2 metric to the column actually present.
+
+        Returns `(y2_name, subtitle)`. For non-activity y2 metrics this is a
+        no-op `(y2_metric.name, None)`. For the activity family it always returns
+        the vendor-semantics warning subtitle, and diverts the name to
+        `amd_gfx_activity` only when the NVIDIA/legacy family is entirely absent —
+        so NVIDIA/legacy specs keep their requested name (and any custom label),
+        while an AMD-only run relabels to the distinct AMD signal instead of
+        rendering an empty NVIDIA series.
+        """
+        if (
+            y2_metric.source != DataSource.GPU_TELEMETRY
+            or y2_metric.name not in GPU_ACTIVITY_COLUMN_PRIORITY
+        ):
+            return y2_metric.name, None
+
+        columns = data.gpu_telemetry.columns if data.gpu_telemetry is not None else []
+        nvidia_or_legacy = (
+            "nvidia_gpu_utilization" in columns or "gpu_utilization" in columns
+        )
+        if not nvidia_or_legacy and "amd_gfx_activity" in columns:
+            return "amd_gfx_activity", _GPU_ACTIVITY_VENDOR_WARNING
+        if resolve_gpu_activity_column(data.gpu_telemetry) is None:
+            raise DataUnavailableError(
+                f"Dual-axis plot cannot be generated: no GPU activity column "
+                f"available for {y2_metric.name}.",
+                data_type="gpu_telemetry",
+                hint="GPU telemetry requires a GPU collector (DCGM/pynvml/amdsmi).",
+            )
+        return y2_metric.name, _GPU_ACTIVITY_VENDOR_WARNING
+
     def create_plot(
         self, spec: PlotSpec, data: RunData, available_metrics: dict
     ) -> go.Figure:
@@ -1132,8 +1178,10 @@ class DualAxisHandler(BaseSingleRunHandler):
                 hint="GPU telemetry requires DCGM to be configured during benchmark runs.",
             )
 
+        y2_name, subtitle = self._resolve_gpu_activity_y2(y2_metric, data)
+
         df_primary = self._prepare_metric_data(y1_metric.name, y1_metric.source, data)
-        df_secondary = self._prepare_metric_data(y2_metric.name, y2_metric.source, data)
+        df_secondary = self._prepare_metric_data(y2_name, y2_metric.source, data)
 
         if df_primary.empty:
             raise DataUnavailableError(
@@ -1150,7 +1198,12 @@ class DualAxisHandler(BaseSingleRunHandler):
         )
         x_label = spec.x_label or default_x_label
         y1_label = spec.y_label or self._get_axis_label(y1_metric, available_metrics)
-        y2_label = self._get_axis_label(y2_metric, available_metrics)
+        # Label by the resolved column so AMD data reads "AMD GFX Activity",
+        # never the requested NVIDIA name.
+        y2_label = self._get_axis_label(
+            MetricSpec(name=y2_name, axis="y2", source=y2_metric.source),
+            available_metrics,
+        )
 
         return self.plot_generator.create_dual_axis_plot(
             df_primary=df_primary,
@@ -1158,11 +1211,12 @@ class DualAxisHandler(BaseSingleRunHandler):
             x_col_primary=x_col,
             x_col_secondary=x_col,
             y1_metric=y1_metric.name,
-            y2_metric=y2_metric.name,
+            y2_metric=y2_name,
             primary_style=spec.primary_style,
             secondary_style=spec.secondary_style,
             active_count_col=spec.supplementary_col,
             title=spec.title,
+            subtitle=subtitle,
             x_label=x_label,
             y1_label=y1_label,
             y2_label=y2_label,
