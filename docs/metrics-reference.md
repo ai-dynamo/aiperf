@@ -757,6 +757,7 @@ usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from 
 - Taken from the API response `usage` object, not computed by AIPerf.
 - OpenAI surfaces cache reads as `prompt_tokens_details.cached_tokens` (or `input_tokens_details.cached_tokens`); writes are transparent and not reported.
 - Anthropic surfaces cache reads at the top level as `cache_read_input_tokens`; writes are reported separately as [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens).
+- **Self-hosted servers gate this behind a flag:** vLLM needs `--enable-prompt-tokens-details` and SGLang needs `--enable-cache-report` (both default off); TRT-LLM emits `cached_tokens` by default. Without the flag these metrics read all-None even when the server is caching — see [Vendor Usage Field Reference](reference/vendor-usage-fields.md).
 - For streaming responses, uses the last non-None value reported.
 
 ---
