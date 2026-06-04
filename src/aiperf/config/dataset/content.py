@@ -305,7 +305,6 @@ class ImageConfig(BaseConfig):
     def _validate_source_sampling_source(self) -> Self:
         if (
             self.source_sampling != ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
-            and self.images_enabled()
             and self.source == ImageSource.NOISE
         ):
             raise ValueError(

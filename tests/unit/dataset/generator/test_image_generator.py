@@ -501,6 +501,18 @@ class TestImageGeneratorCustomDirectory:
                 source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
             )
 
+    def test_source_sampling_rejects_noise_source_even_when_images_disabled(
+        self,
+    ) -> None:
+        with pytest.raises(ValueError, match="requires image source"):
+            ImageConfig(
+                batch_size=0,
+                width=ImageWidthConfig(mean=5, stddev=0),
+                height=ImageHeightConfig(mean=5, stddev=0),
+                source=ImageSource.NOISE,
+                source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
+            )
+
     def test_custom_directory_skips_non_image_files(self, tmp_path):
         """Non-image entries (text, subdirs) must be skipped, not crash generation."""
         img = Image.new("RGB", (5, 5), color="red")
