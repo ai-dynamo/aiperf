@@ -340,7 +340,7 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
 
             # Verify the auto-generated field names are correct
             for metric in custom_metrics:
-                display_name, field_name, unit = metric
+                _display_name, field_name, _unit = metric
                 assert field_name in [
                     "nvidia_sm_clock",
                     "nvidia_mem_clock",
