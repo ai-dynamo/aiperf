@@ -197,7 +197,7 @@ class TestScalarTimeSeriesNumericEdgeCases:
     """Test numeric edge cases."""
 
     @pytest.mark.parametrize("value", [1e308, 1e-308, -100.5, 0.0])
-    def test_extreme_values(self, value: float) -> None:
+    def test_append_extreme_finite_value_stores_exact_value(self, value: float) -> None:
         """Test that extreme (but finite) numeric values are stored correctly.
 
         Non-finite values (NaN/+-Inf) are intentionally excluded: the
