@@ -525,11 +525,12 @@ externally-injected values are not overwritten.
 
 The error-message invariants are pinned by
 [`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
-(parametrized over the three classes): every `_derive_value` call must
-raise `NoMetricValue` with a message that names the tag, the operation
-source (`MetricResultsDict`), and the injection site
-(`compute_efficiency_metrics`). A future weakening of any message fails
-the test rather than silently drifting.
+(parametrized over all eight classes — four metrics x NVIDIA/AMD): every
+`_derive_value` call must raise `NoMetricValue` with a message that names the
+tag, the operation source (`MetricResultsDict`), the injection site
+(`compute_efficiency_metrics`), and the catching path
+(`MetricResultsProcessor.update_derived_metrics`). A future weakening of any
+message fails the test rather than silently drifting.
 
 ## Testing Pattern
 
