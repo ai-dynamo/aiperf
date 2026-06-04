@@ -459,6 +459,56 @@ class TestDualAxisHandler:
         result = handler.can_handle(sample_spec, mock_run)
         assert result is False
 
+    @pytest.fixture
+    def legacy_spec(self):
+        """A dual-axis spec whose y2 metric uses the legacy gpu_utilization name."""
+        spec = MagicMock()
+        spec.name = "dual-axis-legacy"
+        spec.plot_type = PlotType.DUAL_AXIS
+        spec.metrics = [
+            MetricSpec(name="timestamp_s", axis="x", source=DataSource.REQUESTS),
+            MetricSpec(
+                name="throughput_tokens_per_sec", axis="y", source=DataSource.REQUESTS
+            ),
+            MetricSpec(
+                name="gpu_utilization", axis="y2", source=DataSource.GPU_TELEMETRY
+            ),
+        ]
+        return spec
+
+    def test_can_handle_true_with_legacy_gpu_utilization_spec(
+        self, handler, legacy_spec
+    ):
+        """Legacy gpu_utilization specs remain handleable when telemetry exists."""
+        mock_run = MagicMock()
+        mock_run.gpu_telemetry = pd.DataFrame(
+            {"timestamp_s": [1, 2], "gpu_utilization": [80, 85]}
+        )
+
+        assert handler.can_handle(legacy_spec, mock_run) is True
+
+    def test_prepares_legacy_gpu_utilization_via_metric_prep(self, handler):
+        """A legacy gpu_utilization metric still routes through METRIC_PREP_FUNCTIONS.
+
+        Guards the namespacing back-compat contract: the prep map keeps a
+        gpu_utilization entry so existing plot specs that predate the nvidia_*
+        rename keep producing data. Dropping that entry (or the aggregate
+        fallback) would regress legacy plot configs while can_handle stays green.
+        """
+        assert "gpu_utilization" in DualAxisHandler.METRIC_PREP_FUNCTIONS
+
+        mock_run = MagicMock()
+        mock_run.gpu_telemetry = pd.DataFrame(
+            {"timestamp_s": [1, 2], "gpu_utilization": [80.0, 85.0]}
+        )
+
+        result = handler._prepare_metric_data(
+            "gpu_utilization", DataSource.GPU_TELEMETRY, mock_run
+        )
+
+        assert "gpu_utilization" in result.columns
+        assert result["gpu_utilization"].tolist() == [80.0, 85.0]
+
 
 class TestScatterWithPercentilesHandler:
     """Tests for ScatterWithPercentilesHandler class."""
