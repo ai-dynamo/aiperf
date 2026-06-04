@@ -556,7 +556,9 @@ class TestPyNVMLEdgeCases:
         await collector.stop()
 
     @pytest.mark.asyncio
-    async def test_nvidia_energy_consumption_collected(self, initialized_collector):
+    async def test_nvidia_energy_consumption_collected(
+        self, initialized_collector
+    ) -> None:
         """Test energy consumption metric is collected and scaled correctly."""
         records = initialized_collector._collect_gpu_metrics()
 
@@ -567,7 +569,9 @@ class TestPyNVMLEdgeCases:
         )
 
     @pytest.mark.asyncio
-    async def test_nvidia_sm_utilization_sums_multiple_processes(self, patch_pynvml):
+    async def test_nvidia_sm_utilization_sums_multiple_processes(
+        self, patch_pynvml
+    ) -> None:
         """Test SM utilization sums across multiple processes on same GPU."""
         mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
 
@@ -590,7 +594,9 @@ class TestPyNVMLEdgeCases:
         await collector.stop()
 
     @pytest.mark.asyncio
-    async def test_empty_process_list_zero_nvidia_sm_utilization(self, patch_pynvml):
+    async def test_empty_process_list_zero_nvidia_sm_utilization(
+        self, patch_pynvml
+    ) -> None:
         """Test SM utilization is 0.0 when no processes are running."""
         mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
 
@@ -609,7 +615,7 @@ class TestPyNVMLEdgeCases:
         await collector.stop()
 
     @pytest.mark.asyncio
-    async def test_nvidia_sm_utilization_capped_at_100(self, patch_pynvml):
+    async def test_nvidia_sm_utilization_capped_at_100(self, patch_pynvml) -> None:
         """Test SM utilization is capped at 100% when sum exceeds it."""
         mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
 
