@@ -36,7 +36,7 @@ Accuracy benchmark settings. Tunables for the accuracy benchmark loaders. Curren
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_ACCURACY_LCB_RELEASE_TAG` | `'release_v1'` | — | LiveCodeBench dataset release tag passed as ``version_tag=`` to ``load_dataset("livecodebench/code_generation_lite")``. Pins the monthly snapshot LCB serves so accuracy numbers are reproducible across runs and branches. Bump (e.g. to ``release_v2``) when the team rebaselines against a newer snapshot. Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``. |
+| `AIPERF_ACCURACY_LCB_RELEASE_TAG` | `'v4_v5'` | — | LiveCodeBench dataset subset (HF config name) passed as the positional ``name`` arg to ``load_dataset("livecodebench/code_generation_lite", name, split="test")``. Pins which monthly snapshot LCB serves so accuracy numbers are reproducible across runs and branches. Default ``v4_v5`` matches lighteval's base subset; bump (e.g. to ``v6``) when the team rebaselines against a newer snapshot. Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``. |
 
 ## APISERVER
 

@@ -255,6 +255,7 @@ class TestPinnedDatasetLoad:
 
     @pytest.mark.asyncio
     async def test_load_dataset_called_with_default_release(self) -> None:
+        from aiperf.accuracy.benchmarks.lcb_codegeneration import DATASET_NAME
         from aiperf.common.environment import Environment
 
         rows = [_make_row()]
@@ -264,25 +265,27 @@ class TestPinnedDatasetLoad:
         ) as mock_load:
             bench = LCBCodeGenerationBenchmark(run=_make_run())
             await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
-        # Single call with the pinned ``version_tag`` kwarg, so a future
-        # accidental swap to ``release_latest`` (or to no pin at all)
-        # fails the test.
+        # Single call with the pinned config name as the positional
+        # ``name`` arg (matches lighteval's ``hf_subset=`` reference
+        # usage). A future accidental swap to the script-only
+        # ``version_tag=`` kwarg, or to no pin at all, fails the test.
         mock_load.assert_called_once()
-        _, kwargs = mock_load.call_args
-        assert kwargs.get("version_tag") == Environment.ACCURACY.LCB_RELEASE_TAG
-        assert kwargs.get("split") == "test"
+        args, kwargs = mock_load.call_args
+        assert args == (DATASET_NAME, Environment.ACCURACY.LCB_RELEASE_TAG)
+        assert kwargs == {"split": "test"}
 
     @pytest.mark.asyncio
     async def test_env_override_changes_release_tag(self, monkeypatch) -> None:
         """The env var ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` overrides the
-        default ``release_v1`` pin without requiring a source edit. The
+        default config-name pin without requiring a source edit. The
         loader reads ``Environment.ACCURACY.LCB_RELEASE_TAG`` at call
         time, so monkeypatching the attribute on the singleton is the
         cleanest way to exercise the override path in tests (the
         ``BaseSettings`` itself is read once at module import)."""
+        from aiperf.accuracy.benchmarks.lcb_codegeneration import DATASET_NAME
         from aiperf.common.environment import Environment
 
-        monkeypatch.setattr(Environment.ACCURACY, "LCB_RELEASE_TAG", "release_v9")
+        monkeypatch.setattr(Environment.ACCURACY, "LCB_RELEASE_TAG", "v6")
         rows = [_make_row()]
         with patch(
             "aiperf.accuracy.benchmarks.lcb_codegeneration.load_dataset",
@@ -290,8 +293,8 @@ class TestPinnedDatasetLoad:
         ) as mock_load:
             bench = LCBCodeGenerationBenchmark(run=_make_run())
             await bench.load_problems(tasks=None, n_shots=0, enable_cot=False)
-        _, kwargs = mock_load.call_args
-        assert kwargs.get("version_tag") == "release_v9"
+        args, _ = mock_load.call_args
+        assert args == (DATASET_NAME, "v6")
 
     @pytest.mark.asyncio
     async def test_load_failure_remapped_to_runtime_error(self) -> None:

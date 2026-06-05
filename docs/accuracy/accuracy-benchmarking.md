@@ -83,36 +83,41 @@ system message).
 ### LiveCodeBench (lcb_codegeneration) version pinning
 
 LiveCodeBench publishes monthly snapshots of `livecodebench/code_generation_lite`
-as configs named `release_v1`, `release_v2`, …, `release_latest`. The loader
-pins a specific release so accuracy numbers are reproducible across runs and
-branches; the default is `release_v1`. Override at runtime via:
+as HuggingFace **configs** (e.g. `v4_v5`, `v6`, …). The loader pins a
+specific subset so accuracy numbers are reproducible across runs and
+branches; the default is `v4_v5` (the same subset lighteval's reference
+LCB task treats as its base). Override at runtime via:
 
 ```bash
-export AIPERF_ACCURACY_LCB_RELEASE_TAG=release_v6   # or any published snapshot
+export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or any published subset
 ```
 
 The env var is read at every `load_problems` call (no module-reload needed)
-and is plumbed through to `load_dataset(..., version_tag=...)`, which LCB's
-HuggingFace dataset script reads to dispatch to the matching parquet files
-on the HF Hub. Nothing is bundled with the aiperf wheel — all releases are
-fetched on-demand and cached under `~/.cache/huggingface/datasets/`.
+and is passed as the positional `name` arg to
+`load_dataset("livecodebench/code_generation_lite", name, split="test")` —
+the standard HF config-name selector, matching lighteval's `hf_subset=`
+usage. Nothing is bundled with the aiperf wheel — all subsets are fetched
+on-demand and cached under `~/.cache/huggingface/datasets/`.
 
-**Compatibility constraint:** LCB ships its loader as a HuggingFace
-**dataset script**. The `datasets` library removed support for scripted
-datasets in **v4+**. If LCB hasn't migrated to a parquet-only layout by the
-time you upgrade `datasets`, the loader will fail with a `RuntimeError`
-prefixed `lcb_codegeneration: failed to load …`. Two fixes:
+**Compatibility note:** the positional-name API is the standard HF
+`load_dataset` shape and works across both script-based and parquet-only
+`datasets` backends, so the loader is forward-compatible with the
+script-loader removal in `datasets` v4+. If a future LCB release renames
+or removes the pinned subset, the loader raises `RuntimeError` prefixed
+`lcb_codegeneration: failed to load …`; recover by bumping the env var:
 
-1. **Install a compatible `datasets`** (recommended while LCB still ships
-   a script):
-   ```bash
-   uv pip install 'datasets>=3.0,<4'
-   ```
-2. **Bump the pinned release** if LCB renamed/removed the snapshot you
-   were targeting:
-   ```bash
-   export AIPERF_ACCURACY_LCB_RELEASE_TAG=release_latest
-   ```
+```bash
+export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or whatever LCB now ships
+```
+
+The remap also surfaces the installed `datasets` version when ≥ 4, in
+case the failure is the `trust_remote_code` opt-in path (still required
+by LCB's loading script even in v4). If you're hit by that, install a
+compatible `datasets`:
+
+```bash
+uv pip install 'datasets>=3.0,<4'
+```
 
 The error message names which condition fired (it includes the installed
 `datasets` version when ≥ 4) so operators get an actionable next step
