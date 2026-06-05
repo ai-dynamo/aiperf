@@ -9950,6 +9950,7 @@
       "properties": {
         "label": {
           "description": "Unique tier identifier for output artifacts",
+          "minLength": 1,
           "title": "Label",
           "type": "string"
         },
