@@ -9,12 +9,13 @@ Validates: Requirements 1.1, 1.5
 
 from __future__ import annotations
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.orchestrator.search_planner.parsing import (
     parse_sla_tier,
     validate_tier_list,
 )
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

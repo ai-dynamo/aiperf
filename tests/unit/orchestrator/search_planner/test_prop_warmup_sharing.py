@@ -16,13 +16,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.common.environment import Environment
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 from aiperf.orchestrator.search_planner._shared_warmup import apply_sla_warmup
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

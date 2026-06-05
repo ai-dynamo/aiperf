@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
+
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.orchestrator.search_planner.multi_tier_models import (
     BracketState,
     SLOTier,
     TierResult,
 )
-from pydantic import ValidationError
 
 
 class TestSLOTier:

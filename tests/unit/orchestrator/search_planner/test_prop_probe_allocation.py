@@ -13,11 +13,12 @@ infeasible_min - feasible_max gap is maximal.
 
 from __future__ import annotations
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.config.sweep.adaptive import SLAFilter, SLOTier
 from aiperf.orchestrator.search_planner.multi_tier_allocator import ProbeAllocator
 from aiperf.orchestrator.search_planner.multi_tier_models import BracketState
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

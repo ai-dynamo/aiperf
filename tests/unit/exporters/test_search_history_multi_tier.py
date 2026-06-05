@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import orjson
+
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter, SLOTier
 from aiperf.exporters.search_history import write_search_history

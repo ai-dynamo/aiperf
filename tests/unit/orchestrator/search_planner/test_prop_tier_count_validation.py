@@ -13,11 +13,12 @@ ValueError. For any N in [2, 10], validate_tier_list SHALL accept.
 from __future__ import annotations
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.orchestrator.search_planner.multi_tier_models import SLOTier
 from aiperf.orchestrator.search_planner.parsing import validate_tier_list
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 
 def _make_tier(label: str) -> SLOTier:

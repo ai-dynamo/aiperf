@@ -17,11 +17,12 @@ from __future__ import annotations
 
 from typing import Literal
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.config.sweep.adaptive import SLAFilter, SLOTier
 from aiperf.orchestrator.search_planner.multi_tier_models import BracketState
 from aiperf.orchestrator.search_planner.multi_tier_ordering import TierOrderingDetector
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import orjson
 import pytest
+
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective, SweepVariation

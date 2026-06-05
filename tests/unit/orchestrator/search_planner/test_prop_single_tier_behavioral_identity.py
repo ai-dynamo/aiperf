@@ -24,14 +24,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter, SLOTier
 from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 from aiperf.orchestrator.search_planner.multi_tier_planner import MultiTierPlanner
 from aiperf.plugin.enums import SearchPlannerType
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

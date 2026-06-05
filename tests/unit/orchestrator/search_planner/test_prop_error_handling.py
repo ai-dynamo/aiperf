@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from typing import Literal
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
@@ -22,8 +25,6 @@ from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter, SLOTie
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.search_planner._sla_helpers import iteration_feasibility
 from aiperf.orchestrator.search_planner.multi_tier_planner import MultiTierPlanner
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

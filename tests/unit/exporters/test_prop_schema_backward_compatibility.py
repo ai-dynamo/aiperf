@@ -19,13 +19,14 @@ from pathlib import Path
 from typing import Any
 
 import orjson
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter, SLOTier
 from aiperf.exporters.search_history import write_search_history
 from aiperf.orchestrator.search_planner.base import SearchIteration
 from aiperf.orchestrator.search_planner.multi_tier_models import TierResult
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

@@ -14,6 +14,9 @@ convergence_status of "partial".
 
 from __future__ import annotations
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective, SweepVariation
@@ -22,8 +25,6 @@ from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.search_planner.multi_tier_models import BracketState
 from aiperf.orchestrator.search_planner.multi_tier_planner import MultiTierPlanner
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Helpers

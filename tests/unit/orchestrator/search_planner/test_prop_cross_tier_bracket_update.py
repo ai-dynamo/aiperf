@@ -15,13 +15,14 @@ from __future__ import annotations
 
 from typing import Literal
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.sweep.adaptive import SLAFilter, SLOTier
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.search_planner._sla_helpers import iteration_feasibility
 from aiperf.orchestrator.search_planner.multi_tier_models import BracketState
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Strategies

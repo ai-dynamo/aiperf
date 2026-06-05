@@ -15,10 +15,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.search_planner.multi_tier_store import SharedObservationStore
 from hypothesis import given, settings
 from hypothesis import strategies as st
+
+from aiperf.orchestrator.models import RunResult
+from aiperf.orchestrator.search_planner.multi_tier_store import SharedObservationStore
 
 # ---------------------------------------------------------------------------
 # Strategies
