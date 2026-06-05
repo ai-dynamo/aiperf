@@ -1,0 +1,15 @@
+storage = "./test-data"
+rows_per_parquet = 100000
+save_interval_secs = 5
+
+[[endpoints]]
+name = "prefill_node"
+url = "file://tachometer-scraper/sample-metrics/dcgm-gb200.txt"
+frequency = 1.0
+filter = "dcgm"
+
+[endpoints.gpu_metadata]
+"0" = { endpoint = "prefill", endpoint_index = "0", rank_index = "0" }
+"1" = { endpoint = "prefill", endpoint_index = "0", rank_index = "1" }
+"2" = { endpoint = "decode", endpoint_index = "0", rank_index = "0" }
+"3" = { endpoint = "decode", endpoint_index = "0", rank_index = "1" }
