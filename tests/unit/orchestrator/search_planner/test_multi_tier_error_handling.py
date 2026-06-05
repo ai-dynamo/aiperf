@@ -280,35 +280,6 @@ class TestAllTiersConvergeToLowest:
 class TestNonMonotonicObservations:
     """Req 10.4: Non-monotonic observations flag non_monotonic_warning per tier."""
 
-    def test_feasible_above_infeasible_min_sets_warning(self) -> None:
-        """A pass above infeasible_min flags non_monotonic_warning on that tier."""
-        planner = _make_planner(lo=1, hi=256)
-
-        # First probe: all pass at lo=1
-        pair = planner.ask()
-        assert pair is not None
-        _, var1 = pair
-        planner.tell(var1, [_success_result(var1, throughput=500.0)])
-
-        # Second probe (doubling): some tiers fail at 2
-        pair = planner.ask()
-        assert pair is not None
-        _, var2 = pair
-        planner.tell(var2, [_success_result(var2, throughput=50.0)])
-        # At this point: fast has infeasible_min=2, economy has infeasible_min=2
-
-        # Now we're in bisect phase — but let's force a non-monotonic probe
-        # by directly manipulating and telling at a value above infeasible_min
-        # that passes. The next ask should be a midpoint.
-        pair = planner.ask()
-        if pair is None:
-            return  # planner converged early due to bracket size
-
-        _, var3 = pair
-        # If probing between 1 and 2, gap is 1 so may already be converged.
-        # Use a different scenario with wider brackets.
-        pass
-
     def test_non_monotonic_with_wider_bracket(self) -> None:
         """Non-monotonic detection with a wider bracket range."""
         planner = _make_planner(lo=4, hi=256)
