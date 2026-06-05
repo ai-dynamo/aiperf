@@ -72,12 +72,15 @@ class _AccuracySettings(BaseSettings):
         default="v4_v5",
         description="LiveCodeBench dataset subset (HF config name) "
         "passed as the positional ``name`` arg to "
-        '``load_dataset("livecodebench/code_generation_lite", name, split="test")``. '
+        '``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. '
         "Pins which monthly snapshot LCB serves so accuracy numbers "
         "are reproducible across runs and branches. Default "
         "``v4_v5`` matches lighteval's base subset; bump (e.g. to "
         "``v6``) when the team rebaselines against a newer snapshot. "
-        "Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+        "The loader always passes ``trust_remote_code=True`` so LCB's "
+        "dataset-loading script can execute on ``datasets`` v4+ "
+        "(mirrors lighteval's reference opt-in). Consumed by "
+        "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
     )
 
 

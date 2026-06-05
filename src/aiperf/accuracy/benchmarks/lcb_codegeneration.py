@@ -201,18 +201,20 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
         ``load_dataset`` here selects an LCB HuggingFace config (e.g.
         ``"v4_v5"``, ``"v6"``) by passing ``Environment.ACCURACY.LCB_RELEASE_TAG``
         as the **positional ``name`` arg** — the standard HF
-        config-name selector. This matches lighteval's reference
-        usage (``hf_subset=subset``) and works across both script-based
-        and parquet-only ``datasets`` backends, so the loader is
-        forward-compatible with the ``datasets`` v4+ script-loader
-        removal. The tag is overridable via
-        ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` (e.g. when the team
-        rebaselines against a newer monthly snapshot) without source
-        edits. Failures can come from at least three independent
-        sources — the HF ``datasets`` library no longer recognising
-        the upstream config name, the pinned subset being renamed or
-        removed, or a missing ``trust_remote_code`` opt-in — so we
-        don't try to enumerate the specific exception class. A broad
+        config-name selector — alongside ``trust_remote_code=True`` so
+        LCB's dataset-loading script can execute on ``datasets`` v4+
+        (which dropped the implicit-trust default). Both mirror
+        lighteval's reference (``hf_subset=subset`` +
+        ``trust_remote_code=True`` on ``get_dataset_config_names`` +
+        ``trust_dataset=True`` on the task config). The release tag is
+        overridable via ``AIPERF_ACCURACY_LCB_RELEASE_TAG`` (e.g. when
+        the team rebaselines against a newer monthly snapshot) without
+        source edits. Failures can still come from a couple of
+        independent sources — the HF ``datasets`` library
+        no longer recognising the upstream config name, the pinned
+        subset being renamed or removed upstream, or the user explicitly
+        disabling remote-code execution at the env level — so we don't
+        try to enumerate the specific exception class. A broad
         ``except`` keeps the surface small while preserving the
         original cause via ``__cause__``.
         """
@@ -220,10 +222,17 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
         try:
             # Pass the release as positional ``name`` (the standard HF
             # config-name selector), matching the trt-llm/lighteval
-            # reference's ``hf_subset=`` usage. Avoids the LCB-script
-            # ``version_tag=`` kwarg that ``datasets`` v4+ doesn't
-            # honour without ``trust_remote_code``.
-            return load_dataset(DATASET_NAME, release_tag, split="test")
+            # reference's ``hf_subset=`` usage. ``trust_remote_code=True``
+            # opts in to executing LCB's dataset-loading script — which
+            # is what defines the configs and the test-case payload
+            # schema — and is required on ``datasets`` v4+ where remote
+            # code execution is no longer the default. The reference
+            # makes the same opt-in (``get_dataset_config_names(...,
+            # trust_remote_code=True)`` plus ``trust_dataset=True`` on
+            # the LightevalTaskConfig), so we mirror the contract.
+            return load_dataset(
+                DATASET_NAME, release_tag, split="test", trust_remote_code=True
+            )
         except Exception as e:
             raise RuntimeError(
                 f"{TASK_NAME}: failed to load {DATASET_NAME!r} subset "

@@ -272,7 +272,10 @@ class TestPinnedDatasetLoad:
         mock_load.assert_called_once()
         args, kwargs = mock_load.call_args
         assert args == (DATASET_NAME, Environment.ACCURACY.LCB_RELEASE_TAG)
-        assert kwargs == {"split": "test"}
+        # ``trust_remote_code=True`` mirrors the lighteval reference's
+        # opt-in; required on ``datasets`` v4+ where remote-code
+        # execution is no longer the default.
+        assert kwargs == {"split": "test", "trust_remote_code": True}
 
     @pytest.mark.asyncio
     async def test_env_override_changes_release_tag(self, monkeypatch) -> None:
