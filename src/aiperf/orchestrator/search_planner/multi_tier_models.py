@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import Field
 
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.config.sweep.adaptive import SLOTier
 
@@ -71,7 +72,7 @@ class TierResult(AIPerfBaseModel):
         ge=0,
         description="Current infeasible_min (upper bracket bound)",
     )
-    confidence_interval: dict[str, float] | None = Field(
+    confidence_interval: dict[str, FiniteFloat] | None = Field(
         default=None,
         description="Boundary CI from replicate phase: {low, high}",
     )
