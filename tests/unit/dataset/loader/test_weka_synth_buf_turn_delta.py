@@ -283,8 +283,11 @@ def test_turn_delta_case_3_mid_segment_cut_resets_context():
 # ---------------------------------------------------------------------------
 
 
-def test_truncate_returns_none_on_clean_boundary_no_partial_tail():
-    """Boundary cut with prev_partial_tail=0 is a no-op on tokens -> None."""
+def test_truncate_returns_index_when_boundary_cut_drops_segments_past_boundary():
+    """Boundary cut with prev_partial_tail=0 that deletes a following segment
+    must report the first deleted segment index, so turn_delta can detect the
+    disturbance and reset the context. Returning None here would silently lose
+    the deleted segment's content."""
     segs = [
         RoleSegment(
             role="user",
@@ -308,8 +311,71 @@ def test_truncate_returns_none_on_clean_boundary_no_partial_tail():
         decode_tokens_to_text=_stub_decode_tokens_to_text,
         prev_partial_tail=0,
     )
+    assert result == 1
+    assert len(segs) == 1
+
+
+def test_truncate_returns_none_on_clean_boundary_with_no_segments_past():
+    """Boundary cut at the end of the trailing segment, no partial tail and
+    no segments past the cut, is a true no-op and must return None."""
+    segs = [
+        RoleSegment(
+            role="user",
+            block_start=0,
+            block_count=2,
+            tokens=list(range(2 * BLOCK_SIZE)),
+            content="usr",
+        ),
+    ]
+    result = truncate_synth_buf_at_block(
+        segs,
+        target_blocks=2,
+        block_size=BLOCK_SIZE,
+        decode_tokens_to_text=_stub_decode_tokens_to_text,
+        prev_partial_tail=0,
+    )
     assert result is None
     assert len(segs) == 1
+
+
+def test_truncate_returns_segment_index_when_cut_lands_at_segment_start():
+    """Truncation lands exactly at the start of segment i and deletes
+    segments[i:] entirely. The earliest disturbed index is i."""
+    segs = [
+        RoleSegment(
+            role="user",
+            block_start=0,
+            block_count=2,
+            tokens=list(range(2 * BLOCK_SIZE)),
+            content="usr",
+        ),
+        RoleSegment(
+            role="assistant",
+            block_start=2,
+            block_count=1,
+            tokens=list(range(BLOCK_SIZE)),
+            content="ast0",
+        ),
+        RoleSegment(
+            role="user",
+            block_start=3,
+            block_count=1,
+            tokens=list(range(BLOCK_SIZE)),
+            content="usr1",
+        ),
+    ]
+    # target_blocks=3 means the cut lands exactly at the start of segment 2
+    # (cumulative cursor reaches 3 after processing segments 0..1, no segment
+    # straddles the boundary). The trailing-user segment is deleted.
+    result = truncate_synth_buf_at_block(
+        segs,
+        target_blocks=3,
+        block_size=BLOCK_SIZE,
+        decode_tokens_to_text=_stub_decode_tokens_to_text,
+        prev_partial_tail=0,
+    )
+    assert result == 2
+    assert [s.role for s in segs] == ["user", "assistant"]
 
 
 def test_truncate_returns_segment_index_on_boundary_strip():
@@ -367,7 +433,11 @@ def test_truncate_returns_segment_index_on_mid_segment_cut():
     assert result == 1
 
 
-def test_truncate_returns_none_when_zeroes_segments():
+def test_truncate_returns_zero_when_clearing_non_empty_buffer():
+    """target_blocks<=0 with a non-empty buffer clears every segment, which is
+    a disturbance to any previously-emitted segment. Returning None here would
+    cause turn_delta to take the strict-append path with a stale
+    _emitted_segment_count pointing past the now-empty buffer."""
     segs = [
         RoleSegment(
             role="user",
@@ -378,8 +448,173 @@ def test_truncate_returns_none_when_zeroes_segments():
         ),
     ]
     result = truncate_synth_buf_at_block(segs, target_blocks=0, block_size=BLOCK_SIZE)
+    assert result == 0
+    assert segs == []
+
+
+def test_truncate_returns_none_when_zeroes_empty_buffer():
+    """target_blocks<=0 with an already-empty buffer has nothing to disturb."""
+    segs: list[RoleSegment] = []
+    result = truncate_synth_buf_at_block(segs, target_blocks=0, block_size=BLOCK_SIZE)
     assert result is None
     assert segs == []
+
+
+# ---------------------------------------------------------------------------
+# Regression coverage for: truncation deletes previously-emitted segments
+# without modifying a surviving segment in place. (See issue: weka synth
+# buffer should reset context when truncation deletes emitted segments.)
+# ---------------------------------------------------------------------------
+
+
+def test_turn_delta_resets_when_lcp_zero_after_emitted_turn():
+    """LCP==0 after at least one emitted turn forces target_blocks=0, which
+    clears the synth buffer. turn_delta must report reset_context=True with
+    a non-empty rebuilt message list, not strict-append with a stale count."""
+    r = _make_recon()
+    # Turn 0: 2 blocks, block-aligned (no partial tail) so the only
+    # disturbance on turn 1 will be the LCP=0 clear, not a tail strip.
+    r.init_turn_0(
+        hash_ids=[1, 2],
+        in_tokens=2 * BLOCK_SIZE,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    d0 = r.turn_delta()
+    assert d0.reset_context is False
+    assert r._emitted_segment_count == len(r._segments) >= 1
+
+    # Turn 1: disjoint hash_ids -> LCP=0 -> truncate clears the buffer.
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=2 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[97, 98, 99],
+        curr_in_tokens=3 * BLOCK_SIZE,
+        seed="t:1",
+    )
+    # The clear-on-LCP=0 path must record a disturbance at index 0, which is
+    # strictly less than the prior _emitted_segment_count.
+    assert r._last_disturbance_at == 0
+
+    d1 = r.turn_delta()
+    assert d1.reset_context is True
+    # Emits ALL current segments rebuilt for the new turn.
+    assert len(d1.delta_messages) > 0
+    assert len(d1.delta_messages) == len(r._segments)
+    for msg, seg in zip(d1.delta_messages, r._segments, strict=True):
+        assert msg == {"role": seg.role, "content": seg.content}
+
+
+def test_turn_delta_resets_when_boundary_cut_deletes_emitted_segments():
+    """Boundary cut deletes one or more previously-emitted segments without
+    slicing the boundary segment in place. The earliest deleted segment lives
+    in the emitted region, so turn_delta must reset context."""
+    r = _make_recon()
+    # Turn 0: 3 blocks, block-aligned (prev_partial_tail will be 0 on turn 1).
+    r.init_turn_0(
+        hash_ids=[1, 2, 3],
+        in_tokens=3 * BLOCK_SIZE,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    d0 = r.turn_delta()
+    assert d0.reset_context is False
+    assert len(r._segments) == 1  # single user segment
+
+    # Turn 1: extend by 2 blocks. LCP=3 -> boundary cut at end of seg 0 with
+    # nothing to delete, then append asst + user. After turn_delta we have
+    # 3 emitted segments: [user(3), asst, user].
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3],
+        prev_in_tokens=3 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="t:1",
+    )
+    d1 = r.turn_delta()
+    assert d1.reset_context is False
+    assert len(r._segments) >= 3
+    n_emitted = r._emitted_segment_count
+    assert n_emitted == len(r._segments)
+
+    # Turn 2: LCP=3 again. Truncate target_blocks=3 lands at the boundary of
+    # segment 0 (block_count=3, cursor=0). prev_partial_tail=0 means no
+    # in-place strip. The boundary path then deletes segments[1:] (the asst
+    # and user from turn 1) -- both already emitted. The fix must report the
+    # earliest deleted index (1) so turn_delta resets context.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4, 5],
+        prev_in_tokens=5 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 88, 99],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="t:2",
+    )
+    assert r._last_disturbance_at is not None
+    assert r._last_disturbance_at < n_emitted
+
+    d2 = r.turn_delta()
+    assert d2.reset_context is True
+    # All current segments emitted on reset.
+    assert len(d2.delta_messages) == len(r._segments)
+    for msg, seg in zip(d2.delta_messages, r._segments, strict=True):
+        assert msg == {"role": seg.role, "content": seg.content}
+
+
+def test_turn_delta_strict_append_when_truncation_only_deletes_unemitted_segments():
+    """When truncation only deletes segments past _emitted_segment_count, the
+    deletion does not invalidate any emitted content. turn_delta must take
+    the strict-append path (reset_context=False)."""
+    r = _make_recon()
+    # Turn 0: 2 blocks, block-aligned (no partial tail).
+    r.init_turn_0(
+        hash_ids=[1, 2],
+        in_tokens=2 * BLOCK_SIZE,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    d0 = r.turn_delta()
+    assert d0.reset_context is False
+    assert r._emitted_segment_count == 1
+
+    # Turn 1: extend by 3 blocks. After advance_turn, _segments grows but we
+    # deliberately do NOT call turn_delta(), so _emitted_segment_count stays
+    # at 1 -- the new asst+user segments are unemitted.
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=2 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="t:1",
+    )
+    assert len(r._segments) >= 3
+    assert r._emitted_segment_count == 1
+
+    # Turn 2: LCP=2 boundary cut deletes the (unemitted) asst+user appended
+    # in turn 1. The fix correctly reports disturbance at index 1, but since
+    # 1 >= _emitted_segment_count (1), turn_delta must NOT reset.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4, 5],
+        prev_in_tokens=5 * BLOCK_SIZE,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 77, 88, 99],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="t:2",
+    )
+    assert r._last_disturbance_at is not None
+    # Disturbance reported but it lies outside the emitted region.
+    assert r._last_disturbance_at >= r._emitted_segment_count
+
+    d2 = r.turn_delta()
+    assert d2.reset_context is False
+    # Strict append emits only segments[_emitted_segment_count:].
+    assert len(d2.delta_messages) == len(r._segments) - 1
 
 
 # ---------------------------------------------------------------------------

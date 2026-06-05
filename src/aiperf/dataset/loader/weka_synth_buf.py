@@ -433,17 +433,20 @@ def truncate_synth_buf_at_block(
     When ``decode_tokens_to_text`` is provided, ``content`` is re-derived
     from the surviving tokens to keep the (tokens, content) invariant.
 
-    Returns the smallest segment index whose tokens shrank or were re-sliced
-    (boundary cut that strips a partial tail, or mid-segment cut), or
-    ``None`` if no segment's tokens were modified. Segments that were
-    deleted entirely past the cut are not counted as "modifications" of
-    a surviving segment — only the segment whose own token list changed
-    in place is reported. Used by :meth:`ConversationReconstructor.turn_delta`
-    to detect disturbances of previously-emitted segments.
+    Returns the earliest segment index whose content was disturbed by the
+    truncation — either modified in place (boundary partial-tail strip,
+    mid-segment slice) or removed entirely (cleared buffer, cut at a segment
+    start, boundary cut with segments past the boundary). Returns ``None``
+    only when no segment was touched: target lies beyond every segment, or
+    the buffer was already empty. Used by
+    :meth:`ConversationReconstructor.turn_delta` to detect disturbances of
+    previously-emitted segments — any returned index that lies below the
+    emitted count forces a context reset on the next emission.
     """
     if target_blocks <= 0:
+        had_segments = len(segments) > 0
         segments.clear()
-        return None
+        return 0 if had_segments else None
 
     cursor = 0
     for i, seg in enumerate(segments):
@@ -452,7 +455,8 @@ def truncate_synth_buf_at_block(
             continue
         if cursor + seg.block_count == target_blocks:
             # Boundary cut: strip the trailing partial_tail tokens (the only
-            # tokens past block_count*bs are the partial tail).
+            # tokens past block_count*bs are the partial tail), then drop any
+            # segments past the boundary.
             disturbed: int | None = None
             if prev_partial_tail > 0 and len(seg.tokens) > 0:
                 stripped_n = min(prev_partial_tail, len(seg.tokens))
@@ -460,11 +464,16 @@ def truncate_synth_buf_at_block(
                 if decode_tokens_to_text is not None:
                     seg.content = decode_tokens_to_text(seg.tokens)
                 disturbed = i
+            deleted_past_boundary = i + 1 < len(segments)
             del segments[i + 1 :]
+            if disturbed is None and deleted_past_boundary:
+                disturbed = i + 1
             return disturbed
         if cursor == target_blocks:
+            # Cut lands exactly at the start of segment i: segments[i:] are
+            # all deleted. Earliest disturbed index is i.
             del segments[i:]
-            return None
+            return i
         # Mid-segment cut: token-level slice on a guaranteed block boundary.
         kept_blocks = target_blocks - cursor
         kept_tokens_n = min(len(seg.tokens), kept_blocks * block_size)
