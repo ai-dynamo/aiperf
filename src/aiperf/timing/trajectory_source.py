@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -66,11 +66,18 @@ class Trajectory:
 
     ``snapshot`` is set for timestamped traces. ``start_turn_index`` remains
     available for compatibility with timestamp-less datasets and older tests.
+    ``x_correlation_id`` is the persistent session identity used by legacy
+    timestamp-less trajectories across the WARMUP -> PROFILING boundary.
+    Timestamped snapshots store the equivalent realized identity graph on each
+    ``ConversationState``.
     """
 
     conversation_id: str
     start_turn_index: int
     snapshot: TrajectorySnapshot | None = None
+    x_correlation_id: str = field(
+        default_factory=lambda: str(uuid.uuid4()), compare=False
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -691,7 +698,7 @@ class TrajectorySource(ConversationSource):
         return SampledSession(
             conversation_id=trajectory.conversation_id,
             metadata=meta,
-            x_correlation_id=x_correlation_id or str(uuid.uuid4()),
+            x_correlation_id=x_correlation_id or trajectory.x_correlation_id,
             start_turn_index=trajectory.start_turn_index,
         )
 

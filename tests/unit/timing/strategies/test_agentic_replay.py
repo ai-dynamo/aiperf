@@ -378,6 +378,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
                 turns=[
                     TurnMetadata(timestamp_ms=13000.0),
                     TurnMetadata(timestamp_ms=14000.0),
+                    TurnMetadata(timestamp_ms=16000.0, delay_ms=2000.0),
                 ],
                 is_root=False,
                 agent_depth=1,
@@ -419,7 +420,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src.trajectories = [trajectory]
 
-    issued: list[tuple[str, int, int, str | None]] = []
+    issued: list[tuple[str, int, int, str, str | None]] = []
 
     async def capture(turn):
         issued.append(
@@ -427,6 +428,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
                 turn.conversation_id,
                 turn.turn_index,
                 turn.agent_depth,
+                turn.x_correlation_id,
                 turn.parent_correlation_id,
             )
         )
@@ -457,21 +459,161 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     await strategy.execute_phase()
 
     branch_orchestrator.seed_snapshot.assert_called_once()
-    scheduler.schedule_later.assert_called_once()
-    await asyncio.sleep(0)
+    scheduler.schedule_later.assert_not_called()
     assert issued == [
         (
             "trace_0::sa:0",
+            2,
             1,
-            1,
+            "child",
             branch_orchestrator.seed_snapshot.call_args.args[0][
                 1
             ].parent_correlation_id,
         )
     ]
     seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
+    assert seeded_states[0].x_correlation_id == "parent"
+    assert seeded_states[1].x_correlation_id == "child"
     assert seeded_states[0].waiting_on_children is True
     assert seeded_states[1].parent_correlation_id == seeded_states[0].x_correlation_id
+
+
+def test_snapshot_continuation_unblocks_parent_after_terminal_child_warmup():
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=12000.0),
+                    TurnMetadata(timestamp_ms=20000.0),
+                ],
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::sa:0",
+                turns=[
+                    TurnMetadata(timestamp_ms=13000.0),
+                    TurnMetadata(timestamp_ms=14000.0),
+                ],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=2,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=13500.0,
+            states=(
+                ConversationState(
+                    conversation_id="trace_0",
+                    x_correlation_id="parent",
+                    next_turn_index=2,
+                    waiting_on_children=True,
+                    join_target_turn_index=2,
+                ),
+                ConversationState(
+                    conversation_id="trace_0::sa:0",
+                    x_correlation_id="child",
+                    next_turn_index=1,
+                    agent_depth=1,
+                    parent_correlation_id="parent",
+                    join_target_turn_index=2,
+                    branch_id="b0",
+                    branch_mode=ConversationBranchMode.SPAWN,
+                ),
+            ),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=MagicMock(),
+        stop_checker=MagicMock(),
+        credit_issuer=AsyncMock(),
+        lifecycle=MagicMock(),
+    )
+
+    continuation = strategy._snapshot_continuation_after_warmup(trajectory)
+
+    assert len(continuation.states) == 1
+    parent = continuation.states[0]
+    assert parent.x_correlation_id == "parent"
+    assert parent.next_turn_index == 2
+    assert parent.waiting_on_children is False
+    assert parent.join_target_turn_index is None
+    assert parent.next_dispatch_offset_ms == 0.0
+
+
+@pytest.mark.asyncio
+async def test_profiling_snapshot_recycles_root_after_terminal_warmup():
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[TurnMetadata(timestamp_ms=0.0)],
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=0,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=0.0,
+            states=(
+                ConversationState(
+                    conversation_id="trace_0",
+                    x_correlation_id="warmed-root",
+                    next_turn_index=0,
+                ),
+            ),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+    issued = []
+
+    async def capture(turn):
+        issued.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    stop_checker = MagicMock()
+    stop_checker.can_start_new_session.return_value = True
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=MagicMock(),
+        stop_checker=stop_checker,
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert len(issued) == 1
+    assert issued[0].conversation_id == "trace_0"
+    assert issued[0].turn_index == 0
+    assert issued[0].x_correlation_id != "warmed-root"
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import Counter
+from dataclasses import replace as _dataclass_replace
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -127,26 +128,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             t.conversation_id for t in conversation_source.trajectories
         )
         self._failed_warmup_traces: list[str] = []
-        self._warmup_completed_count: int = 0
-        self._warmup_total_count: int = 0
-        # Track which x_correlation_ids correspond to trajectories in WARMUP
-        # so that terminal failures can be attributed to a trace_id.
-        self._warmup_correlation_to_trace: dict[str, str] = {}
-        # Per-trajectory (k_i, num_turns) recorded at warmup dispatch so the
-        # warmup-completion log line can show the actual start position and
-        # how far into the trace the trajectory began.
-        self._warmup_correlation_to_start_info: dict[str, tuple[int, int]] = {}
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
-        # phase) and ``session_for(...)`` mints a new uuid per call, so the
-        # two phases use different ``x_correlation_id``s for the same
-        # trajectory. The MARKER text, however, is spec-required to be
-        # warmup-coherent: the digest is computed from
+        # phase), while the shared TrajectorySource keeps each sampled lane's
+        # x_correlation_id stable across the phase boundary. The MARKER text is
+        # also warmup-coherent: the digest is computed from
         # ``(benchmark_id, recycle_pass, trajectory_index, trace_id)`` —
         # phase-agnostic — so warmup turn k_i and profile turn k_i+1 get
-        # the same marker even though they belong to different sessions.
-        # That preserves the KV-cache lineage warmup is meant to prime.
+        # the same marker within the continued session. That preserves the
+        # KV-cache lineage warmup is meant to prime.
         # trajectory_index is stable per "lane" (slot in the trajectory list)
         # and reused on recycle, so the digest changes only across recycle
         # passes for a given trace_id.
@@ -225,9 +216,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     async def _execute_warmup(self) -> None:
         """Dispatch one warmup credit for every ready trajectory state."""
-        self._warmup_total_count = self.conversation_source.warmup_credit_count
+        warmup_total_count = self.conversation_source.warmup_credit_count
         self.info(
-            f"WARMUP execute: dispatching {self._warmup_total_count} trajectory credits"
+            f"WARMUP execute: dispatching {warmup_total_count} trajectory credits"
         )
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             if trajectory.snapshot is None:
@@ -239,11 +230,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     session.x_correlation_id, trajectory.conversation_id, lane
                 )
                 turn = self._build_turn_for_session(session, dispatch_index)
-                self._record_warmup_turn(turn.x_correlation_id, session, dispatch_index)
                 await self.credit_issuer.issue_credit(turn)
                 continue
 
-            states = self._materialize_snapshot(trajectory).states
+            states = self._get_snapshot(trajectory).states
             for state in states:
                 if state.waiting_on_children:
                     continue
@@ -253,9 +243,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     session.x_correlation_id, state.conversation_id, lane
                 )
                 turn = self._build_turn_for_session(session, state.next_turn_index)
-                self._record_warmup_turn(
-                    turn.x_correlation_id, session, state.next_turn_index
-                )
                 await self.credit_issuer.issue_credit(turn)
         # Trajectory dispatch complete; signal the phase that no more credits
         # will be issued. SendingCompleteStopCondition watches this flag and
@@ -343,28 +330,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         second time the parent re-runs.
         """
         if self.config.phase == CreditPhase.WARMUP:
-            self._warmup_completed_count += 1
-            cid = credit.x_correlation_id
-            lane = self._correlation_to_lane.get(cid, -1)
-            trace_id = self._warmup_correlation_to_trace.get(cid, "?")
-            start_info = self._warmup_correlation_to_start_info.get(cid)
-            if start_info is not None:
-                k_i, n_turns = start_info
-                pct = (k_i / n_turns * 100.0) if n_turns > 0 else 0.0
-                start_desc = f"start_turn={k_i}/{n_turns} ({pct:.0f}% through trace)"
-            else:
-                start_desc = "start_turn=?/?"
-            status = "error" if error is not None else "ok"
-            self.info(
-                lambda c=self._warmup_completed_count,
-                t=self._warmup_total_count,
-                s=status,
-                ln=lane,
-                tid=trace_id,
-                sd=start_desc: (
-                    f"WARMUP {c}/{t} returned [{s}] (lane={ln}, trace_id={tid}, {sd})"
-                )
-            )
             return
 
         terminal_overflow = (
@@ -477,26 +442,32 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         turn = self._build_turn_for_session(session, 0)
         await self.credit_issuer.issue_credit(turn)
 
-    def _record_warmup_turn(
-        self,
-        x_correlation_id: str,
-        session: SampledSession,
-        turn_index: int,
-    ) -> None:
-        self._warmup_correlation_to_trace[x_correlation_id] = session.conversation_id
-        self._warmup_correlation_to_start_info[x_correlation_id] = (
-            turn_index,
-            len(session.metadata.turns),
-        )
-
     async def _dispatch_snapshot_for_profiling(
         self, trajectory: Trajectory, lane: int
     ) -> None:
-        snapshot = self._materialize_snapshot(trajectory)
+        warmup_snapshot = self._get_snapshot(trajectory)
+        snapshot = self._snapshot_continuation_after_warmup(trajectory)
         for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
             if state.agent_depth == 0:
                 self._active_traces[state.conversation_id] += 1
+            self._mint_marker_for_session(
+                state.x_correlation_id, state.conversation_id, lane
+            )
+
+        continuing_roots = {
+            state.x_correlation_id
+            for state in snapshot.states
+            if state.agent_depth == 0
+        }
+        terminal_roots = [
+            state
+            for state in warmup_snapshot.states
+            if state.agent_depth == 0 and state.x_correlation_id not in continuing_roots
+        ]
+        for state in terminal_roots:
+            self._correlation_to_lane[state.x_correlation_id] = lane
+            self._active_traces[state.conversation_id] += 1
             self._mint_marker_for_session(
                 state.x_correlation_id, state.conversation_id, lane
             )
@@ -522,37 +493,78 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             else:
                 await self.credit_issuer.issue_credit(turn)
 
-    def _materialize_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
-        assert trajectory.snapshot is not None
-        corr_map = {
-            state.x_correlation_id: str(uuid.uuid4())
-            for state in trajectory.snapshot.states
-        }
-        states: list[ConversationState] = []
-        for state in trajectory.snapshot.states:
-            parent_corr = (
-                corr_map.get(state.parent_correlation_id)
-                if state.parent_correlation_id is not None
-                else None
+        for state in terminal_roots:
+            await self._spawn_from_recycle_or_id(
+                state.conversation_id,
+                finished_correlation_id=state.x_correlation_id,
             )
+
+    def _snapshot_continuation_after_warmup(
+        self, trajectory: Trajectory
+    ) -> TrajectorySnapshot:
+        """Advance every warmed snapshot stream to its profiling continuation.
+
+        Ready states dispatched turn ``k_i`` during WARMUP. PROFILING must
+        continue those same sessions at ``k_i + 1`` instead of replaying the
+        warmed request. Parents blocked on child joins were not dispatched
+        during WARMUP, so they remain at their gated turn. If every blocking
+        child completed its terminal turn during WARMUP, the parent is
+        unblocked and its gated turn becomes ready immediately.
+        """
+        snapshot = self._get_snapshot(trajectory)
+        states: list[ConversationState] = []
+        for state in snapshot.states:
+            if state.waiting_on_children:
+                states.append(state)
+                continue
+
+            metadata = self.conversation_source.get_metadata(state.conversation_id)
+            resume_index = state.next_turn_index + 1
+            if resume_index >= len(metadata.turns):
+                continue
+
             states.append(
-                ConversationState(
-                    conversation_id=state.conversation_id,
-                    x_correlation_id=corr_map[state.x_correlation_id],
-                    next_turn_index=state.next_turn_index,
-                    next_dispatch_offset_ms=state.next_dispatch_offset_ms,
-                    agent_depth=state.agent_depth,
-                    parent_correlation_id=parent_corr,
-                    waiting_on_children=state.waiting_on_children,
-                    join_target_turn_index=state.join_target_turn_index,
-                    branch_id=state.branch_id,
-                    branch_mode=state.branch_mode,
+                _dataclass_replace(
+                    state,
+                    next_turn_index=resume_index,
+                    # The phase begins after the warmup barrier. Dispatch the
+                    # first measured continuation immediately, matching the
+                    # timestamp-less k_i + 1 path. Later turns honor delay_ms
+                    # through _dispatch_next_turn.
+                    next_dispatch_offset_ms=0.0,
                 )
             )
-        return TrajectorySnapshot(
-            t_star_ms=trajectory.snapshot.t_star_ms,
-            states=tuple(states),
-        )
+
+        live_join_keys = {
+            (state.parent_correlation_id, state.join_target_turn_index)
+            for state in states
+            if state.agent_depth > 0 and state.parent_correlation_id is not None
+        }
+        states = [
+            _dataclass_replace(
+                state,
+                waiting_on_children=False,
+                join_target_turn_index=None,
+                next_dispatch_offset_ms=0.0,
+            )
+            if state.waiting_on_children
+            and (state.x_correlation_id, state.join_target_turn_index)
+            not in live_join_keys
+            else state
+            for state in states
+        ]
+        return TrajectorySnapshot(t_star_ms=snapshot.t_star_ms, states=tuple(states))
+
+    def _get_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
+        """Return the persistent sampled snapshot for a trajectory lane.
+
+        ``TrajectorySource`` constructs each timestamped lane once and is
+        shared across WARMUP and PROFILING. Reusing that realized graph keeps
+        every continuing root and subagent on the same ``X-Session-ID`` across
+        the phase boundary.
+        """
+        assert trajectory.snapshot is not None
+        return trajectory.snapshot
 
     def _release_lane_for(
         self, finished_correlation_id: str, finished_trace_id: str
@@ -643,11 +655,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         WARMUP and another for PROFILING). Both phases start with empty
         ``_recycle_pass``, so the first mint for a given trace_id in PROFILING
         produces ``pass=0`` — matching WARMUP's pass=0 digest for the same
-        (trace_id, lane) pair. Note that WARMUP and PROFILING use *different*
-        x_correlation_ids for the same trajectory (``session_for(...)`` mints a
-        fresh uuid per call), so the marker is not literally reused across the
-        boundary; rather, the digest *value* coincides because (benchmark_id,
-        pass=0, trajectory_index, trace_id) does.
+        (trace_id, lane) pair. The shared ``TrajectorySource`` also preserves
+        the lane's x_correlation_id across the phase boundary.
         """
         if self._cache_bust_target == CacheBustTarget.NONE:
             self._session_marker[x_correlation_id] = None

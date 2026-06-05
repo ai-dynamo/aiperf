@@ -651,6 +651,26 @@ class TestStuckSlotsRelease:
 
 
 class TestProgressReporting:
+    def test_warmup_progress_format_includes_returned_and_in_flight_counts(
+        self,
+    ) -> None:
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            start_ns=1,
+            total_expected_requests=65,
+            requests_sent=65,
+            requests_completed=2,
+            request_errors=1,
+        )
+
+        message = PhaseRunner._format_warmup_progress(stats)
+
+        assert "Phase warmup progress" in message
+        assert "returned=2/65" in message
+        assert "sent=65" in message
+        assert "in_flight=63" in message
+        assert "errors=1" in message
+
     async def test_progress_loop_publishes_stats(
         self,
         conv_src: MagicMock,

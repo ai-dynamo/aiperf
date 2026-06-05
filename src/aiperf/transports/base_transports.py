@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     RequestInfo,
@@ -116,6 +117,8 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             headers["X-Request-ID"] = request_info.x_request_id
         if request_info.x_correlation_id:
             headers["X-Correlation-ID"] = request_info.x_correlation_id
+            if Environment.HTTP.X_SESSION_ID_FROM_CORRELATION_ID:
+                headers["X-Session-ID"] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
         headers.update(self.get_transport_headers(request_info))

@@ -11,8 +11,6 @@ mode (spec §4.2 / §8.4.7):
   - PROFILING ``setup_phase`` raises ``RuntimeError`` only after the source
     has been explicitly cleaned; ``report_warmup_failures`` itself does NOT
     auto-clean the trajectory list.
-  - ``_warmup_correlation_to_trace`` maps every issued WARMUP x_correlation_id
-    to the trajectory's conversation_id for later attribution.
 """
 
 from __future__ import annotations
@@ -220,39 +218,6 @@ async def test_warmup_failure_blocks_profiling_setup() -> None:
     # Must not raise: trajectories list still populated.
     await profiling_strategy.setup_phase()
     assert profiling_strategy._recycle_queue is not None
-
-
-@pytest.mark.asyncio
-async def test_warmup_correlation_map_attribution() -> None:
-    """Every issued WARMUP x_correlation_id maps back to its trajectory's conversation_id."""
-    source = _make_real_source(
-        num_traces=4, turns_per_trace=5, concurrency=4, seed=12345
-    )
-
-    issuer = _make_recording_issuer()
-    strategy = _build_strategy(phase=CreditPhase.WARMUP, source=source, issuer=issuer)
-
-    await strategy.setup_phase()
-    await strategy.execute_phase()
-
-    issued_pairs = _captured_warmup_pairs(issuer)
-    assert len(issued_pairs) == len(source.trajectories) == 4
-
-    # x_correlation_ids are uuid4-derived; must be unique across issued credits.
-    issued_xcorrs = [xc for xc, _ in issued_pairs]
-    assert len(set(issued_xcorrs)) == len(issued_xcorrs), (
-        "Each WARMUP credit must carry a distinct x_correlation_id"
-    )
-
-    # Strategy's correlation -> trace map must mirror the issuer's view exactly.
-    assert strategy._warmup_correlation_to_trace == dict(issued_pairs), (
-        "_warmup_correlation_to_trace must record (x_correlation_id -> conversation_id) "
-        "for every dispatched WARMUP credit"
-    )
-
-    # Forward attribution: for every captured (xcorr, cid), the map answers cid.
-    for xcorr, cid in issued_pairs:
-        assert strategy._warmup_correlation_to_trace[xcorr] == cid
 
 
 @pytest.mark.asyncio

@@ -505,6 +505,11 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Session-ID with the stable X-Correlation-ID value. "
+        "Use this when an external router requires a session-affinity header.",
+    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
@@ -737,6 +742,13 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=2.0,
         description="Interval in seconds between credit progress report messages",
+    )
+    WARMUP_PROGRESS_LOG_INTERVAL: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=30.0,
+        description="Interval in seconds between warmup progress heartbeat log messages. "
+        "Set to 0 to disable.",
     )
     DISABLE_UVLOOP: bool = Field(
         default=False,

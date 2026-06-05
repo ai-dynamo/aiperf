@@ -7,11 +7,9 @@ Covers spec section 8.4 surfaces not exercised by the existing recycle/phase
 adversarial tests:
 
     * record_warmup_failure / report_warmup_failures bookkeeping invariants
-    * _warmup_correlation_to_trace population during _execute_warmup
     * handle_credit_return WARMUP no-op contract
     * _dispatch_next_turn delay routing (immediate vs scheduler)
     * setup_phase WARMUP/PROFILING queue construction edge cases
-    * cross-instance isolation of correlation map
 """
 
 from __future__ import annotations
@@ -181,50 +179,7 @@ def test_report_warmup_failures_raises_with_failed_trace_ids() -> None:
 
 
 # =============================================================================
-# Test 4: _execute_warmup populates _warmup_correlation_to_trace
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_warmup_correlation_map_populated_during_execute() -> None:
-    """After WARMUP execute, the correlation map has one entry per trajectory.
-
-    Each value is a known trajectory conversation_id; each key is the unique
-    x_correlation_id passed to credit_issuer.issue_credit.
-    """
-    trajectory = [
-        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(3)
-    ]
-    ds = _make_dataset(num_traces=3, turns_per_trace=2)
-    issuer = AsyncMock()
-    issuer.issue_credit.return_value = True
-    strategy, _, _, _ = _make_strategy(
-        phase=CreditPhase.WARMUP,
-        trajectories=trajectory,
-        dataset=ds,
-        issuer=issuer,
-    )
-
-    await strategy.setup_phase()
-    await strategy.execute_phase()
-
-    assert len(strategy._warmup_correlation_to_trace) == 3
-
-    expected_trace_ids = {"trace_0", "trace_1", "trace_2"}
-    assert set(strategy._warmup_correlation_to_trace.values()) == expected_trace_ids
-
-    # Each correlation key must have been observed in an issue_credit call.
-    issued_corrs = {
-        call.args[0].x_correlation_id for call in issuer.issue_credit.await_args_list
-    }
-    assert set(strategy._warmup_correlation_to_trace.keys()) == issued_corrs
-
-    # Keys are unique.
-    assert len(set(strategy._warmup_correlation_to_trace.keys())) == 3
-
-
-# =============================================================================
-# Test 5: WARMUP handle_credit_return is a strategy-level no-op
+# Test 4: WARMUP handle_credit_return is a strategy-level no-op
 # =============================================================================
 
 
@@ -257,7 +212,7 @@ async def test_warmup_handle_credit_return_is_noop() -> None:
 
 
 # =============================================================================
-# Test 6: PROFILING credit return during cooldown does not spawn or push
+# Test 5: PROFILING credit return during cooldown does not spawn or push
 # =============================================================================
 
 
@@ -294,7 +249,7 @@ async def test_profiling_handle_credit_return_during_cooldown_no_spawn() -> None
 
 
 # =============================================================================
-# Test 7: _dispatch_next_turn with delay_ms=0 issues immediately
+# Test 6: _dispatch_next_turn with delay_ms=0 issues immediately
 # =============================================================================
 
 
@@ -327,7 +282,7 @@ async def test_dispatch_next_turn_with_zero_delay_issues_immediately() -> None:
 
 
 # =============================================================================
-# Test 8: _dispatch_next_turn with positive delay routes through scheduler
+# Test 7: _dispatch_next_turn with positive delay routes through scheduler
 # =============================================================================
 
 
@@ -377,7 +332,7 @@ async def test_dispatch_next_turn_with_positive_delay_routes_through_scheduler()
 
 
 # =============================================================================
-# Test 9: _dispatch_next_turn with delay_ms=None issues immediately
+# Test 8: _dispatch_next_turn with delay_ms=None issues immediately
 # =============================================================================
 
 
@@ -410,7 +365,7 @@ async def test_dispatch_next_turn_with_none_delay_issues_immediately() -> None:
 
 
 # =============================================================================
-# Test 10: WARMUP setup does not create the recycle queue
+# Test 9: WARMUP setup does not create the recycle queue
 # =============================================================================
 
 
@@ -427,7 +382,7 @@ async def test_warmup_setup_does_not_create_recycle_queue() -> None:
 
 
 # =============================================================================
-# Test 11: PROFILING setup with empty trajectories raises with the canonical message
+# Test 10: PROFILING setup with empty trajectories raises with the canonical message
 # =============================================================================
 
 
@@ -451,46 +406,3 @@ async def test_profiling_setup_raises_when_trajectories_empty() -> None:
     with pytest.raises(RuntimeError) as exc_info:
         await strategy.setup_phase()
     assert "WARMUP must complete" in str(exc_info.value)
-
-
-# =============================================================================
-# Test 12: correlation map is per-instance (not shared via TrajectorySource)
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_warmup_correlation_map_persists_across_phase_construction() -> None:
-    """Sharing the same TrajectorySource across phases must NOT leak the
-    correlation map. Each strategy instance owns its own dict.
-    """
-    trajectory = [
-        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(2)
-    ]
-    ds = _make_dataset(num_traces=3, turns_per_trace=2)
-    src = _build_real_trajectory_source(dataset=ds, trajectories=trajectory)
-
-    def _build(phase: CreditPhase) -> AgenticReplayStrategy:
-        cfg = MagicMock()
-        cfg.phase = phase
-        cfg.concurrency = 2
-        return AgenticReplayStrategy(
-            config=cfg,
-            conversation_source=src,
-            scheduler=MagicMock(),
-            stop_checker=MagicMock(),
-            credit_issuer=AsyncMock(),
-            lifecycle=MagicMock(),
-        )
-
-    warmup = _build(CreditPhase.WARMUP)
-    await warmup.setup_phase()
-    await warmup.execute_phase()
-    assert len(warmup._warmup_correlation_to_trace) == 2
-
-    profiling = _build(CreditPhase.PROFILING)
-    # The new strategy's correlation map is its own empty dict.
-    assert profiling._warmup_correlation_to_trace == {}
-    assert (
-        profiling._warmup_correlation_to_trace
-        is not warmup._warmup_correlation_to_trace
-    )
