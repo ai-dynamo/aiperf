@@ -54,10 +54,9 @@ class IntegrationTestDefaults:
     # Defining the default model differently so we can have more variety in the tests.
     if platform.system() == "Darwin":
         model = "Qwen/Qwen3-0.6B"
-        tokenizer = "Qwen/Qwen3-0.6B"
     else:
         model = "openai/gpt-oss-120b"
-        tokenizer = "openai/gpt-oss-120b"
+    tokenizer = "builtin"
     workers_max: int = 1
     concurrency: int = 2
     request_count: int = 10
@@ -100,11 +99,12 @@ def setup_integration_tokenizer():
     """Set up tokenizer caching for integration tests.
 
     This fixture runs once per test session and:
-    1. Pre-caches the default tokenizer to avoid 429 rate limits
-    2. Enables offline mode to prevent network requests during tests
+    1. Pre-caches the built-in tokenizer for child processes
+    2. Enables offline mode to prevent HuggingFace network requests during tests
 
-    This prevents 429 rate limiting errors from HuggingFace when running
-    many integration tests that load tokenizers.
+    Mock-server integration tests do not need a model-specific HuggingFace
+    tokenizer. Using the built-in tokenizer keeps CI independent from HF Hub
+    rate limits.
     """
     # Check if offline mode is explicitly disabled (for CI cache warming)
     if bool(os.environ.get("AIPERF_SKIP_HF_OFFLINE", False)):
@@ -120,7 +120,6 @@ def setup_integration_tokenizer():
         tokenizer_name = IntegrationTestDefaults.tokenizer
         _logger.info(f"Pre-caching tokenizer for integration tests: {tokenizer_name}")
         Tokenizer.from_pretrained(tokenizer_name)
-        Tokenizer.from_pretrained("gpt2")  # used by a lot of tests
         _logger.info("Tokenizer cached successfully")
     except Exception as e:
         _logger.warning(f"Failed to pre-cache tokenizer: {e}")
@@ -416,7 +415,7 @@ async def aiperf_runner(
             if "--tokenizer" not in args and _needs_tokenizer(args):
                 full_args += [
                     "--tokenizer",
-                    IntegrationTestDefaults.model,
+                    IntegrationTestDefaults.tokenizer,
                 ]
         python_exe = get_venv_python()
         cmd = [python_exe, "-m", "aiperf"] + full_args
@@ -528,7 +527,7 @@ class AIPerfSignalCLI:
         if "--tokenizer" not in args and _needs_tokenizer(args):
             full_args += [
                 "--tokenizer",
-                IntegrationTestDefaults.model,
+                IntegrationTestDefaults.tokenizer,
             ]
         python_exe = get_venv_python()
         cmd = [python_exe, "-m", "aiperf"] + full_args

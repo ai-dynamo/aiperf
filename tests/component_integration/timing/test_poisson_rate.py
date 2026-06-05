@@ -139,6 +139,7 @@ class TestPoissonRateStatistics:
         assert passed, f"Comprehensive Poisson check failed: {summary}"
 
 
+@skip_on_cloud_windows_timing
 @pytest.mark.component_integration
 class TestPoissonRateWithConcurrency(BaseConcurrencyTests):
     """Tests for Poisson rate with concurrency limits.

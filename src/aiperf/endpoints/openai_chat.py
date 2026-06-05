@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -37,28 +38,7 @@ class ChatEndpoint(BaseEndpoint):
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
 
-        # Prepend the shared system + per-conversation user-context prompts
-        # (both live on RequestInfo), then flatten turns via the generic
-        # build_messages skeleton.
-        messages: list[dict[str, Any]] = []
-        rendered = self.build_messages(turns)
-        # If the first authored message is already a system role (common
-        # in dag_jsonl / mooncake_trace traces), skip prepending the
-        # RequestInfo.system_message - some servers concatenate the two,
-        # others take the last, neither matches user intent. The authored
-        # one wins.
-        first_is_system = (
-            bool(rendered)
-            and isinstance(rendered[0], dict)
-            and rendered[0].get("role") == "system"
-        )
-        if request_info.system_message and not first_is_system:
-            messages.append({"role": "system", "content": request_info.system_message})
-        if request_info.user_context_message:
-            messages.append(
-                {"role": "user", "content": request_info.user_context_message}
-            )
-        messages.extend(rendered)
+        messages = self._format_messages(request_info, self.build_messages(turns))
 
         # Conversation-level fields walk from the end and pick the most recent
         # non-None value. Per-request overrides stay scoped to the dispatching
@@ -99,6 +79,52 @@ class ChatEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    @staticmethod
+    def _format_messages(
+        request_info: RequestInfo, rendered: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Build chat messages with RequestInfo-level prompts applied."""
+        messages: list[dict[str, Any]] = []
+        first_is_system = (
+            bool(rendered)
+            and isinstance(rendered[0], dict)
+            and rendered[0].get("role") == "system"
+        )
+        if request_info.system_message:
+            if first_is_system and request_info.credit_phase == CreditPhase.WARMUP:
+                rendered = ChatEndpoint._prepend_system_message(
+                    rendered, request_info.system_message
+                )
+            elif not first_is_system:
+                messages.append(
+                    {"role": "system", "content": request_info.system_message}
+                )
+        if request_info.user_context_message:
+            messages.append(
+                {"role": "user", "content": request_info.user_context_message}
+            )
+        messages.extend(rendered)
+        return messages
+
+    @staticmethod
+    def _prepend_system_message(
+        rendered: list[dict[str, Any]], system_message: str
+    ) -> list[dict[str, Any]]:
+        """Prepend ``system_message`` to the leading rendered system message."""
+        first = dict(rendered[0])
+        content = first.get("content")
+        if isinstance(content, str):
+            first["content"] = (
+                f"{system_message}\n{content}" if content else system_message
+            )
+        elif isinstance(content, list):
+            first["content"] = [{"type": "text", "text": system_message}, *content]
+        elif content is None:
+            first["content"] = system_message
+        else:
+            first["content"] = f"{system_message}\n{content}"
+        return [first, *rendered[1:]]
 
     @staticmethod
     def _ensure_include_usage(payload: dict[str, Any]) -> None:

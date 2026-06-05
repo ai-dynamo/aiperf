@@ -13,6 +13,7 @@ from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationBranchMode,
+    CreditPhase,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -69,6 +70,9 @@ from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+WARMUP_SYSTEM_MESSAGE_PREFIX = CreditPhase.WARMUP.value
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -481,7 +485,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 session=session,
                 credit_context=credit_context,
                 x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
+                system_message=self._system_message_for_phase(
+                    system_message=session.conversation.system_message,
+                    phase=credit.phase,
+                ),
                 user_context_message=session.conversation.user_context_message,
             )
             record: RequestRecord = await self.inference_client.send_request(
@@ -627,6 +634,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )
+
+    @staticmethod
+    def _system_message_for_phase(
+        *, system_message: str | None, phase: CreditPhase
+    ) -> str | None:
+        if phase != CreditPhase.WARMUP:
+            return system_message
+        if not system_message:
+            return WARMUP_SYSTEM_MESSAGE_PREFIX
+        return f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{system_message}"
 
     async def _retrieve_conversation(
         self,
