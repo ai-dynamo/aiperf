@@ -106,18 +106,18 @@ class MetricSample(AIPerfBaseModel):
         default=None,
         description="Metric labels (excluding histogram special labels). None if no labels.",
     )
-    value: float | None = Field(
+    value: FiniteFloat | None = Field(
         default=None, description="Simple metric value (counter/gauge)"
     )
-    buckets: dict[str, float] | None = Field(
+    buckets: dict[str, FiniteFloat] | None = Field(
         default=None,
         description='Histogram bucket upper bounds (le="less than or equal") to counts. Keys are strings like "0.01", "0.1", "1.0"',
     )
-    sum: float | None = Field(
+    sum: FiniteFloat | None = Field(
         default=None,
         description="Sum of all observed values (for histogram only)",
     )
-    count: float | None = Field(
+    count: FiniteFloat | None = Field(
         default=None,
         description="Total number of observations (for histogram only)",
     )
