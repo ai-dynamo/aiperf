@@ -15,13 +15,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [linux, macos]
+        os: [linux, macos, windows]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
           - os: linux
             runner: prod-aiperf-builder-amd-v1
           - os: macos
             runner: macos-latest
+          - os: windows
+            runner: windows-latest
 
     steps:
     - uses: actions/checkout@v6
@@ -34,16 +36,67 @@ jobs:
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
-    - name: Install dependencies
+    # Windows has no `make`. Call uv directly to install the project +
+    # mock server. POSIX runners stay on the make-based path so existing
+    # CI behavior is unchanged.
+    - name: Install dependencies (POSIX)
+      if: runner.os != 'Windows'
       run: |
         make ci-install PYTHON_VERSION=${{ matrix.python-version }}
-    - name: Run unit tests and component integration tests
+    - name: Install dependencies (Windows)
+      if: runner.os == 'Windows'
+      # Mirror the POSIX ``make ci-install`` artifact-generation steps
+      # (mock-server import check, generate-plugin-enums, generate-plugin-
+      # overloads) so Windows runs the same generated code as POSIX. The
+      # ``command -v`` CLI-entry-point check from POSIX is shell-specific
+      # and intentionally skipped here; the ``import`` check is the
+      # platform-portable half.
+      #
+      # PYTHONIOENCODING=utf-8 forces the Python ``print()`` stdio path to
+      # UTF-8 so ``tools/_core.py``'s box-drawing characters (``━``)
+      # render without UnicodeEncodeError on the Windows default ``cp1252``
+      # console code page. Without it, every banner-print call in the
+      # artifact generator crashes the install step.
+      env:
+        PYTHONIOENCODING: utf-8
+      run: |
+        uv venv .venv --python ${{ matrix.python-version }}
+        uv pip install -e ".[dev]"
+        uv pip install -e "tests/aiperf_mock_server[dev]"
+        uv run python -c "import aiperf_mock_server"
+        uv run python tools/generate_plugin_artifacts.py --enums
+        uv run python tools/generate_plugin_artifacts.py --overloads
+    # Windows runs the same two tiers as macOS — unit + component_integration
+    # — by invoking pytest directly (no `make` available on Windows). Integration
+    # tests remain Linux-only (run-integration-tests.yml) which mirrors the
+    # current macOS coverage gap.
+    - name: Run unit tests and component integration tests (POSIX)
+      if: runner.os != 'Windows'
       env:
         # Caps pytest-xdist workers on the 48-vCPU / 6-GiB-RAM Linux
         # builder pod. -n auto without this OOM-kills the runner agent.
         PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       run: |
         make test-ci PYTHON_VERSION=${{ matrix.python-version }}
+    # Mirrors POSIX ``make test-ci`` semantics: run BOTH tiers and
+    # aggregate exit codes so unit-test failures don't mask component-
+    # integration failures (or vice versa). Without the explicit
+    # ``always() && runner.os == 'Windows'`` guard on the second step,
+    # GitHub Actions' implicit ``success()`` short-circuits the
+    # component-integration step on any unit-test failure.
+    - name: Run unit tests (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        uv run pytest tests/unit -n auto --tb=short -m 'not performance and not stress and not slow'
+    - name: Run component integration tests (Windows)
+      # ``!cancelled()`` overrides the implicit ``success()`` so component
+      # integration still runs even if the unit-test step failed — matching
+      # POSIX ``make test-ci`` which aggregates exit codes across both tiers.
+      # Cancellation is still respected so we don't burn runner minutes
+      # finishing after a manual stop.
+      if: ${{ !cancelled() && runner.os == 'Windows' }}
+      run: |
+        uv run pytest tests/component_integration -n auto --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
       if: matrix.os == 'linux' && matrix.python-version == '3.12'
       uses: codecov/codecov-action@v5

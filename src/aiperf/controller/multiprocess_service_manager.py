@@ -4,15 +4,28 @@ import asyncio
 import multiprocessing
 import uuid
 from multiprocessing import Process
-from multiprocessing.context import ForkProcess, SpawnProcess
+from multiprocessing.context import SpawnProcess
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.types import ServiceTypeT
+
+if IS_WINDOWS:
+    # Windows multiprocessing has no fork context — ``ForkProcess`` is
+    # undefined on ``multiprocessing.context`` there. Define a stub so the
+    # type union below evaluates at class-definition time without the
+    # import raising. The stub is never instantiated on Windows because
+    # spawn is the only start method available there; it exists purely
+    # so Pydantic's annotation resolution doesn't NameError.
+    class ForkProcess:  # type: ignore[no-redef]
+        pass
+else:
+    from multiprocessing.context import ForkProcess
 from aiperf.controller.base_service_manager import BaseServiceManager
 
 
@@ -21,7 +34,14 @@ class MultiProcessRunInfo(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Process | SpawnProcess | ForkProcess | None = Field(default=None)
+    process: Process | SpawnProcess | ForkProcess | None = Field(
+        default=None,
+        description=(
+            "The multiprocessing Process handle for the spawned service. "
+            "Subclass varies by start method: ``ForkProcess`` on Linux "
+            "fork-context, ``SpawnProcess`` on Windows/macOS spawn-context."
+        ),
+    )
     service_type: ServiceTypeT = Field(
         ...,
         description="Type of service running in the process",
@@ -144,8 +164,18 @@ class MultiProcessServiceManager(BaseServiceManager):
         """
         self.debug("Waiting for all required services to register...")
 
-        # Get the set of required service types for checking completion
-        required_types = set(self.required_services.keys())
+        # Wait for every service we've actually spawned, not just the ones in
+        # required_services. Optional services (GPU telemetry, server metrics,
+        # API) are started via run_service() and tracked in multi_process_info
+        # but never added to required_services. On slow targets (Windows VDI
+        # multiprocessing.spawn) those optional services register hundreds of
+        # ms after the core ones — if we only waited on required_services, the
+        # ProfileConfigureCommand would broadcast before the optionals had
+        # subscribed, leaving them un-configured and their data missing from
+        # the final export.
+        required_types = set(
+            info.service_type for info in self.multi_process_info
+        ) or set(self.required_services.keys())
 
         # TODO: Can this be done better by using asyncio.Event()?
 
@@ -163,11 +193,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 if required_types.issubset(registered_types):
                     return
 
-                for process in self.multi_process_info:
-                    if not process.process or not process.process.is_alive():
-                        raise AIPerfError(
-                            f"Service process {process.service_id} died before registering"
-                        )
+                self._reap_dead_processes_during_registration(required_types)
 
                 # Wait a bit before checking again
                 await asyncio.sleep(0.5)
@@ -190,6 +216,42 @@ class MultiProcessServiceManager(BaseServiceManager):
                     )
 
             raise AIPerfError("Some services failed to register within timeout") from e
+
+    def _reap_dead_processes_during_registration(
+        self, required_types: set[ServiceTypeT]
+    ) -> None:
+        """Reap dead processes mid-registration: required dying is fatal,
+        optional dying gets a warning and is dropped from the wait set.
+
+        Without this differentiation, an optional service crashing during
+        init (e.g. GPU telemetry missing a DCGM endpoint) would kill the
+        entire benchmark. ``process is None`` is treated as dead — a None
+        process means the spawn call failed before producing a handle.
+
+        Mutates ``required_types`` (discards optional dead types) and
+        ``self.multi_process_info`` (removes optional dead entries) so the
+        caller's wait loop can converge.
+
+        Raises:
+            AIPerfError: if any required service has died.
+        """
+        for info in list(self.multi_process_info):
+            is_dead = info.process is None or not info.process.is_alive()
+            if not is_dead:
+                continue
+            exit_code = info.process.exitcode if info.process else None
+            if info.service_type in self.required_services:
+                raise AIPerfError(
+                    f"Required service {info.service_id} died before "
+                    f"registering (exit code {exit_code})"
+                )
+            self.warning(
+                f"Optional service {info.service_id!r} exited before "
+                f"registering (exit code {exit_code}); continuing "
+                f"benchmark without it."
+            )
+            required_types.discard(info.service_type)
+            self.multi_process_info.remove(info)
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
         """Wait for a process to terminate with timeout handling."""

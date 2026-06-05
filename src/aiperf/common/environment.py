@@ -37,7 +37,6 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
-import platform
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -46,6 +45,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
@@ -898,15 +898,77 @@ class _ServiceSettings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for reading health check HTTP requests.",
     )
+    # Windows-only: TCP-loopback fallback for ZMQ IPC sockets (pyzmq on
+    # Windows does not support ipc://). Per-endpoint ports are derived
+    # deterministically from the IPC path; these settings move or resize
+    # the port window if the default conflicts with another service or
+    # if a collision fires (see `_validate_no_port_collisions`).
+    WINDOWS_TCP_BASE_PORT: int = Field(
+        ge=1024,
+        le=65535,
+        default=28000,
+        description="Windows-only: starting port for the ZMQ IPC TCP-loopback "
+        "fallback range. Per-endpoint ports are derived as "
+        "``base + (sha256_hash mod range)``. No-op on POSIX where ipc:// "
+        "is used directly.",
+    )
+    WINDOWS_TCP_PORT_RANGE: int = Field(
+        ge=64,
+        le=60000,
+        default=20000,
+        description="Windows-only: size of the TCP-loopback port window for "
+        "the ZMQ IPC fallback. Birthday-paradox collision probability for "
+        "n sockets is ``1 - exp(-n*n/(2*range))``. Widen if AIPerf grows "
+        "to many more sockets per run, or relocate via "
+        "``AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT`` if 28000-48000 conflicts.",
+    )
 
     @model_validator(mode="after")
     def auto_disable_uvloop_on_windows(self) -> Self:
-        """Automatically disable uvloop on Windows as it's not supported."""
-        if platform.system() == "Windows" and not self.DISABLE_UVLOOP:
-            _logger.info(
-                "Windows detected: automatically disabling uvloop (not supported on Windows)"
-            )
+        """Automatically disable uvloop on Windows as it's not supported.
+
+        Validator fires on every ``_ServiceSettings()`` construction, which
+        runs once in the main process AND once per spawned child service.
+        Gate the log line to the main process so the user sees it once, not
+        ~9 times per aiperf run on Windows.
+        """
+        if IS_WINDOWS and not self.DISABLE_UVLOOP:
+            import multiprocessing
+
+            if multiprocessing.parent_process() is None:
+                _logger.info(
+                    "Windows detected: automatically disabling uvloop (not supported on Windows)"
+                )
             self.DISABLE_UVLOOP = True
+        return self
+
+    @model_validator(mode="after")
+    def validate_windows_port_window_fits_in_tcp_range(self) -> Self:
+        """Fail fast if the configured Windows TCP-fallback port window would
+        emit invalid ports above the TCP max (65535).
+
+        ``build_socket_address`` derives an endpoint port as
+        ``WINDOWS_TCP_BASE_PORT + (sha256_hash mod WINDOWS_TCP_PORT_RANGE)``.
+        With the two fields bounded independently, a config like base 65000
+        + range 20000 would silently produce ``tcp://127.0.0.1:84999`` —
+        invalid, and only blowing up later at ZMQ bind/connect time with a
+        misleading error. Validate the sum at config time so misconfigured
+        envs fail with a clear, actionable message.
+
+        No-op on POSIX where ipc:// is used and these fields are dead. The
+        check fires anyway because ``_ServiceSettings`` validation runs on
+        every platform — but the only cost is the addition, which is cheap.
+        """
+        max_port = self.WINDOWS_TCP_BASE_PORT + self.WINDOWS_TCP_PORT_RANGE - 1
+        if max_port > 65535:
+            raise ValueError(
+                f"AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT "
+                f"({self.WINDOWS_TCP_BASE_PORT}) + "
+                f"AIPERF_SERVICE_WINDOWS_TCP_PORT_RANGE "
+                f"({self.WINDOWS_TCP_PORT_RANGE}) - 1 = {max_port} exceeds "
+                f"the max TCP port (65535). Lower either value so the "
+                f"window stays within 1024-65535."
+            )
         return self
 
 

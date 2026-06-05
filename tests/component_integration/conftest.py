@@ -133,22 +133,33 @@ def mock_os_exit():
 
 @pytest.fixture(autouse=True, scope="package")
 def mock_os_kill_sigkill():
-    """Patch os.kill to prevent SIGKILL from killing the test process.
+    """Patch os.kill to prevent the BaseService._kill self-kill from killing
+    the test process.
 
     Component integration tests run AIPerf in-process (not as a subprocess).
-    When BaseService._kill() calls os.kill(os.getpid(), signal.SIGKILL), it would
-    kill the test runner. This fixture intercepts that call and raises SystemExit
-    instead, allowing the test framework to handle it gracefully.
+    When BaseService._kill() calls os.kill(os.getpid(), signal.SIGKILL/SIGTERM),
+    it would kill the test runner. This fixture intercepts that call and raises
+    SystemExit instead, allowing the test framework to handle it gracefully.
+    Windows lacks SIGKILL, so BaseService falls back to SIGTERM there — match
+    that here.
     """
     import os
+    import sys
+
+    # signal.SIGKILL doesn't exist on Windows; mirror BaseService._kill's
+    # platform-conditional choice.
+    expected_kill_signal = signal.SIGTERM if sys.platform == "win32" else signal.SIGKILL
 
     original_os_kill = os.kill
 
     def safe_os_kill(pid, sig):
-        if pid == os.getpid() and sig == signal.SIGKILL:
-            # BaseService._kill calls os.kill(os.getpid(), signal.SIGKILL)
-            # Raise SystemExit instead of actually killing the test process
-            raise SystemExit(-9)  # Python subprocess convention for SIGKILL
+        if pid == os.getpid() and sig == expected_kill_signal:
+            # BaseService._kill calls os.kill(os.getpid(), kill_signal)
+            # Raise SystemExit instead of actually killing the test process.
+            # Exit code derived from the platform-selected signal so signal-
+            # specific assertions don't skew between POSIX (-9 for SIGKILL)
+            # and Windows (-15 for SIGTERM).
+            raise SystemExit(-int(expected_kill_signal))
         return original_os_kill(pid, sig)
 
     with patch("os.kill", safe_os_kill):

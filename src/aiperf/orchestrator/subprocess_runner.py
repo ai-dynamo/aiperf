@@ -13,11 +13,41 @@ from pathlib import Path
 
 import orjson
 
+from aiperf.common.constants import IS_WINDOWS
+
 # Parent passes the api_key through this env var rather than writing it
 # into run_config.json (which is redacted by EndpointConfig's
 # field_serializer). We pop+restore in main() so neither child processes
 # nor any logging path inherits the plaintext value.
 _INJECTED_API_KEY_ENV = "AIPERF_INJECTED_API_KEY"
+
+
+def _release_inherited_pipes_on_windows() -> None:
+    """Release inherited stdio pipes on Windows so this intermediate
+    sweep-iteration process can shut down cleanly. No-op on POSIX.
+
+    Sweep iterations are spawned via subprocess.run with stdout=sys.stdout
+    inherited from the orchestrator master, which on Windows propagates
+    pytest's subprocess.PIPE all the way down. The iteration's own grandchild
+    workers already redirect via the bootstrap fix, but the iteration process
+    itself still holds the inherited pipe handle, so its ``os._exit()`` can
+    hang or segfault during ``DLL_PROCESS_DETACH``.
+
+    Delegates to ``bootstrap._redirect_stdio_to_devnull`` so the per-process
+    stderr-to-file pattern (with 0o600 hardening and atexit-cleanup) is
+    applied symmetrically — discarding stderr here would lose tracebacks
+    from iteration-process crashes during sweep-mode benchmarking on
+    Windows. See bootstrap.py::_redirect_stdio_to_devnull for the full
+    rationale.
+    """
+    if not IS_WINDOWS:
+        return
+    # Late import to avoid circular load: bootstrap imports from many other
+    # subsystems; subprocess_runner is loaded before bootstrap completes its
+    # own imports in some test paths.
+    from aiperf.common.bootstrap import _redirect_stdio_to_devnull
+
+    _redirect_stdio_to_devnull()
 
 
 def main() -> None:
@@ -70,4 +100,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Release inherited pipe handles only when actually run as a subprocess
+    # (`python -m aiperf.orchestrator.subprocess_runner ...`). Calling
+    # ``main()`` from unit tests must NOT redirect stderr — pytest's capsys
+    # needs to see the error prints, and there are no inherited pipes to
+    # release in an in-process call. ``_release_inherited_pipes_on_windows``
+    # itself is also gated on IS_WINDOWS so this is belt-and-suspenders.
+    _release_inherited_pipes_on_windows()
     main()
