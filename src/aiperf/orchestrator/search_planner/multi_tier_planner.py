@@ -439,7 +439,7 @@ class MultiTierPlanner(SearchPlanner):
 
     def _handle_all_pass(self, value: int) -> None:
         """All tiers passed: double the probe value or cap at hi."""
-        next_value = value * 2
+        next_value = max(value * 2, value + 1)
         if next_value >= self._hi:
             if value >= self._hi:
                 for b in self._brackets:

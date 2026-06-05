@@ -70,7 +70,7 @@ def apply_sla_warmup(
         "duration": duration,
         "exclude_from_results": True,
     }
-    if phases and phases[0].get("name") == "warmup":
+    if phases and isinstance(phases[0], dict) and phases[0].get("name") == "warmup":
         phases[0] = warmup_phase
     else:
         phases.insert(0, warmup_phase)

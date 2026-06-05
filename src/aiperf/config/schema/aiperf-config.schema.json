@@ -558,10 +558,8 @@
         "slaTiers": {
           "description": "Multi-tier SLO definitions parsed from --search-sla-tier flags. Each tier is a named group of SLA filters sharing a common boundary search. When non-empty (2-10 tiers), the MultiTierPlanner is activated instead of single-tier planners.",
           "items": {
-            "$ref": "`#/`$defs/SLOTier"
+            "$ref": "#/$defs/SLOTier"
           },
-          "minItems": 2,
-          "maxItems": 10,
           "title": "Slatiers",
           "type": "array"
         }
@@ -9950,7 +9948,6 @@
       "properties": {
         "label": {
           "description": "Unique tier identifier for output artifacts",
-          "minLength": 1,
           "title": "Label",
           "type": "string"
         },

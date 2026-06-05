@@ -171,21 +171,28 @@ class TestNoSuccessfulTrials:
 
     def test_continues_after_no_successful_trials(self) -> None:
         """Planner continues to next probe after infeasible at one level."""
-        planner = _make_planner(lo=1, hi=256)
-        # First probe: all pass
+        planner = _make_planner(lo=4, hi=256)
+        # First probe at 4: all pass
         pair = planner.ask()
         assert pair is not None
         _, var1 = pair
         planner.tell(var1, [_success_result(var1, throughput=500.0)])
 
-        # Second probe: all fail (no successful trials)
+        # Second probe at 8: all pass
         pair = planner.ask()
         assert pair is not None
         _, var2 = pair
-        planner.tell(var2, [_failed_result(var2)])
+        planner.tell(var2, [_success_result(var2, throughput=500.0)])
 
-        # Should not be converged yet — can still probe
-        assert not planner.is_converged() or planner.ask() is None
+        # Third probe at 16: all fail (no successful trials)
+        pair = planner.ask()
+        assert pair is not None
+        _, var3 = pair
+        planner.tell(var3, [_failed_result(var3)])
+
+        # Should not be converged — bracket [8, 16] has gap > 1
+        assert not planner.is_converged()
+        assert planner.ask() is not None
 
 
 class TestMissingMetrics:
@@ -415,23 +422,18 @@ class TestNonMonotonicObservations:
 
         # Now manually set infeasible_min lower to trigger non-monotonic on next tell
         # fast has: feasible_max=8, infeasible_min=16
-        # Force a scenario: next probe is midpoint=12, we make it pass at threshold
-        # Actually infeasible_min=16 and feasible_max=8. Next ask gives midpoint.
-        pair = planner.ask()
-        if pair is None:
-            return
-        _, var4 = pair
-        # Report a throughput of 400 (passing fast) at concurrency <= infeasible_min
-        # If concurrency < 16, this is normal. We need to test above infeasible_min.
-        # Instead, let's test via boundary_summary
-        planner.tell(var4, [_success_result(var4, throughput=400.0)])
+        # Force non-monotonic: tell the planner a probe ABOVE infeasible_min passes
+        planner._update_bracket(
+            planner._brackets[0],
+            20,
+            True,
+            [_success_result(var3, throughput=400.0)],
+        )
 
-        # The boundary_summary reflects any non-monotonic across tiers
+        # The boundary_summary reflects the non-monotonic state
         summary = planner.boundary_summary()
-        # At this point it may or may not be non-monotonic depending on value
-        # Let's verify via the stored bracket state
         assert isinstance(summary, dict)
-        assert "non_monotonic_warning" in summary
+        assert summary["non_monotonic_warning"] is True
 
     def test_boundary_summary_reflects_non_monotonic(self) -> None:
         """boundary_summary()['non_monotonic_warning'] is True when any tier has it."""

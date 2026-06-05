@@ -46,7 +46,9 @@ class TierResult(AIPerfBaseModel):
 
     label: str = Field(description="Tier identifier")
     boundary_concurrency: int | None = Field(
-        description="Discovered max concurrency under SLA for this tier"
+        default=None,
+        ge=0,
+        description="Discovered max concurrency under SLA for this tier",
     )
     convergence_status: str = Field(
         description="One of: converged, partial, no_pass_in_range, no_failure_in_range",
@@ -60,16 +62,22 @@ class TierResult(AIPerfBaseModel):
         description="First-failing SLA filter at the boundary",
     )
     bracket_lower: int | None = Field(
+        default=None,
+        ge=0,
         description="Current feasible_max (lower bracket bound)",
     )
     bracket_upper: int | None = Field(
+        default=None,
+        ge=0,
         description="Current infeasible_min (upper bracket bound)",
     )
     confidence_interval: dict[str, float] | None = Field(
         default=None,
         description="Boundary CI from replicate phase: {low, high}",
     )
-    probe_count: int = Field(description="Probes that informed this tier's bracket")
+    probe_count: int = Field(
+        ge=0, description="Probes that informed this tier's bracket"
+    )
     filters: list[dict[str, Any]] = Field(
         description="Echo of the SLA filters that define this tier",
     )
@@ -80,7 +88,7 @@ class MultiTierBoundarySummary(AIPerfBaseModel):
 
     swept_dim_path: str = Field(description="Dotted path of the swept dimension")
     tiers: list[TierResult] = Field(description="Per-tier boundary results")
-    total_probe_count: int = Field(description="Total probes across all tiers")
+    total_probe_count: int = Field(ge=0, description="Total probes across all tiers")
     ordering_detected: bool = Field(
         description="Whether monotonic tier ordering was exploited",
     )
