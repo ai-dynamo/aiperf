@@ -208,7 +208,15 @@ class OptunaSearchPlanner(SearchPlanner):
                 v = trial.suggest_float(dim.path, dim.lo, dim.hi, log=log)
             values[dim.path] = v
 
-        cfg_dict = self._base.model_dump(mode="json", exclude_none=True)
+        # mode="python" + context={"include_secrets": True} so neither the
+        # when_used="json" credential redactors (api_key / headers) nor the
+        # unconditional _redact_urls serializer fire mid-pipeline. See
+        # smooth_isotonic._mutate_base for the full rationale.
+        cfg_dict = self._base.model_dump(
+            mode="python",
+            exclude_none=True,
+            context={"include_secrets": True},
+        )
         for path, val in values.items():
             _set_nested_value(cfg_dict, path, val)
         cfg = BenchmarkConfig.model_validate(cfg_dict)

@@ -416,3 +416,70 @@ def test_max_iterations_budget_is_respected(iterations: int, reason: str):
     # are valid budget-exhaustion signals. The planner MUST surface the
     # max_iterations reason in convergence_reason().
     assert planner.convergence_reason() in {reason, "monotonic_precision_reached"}
+
+
+# ---------------------------------------------------------------------------
+# Credential preservation across _mutate_base
+# ---------------------------------------------------------------------------
+
+
+def _base_config_with_credentials() -> BenchmarkConfig:
+    """Base config carrying credential-bearing fields the JSON serializers
+    would redact (locks in the credential-preservation regression)."""
+    return BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {
+                "urls": ["http://x"],
+                "type": "chat",
+                "api_key": "sk-real-prod-key",
+                "headers": {
+                    "Authorization": "Api-Key real-secret-value",
+                    "X-Trace-Id": "trace-001",
+                },
+            },
+            "datasets": [{"name": "profiling", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 10,
+                }
+            ],
+        }
+    )
+
+
+def test_mutate_base_preserves_credentials() -> None:
+    """REGRESSION-LOCK: ``_mutate_base`` previously dumped with mode="json",
+    firing the EndpointConfig.api_key + .headers redactors and baking
+    ``<redacted>`` into every iteration's config. Same fix as
+    ``smooth_isotonic`` and ``optuna_planner``; locked separately here so
+    a single-planner revert is caught.
+    """
+    planner = MonotonicSLASearchPlanner(_base_config_with_credentials(), _cfg())
+    mutated = planner._mutate_base(42)
+    assert mutated.endpoint.api_key == "sk-real-prod-key"
+    assert mutated.endpoint.headers["Authorization"] == "Api-Key real-secret-value"
+    # Non-sensitive header must round-trip too.
+    assert mutated.endpoint.headers["X-Trace-Id"] == "trace-001"
+
+
+def test_mutate_base_preserves_url_userinfo() -> None:
+    """REGRESSION-LOCK (PR #982 dynamo-ops): URL userinfo survives
+    ``_mutate_base`` via ``context={"include_secrets": True}``. See
+    ``smooth_isotonic`` for the full rationale.
+    """
+    cfg_dict = _base_config_with_credentials().model_dump(
+        mode="python", exclude_none=True, context={"include_secrets": True}
+    )
+    cfg_dict["endpoint"]["urls"] = [
+        "http://alice:s3cret@host1.example.com/v1/chat/completions"
+    ]
+    base = BenchmarkConfig.model_validate(cfg_dict)
+    planner = MonotonicSLASearchPlanner(base, _cfg())
+    mutated = planner._mutate_base(42)
+    assert mutated.endpoint.urls == [
+        "http://alice:s3cret@host1.example.com/v1/chat/completions"
+    ]
