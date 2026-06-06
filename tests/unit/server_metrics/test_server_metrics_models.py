@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import math
+
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common.models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
@@ -83,6 +86,64 @@ class TestMetricSampleValidation:
             ValueError, match="If value is set, sum and count must not be set"
         ):
             MetricSample(value=42.0, count=100)
+
+
+class TestMetricSampleFiniteContract:
+    """MetricSample.value must reject NaN/Inf at construction time to enforce
+    the project's NaN/Inf Discipline contract for serializable metric models."""
+
+    def test_value_rejects_nan(self):
+        with pytest.raises(ValidationError) as exc_info:
+            MetricSample(value=math.nan)
+        assert "finite" in str(exc_info.value).lower()
+
+    def test_value_rejects_positive_inf(self):
+        with pytest.raises(ValidationError):
+            MetricSample(value=math.inf)
+
+    def test_value_rejects_negative_inf(self):
+        with pytest.raises(ValidationError):
+            MetricSample(value=-math.inf)
+
+    def test_value_accepts_zero(self):
+        sample = MetricSample(value=0.0)
+        assert sample.value == 0.0
+
+    def test_value_accepts_normal_float(self):
+        sample = MetricSample(value=0.42)
+        assert sample.value == 0.42
+
+    def test_value_accepts_none_when_buckets_provided(self):
+        # Histogram-style sample: value=None is valid as long as buckets are present.
+        sample = MetricSample(value=None, buckets={"+Inf": 10.0}, sum=5.0, count=10.0)
+        assert sample.value is None
+        assert sample.buckets == {"+Inf": 10.0}
+
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+    def test_bucket_value_rejects_non_finite(self, bad):
+        # A non-finite bucket count would orjson-encode to null on the ZMQ hop
+        # and, if it slipped past the producer filter, poison HistogramTimeSeries.
+        with pytest.raises(ValidationError) as exc_info:
+            MetricSample(buckets={"0.1": 5.0, "+Inf": bad}, sum=5.0, count=10.0)
+        assert "finite" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+    def test_sum_rejects_non_finite(self, bad):
+        with pytest.raises(ValidationError) as exc_info:
+            MetricSample(buckets={"+Inf": 10.0}, sum=bad, count=10.0)
+        assert "finite" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+    def test_count_rejects_non_finite(self, bad):
+        with pytest.raises(ValidationError) as exc_info:
+            MetricSample(buckets={"+Inf": 10.0}, sum=5.0, count=bad)
+        assert "finite" in str(exc_info.value).lower()
+
+    def test_histogram_accepts_finite_buckets_sum_count(self):
+        sample = MetricSample(buckets={"0.1": 5.0, "+Inf": 10.0}, sum=5.0, count=10.0)
+        assert sample.buckets == {"0.1": 5.0, "+Inf": 10.0}
+        assert sample.sum == 5.0
+        assert sample.count == 10.0
 
 
 class TestServerMetricsRecordConversion:

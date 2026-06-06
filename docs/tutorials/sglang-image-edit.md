@@ -50,7 +50,7 @@ docker run --gpus all \
 > [!WARNING]
 > These arguments set up FLUX.2-Klein-4B on a single GPU at port 30000.
 > Adjust the model path, GPU count, or port to match your environment.
-> The flags below come from upstream SGLang multimodal_gen and may change over time — treat the [SGLang Multimodal Gen CLI](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md) as the source of truth if any flag here is rejected.
+> The flags below come from upstream SGLang diffusion and may change over time — treat the [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/cli.md) as the source of truth if any flag here is rejected.
 ```bash
 SERVER_ARGS=( --model-path black-forest-labs/FLUX.2-klein-4B --num-gpus 1 --port 30000 --host 0.0.0.0 --warmup --enable-torch-compile )
 ```

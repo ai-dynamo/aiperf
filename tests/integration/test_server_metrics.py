@@ -410,11 +410,11 @@ class TestServerMetrics:
         jsonl_file = result.artifacts_dir / "custom_test_server_metrics.jsonl"
 
         if json_file.exists():
-            content = json_file.read_text()
+            content = json_file.read_text(encoding="utf-8")
             assert len(content) > 0
 
         if jsonl_file.exists():
-            lines = jsonl_file.read_text().strip().split("\n")
+            lines = jsonl_file.read_text(encoding="utf-8").strip().split("\n")
             assert len(lines) > 0
             # Validate first record
             first_record = SlimRecord.model_validate_json(lines[0])
