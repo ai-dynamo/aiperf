@@ -634,3 +634,119 @@ def test_subprocess_runner_rejects_non_list_urls_env(
             subprocess_main()
         assert exc.value.code == 1
         fake_run.assert_not_called()
+
+
+def test_parse_injected_dict_rejects_non_string_values() -> None:
+    """REGRESSION-LOCK (dynamo-ops): ``_parse_injected_dict`` must reject a
+    JSON object whose values are not strings. ``EndpointConfig.headers`` is
+    ``dict[str, str]`` but ``run.cfg.endpoint.headers.update(...)`` mutates in
+    place without re-validating, so an int value like ``{"Authorization": 123}``
+    would otherwise reach aiohttp as an invalid header.
+    """
+    from aiperf.orchestrator.subprocess_runner import _parse_injected_dict
+
+    with pytest.raises(ValueError, match="string values"):
+        _parse_injected_dict("AIPERF_INJECTED_HEADERS", '{"Authorization": 123}')
+
+
+def test_parse_injected_dict_malformed_json_raises_value_error_not_decode_error() -> (
+    None
+):
+    """REGRESSION-LOCK (coderabbitai): malformed env-var JSON must surface as a
+    ``ValueError`` naming the env var, NOT a raw ``orjson.JSONDecodeError`` that
+    main()'s ``except orjson.JSONDecodeError`` block would misreport as a
+    config-file error.
+    """
+    import orjson as _orjson
+
+    from aiperf.orchestrator.subprocess_runner import _parse_injected_dict
+
+    with pytest.raises(ValueError, match="AIPERF_INJECTED_HEADERS contains invalid"):
+        _parse_injected_dict("AIPERF_INJECTED_HEADERS", "{not valid json")
+    # And specifically not the bare decode error type.
+    try:
+        _parse_injected_dict("AIPERF_INJECTED_HEADERS", "{not valid json")
+    except _orjson.JSONDecodeError:  # pragma: no cover - must not happen
+        pytest.fail("malformed env var leaked a raw orjson.JSONDecodeError")
+    except ValueError:
+        pass
+
+
+def test_parse_injected_str_list_malformed_json_raises_value_error() -> None:
+    """REGRESSION-LOCK (coderabbitai): malformed ``AIPERF_INJECTED_ENDPOINT_URLS``
+    JSON surfaces as a ``ValueError`` naming the env var, not a decode error.
+    """
+    from aiperf.orchestrator.subprocess_runner import _parse_injected_str_list
+
+    with pytest.raises(
+        ValueError, match="AIPERF_INJECTED_ENDPOINT_URLS contains invalid"
+    ):
+        _parse_injected_str_list("AIPERF_INJECTED_ENDPOINT_URLS", "[not valid")
+
+
+def test_subprocess_runner_rejects_non_string_header_values_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REGRESSION-LOCK (dynamo-ops): a non-string header value in
+    ``AIPERF_INJECTED_HEADERS`` exits via the structured error envelope and
+    never reaches the benchmark.
+    """
+    import orjson as _orjson
+
+    cfg = _benchmark_config()
+    run_data = {
+        "benchmark_id": "x",
+        "cfg": cfg.model_dump(mode="json", exclude_none=True),
+        "label": "r1",
+        "artifact_dir": str(tmp_path),
+    }
+    config_file = tmp_path / "run_config.json"
+    config_file.write_bytes(_orjson.dumps(run_data))
+
+    monkeypatch.setenv("AIPERF_INJECTED_HEADERS", '{"Authorization": 123}')
+    monkeypatch.setattr("sys.argv", ["subprocess_runner", str(config_file)])
+
+    with patch("aiperf.cli_runner._run_single_benchmark") as fake_run:
+        from aiperf.orchestrator.subprocess_runner import main as subprocess_main
+
+        with pytest.raises(SystemExit) as exc:
+            subprocess_main()
+        assert exc.value.code == 1
+        fake_run.assert_not_called()
+
+
+def test_subprocess_runner_malformed_env_not_attributed_to_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """REGRESSION-LOCK (coderabbitai): a malformed ``AIPERF_INJECTED_HEADERS``
+    must not be reported as ``Invalid JSON in config file`` — the config file
+    here is well-formed. The error must name the offending env var instead.
+    """
+    import orjson as _orjson
+
+    cfg = _benchmark_config()
+    run_data = {
+        "benchmark_id": "x",
+        "cfg": cfg.model_dump(mode="json", exclude_none=True),
+        "label": "r1",
+        "artifact_dir": str(tmp_path),
+    }
+    config_file = tmp_path / "run_config.json"
+    config_file.write_bytes(_orjson.dumps(run_data))  # valid config on disk
+
+    monkeypatch.setenv("AIPERF_INJECTED_HEADERS", "{not valid json")
+    monkeypatch.setattr("sys.argv", ["subprocess_runner", str(config_file)])
+
+    with patch("aiperf.cli_runner._run_single_benchmark") as fake_run:
+        from aiperf.orchestrator.subprocess_runner import main as subprocess_main
+
+        with pytest.raises(SystemExit) as exc:
+            subprocess_main()
+        assert exc.value.code == 1
+        fake_run.assert_not_called()
+
+    err = capsys.readouterr().err
+    assert "Invalid JSON in config file" not in err, (
+        "malformed env var was misattributed to the config file"
+    )
+    assert "AIPERF_INJECTED_HEADERS" in err

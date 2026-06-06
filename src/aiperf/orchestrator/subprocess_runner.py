@@ -41,16 +41,26 @@ def _parse_injected_dict(name: str, raw: str | None) -> dict[str, str] | None:
     """Decode a JSON-object IPC env-var payload, validating shape.
 
     Used for ``AIPERF_INJECTED_HEADERS``. Returns ``None`` when ``raw`` is
-    unset. Raises ``ValueError`` on shape mismatch so main()'s structured
-    error envelope handles it uniformly with config-file errors.
+    unset. Raises ``ValueError`` on malformed JSON or shape mismatch — a
+    non-object payload, or non-string values that would bypass the
+    ``EndpointConfig.headers`` ``dict[str, str]`` constraint once
+    ``.update()``-ed onto the loaded config (``.update`` mutates in place and
+    never re-runs field validation). Decode errors are re-raised as
+    ``ValueError`` so a bad env var surfaces via main()'s structured error
+    envelope with the env-var name, never misattributed to the config file.
     """
     if not raw:
         return None
-    decoded = orjson.loads(raw)
+    try:
+        decoded = orjson.loads(raw)
+    except orjson.JSONDecodeError as e:
+        raise ValueError(f"{name} contains invalid JSON: {e}") from e
     if not isinstance(decoded, dict):
         raise ValueError(
             f"{name} must decode to a JSON object, got {type(decoded).__name__}"
         )
+    if not all(isinstance(v, str) for v in decoded.values()):
+        raise ValueError(f"{name} must decode to a JSON object with string values")
     return decoded
 
 
@@ -58,11 +68,16 @@ def _parse_injected_str_list(name: str, raw: str | None) -> list[str] | None:
     """Decode a JSON-list-of-strings IPC env-var payload, validating shape.
 
     Used for ``AIPERF_INJECTED_ENDPOINT_URLS``. Returns ``None`` when
-    ``raw`` is unset. Raises ``ValueError`` on shape mismatch.
+    ``raw`` is unset. Raises ``ValueError`` on malformed JSON or shape
+    mismatch; decode errors are re-raised as ``ValueError`` so a bad env
+    var is never misattributed to the config file.
     """
     if not raw:
         return None
-    decoded = orjson.loads(raw)
+    try:
+        decoded = orjson.loads(raw)
+    except orjson.JSONDecodeError as e:
+        raise ValueError(f"{name} contains invalid JSON: {e}") from e
     if not isinstance(decoded, list) or not all(isinstance(u, str) for u in decoded):
         raise ValueError(f"{name} must decode to a JSON list of strings")
     return decoded
