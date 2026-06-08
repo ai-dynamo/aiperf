@@ -84,7 +84,9 @@ class AIPerfMockServer:
         """
         import urllib.request
 
-        with urllib.request.urlopen(f"{self.url}/test/recorded_headers") as resp:
+        with urllib.request.urlopen(
+            f"{self.url}/test/recorded_headers", timeout=10
+        ) as resp:
             import json
 
             return json.loads(resp.read())
@@ -96,7 +98,7 @@ class AIPerfMockServer:
         req = urllib.request.Request(
             f"{self.url}/test/recorded_headers/clear", method="POST"
         )
-        urllib.request.urlopen(req).close()
+        urllib.request.urlopen(req, timeout=10).close()
 
 
 @dataclass(frozen=True)
