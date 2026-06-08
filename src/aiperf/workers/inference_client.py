@@ -248,16 +248,18 @@ class InferenceClient(AIPerfLifecycleMixin):
         # and reduce memory usage (placeholders instead of large image/audio/video data)
         record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
 
-        # Redact per-turn headers on the stored copies; trace rows can carry
-        # sensitive values (e.g., `Authorization`) that otherwise bypass the
-        # `request_headers` redaction path and end up serialised in ZMQ
-        # records.  Also rebind `request_info.turns` to the redacted copies so
-        # downstream consumers of `record.request_info.turns` see the same
-        # scrubbed dicts; the original `session.turn_list` still points at the
-        # in-memory user turns and is untouched.
+        # Redact per-turn headers on every turn copy that crosses ZMQ; trace
+        # rows can carry sensitive values (e.g., `Authorization`) that otherwise
+        # bypass the `request_headers` redaction path and end up serialised in
+        # ZMQ records. Two independent copies leave the worker: `record.turns`
+        # (stripped above) and `record.request_info.turns` (re-materialised by
+        # `_enrich_request_record`'s downcast `model_dump`). Both are fresh
+        # objects, so scrubbing them never touches the caller-owned
+        # `request_info.turns` nor the in-memory `session.turn_list`.
         for turn in record.turns:
             turn.headers = redact_headers(turn.headers)
-        request_info.turns = record.turns
+        for turn in record.request_info.turns:
+            turn.headers = redact_headers(turn.headers)
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:
