@@ -7,6 +7,7 @@ import hashlib
 import logging
 import random
 import time
+from collections import deque
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from time import perf_counter
@@ -291,8 +292,9 @@ class InferenceAuthMiddleware:
 # via `GET /test/recorded_headers` (and clear it via `POST .../clear`) to
 # assert on-the-wire header fidelity end-to-end. Lives at module scope because
 # the mock server is run in a child process per uvicorn worker; tests use the
-# HTTP endpoints rather than the list directly.
-_RECORDED_INBOUND_HEADERS: list[dict[str, Any]] = []
+# HTTP endpoints rather than the list directly. Bounded so long integration
+# runs cannot grow it without limit; oldest entries are dropped past the cap.
+_RECORDED_INBOUND_HEADERS: deque[dict[str, Any]] = deque(maxlen=10_000)
 
 
 class RequestHeaderRecorderMiddleware:
