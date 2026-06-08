@@ -19,6 +19,7 @@ import pickle
 import zlib
 
 import orjson
+import pytest
 
 from aiperf.accuracy.graders.code_execution import (
     _decode_private_test_cases,
@@ -46,7 +47,17 @@ class TestDecodePrivateTestCases:
     def test_decodes_lcb_encoded_blob(self) -> None:
         """Production LCB data is base64/zlib/pickle/json — the
         encoded path must round-trip through ``translate_private_test_cases``
-        to recover the list of cases."""
+        to recover the list of cases.
+
+        Skip cleanly when ``lighteval`` isn't installed: without
+        ``translate_private_test_cases`` the decoder falls through to
+        plain-JSON parsing, which would fail confusingly on base64
+        bytes instead of testing what the docstring claims.
+        """
+        pytest.importorskip(
+            "lighteval.tasks.tasks.lcb.codegen_metrics",
+            reason="encoded-blob decode requires lighteval's translate_private_test_cases",
+        )
         cases = [
             {"input": "[1, 2]", "output": "[2, 1]"},
             {"input": "[3]", "output": "[3]"},
