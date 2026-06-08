@@ -156,6 +156,8 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 # Synthesis may emit more traces than originals (e.g., speedup
                 # expansion); reuse the last original's headers for the tail.
                 original = originals[i] if i < len(originals) else originals[-1]
-                trace.headers = original.headers
+                trace.headers = (
+                    dict(original.headers) if original.headers is not None else None
+                )
             result.append(trace)
         return result
