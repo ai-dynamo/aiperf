@@ -554,3 +554,7 @@ class TestInferenceClient:
         # non-sensitive header preserved).
         assert result.turns[0].headers["Authorization"] != "Bearer secret"
         assert result.turns[0].headers["x-app-id"] == "app-1"
+        # The downcast `record.request_info.turns` also crosses ZMQ, so it must
+        # be scrubbed too (it is re-materialised from an unredacted model_dump).
+        assert result.request_info.turns[0].headers["Authorization"] != "Bearer secret"
+        assert result.request_info.turns[0].headers["x-app-id"] == "app-1"
