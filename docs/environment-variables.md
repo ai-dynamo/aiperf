@@ -30,6 +30,14 @@ CLI runner post-run callback behavior. Controls whether OnComplete callback exce
 |----------------------|---------|-------------|-------------|
 | `AIPERF_RAISE_ON_CALLBACK_ERROR` | `False` | — | When true, re-raise the first OnComplete callback exception after running all remaining callbacks but before os._exit. Provides a strict-mode contract where a callback raise propagates out of the runner. When false (default) the exception is logged with full traceback, the exit code is forced non-zero, and the process still terminates via os._exit so leftover ZMQ/multiprocessing state cannot hang the interpreter. |
 
+## ACCURACY
+
+Accuracy benchmark settings. Tunables for the accuracy benchmark loaders. Currently only pins the LiveCodeBench dataset release so accuracy numbers are reproducible across runs without requiring source edits.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_ACCURACY_LCB_RELEASE_TAG` | `'v4_v5'` | — | LiveCodeBench dataset subset (HF config name) passed as the positional ``name`` arg to ``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. Pins which monthly snapshot LCB serves so accuracy numbers are reproducible across runs and branches. Default ``v4_v5`` matches lighteval's base subset; bump (e.g. to ``v6``) when the team rebaselines against a newer snapshot. The loader always passes ``trust_remote_code=True`` so LCB's dataset-loading script can execute on ``datasets`` v4+ (mirrors lighteval's reference opt-in). Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``. |
+
 ## APISERVER
 
 API server settings. Controls the host and port of the API server.
