@@ -251,16 +251,21 @@ class TestMooncakeTraceIntegration:
                 f"expected {request_count} recorded requests, got "
                 f"{len(recorded)}: {recorded!r}"
             )
-            session_tokens = {r["headers"].get("x-session-token") for r in recorded}
-            baggage_values = {r["headers"].get("baggage") for r in recorded}
-            assert session_tokens == {"tok-A", "tok-B", None}, (
-                f"x-session-token values mismatch: {session_tokens}"
-            )
-            assert baggage_values == {
-                None,
-                "userId=alice,sessionId=tok-B",
-                "userId=bob",
-            }, f"baggage values mismatch: {baggage_values}"
+            # Compare (x-session-token, baggage) tuples so the assertion fails
+            # if the two header values are mismatched across rows, rather than
+            # comparing the two value sets independently.
+            observed_pairs = {
+                (
+                    r["headers"].get("x-session-token"),
+                    r["headers"].get("baggage"),
+                )
+                for r in recorded
+            }
+            assert observed_pairs == {
+                ("tok-A", None),
+                ("tok-B", "userId=alice,sessionId=tok-B"),
+                (None, "userId=bob"),
+            }, f"header pairs mismatch: {observed_pairs}"
 
     async def test_mooncake_trace_text_input_with_synthesis_speedup(
         self,
