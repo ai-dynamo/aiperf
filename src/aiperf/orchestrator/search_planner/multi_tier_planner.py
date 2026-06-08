@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from aiperf.common.environment import Environment
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation
-from aiperf.config.sweep.adaptive import SLOTier
+from aiperf.config.sweep.adaptive import SLAFilter, SLOTier
 from aiperf.orchestrator.search_planner._shared_warmup import mutate_base
 from aiperf.orchestrator.search_planner._sla_helpers import (
     first_failing_filter,
@@ -60,6 +60,12 @@ class MultiTierPlanner(SearchPlanner):
 
     Wraps an underlying search algorithm and manages per-tier bracket
     state, cross-tier observation sharing, and ordering inference.
+
+    Composition means: the planner reuses the underlying algorithm's warmup
+    strategy, precision settings, and convergence thresholds (via _shared_warmup.py),
+    but owns the bracket/bisect loop directly. It does not delegate ask/tell to the
+    single-tier planner because multi-tier bracket state (N brackets, ordering
+    inference, widest-gap allocation) requires a fundamentally different outer loop.
     """
 
     def __init__(
@@ -116,6 +122,11 @@ class MultiTierPlanner(SearchPlanner):
         # Warmup tracking (shared across all tiers)
         self._first_probe_at: set[int] = set()
 
+        # Global SLA filters from --search-sla that compose with per-tier filters
+        self._global_filters: list[SLAFilter] = (
+            list(cfg.sla_filters) if cfg.sla_filters else []
+        )
+
     # ------------------------------------------------------------------
     # SearchPlanner ABC
     # ------------------------------------------------------------------
@@ -131,8 +142,11 @@ class MultiTierPlanner(SearchPlanner):
             # Bisection phase: delegate to allocator
             probe = self._allocator.select_next_probe(self._brackets)
             if probe is None:
-                self._convergence_reason = "multi_tier_all_converged"
-                return None
+                # Check if any non-converged tier still needs bounds
+                probe = self._find_missing_bound_probe()
+                if probe is None:
+                    self._convergence_reason = "multi_tier_all_converged"
+                    return None
             value = probe
 
         self._pending_value = value
@@ -267,6 +281,7 @@ class MultiTierPlanner(SearchPlanner):
         results: list[TierResult] = []
         for bracket in self._brackets:
             status = self._tier_convergence_status(bracket)
+            boundary_metrics = self._extract_boundary_metrics(bracket)
             results.append(
                 TierResult(
                     label=bracket.tier.label,
@@ -278,6 +293,7 @@ class MultiTierPlanner(SearchPlanner):
                     bracket_upper=bracket.infeasible_min,
                     confidence_interval=None,
                     probe_count=bracket.probe_count,
+                    boundary_metrics=boundary_metrics,
                     filters=[
                         {
                             "metric_tag": f.metric_tag,
@@ -318,7 +334,8 @@ class MultiTierPlanner(SearchPlanner):
         non_monotonic_this_iter = False
 
         for bracket in self._brackets:
-            feasible = iteration_feasibility(results, bracket.tier.filters)
+            all_filters = bracket.tier.filters + self._global_filters
+            feasible = iteration_feasibility(results, all_filters)
             tier_verdicts.append(feasible)
 
             if not feasible and successful:
@@ -456,6 +473,21 @@ class MultiTierPlanner(SearchPlanner):
             return
         self._next_value = next_value
 
+    def _find_missing_bound_probe(self) -> int | None:
+        """Find a probe to establish missing bounds for tiers that need them."""
+        for bracket in self._brackets:
+            if bracket.converged:
+                continue
+            if bracket.feasible_max is not None and bracket.infeasible_min is None:
+                candidate = min(bracket.feasible_max * 2, self._hi)
+                if candidate > bracket.feasible_max:
+                    return candidate
+            if bracket.infeasible_min is not None and bracket.feasible_max is None:
+                candidate = max(bracket.infeasible_min // 2, self._lo)
+                if candidate < bracket.infeasible_min:
+                    return candidate
+        return None
+
     def _check_bracket_convergence(self) -> None:
         """Mark tiers as converged when bracket gap is within precision."""
         precision = Environment.SEARCH_PLANNER.SLA_PRECISION_DEFAULT
@@ -477,6 +509,28 @@ class MultiTierPlanner(SearchPlanner):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _extract_boundary_metrics(self, bracket: BracketState) -> dict[str, Any] | None:
+        """Extract metric summaries from the observation at the boundary concurrency."""
+        if bracket.feasible_max is None:
+            return None
+        obs = self._store.get(bracket.feasible_max)
+        if not obs:
+            return None
+        successful = [r for r in obs[-1] if r.success]
+        if not successful:
+            return None
+        boundary_metrics: dict[str, Any] = {}
+        for r in successful[:1]:
+            for tag, metric in r.summary_metrics.items():
+                stats: dict[str, float] = {}
+                for stat in ("avg", "p50", "p90", "p95", "p99"):
+                    val = getattr(metric, stat, None)
+                    if isinstance(val, (int, float)):
+                        stats[stat] = val
+                if stats:
+                    boundary_metrics[tag] = stats
+        return boundary_metrics or None
 
     def _warn_missing_metrics(
         self,

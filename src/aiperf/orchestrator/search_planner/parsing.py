@@ -23,7 +23,20 @@ from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.orchestrator.search_planner.multi_tier_models import SLOTier
 
 _VALID_KINDS = ("int", "real")
-_VALID_SLA_STATS: tuple[str, ...] = ("avg", "p50", "p90", "p95", "p99")
+_VALID_SLA_STATS: tuple[str, ...] = (
+    "avg",
+    "p1",
+    "p5",
+    "p10",
+    "p25",
+    "p50",
+    "p75",
+    "p90",
+    "p95",
+    "p99",
+    "min",
+    "max",
+)
 _VALID_SLA_OPS: tuple[str, ...] = ("lt", "le", "gt", "ge")
 
 

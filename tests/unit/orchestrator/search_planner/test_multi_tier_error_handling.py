@@ -109,6 +109,7 @@ def _success_result(
         success=True,
         summary_metrics={
             "output_token_throughput": JsonMetricResult(unit="tok/s", avg=throughput),
+            "time_to_first_token": JsonMetricResult(unit="ms", p95=100.0),
         },
         variation_label=variation.label,
         variation_values=variation.values,

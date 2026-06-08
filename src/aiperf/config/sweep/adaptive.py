@@ -45,7 +45,9 @@ class SLAFilter(BaseConfig):
             "RunResult.summary_metrics produced by the run."
         ),
     )
-    stat: Literal["avg", "p50", "p90", "p95", "p99"] = Field(
+    stat: Literal[
+        "avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max"
+    ] = Field(
         default="p95",
         description="Statistic on the metric to compare against the threshold.",
     )

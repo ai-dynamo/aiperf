@@ -79,6 +79,10 @@ class TierResult(AIPerfBaseModel):
     probe_count: int = Field(
         ge=0, description="Probes that informed this tier's bracket"
     )
+    boundary_metrics: dict[str, Any] | None = Field(
+        default=None,
+        description="Key metric values observed at the boundary concurrency",
+    )
     filters: list[dict[str, Any]] = Field(
         description="Echo of the SLA filters that define this tier",
     )

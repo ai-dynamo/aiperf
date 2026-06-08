@@ -363,3 +363,102 @@ class TestMultiTierEndToEnd:
         # At least some tiers should be partial
         results = planner.tier_results()
         assert any(r.convergence_status == "partial" for r in results)
+
+    def test_widely_separated_boundaries_all_resolve(self) -> None:
+        """Planner continues probing until ALL tier boundaries are found, even when
+        widely separated (e.g., 39, 79, 93) as required by issue #987.
+
+        Uses throughput model: throughput = max(1, 500 - 5*c)
+        - fast (>300): boundary at c=39 (500-195=305>300, c=40: 500-200=300 not >300)
+        - standard (>100): boundary at c=79 (500-395=105>100, c=80: 500-400=100 not >100)
+        - economy (>30): boundary at c=93 (500-465=35>30, c=94: 500-470=30 not >30)
+        """
+
+        def simulate_wide(concurrency: int) -> float:
+            return max(1.0, 500.0 - 5.0 * concurrency)
+
+        tiers = [
+            SLOTier(
+                label="fast",
+                filters=[
+                    SLAFilter(
+                        metric_tag="output_token_throughput",
+                        stat="avg",
+                        op="gt",
+                        threshold=300.0,
+                    )
+                ],
+            ),
+            SLOTier(
+                label="standard",
+                filters=[
+                    SLAFilter(
+                        metric_tag="output_token_throughput",
+                        stat="avg",
+                        op="gt",
+                        threshold=100.0,
+                    )
+                ],
+            ),
+            SLOTier(
+                label="economy",
+                filters=[
+                    SLAFilter(
+                        metric_tag="output_token_throughput",
+                        stat="avg",
+                        op="gt",
+                        threshold=30.0,
+                    )
+                ],
+            ),
+        ]
+
+        cfg = _cfg(lo=1, hi=256, max_iterations=80)
+        planner = MultiTierPlanner(base_config=_base_config(), cfg=cfg, tiers=tiers)
+
+        probe_count = 0
+        while True:
+            pair = planner.ask()
+            if pair is None:
+                break
+            _, variation = pair
+            concurrency = variation.values["phases.profiling.concurrency"]
+            throughput = simulate_wide(concurrency)
+            result = RunResult(
+                label="trial_0",
+                success=True,
+                summary_metrics={
+                    "output_token_throughput": JsonMetricResult(
+                        unit="tok/s", avg=throughput
+                    ),
+                },
+                variation_label=variation.label,
+                variation_values=variation.values,
+            )
+            planner.tell(variation, [result])
+            probe_count += 1
+
+        results = planner.tier_results()
+        boundaries = {r.label: r for r in results}
+
+        # ALL three tiers must converge
+        assert boundaries["fast"].convergence_status == "converged"
+        assert boundaries["standard"].convergence_status == "converged"
+        assert boundaries["economy"].convergence_status == "converged"
+
+        # ALL three tiers must have boundary_concurrency
+        assert boundaries["fast"].boundary_concurrency is not None
+        assert boundaries["standard"].boundary_concurrency is not None
+        assert boundaries["economy"].boundary_concurrency is not None
+
+        # Boundaries must be ordered: fast < standard < economy
+        assert (
+            boundaries["fast"].boundary_concurrency
+            < boundaries["standard"].boundary_concurrency
+            < boundaries["economy"].boundary_concurrency
+        )
+
+        # Boundaries should be near the analytical values
+        assert 35 <= boundaries["fast"].boundary_concurrency <= 39
+        assert 75 <= boundaries["standard"].boundary_concurrency <= 79
+        assert 89 <= boundaries["economy"].boundary_concurrency <= 93

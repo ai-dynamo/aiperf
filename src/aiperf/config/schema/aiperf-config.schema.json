@@ -9892,10 +9892,17 @@
           "description": "Statistic on the metric to compare against the threshold.",
           "enum": [
             "avg",
+            "p1",
+            "p5",
+            "p10",
+            "p25",
             "p50",
+            "p75",
             "p90",
             "p95",
-            "p99"
+            "p99",
+            "min",
+            "max"
           ],
           "title": "Stat",
           "type": "string"
