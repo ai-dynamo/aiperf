@@ -8,7 +8,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.constants import BYTES_PER_MIB, WARMUP_SYSTEM_MESSAGE_PREFIX
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -70,9 +70,6 @@ from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
-
-
-WARMUP_SYSTEM_MESSAGE_PREFIX = CreditPhase.WARMUP
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
