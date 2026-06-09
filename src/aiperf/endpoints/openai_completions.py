@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -37,6 +39,10 @@ class CompletionsEndpoint(BaseEndpoint):
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
+        if request_info.credit_phase == CreditPhase.WARMUP:
+            prompts = [
+                f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{prompt}" for prompt in prompts
+            ]
 
         extra = model_endpoint.endpoint.extra or []
 
