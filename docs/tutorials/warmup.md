@@ -294,7 +294,7 @@ This completes 10 full conversations (each ~5 turns) before profiling begins.
 
 ## Mid-Conversation Seeding (Steady-State Priming)
 
-For long multi-turn workloads the in-flight **context** distribution takes time to reach steady state: every session starts at turn 0 with a short prompt, and only deep into the run do sessions accumulate the long contexts that dominate KV/prefill cost. `--warmup-seed-turn-fraction` primes that distribution immediately by starting each warmup session partway through its conversation:
+For long multi-turn workloads the in-flight **context** distribution takes time to reach steady state: every session starts at turn 0 with a short prompt, and only deep into the run do sessions accumulate the long contexts that dominate KV/prefill cost. The `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` flags prime that distribution immediately by starting each warmup session at a randomly-chosen point partway through its conversation:
 
 ```bash
 aiperf profile \
@@ -305,18 +305,20 @@ aiperf profile \
     --input-file sessions.jsonl \
     --warmup-concurrency 64 \
     --warmup-duration 120 \
-    --warmup-seed-turn-fraction 0.5 \
+    --trajectory-start-min-ratio 0.3 \
+    --trajectory-start-max-ratio 0.7 \
     --concurrency 64 \
     --benchmark-duration 1800
 ```
 
-With `--warmup-seed-turn-fraction 0.5`, a warmup session sampled from a 40-turn conversation begins at turn 20. Turns `[0, 20)` are reconstructed as **token-sized synthetic history** — each prior turn contributes a synthetic user prompt and an assistant reply sized to the trace's per-turn input/output lengths — so the session's accumulated context starts at its mid-conversation depth without spending wall-clock replaying those turns. The session then runs turns `20…39` normally.
+Per warmup session, a start ratio is sampled uniformly in `[0.3, 0.7]`, so a session sampled from a 40-turn conversation begins somewhere around turn 12–28. Turns before the start are reconstructed as **token-sized synthetic history** — each prior turn contributes a synthetic user prompt and an assistant reply sized to the trace's per-turn input/output lengths — so the session's accumulated context starts at its mid-conversation depth without spending wall-clock replaying those turns. The session then runs its remaining turns normally. Using a *range* rather than a single point spreads warmup sessions across a band of depths, which fills out the in-flight context distribution faster than one fixed depth would.
 
 **Notes:**
 
+- **Enable with the max.** Setting `--trajectory-start-max-ratio > 0` enables seeding; `--trajectory-start-min-ratio` defaults to `0.0` (range `[0, max]`). The min must be ≤ the max. Both require a warmup trigger (`--warmup-duration` / `--warmup-request-count` / `--warmup-num-sessions`).
 - **Warmup-only.** Seeded sessions prime the in-flight depth distribution but, like all warmup traffic, are excluded from results. Use a `seamless` profiling phase so the primed warmup sessions are still in flight when profiling begins.
 - **Synthesized multi-turn only.** Valid for the `DELTAS_WITHOUT_RESPONSES` context mode (synthesized prompts with live-captured responses). Raw-payload and pre-rendered message-array conversations are rejected with a clear error.
-- **Per-session, clamped.** A session with `N` turns starts at `floor(fraction * N)`, clamped so at least the final turn still runs on the wire. Short sessions whose fraction rounds to 0 start normally at turn 0.
+- **Per-session, clamped.** A session with `N` turns starts at `floor(ratio * N)`, clamped so at least the final turn still runs on the wire. Short sessions whose ratio rounds to 0 start normally at turn 0.
 
 ## Prefill Concurrency Warmup
 
@@ -413,7 +415,8 @@ aiperf profile \
 | `--warmup-prefill-concurrency` | int | `--prefill-concurrency` | Prefill concurrency during warmup |
 | `--warmup-request-rate` | float | `--request-rate` | Request rate during warmup |
 | `--warmup-arrival-pattern` | str | `--arrival-pattern` | Arrival pattern during warmup |
-| `--warmup-seed-turn-fraction` | float | None | Fraction of each session's turns to pre-seed as synthetic history, priming the in-flight context depth (synthesized multi-turn only) |
+| `--trajectory-start-min-ratio` | float | 0.0 | Lower bound of the per-session start-ratio range for warmup seeding (synthesized multi-turn only) |
+| `--trajectory-start-max-ratio` | float | None | Upper bound of the per-session start-ratio range; > 0 enables warmup seeding |
 
 ### Ramping (inherit from profiling if not set)
 
