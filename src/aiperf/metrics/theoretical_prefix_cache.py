@@ -77,6 +77,9 @@ class TheoreticalPrefixCacheAccumulator(BaseMetricsProcessor):
         hit_blocks, total_blocks = counts
         if total_blocks <= 0:
             return
+        # Clamp the hit count into [0, total_blocks]: a loader miscount must not
+        # drive the cumulative hit rate above 100% (or below 0%).
+        hit_blocks = max(0, min(hit_blocks, total_blocks))
         self._hit_blocks += hit_blocks
         self._total_blocks += total_blocks
 

@@ -448,7 +448,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         hits = self._counter_delta(endpoints, "vllm:prefix_cache_hits", start_ns)
         queries = self._counter_delta(endpoints, "vllm:prefix_cache_queries", start_ns)
         if hits is not None and queries and queries > 0:
-            out["prefix_cache_hit_rate"] = 100.0 * hits / queries
+            # hits and queries are deltas from independently-latched counter
+            # series; a query series lagging a batched hits update can make
+            # hits > queries. Cap at 100% so the row never reports an
+            # impossible hit rate.
+            out["prefix_cache_hit_rate"] = 100.0 * min(hits, queries) / queries
             out["unique_input_tokens_srv"] = max(queries - hits, 0.0)
             return
         # SGLang counter pair: `cached_tokens_total` / `prompt_tokens_total`
@@ -461,7 +465,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         sgl_cached = self._counter_delta(endpoints, "sglang:cached_tokens", start_ns)
         sgl_prompt = self._counter_delta(endpoints, "sglang:prompt_tokens", start_ns)
         if sgl_cached is not None and sgl_prompt and sgl_prompt > 0:
-            out["prefix_cache_hit_rate"] = 100.0 * sgl_cached / sgl_prompt
+            out["prefix_cache_hit_rate"] = (
+                100.0 * min(sgl_cached, sgl_prompt) / sgl_prompt
+            )
             out["unique_input_tokens_srv"] = max(sgl_prompt - sgl_cached, 0.0)
             return
         # Last-resort fallback for SGLang versions that emit only the gauge.
@@ -484,7 +490,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             endpoints, "vllm:external_prefix_cache_queries", start_ns
         )
         if ext_hits is not None and ext_queries and ext_queries > 0:
-            out["external_prefix_cache_hit_rate"] = 100.0 * ext_hits / ext_queries
+            out["external_prefix_cache_hit_rate"] = (
+                100.0 * min(ext_hits, ext_queries) / ext_queries
+            )
 
     def _add_kv_cache_usage_pct(self, out: dict[str, float], endpoints: list) -> None:
         kv = self._first_gauge(
@@ -504,14 +512,15 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # the ratio is computed here.
         cpu_kv = self._gauge_latest_max(endpoints, "vllm:cpu_cache_usage_perc")
         if cpu_kv is None:
-            host_used = self._gauge_latest_max(
-                endpoints, "sglang:hicache_host_used_tokens"
+            # Pair used/total WITHIN each endpoint and take the busiest node's
+            # ratio. Taking max(used) and max(total) independently across
+            # endpoints could combine the numerator from one node with the
+            # denominator from another, yielding a ratio matching no real node.
+            cpu_kv = self._max_endpoint_gauge_ratio(
+                endpoints,
+                "sglang:hicache_host_used_tokens",
+                "sglang:hicache_host_total_tokens",
             )
-            host_total = self._gauge_latest_max(
-                endpoints, "sglang:hicache_host_total_tokens"
-            )
-            if host_used is not None and host_total and host_total > 0:
-                cpu_kv = host_used / host_total
         if cpu_kv is not None:
             out["cpu_kv_cache_usage_pct"] = self._to_pct(cpu_kv)
 
@@ -635,7 +644,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     )
                     if baseline_idx is None or baseline_idx == len(vals) - 1:
                         continue
-                    total += float(vals[-1] - vals[baseline_idx])
+                    # Clamp counter resets to 0 (server restart drops the
+                    # counter below its prior value), mirroring the export path
+                    # (export_stats: max(raw_delta, 0)). Without this the
+                    # realtime row emits negative rates / hit-rates.
+                    total += max(float(vals[-1] - vals[baseline_idx]), 0.0)
                     found = True
         return total if found else None
 
@@ -654,6 +667,54 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         if first_in_window >= len(vals):
             return None
         return first_in_window - 1 if first_in_window > 0 else first_in_window
+
+    @staticmethod
+    def _counter_rate_baseline_idx(
+        time_series: Any, start_ns: int | None
+    ) -> int | None:
+        """Rate-window baseline: the first sample AT/AFTER ``start_ns``.
+
+        Unlike the delta baseline (``_counter_baseline_idx``, which picks the
+        last sample BEFORE ``start_ns`` to mirror export delta accounting), the
+        realtime rate must measure FROM ``start_ns`` so the warmup->start idle
+        gap is excluded from the denominator. Returns None when fewer than two
+        samples exist; the caller skips endpoints whose baseline is the final
+        sample (no two-point window after ``start_ns``).
+        """
+        vals = time_series.values
+        if len(vals) < 2:
+            return None
+        if start_ns is None:
+            return 0
+        return int(np.searchsorted(time_series.timestamps, start_ns, side="left"))
+
+    @staticmethod
+    def _max_endpoint_gauge_ratio(
+        endpoints: list, num_name: str, den_name: str
+    ) -> float | None:
+        """Max per-endpoint ratio of two gauges, pairing numerator and
+        denominator WITHIN each endpoint (never mixing across endpoints).
+
+        Returns None if no endpoint has both gauges with a positive denominator.
+        """
+        best: float | None = None
+        for ep in endpoints:
+            num: float | None = None
+            den: float | None = None
+            for key, entry in ep.metrics.items():
+                if entry.metric_type != PrometheusMetricType.GAUGE:
+                    continue
+                vals = entry.data.values
+                if len(vals) == 0:
+                    continue
+                if key.name == num_name:
+                    num = float(vals[-1])
+                elif key.name == den_name:
+                    den = float(vals[-1])
+            if num is not None and den is not None and den > 0:
+                ratio = num / den
+                best = ratio if best is None else max(best, ratio)
+        return best
 
     @staticmethod
     def _gauge_latest_max(endpoints: list, metric_name: str) -> float | None:
@@ -682,13 +743,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     ) -> float | None:
         """Sum (last - first) across endpoints divided by elapsed wall seconds.
 
-        Running-average rate for a Prometheus counter, in tokens/sec. Uses each
-        endpoint's selected baseline and last observed timestamps as the window.
-        Skips entries whose stored metric_type is not COUNTER (see
-        ``_counter_delta`` for the gauge-collision rationale).
+        Running-average rate for a Prometheus counter, in tokens/sec. The window
+        runs from each endpoint's rate baseline to its last observed sample.
+        When ``start_ns`` is given the baseline is the first sample AT/AFTER
+        ``start_ns`` (``_counter_rate_baseline_idx``), so the rate measures the
+        profiling window only -- the warmup->start idle gap is NOT folded into
+        the denominator. Skips entries whose stored metric_type is not COUNTER
+        (see ``_counter_delta`` for the gauge-collision rationale).
 
-        Returns None if no endpoint observed the metric, or if every endpoint has
-        only one usable sample.
+        Returns None if no endpoint observed the metric, or if no endpoint has
+        two samples at/after ``start_ns``.
         """
         total_delta = 0.0
         max_elapsed_ns: float = 0.0
@@ -703,12 +767,14 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 ts = entry.data.timestamps
                 if len(vals) < 2 or len(ts) < 2:
                     continue
-                baseline_idx = ServerMetricsAccumulator._counter_baseline_idx(
+                baseline_idx = ServerMetricsAccumulator._counter_rate_baseline_idx(
                     entry.data, start_ns
                 )
-                if baseline_idx is None or baseline_idx == len(vals) - 1:
+                if baseline_idx is None or baseline_idx >= len(vals) - 1:
                     continue
-                total_delta += float(vals[-1] - vals[baseline_idx])
+                # Clamp counter resets to 0 (see _counter_delta) so a restart
+                # cannot produce a negative throughput rate.
+                total_delta += max(float(vals[-1] - vals[baseline_idx]), 0.0)
                 max_elapsed_ns = max(max_elapsed_ns, float(ts[-1] - ts[baseline_idx]))
                 found = True
         if not found or max_elapsed_ns <= 0:

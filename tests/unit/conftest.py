@@ -298,6 +298,25 @@ def reset_singleton_factories():
     SingletonMeta._instances.clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_tokenizer_preload_cache():
+    """Clear the forkserver tokenizer-preload cache between tests.
+
+    The module-level ``_LOADED`` cache in ``aiperf.dataset._tokenizer_preload``
+    is read by parallel_convert workers via ``get_preloaded``. A test that
+    populates it (e.g. by triggering ``_preload`` with a mocked
+    ``Tokenizer.from_pretrained``) would otherwise leak a tokenizer into later
+    tests in the same process — the worker would prefer the leaked preload over
+    its ``Tokenizer.from_pretrained`` fallback, breaking parallel-convert
+    determinism checks under certain test orderings / xdist sharding.
+    """
+    from aiperf.dataset import _tokenizer_preload
+
+    _tokenizer_preload.clear_preloaded()
+    yield
+    _tokenizer_preload.clear_preloaded()
+
+
 @pytest.fixture
 def temporary_registry() -> Generator[PluginRegistry, None, None]:
     """Fixture for isolated plugin registry testing.
