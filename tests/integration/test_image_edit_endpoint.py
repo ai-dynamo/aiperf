@@ -29,7 +29,7 @@ class TestImageEditEndpoint:
             f"""
             aiperf profile \
                 --model black-forest-labs/FLUX.2-klein-4B \
-                --tokenizer builtin \
+                --tokenizer gpt2 \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type image_edit \
                 --image-batch-size 1 \
@@ -62,7 +62,7 @@ class TestImageEditEndpoint:
             f"""
             aiperf profile \
                 --model black-forest-labs/FLUX.2-klein-4B \
-                --tokenizer builtin \
+                --tokenizer gpt2 \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type image_edit \
                 --image-batch-size 1 \
