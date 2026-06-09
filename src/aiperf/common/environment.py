@@ -7,6 +7,7 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.ACCURACY.*       - Accuracy benchmark settings
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
@@ -55,6 +56,32 @@ from aiperf.plugin.enums import ServiceType
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
+
+
+class _AccuracySettings(BaseSettings):
+    """Accuracy benchmark settings.
+
+    Tunables for the accuracy benchmark loaders. Currently only pins the
+    LiveCodeBench dataset release so accuracy numbers are reproducible
+    across runs without requiring source edits.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
+
+    LCB_RELEASE_TAG: str = Field(
+        default="v4_v5",
+        description="LiveCodeBench dataset subset (HF config name) "
+        "passed as the positional ``name`` arg to "
+        '``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. '
+        "Pins which monthly snapshot LCB serves so accuracy numbers "
+        "are reproducible across runs and branches. Default "
+        "``v4_v5`` matches lighteval's base subset; bump (e.g. to "
+        "``v6``) when the team rebaselines against a newer snapshot. "
+        "The loader always passes ``trust_remote_code=True`` so LCB's "
+        "dataset-loading script can execute on ``datasets`` v4+ "
+        "(mirrors lighteval's reference opt-in). Consumed by "
+        "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
 
 
 class _APIServerSettings(BaseSettings):
@@ -1273,6 +1300,10 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    ACCURACY: _AccuracySettings = Field(
+        default_factory=_AccuracySettings,
+        description="Accuracy benchmark settings (dataset version pins, etc.)",
+    )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",

@@ -22,7 +22,7 @@ from aiperf.config.accuracy import AccuracyConfig
 # implementation (and remove the ``is_implemented: false`` from the YAML).
 # This branch (AIP-874) implements ``aime``, ``math``, and ``code_execution``,
 # so those names are absent from the stub lists.
-STUB_BENCHMARKS = ("lcb_codegeneration",)
+STUB_BENCHMARKS: tuple[str, ...] = ()
 STUB_GRADERS: tuple[str, ...] = ()
 
 
@@ -62,26 +62,15 @@ class TestRejectsStubBenchmark:
         # must surface at least that as a usable alternative.
         assert "mmlu" in msg.split("Available:")[-1]
 
-    def test_accuracyconfig_with_hyphenated_stub_name_raises_validationerror(
-        self,
-    ) -> None:
-        """Reproduces the original bug: ``--accuracy-benchmark lcb-codegeneration``
-        used the hyphen-tolerant enum lookup and reached the loader."""
-        with pytest.raises(ValidationError) as exc:
-            AccuracyConfig(benchmark="lcb-codegeneration")
-        msg = str(exc.value)
-        # Enum normalization runs first → message references the canonical
-        # snake-case form, not the user's hyphenated input.
-        assert "lcb_codegeneration" in msg
-        assert "not yet implemented" in msg
-
-    def test_accuracyconfig_with_uppercase_stub_name_raises_validationerror(
-        self,
-    ) -> None:
-        """Case-insensitive enum lookup must not bypass the validator."""
-        with pytest.raises(ValidationError) as exc:
-            AccuracyConfig(benchmark="LCB_CODEGENERATION")
-        assert "lcb_codegeneration" in str(exc.value)
+    # The two regression tests for hyphen/uppercase normalization of
+    # stub benchmark names lived here while ``lcb_codegeneration`` was
+    # still the canonical stub example. With AIP-881 landing,
+    # ``STUB_BENCHMARKS`` is empty and there is no longer a stubbed
+    # name to point those assertions at — the parametrized test above
+    # naturally skips once all benchmarks are implemented. The
+    # underlying validator (``AccuracyConfig._reject_stub_plugins``)
+    # still rejects any benchmark advertising ``is_implemented: false``;
+    # add a similar regression test when the next stub lands.
 
 
 class TestRejectsStubGrader:

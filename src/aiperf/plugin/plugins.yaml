@@ -1529,12 +1529,17 @@ accuracy_benchmark:
   lcb_codegeneration:
     class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
     description: |
-      LiveCodeBench code generation benchmark for evaluating code synthesis
-      capabilities with test-case-based validation.
+      LiveCodeBench code generation benchmark, aligned with the trt-llm
+      benchmark recipe's lighteval-backed configuration
+      (livecodebench/code_generation_lite + lighteval ``codegen_metrics``).
+      Serializes the LCB-style test-case payload (starter_code,
+      public_test_cases, private_test_cases, upstream metadata) into
+      ``BenchmarkProblem.ground_truth`` as an orjson blob so
+      ``CodeExecutionGrader`` can run the generated code against the
+      bundled public + private test cases.
     metadata:
       default_grader: code_execution
       default_n_shots: 0
-      is_implemented: false
 
 # =============================================================================
 # Communication Backends
