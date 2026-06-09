@@ -79,6 +79,7 @@ system message).
 | `math_500` | `lighteval_latex` | 0 | `HuggingFaceH4/MATH-500` (trt-llm/lighteval reference, gold is full solution containing `\boxed{answer}`, `latex_gold_metric`) |
 | `gpqa_diamond` | `lighteval_gpqa` | 0 | `Idavidrein/gpqa` subset `gpqa_diamond` (trt-llm/lighteval reference, simple-evals template with SHA-256-seeded deterministic A/B/C/D shuffling, `gpqa_metric`) |
 | `lcb_codegeneration` | `code_execution` | 0 | `livecodebench/code_generation_lite` (trt-llm/lighteval reference; LCB test-case payload serialized into `BenchmarkProblem.ground_truth` as an orjson blob; `code_execution` grader runs the generated code against the bundled test cases via lighteval's `codegen_metrics`) |
+| `gsm8k` | `lighteval_gsm8k` | 0 | `gsm8k` subset `main` (trt-llm/lighteval reference, `gsm8k_leaderboard` config; prompt `"Question: {question}\nAnswer:"`, gold is the raw answer ending in `#### <number>`, `quasi_exact_match_gsm8k`) |
 
 ### LiveCodeBench (lcb_codegeneration) version pinning
 

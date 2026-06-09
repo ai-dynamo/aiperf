@@ -1425,6 +1425,15 @@ accuracy_grader:
       ``IndicesExtractionConfig(prefix_for_extraction="NativeLetters")``
       to find the chosen A/B/C/D letter in both gold and prediction.
 
+  lighteval_gsm8k:
+    class: aiperf.accuracy.graders.gsm8k_grader:LightevalGSM8KGrader
+    description: |
+      Lighteval ``quasi_exact_match_gsm8k`` grader — used by GSM8K. Extracts
+      the number after "####" from the gold answer using gsm8k_normalizer,
+      and extracts the last number from the model prediction (preferring a
+      "####" marker when present). Compares numerically so "24" and "24.0"
+      match. Pure-regex; no lighteval install required.
+
 # =============================================================================
 # Accuracy Benchmarks
 # =============================================================================
@@ -1512,6 +1521,19 @@ accuracy_benchmark:
       ``LightevalLatexGrader`` extracts the boxed expression at grade time.
     metadata:
       default_grader: lighteval_latex
+      default_n_shots: 0
+
+  gsm8k:
+    class: aiperf.accuracy.benchmarks.gsm8k:GSM8KBenchmark
+    description: |
+      GSM8K (Grade School Math 8K) benchmark. Grade-school math word
+      problems requiring multi-step reasoning. Aligned with lighteval's
+      ``gsm8k_leaderboard`` task config (gsm8k/main test split, prompt
+      ``"Question: {question}\nAnswer:"``, ``generation_size=256``).
+      Gold is the raw ``answer`` field ending in ``#### <number>``;
+      ``LightevalGSM8KGrader`` extracts the number at grade time.
+    metadata:
+      default_grader: lighteval_gsm8k
       default_n_shots: 0
 
   gpqa_diamond:
