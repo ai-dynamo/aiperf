@@ -857,7 +857,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             phase_stats = self._records_tracker.create_stats_for_phase(
                 CreditPhase.PROFILING
             )
-            server_snapshot = self._collect_realtime_server_snapshot()
+            server_snapshot = self._collect_realtime_server_snapshot(
+                start_ns=phase_stats.start_ns
+            )
             if not self._has_realtime_update(phase_stats, server_snapshot):
                 continue  # No changed records or server metrics; skip the rebuild.
             emitted = await self._report_realtime_metrics(
