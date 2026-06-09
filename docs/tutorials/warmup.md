@@ -292,6 +292,32 @@ aiperf profile \
 
 This completes 10 full conversations (each ~5 turns) before profiling begins.
 
+## Mid-Conversation Seeding (Steady-State Priming)
+
+For long multi-turn workloads the in-flight **context** distribution takes time to reach steady state: every session starts at turn 0 with a short prompt, and only deep into the run do sessions accumulate the long contexts that dominate KV/prefill cost. `--warmup-seed-turn-fraction` primes that distribution immediately by starting each warmup session partway through its conversation:
+
+```bash
+aiperf profile \
+    --model your-model \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --streaming \
+    --input-file sessions.jsonl \
+    --warmup-concurrency 64 \
+    --warmup-duration 120 \
+    --warmup-seed-turn-fraction 0.5 \
+    --concurrency 64 \
+    --benchmark-duration 1800
+```
+
+With `--warmup-seed-turn-fraction 0.5`, a warmup session sampled from a 40-turn conversation begins at turn 20. Turns `[0, 20)` are reconstructed as **token-sized synthetic history** — each prior turn contributes a synthetic user prompt and an assistant reply sized to the trace's per-turn input/output lengths — so the session's accumulated context starts at its mid-conversation depth without spending wall-clock replaying those turns. The session then runs turns `20…39` normally.
+
+**Notes:**
+
+- **Warmup-only.** Seeded sessions prime the in-flight depth distribution but, like all warmup traffic, are excluded from results. Use a `seamless` profiling phase so the primed warmup sessions are still in flight when profiling begins.
+- **Synthesized multi-turn only.** Valid for the `DELTAS_WITHOUT_RESPONSES` context mode (synthesized prompts with live-captured responses). Raw-payload and pre-rendered message-array conversations are rejected with a clear error.
+- **Per-session, clamped.** A session with `N` turns starts at `floor(fraction * N)`, clamped so at least the final turn still runs on the wire. Short sessions whose fraction rounds to 0 start normally at turn 0.
+
 ## Prefill Concurrency Warmup
 
 When using [prefill concurrency](./prefill-concurrency.md) to limit simultaneous prefill operations, you can configure warmup separately:
@@ -387,6 +413,7 @@ aiperf profile \
 | `--warmup-prefill-concurrency` | int | `--prefill-concurrency` | Prefill concurrency during warmup |
 | `--warmup-request-rate` | float | `--request-rate` | Request rate during warmup |
 | `--warmup-arrival-pattern` | str | `--arrival-pattern` | Arrival pattern during warmup |
+| `--warmup-seed-turn-fraction` | float | None | Fraction of each session's turns to pre-seed as synthetic history, priming the in-flight context depth (synthesized multi-turn only) |
 
 ### Ramping (inherit from profiling if not set)
 

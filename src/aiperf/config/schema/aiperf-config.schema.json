@@ -1030,6 +1030,14 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
+                    "seedTurnFraction": {
+                      "default": 0.0,
+                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Seedturnfraction",
+                      "type": "number"
+                    },
                     "gracePeriod": {
                       "anyOf": [
                         {
@@ -1192,6 +1200,14 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "seedTurnFraction": {
+                      "default": 0.0,
+                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Seedturnfraction",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -1374,6 +1390,14 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "seedTurnFraction": {
+                      "default": 0.0,
+                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Seedturnfraction",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -1571,6 +1595,14 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
+                    "seedTurnFraction": {
+                      "default": 0.0,
+                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Seedturnfraction",
+                      "type": "number"
+                    },
                     "gracePeriod": {
                       "anyOf": [
                         {
@@ -1752,6 +1784,14 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "seedTurnFraction": {
+                      "default": 0.0,
+                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Seedturnfraction",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -1941,6 +1981,14 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "seedTurnFraction": {
+                      "default": 0.0,
+                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Seedturnfraction",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -2732,6 +2780,14 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -2894,6 +2950,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3076,6 +3140,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3273,6 +3345,14 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -3454,6 +3534,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3643,6 +3731,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3850,6 +3946,14 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -4012,6 +4116,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -4194,6 +4306,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -4391,6 +4511,14 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -4572,6 +4700,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -4761,6 +4897,14 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "seedTurnFraction": {
+                  "default": 0.0,
+                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seedturnfraction",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -5161,6 +5305,32 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
+        "seedTurnFraction": {
+          "default": 0.0,
+          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+          "title": "Seedturnfraction",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Seedturnfraction",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
         "gracePeriod": {
           "anyOf": [
             {
@@ -5421,6 +5591,32 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "seedTurnFraction": {
+          "default": 0.0,
+          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+          "title": "Seedturnfraction",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Seedturnfraction",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
@@ -6656,6 +6852,32 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
+        "seedTurnFraction": {
+          "default": 0.0,
+          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+          "title": "Seedturnfraction",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Seedturnfraction",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
         "gracePeriod": {
           "anyOf": [
             {
@@ -6980,6 +7202,32 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "seedTurnFraction": {
+          "default": 0.0,
+          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+          "title": "Seedturnfraction",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Seedturnfraction",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
@@ -8961,6 +9209,32 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "seedTurnFraction": {
+          "default": 0.0,
+          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+          "title": "Seedturnfraction",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Seedturnfraction",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
@@ -11598,6 +11872,32 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "seedTurnFraction": {
+          "default": 0.0,
+          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+          "title": "Seedturnfraction",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Seedturnfraction",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
