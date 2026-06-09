@@ -664,6 +664,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug(lambda: f"Credit {credit_context.credit.id} cancelled")
             credit_context.cancelled = True
         finally:
+            # Lockstep: a credit returned as completed MUST be accompanied by a
+            # record, or the RecordsManager completion barrier (which has no
+            # timeout) hangs waiting for it. If processing failed before any
+            # record was emitted, forward an error record now. Cancelled credits
+            # are excluded from the barrier target, so they need no record.
+            if not credit_context.cancelled and not credit_context.record_emitted:
+                await self._emit_credit_failure_record(credit_context)
             # ALWAYS return the credit here to ensure accurate tracking
             credit_return = CreditReturn(
                 credit=credit_context.credit,
@@ -678,6 +685,48 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context.returned = True
             # Note: Don't null credit_context.credit here - done callback needs
             # credit.id for cleanup. Done callback handles all reference clearing.
+
+    async def _emit_credit_failure_record(self, credit_context: CreditContext) -> None:
+        """Forward an error record for a credit whose processing failed before
+        any record was emitted.
+
+        Mirrors the conversation-retrieval error path so the records-side count
+        stays in lockstep with the credit the worker is about to return as
+        completed; without it the RecordsManager completion barrier (no timeout)
+        hangs waiting for a record that never arrives.
+        """
+        credit = credit_context.credit
+        err = credit_context.error
+        if isinstance(err, ErrorDetails):
+            error = err
+        elif isinstance(err, str) and err:
+            error = ErrorDetails(message=err, type="CreditProcessingError", code=500)
+        else:
+            error = ErrorDetails(
+                message="Credit processing failed before a record was produced",
+                type="CreditProcessingError",
+                code=500,
+            )
+        await self._send_inference_result_message(
+            RequestRecord(
+                request_info=RecordContext(
+                    conversation_id=credit.conversation_id,
+                    turn_index=credit.turn_index,
+                    credit_num=credit.id,
+                    credit_phase=credit.phase,
+                    x_request_id=str(uuid.uuid4()),
+                    x_correlation_id=credit.x_correlation_id,
+                    agent_depth=credit.agent_depth,
+                    parent_correlation_id=credit.parent_correlation_id,
+                ),
+                model_name=self.model_endpoint.primary_model_name,
+                timestamp_ns=time.time_ns(),
+                start_perf_ns=time.perf_counter_ns(),
+                end_perf_ns=time.perf_counter_ns(),
+                error=error,
+            )
+        )
+        credit_context.record_emitted = True
 
     async def _process_credit(self, credit_context: CreditContext) -> None:
         """Process a credit (1 credit = 1 request).
@@ -901,6 +950,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             request_info, first_token_callback=first_token_callback
         )
         await self._send_inference_result_message(record)
+        credit_context.record_emitted = True
         if record.error is not None:
             credit_context.error = record.error
         return record
@@ -1071,6 +1121,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     error=error,
                 )
             )
+            credit_context.record_emitted = True
             raise ValueError(f"Failed to retrieve conversation response: {error}")
 
         return conversation_response.conversation

@@ -28,6 +28,7 @@ class CreditCounter:
 
         # Progress counters
         self._requests_sent: int = 0
+        self._root_requests_sent: int = 0
         self._requests_completed: int = 0
         self._requests_cancelled: int = 0
         self._request_errors: int = 0
@@ -69,6 +70,15 @@ class CreditCounter:
     def request_errors(self) -> int:
         """Total request errors."""
         return self._request_errors
+
+    @property
+    def root_requests_sent(self) -> int:
+        """Total root (``agent_depth == 0``) requests sent.
+
+        Used by the session-completion predicate so DAG children inflating
+        ``requests_sent`` cannot prematurely satisfy it.
+        """
+        return self._root_requests_sent
 
     @property
     def sent_sessions(self) -> int:
@@ -194,10 +204,30 @@ class CreditCounter:
 
         new_sent_sessions_count = self._sent_sessions
         new_total_session_turns = self._total_session_turns
+        # Root-only wire count for the session-completion predicate. DAG
+        # children bump ``requests_sent`` (real wire activity) but inherit the
+        # parent's session slot, so counting them in the session-turns
+        # comparison would let the first child wire spuriously satisfy
+        # ``sent >= session_turns`` and exit the strategy loop before the
+        # parent's remaining turns dispatch (BG-fork parents keep firing turns
+        # after children begin). Ported from origin/main's DAG fix.
+        new_root_sent = self._root_requests_sent + (
+            1 if turn_to_send.agent_depth == 0 else 0
+        )
 
-        if turn_to_send.agent_depth == 0 and turn_to_send.turn_index == 0:
+        # A root session is counted on its first credit in the phase: turn 0,
+        # or an agentic mid-trace resume (is_session_start, turn_index > 0).
+        # Without this, a resumed root would bump completed_sessions on its
+        # final turn while never bumping sent_sessions, driving
+        # completed_sessions > sent_sessions and in_flight_sessions < 0.
+        # total_session_turns counts only the turns this session will actually
+        # send (num_turns - start index), so a resumed root contributes its
+        # remaining tail, keeping it consistent with root_requests_sent.
+        if turn_to_send.agent_depth == 0 and (
+            turn_to_send.turn_index == 0 or turn_to_send.is_session_start
+        ):
             new_sent_sessions_count += 1
-            new_total_session_turns += turn_to_send.num_turns
+            new_total_session_turns += turn_to_send.num_turns - turn_to_send.turn_index
 
         is_final_credit = turn_to_send.counts_toward_phase_target and (
             (
@@ -207,11 +237,12 @@ class CreditCounter:
             or (
                 self._config.expected_num_sessions is not None
                 and new_sent_sessions_count >= self._config.expected_num_sessions
-                and new_sent_count >= new_total_session_turns
+                and new_root_sent >= new_total_session_turns
             )
         )
 
         self._requests_sent = new_sent_count
+        self._root_requests_sent = new_root_sent
         self._sent_sessions = new_sent_sessions_count
         self._total_session_turns = new_total_session_turns
 
@@ -221,6 +252,7 @@ class CreditCounter:
         self,
         is_final_turn: bool,
         cancelled: bool,
+        errored: bool = False,
         *,
         is_child: bool = False,
     ) -> bool:
@@ -237,6 +269,12 @@ class CreditCounter:
         Args:
             is_final_turn: Whether the returned turn is the final turn of its session
             cancelled: Whether the credit was cancelled
+            errored: Whether the request returned with a non-None error. Errored
+                requests still count as "returned" for the all-returned
+                invariant (they are not cancellations), but also bump
+                ``_request_errors`` so the phase-complete log line reflects
+                fault-injected runs. Request-level, so it ticks for children
+                too. Ported from origin/main.
             is_child: True when ``credit.agent_depth > 0``. Session-level
                 counters are skipped for children; request-level counters
                 still tick.
@@ -256,6 +294,8 @@ class CreditCounter:
             self._requests_completed += 1
             if is_final_turn and not is_child:
                 self._completed_sessions += 1
+            if errored:
+                self._request_errors += 1
 
         return self.check_all_returned_or_cancelled()
 

@@ -231,6 +231,7 @@ class CreditCallbackHandler:
         is_final_returned = handler.progress.increment_returned(
             credit.is_final_turn,
             credit_return.cancelled,
+            errored=credit_return.error is not None,
             is_child=credit.agent_depth > 0,
         )
 

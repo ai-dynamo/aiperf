@@ -76,6 +76,7 @@ class SampledSession:
             num_turns=max_turns or len(self.metadata.turns),
             agent_depth=self.agent_depth,
             parent_correlation_id=self.parent_correlation_id,
+            is_session_start=True,
             has_forks=first_meta.has_forks if first_meta is not None else False,
             branch_mode=self.branch_mode,
             cache_bust_marker=self.cache_bust_marker,
@@ -106,6 +107,11 @@ class SampledSession:
             num_turns=len(self.metadata.turns),
             agent_depth=self.agent_depth,
             parent_correlation_id=self.parent_correlation_id,
+            # build_turn_at_index is only used to START a session (warmup at
+            # k_i, profiling resume at k_i+1, recycled at 0); continuations go
+            # through TurnToSend.from_previous_credit. Mark it a session start so
+            # the resumed root acquires a session slot + counts even at k_i > 0.
+            is_session_start=True,
             has_forks=meta.has_forks if meta is not None else False,
             branch_mode=self.branch_mode,
         )

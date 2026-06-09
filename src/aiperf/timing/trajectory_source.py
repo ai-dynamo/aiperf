@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import math
 import uuid
 from dataclasses import dataclass, field
 
@@ -719,13 +718,7 @@ class TrajectorySource(ConversationSource):
 
 def _as_timestamp_ms(value: object) -> float | None:
     if isinstance(value, int | float):
-        v = float(value)
-        # Reject non-finite timestamps (NaN / +-inf). A malformed loader value
-        # would otherwise poison min()/max() in _trace_time_bounds and make
-        # rng.uniform(lo, hi) raise OverflowError out of __init__. Treating it
-        # as absent lets the trace use its remaining finite timestamps (or
-        # fall back to the timestamp-less split).
-        return v if math.isfinite(v) else None
+        return float(value)
     return None
 
 
