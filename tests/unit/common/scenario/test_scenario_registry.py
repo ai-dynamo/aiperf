@@ -17,6 +17,12 @@ def test_inferencex_agentx_mvp_registered():
     assert spec.require_loader == (
         "semianalysis_cc_traces_weka_with_subagents",
         "semianalysis_cc_traces_weka_with_subagents_256k",
+        "semianalysis_cc_traces_weka_with_subagents_060226",
+        "semianalysis_cc_traces_weka_with_subagents_060226_256k",
+        "semianalysis_cc_traces_weka_with_subagents_060526",
+        "semianalysis_cc_traces_weka_with_subagents_060526_256k",
+        "semianalysis_cc_traces_weka_with_subagents_060826",
+        "semianalysis_cc_traces_weka_with_subagents_060826_256k",
         "weka_trace",
         "weka_hf",
     )
