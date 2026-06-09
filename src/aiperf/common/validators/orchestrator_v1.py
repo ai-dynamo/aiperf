@@ -38,6 +38,56 @@ def _check_prereq_fields(prereq: TurnPrerequisite, loc: str) -> None:
         )
 
 
+def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
+    """Reject any cycle in the spawn graph.
+
+    Each branch's ``child_conversation_ids`` are directed edges (the
+    declaring conversation -> each child conversation). The v1 orchestrator
+    spawns children recursively at ``agent_depth + 1`` with no cycle guard,
+    so a self-spawn (``r -> r``) or any spawn cycle (``r -> c -> r``) would
+    recurse without bound at replay time. Detected here at load time via an
+    iterative DFS so a deep acyclic chain cannot overflow the stack.
+    """
+    spawn_edges: dict[str, set[str]] = {}
+    for conv in metadata.conversations:
+        for branch in conv.branches:
+            spawn_edges.setdefault(conv.conversation_id, set()).update(
+                branch.child_conversation_ids
+            )
+
+    # color: absent=unvisited, 1=on current DFS path, 2=fully explored.
+    color: dict[str, int] = {}
+    for start in spawn_edges:
+        if color.get(start, 0) != 0:
+            continue
+        color[start] = 1
+        path = [start]
+        stack = [(start, iter(sorted(spawn_edges.get(start, ()))))]
+        while stack:
+            node, neighbors = stack[-1]
+            descended = False
+            for nxt in neighbors:
+                state = color.get(nxt, 0)
+                if state == 1:
+                    cycle = path[path.index(nxt) :] + [nxt]
+                    raise NotImplementedError(
+                        f"spawn graph contains a cycle ({' -> '.join(cycle)}); "
+                        f"the v1 orchestrator spawns children recursively with "
+                        f"no acyclicity guard, so a cyclic spawn graph would "
+                        f"recurse without bound"
+                    )
+                if state == 0:
+                    color[nxt] = 1
+                    path.append(nxt)
+                    stack.append((nxt, iter(sorted(spawn_edges.get(nxt, ())))))
+                    descended = True
+                    break
+            if not descended:
+                color[node] = 2
+                stack.pop()
+                path.pop()
+
+
 def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
     """Raise NotImplementedError for any construct v1 cannot honor.
 
@@ -45,6 +95,10 @@ def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
     """
     supported_modes = {ConversationBranchMode.FORK, ConversationBranchMode.SPAWN}
     all_conversation_ids = {c.conversation_id for c in metadata.conversations}
+
+    # Reject self-spawn / cyclic spawn graphs up front (v1 has no runtime
+    # acyclicity guard, so a cycle recurses without bound).
+    _assert_spawn_graph_acyclic(metadata)
 
     for conv in metadata.conversations:
         branch_ids_by_turn: dict[int, list[str]] = {}
@@ -67,7 +121,37 @@ def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
                     )
                 seen.add(b_id)
 
+        # Duplicate branch *descriptor* check: two ConversationBranchInfo
+        # objects in one conversation sharing a branch_id silently collapse
+        # under the dict-comp below (and in the orchestrator), dropping all
+        # but the last and never spawning the dropped branch's children.
+        seen_branch_descriptor_ids: set[str] = set()
+        for b in conv.branches:
+            if b.branch_id in seen_branch_descriptor_ids:
+                raise NotImplementedError(
+                    f"conversation '{conv.conversation_id}': branch_id "
+                    f"'{b.branch_id}' is declared by multiple "
+                    f"ConversationBranchInfo objects; each branch_id must map "
+                    f"to a single branch descriptor"
+                )
+            seen_branch_descriptor_ids.add(b.branch_id)
+
         branches_by_id = {b.branch_id: b for b in conv.branches}
+
+        # Dangling branch_id check: every branch_id declared on a turn's
+        # branch_ids must resolve to a ConversationBranchInfo, otherwise the
+        # orchestrator's branches_by_id.get(b_id) returns None and the
+        # authored branch silently never spawns.
+        for decl_idx, branch_ids in branch_ids_by_turn.items():
+            for b_id in branch_ids:
+                if b_id not in branches_by_id:
+                    raise NotImplementedError(
+                        f"conversation '{conv.conversation_id}' turn "
+                        f"{decl_idx}: branch_id '{b_id}' is declared in "
+                        f"branch_ids but has no matching ConversationBranchInfo; "
+                        f"every declared branch_id must resolve to a branch "
+                        f"descriptor"
+                    )
 
         # Map each branch_id to the earliest turn that declares it, for
         # enforcing strictly-prior-turn spawn references below.
