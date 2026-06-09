@@ -91,6 +91,10 @@ class CreditContext(
         returned: True if the credit was returned after completion.
         first_token_sent: True if the first token was sent before this return.
         error: The error message if the request failed (None on success).
+        record_emitted: True once an inference record has been pushed for this
+            credit. Used to keep the records-side count in lockstep with the
+            credit-side count: a completed (non-cancelled) credit with no
+            record would hang the RecordsManager completion barrier.
     """
 
     credit: Credit
@@ -99,6 +103,7 @@ class CreditContext(
     returned: bool = False
     first_token_sent: bool = False
     error: str | None = None
+    record_emitted: bool = False
 
 
 # =============================================================================
@@ -124,6 +129,14 @@ class TurnToSend(Struct, frozen=True):
     parent_correlation_id: str | None = None
     counts_toward_phase_target: bool = True
     """Whether this turn can satisfy the phase's planned send target."""
+    is_session_start: bool = False
+    """True when this credit begins a new root-session occupancy in the phase
+    and must acquire a session slot + bump ``sent_sessions``, even when
+    ``turn_index > 0``. Agentic replay resumes a sampled trajectory mid-trace
+    (warmup at k_i, profiling at k_i+1), so its first credit is a session start
+    despite a non-zero ``turn_index``. ``turn_index == 0`` always implies a
+    session start regardless of this flag. A mid-trace session start can only
+    legitimately occur during a phase's initial dispatch (execute_phase)."""
     has_forks: bool = False
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 

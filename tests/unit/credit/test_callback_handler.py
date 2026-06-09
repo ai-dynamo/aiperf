@@ -169,6 +169,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             False,  # cancelled=False
+            errored=False,
             is_child=False,
         )
 
@@ -184,6 +185,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             True,  # cancelled=True
+            errored=False,
             is_child=False,
         )
 
@@ -393,7 +395,7 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled, is_child=False
+            credit.is_final_turn, cancelled, errored=False, is_child=False
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()

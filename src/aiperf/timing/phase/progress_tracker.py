@@ -106,6 +106,7 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
+        errored: bool = False,
         *,
         is_child: bool = False,
     ) -> bool:
@@ -114,6 +115,8 @@ class PhaseProgressTracker:
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
+            errored: Whether the request returned with a non-None error. Bumps
+                ``request_errors`` (request-level; ticks for children too).
             is_child: True when the returned credit is a DAG descendant
                 (``credit.agent_depth > 0``). Child returns bump the
                 request-level counters (``requests_completed`` /
@@ -136,7 +139,7 @@ class PhaseProgressTracker:
         checking lifecycle.is_complete before calling this method.
         """
         return self._counter.increment_returned(
-            is_final_turn, cancelled, is_child=is_child
+            is_final_turn, cancelled, errored=errored, is_child=is_child
         )
 
     def increment_prefill_released(self) -> None:
