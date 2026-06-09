@@ -319,6 +319,43 @@ class TestHistogramTimeSeries:
         assert bucket_dict["0.1"] == 0.0
         assert bucket_dict["1.0"] == 20.0
 
+    def test_bucket_schema_mismatch_warns_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that repeated schema mismatches emit only one warning per series."""
+        series = HistogramTimeSeries()
+        series.append(
+            1000,
+            MetricSample(buckets={"0.1": 5.0, "+Inf": 10.0}, sum=5.0, count=10.0),
+        )
+
+        with caplog.at_level("WARNING", logger="aiperf.server_metrics.storage"):
+            series.append(
+                2000,
+                MetricSample(
+                    buckets={"0.1": 10.0, "1.0": 15.0, "+Inf": 20.0},
+                    sum=10.0,
+                    count=20.0,
+                ),
+            )
+            series.append(
+                3000,
+                MetricSample(
+                    buckets={"0.1": 15.0, "1.0": 20.0, "+Inf": 30.0},
+                    sum=15.0,
+                    count=30.0,
+                ),
+            )
+
+        warnings = [
+            record
+            for record in caplog.records
+            if "Histogram bucket schema mismatch" in record.message
+        ]
+        assert len(warnings) == 1
+        assert "Further schema mismatch warnings" in warnings[0].message
+        assert series.get_bucket_dict(2) == {"0.1": 15.0, "+Inf": 30.0}
+
     def test_get_indices_for_filter_no_filter(self) -> None:
         """Test get_indices_for_filter with no filter."""
         series = HistogramTimeSeries()

@@ -183,6 +183,7 @@ async def test_realtime_task_reuses_precomputed_snapshot_without_duplicate_colle
 ) -> None:
     phase_stats = PhaseRecordsStats(
         phase=CreditPhase.PROFILING,
+        start_ns=1234,
         success_records=2,
     )
     manager = _make_realtime_task_manager(
@@ -192,7 +193,7 @@ async def test_realtime_task_reuses_precomputed_snapshot_without_duplicate_colle
 
     await _run_one_realtime_task_tick(manager, monkeypatch)
 
-    manager._collect_realtime_server_snapshot.assert_called_once_with()
+    manager._collect_realtime_server_snapshot.assert_called_once_with(start_ns=1234)
     manager._report_realtime_metrics.assert_awaited_once_with(
         server_snapshot={"num_running": 2.0}
     )
