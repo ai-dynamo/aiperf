@@ -8,6 +8,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
+from aiperf.common import random_generator as rng
 from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
@@ -104,6 +105,8 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
         self._branch_orchestrator = branch_orchestrator
+        # Per-session start-ratio sampling for mid-conversation seeding.
+        self._trajectory_rng = rng.derive("timing.trajectory_start")
 
         # Queue for subsequent turns (turn_index > 0) waiting to be issued.
         # Populated by handle_credit_return when workers complete turns.
@@ -128,16 +131,21 @@ class RequestRateStrategy(AIPerfLoggerMixin):
     def _build_start_turn(self, session: SampledSession) -> TurnToSend:
         """Build the start turn for a newly sampled session.
 
-        Applies mid-conversation seeding when ``seed_turn_fraction`` is set for
-        this phase: the session begins at turn ``floor(fraction * num_turns)``
-        with the earlier turns reconstructed as synthetic history worker-side.
-        Falls back to a normal turn-0 start when seeding is disabled or the
-        fraction rounds down to 0 (short sessions).
+        Applies mid-conversation seeding when ``trajectory_start_max_ratio`` is
+        set for this phase: a start ratio is sampled uniformly in
+        ``[trajectory_start_min_ratio, trajectory_start_max_ratio]`` and the
+        session begins at turn ``floor(ratio * num_turns)``, with the earlier
+        turns reconstructed as synthetic history worker-side. Falls back to a
+        normal turn-0 start when seeding is disabled or the ratio rounds down to
+        0 (short sessions).
         """
-        fraction = self._config.seed_turn_fraction
-        if fraction <= 0.0:
+        max_ratio = self._config.trajectory_start_max_ratio
+        if max_ratio <= 0.0:
             return session.build_first_turn()
-        start_turn_index = int(fraction * len(session.metadata.turns))
+        ratio = self._trajectory_rng.uniform(
+            self._config.trajectory_start_min_ratio, max_ratio
+        )
+        start_turn_index = int(ratio * len(session.metadata.turns))
         return session.build_seeded_turn(start_turn_index)
 
     async def execute_phase(self) -> None:

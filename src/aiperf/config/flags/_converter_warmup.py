@@ -128,6 +128,14 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
                 "--warmup-duration to enable a duration-bounded warmup with "
                 "the grace period, or drop --warmup-grace-period."
             )
+        if {"trajectory_start_min_ratio", "trajectory_start_max_ratio"} & s:
+            raise ValueError(
+                "--trajectory-start-min-ratio / --trajectory-start-max-ratio were "
+                "supplied without any warmup trigger; mid-conversation seeding runs "
+                "only during warmup. Add --warmup-duration (or --warmup-request-count "
+                "/ --warmup-num-sessions) to enable a warmup phase, or drop the "
+                "trajectory-start flags."
+            )
         return None
     w: dict[str, Any] = {"exclude_from_results": True}
     _warmup_count_field(w, cli)
@@ -137,8 +145,10 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
         w["prefill_concurrency"] = cli.warmup_prefill_concurrency
     elif "prefill_concurrency" in s:
         w["prefill_concurrency"] = cli.prefill_concurrency
-    if "warmup_seed_turn_fraction" in s:
-        w["seed_turn_fraction"] = cli.warmup_seed_turn_fraction
+    if "trajectory_start_min_ratio" in s:
+        w["trajectory_start_min_ratio"] = cli.trajectory_start_min_ratio
+    if "trajectory_start_max_ratio" in s:
+        w["trajectory_start_max_ratio"] = cli.trajectory_start_max_ratio
     if cli.warmup_grace_period is not None:
         # grace_period is a duration-phase concept (a tail on top of ``duration``);
         # PhaseConfig rejects it without ``duration`` set. Raise a targeted error

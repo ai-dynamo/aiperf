@@ -1177,12 +1177,20 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
-                    "seedTurnFraction": {
+                    "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
-                      "title": "Seedturnfraction",
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
                       "type": "number"
                     },
                     "gracePeriod": {
@@ -1528,12 +1536,20 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
-                    "seedTurnFraction": {
+                    "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
-                      "title": "Seedturnfraction",
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
                       "type": "number"
                     },
                     "gracePeriod": {
@@ -1947,12 +1963,20 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
-                    "seedTurnFraction": {
+                    "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
-                      "title": "Seedturnfraction",
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
                       "type": "number"
                     },
                     "gracePeriod": {
@@ -2380,12 +2404,20 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
-                    "seedTurnFraction": {
+                    "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
-                      "title": "Seedturnfraction",
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
                       "type": "number"
                     },
                     "gracePeriod": {
@@ -2799,12 +2831,20 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
-                    "seedTurnFraction": {
+                    "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
-                      "title": "Seedturnfraction",
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
                       "type": "number"
                     },
                     "gracePeriod": {
@@ -3195,12 +3235,20 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
-                    "seedTurnFraction": {
+                    "trajectoryStartMinRatio": {
                       "default": 0.0,
-                      "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                       "exclusiveMaximum": 1.0,
                       "minimum": 0.0,
-                      "title": "Seedturnfraction",
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
                       "type": "number"
                     },
                     "gracePeriod": {
@@ -4266,12 +4314,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -4617,12 +4673,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -5036,12 +5100,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -5469,12 +5541,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -5888,12 +5968,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -6284,12 +6372,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -6675,12 +6771,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -7026,12 +7130,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -7445,12 +7557,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -7878,12 +7998,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -8297,12 +8425,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -8693,12 +8829,20 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
-                "seedTurnFraction": {
+                "trajectoryStartMinRatio": {
                   "default": 0.0,
-                  "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
                   "exclusiveMaximum": 1.0,
                   "minimum": 0.0,
-                  "title": "Seedturnfraction",
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
                   "type": "number"
                 },
                 "gracePeriod": {
@@ -9400,17 +9544,43 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "seedTurnFraction": {
+        "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
-          "title": "Seedturnfraction",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
-              "title": "Seedturnfraction",
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
               "type": "number"
             },
             {
@@ -9991,17 +10161,43 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "seedTurnFraction": {
+        "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
-          "title": "Seedturnfraction",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
-              "title": "Seedturnfraction",
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
               "type": "number"
             },
             {
@@ -11783,17 +11979,43 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "seedTurnFraction": {
+        "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
-          "title": "Seedturnfraction",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
-              "title": "Seedturnfraction",
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
               "type": "number"
             },
             {
@@ -12435,17 +12657,43 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "seedTurnFraction": {
+        "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
-          "title": "Seedturnfraction",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
-              "title": "Seedturnfraction",
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
               "type": "number"
             },
             {
@@ -14884,17 +15132,43 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "seedTurnFraction": {
+        "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
-          "title": "Seedturnfraction",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
-              "title": "Seedturnfraction",
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
               "type": "number"
             },
             {
@@ -18107,17 +18381,43 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "seedTurnFraction": {
+        "trajectoryStartMinRatio": {
           "default": 0.0,
-          "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
-          "title": "Seedturnfraction",
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.0,
-              "description": "Fraction of each session's turns to pre-seed as synthetic history before the session begins on the wire (0.0 = disabled). A session sampled for this phase starts at turn floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed as token-sized synthetic context so the in-flight context distribution reaches steady-state depth without replaying earlier turns. Intended for warmup priming; only valid for synthesized multi-turn datasets (DELTAS_WITHOUT_RESPONSES context mode).",
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
               "exclusiveMaximum": 1.0,
               "minimum": 0.0,
-              "title": "Seedturnfraction",
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
               "type": "number"
             },
             {

@@ -208,20 +208,26 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     # Mid-conversation seeding (warmup priming)
     # -------------------------------------------------------------------------
 
-    seed_turn_fraction: Annotated[
+    trajectory_start_min_ratio: Annotated[
         float,
         Field(
             ge=0.0,
             lt=1.0,
             default=0.0,
-            description="Fraction of each session's turns to pre-seed as synthetic "
-            "history before the session begins on the wire (0.0 = disabled). A "
-            "session sampled for this phase starts at turn "
-            "floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed "
-            "as token-sized synthetic context so the in-flight context distribution "
-            "reaches steady-state depth without replaying earlier turns. Intended "
-            "for warmup priming; only valid for synthesized multi-turn datasets "
-            "(DELTAS_WITHOUT_RESPONSES context mode).",
+            description="Lower bound of the per-session start-ratio range for "
+            "mid-conversation seeding (ratio ~ Uniform[min, max]); the session "
+            "starts at turn floor(ratio * num_turns) with prior turns synthesized "
+            "as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+        ),
+    ]
+
+    trajectory_start_max_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            lt=1.0,
+            default=0.0,
+            description="Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
         ),
     ]
 
@@ -336,6 +342,12 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         if self.grace_period is not None and self.duration is None:
             raise ValueError(
                 f"Phase '{self.name}': grace_period requires duration to be set"
+            )
+        if self.trajectory_start_min_ratio > self.trajectory_start_max_ratio:
+            raise ValueError(
+                f"Phase '{self.name}': trajectory_start_min_ratio "
+                f"({self.trajectory_start_min_ratio}) must be <= "
+                f"trajectory_start_max_ratio ({self.trajectory_start_max_ratio})"
             )
         return self
 

@@ -256,9 +256,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def _compute_seed_enabled(self) -> bool:
         """True if any configured phase requests mid-conversation seeding.
 
-        Checks ``seed_turn_fraction`` across warmup and profiling phases. When
-        true, ``_finalize_turn`` attaches a synthetic assistant placeholder to
-        each turn for later worker-side history hydration.
+        Checks ``trajectory_start_max_ratio`` across warmup and profiling
+        phases. When true, ``_finalize_turn`` attaches a synthetic assistant
+        placeholder to each turn for later worker-side history hydration.
         """
         cfg = self.run.cfg
         phases: list = []
@@ -266,7 +266,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             fn = getattr(cfg, getter, None)
             if callable(fn):
                 phases.extend(fn())
-        return any(getattr(p, "seed_turn_fraction", 0.0) > 0.0 for p in phases)
+        return any(getattr(p, "trajectory_start_max_ratio", 0.0) > 0.0 for p in phases)
 
     def _set_seed_response(self, turn: Turn) -> None:
         """Attach a token-sized synthetic assistant placeholder to the turn.
