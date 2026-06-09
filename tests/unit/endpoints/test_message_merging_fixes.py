@@ -373,6 +373,33 @@ class TestChatDeDupsLeadingSystem:
         assert systems[0]["content"] == "warmup\nauthored system"
         assert authored[0]["content"] == "authored system"
 
+    def test_warmup_marker_merges_into_raw_messages_leading_system_list_content(
+        self, chat_endpoint
+    ):
+        authored = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "authored system"}],
+            },
+            {"role": "user", "content": "hi"},
+        ]
+        turn = Turn(role="user", raw_messages=authored)
+        request_info = create_request_info(
+            model_endpoint=chat_endpoint.model_endpoint,
+            turns=[turn],
+            credit_phase=CreditPhase.WARMUP,
+            system_message="warmup",
+        )
+        payload = chat_endpoint.format_payload(request_info)
+
+        systems = [m for m in payload["messages"] if m["role"] == "system"]
+        assert len(systems) == 1
+        assert systems[0]["content"] == [
+            {"type": "text", "text": "warmup"},
+            {"type": "text", "text": "authored system"},
+        ]
+        assert authored[0]["content"] == [{"type": "text", "text": "authored system"}]
+
 
 # ---------------------------------------------------------------------------
 # P3 #12: raw_messages truthiness (empty list falls back to synthesis)

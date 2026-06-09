@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-WARMUP_SYSTEM_MESSAGE_PREFIX = CreditPhase.WARMUP.value
+WARMUP_SYSTEM_MESSAGE_PREFIX = CreditPhase.WARMUP
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
