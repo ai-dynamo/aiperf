@@ -495,6 +495,7 @@ class HistogramTimeSeries:
         self._size: int = 0
         self._bucket_les: tuple[str, ...] | None = None
         self._bucket_counts: np.ndarray | None = None
+        self._bucket_schema_mismatch_warned = False
         self._logger = logging.getLogger(__name__)
 
     def append(self, timestamp_ns: int, sample: MetricSample) -> None:
@@ -538,20 +539,9 @@ class HistogramTimeSeries:
         expected_bucket_keys = set(self._bucket_les)
 
         if sample_bucket_keys != expected_bucket_keys:
-            missing_in_sample = expected_bucket_keys - sample_bucket_keys
-            extra_in_sample = sample_bucket_keys - expected_bucket_keys
-
-            if missing_in_sample:
-                self._logger.warning(
-                    f"Histogram bucket schema mismatch: sample is missing buckets {sorted(missing_in_sample)}. "
-                    f"Missing buckets will be filled with 0.0. Expected schema: {self._bucket_les}"
-                )
-
-            if extra_in_sample:
-                self._logger.warning(
-                    f"Histogram bucket schema mismatch: sample has unexpected buckets {sorted(extra_in_sample)}. "
-                    f"Extra buckets will be ignored. Expected schema: {self._bucket_les}"
-                )
+            self._warn_on_bucket_schema_mismatch(
+                sample_bucket_keys, expected_bucket_keys
+            )
 
         # Convert dict to row (order matches _bucket_les, 0.0 for missing buckets)
         bucket_row = np.array([sample.buckets.get(le, 0.0) for le in self._bucket_les])
@@ -600,6 +590,33 @@ class HistogramTimeSeries:
         self._counts[idx] = sample.count or 0.0
         self._bucket_counts[idx] = bucket_row
         self._size += 1
+
+    def _warn_on_bucket_schema_mismatch(
+        self, sample_bucket_keys: set[str], expected_bucket_keys: set[str]
+    ) -> None:
+        if self._bucket_schema_mismatch_warned:
+            return
+
+        missing_in_sample = expected_bucket_keys - sample_bucket_keys
+        extra_in_sample = sample_bucket_keys - expected_bucket_keys
+        mismatch_details: list[str] = []
+
+        if missing_in_sample:
+            mismatch_details.append(
+                f"Histogram bucket schema mismatch: sample is missing buckets {sorted(missing_in_sample)}. "
+                "Missing buckets will be filled with 0.0."
+            )
+        if extra_in_sample:
+            mismatch_details.append(
+                f"Histogram bucket schema mismatch: sample has unexpected buckets {sorted(extra_in_sample)}. "
+                "Extra buckets will be ignored."
+            )
+
+        self._logger.warning(
+            f"{' '.join(mismatch_details)} Expected schema: {self._bucket_les}. "
+            "Further schema mismatch warnings for this histogram series will be suppressed."
+        )
+        self._bucket_schema_mismatch_warned = True
 
     def get_bucket_dict(self, idx: int) -> dict[str, float]:
         """Get bucket snapshot at index as dict for percentile estimation.
