@@ -199,6 +199,14 @@ class CreditPhaseConfig(AIPerfBaseModel):
         "This is the max number of requests that can be waiting for the first token at once. "
         "If None, the prefill concurrency is unlimited.",
     )
+    seed_turn_fraction: float = Field(
+        default=0.0,
+        ge=0.0,
+        lt=1.0,
+        description="Fraction of each session's turns to pre-seed as synthetic history "
+        "before the session begins on the wire (0.0 = disabled). New sessions in this "
+        "phase start at turn floor(seed_turn_fraction * num_turns).",
+    )
     request_rate: float | None = Field(
         default=None, gt=0, description="The request rate of the credit phase."
     )
@@ -467,6 +475,7 @@ def _build_warmup_config(
         arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=False,
         grace_period_sec=grace_period,
+        seed_turn_fraction=phase.seed_turn_fraction,
         concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
         prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),
         request_rate_ramp_duration_sec=_ramp_duration(
@@ -509,6 +518,7 @@ def _build_profiling_config(
         arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=phase.seamless,
         grace_period_sec=phase.grace_period,
+        seed_turn_fraction=phase.seed_turn_fraction,
         num_users=getattr(phase, "users", None),
         concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
         prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),

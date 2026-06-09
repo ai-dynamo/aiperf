@@ -205,6 +205,27 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     ]
 
     # -------------------------------------------------------------------------
+    # Mid-conversation seeding (warmup priming)
+    # -------------------------------------------------------------------------
+
+    seed_turn_fraction: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            lt=1.0,
+            default=0.0,
+            description="Fraction of each session's turns to pre-seed as synthetic "
+            "history before the session begins on the wire (0.0 = disabled). A "
+            "session sampled for this phase starts at turn "
+            "floor(seed_turn_fraction * num_turns); turns [0, k) are reconstructed "
+            "as token-sized synthetic context so the in-flight context distribution "
+            "reaches steady-state depth without replaying earlier turns. Intended "
+            "for warmup priming; only valid for synthesized multi-turn datasets "
+            "(DELTAS_WITHOUT_RESPONSES context mode).",
+        ),
+    ]
+
+    # -------------------------------------------------------------------------
     # Transition Settings
     # -------------------------------------------------------------------------
 

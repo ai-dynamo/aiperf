@@ -85,6 +85,13 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         self.turn_count = 0
 
+        # When any phase requests mid-conversation seeding, every turn gets a
+        # token-sized synthetic assistant placeholder (Turn.seed_response) so a
+        # session seeded at turn k can reconstruct turns [0, k) as history
+        # without replaying them. Computed once; off by default to avoid the
+        # extra per-turn text generation on non-seeded runs.
+        self._seed_enabled = self._compute_seed_enabled()
+
         # ``PromptConfig.sequence_distribution`` is a
         # ``list[SequenceDistributionEntry]`` of typed ``SamplingDistribution``
         # objects. Convert each entry directly to a ``SequenceLengthPair``
@@ -246,12 +253,49 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                     osl_mean, osl_stddev
                 )
 
+    def _compute_seed_enabled(self) -> bool:
+        """True if any configured phase requests mid-conversation seeding.
+
+        Checks ``seed_turn_fraction`` across warmup and profiling phases. When
+        true, ``_finalize_turn`` attaches a synthetic assistant placeholder to
+        each turn for later worker-side history hydration.
+        """
+        cfg = self.run.cfg
+        phases: list = []
+        for getter in ("get_warmup_phases", "get_profiling_phases"):
+            fn = getattr(cfg, getter, None)
+            if callable(fn):
+                phases.extend(fn())
+        return any(getattr(p, "seed_turn_fraction", 0.0) > 0.0 for p in phases)
+
+    def _set_seed_response(self, turn: Turn) -> None:
+        """Attach a token-sized synthetic assistant placeholder to the turn.
+
+        Used only when seeding is enabled. Sized to the turn's ``max_tokens``
+        (its output length) and shaped like a captured response (role
+        'assistant' + raw_messages) so ``build_messages`` renders it identically
+        when reconstructing seeded history. No-op without a prompt generator,
+        without a resolved ``max_tokens``, or if one is already set.
+        """
+        if (
+            turn.seed_response is not None
+            or turn.max_tokens is None
+            or self.prompt_generator is None
+        ):
+            return
+        text = self.prompt_generator.generate_prompt(turn.max_tokens)
+        turn.seed_response = Turn(
+            role="assistant",
+            raw_messages=[{"role": "assistant", "content": text}],
+        )
+
     def _finalize_turn(self, turn: Turn) -> None:
         """Finalize a turn by populating all required metadata fields.
 
         This method handles:
         - Model name selection
         - Max tokens sampling based on output configuration
+        - Synthetic seed-response generation when seeding is enabled
         - Any other turn-level metadata that needs to be set
 
         Args:
@@ -260,6 +304,8 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         if turn.model is None:
             turn.model = self._select_model_name()
         self._set_max_tokens(turn)
+        if self._seed_enabled:
+            self._set_seed_response(turn)
 
         # Clear cached sequence lengths for this turn to free memory
         turn_id = id(turn)

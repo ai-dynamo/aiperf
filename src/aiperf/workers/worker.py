@@ -527,13 +527,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
                 self._pin_parent_if_fork_child(credit, x_correlation_id)
                 self._seed_from_parent_if_fork_child(credit, x_correlation_id)
-                # Session seeded mid-conversation (start_turn_index > 0):
-                # reconstruct turns [0, k) as synthetic history so the
-                # accumulated context starts at its steady-state depth.
-                if credit_context.credit.start_turn_index > 0:
-                    session.hydrate_seed_history(
-                        credit_context.credit.start_turn_index
-                    )
+                self._hydrate_seed_history_if_seeded(credit, session)
 
             session.advance_turn(credit_context.credit.turn_index)
 
@@ -795,6 +789,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.session_manager.seed_from_parent(
             x_correlation_id, credit.parent_correlation_id
         )
+
+    def _hydrate_seed_history_if_seeded(
+        self, credit: Credit, session: UserSession
+    ) -> None:
+        """Reconstruct synthetic history for a session seeded mid-conversation.
+
+        No-op for normal sessions (start_turn_index == 0). For start_turn_index
+        = k > 0, prepends synthetic (user, assistant) pairs for turns [0, k) so
+        the session's accumulated context starts at its turn-k depth without
+        replaying the earlier turns on the wire. Called once at session
+        creation, before the first ``advance_turn``.
+        """
+        if credit.start_turn_index > 0:
+            session.hydrate_seed_history(credit.start_turn_index)
 
     def _release_and_evict_for_terminal(
         self, credit: Credit, x_correlation_id: str

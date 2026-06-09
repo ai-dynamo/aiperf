@@ -178,6 +178,7 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "warmup_request_count",
         "warmup_request_rate",
         "warmup_request_rate_ramp_duration",
+        "warmup_seed_turn_fraction",
     }
 )
 

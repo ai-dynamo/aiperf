@@ -2069,6 +2069,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    warmup_seed_turn_fraction: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            lt=1.0,
+            description="Fraction of each session's turns to pre-seed as synthetic "
+            "history during warmup, so warmup sessions begin at turn "
+            "floor(fraction * num_turns) and the in-flight context distribution "
+            "reaches steady-state depth without replaying the earlier turns. "
+            "Only valid for synthesized multi-turn datasets. If not set, no seeding.",
+        ),
+        CLIParameter(
+            name=("--warmup-seed-turn-fraction",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
     warmup_prefill_concurrency: Annotated[
         int | None,
         Field(

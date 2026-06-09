@@ -1025,6 +1025,11 @@ The number of sessions to use for the warmup phase. If not set, it will use the 
 The concurrency value to use for the warmup phase. If not set, it will use the `--concurrency` value.
 <br/>_Constraints: ≥ 1_
 
+#### `--warmup-seed-turn-fraction` `<float>`
+
+Fraction of each session's turns to pre-seed as synthetic history during warmup, so warmup sessions begin at turn floor(fraction * num_turns) and the in-flight context distribution reaches steady-state depth without replaying the earlier turns. Only valid for synthesized multi-turn datasets. If not set, no seeding.
+<br/>_Constraints: ≥ 0.0, &lt; 1.0_
+
 #### `--warmup-prefill-concurrency` `<int>`
 
 The prefill concurrency value to use for the warmup phase. If not set, it will use the `--prefill-concurrency` value.
@@ -2465,6 +2470,11 @@ The number of sessions to use for the warmup phase. If not set, it will use the 
 
 The concurrency value to use for the warmup phase. If not set, it will use the `--concurrency` value.
 <br/>_Constraints: ≥ 1_
+
+#### `--warmup-seed-turn-fraction` `<float>`
+
+Fraction of each session's turns to pre-seed as synthetic history during warmup, so warmup sessions begin at turn floor(fraction * num_turns) and the in-flight context distribution reaches steady-state depth without replaying the earlier turns. Only valid for synthesized multi-turn datasets. If not set, no seeding.
+<br/>_Constraints: ≥ 0.0, &lt; 1.0_
 
 #### `--warmup-prefill-concurrency` `<int>`
 
