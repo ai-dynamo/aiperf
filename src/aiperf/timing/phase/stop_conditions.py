@@ -175,10 +175,19 @@ class SessionCountStopCondition(StopCondition):
 
         True when either: session limit not reached (can start new sessions),
         OR already-started sessions still have unsent turns remaining.
+
+        The unsent-turns comparison uses ``root_requests_sent`` (not
+        ``requests_sent``) to stay in lockstep with
+        ``CreditCounter.increment_sent``'s ``is_final_credit`` predicate, which
+        also compares root-only sends against ``total_session_turns``. DAG
+        children inflate ``requests_sent`` but inherit the parent's session slot
+        and add no root turns; using the global count here would close the gate
+        on a multi-turn root's remaining continuations (silently dropped in
+        ``CreditCallbackHandler``) while ``is_final_credit`` never fires.
         """
         return (
             self._counter.sent_sessions < self._config.expected_num_sessions
-            or self._counter.requests_sent < self._counter.total_session_turns
+            or self._counter.root_requests_sent < self._counter.total_session_turns
         )
 
     def can_start_new_session(self) -> bool:

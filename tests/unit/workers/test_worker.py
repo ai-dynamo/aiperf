@@ -470,6 +470,12 @@ class TestWorkerCreditRecordLockstep:
         send_record.assert_awaited_once()
         emitted_record = send_record.await_args.args[0]
         assert emitted_record.error is not None
+        # The synthetic error must also be surfaced on the CreditReturn so
+        # increment_returned(..., errored=...) counts it; otherwise the forwarded
+        # error record is invisible to the phase-complete request_errors log line.
+        assert sample_credit_context.error is not None
+        credit_return = credit_send.await_args.args[0]
+        assert credit_return.error is not None
 
     async def test_cancelled_credit_does_not_emit_record(
         self, monkeypatch, mock_worker, sample_credit_context
