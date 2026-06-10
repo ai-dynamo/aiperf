@@ -99,6 +99,32 @@ def test_inject_marker_into_raw_messages_suffix():
     assert raw[0]["content"] == "you are helpful" + _SUFFIX_MARKER
 
 
+def test_inject_marker_into_raw_messages_prefix_idempotent():
+    """In DELTAS mode turn_list[0] is a single shared object re-visited every
+    credit; re-injecting the same marker must NOT stack it."""
+    raw = [{"role": "system", "content": "you are helpful"}]
+    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
+    assert raw[0]["content"] == _PREFIX_MARKER + "you are helpful"
+
+
+def test_inject_marker_into_raw_messages_suffix_idempotent():
+    raw = [{"role": "system", "content": "you are helpful"}]
+    _inject_marker_into_raw_messages(raw, _SUFFIX_MARKER, is_prefix=False)
+    _inject_marker_into_raw_messages(raw, _SUFFIX_MARKER, is_prefix=False)
+    assert raw[0]["content"] == "you are helpful" + _SUFFIX_MARKER
+
+
+def test_inject_marker_into_raw_messages_multimodal_idempotent():
+    raw = [{"role": "system", "content": [{"type": "text", "text": "hi"}]}]
+    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
+    assert raw[0]["content"] == [
+        {"type": "text", "text": _PREFIX_MARKER.strip()},
+        {"type": "text", "text": "hi"},
+    ]
+
+
 def test_inject_marker_no_system_role_is_noop():
     raw = [{"role": "user", "content": "hi"}]
     _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
@@ -630,3 +656,285 @@ def test_apply_system_prefix_no_system_under_deltas_falls_back_to_turn_0_user():
 
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
     assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
+
+
+# =============================================================================
+# reset_context re-injection (FIRST_TURN_*)
+# =============================================================================
+# A turn carrying ``reset_context=True`` makes the endpoint's build_messages
+# discard every accumulated prior turn and start the wire payload fresh from
+# that turn's raw_messages. The turn-0 marker is no longer in the effective
+# prefix, so the marker must be RE-APPLIED to the reset turn — otherwise every
+# recycled play of the trace replays a byte-identical post-reset prefix and the
+# server's prefix cache warms across plays (the exact thing cache-bust prevents).
+
+
+def _make_delta_session_with_resets(
+    turns_raw: list[list[dict] | None], reset_flags: list[bool]
+) -> UserSession:
+    """Like ``_make_delta_session`` but sets ``reset_context`` per turn."""
+    turns = [
+        Turn(raw_messages=raw, reset_context=reset)
+        for raw, reset in zip(turns_raw, reset_flags, strict=True)
+    ]
+    conversation = Conversation(session_id="conv_test", turns=list(turns))
+    return UserSession(
+        x_correlation_id="xcorr_test",
+        num_turns=len(turns),
+        conversation=conversation,
+        turn_list=list(turns),
+    )
+
+
+def test_first_turn_prefix_reapplied_on_reset_context_turn():
+    """FIRST_TURN_PREFIX at turn_index > 0 must inject into the reset turn (the
+    new wire prefix), not be skipped as it is for ordinary later turns."""
+    turn_0 = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "hi"},
+    ]
+    # Reset turn: build_messages discards turn 0 and starts here.
+    turn_1_reset = [
+        {"role": "system", "content": "fresh rules"},
+        {"role": "user", "content": "new prefix"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset], reset_flags=[False, True]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    # The reset turn's first user message carries the marker.
+    assert (
+        session.turn_list[1].raw_messages[1]["content"] == _PREFIX_MARKER + "new prefix"
+    )
+    # Turn 0 (discarded from the wire) is left untouched.
+    assert session.turn_list[0].raw_messages[1]["content"] == "hi"
+
+
+def test_first_turn_suffix_reapplied_on_reset_context_turn():
+    turn_0 = [{"role": "user", "content": "hi"}]
+    turn_1_reset = [{"role": "user", "content": "new prefix"}]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset], reset_flags=[False, True]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_SUFFIX,
+        marker=_SUFFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert (
+        session.turn_list[1].raw_messages[0]["content"] == "new prefix" + _SUFFIX_MARKER
+    )
+
+
+def test_first_turn_prefix_no_op_on_ordinary_later_turn():
+    """Regression guard: a non-reset turn at index > 0 stays a no-op (later
+    turns inherit the turn-0 marker via the server's prefix cache)."""
+    turn_0 = [{"role": "user", "content": "hi"}]
+    turn_1 = [
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "follow up"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1], reset_flags=[False, False]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == "hi"
+    assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
+
+
+def test_first_turn_prefix_reset_on_turn_zero_uses_turn_zero_path_once():
+    """A reset flag on turn 0 still resolves through the turn-0 path and injects
+    exactly once (no double application)."""
+    turn_0_reset = [{"role": "user", "content": "hi"}]
+    session = _make_delta_session_with_resets([turn_0_reset], reset_flags=[True])
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=0,
+        num_turns=1,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
+
+
+# =============================================================================
+# reset_context re-injection (SYSTEM_*)
+# =============================================================================
+# Same defect as FIRST_TURN_*, but for the SYSTEM_* sub-paths that mutate a
+# turn's raw_messages. Sub-path 1 (Conversation-level system_message) is safe
+# because the marker rides on RequestInfo.system_message and is re-emitted every
+# turn independent of build_messages' reset. Sub-paths 2 (raw role=="system" in
+# a turn) and 3 (no system -> first-user fallback) marked the discarded turn 0
+# instead of the reset turn's fresh prefix; these tests pin the fix.
+
+
+def test_system_prefix_reapplied_on_reset_turn_with_own_system():
+    """Sub-path 2 under reset: the reset turn's own system message (the new wire
+    prefix), not the discarded turn 0 system, must carry the marker."""
+    turn_0 = [
+        {"role": "system", "content": "S0"},
+        {"role": "user", "content": "u0"},
+    ]
+    turn_1_reset = [
+        {"role": "system", "content": "S1"},
+        {"role": "user", "content": "u1"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset], reset_flags=[False, True]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    out = _apply_cache_bust(session, credit, system_message=None)
+
+    assert out is None
+    assert session.turn_list[1].raw_messages[0]["content"] == _PREFIX_MARKER + "S1"
+    # Discarded turn 0 system left untouched on this credit.
+    assert session.turn_list[0].raw_messages[0]["content"] == "S0"
+
+
+def test_system_suffix_reapplied_on_reset_turn_with_own_system():
+    turn_0 = [{"role": "system", "content": "S0"}]
+    turn_1_reset = [
+        {"role": "system", "content": "S1"},
+        {"role": "user", "content": "u1"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset], reset_flags=[False, True]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_SUFFIX,
+        marker=_SUFFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[1].raw_messages[0]["content"] == "S1" + _SUFFIX_MARKER
+    assert session.turn_list[0].raw_messages[0]["content"] == "S0"
+
+
+def test_system_prefix_reset_no_system_falls_back_to_reset_turn_user():
+    """Sub-path 3 under reset: no system anywhere, so the marker falls back to
+    the reset turn's first user message (its new prefix), not turn 0's."""
+    turn_0 = [{"role": "user", "content": "u0"}]
+    turn_1_reset = [{"role": "user", "content": "u1"}]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset], reset_flags=[False, True]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[1].raw_messages[0]["content"] == _PREFIX_MARKER + "u1"
+    assert session.turn_list[0].raw_messages[0]["content"] == "u0"
+
+
+def test_system_prefix_subpath2_no_stacking_across_delta_turns():
+    """Sub-path 2 dispatch: under DELTAS the shared turn_list[0] system is
+    re-visited on every credit. The marker must be injected once and not stack
+    turn-over-turn (the original 'inject every turn' design stacked here)."""
+    turn_0 = [
+        {"role": "system", "content": "S0"},
+        {"role": "user", "content": "u0"},
+    ]
+    turn_1 = [
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "u1"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1], reset_flags=[False, False]
+    )
+
+    _apply_cache_bust(
+        session,
+        _make_credit(
+            target=CacheBustTarget.SYSTEM_PREFIX,
+            marker=_PREFIX_MARKER,
+            turn_index=0,
+            num_turns=2,
+        ),
+        system_message=None,
+    )
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "S0"
+
+    _apply_cache_bust(
+        session,
+        _make_credit(
+            target=CacheBustTarget.SYSTEM_PREFIX,
+            marker=_PREFIX_MARKER,
+            turn_index=1,
+            num_turns=2,
+        ),
+        system_message=None,
+    )
+    # Still exactly one marker, not stacked.
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "S0"
+
+
+def test_system_prefix_conversation_message_safe_under_reset():
+    """Sub-path 1 regression: a Conversation-level system_message is re-marked
+    every turn and rides on RequestInfo, so reset never strips it. The returned
+    string carries the marker and the raw turns stay untouched."""
+    turns = [
+        Turn(
+            raw_messages=[{"role": "user", "content": "u0"}],
+            reset_context=False,
+        ),
+        Turn(
+            raw_messages=[{"role": "user", "content": "u1"}],
+            reset_context=True,
+        ),
+    ]
+    conversation = Conversation(
+        session_id="conv_test", turns=list(turns), system_message="CONV"
+    )
+    session = UserSession(
+        x_correlation_id="xcorr_test",
+        num_turns=2,
+        conversation=conversation,
+        turn_list=list(turns),
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    out = _apply_cache_bust(session, credit, system_message="CONV")
+
+    assert out == _PREFIX_MARKER + "CONV"
+    assert session.turn_list[1].raw_messages[0]["content"] == "u1"
