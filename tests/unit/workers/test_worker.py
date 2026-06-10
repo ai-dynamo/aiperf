@@ -499,3 +499,34 @@ class TestWorkerCreditRecordLockstep:
         assert sample_credit_context.cancelled is True
         credit_send.assert_awaited_once()
         send_record.assert_not_awaited()
+
+    async def test_failure_record_emit_raising_still_returns_credit(
+        self, monkeypatch, mock_worker, sample_credit_context
+    ):
+        """The lockstep emit must never abort the credit return. If
+        _emit_credit_failure_record raises, the finally block must still send
+        the CreditReturn and set returned=True -- otherwise the done callback
+        returns the credit as completed-without-record and hangs the barrier
+        (the exact break the lockstep guard exists to prevent)."""
+        mock_worker._is_payload_bytes = False
+
+        async def boom(*args, **kwargs):
+            raise ValueError("processing failed before any record was emitted")
+
+        monkeypatch.setattr(mock_worker, "_process_credit_with_session", boom)
+
+        async def emit_boom(*args, **kwargs):
+            raise RuntimeError("inference results push socket closed")
+
+        monkeypatch.setattr(mock_worker, "_emit_credit_failure_record", emit_boom)
+        credit_send = AsyncMock()
+        monkeypatch.setattr(mock_worker.credit_dealer_client, "send", credit_send)
+
+        # Must not propagate out of the task handler.
+        await mock_worker._on_credit_drop_message_task(sample_credit_context)
+
+        # Credit is still returned (not cancelled) so concurrency accounting and
+        # the done-callback fallback stay consistent.
+        assert sample_credit_context.returned is True
+        assert sample_credit_context.cancelled is False
+        credit_send.assert_awaited_once()

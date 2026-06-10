@@ -669,8 +669,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # timeout) hangs waiting for it. If processing failed before any
             # record was emitted, forward an error record now. Cancelled credits
             # are excluded from the barrier target, so they need no record.
+            #
+            # The emit MUST NOT abort the credit return below: if it raised, the
+            # finally would exit early, ``returned`` would stay False, and the
+            # done callback would return the credit as completed anyway (no
+            # record emitted) -- the exact lockstep break this guards against.
+            # Contain the failure and always proceed to return the credit.
             if not credit_context.cancelled and not credit_context.record_emitted:
-                await self._emit_credit_failure_record(credit_context)
+                try:
+                    await self._emit_credit_failure_record(credit_context)
+                except Exception as e:  # noqa: BLE001
+                    self.exception(
+                        f"Failed to emit lockstep failure record for credit "
+                        f"{credit_context.credit.id}: {e!r}"
+                    )
             # ALWAYS return the credit here to ensure accurate tracking
             credit_return = CreditReturn(
                 credit=credit_context.credit,
