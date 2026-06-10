@@ -7,7 +7,7 @@
 
 This document catalogs every stubbed method in the accuracy benchmarking scaffolding. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline — the performance benchmarking path is unaffected.
 
-**Status summary:** All accuracy scaffolding is now implemented end-to-end. The seven graders (`MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `ExactMatchGrader`) and nine benchmark loaders (`MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, `BigBenchBenchmark`, `AIME24Benchmark`, `AIME25Benchmark`, `Math500Benchmark`, `GPQADiamondBenchmark`, `LCBCodeGenerationBenchmark`) are all wired into the plugin system, CLI, config pipeline, and processor/exporter chain. There are no remaining stubs.
+**Status summary:** All accuracy scaffolding is now implemented end-to-end. The eight graders (`MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `LightevalGSM8KGrader`, `ExactMatchGrader`) and ten benchmark loaders (`MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, `BigBenchBenchmark`, `AIME24Benchmark`, `AIME25Benchmark`, `Math500Benchmark`, `GPQADiamondBenchmark`, `LCBCodeGenerationBenchmark`, `GSM8KBenchmark`) are all wired into the plugin system, CLI, config pipeline, and processor/exporter chain. There are no remaining stubs.
 
 ## Table of Contents
 

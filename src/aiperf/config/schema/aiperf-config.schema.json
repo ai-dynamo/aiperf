@@ -26,6 +26,7 @@
         "aime24",
         "aime25",
         "math_500",
+        "gsm8k",
         "gpqa_diamond",
         "lcb_codegeneration"
       ],
@@ -149,7 +150,8 @@
         "code_execution",
         "lighteval_expr",
         "lighteval_latex",
-        "lighteval_gpqa"
+        "lighteval_gpqa",
+        "lighteval_gsm8k"
       ],
       "title": "AccuracyGraderType",
       "type": "string"
