@@ -34,6 +34,7 @@ def evaluate_tiers_on_grid(
     per_combination_metrics: list[dict[str, Any]],
     tiers: list[SLOTier],
     swept_param: str,
+    global_filters: list[Any] | None = None,
 ) -> list[TierResult]:
     """Evaluate all tiers at every grid point and derive per-tier boundaries.
 
@@ -49,6 +50,8 @@ def evaluate_tiers_on_grid(
         swept_param: Dotted path of the swept parameter (e.g.
             ``"phases.profiling.concurrency"``). Used to extract the grid
             point value from each combination's parameters.
+        global_filters: Optional list of global SLA filters that compose
+            with each tier's filters during evaluation.
 
     Returns:
         One :class:`TierResult` per tier with boundary derived from grid results.
@@ -67,7 +70,7 @@ def evaluate_tiers_on_grid(
     # Evaluate all tiers at every grid point
     results: list[TierResult] = []
     for tier in tiers:
-        tier_result = _evaluate_tier_on_grid(rows, tier, param_key)
+        tier_result = _evaluate_tier_on_grid(rows, tier, param_key, global_filters)
         results.append(tier_result)
 
     return results
@@ -87,11 +90,15 @@ def _evaluate_tier_on_grid(
     rows: list[dict[str, Any]],
     tier: SLOTier,
     param_key: str,
+    global_filters: list[Any] | None = None,
 ) -> TierResult:
     """Evaluate a single tier across all grid points and derive its boundary.
 
     Boundary = max passing grid point for this tier.
     """
+    # Compose filters
+    effective_filters = list(tier.filters) + (global_filters or [])
+
     max_passing: int | None = None
     min_failing: int | None = None
     binding_constraint: dict[str, Any] | None = None
@@ -102,7 +109,7 @@ def _evaluate_tier_on_grid(
         metrics = row.get("metrics") or {}
         points_evaluated += 1
 
-        passed, first_breach = _tier_passes(tier, metrics)
+        passed, first_breach = _tier_passes(effective_filters, metrics)
 
         if passed:
             int_value = int(float(value))
@@ -142,20 +149,20 @@ def _evaluate_tier_on_grid(
                 "op": f.op,
                 "threshold": f.threshold,
             }
-            for f in tier.filters
+            for f in effective_filters
         ],
     )
 
 
 def _tier_passes(
-    tier: SLOTier, metrics: dict[str, Any]
+    filters: list, metrics: dict[str, Any]
 ) -> tuple[bool, dict[str, Any] | None]:
-    """Check if all filters in a tier pass for a given metrics dict.
+    """Check if all filters pass for a given metrics dict.
 
     Returns (passed, first_breach) where first_breach is the first failing
     filter's details (or None if all passed).
     """
-    for f in tier.filters:
+    for f in filters:
         observed = read_metric_value(metrics, f.metric_tag, f.stat)
         if observed is None:
             return False, {

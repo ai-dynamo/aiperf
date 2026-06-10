@@ -341,7 +341,7 @@ class TestMultiTierEndToEnd:
             assert len(entry.results) == 1
 
     def test_tier_metadata_probe_count_matches_history(self) -> None:
-        """tier_metadata total_probe_count matches the sum of per-tier counts."""
+        """tier_metadata tier_evaluation_count matches the sum of per-tier counts."""
         planner = _make_planner()
         _drive_to_convergence(planner)
 
@@ -349,7 +349,7 @@ class TestMultiTierEndToEnd:
         results = planner.tier_results()
 
         per_tier_sum = sum(r.probe_count for r in results)
-        assert metadata["total_probe_count"] == per_tier_sum
+        assert metadata["tier_evaluation_count"] == per_tier_sum
 
     def test_max_iterations_produces_partial_results(self) -> None:
         """When max_iterations is exhausted, partial results are reported."""
@@ -462,3 +462,78 @@ class TestMultiTierEndToEnd:
         assert 35 <= boundaries["fast"].boundary_concurrency <= 39
         assert 75 <= boundaries["standard"].boundary_concurrency <= 79
         assert 89 <= boundaries["economy"].boundary_concurrency <= 93
+
+    def test_lenient_tier_passes_to_max_marked_no_failure_in_range(self) -> None:
+        """When a lenient tier passes at every probed concurrency up to hi,
+        it should be marked no_failure_in_range, not partial.
+
+        Uses throughput model: throughput = max(1, 500 - 20*c)
+        - fast (>300): boundary at c=9 (500-180=320>300, c=10: 500-200=300 not >300)
+        - economy (>30): c=23 would fail (500-460=40>30, c=24: 500-480=20<30)
+          but hi=20, so the tier passes at every concurrency in [1, 20].
+        """
+
+        def simulate_lenient(concurrency: int) -> float:
+            return max(1.0, 500.0 - 20.0 * concurrency)
+
+        tiers = [
+            SLOTier(
+                label="fast",
+                filters=[
+                    SLAFilter(
+                        metric_tag="output_token_throughput",
+                        stat="avg",
+                        op="gt",
+                        threshold=300.0,
+                    )
+                ],
+            ),
+            SLOTier(
+                label="economy",
+                filters=[
+                    SLAFilter(
+                        metric_tag="output_token_throughput",
+                        stat="avg",
+                        op="gt",
+                        threshold=30.0,
+                    )
+                ],
+            ),
+        ]
+
+        cfg = _cfg(lo=1, hi=20, max_iterations=50)
+        planner = MultiTierPlanner(base_config=_base_config(), cfg=cfg, tiers=tiers)
+
+        while True:
+            pair = planner.ask()
+            if pair is None:
+                break
+            _, variation = pair
+            concurrency = variation.values["phases.profiling.concurrency"]
+            throughput = simulate_lenient(concurrency)
+            result = RunResult(
+                label="trial_0",
+                success=True,
+                summary_metrics={
+                    "output_token_throughput": JsonMetricResult(
+                        unit="tok/s", avg=throughput
+                    ),
+                },
+                variation_label=variation.label,
+                variation_values=variation.values,
+            )
+            planner.tell(variation, [result])
+
+        results = planner.tier_results()
+        result_map = {r.label: r for r in results}
+
+        # fast tier should converge normally within [1, 20]
+        fast = result_map["fast"]
+        assert fast.convergence_status == "converged"
+        assert fast.boundary_concurrency is not None
+        assert fast.boundary_concurrency <= 10
+
+        # economy tier passes at all concurrencies up to hi=20
+        economy = result_map["economy"]
+        assert economy.convergence_status == "no_failure_in_range"
+        assert economy.boundary_concurrency == 20

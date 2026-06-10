@@ -399,7 +399,7 @@ class TestFullCycleAcrossModes:
 
         # Verify tier_metadata is produced
         metadata = planner.tier_metadata()
-        assert "total_probe_count" in metadata
+        assert "tier_evaluation_count" in metadata
         assert "ordering_detected" in metadata
         assert "ordering_pairs" in metadata
 
@@ -465,4 +465,4 @@ class TestFullCycleAcrossModes:
         assert len(keys_set) == 1, "All TierResult entries must have identical schema"
 
         metadata = planner.tier_metadata()
-        assert metadata["total_probe_count"] > 0
+        assert metadata["tier_evaluation_count"] > 0

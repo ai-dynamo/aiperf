@@ -200,7 +200,8 @@ class _MultiTierPlannerStub:
     def tier_metadata(self) -> dict[str, Any]:
         total = sum(tr.probe_count for tr in self._tier_results)
         return {
-            "total_probe_count": total,
+            "actual_probe_count": total,
+            "tier_evaluation_count": total,
             "ordering_detected": self._ordering_detected,
             "ordering_pairs": (
                 [{"strict": self._tiers[0].label, "lenient": self._tiers[-1].label}]

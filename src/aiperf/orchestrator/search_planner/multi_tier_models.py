@@ -93,7 +93,12 @@ class MultiTierBoundarySummary(AIPerfBaseModel):
 
     swept_dim_path: str = Field(description="Dotted path of the swept dimension")
     tiers: list[TierResult] = Field(description="Per-tier boundary results")
-    total_probe_count: int = Field(ge=0, description="Total probes across all tiers")
+    actual_probe_count: int = Field(
+        ge=0, description="Actual number of probes executed"
+    )
+    tier_evaluation_count: int = Field(
+        ge=0, description="Sum of per-tier evaluation counts"
+    )
     ordering_detected: bool = Field(
         description="Whether monotonic tier ordering was exploited",
     )

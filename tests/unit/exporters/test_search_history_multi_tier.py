@@ -135,7 +135,8 @@ class _MultiTierPlannerStub:
 
     def tier_metadata(self) -> dict:
         return {
-            "total_probe_count": 10,
+            "actual_probe_count": 8,
+            "tier_evaluation_count": 10,
             "ordering_detected": True,
             "ordering_pairs": [{"strict": "fast", "lenient": "standard"}],
         }
@@ -201,7 +202,8 @@ def test_multi_tier_adds_tier_metadata(tmp_path: Path):
     )
     data = orjson.loads((tmp_path / "search_history.json").read_bytes())
     assert "tier_metadata" in data
-    assert data["tier_metadata"]["total_probe_count"] == 10
+    assert data["tier_metadata"]["actual_probe_count"] == 8
+    assert data["tier_metadata"]["tier_evaluation_count"] == 10
     assert data["tier_metadata"]["ordering_detected"] is True
     assert data["tier_metadata"]["ordering_pairs"] == [
         {"strict": "fast", "lenient": "standard"}

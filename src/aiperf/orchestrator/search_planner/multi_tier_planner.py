@@ -6,6 +6,8 @@ Composition layer over existing search algorithms that resolves per-tier SLO
 boundaries simultaneously by sharing observations, exploiting tier ordering,
 and allocating probes to the widest-gap bracket.
 
+# TODO: follow-up PR to update docs/tutorials with multi-tier search usage.
+
 Phases
 ------
 
@@ -53,6 +55,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["MultiTierPlanner"]
+
+_ALL_STATS = (
+    "avg",
+    "p1",
+    "p5",
+    "p10",
+    "p25",
+    "p50",
+    "p75",
+    "p90",
+    "p95",
+    "p99",
+    "min",
+    "max",
+    "std",
+)
 
 
 class MultiTierPlanner(SearchPlanner):
@@ -260,6 +278,7 @@ class MultiTierPlanner(SearchPlanner):
     def tier_metadata(self) -> dict[str, Any]:
         """Produce tier-level metadata for search_history.json output."""
         total_probes = sum(b.probe_count for b in self._brackets)
+        actual_probes = len(self._history)
         active_pairs = self._ordering.ordered_pairs
         ordering_pairs: list[dict[str, str]] | None = None
         if active_pairs:
@@ -271,7 +290,8 @@ class MultiTierPlanner(SearchPlanner):
                 for strict, lenient in active_pairs
             ]
         return {
-            "total_probe_count": total_probes,
+            "actual_probe_count": actual_probes,
+            "tier_evaluation_count": total_probes,
             "ordering_detected": len(active_pairs) > 0,
             "ordering_pairs": ordering_pairs,
         }
@@ -301,7 +321,7 @@ class MultiTierPlanner(SearchPlanner):
                             "op": f.op,
                             "threshold": f.threshold,
                         }
-                        for f in bracket.tier.filters
+                        for f in self._effective_filters(bracket)
                     ],
                 )
             )
@@ -310,6 +330,10 @@ class MultiTierPlanner(SearchPlanner):
     # ------------------------------------------------------------------
     # Internal: tell() decomposition
     # ------------------------------------------------------------------
+
+    def _effective_filters(self, bracket: BracketState) -> list[SLAFilter]:
+        """Return tier filters + global filters for evaluation."""
+        return list(bracket.tier.filters) + self._global_filters
 
     def _log_no_successful_trials(self, value: int, results: list[RunResult]) -> None:
         """Log warning when all trials at a concurrency level failed (Req 10.1)."""
@@ -427,7 +451,7 @@ class MultiTierPlanner(SearchPlanner):
             if bracket.infeasible_min is None or value < bracket.infeasible_min:
                 bracket.infeasible_min = value
                 # Track binding constraint
-                breach = first_failing_filter(results, bracket.tier.filters)
+                breach = first_failing_filter(results, self._effective_filters(bracket))
                 if breach is not None:
                     bracket.binding_constraint = breach
 
@@ -482,6 +506,11 @@ class MultiTierPlanner(SearchPlanner):
                 candidate = min(bracket.feasible_max * 2, self._hi)
                 if candidate > bracket.feasible_max:
                     return candidate
+                # feasible_max >= hi with no failure found: mark no_failure_in_range
+                bracket.feasible_max = self._hi
+                bracket.converged = True
+                bracket.convergence_reason = "no_failure_in_range"
+                continue
             if bracket.infeasible_min is not None and bracket.feasible_max is None:
                 candidate = max(bracket.infeasible_min // 2, self._lo)
                 if candidate < bracket.infeasible_min:
@@ -520,17 +549,18 @@ class MultiTierPlanner(SearchPlanner):
         successful = [r for r in obs[-1] if r.success]
         if not successful:
             return None
-        boundary_metrics: dict[str, Any] = {}
-        for r in successful[:1]:
-            for tag, metric in r.summary_metrics.items():
-                stats: dict[str, float] = {}
-                for stat in ("avg", "p50", "p90", "p95", "p99"):
-                    val = getattr(metric, stat, None)
-                    if isinstance(val, (int, float)):
-                        stats[stat] = val
-                if stats:
-                    boundary_metrics[tag] = stats
-        return boundary_metrics or None
+        # Use first successful trial's metrics
+        run = successful[0]
+        result: dict[str, Any] = {}
+        for tag, metric in run.summary_metrics.items():
+            stat_values: dict[str, float] = {}
+            for stat in _ALL_STATS:
+                val = getattr(metric, stat, None)
+                if isinstance(val, (int, float)):
+                    stat_values[stat] = val
+            if stat_values:
+                result[tag] = stat_values
+        return result or None
 
     def _warn_missing_metrics(
         self,
@@ -543,7 +573,7 @@ class MultiTierPlanner(SearchPlanner):
         the case where the filter failed because the metric was absent rather than
         because the metric exceeded the threshold (Req 10.2).
         """
-        for sla in bracket.tier.filters:
+        for sla in self._effective_filters(bracket):
             metric_present = any(
                 run.summary_metrics.get(sla.metric_tag) is not None
                 for run in successful
