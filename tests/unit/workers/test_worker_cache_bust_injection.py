@@ -131,6 +131,32 @@ def test_inject_marker_no_system_role_is_noop():
     assert raw[0]["content"] == "hi"
 
 
+def test_inject_first_user_turn_idempotent_prefix():
+    """Injection is unconditional per credit (seeded resume marks turn 0 every
+    credit); the helper must not stack the marker on repeated calls."""
+    raw = [{"role": "user", "content": "hi"}]
+    _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
+    assert raw[0]["content"] == _PREFIX_MARKER + "hi"
+
+
+def test_inject_first_user_turn_idempotent_multimodal():
+    raw = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
+    assert raw[0]["content"] == [
+        {"type": "text", "text": _PREFIX_MARKER.strip()},
+        {"type": "text", "text": "hi"},
+    ]
+
+
+def test_inject_first_user_text_idempotent():
+    turn = Turn(raw_messages=None, texts=[Text(contents=["hello"])])
+    _inject_marker_into_first_user_text(turn, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_first_user_text(turn, _PREFIX_MARKER, is_prefix=True)
+    assert turn.texts[0].contents[0] == _PREFIX_MARKER + "hello"
+
+
 def test_inject_marker_empty_raw_is_noop():
     raw: list[dict] = []
     _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
@@ -207,7 +233,9 @@ def test_system_prefix_uses_existing_raw_system_role_when_no_conversation_system
     assert msgs[1]["content"] == "hi"
 
 
-def test_system_prefix_fallback_no_op_on_turn_index_gt_zero():
+def test_system_prefix_fallback_marks_first_user_on_turn_index_gt_zero():
+    """SYSTEM_PREFIX with no system anywhere falls back to the first user turn,
+    and now injects every credit (seeded-resume fix) rather than only turn 0."""
     raw = [{"role": "user", "content": "hi"}]
     session = _make_session(raw, num_turns=2)
     credit = _make_credit(
@@ -220,7 +248,7 @@ def test_system_prefix_fallback_no_op_on_turn_index_gt_zero():
     out = _apply_cache_bust(session, credit, system_message=None)
 
     assert out is None
-    assert session.turn_list[-1].raw_messages[0]["content"] == "hi"
+    assert session.turn_list[-1].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
 
 
 def test_first_turn_prefix_unaffected_by_system_message_presence():
@@ -738,9 +766,9 @@ def test_first_turn_suffix_reapplied_on_reset_context_turn():
     )
 
 
-def test_first_turn_prefix_no_op_on_ordinary_later_turn():
-    """Regression guard: a non-reset turn at index > 0 stays a no-op (later
-    turns inherit the turn-0 marker via the server's prefix cache)."""
+def test_first_turn_prefix_marks_prefix_turn_on_ordinary_later_turn():
+    """A non-reset turn at index > 0 re-marks the shared turn-0 prefix
+    (idempotent) and leaves the later turn's own user content untouched."""
     turn_0 = [{"role": "user", "content": "hi"}]
     turn_1 = [
         {"role": "assistant", "content": "ok"},
@@ -758,7 +786,7 @@ def test_first_turn_prefix_no_op_on_ordinary_later_turn():
 
     _apply_cache_bust(session, credit, system_message=None)
 
-    assert session.turn_list[0].raw_messages[0]["content"] == "hi"
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
     assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
 
 
@@ -777,6 +805,105 @@ def test_first_turn_prefix_reset_on_turn_zero_uses_turn_zero_path_once():
     _apply_cache_bust(session, credit, system_message=None)
 
     assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "hi"
+
+
+# =============================================================================
+# Seeded mid-trajectory resume (FIRST_TURN_* / SYSTEM_* sub-path 3)
+# =============================================================================
+# Agentic replay can resume a trajectory at turn k_i > 0. The worker's
+# advance_turn back-fills turns 0..k_i into turn_list, so turn 0 (the real wire
+# prefix) is present even though credit.turn_index > 0. The turn-0 gate missed
+# it; injection now runs every credit and is idempotent.
+
+
+def test_first_turn_prefix_marks_seeded_turn_zero_on_resume():
+    """FIRST_TURN_PREFIX at turn_index > 0 with no reset must mark the seeded
+    turn 0 (the conversation's opening prefix), not be skipped."""
+    turn_0 = [{"role": "user", "content": "u0"}]
+    turn_1 = [
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "u1"},
+    ]
+    turn_2 = [
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1, turn_2], reset_flags=[False, False, False]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=2,
+        num_turns=3,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
+    # Later seeded turns' user messages are untouched.
+    assert session.turn_list[2].raw_messages[1]["content"] == "u2"
+
+
+def test_first_turn_prefix_resume_then_next_turn_no_stacking():
+    """The seeded turn 0 is shared across the session's turns; processing the
+    resume credit then the next turn must mark it exactly once."""
+    turn_0 = [{"role": "user", "content": "u0"}]
+    turn_1 = [
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "u1"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1], reset_flags=[False, False]
+    )
+
+    _apply_cache_bust(
+        session,
+        _make_credit(
+            target=CacheBustTarget.FIRST_TURN_PREFIX,
+            marker=_PREFIX_MARKER,
+            turn_index=1,
+            num_turns=2,
+        ),
+        system_message=None,
+    )
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
+
+    # Next turn on the same session re-runs injection; idempotent -> no stack.
+    _apply_cache_bust(
+        session,
+        _make_credit(
+            target=CacheBustTarget.FIRST_TURN_PREFIX,
+            marker=_PREFIX_MARKER,
+            turn_index=1,
+            num_turns=2,
+        ),
+        system_message=None,
+    )
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
+
+
+def test_system_prefix_subpath3_marks_seeded_turn_zero_on_resume():
+    """SYSTEM_PREFIX with no system anywhere falls back to first-user; under a
+    seeded resume it must still mark the seeded turn 0."""
+    turn_0 = [{"role": "user", "content": "u0"}]
+    turn_1 = [
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "u1"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1], reset_flags=[False, False]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
 
 
 # =============================================================================

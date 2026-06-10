@@ -388,12 +388,12 @@ def test_agentic_replay_cache_bust_marker_in_wire_payload(
         session_rids[xcorr] = next(iter(rids_in_session))
 
     if is_first_turn_target:
-        # FIRST_TURN_* only fires when credit.turn_index == 0. With our
-        # 6-trace fixture + concurrency=3 + duration=8s, recycled sessions
-        # always start at turn 0, so at least one session must be marked.
+        # FIRST_TURN_* marks the conversation's opening user turn on every
+        # credit (idempotent), including seeded mid-trajectory resumes, so at
+        # least one session must be marked (in practice all of them).
         assert len(session_rids) >= 1, (
             f"target={target}: no session received a FIRST_TURN marker. "
-            f"Recycled sessions begin at turn_index=0 and must inject. "
+            f"The opening user turn must be injected. "
             f"Total sessions={len(by_session)}, "
             f"unmarked={len(sessions_without_marker)}"
         )
