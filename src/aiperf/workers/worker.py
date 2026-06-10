@@ -101,6 +101,27 @@ def _apply_cache_bust_to_system_message(
     return system_message
 
 
+def _content_has_marker_at_edge(
+    content: object, marker: str, *, is_prefix: bool
+) -> bool:
+    """Whether ``content`` already carries ``marker`` at the prefix/suffix edge.
+
+    The injection helpers run once per credit and several paths mutate a turn
+    object shared across the session's turns (delta-mode ``turn_list[0]``, and
+    the unconditional every-credit first-user mark used for seeded resumes), so
+    re-injecting the constant per-session marker must not stack it. This check
+    is exact (the per-session marker is constant; a fresh recycled play sees
+    pristine content and injects its own marker). Handles plain-string and
+    OpenAI multimodal list-of-parts content.
+    """
+    if isinstance(content, str):
+        return content.startswith(marker) if is_prefix else content.endswith(marker)
+    if isinstance(content, list) and content:
+        marker_part = {"type": "text", "text": marker.strip()}
+        return content[0 if is_prefix else -1] == marker_part
+    return False
+
+
 def _inject_marker_into_raw_messages(
     raw_messages: list[dict], marker: str, *, is_prefix: bool
 ) -> None:
@@ -109,14 +130,8 @@ def _inject_marker_into_raw_messages(
     No-op when raw_messages is empty or the first message is not a system role.
     For multimodal content (``content`` is a list of parts), the marker is
     inserted as a new ``{"type": "text", "text": marker}`` part at the start
-    (prefix) or end (suffix) of the parts list.
-
-    Idempotent: under delta modes ``turn_list[0]`` is a single object shared
-    across the session's turns and this runs once per credit, so re-injecting
-    the same marker would stack it (``[rid][rid]...``). Bail when the marker is
-    already at the target position. The per-session marker is constant, so this
-    check is exact; a fresh recycled play sees pristine content and re-injects
-    its own (different) marker.
+    (prefix) or end (suffix) of the parts list. Idempotent via
+    :func:`_content_has_marker_at_edge`.
     """
     if not raw_messages or not marker:
         return
@@ -124,9 +139,9 @@ def _inject_marker_into_raw_messages(
     if not isinstance(first, dict) or first.get("role") != "system":
         return
     content = first.get("content", "")
+    if _content_has_marker_at_edge(content, marker, is_prefix=is_prefix):
+        return
     if isinstance(content, str):
-        if (content.startswith(marker)) if is_prefix else (content.endswith(marker)):
-            return
         raw_messages[0] = {
             **first,
             "content": (marker + content) if is_prefix else (content + marker),
@@ -134,9 +149,6 @@ def _inject_marker_into_raw_messages(
         return
     if isinstance(content, list):
         marker_part = {"type": "text", "text": marker.strip()}
-        edge = content[0 if is_prefix else -1] if content else None
-        if edge == marker_part:
-            return
         new_content = [marker_part, *content] if is_prefix else [*content, marker_part]
         raw_messages[0] = {**first, "content": new_content}
         return
@@ -154,13 +166,18 @@ def _inject_marker_into_first_user_turn(
     No-op when raw_messages is empty. For multimodal content (``content`` is
     a list of parts), the marker is inserted as a new
     ``{"type": "text", "text": marker}`` part at the start (prefix) or end
-    (suffix) of the parts list.
+    (suffix) of the parts list. Idempotent via
+    :func:`_content_has_marker_at_edge` — FIRST_TURN_* injection runs every
+    credit (to mark seeded turn 0 on mid-trajectory resumes), so repeated calls
+    on the same shared turn must not stack the marker.
     """
     if not raw_messages or not marker:
         return
     for idx, msg in enumerate(raw_messages):
         if isinstance(msg, dict) and msg.get("role") == "user":
             content = msg.get("content", "")
+            if _content_has_marker_at_edge(content, marker, is_prefix=is_prefix):
+                return
             if isinstance(content, str):
                 raw_messages[idx] = {
                     **msg,
@@ -243,6 +260,8 @@ def _inject_marker_into_first_user_text(
         first.contents = [marker.strip()]
         return
     existing = first.contents[0]
+    if _content_has_marker_at_edge(existing, marker, is_prefix=is_prefix):
+        return
     first.contents[0] = (marker + existing) if is_prefix else (existing + marker)
 
 
@@ -308,7 +327,6 @@ def _apply_cache_bust(
     if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
         return _apply_system_target_cache_bust(
             session,
-            credit,
             system_message=system_message,
             marker=marker,
             target=target,
@@ -316,18 +334,23 @@ def _apply_cache_bust(
             is_prefix=is_prefix,
         )
 
-    if credit.turn_index == 0:
-        _inject_marker_at_first_user(session.turn_list, marker, is_prefix=is_prefix)
-    elif reset_turn is not None:
+    if reset_turn is not None:
+        # Reset turn is the new effective prefix; mark it (not the discarded
+        # turn 0 that _inject_marker_at_first_user would walk to from the front).
         _inject_marker_into_first_user_turn(
             reset_turn.raw_messages, marker, is_prefix=is_prefix
         )
+    else:
+        # Mark the conversation's opening user turn every credit (idempotent).
+        # Unconditional rather than turn_index==0-gated so a seeded mid-
+        # trajectory resume (turn_list back-filled with turns 0..k_i at a credit
+        # whose turn_index > 0) still marks turn 0, the true wire prefix.
+        _inject_marker_at_first_user(session.turn_list, marker, is_prefix=is_prefix)
     return system_message
 
 
 def _apply_system_target_cache_bust(
     session: UserSession,
-    credit: Credit,
     *,
     system_message: str | None,
     marker: str,
@@ -345,10 +368,9 @@ def _apply_system_target_cache_bust(
       2. ``raw_messages`` first dict has ``role=="system"``: marker injected
          into that system message. Under deltas it lives in ``turn_list[0]``;
          under message-array it lives in ``turn_list[-1]`` (same single turn).
-      3. No system anywhere -> first-user-turn fallback: marker injected ONLY on
-         ``turn_index == 0``. Subsequent turns inherit via the server's
-         prefix-cache hit, matching ``FIRST_TURN_*`` semantics. Re-injecting on
-         every turn would drift token-0 on every credit and fragment the cache.
+      3. No system anywhere -> first-user-turn fallback: marker injected into
+         the first user turn every credit (idempotent), matching ``FIRST_TURN_*``
+         semantics so a seeded mid-trajectory resume still marks turn 0.
 
     Sub-paths 2 and 3 retarget to the reset turn's own prefix when a reset is
     current (the turn-0 carrier they would otherwise mark is discarded from the
@@ -360,7 +382,7 @@ def _apply_system_target_cache_bust(
     raw_system = _find_first_system_message(prefix_turns)
     if raw_system is not None:
         _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)
-    elif credit.turn_index == 0 or reset_turn is not None:
+    else:
         _inject_marker_at_first_user(prefix_turns, marker, is_prefix=is_prefix)
     return system_message
 
@@ -907,8 +929,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit: Credit,
     ) -> None:
         """Emit a one-shot warning if cache-bust was requested but had nowhere
-        to land on this credit (e.g. SYSTEM_* on turn>0 with no system anywhere,
-        or empty session.turn_list).
+        to land on this credit (an empty ``session.turn_list``).
 
         Rate-limited to once per worker via ``self._cache_bust_warning_shown`` —
         the misconfiguration is identical for every credit, so a single
@@ -926,30 +947,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 f"cache-bust target={target.value} requested but session.turn_list "
                 f"is empty — marker NOT injected (further occurrences suppressed)."
             )
-            return
-        # SYSTEM_* on turn>0 with no system anywhere: the fallback is gated on
-        # turn_index==0 by design (see _apply_cache_bust comments), so the
-        # marker is intentionally NOT re-applied. Surface this once so users
-        # configuring cache-bust against a synthetic / no-system trace see why
-        # token-0 didn't drift.
-        if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
-            if session.conversation.system_message is not None:
-                return
-            last_turn = session.turn_list[-1]
-            raw = last_turn.raw_messages
-            has_raw_system = bool(
-                raw and isinstance(raw[0], dict) and raw[0].get("role") == "system"
-            )
-            if not has_raw_system and credit.turn_index > 0:
-                self._cache_bust_warning_shown = True
-                self.warning(
-                    f"cache-bust target={target.value} requested but trace has no "
-                    f"system message (neither Conversation.system_message nor "
-                    f"raw_messages[0].role=='system'); fallback to first-user-turn "
-                    f"only fires on turn_index==0, so subsequent turns inherit the "
-                    f"already-prefixed prompt. This is intentional (matches "
-                    f"FIRST_TURN_* semantics) — further occurrences suppressed."
-                )
 
     async def _execute_request(
         self,
