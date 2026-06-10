@@ -726,6 +726,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 error=error,
             )
         )
+        # Surface the error on the credit so the subsequent CreditReturn carries
+        # it and increment_returned(..., errored=...) counts it. Without this the
+        # forwarded error record would not be reflected in the phase-complete
+        # request_errors log line.
+        credit_context.error = error
         credit_context.record_emitted = True
 
     async def _process_credit(self, credit_context: CreditContext) -> None:
