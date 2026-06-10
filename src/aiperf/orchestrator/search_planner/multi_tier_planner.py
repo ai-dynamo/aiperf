@@ -302,6 +302,14 @@ class MultiTierPlanner(SearchPlanner):
         for bracket in self._brackets:
             status = self._tier_convergence_status(bracket)
             boundary_metrics = self._extract_boundary_metrics(bracket)
+            bracket_lower = bracket.feasible_max
+            bracket_upper = bracket.infeasible_min
+            if (
+                bracket_lower is not None
+                and bracket_upper is not None
+                and bracket_upper <= bracket_lower
+            ):
+                bracket_upper = None  # inverted bracket is meaningless
             results.append(
                 TierResult(
                     label=bracket.tier.label,
@@ -309,8 +317,8 @@ class MultiTierPlanner(SearchPlanner):
                     convergence_status=status,
                     convergence_reason=bracket.convergence_reason,
                     binding_constraint=bracket.binding_constraint,
-                    bracket_lower=bracket.feasible_max,
-                    bracket_upper=bracket.infeasible_min,
+                    bracket_lower=bracket_lower,
+                    bracket_upper=bracket_upper,
                     confidence_interval=None,
                     probe_count=bracket.probe_count,
                     boundary_metrics=boundary_metrics,
@@ -524,6 +532,20 @@ class MultiTierPlanner(SearchPlanner):
             if bracket.converged:
                 continue
             if bracket.feasible_max is None or bracket.infeasible_min is None:
+                continue
+            # Inverted bracket: non-monotonic evidence contradicts the boundary
+            if bracket.feasible_max >= bracket.infeasible_min:
+                bracket.non_monotonic_warning = True
+                logger.warning(
+                    "multi_tier[%s]: inverted bracket (feasible_max=%d >= "
+                    "infeasible_min=%d); clearing stale infeasible_min and "
+                    "continuing search",
+                    bracket.tier.label,
+                    bracket.feasible_max,
+                    bracket.infeasible_min,
+                )
+                bracket.infeasible_min = None
+                bracket.binding_constraint = None
                 continue
             gap = bracket.infeasible_min - bracket.feasible_max
             if gap <= 1:

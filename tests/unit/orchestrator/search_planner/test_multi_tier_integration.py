@@ -537,3 +537,85 @@ class TestMultiTierEndToEnd:
         economy = result_map["economy"]
         assert economy.convergence_status == "no_failure_in_range"
         assert economy.boundary_concurrency == 20
+
+    def test_non_monotonic_no_inverted_bracket_emitted(self) -> None:
+        """When c=1 fails then c=2+ passes (non-monotonic), no inverted bracket
+        is emitted and the tier is not marked precision-converged.
+
+        This is the regression test for the inverted-bracket bug where
+        feasible_max=2, infeasible_min=1 was incorrectly reported as converged.
+        """
+
+        def simulate_non_mono(concurrency: int) -> float:
+            if concurrency == 1:
+                return 100.0  # anomalous dip below fast threshold
+            return max(1.0, 500.0 - 5.0 * concurrency)
+
+        tiers = [
+            SLOTier(
+                label="fast",
+                filters=[
+                    SLAFilter(
+                        metric_tag="output_token_throughput",
+                        stat="avg",
+                        op="gt",
+                        threshold=300.0,
+                    )
+                ],
+            ),
+            SLOTier(
+                label="economy",
+                filters=[
+                    SLAFilter(
+                        metric_tag="output_token_throughput",
+                        stat="avg",
+                        op="gt",
+                        threshold=30.0,
+                    )
+                ],
+            ),
+        ]
+
+        cfg = _cfg(lo=1, hi=128, max_iterations=50)
+        planner = MultiTierPlanner(base_config=_base_config(), cfg=cfg, tiers=tiers)
+
+        while True:
+            pair = planner.ask()
+            if pair is None:
+                break
+            _, variation = pair
+            concurrency = variation.values["phases.profiling.concurrency"]
+            throughput = simulate_non_mono(concurrency)
+            result = RunResult(
+                label="trial_0",
+                success=True,
+                summary_metrics={
+                    "output_token_throughput": JsonMetricResult(
+                        unit="tok/s", avg=throughput
+                    ),
+                },
+                variation_label=variation.label,
+                variation_values=variation.values,
+            )
+            planner.tell(variation, [result])
+
+        results = planner.tier_results()
+        fast = next(r for r in results if r.label == "fast")
+
+        # 1. No inverted bracket: bracket_upper must be None or > bracket_lower
+        if fast.bracket_lower is not None and fast.bracket_upper is not None:
+            assert fast.bracket_upper > fast.bracket_lower, (
+                f"Inverted bracket emitted: bracket_lower={fast.bracket_lower}, "
+                f"bracket_upper={fast.bracket_upper}"
+            )
+
+        # 2. Must NOT be marked "converged" with reason "precision_reached"
+        #    when the underlying evidence is non-monotonic
+        if fast.convergence_reason == "multi_tier_precision_reached":
+            assert fast.bracket_lower is not None
+            assert fast.bracket_upper is not None
+            assert fast.bracket_upper > fast.bracket_lower
+
+        # 3. The tier should still find a valid boundary (c>=2 passes)
+        assert fast.boundary_concurrency is not None
+        assert fast.boundary_concurrency >= 2

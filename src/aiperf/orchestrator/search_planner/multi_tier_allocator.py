@@ -29,6 +29,7 @@ class ProbeAllocator:
             if not b.converged
             and b.feasible_max is not None
             and b.infeasible_min is not None
+            and b.infeasible_min > b.feasible_max  # exclude inverted brackets
         ]
         if not candidates:
             return None
