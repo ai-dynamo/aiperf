@@ -303,13 +303,15 @@ def _apply_cache_bust(
     ``turn_list`` where the system role lives in ``turn_list[0]`` and later
     deltas start with the prior assistant response).
 
-    A ``reset_context`` turn makes the endpoint's ``build_messages`` discard
-    every accumulated prior turn and restart the wire payload from this turn's
-    ``raw_messages``, so the effective prefix is the reset turn — not the
-    discarded turn 0 where the original marker landed. When one is current,
-    injection is scoped to it so recycled plays of the trace stay byte-distinct
-    past the context cut instead of warming the server's prefix cache on
-    identical post-reset bytes. ``SYSTEM_*`` targets are handled in
+    Injection targets the *effective wire prefix* (see
+    :func:`_effective_prefix_turns`): the slice of ``turn_list`` that
+    ``build_messages`` actually emits. A ``reset_context`` turn makes
+    ``build_messages`` discard every prior turn, so the effective prefix begins
+    at the last such turn — which may sit mid-history (seeded on a resume,
+    never dispatched as the current turn), not just at ``turn_list[-1]``.
+    Marking the discarded turn 0 instead would leave the real prefix unmarked
+    and let recycled plays warm the server's cache on identical post-reset
+    bytes. ``SYSTEM_*`` targets are handled in
     :func:`_apply_system_target_cache_bust`.
     """
     marker = credit.cache_bust_marker
@@ -322,63 +324,52 @@ def _apply_cache_bust(
         CacheBustTarget.SYSTEM_PREFIX,
         CacheBustTarget.FIRST_TURN_PREFIX,
     )
-    reset_turn = _current_reset_turn(session)
+    prefix_turns = _effective_prefix_turns(session)
 
     if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
         return _apply_system_target_cache_bust(
-            session,
+            prefix_turns,
             system_message=system_message,
             marker=marker,
             target=target,
-            reset_turn=reset_turn,
             is_prefix=is_prefix,
         )
 
-    if reset_turn is not None:
-        # Reset turn is the new effective prefix; mark it (not the discarded
-        # turn 0 that _inject_marker_at_first_user would walk to from the front).
-        _inject_marker_into_first_user_turn(
-            reset_turn.raw_messages, marker, is_prefix=is_prefix
-        )
-    else:
-        # Mark the conversation's opening user turn every credit (idempotent).
-        # Unconditional rather than turn_index==0-gated so a seeded mid-
-        # trajectory resume (turn_list back-filled with turns 0..k_i at a credit
-        # whose turn_index > 0) still marks turn 0, the true wire prefix.
-        _inject_marker_at_first_user(session.turn_list, marker, is_prefix=is_prefix)
+    # Mark the effective prefix's opening user turn every credit (idempotent).
+    # Unconditional rather than turn_index==0-gated so a seeded mid-trajectory
+    # resume (turn_list back-filled with turns 0..k_i at a credit whose
+    # turn_index > 0) still marks the true wire prefix.
+    _inject_marker_at_first_user(prefix_turns, marker, is_prefix=is_prefix)
     return system_message
 
 
 def _apply_system_target_cache_bust(
-    session: UserSession,
+    prefix_turns: list[Turn],
     *,
     system_message: str | None,
     marker: str,
     target: CacheBustTarget,
-    reset_turn: Turn | None,
     is_prefix: bool,
 ) -> str | None:
     """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` marker for one credit.
 
-    Three sub-paths with intentionally different semantics:
+    ``prefix_turns`` is the effective wire prefix slice (see
+    :func:`_effective_prefix_turns`). Three sub-paths:
       1. Conversation-level ``system_message`` present: marker applied every
          turn (string mutation re-applied per credit). Unaffected by
          ``reset_context`` — the ``system_message`` rides on ``RequestInfo`` and
          is re-emitted every turn independent of ``build_messages``' reset.
       2. ``raw_messages`` first dict has ``role=="system"``: marker injected
-         into that system message. Under deltas it lives in ``turn_list[0]``;
-         under message-array it lives in ``turn_list[-1]`` (same single turn).
-      3. No system anywhere -> first-user-turn fallback: marker injected into
-         the first user turn every credit (idempotent), matching ``FIRST_TURN_*``
-         semantics so a seeded mid-trajectory resume still marks turn 0.
+         into the first system message of the prefix slice.
+      3. No system in the slice -> first-user-turn fallback: marker injected
+         into the first user turn every credit (idempotent), matching
+         ``FIRST_TURN_*`` semantics so a seeded mid-trajectory resume still
+         marks the prefix.
 
-    Sub-paths 2 and 3 retarget to the reset turn's own prefix when a reset is
-    current (the turn-0 carrier they would otherwise mark is discarded from the
-    wire). Returns the (possibly modified) ``system_message``.
+    Returns the (possibly modified) ``system_message``.
     """
     if system_message is not None:
         return _apply_cache_bust_to_system_message(system_message, marker, target)
-    prefix_turns = [reset_turn] if reset_turn is not None else session.turn_list
     raw_system = _find_first_system_message(prefix_turns)
     if raw_system is not None:
         _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)
@@ -387,23 +378,22 @@ def _apply_system_target_cache_bust(
     return system_message
 
 
-def _current_reset_turn(session: UserSession) -> Turn | None:
-    """Return the just-advanced current turn iff it is a ``reset_context`` turn
-    that establishes a fresh wire prefix, else ``None``.
+def _effective_prefix_turns(session: UserSession) -> list[Turn]:
+    """The ``turn_list`` slice that forms the wire prefix for cache-bust.
 
-    ``reset_context`` only takes effect when ``raw_messages`` is populated (see
-    ``Turn.reset_context`` and ``base_endpoint.build_messages``), so a turn
-    without ``raw_messages`` is never a reset prefix even if the flag is set.
-    The current turn is ``turn_list[-1]`` at cache-bust time: ``advance_turn``
-    has appended it and live assistant responses are stored only after the
-    request is built.
+    ``base_endpoint.build_messages`` restarts the message array at every
+    ``reset_context`` turn that carries ``raw_messages`` (discarding everything
+    before it), so the effective prefix begins at the *last* such turn in
+    ``turn_list`` — not turn 0, and not merely ``turn_list[-1]``: a reset can
+    sit mid-history (e.g. seeded into a mid-trajectory resume, where it is never
+    dispatched as the current turn). Returns the slice from that turn to the
+    end, or the whole ``turn_list`` when there is no reset.
     """
-    if not session.turn_list:
-        return None
-    current = session.turn_list[-1]
-    if current.reset_context and current.raw_messages:
-        return current
-    return None
+    turns = session.turn_list
+    for i in range(len(turns) - 1, -1, -1):
+        if turns[i].reset_context and turns[i].raw_messages:
+            return turns[i:]
+    return turns
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
