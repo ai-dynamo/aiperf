@@ -907,6 +907,97 @@ def test_system_prefix_subpath3_marks_seeded_turn_zero_on_resume():
 
 
 # =============================================================================
+# Buried reset_context (reset turn is NOT the current turn)
+# =============================================================================
+# build_messages restarts the wire array at every reset_context turn, so the
+# effective prefix is the LAST reset turn in turn_list. That turn may sit
+# mid-history (seeded on a resume, never dispatched as the current turn), so
+# inspecting only turn_list[-1] would mark the discarded turn 0 instead.
+
+
+def test_first_turn_prefix_marks_buried_reset_turn_not_discarded_turn_zero():
+    turn_0 = [{"role": "user", "content": "u0"}]
+    turn_1_reset = [
+        {"role": "system", "content": "S1"},
+        {"role": "user", "content": "u1"},
+    ]
+    turn_2 = [
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset, turn_2], reset_flags=[False, True, False]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=2,
+        num_turns=3,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    # Marker lands on the buried reset turn (the real wire prefix), not turn 0.
+    assert session.turn_list[1].raw_messages[1]["content"] == _PREFIX_MARKER + "u1"
+    assert session.turn_list[0].raw_messages[0]["content"] == "u0"
+    assert session.turn_list[2].raw_messages[1]["content"] == "u2"
+
+
+def test_system_prefix_marks_buried_reset_turn_system():
+    turn_0 = [
+        {"role": "system", "content": "S0"},
+        {"role": "user", "content": "u0"},
+    ]
+    turn_1_reset = [
+        {"role": "system", "content": "S1"},
+        {"role": "user", "content": "u1"},
+    ]
+    turn_2 = [
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset, turn_2], reset_flags=[False, True, False]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=2,
+        num_turns=3,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[1].raw_messages[0]["content"] == _PREFIX_MARKER + "S1"
+    # Discarded turn 0 system left untouched.
+    assert session.turn_list[0].raw_messages[0]["content"] == "S0"
+
+
+def test_first_turn_prefix_marks_only_last_of_multiple_resets():
+    """With two resets, only the last (the effective prefix) is marked."""
+    turn_0_reset = [{"role": "user", "content": "u0"}]
+    turn_1_reset = [{"role": "user", "content": "u1"}]
+    turn_2 = [
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0_reset, turn_1_reset, turn_2], reset_flags=[True, True, False]
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=2,
+        num_turns=3,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[1].raw_messages[0]["content"] == _PREFIX_MARKER + "u1"
+    assert session.turn_list[0].raw_messages[0]["content"] == "u0"
+
+
+# =============================================================================
 # reset_context re-injection (SYSTEM_*)
 # =============================================================================
 # Same defect as FIRST_TURN_*, but for the SYSTEM_* sub-paths that mutate a
