@@ -504,8 +504,11 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         if cp["subagent_index"] in dropped_subagent_indices:
             continue
 
+        # Subagents share the parent trace's ``hash_id_scope: "local"``
+        # namespace (see _reconstruct_serial): scope on parent_trace_id, not
+        # the child session_id, so shared blocks decode identically.
         child_decode, child_partial, child_decode_text = _make_scope_helpers(
-            cp["session_id"], bs
+            cp["parent_trace_id"], bs
         )
         child_recon = ConversationReconstructor(
             block_size=bs,

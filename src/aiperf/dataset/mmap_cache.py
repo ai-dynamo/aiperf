@@ -33,8 +33,9 @@ Concurrency: writers populate to ``<cache_dir>/<key>.tmp.<pid>`` and atomically
 (missing manifest.json) treats the entry as a MISS and overwrites it.
 
 Manifest version:
-    Bumped whenever the on-disk layout or the side-data schema changes.
-    Mismatches are treated as a MISS.
+    Bumped whenever the on-disk layout, the side-data schema, or the decoded
+    content the loaders produce for a given key changes. Mismatches are treated
+    as a MISS.
 """
 
 from __future__ import annotations
@@ -61,10 +62,15 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 
-# Bump when cached side-data changes. Version 5 fixes Conversation.metadata()
-# projection of per-turn theoretical prefix-cache block counts, which realtime
-# profiling needs to report the trace-level infinite-cache hit rate.
-MANIFEST_VERSION = 5
+# Bump when the on-disk layout, side-data schema, OR the decoded content the
+# loaders produce for a given key changes -- the key has no source-code
+# component, so a content-semantics fix must bump this or warm caches keep
+# serving the old (wrong) dataset. Version 6 invalidates entries built before
+# the weka subagent hash_id-scope fix (subagents now share the parent trace's
+# scope, so shared blocks decode to different tokens than v5 produced).
+# Version 5 fixed the Conversation.metadata() projection of per-turn
+# theoretical prefix-cache block counts for realtime infinite-cache hit rate.
+MANIFEST_VERSION = 6
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
