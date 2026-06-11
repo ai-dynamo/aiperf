@@ -4,8 +4,10 @@
 """Per-trace parallel reconstruction for WekaTraceLoader.
 
 Each Weka trace (one parent + zero or more subagent children) is a
-self-contained reconstruction unit: scope-keyed cache, scope-keyed
-HashIdRandomGenerator, scope-keyed partial-tail seed. The byte-exact
+self-contained reconstruction unit: one trace-scoped cache and
+HashIdRandomGenerator shared by the parent and all its children
+(``hash_id_scope: "local"`` = one namespace per trace file), plus
+scope-keyed partial-tail seeds. The byte-exact
 LCP-driven reconstruction in
 :class:`aiperf.dataset.loader.weka_synth_buf.ConversationReconstructor`
 carries cross-turn state, but never cross-trace state.

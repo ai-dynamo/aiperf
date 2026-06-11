@@ -1180,3 +1180,23 @@ def test_convert_to_conversations_sibling_subagents_share_hash_id_scope(tmp_path
     assert len(children) == 2
     sib_a, sib_b = children
     assert sib_a.turns[0].raw_messages == sib_b.turns[0].raw_messages
+
+
+def test_subagent_child_shares_trace_decode_scope():
+    """Same hash_id must decode to identical tokens in parent and child
+    (hash_id_scope: 'local' = one namespace per trace FILE)."""
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(
+        filename=str(FIXTURES / "one_subagent.json"), user_config=uc
+    )
+    _stub_prompt_generator_for_reconstructor(loader)
+    scopes_used: list[str] = []
+    orig = loader.prompt_generator._hash_id_corpus_rng.set_trace_id
+
+    def _spy(scope: str):
+        scopes_used.append(scope)
+        return orig(scope)
+
+    loader.prompt_generator._hash_id_corpus_rng.set_trace_id = _spy
+    loader.convert_to_conversations(loader.load_dataset())
+    assert scopes_used and all(s == "trace_sa" for s in scopes_used), scopes_used
