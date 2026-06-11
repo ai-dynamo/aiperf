@@ -291,6 +291,16 @@ class _DatasetSettings(BaseSettings):
         "the trace's hash_ids). Default False preserves the pre-canned-"
         "assistant behavior that matches recorded hash_ids byte-for-byte.",
     )
+    WEKA_SPLIT_FLATTENED_AGENTS: bool = Field(
+        default=True,
+        description="When True (default), WekaTraceLoader detects untagged "
+        "agent fan-outs recorded as flat top-level requests (hash_id LCP "
+        "chain detection), splitting them into per-agent child conversations "
+        "with SPAWN/SPAWN_JOIN linkage so replay reproduces the recorded "
+        "concurrency. Set to False to restore the legacy single-stream "
+        "chaining that serializes all top-level requests into one root "
+        "conversation.",
+    )
 
 
 class _DeveloperSettings(BaseSettings):
