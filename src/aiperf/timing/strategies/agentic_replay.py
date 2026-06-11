@@ -433,6 +433,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         session = self._build_session_for_trace(next_trace_id)
         if session is None or not session.metadata.turns:
+            # Unspawnable right now (missing metadata / zero turns): re-enqueue
+            # so the recycle pool's eligible set is conserved. Dropping it here
+            # silently erodes pool diversity for the rest of the phase (the
+            # finished trace was already re-enqueued above).
+            self._recycle_queue.put_nowait(next_trace_id)
             return
 
         self._correlation_to_lane[session.x_correlation_id] = lane
