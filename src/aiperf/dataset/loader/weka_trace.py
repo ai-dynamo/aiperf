@@ -1173,11 +1173,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             if cp.subagent_index in dropped_per_trace.get(cp.parent_trace_id, set()):
                 continue
             child_model_map = model_map_per_trace.get(cp.parent_trace_id, {})
-            # Subagent has its own scope: tool_tokens/system_tokens differ from
-            # the parent, and its block_cache must not leak across subagents.
+            # ``hash_id_scope: "local"`` is one namespace per trace FILE: a
+            # subagent shares its parent trace's scope so a hash_id reused
+            # across parent and subagent (or across siblings) decodes to the
+            # same tokens, reproducing the real cross-agent shared prefix.
             pg = self.prompt_generator
             pg._cache.clear()
-            pg._hash_id_corpus_rng.set_trace_id(cp.session_id)
+            pg._hash_id_corpus_rng.set_trace_id(cp.parent_trace_id)
             # Sync for ``_decode_block_tokens``; see parent loop above.
             self._block_size = cp.block_size
 
