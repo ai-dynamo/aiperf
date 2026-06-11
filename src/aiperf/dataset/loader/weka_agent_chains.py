@@ -18,6 +18,12 @@ elected continuation back onto tails whose longer state turned out to be
 dead. A deeper sibling fork from the same tail IS the "future pullback"
 that demotes shallower forks to spawns, so the election encodes the rule
 directly.
+
+Same-model rule: a chain is only ever continued — by extension or by seam
+splice — by requests of the SAME model. Cross-model attachment is always a
+spawn, even on a full-prefix match (a Haiku worker reading Opus context is
+a different agent; the rare mid-session /model switch is accepted as a
+split).
 """
 
 from __future__ import annotations
@@ -84,6 +90,9 @@ class AgentChain:
     """Hash array of the last hash-bearing request (phase-1 state)."""
     tail_end: float = 0.0
     """Interval end of the last hash-bearing request (phase-1 state)."""
+    tail_model: str = ""
+    """Model of the last hash-bearing request (phase-1 state). A chain is
+    only ever continued by same-model requests; cross-model = spawn."""
 
 
 @dataclass(slots=True)
@@ -121,6 +130,7 @@ class _Phase1State:
             c.tail_outer_idx = outer_idx
             c.tail_hash = np.asarray(req.hash_ids, dtype=np.int64)
             c.tail_end = _req_end(req)
+            c.tail_model = req.model
 
     def classify(self, outer_idx: int, req: _NormalRequestT) -> None:
         self.req_by_outer[outer_idx] = req
@@ -135,7 +145,7 @@ class _Phase1State:
             return
 
         h = np.asarray(req.hash_ids, dtype=np.int64)
-        target = _find_extension_target(self.chains, h, req.t)
+        target = _find_extension_target(self.chains, h, req.t, req.model)
         if target is not None:
             self._append(target, outer_idx, req)
             return
@@ -213,9 +223,10 @@ def detect_agent_chains(normals: list[IndexedRequest]) -> ChainDetectionResult:
 
 
 def _find_extension_target(
-    chains: list[AgentChain], h: np.ndarray, t: float
+    chains: list[AgentChain], h: np.ndarray, t: float, model: str
 ) -> int | None:
-    """Chain whose tail is a complete prefix of ``h`` and has ended by ``t``.
+    """Chain whose tail is a complete prefix of ``h``, has ended by ``t``,
+    and ran on the same ``model`` (cross-model attachment is always a spawn).
 
     Deepest tail wins; ties go to the lowest chain index (ascending scan
     with strict ``>`` keeps the first)."""
@@ -225,6 +236,8 @@ def _find_extension_target(
     for idx, c in enumerate(chains):
         tl = c.tail_hash.shape[0]
         if tl == 0 or tl > hn or tl <= best_len:
+            continue
+        if c.tail_model != model:
             continue
         if c.tail_end > t + _EPSILON_SECONDS:
             continue
@@ -386,6 +399,7 @@ def _resolve_seams(
             if chains[ci].fork is not None
             and chains[ci].fork.depth > 0
             and t_end <= chains[ci].requests[0][1].t + _EPSILON_SECONDS
+            and chains[ci].requests[0][1].model == t_req.model
         ]
         if not candidates:
             continue

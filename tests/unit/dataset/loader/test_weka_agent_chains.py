@@ -10,11 +10,13 @@ from aiperf.dataset.loader.weka_agent_chains import (
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
 
-def _req(t: float, hash_ids: list[int], api_time: float = 1.0) -> WekaNormalRequest:
+def _req(
+    t: float, hash_ids: list[int], api_time: float = 1.0, model: str = "m"
+) -> WekaNormalRequest:
     return WekaNormalRequest(
         type="n",
         t=t,
-        model="m",
+        model=model,
         input_length=len(hash_ids) * 64,
         output_length=10,
         hash_ids=hash_ids,
@@ -280,3 +282,45 @@ def test_shared_seen_set_counts_cross_conversation_hits_in_time_order():
     assert out[("sa", 0)] == (1, 2)  # processed before w0 (position 1 < 2)
     assert out[("w0", 0)] == (2, 3)
     assert out[("root", 1)] == (3, 4)  # block 4 is globally novel
+
+
+def test_cross_model_full_prefix_extension_is_spawn():
+    # haiku request fully extends the opus tail after it ended — the
+    # same-model rule still forces a fork (cross-model = different agent).
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3], model="opus"),
+            _req(2.0, [1, 2, 3, 7], model="haiku"),
+        )
+    )
+    assert len(r.worker_indices) == 1
+    assert r.seams_merged == 0  # and phase 2 must not splice it back
+
+
+def test_cross_model_shrink_never_seams():
+    # Dead longer state, temporally feasible — but the continuation
+    # candidate is a different model, so it stays a spawn.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4, 5, 6], model="opus"),
+            _req(2.0, [1, 2, 90, 91], model="haiku"),
+        )
+    )
+    assert r.seams_merged == 0
+    assert len(r.worker_indices) == 1
+
+
+def test_same_model_fork_elected_over_deeper_cross_model_fork():
+    # Deeper fork is cross-model (excluded); shallower same-model fork
+    # is elected as the seam continuation.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4, 5, 6], model="opus"),
+            _req(2.0, [1, 2, 3, 4, 80, 81], model="haiku"),  # deep, wrong model
+            _req(3.0, [1, 2, 90], model="opus"),  # shallow, same model
+        )
+    )
+    assert r.seams_merged == 1
+    assert _chain_outer_indices(r, r.main_index) == [0, 2]
+    assert len(r.worker_indices) == 1
+    assert _chain_outer_indices(r, r.worker_indices[0]) == [1]
