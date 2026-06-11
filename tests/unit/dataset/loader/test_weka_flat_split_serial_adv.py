@@ -443,10 +443,12 @@ def test_flat_chain_think_time_only_uses_recorded_think_time():
     think_time*1000 (ms), falling back to the full within-chain delta when
     think_time is None (spec §5.6 'honoring think_time_only')."""
     requests = [
-        # out>64 so the main turn is a real turn, not a title-gen preamble
-        # (a small disjoint leading request would be set aside before split).
-        _normal(0.0, [1, 2, 3], out=128, api_time=0.5),  # main
+        # Real 2-turn main thread (shared [1,2,3] prefix) so its founder is not a
+        # lone block-disjoint leader -- which would now be peeled as a one-shot
+        # preamble. The [900,...] rows are then detected as the worker chain.
+        _normal(0.0, [1, 2, 3], api_time=0.5),  # main t0
         _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU, think_time=0.0),  # w t0
+        _normal(4.0, [1, 2, 3, 4], api_time=0.5),  # main t1 (shares prefix)
         _normal(
             8.0, [900, 901, 902], api_time=0.5, model=_HAIKU, think_time=2.0
         ),  # w t1
@@ -671,3 +673,101 @@ def test_flat_branch_child_ids_resolve_and_join_targets_not_background():
             assert p.kind == PrerequisiteKind.SPAWN_JOIN
             assert branches_by_id[p.branch_id].is_background is False
             assert branches_by_id[p.branch_id].mode == ConversationBranchMode.SPAWN
+
+
+# --------------------------------------------------------------------------
+# Preamble split: a leading request that shares NO blocks with the rest of the
+# trace is a one-shot preamble and must not found the main chain. Small ones
+# (Claude Code title generation) and large fully-disjoint ones (observed on 4
+# real 060826 traces: a 25-31k-token disjoint giant hijacked main_index into a
+# 1-turn "main" while the real session split into dozens of fa:* chains).
+# --------------------------------------------------------------------------
+
+
+def _req(t: float, hash_ids: list[int], out: int):
+    from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
+
+    return WekaNormalRequest.model_validate(_normal(t, hash_ids, out=out))
+
+
+def test_split_off_preamble_small_disjoint_leader_is_split():
+    """A small (out<=64), block-disjoint leading request (title-gen) is set
+    aside; the rest reach detection in outer-index order."""
+    from aiperf.dataset.loader.weka_trace import _split_off_preamble
+
+    normals = [
+        (0, _req(0.0, [900, 901], out=20)),  # title-gen: small, disjoint
+        (1, _req(1.0, [1, 2, 3], out=200)),
+        (2, _req(2.0, [1, 2, 3, 4], out=200)),
+    ]
+    preamble, rest = _split_off_preamble(normals)
+    assert [oi for oi, _ in preamble] == [0]
+    assert [oi for oi, _ in rest] == [1, 2]
+
+
+def test_split_off_preamble_large_disjoint_leader_is_split():
+    """A LARGE (out>64) leading request whose blocks are fully disjoint from
+    every other request is still a one-shot preamble and must be set aside, so
+    it cannot hijack main_index. This is the 060826 'disjoint giant' case."""
+    from aiperf.dataset.loader.weka_trace import _split_off_preamble
+
+    normals = [
+        (0, _req(0.0, [900, 901, 902, 903], out=500)),  # disjoint giant
+        (1, _req(1.0, [1, 2, 3], out=10)),
+        (2, _req(2.0, [1, 2, 3, 4], out=10)),
+    ]
+    preamble, rest = _split_off_preamble(normals)
+    assert [oi for oi, _ in preamble] == [0]
+    assert [oi for oi, _ in rest] == [1, 2]
+
+
+def test_split_off_preamble_large_leader_sharing_prefix_is_kept():
+    """A large leading request whose blocks ARE reused by later turns is a
+    genuine conversation root, not a preamble -- it must be kept (61/65 of the
+    060826 out>64 leaders are this case)."""
+    from aiperf.dataset.loader.weka_trace import _split_off_preamble
+
+    normals = [
+        (0, _req(0.0, [1, 2, 3], out=500)),  # real root: prefix reused below
+        (1, _req(1.0, [1, 2, 3, 4], out=10)),
+        (2, _req(2.0, [1, 2, 3, 4, 5], out=10)),
+    ]
+    preamble, rest = _split_off_preamble(normals)
+    assert preamble == []
+    assert [oi for oi, _ in rest] == [0, 1, 2]
+
+
+def test_split_off_preamble_large_leader_partial_overlap_is_kept():
+    """A large leader that shares SOME blocks (LCP>0) with the rest is not a
+    preamble; only a FULLY block-disjoint large leader is set aside."""
+    from aiperf.dataset.loader.weka_trace import _split_off_preamble
+
+    normals = [
+        (0, _req(0.0, [1, 2, 900], out=500)),  # shares prefix [1,2] with below
+        (1, _req(1.0, [1, 2, 3], out=10)),
+        (2, _req(2.0, [1, 2, 3, 4], out=10)),
+    ]
+    preamble, rest = _split_off_preamble(normals)
+    assert preamble == []
+
+
+def test_large_disjoint_leader_does_not_hijack_main_chain():
+    """End-to-end: a large disjoint leading request must be peeled, not allowed
+    to found a 1-turn main while the real multi-agent session is demoted to
+    worker chains. Without the fix the giant founds a 1-turn root and BOTH real
+    agents become fa:* chains; with it the giant re-attaches to the true main
+    (agent A) and only the genuine second agent (B) is a worker."""
+    requests = [
+        _normal(0.0, [900, 901, 902, 903], out=500, api_time=0.5),  # disjoint giant
+        _normal(1.0, [1, 2, 3], api_time=0.5),  # agent A (real main)
+        _normal(2.0, [1, 2, 3, 4], api_time=0.5),
+        _normal(3.0, [1, 2, 3, 4, 5], api_time=0.5),
+        _normal(4.0, [50, 51, 52], api_time=0.5, model=_HAIKU),  # agent B (worker)
+        _normal(5.0, [50, 51, 52, 53], api_time=0.5, model=_HAIKU),
+    ]
+    loader = _build_loader()
+    convs = _convert(loader, _trace("flt_big_pre", requests))
+    root = convs["flt_big_pre"]
+    fa_chains = [sid for sid in convs if "::fa:" in sid]
+    assert len(root.turns) == 4  # giant (re-attached preamble) + agent A's 3 turns
+    assert len(fa_chains) == 1  # only agent B remains a worker

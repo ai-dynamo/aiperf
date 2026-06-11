@@ -368,28 +368,42 @@ def _split_off_preamble(
     (the earliest request founds the main chain), hijacking the root agent's
     identity: the real root is demoted to a worker chain and its disjoint
     namespace skews the setup-prefix baseline. Only the single earliest request
-    is eligible, and only if it is small (output <=
-    ``_TITLE_GEN_MAX_OUTPUT_TOKENS``) and its hash list is disjoint (zero LCP)
-    from every other retained request. Capping at one is deliberate: a trace of
-    many mutually-disjoint requests is an independent-agent batch (or a
-    nonce-poisoned trace), not a run of title-generators, and must reach
-    detection intact. Returns ``(preamble, rest)`` in original outer-index
-    order; preamble is re-attached to the main chain for replay but never founds
-    the root or defines the namespace.
+    is eligible, and only if its hash list shares no common prefix (zero LCP)
+    with any other retained request. A prefix-disjoint leader qualifies as a
+    preamble when EITHER it is small (output <= ``_TITLE_GEN_MAX_OUTPUT_TOKENS``,
+    the title-generation case) OR it is FULLY block-disjoint -- none of its
+    blocks reappear anywhere in the trace, so its context is never reused (the
+    large one-shot-preamble case: observed on 060826 as 25-31k-token disjoint
+    leaders that otherwise founded a 1-turn "main" while the real session split
+    into dozens of worker chains). A large leader that merely shares no *prefix*
+    but reuses some blocks mid-list is kept, so a real lone-turn root is never
+    peeled. Capping at one is deliberate: a trace of many mutually-disjoint
+    requests is an independent-agent batch (or a nonce-poisoned trace), not a
+    run of preambles, and must reach detection intact. Returns
+    ``(preamble, rest)`` in original outer-index order; preamble is re-attached
+    to the main chain for replay but never founds the root or defines the
+    namespace.
     """
     if len(normals) < 2:
         return [], normals
     ordered = sorted(normals, key=lambda item: (item[1].t, item[0]))
     outer_idx, req = ordered[0]
-    if not req.hash_ids or req.output_length > _TITLE_GEN_MAX_OUTPUT_TOKENS:
+    if not req.hash_ids:
         return [], normals
+    rest = ordered[1:]
     if any(
         _hash_list_lcp(req.hash_ids, other.hash_ids) > 0
-        for _, other in ordered[1:]
+        for _, other in rest
         if other.hash_ids
     ):
         return [], normals
-    return [(outer_idx, req)], sorted(ordered[1:], key=lambda item: item[0])
+    if req.output_length > _TITLE_GEN_MAX_OUTPUT_TOKENS:
+        other_blocks: set[int] = set()
+        for _, other in rest:
+            other_blocks.update(other.hash_ids)
+        if not other_blocks.isdisjoint(req.hash_ids):
+            return [], normals
+    return [(outer_idx, req)], sorted(rest, key=lambda item: item[0])
 
 
 def _dropped_subagent_indices(plan: _ParentPlan) -> set[int]:
