@@ -292,9 +292,11 @@ def test_filter_kills_middle_parent_subagent_reanchors(tmp_path, monkeypatch):
     data = _base_trace(
         [
             _normal(0.0, 50, 10, [1]),
-            _normal(1.0, 500, 10, [2]),
+            _normal(1.0, 500, 10, [1, 2]),
             _subagent(2.0, "a1", [_normal(0.0, 30, 5, [100])]),
-            _normal(4.0, 50, 10, [3]),
+            # Chains onto the surviving [1] prefix so detection keeps the
+            # post-filter parent as one conversation.
+            _normal(4.0, 50, 10, [1, 3]),
         ],
         trace_id="tmid",
     )

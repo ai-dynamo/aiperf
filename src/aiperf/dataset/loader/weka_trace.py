@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -180,7 +180,8 @@ class _TraceIdleTiming:
     # the parallel reconstruction path pickles request objects to worker
     # processes, where they materialize at fresh memory addresses and any
     # id()-based dict misses with KeyError. (session_id, idx) is stable
-    # across the pickle round-trip.
+    # across the pickle round-trip. Detected flat chains land in the same
+    # map under their own session ids.
     child_by_session_request: dict[tuple[str, int], _RequestTiming]
     subagent_end_by_outer_idx: dict[int, float]
     # Mapped subagent spawn time (warp.map(entry.t)), keyed by outer idx. The
@@ -188,6 +189,7 @@ class _TraceIdleTiming:
     # the turns it links; the raw entry.t would land far past the parent's
     # last turn whenever an idle gap is compressed.
     subagent_start_by_outer_idx: dict[int, float]
+    flat_chain_end_by_session: dict[str, float] = field(default_factory=dict)
 
 
 class _IdleGapTimeWarp:
@@ -296,6 +298,52 @@ def _expand_subagent_to_child_plans(
     return plans
 
 
+@dataclass
+class _FlatChainPlan:
+    """A detected flattened-agent worker chain (spec §5).
+
+    Built when LCP chain detection splits a trace's flat top-level requests
+    into per-agent chains; every non-main chain becomes one of these and is
+    emitted as a child Conversation with SPAWN/SPAWN_JOIN linkage.
+    """
+
+    session_id: str
+    parent_trace_id: str
+    chain_index: int
+    requests: list[tuple[int, _NormalRequestT]]
+    prefix_blocks: int
+    fork_parent_chain: int | None
+    fork_depth: int
+    block_size: int
+
+
+def _flat_chain_end_seconds(fp: _FlatChainPlan) -> float:
+    """Recorded end of a detected chain: latest request-interval end."""
+    return max(_request_end_seconds(req.t, req.api_time) for _, req in fp.requests)
+
+
+@dataclass
+class _SplitStats:
+    """Corpus-level counters from flattened-agent detection."""
+
+    traces_split: int = 0
+    total_chains: int = 0
+    total_seams: int = 0
+    total_empty_hash: int = 0
+    traces_poisoned: int = 0
+
+
+@dataclass
+class _ReconstructionPlans:
+    """Everything plan building derives from the parsed traces."""
+
+    parent_plans: list[_ParentPlan]
+    child_plans: list[_ChildPlan]
+    flat_plans: list[_FlatChainPlan]
+    main_prefix_by_trace: dict[str, int]
+    split_stats: _SplitStats
+
+
 def _dropped_subagent_indices(plan: _ParentPlan) -> set[int]:
     normal_outer_indices = [outer_idx for outer_idx, _ in plan.normals]
     dropped: set[int] = set()
@@ -316,11 +364,35 @@ def _child_plans_for_active_subagents(
     ]
 
 
+def _populate_flat_chain_timing(
+    flat_plans_for_trace: list[_FlatChainPlan],
+    warp: _IdleGapTimeWarp,
+    child_by_session_request: dict[tuple[str, int], _RequestTiming],
+) -> dict[str, float]:
+    """Warp flat-chain request timing onto the shared per-trace timeline.
+
+    Mutates ``child_by_session_request`` in place (flat chains share the
+    subagent children's keyspace) and returns the warped chain-end map used
+    for SPAWN_JOIN placement.
+    """
+    flat_chain_end_by_session: dict[str, float] = {}
+    for fp in flat_plans_for_trace:
+        prev_flat_t: float | None = None
+        for k, (_, req) in enumerate(fp.requests):
+            t = warp.map(req.t)
+            delay_ms = None if prev_flat_t is None else (t - prev_flat_t) * 1000.0
+            child_by_session_request[(fp.session_id, k)] = _RequestTiming(t, delay_ms)
+            prev_flat_t = t
+        flat_chain_end_by_session[fp.session_id] = warp.map(_flat_chain_end_seconds(fp))
+    return flat_chain_end_by_session
+
+
 def _build_trace_idle_timing(
     *,
     plan: _ParentPlan,
     child_plans: list[_ChildPlan],
     cap_seconds: float,
+    flat_plans: list[_FlatChainPlan] | None = None,
 ) -> _TraceIdleTiming:
     """Build per-turn timing after capping request-start gaps in one root trace.
 
@@ -338,9 +410,17 @@ def _build_trace_idle_timing(
     latency still matters for join placement, but it does not prevent this idle
     gap from being compressed.
     """
+    flat_plans_for_trace = [
+        fp for fp in (flat_plans or []) if fp.parent_trace_id == plan.trace_id
+    ]
     request_starts: list[float] = []
     for _, req in plan.normals:
         request_starts.append(req.t)
+    # Flat-chain requests were top-level rows before the split; including
+    # them keeps the warp's gap structure identical to the unsplit trace.
+    for fp in flat_plans_for_trace:
+        for _, req in fp.requests:
+            request_starts.append(req.t)
 
     child_plans_for_trace = _child_plans_for_active_subagents(plan, child_plans)
     for cp in child_plans_for_trace:
@@ -365,6 +445,10 @@ def _build_trace_idle_timing(
             child_by_session_request[(cp.session_id, k)] = _RequestTiming(t, delay_ms)
             prev_child_t = t
 
+    flat_chain_end_by_session = _populate_flat_chain_timing(
+        flat_plans_for_trace, warp, child_by_session_request
+    )
+
     subagent_end_by_outer_idx = {
         outer_idx: warp.map(_sa_end_seconds(entry))
         for outer_idx, entry in plan.subagents
@@ -377,6 +461,7 @@ def _build_trace_idle_timing(
         child_by_session_request=child_by_session_request,
         subagent_end_by_outer_idx=subagent_end_by_outer_idx,
         subagent_start_by_outer_idx=subagent_start_by_outer_idx,
+        flat_chain_end_by_session=flat_chain_end_by_session,
     )
 
 
@@ -682,9 +767,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
     def _build_reconstruction_plans(
         self, data: dict[str, list[WekaTrace]]
-    ) -> tuple[list[_ParentPlan], list[_ChildPlan]]:
+    ) -> _ReconstructionPlans:
         parent_plans: list[_ParentPlan] = []
         child_plans: list[_ChildPlan] = []
+        flat_plans: list[_FlatChainPlan] = []
+        main_prefix_by_trace: dict[str, int] = {}
+        split_stats = _SplitStats()
+        split_enabled = Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
         for trace_id, wekas in data.items():
             trace = wekas[0]
             trace_bs = self._block_size_for_trace(trace)
@@ -702,28 +791,119 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             trace_id, sa_index, req, trace_bs
                         )
                     )
+            main_prefix_blocks = math.ceil(
+                (trace.tool_tokens + trace.system_tokens) / trace_bs
+            )
+            if split_enabled and len(normals) > 1:
+                normals, main_prefix_blocks = self._detect_and_split_flat_chains(
+                    trace_id=trace_id,
+                    normals=normals,
+                    declared_prefix_blocks=main_prefix_blocks,
+                    trace_bs=trace_bs,
+                    flat_plans=flat_plans,
+                    split_stats=split_stats,
+                )
+            main_prefix_by_trace[trace_id] = main_prefix_blocks
             parent_plans.append(
                 _ParentPlan(trace_id, normals, subagents, block_size=trace_bs)
             )
-        return parent_plans, child_plans
+        return _ReconstructionPlans(
+            parent_plans=parent_plans,
+            child_plans=child_plans,
+            flat_plans=flat_plans,
+            main_prefix_by_trace=main_prefix_by_trace,
+            split_stats=split_stats,
+        )
+
+    def _detect_and_split_flat_chains(
+        self,
+        *,
+        trace_id: str,
+        normals: list[tuple[int, _NormalRequestT]],
+        declared_prefix_blocks: int,
+        trace_bs: int,
+        flat_plans: list[_FlatChainPlan],
+        split_stats: _SplitStats,
+    ) -> tuple[list[tuple[int, _NormalRequestT]], int]:
+        """Run LCP chain detection on one trace's retained top-level requests.
+
+        Appends one :class:`_FlatChainPlan` per detected worker chain to
+        ``flat_plans`` and returns the (possibly reduced) main-chain normals
+        plus the effective main-chain setup-prefix block count.
+        """
+        from aiperf.dataset.loader.weka_agent_chains import (
+            compute_chain_prefix_blocks,
+            detect_agent_chains,
+            looks_hash_poisoned,
+        )
+
+        detection = detect_agent_chains(normals)
+        if looks_hash_poisoned(detection):
+            split_stats.traces_poisoned += 1
+            _logger.warning(
+                f"Trace {trace_id}: hash_ids look nonce-poisoned (zero-LCP "
+                f"chain founders dominate; e.g. a per-request billing nonce "
+                f"in the first system block poisons chained block hashes). "
+                f"Skipping flattened-agent splitting for this trace."
+            )
+            return normals, declared_prefix_blocks
+        if not detection.worker_indices:
+            return normals, declared_prefix_blocks
+
+        prefixes = compute_chain_prefix_blocks(
+            detection, declared_prefix_blocks=declared_prefix_blocks
+        )
+        for n, ci in enumerate(detection.worker_indices):
+            chain = detection.chains[ci]
+            flat_plans.append(
+                _FlatChainPlan(
+                    session_id=f"{trace_id}::fa:{n:03d}",
+                    parent_trace_id=trace_id,
+                    chain_index=n,
+                    requests=list(chain.requests),
+                    prefix_blocks=prefixes[ci],
+                    fork_parent_chain=chain.fork.parent_chain if chain.fork else None,
+                    fork_depth=chain.fork.depth if chain.fork else 0,
+                    block_size=trace_bs,
+                )
+            )
+        split_stats.traces_split += 1
+        split_stats.total_chains += len(detection.worker_indices)
+        split_stats.total_seams += detection.seams_merged
+        split_stats.total_empty_hash += detection.unclassified_empty_hash
+        _logger.info(
+            f"Trace {trace_id}: detected {1 + len(detection.worker_indices)} "
+            f"agents ({detection.seams_merged} seams merged, "
+            f"{len(detection.worker_indices)} spawned chains, "
+            f"{detection.unclassified_empty_hash} empty-hash kept on main)"
+        )
+        return (
+            list(detection.chains[detection.main_index].requests),
+            prefixes[detection.main_index],
+        )
 
     def _build_shared_metric_values(
         self,
         parent_plans: list[_ParentPlan],
         child_plans: list[_ChildPlan],
+        flat_plans: list[_FlatChainPlan] | None = None,
     ) -> dict[str, dict[tuple[str, int], tuple[int, int]]]:
         """Per-trace ``{(session_id, k): (hits, total)}`` from ONE shared
         seen-set consumed in global (t, outer_idx, stream_idx, k) order.
 
         ``hash_id_scope: "local"`` means one namespace per trace file, so a
         block first sent by the parent is a cache hit when a subagent child
-        re-sends it (and vice versa). Dropped subagents are excluded to
-        match emission.
+        or a detected flat chain re-sends it (and vice versa). Dropped
+        subagents are excluded to match emission.
         """
         from aiperf.dataset.loader.weka_agent_chains import (
             MetricRecord,
             compute_shared_prefix_cache_metrics,
         )
+
+        flat_by_trace: dict[str, list[_FlatChainPlan]] = defaultdict(list)
+        for fp in flat_plans or []:
+            flat_by_trace[fp.parent_trace_id].append(fp)
 
         out: dict[str, dict[tuple[str, int], tuple[int, int]]] = {}
         for plan in parent_plans:
@@ -737,6 +917,16 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         hash_ids=list(req.hash_ids),
                     )
                 )
+            for fp in flat_by_trace.get(plan.trace_id, []):
+                for k, (outer_idx, req) in enumerate(fp.requests):
+                    records.append(
+                        MetricRecord(
+                            sort_key=(req.t, outer_idx, 0, 0),
+                            session_id=fp.session_id,
+                            k=k,
+                            hash_ids=list(req.hash_ids),
+                        )
+                    )
             sa_outer_by_index = {
                 sa_index: outer_idx
                 for sa_index, (outer_idx, _) in enumerate(plan.subagents)
@@ -760,7 +950,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         return out
 
     def _build_trace_idle_timing_by_trace(
-        self, parent_plans: list[_ParentPlan], child_plans: list[_ChildPlan]
+        self,
+        parent_plans: list[_ParentPlan],
+        child_plans: list[_ChildPlan],
+        flat_plans: list[_FlatChainPlan] | None = None,
     ) -> dict[str, _TraceIdleTiming]:
         trace_idle_gap_cap_seconds = self._trace_idle_gap_cap_seconds()
         if trace_idle_gap_cap_seconds is None:
@@ -770,6 +963,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 plan=plan,
                 child_plans=child_plans,
                 cap_seconds=trace_idle_gap_cap_seconds,
+                flat_plans=flat_plans,
             )
             for plan in parent_plans
         }
@@ -876,9 +1070,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         if max_ctx is not None:
             data = self._filter_traces_by_max_context(data, max_ctx)
 
-        parent_plans, child_plans = self._build_reconstruction_plans(data)
+        plans = self._build_reconstruction_plans(data)
+        parent_plans = plans.parent_plans
+        child_plans = plans.child_plans
+        flat_plans = plans.flat_plans
         metric_values_by_trace = self._build_shared_metric_values(
-            parent_plans, child_plans
+            parent_plans, child_plans, flat_plans
         )
 
         # Per-trace model rewrite map. Built once here, applied in both the
@@ -896,7 +1093,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         cap_seconds = self.user_config.loadgen.inter_turn_delay_cap_seconds
         trace_idle_gap_cap_seconds = self._trace_idle_gap_cap_seconds()
         trace_idle_timing_by_trace = self._build_trace_idle_timing_by_trace(
-            parent_plans, child_plans
+            parent_plans, child_plans, flat_plans
         )
         turn_cap_seconds = (
             None if trace_idle_gap_cap_seconds is not None else cap_seconds
@@ -909,10 +1106,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         parallel_threshold = Environment.DATASET.WEKA_PARALLEL_THRESHOLD
         configured_workers = Environment.DATASET.WEKA_PARALLEL_WORKERS
+        # Flat-chain emission lands in the parallel path in a follow-up; until
+        # then any corpus with detected splits reconstructs serially.
         use_parallel = (
             self.prompt_generator is not None
             and _n_plans >= parallel_threshold
             and configured_workers != 1
+            and not flat_plans
         )
 
         try:
@@ -943,6 +1143,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     model_map_per_trace=model_map_per_trace,
                     trace_idle_timing_by_trace=trace_idle_timing_by_trace,
                     metric_values_by_trace=metric_values_by_trace,
+                    flat_plans=flat_plans,
+                    main_prefix_by_trace=plans.main_prefix_by_trace,
                 )
         finally:
             # Don't hold trace content past this call. The caller may process
@@ -984,6 +1186,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         model_map_per_trace: dict[str, dict[str, str]],
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
         metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
+        flat_plans: list[_FlatChainPlan] | None = None,
+        main_prefix_by_trace: dict[str, int] | None = None,
     ) -> list[Conversation]:
         """In-process serial reconstruction."""
         import time as _time
@@ -1000,6 +1204,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         from aiperf.dataset.loader.weka_synth_buf import (
             ConversationReconstructor,
         )
+
+        flat_plans_by_trace: dict[str, list[_FlatChainPlan]] = defaultdict(list)
+        for fp in flat_plans or []:
+            flat_plans_by_trace[fp.parent_trace_id].append(fp)
+        main_prefix_by_trace = main_prefix_by_trace or {}
 
         conversations: list[Conversation] = []
         n_plans = len(parent_plans)
@@ -1043,11 +1252,30 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             for k, (outer_idx, req) in enumerate(plan.normals):
                 seed = f"{plan.trace_id}:turn_{k}:partial_tail"
                 if k == 0:
+                    # When detection's observed namespace-group prefix beats
+                    # the declared tool/system tokens (spec §5.4 "keep the
+                    # longer one"), emit it as a synthetic system segment so
+                    # the system|user boundary sits at the same block offset
+                    # in every conversation of the group. Declared values
+                    # pass through untouched when they win or tie.
+                    declared_blocks = math.ceil(
+                        (trace.tool_tokens + trace.system_tokens) / plan.block_size
+                    )
+                    eff_blocks = main_prefix_by_trace.get(
+                        plan.trace_id, declared_blocks
+                    )
+                    if eff_blocks > declared_blocks and len(req.hash_ids) >= eff_blocks:
+                        init_tool, init_system = 0, eff_blocks * plan.block_size
+                    else:
+                        init_tool, init_system = (
+                            trace.tool_tokens,
+                            trace.system_tokens,
+                        )
                     recon.init_turn_0(
                         hash_ids=req.hash_ids,
                         in_tokens=req.input_length,
-                        tool_tokens=trace.tool_tokens,
-                        system_tokens=trace.system_tokens,
+                        tool_tokens=init_tool,
+                        system_tokens=init_system,
                         seed=seed,
                     )
                 else:
@@ -1230,6 +1458,58 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             branch_id=branch_id,
                         )
                     )
+
+            # Detected flat chains: SPAWN off the last main turn preceding the
+            # chain's first request (turn 0 fallback — never drop real load),
+            # SPAWN_JOIN on the first later main turn at/after the chain's
+            # end, grouped by (preceding, join) like subagents.
+            flat_groups: dict[tuple[int, int | None], list[_FlatChainPlan]] = (
+                defaultdict(list)
+            )
+            flat_group_order: list[tuple[int, int | None]] = []
+            for fp in flat_plans_by_trace.get(plan.trace_id, []):
+                first_outer = fp.requests[0][0]
+                preceding = max(
+                    (pos for oi, pos in outer_to_turn_pos.items() if oi < first_outer),
+                    default=0,
+                )
+                if trace_idle_timing is not None:
+                    fp_end = trace_idle_timing.flat_chain_end_by_session[fp.session_id]
+                else:
+                    fp_end = _flat_chain_end_seconds(fp)
+                join_turn = None
+                for oi, pos in sorted(outer_to_turn_pos.items()):
+                    if oi <= first_outer:
+                        continue
+                    if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= fp_end:
+                        join_turn = pos
+                        break
+                key = (preceding, join_turn)
+                if key not in flat_groups:
+                    flat_group_order.append(key)
+                flat_groups[key].append(fp)
+
+            for preceding, join_turn in flat_group_order:
+                fps = flat_groups[(preceding, join_turn)]
+                branch_id = f"{plan.trace_id}:flatspawn:{fps[0].chain_index}"
+                conv.branches.append(
+                    ConversationBranchInfo(
+                        branch_id=branch_id,
+                        child_conversation_ids=[fp.session_id for fp in fps],
+                        mode=ConversationBranchMode.SPAWN,
+                        is_background=join_turn is None,
+                        start_timestamp_ms=min(fp.requests[0][1].t for fp in fps)
+                        * 1000.0,
+                    )
+                )
+                conv.turns[preceding].branch_ids.append(branch_id)
+                if join_turn is not None:
+                    conv.turns[join_turn].prerequisites.append(
+                        TurnPrerequisite(
+                            kind=PrerequisiteKind.SPAWN_JOIN,
+                            branch_id=branch_id,
+                        )
+                    )
             dropped_per_trace[plan.trace_id] = dropped_subagent_indices
             conversations.append(conv)
             if _plan_idx % log_every_plan == 0 or _plan_idx == n_plans:
@@ -1242,7 +1522,31 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     f"in {elapsed:.1f}s ({rate:.1f} traces/s)"
                 )
 
-        for cp in child_plans:
+        # Emit children grouped per trace: subagent children first, then the
+        # trace's detected flat chains (the parallel path assembles results
+        # in the same order, keeping both paths byte-identical).
+        child_units: list[_ChildPlan | _FlatChainPlan] = []
+        for plan in parent_plans:
+            child_units.extend(
+                cp for cp in child_plans if cp.parent_trace_id == plan.trace_id
+            )
+            child_units.extend(flat_plans_by_trace.get(plan.trace_id, []))
+
+        for cp in child_units:
+            if isinstance(cp, _FlatChainPlan):
+                conversations.append(
+                    self._emit_flat_chain_conversation(
+                        fp=cp,
+                        ignore_delays=ignore_delays,
+                        think_time_only=think_time_only,
+                        model_map=model_map_per_trace.get(cp.parent_trace_id, {}),
+                        trace_idle_timing=trace_idle_timing_by_trace.get(
+                            cp.parent_trace_id
+                        ),
+                        metric_values=metric_values_by_trace[cp.parent_trace_id],
+                    )
+                )
+                continue
             if cp.subagent_index in dropped_per_trace.get(cp.parent_trace_id, set()):
                 continue
             child_model_map = model_map_per_trace.get(cp.parent_trace_id, {})
@@ -1328,6 +1632,126 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             conversations.append(child_conv)
 
         return conversations
+
+    def _emit_flat_chain_conversation(
+        self,
+        *,
+        fp: _FlatChainPlan,
+        ignore_delays: bool,
+        think_time_only: bool,
+        model_map: dict[str, str],
+        trace_idle_timing: _TraceIdleTiming | None,
+        metric_values: dict[tuple[str, int], tuple[int, int]],
+    ) -> Conversation:
+        """Reconstruct one detected flat chain as a child Conversation.
+
+        Mirrors the subagent-child emission with three differences: the
+        decode scope is the parent trace (shared namespace), turn 0's system
+        segment comes from the chain's effective namespace-group prefix, and
+        ``max_tokens`` honors ``--max-osl`` like the top-level requests these
+        rows used to be.
+        """
+        pg = self.prompt_generator
+        pg._cache.clear()
+        pg._hash_id_corpus_rng.set_trace_id(fp.parent_trace_id)
+        self._block_size = fp.block_size
+
+        recon = self._new_reconstructor(fp.block_size)
+        conv = Conversation(
+            session_id=fp.session_id,
+            context_mode=self._resolved_context_mode(),
+            is_root=False,
+            agent_depth=1,
+            parent_conversation_id=fp.parent_trace_id,
+        )
+        from aiperf.common.models import Turn
+
+        for k, (_outer_idx, req) in enumerate(fp.requests):
+            seed = f"{fp.session_id}:turn_{k}:partial_tail"
+            if k == 0:
+                recon.init_turn_0(
+                    hash_ids=req.hash_ids,
+                    in_tokens=req.input_length,
+                    tool_tokens=0,
+                    system_tokens=fp.prefix_blocks * fp.block_size,
+                    seed=seed,
+                )
+            else:
+                prev_req = fp.requests[k - 1][1]
+                recon.advance_turn(
+                    prev_hash_ids=prev_req.hash_ids,
+                    prev_in_tokens=prev_req.input_length,
+                    prev_out_tokens=prev_req.output_length,
+                    curr_hash_ids=req.hash_ids,
+                    curr_in_tokens=req.input_length,
+                    seed=seed,
+                )
+            t_ms, delay_ms = self._flat_turn_timing(
+                fp=fp,
+                k=k,
+                req=req,
+                trace_idle_timing=trace_idle_timing,
+                think_time_only=think_time_only,
+            )
+            delta = recon.turn_delta()
+            hit_blocks, total_blocks = metric_values[(fp.session_id, k)]
+            conv.turns.append(
+                Turn(
+                    timestamp=None if ignore_delays else t_ms,
+                    delay=None if ignore_delays else delay_ms,
+                    model=model_map.get(req.model, req.model),
+                    max_tokens=self._cap_output(req),
+                    raw_messages=delta.delta_messages,
+                    reset_context=delta.reset_context,
+                    theoretical_prefix_cache_hit_blocks=hit_blocks,
+                    theoretical_prefix_cache_total_blocks=total_blocks,
+                )
+            )
+        return conv
+
+    def _new_reconstructor(self, block_size: int):
+        """Fresh per-conversation LCP reconstructor bound to this loader."""
+        from aiperf.dataset.loader.weka_synth_buf import ConversationReconstructor
+
+        return ConversationReconstructor(
+            block_size=block_size,
+            decode_block_tokens=self._decode_block_tokens,
+            sample_partial_tail_tokens=self.sample_partial_tail_tokens,
+            decode_tokens_to_text=self._decode_tokens_to_text,
+            bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
+            emit_assistant_segments=not self._use_live_assistant,
+        )
+
+    def _flat_turn_timing(
+        self,
+        *,
+        fp: _FlatChainPlan,
+        k: int,
+        req: _NormalRequestT,
+        trace_idle_timing: _TraceIdleTiming | None,
+        think_time_only: bool,
+    ) -> tuple[float, float | None]:
+        """(timestamp_ms, clamped delay_ms) for one flat-chain turn.
+
+        Same precedence as the subagent-child loop: warped per-trace timing
+        when the idle-gap cap is active, else raw per-chain deltas honoring
+        ``--use-think-time-only`` and the inter-turn delay cap.
+        """
+        if trace_idle_timing is not None:
+            timing = trace_idle_timing.child_by_session_request[(fp.session_id, k)]
+            t_ms = timing.timestamp_seconds * 1000.0
+            delay_ms = timing.delay_ms
+        else:
+            t_ms = req.t * 1000.0
+            if k == 0:
+                delay_ms = None
+            elif think_time_only and req.think_time is not None:
+                delay_ms = req.think_time * 1000.0
+            else:
+                delay_ms = t_ms - fp.requests[k - 1][1].t * 1000.0
+        if delay_ms is not None:
+            delay_ms = self._delay_cap_tracker.clamp(delay_ms)
+        return t_ms, delay_ms
 
     def _build_parallel_reconstruction_tasks(
         self,

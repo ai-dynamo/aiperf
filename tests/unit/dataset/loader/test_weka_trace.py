@@ -424,7 +424,8 @@ def test_weka_parallel_child_conversation_metadata_is_non_root(monkeypatch):
     )
     _stub_prompt_generator_for_reconstructor(loader)
     data = loader.load_dataset()
-    parent_plans, child_plans = loader._build_reconstruction_plans(data)
+    plans = loader._build_reconstruction_plans(data)
+    parent_plans, child_plans = plans.parent_plans, plans.child_plans
 
     def fake_run_parallel_weka_reconstruction(*args, **kwargs):
         return [
@@ -873,7 +874,8 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
                 "model": "claude-opus-4-5-20251101",
                 "in": 200,
                 "out": 20,
-                "hash_ids": [3, 4],
+                # Chains onto [1, 2] so detection keeps one conversation.
+                "hash_ids": [1, 2, 3],
                 "input_types": ["text"],
                 "output_types": ["text"],
                 "stop": "end_turn",
@@ -886,7 +888,8 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
                 "model": "claude-opus-4-5-20251101",
                 "in": 300,
                 "out": 30,
-                "hash_ids": [5, 6],
+                # Chains onto [1, 2, 3] so detection keeps one conversation.
+                "hash_ids": [1, 2, 3, 4],
                 "input_types": ["text"],
                 "output_types": ["text"],
                 "stop": "end_turn",
@@ -1299,3 +1302,110 @@ def test_theoretical_metric_shares_seen_set_with_subagent_children():
     # Root turn 1: [1,2,3,4,99] -> 1,2,3 seen from itself; 4 novel stops the
     # leading run even though 99 was seen from the child.
     assert root.turns[1].theoretical_prefix_cache_hit_blocks == 3
+
+
+FANOUT_FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces_fanout"
+
+
+def _fanout_loader():
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(
+        filename=str(FANOUT_FIXTURES / "fanout.json"), user_config=uc
+    )
+    _stub_prompt_generator_for_reconstructor(loader)
+    return loader
+
+
+def test_flattened_fanout_splits_into_three_conversations():
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    assert set(convs) == {
+        "trace_fanout",
+        "trace_fanout::fa:000",
+        "trace_fanout::fa:001",
+    }
+    root = convs["trace_fanout"]
+    assert len(root.turns) == 3
+    w0 = convs["trace_fanout::fa:000"]
+    assert len(w0.turns) == 2
+    assert w0.agent_depth == 1
+    assert w0.is_root is False
+    assert w0.parent_conversation_id == "trace_fanout"
+    assert len(convs["trace_fanout::fa:001"].turns) == 1
+
+
+def test_flattened_fanout_branch_anchoring_and_joins():
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    root = convs["trace_fanout"]
+    # Both workers spawn off turn 0 (last main turn before their first req).
+    spawn_branch_ids = root.turns[0].branch_ids
+    assert len(spawn_branch_ids) == 2
+    branches = {b.branch_id: b for b in root.branches}
+    # Worker 1 (ends t=6.5) gates main turn 1 (t=9); worker 0 (ends t=9.5)
+    # gates main turn 2 (t=12) -> different join turns -> separate branches.
+    join_prereqs_t1 = [p.branch_id for p in root.turns[1].prerequisites]
+    join_prereqs_t2 = [p.branch_id for p in root.turns[2].prerequisites]
+    assert len(join_prereqs_t1) == 1 and len(join_prereqs_t2) == 1
+    assert branches[join_prereqs_t1[0]].child_conversation_ids == [
+        "trace_fanout::fa:001"
+    ]
+    assert branches[join_prereqs_t2[0]].child_conversation_ids == [
+        "trace_fanout::fa:000"
+    ]
+
+
+def test_flattened_fanout_per_chain_delays():
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    w0 = convs["trace_fanout::fa:000"]
+    assert w0.turns[0].delay is None
+    assert w0.turns[1].delay == pytest.approx((8.5 - 2.0) * 1000.0)
+    root = convs["trace_fanout"]
+    # Main delays computed within the main chain only: 9.0-0.0, 12.0-9.0.
+    assert root.turns[1].delay == pytest.approx(9000.0)
+    assert root.turns[2].delay == pytest.approx(3000.0)
+
+
+def test_flattened_fanout_observed_prefix_becomes_system_segment():
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    # Observed prefix = 2 blocks -> turn 0 of root and workers opens with a
+    # system segment of exactly 2 * 64 decoded tokens.
+    for sid in ("trace_fanout", "trace_fanout::fa:000", "trace_fanout::fa:001"):
+        msgs = convs[sid].turns[0].raw_messages
+        assert msgs[0]["role"] == "system", sid
+        assert msgs[0]["content"] == "<dec:128>", sid
+
+
+def test_flattened_fanout_shares_decode_scope_with_root():
+    """Worker chains decode under the trace scope, never their own."""
+    loader = _fanout_loader()
+    scopes_used: list[str] = []
+    orig = loader.prompt_generator._hash_id_corpus_rng.set_trace_id
+
+    def _spy(scope: str):
+        scopes_used.append(scope)
+        return orig(scope)
+
+    loader.prompt_generator._hash_id_corpus_rng.set_trace_id = _spy
+    loader.convert_to_conversations(loader.load_dataset())
+    assert scopes_used and all(s == "trace_fanout" for s in scopes_used)
+
+
+def test_split_disabled_restores_legacy_single_stream(monkeypatch):
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", False)
+    loader = _fanout_loader()
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    assert [c.session_id for c in convs] == ["trace_fanout"]
+    assert len(convs[0].turns) == 6
