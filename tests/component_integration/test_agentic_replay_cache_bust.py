@@ -291,14 +291,12 @@ def test_agentic_replay_cache_bust_marker_in_wire_payload(
     across all turns of a session, distinct across sessions, and absent
     from the trace turn bodies.
 
-    Note on ``FIRST_TURN_*`` semantics (spec §4.5): the worker only injects
-    the marker at ``credit.turn_index == 0``. Agentic_replay trajectories
-    that resume at ``k_i > 0`` therefore never see a FIRST_TURN_* marker —
-    only sessions that begin at turn 0 (recycled spawns and k_i=0
-    trajectories) carry one. We restrict the per-session continuity /
-    cross-session distinctness assertions to *marked* sessions for
-    FIRST_TURN_* and require at least one such marked session to exist.
-    SYSTEM_* applies on every turn, so marker coverage is universal.
+    Marker coverage is universal for every target: FIRST_TURN_* injects into
+    the effective wire prefix's opening user turn on every credit (including
+    mid-trajectory resumes at ``k_i > 0``, whose seeded turn 0 is the real
+    prefix), and SYSTEM_* applies every turn. So every profiling session must
+    carry exactly one marker — a regression of the seeded-resume fix would show
+    up here as an unmarked ``k_i > 0`` session.
     """
     cmd = _build_cmd(weka_with_system_dir, cache_bust=target)
     result = cli.run_sync(cmd, timeout=defaults.timeout)
@@ -329,10 +327,6 @@ def test_agentic_replay_cache_bust_marker_in_wire_payload(
         f"got {len(by_session)}: {list(by_session.keys())}"
     )
 
-    is_first_turn_target = target in (
-        CacheBustTarget.FIRST_TURN_PREFIX,
-        CacheBustTarget.FIRST_TURN_SUFFIX,
-    )
     is_prefix_target = target in (
         CacheBustTarget.SYSTEM_PREFIX,
         CacheBustTarget.FIRST_TURN_PREFIX,
@@ -387,22 +381,19 @@ def test_agentic_replay_cache_bust_marker_in_wire_payload(
         )
         session_rids[xcorr] = next(iter(rids_in_session))
 
-    if is_first_turn_target:
-        # FIRST_TURN_* only fires when credit.turn_index == 0. With our
-        # 6-trace fixture + concurrency=3 + duration=8s, recycled sessions
-        # always start at turn 0, so at least one session must be marked.
-        assert len(session_rids) >= 1, (
-            f"target={target}: no session received a FIRST_TURN marker. "
-            f"Recycled sessions begin at turn_index=0 and must inject. "
-            f"Total sessions={len(by_session)}, "
-            f"unmarked={len(sessions_without_marker)}"
-        )
-    else:
-        # SYSTEM_* applies on every turn -> every session must be marked.
-        assert not sessions_without_marker, (
-            f"target={target}: SYSTEM_* must mark every session; "
-            f"unmarked={sessions_without_marker}"
-        )
+    # Every profiling session must carry a marker, for ALL targets. FIRST_TURN_*
+    # marks the effective prefix's opening user turn on every credit — including
+    # seeded mid-trajectory resumes at k_i > 0 — so an unmarked session here is a
+    # regression of the seeded-resume fix. SYSTEM_* applies every turn. (This
+    # fixture is linear, no FORK children — FORK inheritance is covered in the
+    # DAG cache-bust test and the worker unit tests.)
+    assert not sessions_without_marker, (
+        f"target={target}: every session must be marked, but these were not: "
+        f"{sessions_without_marker}. Total sessions={len(by_session)}."
+    )
+    assert len(session_rids) >= 1, (
+        f"target={target}: no marked sessions at all (fixture/run too small?)."
+    )
 
     # Cross-session distinctness: among marked sessions we want >= 2 distinct
     # rids whenever there are >= 2 marked sessions (which is the common case).
