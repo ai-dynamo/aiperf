@@ -17,6 +17,7 @@ from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
     CommandType,
+    ConversationBranchMode,
     MemoryMapFormat,
     MessageType,
 )
@@ -318,6 +319,20 @@ def _apply_cache_bust(
     target = credit.cache_bust_target
 
     if not marker or target == CacheBustTarget.NONE:
+        return system_message
+
+    # FORK children share the parent's KV cache by design: they seed turn_list
+    # from the parent (the SAME Turn objects) and must send the parent's exact
+    # prefix to hit its cache. The parent already injected its marker into those
+    # shared turns, so the child inherits it for free — re-busting here would
+    # diverge the child's prefix from the parent's (cache miss) AND mutate the
+    # parent's shared, read-only Turn objects (stacking markers). So cache-bust
+    # is a no-op for FORK children. SPAWN children start fresh (no shared turns)
+    # and root sessions own their prefix, so both are busted normally.
+    if (
+        session.parent_correlation_id is not None
+        and session.branch_mode == ConversationBranchMode.FORK
+    ):
         return system_message
 
     is_prefix = target in (
