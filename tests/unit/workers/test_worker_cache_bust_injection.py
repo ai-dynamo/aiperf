@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.credit.structs import Credit
 from aiperf.workers.session_manager import UserSession
@@ -899,6 +899,112 @@ def test_system_prefix_subpath3_marks_seeded_turn_zero_on_resume():
         marker=_PREFIX_MARKER,
         turn_index=1,
         num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
+
+
+# =============================================================================
+# FORK children: inherit the parent's prefix, never bust
+# =============================================================================
+# A FORK child seeds turn_list = list(parent.turn_list) (SHARED Turn objects,
+# same worker). It shares the parent's KV cache by design, so cache-bust must be
+# a complete no-op: the child inherits the parent's already-injected marker via
+# the shared object and must NOT re-bust it (which would diverge the prefix from
+# the parent -> cache miss -> and corrupt the parent's shared Turn).
+
+
+def _make_fork_child_session(
+    turns: list[Turn], *, num_turns: int | None = None
+) -> UserSession:
+    conversation = Conversation(session_id="child", turns=list(turns))
+    return UserSession(
+        x_correlation_id="child_xcorr",
+        num_turns=num_turns if num_turns is not None else len(turns),
+        conversation=conversation,
+        turn_list=list(turns),
+        parent_correlation_id="parent_xcorr",
+        branch_mode=ConversationBranchMode.FORK,
+    )
+
+
+def test_fork_child_first_turn_is_noop_inherits_parent_marker():
+    # The shared turn 0 already carries the PARENT's marker (injected by the
+    # parent's session). The child must leave it untouched.
+    parent_marked_t0 = Turn(
+        raw_messages=[{"role": "user", "content": "[rid:PARENT00000]\n\nu0"}],
+        reset_context=False,
+    )
+    child_turn = Turn(
+        raw_messages=[
+            {"role": "assistant", "content": "a0"},
+            {"role": "user", "content": "u1"},
+        ],
+        reset_context=False,
+    )
+    session = _make_fork_child_session([parent_marked_t0, child_turn])
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker="[rid:CHILD000000]\n\n",
+        turn_index=1,
+        num_turns=2,
+    )
+
+    out = _apply_cache_bust(session, credit, system_message=None)
+
+    assert out is None
+    # Parent's marker preserved verbatim; the child's marker is NOT added.
+    assert session.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
+
+
+def test_fork_child_system_target_is_noop():
+    parent_marked_sys = Turn(
+        raw_messages=[
+            {"role": "system", "content": "[rid:PARENT00000]\n\nS0"},
+            {"role": "user", "content": "u0"},
+        ],
+        reset_context=False,
+    )
+    child_turn = Turn(
+        raw_messages=[
+            {"role": "assistant", "content": "a0"},
+            {"role": "user", "content": "u1"},
+        ],
+        reset_context=False,
+    )
+    session = _make_fork_child_session([parent_marked_sys, child_turn])
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX,
+        marker="[rid:CHILD000000]\n\n",
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nS0"
+
+
+def test_spawn_child_is_busted_normally():
+    """SPAWN children start fresh (no shared parent turns), so they are busted
+    like a root session."""
+    t0 = Turn(raw_messages=[{"role": "user", "content": "u0"}], reset_context=False)
+    conversation = Conversation(session_id="spawn", turns=[t0])
+    session = UserSession(
+        x_correlation_id="spawn_xcorr",
+        num_turns=1,
+        conversation=conversation,
+        turn_list=[t0],
+        parent_correlation_id="parent_xcorr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=0,
+        num_turns=1,
     )
 
     _apply_cache_bust(session, credit, system_message=None)
