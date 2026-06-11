@@ -96,3 +96,94 @@ def test_empty_input_returns_empty_result():
     r = detect_agent_chains([])
     assert r.chains == []
     assert r.worker_indices == []
+
+
+def test_compaction_shrink_with_dead_longer_state_is_join_seam():
+    # M1 grows to 6 blocks and ends; M2 keeps only the 2-block prefix.
+    # Nothing ever returns to the longer state -> same agent (seam).
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4, 5, 6]),
+            _req(2.0, [1, 2, 90, 91]),
+        )
+    )
+    assert r.worker_indices == []
+    assert r.seams_merged == 1
+    assert _chain_outer_indices(r, r.main_index) == [0, 1]
+
+
+def test_shrink_with_live_longer_state_is_spawn():
+    # Same shrink shape, but a later request extends the longer state.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4, 5, 6]),
+            _req(2.0, [1, 2, 90, 91]),
+            _req(4.0, [1, 2, 3, 4, 5, 6, 7]),  # pullback: M1's state lives
+        )
+    )
+    assert r.seams_merged == 0
+    assert len(r.worker_indices) == 1
+    assert _chain_outer_indices(r, r.main_index) == [0, 2]
+    assert _chain_outer_indices(r, r.worker_indices[0]) == [1]
+
+
+def test_election_deepest_fork_wins_seam_shallower_stays_spawn():
+    # Two forks off the same dead tail: depth 2 and depth 4.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4, 5, 6]),
+            _req(2.0, [1, 2, 90]),  # shallow fork (depth 2)
+            _req(3.0, [1, 2, 3, 4, 80, 81]),  # deep fork (depth 4)
+        )
+    )
+    assert r.seams_merged == 1
+    assert _chain_outer_indices(r, r.main_index) == [0, 2]
+    assert len(r.worker_indices) == 1
+    assert _chain_outer_indices(r, r.worker_indices[0]) == [1]
+
+
+def test_temporal_overlap_vetoes_seam():
+    # Shrink that starts before the tail's interval ends: cannot be the
+    # same agent even though the longer state is dead.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4, 5, 6], api_time=10.0),  # ends t=10
+            _req(2.0, [1, 2, 90, 91]),  # starts t=2
+        )
+    )
+    assert r.seams_merged == 0
+    assert len(r.worker_indices) == 1
+
+
+def test_cascaded_compactions_stay_one_chain():
+    # Compact twice; both seams splice into one chain.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4, 5, 6]),
+            _req(2.0, [1, 2, 80, 81, 82, 83]),
+            _req(4.0, [1, 2, 80, 91]),
+        )
+    )
+    assert r.seams_merged == 2
+    assert r.worker_indices == []
+    assert _chain_outer_indices(r, r.main_index) == [0, 1, 2]
+
+
+def test_fanout_with_continuing_main_yields_worker_chains():
+    # Main keeps growing; two overlapping workers fork at the shared prefix.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3], api_time=1.0),
+            _req(2.0, [1, 2, 50, 51], api_time=5.0),  # worker A
+            _req(2.5, [1, 2, 60, 61], api_time=5.0),  # worker B (overlaps A)
+            _req(9.0, [1, 2, 3, 4, 5], api_time=1.0),  # main turn 2
+            _req(8.0, [1, 2, 50, 51, 52], api_time=1.0),  # worker A turn 2
+        )
+    )
+    assert r.seams_merged == 0
+    assert len(r.worker_indices) == 2
+    assert _chain_outer_indices(r, r.main_index) == [0, 3]
+    by_first = {
+        r.chains[i].requests[0][0]: _chain_outer_indices(r, i) for i in r.worker_indices
+    }
+    assert by_first == {1: [1, 4], 2: [2]}
