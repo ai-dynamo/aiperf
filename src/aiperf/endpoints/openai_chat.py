@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aiperf.common.exceptions import InferenceClientError
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -101,8 +102,28 @@ class ChatEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
-        data = self.extract_chat_response_data(json_obj)
+        if error := json_obj.get("error"):
+            if isinstance(error, dict):
+                message = error.get("message") or str(error)
+                error_type = error.get("type")
+                error_code = error.get("code")
+                details = ", ".join(
+                    str(value)
+                    for value in (error_type, error_code)
+                    if value is not None
+                )
+                if details:
+                    message = f"{message} ({details})"
+            else:
+                message = str(error)
+            raise InferenceClientError(f"Inference server error: {message}")
+
         usage = json_obj.get("usage") or None
+        data = (
+            self.extract_chat_response_data(json_obj)
+            if json_obj.get("choices")
+            else None
+        )
 
         if data or usage:
             return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
