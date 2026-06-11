@@ -387,6 +387,18 @@ class BranchOrchestrator:
                     (conv.conversation_id, branch.branch_id)
                 )
 
+    def _register_fork_routing(
+        self, parent_corr: str, mode: ConversationBranchMode
+    ) -> None:
+        """Bump the parent's sticky routing refcount for a FORK child.
+
+        FORK children sticky-route to the parent's worker; the refcount is
+        balanced by ``_handle_child_done``'s ``release_child_routing`` on leaf.
+        SPAWN children route freely and register no refcount.
+        """
+        if mode == ConversationBranchMode.FORK and self._sticky_router is not None:
+            self._sticky_router.register_child_routing(parent_corr)
+
     def seed_snapshot(
         self,
         states,
@@ -420,6 +432,7 @@ class BranchOrchestrator:
                 self._child_modes[child_state.x_correlation_id] = (
                     child_state.branch_mode
                 )
+                self._register_fork_routing(parent_corr, child_state.branch_mode)
                 entries: list[ChildJoinEntry] = []
                 if (
                     parent_state is not None
@@ -600,7 +613,6 @@ class BranchOrchestrator:
             if branch.is_background:
                 branch_gates = []
 
-            is_fork = branch.mode == ConversationBranchMode.FORK
             for gate in branch_gates:
                 expected_gates.add(gate)
 
@@ -625,10 +637,8 @@ class BranchOrchestrator:
                 per_child_gates[child_corr] = list(branch_gates)
                 all_children.append(child)
 
-                # Only FORK-mode children sticky-route to the parent's
-                # worker; SPAWN-mode children do not register a refcount.
-                if is_fork and self._sticky_router is not None:
-                    self._sticky_router.register_child_routing(parent_corr)
+                # Only FORK-mode children sticky-route to the parent's worker.
+                self._register_fork_routing(parent_corr, branch.mode)
                 self.stats.children_spawned += 1
 
                 # Register in _child_to_join (one entry per gate this child
@@ -761,7 +771,13 @@ class BranchOrchestrator:
             # A gate may be vestigial (created this call and immediately
             # satisfied) if every child under every prereq rolled back.
             if pending.is_satisfied:
-                drained_gates.append(pending)
+                # Only fire NOW if the gate is the parent's IMMEDIATE next
+                # turn. A delayed gate (intervening turns precede it) must not
+                # dispatch out of order: pop it silently and let the parent
+                # advance turns normally; when it reaches the (now un-gated)
+                # turn, the strategy sends it as an ordinary continuation.
+                if gated_idx == credit.turn_index + 1:
+                    drained_gates.append(pending)
                 self._pop_future_join(parent_corr, gated_idx)
         # If no successful children AND no gated turns, release the
         # reserved parent state so the parent can drain.
