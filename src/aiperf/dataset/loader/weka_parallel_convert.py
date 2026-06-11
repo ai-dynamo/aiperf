@@ -129,6 +129,17 @@ class _WekaSubagentMarkerPayload(TypedDict):
     effective_t: NotRequired[float]
 
 
+class _WekaFlatChainMarkerPayload(TypedDict):
+    """Branch-anchoring info for one detected flat chain (spec §5.3)."""
+
+    session_id: str
+    chain_index: int
+    first_outer_idx: int
+    end_seconds: float
+    effective_end_seconds: NotRequired[float]
+    t: float
+
+
 class _WekaParentPayload(TypedDict):
     """Per-trace parent payload shipped to a worker."""
 
@@ -136,6 +147,11 @@ class _WekaParentPayload(TypedDict):
     subagents: list[tuple[int, _WekaSubagentMarkerPayload]]
     tool_tokens: int
     system_tokens: int
+    # Turn-0 override when the observed namespace-group prefix beats the
+    # declared tool/system tokens (spec §5.4 "keep the longer one").
+    init_tool_tokens: NotRequired[int]
+    init_system_tokens: NotRequired[int]
+    flat_markers: NotRequired[list[_WekaFlatChainMarkerPayload]]
 
 
 class _WekaChildPayload(TypedDict):
@@ -346,8 +362,8 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             parent_recon.init_turn_0(
                 hash_ids=req["hash_ids"],
                 in_tokens=req["input_length"],
-                tool_tokens=parent["tool_tokens"],
-                system_tokens=parent["system_tokens"],
+                tool_tokens=parent.get("init_tool_tokens", parent["tool_tokens"]),
+                system_tokens=parent.get("init_system_tokens", parent["system_tokens"]),
                 seed=seed,
             )
         else:
@@ -491,6 +507,46 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             }
         )
 
+    # Detected flat chains: SPAWN off the last main turn preceding the
+    # chain's first request (turn 0 fallback — never drop real load),
+    # SPAWN_JOIN on the first later main turn at/after the chain's end.
+    # Mirrors the serial path's grouping exactly.
+    flat_groups: dict[tuple[int, int | None], list[_WekaFlatChainMarkerPayload]] = (
+        defaultdict(list)
+    )
+    flat_group_order: list[tuple[int, int | None]] = []
+    for marker in parent.get("flat_markers", []):
+        first_outer = marker["first_outer_idx"]
+        preceding = max(
+            (pos for oi, pos in outer_to_turn_pos.items() if oi < first_outer),
+            default=0,
+        )
+        fp_end = marker.get("effective_end_seconds", marker["end_seconds"])
+        join_turn = None
+        for oi, pos in sorted(outer_to_turn_pos.items()):
+            if oi <= first_outer:
+                continue
+            if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= fp_end:
+                join_turn = pos
+                break
+        key = (preceding, join_turn)
+        if key not in flat_groups:
+            flat_group_order.append(key)
+        flat_groups[key].append(marker)
+
+    for preceding, join_turn in flat_group_order:
+        markers = flat_groups[(preceding, join_turn)]
+        branches.append(
+            {
+                "branch_id": (f"{task.trace_id}:flatspawn:{markers[0]['chain_index']}"),
+                "child_session_ids": [m["session_id"] for m in markers],
+                "is_background": join_turn is None,
+                "preceding_turn": preceding,
+                "following_turn": join_turn,
+                "start_timestamp": min(m["t"] for m in markers) * 1000.0,
+            }
+        )
+
     children_out: list[_WekaChildDict] = []
     for cp in task.children:
         if cp["subagent_index"] in dropped_subagent_indices:
@@ -555,7 +611,12 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     "timestamp": None if task.ignore_delays else t_ms,
                     "delay": None if task.ignore_delays else child_delay_ms,
                     "model": task.model_map.get(creq["model"], creq["model"]),
-                    "max_tokens": creq["output_length"],
+                    # Flat-chain children carry capped_output_length (their
+                    # rows were top-level and honor --max-osl); subagent
+                    # children keep the recorded output_length.
+                    "max_tokens": creq.get(
+                        "capped_output_length", creq["output_length"]
+                    ),
                     "raw_messages": child_delta.delta_messages,
                     "reset_context": child_delta.reset_context,
                     "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,

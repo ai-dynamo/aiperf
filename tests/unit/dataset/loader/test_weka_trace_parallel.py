@@ -682,3 +682,101 @@ def test_parallel_path_handles_small_trace_counts(tmp_path, n_traces):
     assert len(parallel_results) == n_traces
     for r in parallel_results:
         assert r["parent_turns"], f"{r['trace_id']}: empty parent_turns"
+
+
+def test_fanout_split_parallel_byte_identical_to_serial(monkeypatch):
+    """Flat-chain splitting must be byte-identical across both paths.
+
+    Runs the FULL convert_to_conversations twice — serial (workers=1) and
+    parallel (threshold=1, the pool replaced by an in-process map over
+    _process_task) — so the real task builder and assembly are exercised.
+    """
+    from multiprocessing import shared_memory
+
+    import aiperf.common.environment as env_mod
+
+    fanout = FIXTURES.parent / "weka_traces_fanout" / "fanout.json"
+
+    def _serial_convs():
+        monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
+        loader = WekaTraceLoader(filename=str(fanout), user_config=_mk_user_config())
+        _stub_loader_real_rng(loader)
+        return loader.convert_to_conversations(loader.load_dataset())
+
+    def _parallel_convs():
+        monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 2)
+        monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 1)
+        loader = WekaTraceLoader(filename=str(fanout), user_config=_mk_user_config())
+        _stub_loader_real_rng(loader)
+        pg = loader.prompt_generator
+
+        corpus_arr = np.array(pg._tokenized_corpus, dtype=np.int32)
+        shm = shared_memory.SharedMemory(
+            create=True, size=len(corpus_arr) * np.dtype(np.int32).itemsize
+        )
+        np.ndarray((len(corpus_arr),), dtype=np.int32, buffer=shm.buf)[:] = corpus_arr
+        saved_state = wpc._worker_state
+        try:
+            with patch(
+                "aiperf.dataset.loader.weka_parallel_convert.Tokenizer.from_pretrained",
+                return_value=pg.tokenizer,
+            ):
+                wpc._init_worker(
+                    wpc._WekaWorkerInitArgs(
+                        shm_name=shm.name,
+                        corpus_len=len(corpus_arr),
+                        tokenizer_name="test-tok",
+                        base_seed=pg._hash_id_corpus_rng.seed,
+                        block_size=loader._block_size,
+                        bpe_stable_terminator_tokens=[],
+                    )
+                )
+
+            def _inproc_pool(tasks, **_kwargs):
+                return [wpc._process_task(t) for t in tasks]
+
+            monkeypatch.setattr(wpc, "run_parallel_weka_reconstruction", _inproc_pool)
+            return loader.convert_to_conversations(loader.load_dataset())
+        finally:
+            wpc._worker_state = saved_state
+            shm.close()
+            shm.unlink()
+
+    serial_convs = _serial_convs()
+    parallel_convs = _parallel_convs()
+
+    assert [c.session_id for c in serial_convs] == [
+        c.session_id for c in parallel_convs
+    ]
+    for sc, pc in zip(serial_convs, parallel_convs, strict=True):
+        assert sc.is_root == pc.is_root, sc.session_id
+        assert sc.agent_depth == pc.agent_depth, sc.session_id
+        assert sc.parent_conversation_id == pc.parent_conversation_id, sc.session_id
+        s_branches = [
+            (b.branch_id, b.child_conversation_ids, b.is_background)
+            for b in sc.branches
+        ]
+        p_branches = [
+            (b.branch_id, b.child_conversation_ids, b.is_background)
+            for b in pc.branches
+        ]
+        assert s_branches == p_branches, sc.session_id
+        for k, (st, pt) in enumerate(zip(sc.turns, pc.turns, strict=True)):
+            assert st.timestamp == pt.timestamp, f"{sc.session_id} turn {k}"
+            assert st.delay == pt.delay, f"{sc.session_id} turn {k}"
+            assert st.max_tokens == pt.max_tokens, f"{sc.session_id} turn {k}"
+            assert st.model == pt.model, f"{sc.session_id} turn {k}"
+            assert st.branch_ids == pt.branch_ids, f"{sc.session_id} turn {k}"
+            assert [p.branch_id for p in st.prerequisites] == [
+                p.branch_id for p in pt.prerequisites
+            ], f"{sc.session_id} turn {k}"
+            assert st.reset_context == pt.reset_context, f"{sc.session_id} turn {k}"
+            assert (
+                st.theoretical_prefix_cache_hit_blocks
+                == pt.theoretical_prefix_cache_hit_blocks
+            ), f"{sc.session_id} turn {k}"
+            assert st.raw_messages == pt.raw_messages, (
+                f"{sc.session_id} turn {k}: raw_messages drift\n"
+                f"  serial:   {st.raw_messages!r}\n"
+                f"  parallel: {pt.raw_messages!r}"
+            )
