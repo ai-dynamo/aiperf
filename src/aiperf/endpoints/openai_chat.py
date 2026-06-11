@@ -101,8 +101,12 @@ class ChatEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
-        data = self.extract_chat_response_data(json_obj)
         usage = json_obj.get("usage") or None
+        data = (
+            self.extract_chat_response_data(json_obj)
+            if json_obj.get("choices")
+            else None
+        )
 
         if data or usage:
             return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
