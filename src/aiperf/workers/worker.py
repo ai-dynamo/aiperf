@@ -17,7 +17,6 @@ from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
     CommandType,
-    ConversationBranchMode,
     MemoryMapFormat,
     MessageType,
 )
@@ -102,27 +101,6 @@ def _apply_cache_bust_to_system_message(
     return system_message
 
 
-def _content_has_marker_at_edge(
-    content: object, marker: str, *, is_prefix: bool
-) -> bool:
-    """Whether ``content`` already carries ``marker`` at the prefix/suffix edge.
-
-    The injection helpers run once per credit and several paths mutate a turn
-    object shared across the session's turns (delta-mode ``turn_list[0]``, and
-    the unconditional every-credit first-user mark used for seeded resumes), so
-    re-injecting the constant per-session marker must not stack it. This check
-    is exact (the per-session marker is constant; a fresh recycled play sees
-    pristine content and injects its own marker). Handles plain-string and
-    OpenAI multimodal list-of-parts content.
-    """
-    if isinstance(content, str):
-        return content.startswith(marker) if is_prefix else content.endswith(marker)
-    if isinstance(content, list) and content:
-        marker_part = {"type": "text", "text": marker.strip()}
-        return content[0 if is_prefix else -1] == marker_part
-    return False
-
-
 def _inject_marker_into_raw_messages(
     raw_messages: list[dict], marker: str, *, is_prefix: bool
 ) -> None:
@@ -131,8 +109,7 @@ def _inject_marker_into_raw_messages(
     No-op when raw_messages is empty or the first message is not a system role.
     For multimodal content (``content`` is a list of parts), the marker is
     inserted as a new ``{"type": "text", "text": marker}`` part at the start
-    (prefix) or end (suffix) of the parts list. Idempotent via
-    :func:`_content_has_marker_at_edge`.
+    (prefix) or end (suffix) of the parts list.
     """
     if not raw_messages or not marker:
         return
@@ -140,8 +117,6 @@ def _inject_marker_into_raw_messages(
     if not isinstance(first, dict) or first.get("role") != "system":
         return
     content = first.get("content", "")
-    if _content_has_marker_at_edge(content, marker, is_prefix=is_prefix):
-        return
     if isinstance(content, str):
         raw_messages[0] = {
             **first,
@@ -167,18 +142,13 @@ def _inject_marker_into_first_user_turn(
     No-op when raw_messages is empty. For multimodal content (``content`` is
     a list of parts), the marker is inserted as a new
     ``{"type": "text", "text": marker}`` part at the start (prefix) or end
-    (suffix) of the parts list. Idempotent via
-    :func:`_content_has_marker_at_edge` — FIRST_TURN_* injection runs every
-    credit (to mark seeded turn 0 on mid-trajectory resumes), so repeated calls
-    on the same shared turn must not stack the marker.
+    (suffix) of the parts list.
     """
     if not raw_messages or not marker:
         return
     for idx, msg in enumerate(raw_messages):
         if isinstance(msg, dict) and msg.get("role") == "user":
             content = msg.get("content", "")
-            if _content_has_marker_at_edge(content, marker, is_prefix=is_prefix):
-                return
             if isinstance(content, str):
                 raw_messages[idx] = {
                     **msg,
@@ -261,8 +231,6 @@ def _inject_marker_into_first_user_text(
         first.contents = [marker.strip()]
         return
     existing = first.contents[0]
-    if _content_has_marker_at_edge(existing, marker, is_prefix=is_prefix):
-        return
     first.contents[0] = (marker + existing) if is_prefix else (existing + marker)
 
 
@@ -304,16 +272,17 @@ def _apply_cache_bust(
     ``turn_list`` where the system role lives in ``turn_list[0]`` and later
     deltas start with the prior assistant response).
 
-    Injection targets the *effective wire prefix* (see
-    :func:`_effective_prefix_turns`): the slice of ``turn_list`` that
-    ``build_messages`` actually emits. A ``reset_context`` turn makes
-    ``build_messages`` discard every prior turn, so the effective prefix begins
-    at the last such turn — which may sit mid-history (seeded on a resume,
-    never dispatched as the current turn), not just at ``turn_list[-1]``.
-    Marking the discarded turn 0 instead would leave the real prefix unmarked
-    and let recycled plays warm the server's cache on identical post-reset
-    bytes. ``SYSTEM_*`` targets are handled in
-    :func:`_apply_system_target_cache_bust`.
+    SYSTEM_* fallback: when ``target`` is ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX``
+    and there is no system message anywhere (neither a Conversation-level
+    ``system_message`` nor a leading ``role=="system"`` entry in any turn's
+    ``raw_messages``), the marker is routed to the first user turn with the
+    same prefix/suffix orientation — i.e. SYSTEM_PREFIX falls back to a
+    first-user-turn prefix, SYSTEM_SUFFIX falls back to a first-user-turn
+    suffix. Without a system prompt the first user message is the prefix of
+    the entire wire payload, so this produces the same physical token-0
+    divergence without fabricating a system role. The fallback is gated on
+    ``credit.turn_index == 0`` (matches FIRST_TURN_* semantics: marker only
+    affects the first turn's KV cache; later turns inherit).
     """
     marker = credit.cache_bust_marker
     target = credit.cache_bust_target
@@ -321,94 +290,36 @@ def _apply_cache_bust(
     if not marker or target == CacheBustTarget.NONE:
         return system_message
 
-    # FORK children share the parent's KV cache by design: they seed turn_list
-    # from the parent (the SAME Turn objects) and must send the parent's exact
-    # prefix to hit its cache. The parent already injected its marker into those
-    # shared turns, so the child inherits it for free — re-busting here would
-    # diverge the child's prefix from the parent's (cache miss) AND mutate the
-    # parent's shared, read-only Turn objects (stacking markers). So cache-bust
-    # is a no-op for FORK children. SPAWN children start fresh (no shared turns)
-    # and root sessions own their prefix, so both are busted normally.
-    if (
-        session.parent_correlation_id is not None
-        and session.branch_mode == ConversationBranchMode.FORK
-    ):
-        return system_message
-
     is_prefix = target in (
         CacheBustTarget.SYSTEM_PREFIX,
         CacheBustTarget.FIRST_TURN_PREFIX,
     )
-    prefix_turns = _effective_prefix_turns(session)
 
     if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
-        return _apply_system_target_cache_bust(
-            prefix_turns,
-            system_message=system_message,
-            marker=marker,
-            target=target,
-            is_prefix=is_prefix,
-        )
+        # Three sub-paths with intentionally different semantics:
+        #   1. Conversation-level system_message present:  marker injected
+        #      every turn (string mutation re-applied per credit).
+        #   2. raw_messages first dict has role=="system": marker injected
+        #      every turn (raw mutation re-applied per credit). Under deltas
+        #      that dict lives in turn_list[0]; under message-array it lives
+        #      in turn_list[-1] (same single turn).
+        #   3. No system anywhere -> first-user-turn fallback: marker injected
+        #      ONLY on turn_index == 0. Subsequent turns inherit via the
+        #      inference server's prefix-cache hit, matching FIRST_TURN_*
+        #      semantics. Re-injecting on every turn would drift token-0 on
+        #      every credit and fragment the cache key.
+        if system_message is not None:
+            return _apply_cache_bust_to_system_message(system_message, marker, target)
+        raw_system = _find_first_system_message(session.turn_list)
+        if raw_system is not None:
+            _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)
+        elif credit.turn_index == 0:
+            _inject_marker_at_first_user(session.turn_list, marker, is_prefix=is_prefix)
+        return system_message
 
-    # Mark the effective prefix's opening user turn every credit (idempotent).
-    # Unconditional rather than turn_index==0-gated so a seeded mid-trajectory
-    # resume (turn_list back-filled with turns 0..k_i at a credit whose
-    # turn_index > 0) still marks the true wire prefix.
-    _inject_marker_at_first_user(prefix_turns, marker, is_prefix=is_prefix)
+    if credit.turn_index == 0:
+        _inject_marker_at_first_user(session.turn_list, marker, is_prefix=is_prefix)
     return system_message
-
-
-def _apply_system_target_cache_bust(
-    prefix_turns: list[Turn],
-    *,
-    system_message: str | None,
-    marker: str,
-    target: CacheBustTarget,
-    is_prefix: bool,
-) -> str | None:
-    """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` marker for one credit.
-
-    ``prefix_turns`` is the effective wire prefix slice (see
-    :func:`_effective_prefix_turns`). Three sub-paths:
-      1. Conversation-level ``system_message`` present: marker applied every
-         turn (string mutation re-applied per credit). Unaffected by
-         ``reset_context`` — the ``system_message`` rides on ``RequestInfo`` and
-         is re-emitted every turn independent of ``build_messages``' reset.
-      2. ``raw_messages`` first dict has ``role=="system"``: marker injected
-         into the first system message of the prefix slice.
-      3. No system in the slice -> first-user-turn fallback: marker injected
-         into the first user turn every credit (idempotent), matching
-         ``FIRST_TURN_*`` semantics so a seeded mid-trajectory resume still
-         marks the prefix.
-
-    Returns the (possibly modified) ``system_message``.
-    """
-    if system_message is not None:
-        return _apply_cache_bust_to_system_message(system_message, marker, target)
-    raw_system = _find_first_system_message(prefix_turns)
-    if raw_system is not None:
-        _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)
-    else:
-        _inject_marker_at_first_user(prefix_turns, marker, is_prefix=is_prefix)
-    return system_message
-
-
-def _effective_prefix_turns(session: UserSession) -> list[Turn]:
-    """The ``turn_list`` slice that forms the wire prefix for cache-bust.
-
-    ``base_endpoint.build_messages`` restarts the message array at every
-    ``reset_context`` turn that carries ``raw_messages`` (discarding everything
-    before it), so the effective prefix begins at the *last* such turn in
-    ``turn_list`` — not turn 0, and not merely ``turn_list[-1]``: a reset can
-    sit mid-history (e.g. seeded into a mid-trajectory resume, where it is never
-    dispatched as the current turn). Returns the slice from that turn to the
-    end, or the whole ``turn_list`` when there is no reset.
-    """
-    turns = session.turn_list
-    for i in range(len(turns) - 1, -1, -1):
-        if turns[i].reset_context and turns[i].raw_messages:
-            return turns[i:]
-    return turns
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -753,25 +664,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug(lambda: f"Credit {credit_context.credit.id} cancelled")
             credit_context.cancelled = True
         finally:
-            # Lockstep: a credit returned as completed MUST be accompanied by a
-            # record, or the RecordsManager completion barrier (which has no
-            # timeout) hangs waiting for it. If processing failed before any
-            # record was emitted, forward an error record now. Cancelled credits
-            # are excluded from the barrier target, so they need no record.
-            #
-            # The emit MUST NOT abort the credit return below: if it raised, the
-            # finally would exit early, ``returned`` would stay False, and the
-            # done callback would return the credit as completed anyway (no
-            # record emitted) -- the exact lockstep break this guards against.
-            # Contain the failure and always proceed to return the credit.
-            if not credit_context.cancelled and not credit_context.record_emitted:
-                try:
-                    await self._emit_credit_failure_record(credit_context)
-                except Exception as e:  # noqa: BLE001
-                    self.exception(
-                        f"Failed to emit lockstep failure record for credit "
-                        f"{credit_context.credit.id}: {e!r}"
-                    )
             # ALWAYS return the credit here to ensure accurate tracking
             credit_return = CreditReturn(
                 credit=credit_context.credit,
@@ -786,53 +678,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context.returned = True
             # Note: Don't null credit_context.credit here - done callback needs
             # credit.id for cleanup. Done callback handles all reference clearing.
-
-    async def _emit_credit_failure_record(self, credit_context: CreditContext) -> None:
-        """Forward an error record for a credit whose processing failed before
-        any record was emitted.
-
-        Mirrors the conversation-retrieval error path so the records-side count
-        stays in lockstep with the credit the worker is about to return as
-        completed; without it the RecordsManager completion barrier (no timeout)
-        hangs waiting for a record that never arrives.
-        """
-        credit = credit_context.credit
-        err = credit_context.error
-        if isinstance(err, ErrorDetails):
-            error = err
-        elif isinstance(err, str) and err:
-            error = ErrorDetails(message=err, type="CreditProcessingError", code=500)
-        else:
-            error = ErrorDetails(
-                message="Credit processing failed before a record was produced",
-                type="CreditProcessingError",
-                code=500,
-            )
-        await self._send_inference_result_message(
-            RequestRecord(
-                request_info=RecordContext(
-                    conversation_id=credit.conversation_id,
-                    turn_index=credit.turn_index,
-                    credit_num=credit.id,
-                    credit_phase=credit.phase,
-                    x_request_id=str(uuid.uuid4()),
-                    x_correlation_id=credit.x_correlation_id,
-                    agent_depth=credit.agent_depth,
-                    parent_correlation_id=credit.parent_correlation_id,
-                ),
-                model_name=self.model_endpoint.primary_model_name,
-                timestamp_ns=time.time_ns(),
-                start_perf_ns=time.perf_counter_ns(),
-                end_perf_ns=time.perf_counter_ns(),
-                error=error,
-            )
-        )
-        # Surface the error on the credit so the subsequent CreditReturn carries
-        # it and increment_returned(..., errored=...) counts it. Without this the
-        # forwarded error record would not be reflected in the phase-complete
-        # request_errors log line.
-        credit_context.error = error
-        credit_context.record_emitted = True
 
     async def _process_credit(self, credit_context: CreditContext) -> None:
         """Process a credit (1 credit = 1 request).
@@ -1000,7 +845,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit: Credit,
     ) -> None:
         """Emit a one-shot warning if cache-bust was requested but had nowhere
-        to land on this credit (an empty ``session.turn_list``).
+        to land on this credit (e.g. SYSTEM_* on turn>0 with no system anywhere,
+        or empty session.turn_list).
 
         Rate-limited to once per worker via ``self._cache_bust_warning_shown`` —
         the misconfiguration is identical for every credit, so a single
@@ -1018,6 +864,30 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 f"cache-bust target={target.value} requested but session.turn_list "
                 f"is empty — marker NOT injected (further occurrences suppressed)."
             )
+            return
+        # SYSTEM_* on turn>0 with no system anywhere: the fallback is gated on
+        # turn_index==0 by design (see _apply_cache_bust comments), so the
+        # marker is intentionally NOT re-applied. Surface this once so users
+        # configuring cache-bust against a synthetic / no-system trace see why
+        # token-0 didn't drift.
+        if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
+            if session.conversation.system_message is not None:
+                return
+            last_turn = session.turn_list[-1]
+            raw = last_turn.raw_messages
+            has_raw_system = bool(
+                raw and isinstance(raw[0], dict) and raw[0].get("role") == "system"
+            )
+            if not has_raw_system and credit.turn_index > 0:
+                self._cache_bust_warning_shown = True
+                self.warning(
+                    f"cache-bust target={target.value} requested but trace has no "
+                    f"system message (neither Conversation.system_message nor "
+                    f"raw_messages[0].role=='system'); fallback to first-user-turn "
+                    f"only fires on turn_index==0, so subsequent turns inherit the "
+                    f"already-prefixed prompt. This is intentional (matches "
+                    f"FIRST_TURN_* semantics) — further occurrences suppressed."
+                )
 
     async def _execute_request(
         self,
@@ -1031,7 +901,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             request_info, first_token_callback=first_token_callback
         )
         await self._send_inference_result_message(record)
-        credit_context.record_emitted = True
         if record.error is not None:
             credit_context.error = record.error
         return record
@@ -1202,7 +1071,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     error=error,
                 )
             )
-            credit_context.record_emitted = True
             raise ValueError(f"Failed to retrieve conversation response: {error}")
 
         return conversation_response.conversation

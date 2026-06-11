@@ -9,7 +9,6 @@ Each trace emits one root Conversation plus one child Conversation per
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,9 +57,8 @@ def _subagent_request_absolute_t(
 
 
 def _request_end_seconds(start_seconds: float, api_time: float | None) -> float:
-    """Request interval end in seconds; missing/negative/non-finite durations become zero."""
-    duration = api_time if api_time is not None and math.isfinite(api_time) else 0.0
-    return start_seconds + max(duration, 0.0)
+    """Request interval end in seconds; missing/negative durations become zero."""
+    return start_seconds + max(api_time or 0.0, 0.0)
 
 
 def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
@@ -71,13 +69,7 @@ def _sa_end_seconds(entry: WekaSubagentEntry) -> float:
     Falls back further to ``entry.t`` when both are unavailable.
     """
     if entry.duration_ms is not None:
-        duration_s = entry.duration_ms / 1000.0
-        # A subagent cannot finish before it starts: clamp negative / non-finite
-        # recorded durations to 0 so the end never precedes the spawn timestamp
-        # (a NaN/negative end otherwise poisons the parent.t >= sa_end join scan).
-        if not math.isfinite(duration_s) or duration_s < 0.0:
-            duration_s = 0.0
-        return entry.t + duration_s
+        return entry.t + entry.duration_ms / 1000.0
     if entry.requests:
         return max(
             _request_end_seconds(_subagent_request_absolute_t(entry, ir), ir.api_time)
@@ -183,11 +175,6 @@ class _TraceIdleTiming:
     # across the pickle round-trip.
     child_by_session_request: dict[tuple[str, int], _RequestTiming]
     subagent_end_by_outer_idx: dict[int, float]
-    # Mapped subagent spawn time (warp.map(entry.t)), keyed by outer idx. The
-    # branch start_timestamp_ms must live on the same compressed timeline as
-    # the turns it links; the raw entry.t would land far past the parent's
-    # last turn whenever an idle gap is compressed.
-    subagent_start_by_outer_idx: dict[int, float]
 
 
 class _IdleGapTimeWarp:
@@ -379,14 +366,10 @@ def _build_trace_idle_timing(
         outer_idx: warp.map(_sa_end_seconds(entry))
         for outer_idx, entry in plan.subagents
     }
-    subagent_start_by_outer_idx = {
-        outer_idx: warp.map(entry.t) for outer_idx, entry in plan.subagents
-    }
     return _TraceIdleTiming(
         parent_by_outer_idx=parent_by_outer_idx,
         child_by_session_request=child_by_session_request,
         subagent_end_by_outer_idx=subagent_end_by_outer_idx,
-        subagent_start_by_outer_idx=subagent_start_by_outer_idx,
     )
 
 
@@ -1028,10 +1011,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         delay_ms = t_ms - plan.normals[k - 1][1].t * 1000.0
                 if delay_ms is not None:
                     delay_ms = self._delay_cap_tracker.clamp(delay_ms)
-                    # Floor at 0: a negative inter-turn delay (corrupt
-                    # think_time, or a non-monotonic timestamp gap) would tell
-                    # the load generator to dispatch a request in the past.
-                    delay_ms = max(delay_ms, 0.0)
                 delta = recon.turn_delta()
                 theoretical_hit_blocks = _count_seen_prefix_blocks(
                     req.hash_ids, parent_seen_hash_ids
@@ -1132,12 +1111,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
                 if trace_idle_timing is not None:
                     sa_end_t = trace_idle_timing.subagent_end_by_outer_idx[sa_outer_idx]
-                    sa_start_t = trace_idle_timing.subagent_start_by_outer_idx[
-                        sa_outer_idx
-                    ]
                 else:
                     sa_end_t = _sa_end_seconds(sa_entry)
-                    sa_start_t = sa_entry.t
                 join_turn: int | None = None
                 for oi, pos in sorted(outer_to_turn_pos.items()):
                     if oi <= sa_outer_idx:
@@ -1149,12 +1124,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 key = (preceding, join_turn)
                 if key not in groups:
                     group_order.append(key)
-                groups[key].append((subagent_index, sa_entry, sa_start_t))
+                groups[key].append((subagent_index, sa_entry))
 
             for preceding, join_turn in group_order:
                 entries = groups[(preceding, join_turn)]
                 child_sids: list[str] = []
-                for subagent_index, e, _sa_start_t in entries:
+                for subagent_index, e in entries:
                     subagent_child_sids = child_sids_by_subagent[subagent_index]
                     child_sids.extend(subagent_child_sids)
                     if len(subagent_child_sids) > 1:
@@ -1171,9 +1146,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         child_conversation_ids=child_sids,
                         mode=ConversationBranchMode.SPAWN,
                         is_background=is_background,
-                        # Mapped spawn time (raw entry.t when no idle-gap warp),
-                        # so the branch start shares the turns' compressed timeline.
-                        start_timestamp_ms=min(s for _, _, s in entries) * 1000.0,
+                        start_timestamp_ms=min(e.t for _, e in entries) * 1000.0,
                     )
                 )
                 conv.turns[preceding].branch_ids.append(branch_id)
@@ -1200,11 +1173,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             if cp.subagent_index in dropped_per_trace.get(cp.parent_trace_id, set()):
                 continue
             child_model_map = model_map_per_trace.get(cp.parent_trace_id, {})
-            # Subagent has its own scope: tool_tokens/system_tokens differ from
-            # the parent, and its block_cache must not leak across subagents.
+            # ``hash_id_scope: "local"`` is one namespace per trace FILE: a
+            # subagent shares its parent trace's scope so a hash_id reused
+            # across parent and subagent (or across siblings) decodes to the
+            # same tokens, reproducing the real cross-agent shared prefix.
             pg = self.prompt_generator
             pg._cache.clear()
-            pg._hash_id_corpus_rng.set_trace_id(cp.session_id)
+            pg._hash_id_corpus_rng.set_trace_id(cp.parent_trace_id)
             # Sync for ``_decode_block_tokens``; see parent loop above.
             self._block_size = cp.block_size
 
@@ -1430,12 +1405,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             if trace_idle_timing is not None:
                 sa_payload["effective_sa_end_seconds"] = (
                     trace_idle_timing.subagent_end_by_outer_idx[outer_idx]
-                )
-                # Mapped spawn time -> _process_task reads it for the branch
-                # start_timestamp (e.get("effective_t", e["t"])); without it the
-                # parallel branch start silently reverts to raw seconds under a warp.
-                sa_payload["effective_t"] = (
-                    trace_idle_timing.subagent_start_by_outer_idx[outer_idx]
                 )
             subagents_dicts.append((outer_idx, sa_payload))
         return subagents_dicts
