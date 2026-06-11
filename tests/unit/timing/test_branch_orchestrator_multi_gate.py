@@ -280,16 +280,17 @@ async def test_multi_branch_rollback_partial_dispatch_failure():
     assert 4 in orch._future_joins.get("corr-root", {})
 
     # b2 gate (T=2) — c2 was the only child; dispatch rolled back; the gate
-    # is now zero-outstanding. _spawn_children_and_register_gates detects
-    # the drained gate and dispatches it immediately (Phase 0 hang-fix
-    # semantics preserved). T=2 must be gone from _future_joins.
+    # is now zero-outstanding. T=2 is a DELAYED gate (the parent is suspended
+    # at T=1), so it is popped silently rather than dispatched out of order:
+    # the parent sends turn 2 as a normal continuation once it advances there.
+    # T=2 must be gone from _future_joins.
     root_futures = orch._future_joins.get("corr-root", {})
     assert 2 not in root_futures, (
         "b2 gate should have drained after its sole child's dispatch failed"
     )
-    # The drained gate fired dispatch_join_turn immediately; resumed count
-    # includes b2's forced dispatch.
-    assert issuer.dispatch_join_turn.await_count >= 1
+    # No immediate join dispatch: b2 is not the parent's next turn (it's
+    # blocked at T=1), so the delayed vacuous gate must NOT fire out of order.
+    assert issuer.dispatch_join_turn.await_count == 0
     resumed_after_rollback = orch.stats.parents_resumed
 
     # Surviving branches: c1 still dispatched; c3 still registered.
