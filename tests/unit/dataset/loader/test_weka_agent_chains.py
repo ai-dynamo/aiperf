@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from aiperf.dataset.loader.weka_agent_chains import detect_agent_chains
+from aiperf.dataset.loader.weka_agent_chains import (
+    compute_chain_prefix_blocks,
+    detect_agent_chains,
+    looks_hash_poisoned,
+)
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
 
@@ -187,3 +191,71 @@ def test_fanout_with_continuing_main_yields_worker_chains():
         r.chains[i].requests[0][0]: _chain_outer_indices(r, i) for i in r.worker_indices
     }
     assert by_first == {1: [1, 4], 2: [2]}
+
+
+def test_observed_prefix_recovers_zero_declared_boundary():
+    # 0/0-declared trace: main + one worker sharing blocks [1, 2].
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3], api_time=1.0),
+            _req(0.5, [1, 2, 50], api_time=1.0),
+            _req(3.0, [1, 2, 3, 4], api_time=1.0),
+        )
+    )
+    prefixes = compute_chain_prefix_blocks(r, declared_prefix_blocks=0)
+    assert prefixes[r.main_index] == 2
+    assert prefixes[r.worker_indices[0]] == 2
+
+
+def test_declared_wins_when_longer_for_main_chain_only():
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3], api_time=1.0),
+            _req(0.5, [1, 2, 50], api_time=1.0),
+            _req(3.0, [1, 2, 3, 4], api_time=1.0),
+        )
+    )
+    prefixes = compute_chain_prefix_blocks(r, declared_prefix_blocks=3)
+    assert prefixes[r.main_index] == 3  # keep the longer one
+    assert prefixes[r.worker_indices[0]] == 2  # workers only prove observed
+
+
+def test_disjoint_group_gets_own_observed_prefix():
+    # Main namespace plus a disjoint 2-worker batch sharing [100, 101].
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3], api_time=0.5),
+            _req(1.0, [100, 101, 110], api_time=5.0),
+            _req(1.5, [100, 101, 120], api_time=5.0),
+        )
+    )
+    prefixes = compute_chain_prefix_blocks(r, declared_prefix_blocks=0)
+    assert prefixes[r.main_index] == 0  # singleton group -> declared (0)
+    disjoint = [prefixes[i] for i in r.worker_indices]
+    assert disjoint == [2, 2]
+
+
+def test_singleton_trace_keeps_declared_prefix():
+    r = detect_agent_chains(_normals(_req(0.0, [1, 2, 3])))
+    prefixes = compute_chain_prefix_blocks(r, declared_prefix_blocks=5)
+    assert prefixes == {r.main_index: 5}
+
+
+def test_nonce_poisoned_trace_flagged():
+    # Every request disjoint from every other: one zero-depth chain each.
+    reqs = [_req(float(i), [100 * i + 1, 100 * i + 2]) for i in range(10)]
+    r = detect_agent_chains(_normals(*reqs))
+    assert looks_hash_poisoned(r) is True
+
+
+def test_healthy_fanout_not_flagged():
+    reqs = [_req(0.0, [1, 2, 3])]
+    # 9 workers forking at the shared prefix (depth 2) while main is idle.
+    reqs += [_req(1.0 + 0.1 * i, [1, 2, 100 + i], api_time=5.0) for i in range(9)]
+    r = detect_agent_chains(_normals(*reqs))
+    assert looks_hash_poisoned(r) is False
+
+
+def test_small_trace_never_flagged():
+    r = detect_agent_chains(_normals(_req(0.0, [1]), _req(1.0, [5])))
+    assert looks_hash_poisoned(r) is False

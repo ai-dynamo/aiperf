@@ -252,6 +252,73 @@ def _max_lcp_chain(chains: list[AgentChain], h: np.ndarray) -> tuple[int | None,
     return best_idx, best_key[0]
 
 
+def _observed_group_prefix(result: ChainDetectionResult, members: list[int]) -> int:
+    """LCP over the group members' first-request hash lists (0 if < 2)."""
+    firsts = [
+        np.asarray(result.chains[ci].requests[0][1].hash_ids, dtype=np.int64)
+        for ci in members
+    ]
+    firsts = [f for f in firsts if f.shape[0] > 0]
+    if len(firsts) < 2:
+        return 0
+    observed = firsts[0].shape[0]
+    for other in firsts[1:]:
+        observed = min(observed, _np_lcp(firsts[0][:observed], other))
+    return observed
+
+
+def compute_chain_prefix_blocks(
+    result: ChainDetectionResult, *, declared_prefix_blocks: int
+) -> dict[int, int]:
+    """Effective setup-prefix block count per live chain (spec §5.4).
+
+    Chains are grouped by fork ancestry into namespace groups (each
+    zero-depth fork roots a new group). Per group, the observed prefix is
+    the LCP over members' first-request hash lists (0 for singletons).
+    The main chain keeps the LONGER of declared vs observed; other chains
+    use observed — they only prove the shared region, anything past it is
+    not common to the group.
+    """
+    live = [i for i, c in enumerate(result.chains) if c.spliced_into is None]
+    if not live:
+        return {}
+
+    def _group_root(ci: int) -> int:
+        while True:
+            c = result.chains[ci]
+            if c.fork is None or c.fork.parent_chain is None or c.fork.depth == 0:
+                return ci
+            ci = c.fork.parent_chain
+
+    groups: dict[int, list[int]] = {}
+    for ci in live:
+        groups.setdefault(_group_root(ci), []).append(ci)
+
+    prefixes: dict[int, int] = {}
+    for members in groups.values():
+        observed = _observed_group_prefix(result, members)
+        for ci in members:
+            if ci == result.main_index:
+                prefixes[ci] = max(declared_prefix_blocks, observed)
+            else:
+                prefixes[ci] = observed
+    return prefixes
+
+
+def looks_hash_poisoned(
+    result: ChainDetectionResult, *, min_chains: int = 8, ratio: float = 0.5
+) -> bool:
+    """True when detection is dominated by zero-depth chain founders —
+    the signature of per-request-nonce-poisoned chained block hashes
+    (spec §8). Legitimate disjoint-namespace batches produce only a few
+    zero-depth founders and stay far below the threshold."""
+    total = len(result.chains)
+    if total < min_chains:
+        return False
+    zero = sum(1 for c in result.chains if c.fork is not None and c.fork.depth == 0)
+    return zero / total > ratio
+
+
 def _resolve_seams(
     chains: list[AgentChain],
     forks_by_tail: dict[int, list[int]],
