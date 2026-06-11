@@ -28,6 +28,7 @@ split).
 
 from __future__ import annotations
 
+import heapq
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -145,12 +146,27 @@ class _Phase1State:
             return
 
         h = np.asarray(req.hash_ids, dtype=np.int64)
+        if not self.chains:
+            # The trace's first request founds the main chain. It forked
+            # from nothing: fork stays None (the AgentChain contract), so
+            # the poisoned-hash ratio never counts the main chain itself
+            # as a zero-depth founder.
+            self.chains.append(AgentChain())
+            self._append(0, outer_idx, req)
+            return
         target = _find_extension_target(self.chains, h, req.t, req.model)
         if target is not None:
             self._append(target, outer_idx, req)
             return
 
         parent, depth = _max_lcp_chain(self.chains, h)
+        if parent is None and all(c.tail_hash.shape[0] == 0 for c in self.chains):
+            # No chain carries hash evidence yet (only leading empty-hash
+            # rows): this is the trace's first hash-bearing request and IS
+            # the main agent — joining chain 0 keeps the empty rows "on the
+            # main chain" instead of exiling all real load to a spawn.
+            self._append(0, outer_idx, req)
+            return
         fork = ChainFork(
             parent_chain=parent,
             fork_outer_idx=(
@@ -318,38 +334,6 @@ def compute_chain_prefix_blocks(
     return prefixes
 
 
-@dataclass(slots=True, frozen=True)
-class MetricRecord:
-    """One request's contribution to the per-trace shared seen-set."""
-
-    sort_key: tuple[float, int, int, int]
-    """(absolute_t, outer_idx, stream_idx, k) — deterministic global order."""
-    session_id: str
-    """Conversation the value is looked up under at emission time."""
-    k: int
-    """Turn index within that conversation."""
-    hash_ids: list[int]
-    """The request's input hash blocks."""
-
-
-def compute_shared_prefix_cache_metrics(
-    records: list[MetricRecord],
-) -> dict[tuple[str, int], tuple[int, int]]:
-    """{(session_id, k): (hit_blocks, total_blocks)} over ONE shared
-    per-trace seen-set, consumed in global time order (spec §5.5)."""
-    out: dict[tuple[str, int], tuple[int, int]] = {}
-    seen: set[int] = set()
-    for rec in sorted(records, key=lambda r: r.sort_key):
-        hits = 0
-        for hid in rec.hash_ids:
-            if hid not in seen:
-                break
-            hits += 1
-        out[(rec.session_id, rec.k)] = (hits, len(rec.hash_ids))
-        seen.update(rec.hash_ids)
-    return out
-
-
 def looks_hash_poisoned(
     result: ChainDetectionResult, *, min_chains: int = 8, ratio: float = 0.5
 ) -> bool:
@@ -364,6 +348,84 @@ def looks_hash_poisoned(
     return zero / total > ratio
 
 
+def _last_hash_outer_idx(chain: AgentChain) -> int | None:
+    """Outer index of the chain's last HASH-BEARING request.
+
+    Empty-hash rows carry no LCP evidence and must stay invisible to
+    detection (spec §8), so they cannot make a dead tail look "extended"."""
+    for oi, req in reversed(chain.requests):
+        if req.hash_ids:
+            return oi
+    return None
+
+
+def _elect_continuation(
+    chains: list[AgentChain],
+    registered: list[int],
+    t_req: _NormalRequestT,
+) -> int | None:
+    """Pick the seam continuation among forks registered on a dead tail.
+
+    Eligibility: positive depth, no temporal overlap with the tail, same
+    model. Election: deepest LCP, tie-break earliest fork_time, then lowest
+    chain index."""
+    t_end = _req_end(t_req)
+    candidates = [
+        ci
+        for ci in registered
+        if chains[ci].fork is not None
+        and chains[ci].fork.depth > 0
+        and t_end <= chains[ci].requests[0][1].t + _EPSILON_SECONDS
+        and chains[ci].requests[0][1].model == t_req.model
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda ci: (
+            chains[ci].fork.depth,
+            -chains[ci].fork.fork_time,
+            -ci,
+        ),
+    )
+
+
+def _rekey_leftover_forks(
+    *,
+    chains: list[AgentChain],
+    forks_by_tail: dict[int, list[int]],
+    req_by_outer: dict[int, _NormalRequestT],
+    registered: list[int],
+    elected: int,
+    owner: int,
+    new_tail_outer: int,
+) -> bool:
+    """Re-evaluate non-elected forks against the merged chain's new tail.
+
+    A fork's LCP relationship is to the evolving conversation state, not to
+    one frozen snapshot — without re-keying, phase-1's deepest-tail
+    tie-break can register a later compaction continuation under an
+    already-consumed tail and strand it as a spurious spawn. Returns True
+    when any fork was re-keyed (the caller re-arms that tail's key)."""
+    new_tail_hash = np.asarray(req_by_outer[new_tail_outer].hash_ids, np.int64)
+    rekeyed = False
+    for ci in registered:
+        c = chains[ci]
+        if ci == elected or c.spliced_into is not None or c.fork is None:
+            continue
+        d = _np_lcp(
+            new_tail_hash, np.asarray(c.requests[0][1].hash_ids, dtype=np.int64)
+        )
+        if d <= 0:
+            continue
+        c.fork.fork_outer_idx = new_tail_outer
+        c.fork.depth = d
+        c.fork.parent_chain = owner
+        forks_by_tail.setdefault(new_tail_outer, []).append(ci)
+        rekeyed = True
+    return rekeyed
+
+
 def _resolve_seams(
     chains: list[AgentChain],
     forks_by_tail: dict[int, list[int]],
@@ -373,11 +435,15 @@ def _resolve_seams(
     """Phase 2: splice join-seam continuations onto dead tails.
 
     For each fork-source request T in time order: if T is still the final
-    request of its (post-splice) chain, elect among its temporally-feasible
-    forks the deepest one (tie: earliest fork_time, then lowest index) as
-    the same agent's continuation and splice it on. Everything else stays a
-    spawn. Cascades fall out of the forward pass: a splice moves the chain's
-    tail to a later request, whose own forks are visited later."""
+    hash-bearing request of its (post-splice) chain, elect among its
+    temporally-feasible same-model forks the deepest one (tie: earliest
+    fork_time, then lowest index) as the same agent's continuation and
+    splice it on. Everything else stays a spawn.
+
+    Cascades: a splice moves the chain's tail to a later request, whose own
+    forks are visited later in the worklist, and the non-elected forks of
+    the consumed tail are re-keyed against the merged chain's new tail (see
+    :func:`_rekey_leftover_forks`)."""
     alias: dict[int, int] = {}
 
     def _resolve(i: int) -> int:
@@ -386,31 +452,26 @@ def _resolve_seams(
         return i
 
     seams = 0
-    for fork_outer_idx in sorted(forks_by_tail):
+    keys = sorted(forks_by_tail)
+    heapq.heapify(keys)
+    processed: set[int] = set()
+    while keys:
+        fork_outer_idx = heapq.heappop(keys)
+        if fork_outer_idx in processed:
+            continue
+        processed.add(fork_outer_idx)
         owner = _resolve(chain_of_request[fork_outer_idx])
         owner_chain = chains[owner]
-        if owner_chain.requests[-1][0] != fork_outer_idx:
+        if _last_hash_outer_idx(owner_chain) != fork_outer_idx:
             continue  # longer state was extended -> all forks are spawns
-        t_req = req_by_outer[fork_outer_idx]
-        t_end = _req_end(t_req)
-        candidates = [
+        registered = [
             ci
             for ci in forks_by_tail[fork_outer_idx]
-            if chains[ci].fork is not None
-            and chains[ci].fork.depth > 0
-            and t_end <= chains[ci].requests[0][1].t + _EPSILON_SECONDS
-            and chains[ci].requests[0][1].model == t_req.model
+            if chains[ci].spliced_into is None
         ]
-        if not candidates:
+        elected = _elect_continuation(chains, registered, req_by_outer[fork_outer_idx])
+        if elected is None:
             continue
-        elected = max(
-            candidates,
-            key=lambda ci: (
-                chains[ci].fork.depth,
-                -chains[ci].fork.fork_time,
-                -ci,
-            ),
-        )
         target = chains[elected]
         owner_chain.requests.extend(target.requests)
         for oi, _ in target.requests:
@@ -418,4 +479,22 @@ def _resolve_seams(
         target.spliced_into = owner
         alias[elected] = owner
         seams += 1
+
+        new_tail_outer = _last_hash_outer_idx(owner_chain)
+        if new_tail_outer is None:
+            continue
+        if _rekey_leftover_forks(
+            chains=chains,
+            forks_by_tail=forks_by_tail,
+            req_by_outer=req_by_outer,
+            registered=registered,
+            elected=elected,
+            owner=owner,
+            new_tail_outer=new_tail_outer,
+        ):
+            # The new tail's key may sort below the current one or may have
+            # been visited already as a no-op; allow it to (re)process so
+            # the re-keyed candidates get their election.
+            processed.discard(new_tail_outer)
+            heapq.heappush(keys, new_tail_outer)
     return seams

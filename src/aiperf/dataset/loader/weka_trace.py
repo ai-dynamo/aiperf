@@ -907,7 +907,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         or a detected flat chain re-sends it (and vice versa). Dropped
         subagents are excluded to match emission.
         """
-        from aiperf.dataset.loader.weka_agent_chains import (
+        from aiperf.dataset.loader.weka_metric_prepass import (
             MetricRecord,
             compute_shared_prefix_cache_metrics,
         )
