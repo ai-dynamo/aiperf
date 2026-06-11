@@ -4,6 +4,7 @@
 
 import pytest
 
+from aiperf.common.exceptions import InferenceClientError
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TextResponseData,
@@ -82,6 +83,30 @@ class TestChatEndpointParseResponse:
         assert parsed.perf_ns == 123456789
         assert parsed.data is None
         assert parsed.usage == usage
+
+    def test_parse_response_streaming_error(self, endpoint):
+        """Test parsing SGLang's nested streaming error response."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "error": {
+                    "object": "error",
+                    "message": "Generation aborted due to insufficient KV cache.",
+                    "type": "INSUFFICIENT_STORAGE",
+                    "param": None,
+                    "code": 507,
+                }
+            },
+        )
+
+        with pytest.raises(
+            InferenceClientError,
+            match=(
+                "Inference server error: Generation aborted due to insufficient "
+                "KV cache. \\(INSUFFICIENT_STORAGE, 507\\)"
+            ),
+        ):
+            endpoint.parse_response(mock_response)
 
     def test_parse_response_with_reasoning_content(self, endpoint):
         """Test parsing response with reasoning_content (reasoning-capable models)."""
