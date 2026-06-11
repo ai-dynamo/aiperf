@@ -509,6 +509,9 @@ def _settings_payload_from_user_config(
         "weka_live_assistant_responses": (
             Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
         ),
+        "weka_split_flattened_agents": (
+            Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
+        ),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
         "max_context_length": inp.max_context_length,

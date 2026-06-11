@@ -94,6 +94,29 @@ class TestComputeCacheKey:
         assert live_key is not None
         assert pre_canned_key != live_key
 
+    def test_key_changes_when_weka_split_flattened_agents_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        cfg = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
+            ),
+        )
+
+        monkeypatch.setattr(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", True)
+        split_key = mmap_cache.compute_cache_key_from_user_config(cfg)
+        monkeypatch.setattr(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", False)
+        legacy_key = mmap_cache.compute_cache_key_from_user_config(cfg)
+
+        assert split_key is not None
+        assert legacy_key is not None
+        # The flag changes loader output (split vs legacy single-stream), so
+        # a warm cache from one mode must never serve the other.
+        assert split_key != legacy_key
+
     def test_key_is_deterministic_for_identical_inputs(self, tmp_path: Path) -> None:
         f = _write_input_file(tmp_path, b"hello world")
         k1 = mmap_cache.compute_cache_key(
