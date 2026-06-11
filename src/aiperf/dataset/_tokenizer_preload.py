@@ -118,4 +118,16 @@ def get_preloaded(
     return _LOADED.get((name, trust_remote_code, revision))
 
 
+def clear_preloaded() -> None:
+    """Drop every preloaded tokenizer.
+
+    Primarily for test isolation: a test that triggers ``_preload`` (or
+    otherwise populates ``_LOADED``) would leak its tokenizer into every later
+    ``get_preloaded`` caller in the same process -- including parallel_convert
+    workers, whose ``_init_worker`` prefers a preloaded tokenizer over
+    ``Tokenizer.from_pretrained``.
+    """
+    _LOADED.clear()
+
+
 _preload()
