@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
 from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
 from aiperf.common.models.dataset_models import Conversation, Text, Turn
 from aiperf.credit.structs import Credit
-from aiperf.workers.session_manager import UserSession
+from aiperf.workers.session_manager import UserSession, UserSessionManager
 from aiperf.workers.worker import (
     _apply_cache_bust,
     _apply_cache_bust_to_system_message,
@@ -1262,3 +1264,310 @@ def test_system_prefix_conversation_message_safe_under_reset():
 
     assert out == _PREFIX_MARKER + "CONV"
     assert session.turn_list[1].raw_messages[0]["content"] == "u1"
+
+
+# =============================================================================
+# Extensive matrix: session-type x target x prefix-scenario interactions
+# =============================================================================
+# These lock the full interaction surface that bit us repeatedly: FORK (shared,
+# inherit-don't-bust) vs SPAWN/root (own prefix, bust) crossed with all four
+# targets, multi-turn persistence, idempotency, and reset/seeded-resume combos.
+
+
+_ALL_TARGETS = [
+    CacheBustTarget.FIRST_TURN_PREFIX,
+    CacheBustTarget.FIRST_TURN_SUFFIX,
+    CacheBustTarget.SYSTEM_PREFIX,
+    CacheBustTarget.SYSTEM_SUFFIX,
+]
+
+
+def _marker_for(target: CacheBustTarget) -> str:
+    """Prefix targets need a trailing-newline marker; suffix targets a leading one
+    (mirrors build_cache_bust_marker's placement)."""
+    return (
+        _SUFFIX_MARKER
+        if target in (CacheBustTarget.FIRST_TURN_SUFFIX, CacheBustTarget.SYSTEM_SUFFIX)
+        else _PREFIX_MARKER
+    )
+
+
+# ---- FORK is a no-op for every target -------------------------------------
+
+
+@pytest.mark.parametrize("target", _ALL_TARGETS)
+def test_fork_child_is_noop_for_all_targets(target: CacheBustTarget):
+    """A FORK child must never re-bust its inherited prefix, regardless of target.
+    The shared turn carries only the parent's marker; the child adds nothing."""
+    parent_marked = Turn(
+        raw_messages=[
+            {"role": "system", "content": "[rid:PARENT00000]\n\nS0"},
+            {"role": "user", "content": "[rid:PARENT00000]\n\nu0"},
+        ],
+        reset_context=False,
+    )
+    child_turn = Turn(
+        raw_messages=[
+            {"role": "assistant", "content": "a0"},
+            {"role": "user", "content": "u1"},
+        ],
+        reset_context=False,
+    )
+    session = _make_fork_child_session([parent_marked, child_turn])
+    before_sys = session.turn_list[0].raw_messages[0]["content"]
+    before_user = session.turn_list[0].raw_messages[1]["content"]
+    credit = _make_credit(
+        target=target, marker="[rid:CHILD000000]\n\n", turn_index=1, num_turns=2
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[0].raw_messages[0]["content"] == before_sys
+    assert session.turn_list[0].raw_messages[1]["content"] == before_user
+
+
+def test_fork_child_noop_even_when_conversation_system_message_present():
+    """SYSTEM sub-path 1 (Conversation-level system_message) is also skipped for
+    a FORK child: the child returns it unchanged rather than applying its own
+    marker (which would diverge from the parent's system prefix)."""
+    parent_marked = Turn(
+        raw_messages=[{"role": "user", "content": "u0"}], reset_context=False
+    )
+    conversation = Conversation(
+        session_id="child", turns=[parent_marked], system_message="CONV"
+    )
+    session = UserSession(
+        x_correlation_id="child_xcorr",
+        num_turns=1,
+        conversation=conversation,
+        turn_list=[parent_marked],
+        parent_correlation_id="parent_xcorr",
+        branch_mode=ConversationBranchMode.FORK,
+    )
+    credit = _make_credit(
+        target=CacheBustTarget.SYSTEM_PREFIX, marker=_PREFIX_MARKER, num_turns=1
+    )
+
+    out = _apply_cache_bust(session, credit, system_message="CONV")
+
+    # Returned unchanged (NOT marker + "CONV").
+    assert out == "CONV"
+
+
+def test_fork_child_multi_turn_prefix_stays_single_marked():
+    """Processing several FORK-child credits never stacks onto the shared turn 0."""
+    shared_t0 = Turn(
+        raw_messages=[{"role": "user", "content": "[rid:PARENT00000]\n\nu0"}],
+        reset_context=False,
+    )
+    later = Turn(
+        raw_messages=[
+            {"role": "assistant", "content": "a"},
+            {"role": "user", "content": "u_later"},
+        ],
+        reset_context=False,
+    )
+    session = _make_fork_child_session([shared_t0, later], num_turns=2)
+    for ti in (1, 1, 1):
+        _apply_cache_bust(
+            session,
+            _make_credit(
+                target=CacheBustTarget.FIRST_TURN_PREFIX,
+                marker="[rid:CHILD000000]\n\n",
+                turn_index=ti,
+                num_turns=2,
+            ),
+            system_message=None,
+        )
+    assert session.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
+
+
+def test_fork_child_with_own_reset_is_still_noop():
+    """A FORK child carrying its OWN reset_context turn is still a no-op: FORK
+    never busts. (Documents current behavior — a child-introduced reset prefix
+    is not independently busted; revisit if that workload appears.)"""
+    shared_t0 = Turn(
+        raw_messages=[{"role": "user", "content": "[rid:PARENT00000]\n\nu0"}],
+        reset_context=False,
+    )
+    child_reset = Turn(
+        raw_messages=[{"role": "user", "content": "child fresh prefix"}],
+        reset_context=True,
+    )
+    session = _make_fork_child_session([shared_t0, child_reset], num_turns=2)
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker="[rid:CHILD000000]\n\n",
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+
+    assert session.turn_list[1].raw_messages[0]["content"] == "child fresh prefix"
+    assert session.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
+
+
+# ---- Realistic FORK lifecycle through UserSessionManager seeding -----------
+
+
+def test_fork_lifecycle_child_inherits_parents_marked_turn_object():
+    """End-to-end at the session layer: a parent marks turn 0 in place, a FORK
+    child is seeded from the parent via create_and_store (sharing the SAME Turn
+    object), and the child's cache-bust is a no-op — so the child sends the
+    parent's exact marked prefix (byte-identical => prefix-cache hit)."""
+    mgr = UserSessionManager()
+    t0 = Turn(raw_messages=[{"role": "user", "content": "u0"}], reset_context=False)
+    parent_conv = Conversation(session_id="root", turns=[t0])
+    parent = mgr.create_and_store("P", parent_conv, num_turns=1)
+    parent.advance_turn(0)
+    _apply_cache_bust(
+        parent,
+        _make_credit(
+            target=CacheBustTarget.FIRST_TURN_PREFIX,
+            marker="[rid:PARENT00000]\n\n",
+            turn_index=0,
+            num_turns=1,
+        ),
+        system_message=None,
+    )
+    assert parent.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
+
+    # FORK child seeds turn_list from the parent (shallow copy -> shared Turn).
+    child = mgr.create_and_store(
+        "C",
+        parent_conv,
+        num_turns=1,
+        parent_correlation_id="P",
+        branch_mode=ConversationBranchMode.FORK,
+    )
+    # The child shares the parent's marked turn-0 object by identity.
+    assert child.turn_list[0] is parent.turn_list[0]
+
+    _apply_cache_bust(
+        child,
+        _make_credit(
+            target=CacheBustTarget.FIRST_TURN_PREFIX,
+            marker="[rid:CHILD000000]\n\n",
+            turn_index=0,
+            num_turns=1,
+        ),
+        system_message=None,
+    )
+
+    # No-op: still exactly the parent's marker, no child marker, no stacking.
+    assert child.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
+    assert parent.turn_list[0].raw_messages[0]["content"] == "[rid:PARENT00000]\n\nu0"
+
+
+# ---- SPAWN children and root sessions ARE busted (across targets) ----------
+
+
+@pytest.mark.parametrize("target", _ALL_TARGETS)
+def test_spawn_child_is_busted_for_all_targets(target: CacheBustTarget):
+    marker = _marker_for(target)
+    raw = [
+        {"role": "system", "content": "S0"},
+        {"role": "user", "content": "u0"},
+    ]
+    turn = Turn(raw_messages=[dict(m) for m in raw], reset_context=False)
+    conversation = Conversation(session_id="spawn", turns=[turn])
+    session = UserSession(
+        x_correlation_id="spawn_xcorr",
+        num_turns=1,
+        conversation=conversation,
+        turn_list=[turn],
+        parent_correlation_id="parent_xcorr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+
+    _apply_cache_bust(
+        session,
+        _make_credit(target=target, marker=marker, turn_index=0, num_turns=1),
+        system_message=None,
+    )
+
+    msgs = session.turn_list[0].raw_messages
+    if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
+        carrier = msgs[0]["content"]  # system
+    else:
+        carrier = msgs[1]["content"]  # first user
+    assert _PREFIX_MARKER.strip() in carrier
+
+
+# ---- Idempotency stress: one session, many credits, single marker ----------
+
+
+def test_within_session_many_credits_single_marker_prefix():
+    """A root session re-processed across many credits keeps exactly one marker
+    on the shared turn-0 object (idempotency holds turn-over-turn)."""
+    t0_raw = [{"role": "user", "content": "u0"}]
+    rest_raw = [
+        [
+            {"role": "assistant", "content": f"a{i}"},
+            {"role": "user", "content": f"u{i + 1}"},
+        ]
+        for i in range(4)
+    ]
+    session = _make_delta_session_with_resets(
+        [t0_raw, *rest_raw], reset_flags=[False] * 5
+    )
+    for ti in range(5):
+        _apply_cache_bust(
+            session,
+            _make_credit(
+                target=CacheBustTarget.FIRST_TURN_PREFIX,
+                marker=_PREFIX_MARKER,
+                turn_index=ti,
+                num_turns=5,
+            ),
+            system_message=None,
+        )
+    assert session.turn_list[0].raw_messages[0]["content"] == _PREFIX_MARKER + "u0"
+
+
+def test_within_session_many_credits_single_marker_suffix():
+    session = _make_delta_session_with_resets(
+        [[{"role": "user", "content": "u0"}]], reset_flags=[False]
+    )
+    for _ in range(3):
+        _apply_cache_bust(
+            session,
+            _make_credit(
+                target=CacheBustTarget.FIRST_TURN_SUFFIX,
+                marker=_SUFFIX_MARKER,
+                turn_index=0,
+                num_turns=1,
+            ),
+            system_message=None,
+        )
+    assert session.turn_list[0].raw_messages[0]["content"] == "u0" + _SUFFIX_MARKER
+
+
+# ---- Seeded-resume x reset combinations (suffix coverage) ------------------
+
+
+def test_seeded_resume_with_buried_reset_suffix():
+    """Buried reset + suffix target on a seeded resume: marker suffixes the reset
+    turn's first user (the effective prefix), not the discarded turn 0."""
+    turn_0 = [{"role": "user", "content": "u0"}]
+    turn_1_reset = [{"role": "user", "content": "u1"}]
+    turn_2 = [
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+    ]
+    session = _make_delta_session_with_resets(
+        [turn_0, turn_1_reset, turn_2], reset_flags=[False, True, False]
+    )
+    _apply_cache_bust(
+        session,
+        _make_credit(
+            target=CacheBustTarget.FIRST_TURN_SUFFIX,
+            marker=_SUFFIX_MARKER,
+            turn_index=2,
+            num_turns=3,
+        ),
+        system_message=None,
+    )
+    assert session.turn_list[1].raw_messages[0]["content"] == "u1" + _SUFFIX_MARKER
+    assert session.turn_list[0].raw_messages[0]["content"] == "u0"
