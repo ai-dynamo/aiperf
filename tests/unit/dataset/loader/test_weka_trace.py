@@ -1409,3 +1409,14 @@ def test_split_disabled_restores_legacy_single_stream(monkeypatch):
     convs = loader.convert_to_conversations(loader.load_dataset())
     assert [c.session_id for c in convs] == ["trace_fanout"]
     assert len(convs[0].turns) == 6
+
+
+def test_flattened_fanout_logs_detection_summary(caplog):
+    import logging
+
+    loader = _fanout_loader()
+    with caplog.at_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace"):
+        loader.convert_to_conversations(loader.load_dataset())
+    text = caplog.text
+    assert "detected 3 agents" in text
+    assert "split 1 trace(s) into 2 extra agent chain(s)" in text

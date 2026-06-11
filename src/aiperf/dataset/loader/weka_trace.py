@@ -877,6 +877,17 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             f"{len(detection.worker_indices)} spawned chains, "
             f"{detection.unclassified_empty_hash} empty-hash kept on main)"
         )
+        # True-DAG fork edges live only in this log in v1 (the orchestrator
+        # cannot replay nested spawns, so all chains attach to the root).
+        _logger.debug(
+            lambda: f"Trace {trace_id} fork detail: "
+            + "; ".join(
+                f"fa:{n:03d} parent_chain={detection.chains[ci].fork.parent_chain} "
+                f"depth={detection.chains[ci].fork.depth}"
+                for n, ci in enumerate(detection.worker_indices)
+                if detection.chains[ci].fork is not None
+            )
+        )
         return (
             list(detection.chains[detection.main_index].requests),
             prefixes[detection.main_index],
@@ -1164,6 +1175,17 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
         validate_for_orchestrator_v1(metadata)
         self._delay_cap_tracker.log_summary(logger_name=__name__)
+        split_stats = plans.split_stats
+        if split_stats.traces_split or split_stats.traces_poisoned:
+            _logger.info(
+                f"WekaTraceLoader: flattened-agent detection split "
+                f"{split_stats.traces_split} trace(s) into "
+                f"{split_stats.total_chains} extra agent chain(s) "
+                f"({split_stats.total_seams} seams merged, "
+                f"{split_stats.total_empty_hash} empty-hash requests kept on "
+                f"main, {split_stats.traces_poisoned} trace(s) skipped as "
+                f"nonce-poisoned)"
+            )
         _logger.info(
             f"WekaTraceLoader: reconstructed {len(conversations)} conversation(s) "
             f"in {_time.monotonic() - _t1:.1f}s "
