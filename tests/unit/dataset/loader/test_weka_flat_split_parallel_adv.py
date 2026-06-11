@@ -566,13 +566,15 @@ def test_convert_poisoned_trace_alongside_healthy_parallel_byte_identical(
     assert len(sids) == len(set(sids))
 
 
-def test_convert_poisoned_trace_skips_split_per_spec(tmp_path, monkeypatch):
-    """Spec 8: detection must be skipped (legacy single-stream emission) for
-    traces dominated by zero-depth chain founders."""
+def test_convert_disjoint_batch_splits_serial(tmp_path, monkeypatch):
+    """With the nonce-poison guard removed, a fully-disjoint trace splits into
+    independent per-agent chains (root + spawned), retaining every request,
+    instead of collapsing to one linear conversation."""
     path = _write_traces(tmp_path, [_trace("trace_poison", _poisoned_requests())])
     serial = _convert_serial(path, _mk_user_config(), monkeypatch)
-    assert [c.session_id for c in serial] == ["trace_poison"]
-    assert len(serial[0].turns) == 9
+    sids = [c.session_id for c in serial]
+    assert sids[0] == "trace_poison" and len(serial) > 1
+    assert sum(len(c.turns) for c in serial) == 9
 
 
 def test_convert_max_osl_cross_model_batch_rewrite_parallel_byte_identical(

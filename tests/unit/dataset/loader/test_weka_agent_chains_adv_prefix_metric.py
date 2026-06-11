@@ -1,14 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for the namespace-group setup prefix (spec section 5.4),
-the poisoned-hash guard (spec section 8), and the shared prefix-cache metric
-pre-pass (spec section 5.5) in ``weka_agent_chains``."""
+"""Adversarial tests for the namespace-group setup prefix (spec section 5.4)
+and the shared prefix-cache metric pre-pass (spec section 5.5) in
+``weka_agent_chains``."""
 
 import random
 
 import pytest
 
-from aiperf.dataset.loader import weka_agent_chains
 from aiperf.dataset.loader.weka_agent_chains import (
     AgentChain,
     ChainDetectionResult,
@@ -230,65 +229,6 @@ def test_compute_chain_prefix_blocks_empty_detection_returns_empty():
         detect_agent_chains([]), declared_prefix_blocks=9
     )
     assert prefixes == {}
-
-
-# ---------------------------------------------------------------------------
-# looks_hash_poisoned — the poisoned-hash guard (spec section 8)
-# ---------------------------------------------------------------------------
-
-
-def _detection_with_founders(zero_depth: int, deep: int) -> ChainDetectionResult:
-    """main chain + ``deep`` depth>0 spawns + ``zero_depth`` zero-LCP
-    founders; main is extended last so the deep forks stay spawns."""
-    reqs = [_req(0.0, [1, 2, 3], api_time=0.1)]
-    for i in range(deep):
-        reqs.append(_req(1.0 + i, [1, 2, 11 + i], api_time=50.0))
-    for i in range(zero_depth):
-        reqs.append(_req(10.0 + i, [100 * (i + 1)], api_time=50.0))
-    reqs.append(_req(100.0, [1, 2, 3, 4], api_time=0.1))
-    return detect_agent_chains(_normals(*reqs))
-
-
-def test_looks_hash_poisoned_spec_threshold_boundaries():
-    fn = getattr(weka_agent_chains, "looks_hash_poisoned", None)
-    assert fn is not None, "looks_hash_poisoned missing from weka_agent_chains"
-
-    # Exactly 8 chains with exactly 4 (50%) zero-depth founders: the spec
-    # threshold is STRICTLY greater than 50% -> not poisoned.
-    at_half = _detection_with_founders(zero_depth=4, deep=3)
-    assert len(at_half.chains) == 8
-    assert fn(at_half) is False
-
-    # 7 chains dominated by zero-depth founders: below min_chains=8 -> False.
-    small = _detection_with_founders(zero_depth=6, deep=0)
-    assert len(small.chains) == 7
-    assert fn(small) is False
-
-    # 8 chains with 5 (62.5%) zero-depth founders -> poisoned.
-    poisoned = _detection_with_founders(zero_depth=5, deep=2)
-    assert len(poisoned.chains) == 8
-    assert fn(poisoned) is True
-
-    # Denominator probe: 8 phase-1 chains where ONE was seam-spliced (7
-    # live) and 4 are zero-depth founders. ChainDetectionResult documents
-    # that spliced chains stay in ``chains``, so the ratio is 4/8 == 50%
-    # -> False; a live-chain denominator (4/7 > 50%) would flip it.
-    r = detect_agent_chains(
-        _normals(
-            _req(0.0, [1, 2, 3], api_time=0.1),
-            _req(0.5, [1, 2, 11], api_time=100.0),  # deep spawn A
-            _req(0.6, [1, 2, 12], api_time=100.0),  # deep spawn B
-            _req(1.0, [1, 2, 3, 4], api_time=0.1),  # main pullback
-            _req(5.0, [1, 2, 3, 90], api_time=0.1),  # compaction seam
-            _req(10.0, [100], api_time=0.1),
-            _req(11.0, [200], api_time=0.1),
-            _req(12.0, [300], api_time=0.1),
-            _req(13.0, [400], api_time=0.1),
-        )
-    )
-    assert len(r.chains) == 8
-    assert r.seams_merged == 1
-    assert fn(r) is False
 
 
 # ---------------------------------------------------------------------------

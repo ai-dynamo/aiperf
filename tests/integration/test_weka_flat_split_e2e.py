@@ -221,11 +221,10 @@ def _write_background_trace(target_dir: Path) -> Path:
 def _write_poisoned_corpus(target_dir: Path) -> Path:
     """Two traces of 10 mutually disjoint single-block-hash requests each.
 
-    Per-request billing-nonce pathology: every request's hash list is a
-    single unique block, so LCP detection shatters the trace into one
-    zero-depth founder chain per request. Spec (section 7/8): such traces
-    must be flagged (``looks_hash_poisoned``), a WARNING logged, and the
-    split skipped.
+    Every request's hash list is a single unique block, so LCP detection
+    treats each as an independent zero-depth founder chain. With no
+    nonce-poison guard, the trace splits into one root plus per-request
+    agent chains (and the run must still complete cleanly).
     """
     for tid, base in (("trace_poison_a", 1000), ("trace_poison_b", 2000)):
         _write_trace(
@@ -791,12 +790,12 @@ async def test_poisoned_corpus_completes_without_deadlock(
         assert branch_stats.children_errored == 0, branch_stats
 
 
-async def test_poisoned_corpus_warns_and_does_not_split(
+async def test_disjoint_corpus_splits_into_fa_sessions(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:
-    """Spec sections 7/8: >= 8 mutually disjoint single-block-hash requests per
-    trace must log a WARNING naming the nonce-poison pathology and must NOT be
-    split into ::fa: sessions."""
+    """With the nonce-poison guard removed, a corpus of mutually-disjoint
+    single-block-hash requests splits into per-agent ::fa: sessions and logs
+    no nonce-poison WARNING."""
     corpus = _write_poisoned_corpus(tmp_path / "traces")
     result = await _run_weka_profile(
         input_dir=corpus,
@@ -807,20 +806,19 @@ async def test_poisoned_corpus_warns_and_does_not_split(
         extra_args=_POISON_RATE_ARGS,
         timeout=200.0,
     )
-    _assert_success(result, "poisoned corpus spec behavior")
+    _assert_success(result, "disjoint corpus split behavior")
 
     fa_records = [
         md
         for md in _profiling_metadata(result)
         if md.conversation_id and "::fa:" in md.conversation_id
     ]
-    assert not fa_records, (
-        "nonce-poisoned traces must NOT be split into per-request agent "
-        f"chains; got ::fa: sessions {sorted({md.conversation_id for md in fa_records})}"
-    )
+    assert fa_records, "disjoint traces must split into per-agent ::fa: chains"
+    # The trace ids contain "poison" but never "nonce"; the removed guard's
+    # warning was the only source of "nonce" in the logs.
     log_text = _combined_log_text(result).lower()
-    assert "poison" in log_text or "nonce" in log_text, (
-        "a WARNING naming the nonce-poison pathology must be logged"
+    assert "nonce" not in log_text, (
+        "the nonce-poison guard was removed; no nonce-poison warning expected"
     )
 
 

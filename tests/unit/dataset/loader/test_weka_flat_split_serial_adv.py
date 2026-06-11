@@ -339,32 +339,27 @@ def test_subagent_and_flat_branch_coexist_on_same_turn():
 
 
 # --------------------------------------------------------------------------
-# Poisoned-trace path (spec §8 / §7): >=8 chains and >50% forked at depth 0
-# must log a WARNING and SKIP splitting (single conversation).
+# Disjoint-batch path: with no nonce-poison guard, a trace of mutually-
+# disjoint requests is an independent-agent batch and splits into per-agent
+# chains rather than being skipped.
 # --------------------------------------------------------------------------
 
 
-def test_poisoned_trace_warns_and_does_not_split(caplog):
-    """A trace whose detection shatters into >=8 zero-depth founders (a
-    per-request billing-nonce pathology) must NOT be split: one root
-    conversation, and a WARNING naming the pathology (spec §8 'looks_hash_
-    poisoned', §7 'A WARNING per trace whose hashes look nonce-poisoned')."""
-    # 10 mutually-disjoint single-block requests -> every request is a
-    # zero-depth founder (LCP=0 against all others).
+def test_disjoint_batch_splits_into_independent_chains(caplog):
+    """A trace of mutually-disjoint requests (zero LCP between all) splits
+    into independent per-agent chains, retaining every request, and logs no
+    nonce-poison WARNING (the guard was removed)."""
+    # 10 mutually-disjoint single-block requests -> independent founders.
     requests = [_normal(float(i), [1000 + i], api_time=0.01) for i in range(10)]
     loader = _build_loader()
     with caplog.at_level(logging.WARNING):
         convs = _convert(loader, _trace("flt_poison", requests))
-    # Spec: detection is skipped -> single conversation, all rows on main.
-    assert [sid for sid in convs] == ["flt_poison"], (
-        "poisoned trace must NOT be split into per-request chains"
-    )
+    assert len(convs) > 1, "disjoint batch must split into per-agent chains"
     assert _retained_request_count(convs) == 10
-    assert any(
+    assert not any(
         "poison" in r.message.lower() or "nonce" in r.message.lower()
         for r in caplog.records
-        if r.levelno >= logging.WARNING
-    ), "a WARNING naming the nonce-poison pathology must be logged"
+    ), "the nonce-poison guard was removed; no such warning should be logged"
 
 
 # --------------------------------------------------------------------------
@@ -448,7 +443,9 @@ def test_flat_chain_think_time_only_uses_recorded_think_time():
     think_time*1000 (ms), falling back to the full within-chain delta when
     think_time is None (spec §5.6 'honoring think_time_only')."""
     requests = [
-        _normal(0.0, [1, 2, 3], api_time=0.5),  # main
+        # out>64 so the main turn is a real turn, not a title-gen preamble
+        # (a small disjoint leading request would be set aside before split).
+        _normal(0.0, [1, 2, 3], out=128, api_time=0.5),  # main
         _normal(3.0, [900, 901], api_time=0.5, model=_HAIKU, think_time=0.0),  # w t0
         _normal(
             8.0, [900, 901, 902], api_time=0.5, model=_HAIKU, think_time=2.0

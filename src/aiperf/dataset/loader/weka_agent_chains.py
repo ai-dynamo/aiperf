@@ -148,9 +148,7 @@ class _Phase1State:
         h = np.asarray(req.hash_ids, dtype=np.int64)
         if not self.chains:
             # The trace's first request founds the main chain. It forked
-            # from nothing: fork stays None (the AgentChain contract), so
-            # the poisoned-hash ratio never counts the main chain itself
-            # as a zero-depth founder.
+            # from nothing, so fork stays None (the AgentChain contract).
             self.chains.append(AgentChain())
             self._append(0, outer_idx, req)
             return
@@ -332,20 +330,6 @@ def compute_chain_prefix_blocks(
             else:
                 prefixes[ci] = observed
     return prefixes
-
-
-def looks_hash_poisoned(
-    result: ChainDetectionResult, *, min_chains: int = 8, ratio: float = 0.5
-) -> bool:
-    """True when detection is dominated by zero-depth chain founders —
-    the signature of per-request-nonce-poisoned chained block hashes
-    (spec §8). Legitimate disjoint-namespace batches produce only a few
-    zero-depth founders and stay far below the threshold."""
-    total = len(result.chains)
-    if total < min_chains:
-        return False
-    zero = sum(1 for c in result.chains if c.fork is not None and c.fork.depth == 0)
-    return zero / total > ratio
 
 
 def _last_hash_outer_idx(chain: AgentChain) -> int | None:

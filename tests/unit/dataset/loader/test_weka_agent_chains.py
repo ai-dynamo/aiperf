@@ -3,7 +3,6 @@
 from aiperf.dataset.loader.weka_agent_chains import (
     compute_chain_prefix_blocks,
     detect_agent_chains,
-    looks_hash_poisoned,
 )
 from aiperf.dataset.loader.weka_metric_prepass import (
     MetricRecord,
@@ -245,26 +244,6 @@ def test_singleton_trace_keeps_declared_prefix():
     r = detect_agent_chains(_normals(_req(0.0, [1, 2, 3])))
     prefixes = compute_chain_prefix_blocks(r, declared_prefix_blocks=5)
     assert prefixes == {r.main_index: 5}
-
-
-def test_nonce_poisoned_trace_flagged():
-    # Every request disjoint from every other: one zero-depth chain each.
-    reqs = [_req(float(i), [100 * i + 1, 100 * i + 2]) for i in range(10)]
-    r = detect_agent_chains(_normals(*reqs))
-    assert looks_hash_poisoned(r) is True
-
-
-def test_healthy_fanout_not_flagged():
-    reqs = [_req(0.0, [1, 2, 3])]
-    # 9 workers forking at the shared prefix (depth 2) while main is idle.
-    reqs += [_req(1.0 + 0.1 * i, [1, 2, 100 + i], api_time=5.0) for i in range(9)]
-    r = detect_agent_chains(_normals(*reqs))
-    assert looks_hash_poisoned(r) is False
-
-
-def test_small_trace_never_flagged():
-    r = detect_agent_chains(_normals(_req(0.0, [1]), _req(1.0, [5])))
-    assert looks_hash_poisoned(r) is False
 
 
 def test_shared_seen_set_counts_cross_conversation_hits_in_time_order():

@@ -330,7 +330,6 @@ class _SplitStats:
     total_chains: int = 0
     total_seams: int = 0
     total_empty_hash: int = 0
-    traces_poisoned: int = 0
 
 
 @dataclass
@@ -342,6 +341,55 @@ class _ReconstructionPlans:
     flat_plans: list[_FlatChainPlan]
     main_prefix_by_trace: dict[str, int]
     split_stats: _SplitStats
+
+
+_TITLE_GEN_MAX_OUTPUT_TOKENS = 64
+"""A leading request with output at or below this is small enough to be a Claude
+Code title-generation / one-shot preamble call, not a real conversation turn."""
+
+
+def _hash_list_lcp(a: list[int], b: list[int]) -> int:
+    """Length of the longest common prefix of two hash-id lists."""
+    n = min(len(a), len(b))
+    i = 0
+    while i < n and a[i] == b[i]:
+        i += 1
+    return i
+
+
+def _split_off_preamble(
+    normals: list[tuple[int, _NormalRequestT]],
+) -> tuple[list[tuple[int, _NormalRequestT]], list[tuple[int, _NormalRequestT]]]:
+    """Pull leading throwaway requests (e.g. Claude Code title generation) off
+    the front before chain detection.
+
+    Claude Code issues a small title/summary call at session start that shares
+    no cached prefix with the conversation. Left in, it wins ``main_index``
+    (the earliest request founds the main chain), hijacking the root agent's
+    identity: the real root is demoted to a worker chain and its disjoint
+    namespace skews the setup-prefix baseline. Only the single earliest request
+    is eligible, and only if it is small (output <=
+    ``_TITLE_GEN_MAX_OUTPUT_TOKENS``) and its hash list is disjoint (zero LCP)
+    from every other retained request. Capping at one is deliberate: a trace of
+    many mutually-disjoint requests is an independent-agent batch (or a
+    nonce-poisoned trace), not a run of title-generators, and must reach
+    detection intact. Returns ``(preamble, rest)`` in original outer-index
+    order; preamble is re-attached to the main chain for replay but never founds
+    the root or defines the namespace.
+    """
+    if len(normals) < 2:
+        return [], normals
+    ordered = sorted(normals, key=lambda item: (item[1].t, item[0]))
+    outer_idx, req = ordered[0]
+    if not req.hash_ids or req.output_length > _TITLE_GEN_MAX_OUTPUT_TOKENS:
+        return [], normals
+    if any(
+        _hash_list_lcp(req.hash_ids, other.hash_ids) > 0
+        for _, other in ordered[1:]
+        if other.hash_ids
+    ):
+        return [], normals
+    return [(outer_idx, req)], sorted(ordered[1:], key=lambda item: item[0])
 
 
 def _dropped_subagent_indices(plan: _ParentPlan) -> set[int]:
@@ -834,19 +882,14 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         from aiperf.dataset.loader.weka_agent_chains import (
             compute_chain_prefix_blocks,
             detect_agent_chains,
-            looks_hash_poisoned,
         )
 
-        detection = detect_agent_chains(normals)
-        if looks_hash_poisoned(detection):
-            split_stats.traces_poisoned += 1
-            _logger.warning(
-                f"Trace {trace_id}: hash_ids look nonce-poisoned (zero-LCP "
-                f"chain founders dominate; e.g. a per-request billing nonce "
-                f"in the first system block poisons chained block hashes). "
-                f"Skipping flattened-agent splitting for this trace."
-            )
-            return normals, declared_prefix_blocks
+        # Set aside leading title-generation / one-shot preamble requests so
+        # they don't hijack main_index (earliest request) and skew the
+        # namespace baseline; they re-attach to the main chain for replay.
+        preamble, detect_normals = _split_off_preamble(normals)
+
+        detection = detect_agent_chains(detect_normals)
         if not detection.worker_indices:
             return normals, declared_prefix_blocks
 
@@ -888,10 +931,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 if detection.chains[ci].fork is not None
             )
         )
-        return (
-            list(detection.chains[detection.main_index].requests),
-            prefixes[detection.main_index],
-        )
+        main_normals = list(detection.chains[detection.main_index].requests)
+        if preamble:
+            main_normals = sorted(
+                preamble + main_normals, key=lambda item: (item[1].t, item[0])
+            )
+        return main_normals, prefixes[detection.main_index]
 
     def _build_shared_metric_values(
         self,
@@ -1176,15 +1221,14 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         validate_for_orchestrator_v1(metadata)
         self._delay_cap_tracker.log_summary(logger_name=__name__)
         split_stats = plans.split_stats
-        if split_stats.traces_split or split_stats.traces_poisoned:
+        if split_stats.traces_split:
             _logger.info(
                 f"WekaTraceLoader: flattened-agent detection split "
                 f"{split_stats.traces_split} trace(s) into "
                 f"{split_stats.total_chains} extra agent chain(s) "
                 f"({split_stats.total_seams} seams merged, "
                 f"{split_stats.total_empty_hash} empty-hash requests kept on "
-                f"main, {split_stats.traces_poisoned} trace(s) skipped as "
-                f"nonce-poisoned)"
+                f"main)"
             )
         _logger.info(
             f"WekaTraceLoader: reconstructed {len(conversations)} conversation(s) "
