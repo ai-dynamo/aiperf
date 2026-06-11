@@ -463,6 +463,9 @@ def test_weka_parallel_child_conversation_metadata_is_non_root(monkeypatch):
         t_start=0.0,
         model_map_per_trace={"trace_sa": {}},
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
 
     child = next(c for c in conversations if c.session_id == "trace_sa::sa:agent_001")
@@ -1200,3 +1203,99 @@ def test_subagent_child_shares_trace_decode_scope():
     loader.prompt_generator._hash_id_corpus_rng.set_trace_id = _spy
     loader.convert_to_conversations(loader.load_dataset())
     assert scopes_used and all(s == "trace_sa" for s in scopes_used), scopes_used
+
+
+def test_theoretical_metric_values_unchanged_for_disjoint_namespaces():
+    """one_subagent.json has no parent/child hash overlap: the shared
+    seen-set must reproduce the legacy per-conversation values exactly."""
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(
+        filename=str(FIXTURES / "one_subagent.json"), user_config=uc
+    )
+    _stub_prompt_generator_for_reconstructor(loader)
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    root = convs["trace_sa"]
+    child = convs["trace_sa::sa:agent_001"]
+    assert root.turns[0].theoretical_prefix_cache_hit_blocks == 0
+    assert root.turns[0].theoretical_prefix_cache_total_blocks == 3
+    assert root.turns[1].theoretical_prefix_cache_hit_blocks == 3
+    assert root.turns[1].theoretical_prefix_cache_total_blocks == 5
+    assert child.turns[0].theoretical_prefix_cache_hit_blocks == 0
+    assert child.turns[0].theoretical_prefix_cache_total_blocks == 2
+
+
+def test_theoretical_metric_shares_seen_set_with_subagent_children():
+    """A hash block first sent by the parent counts as a hit when the
+    subagent child later sends it (shared per-trace seen-set)."""
+    from aiperf.dataset.loader.weka_trace_models import WekaTrace
+
+    trace = WekaTrace.model_validate(
+        {
+            "id": "trace_shared",
+            "models": ["m"],
+            "block_size": 64,
+            "hash_id_scope": "local",
+            "requests": [
+                {
+                    "t": 0.0,
+                    "type": "n",
+                    "model": "m",
+                    "in": 192,
+                    "out": 30,
+                    "hash_ids": [1, 2, 3],
+                    "api_time": 1.0,
+                },
+                {
+                    "t": 2.0,
+                    "type": "subagent",
+                    "agent_id": "agent_001",
+                    "subagent_type": "Explore",
+                    "duration_ms": 3000,
+                    "total_tokens": 500,
+                    "tool_use_count": 1,
+                    "status": "completed",
+                    "requests": [
+                        {
+                            "t": 2.5,
+                            "type": "n",
+                            "model": "m",
+                            "in": 192,
+                            "out": 50,
+                            # Child re-sends the parent's [1, 2] prefix.
+                            "hash_ids": [1, 2, 99],
+                            "api_time": 0.5,
+                        }
+                    ],
+                    "models": ["m"],
+                    "tool_tokens": 64,
+                    "system_tokens": 0,
+                },
+                {
+                    "t": 6.0,
+                    "type": "n",
+                    "model": "m",
+                    "in": 320,
+                    "out": 40,
+                    "hash_ids": [1, 2, 3, 4, 99],
+                    "api_time": 1.5,
+                },
+            ],
+        }
+    )
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(filename=None, user_config=uc)
+    _stub_prompt_generator_for_reconstructor(loader)
+    convs = {
+        c.session_id: c
+        for c in loader.convert_to_conversations({"trace_shared": [trace]})
+    }
+    child = convs["trace_shared::sa:agent_001"]
+    # Child turn 0 at t=2.5 re-sends [1, 2] already seen from the parent.
+    assert child.turns[0].theoretical_prefix_cache_hit_blocks == 2
+    assert child.turns[0].theoretical_prefix_cache_total_blocks == 3
+    root = convs["trace_shared"]
+    # Root turn 1: [1,2,3,4,99] -> 1,2,3 seen from itself; 4 novel stops the
+    # leading run even though 99 was seen from the child.
+    assert root.turns[1].theoretical_prefix_cache_hit_blocks == 3

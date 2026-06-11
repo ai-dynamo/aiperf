@@ -114,9 +114,14 @@ def _drive_parallel_inproc(
 
         from collections import defaultdict
 
+        metric_values_by_trace = loader._build_shared_metric_values(
+            parent_plans, child_plans
+        )
+
         children_by_trace = defaultdict(list)
         sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
+            child_metric_values = metric_values_by_trace[cp.parent_trace_id]
             requests_dicts = [
                 {
                     "hash_ids": list(creq.hash_ids),
@@ -125,8 +130,16 @@ def _drive_parallel_inproc(
                     "model": creq.model,
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
+                    # Dropped children have no pre-pass entry; they are
+                    # skipped by _process_task so the fallback is unused.
+                    "theoretical_hit_blocks": child_metric_values.get(
+                        (cp.session_id, k), (0, 0)
+                    )[0],
+                    "theoretical_total_blocks": child_metric_values.get(
+                        (cp.session_id, k), (0, len(creq.hash_ids))
+                    )[1],
                 }
-                for creq in cp.stream_requests
+                for k, creq in enumerate(cp.stream_requests)
             ]
             children_by_trace[cp.parent_trace_id].append(
                 {
@@ -157,9 +170,15 @@ def _drive_parallel_inproc(
                         "t": req.t,
                         "think_time": getattr(req, "think_time", None),
                         "capped_output_length": loader._cap_output(req),
+                        "theoretical_hit_blocks": metric_values_by_trace[plan.trace_id][
+                            (plan.trace_id, k)
+                        ][0],
+                        "theoretical_total_blocks": metric_values_by_trace[
+                            plan.trace_id
+                        ][(plan.trace_id, k)][1],
                     },
                 )
-                for outer_idx, req in plan.normals
+                for k, (outer_idx, req) in enumerate(plan.normals)
             ]
             subagents_dicts = []
             for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
@@ -343,6 +362,9 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=serial_loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
 
     # Parallel path: drive _process_task in-process to get reconstruction
@@ -449,6 +471,9 @@ def test_parallel_byte_equivalence_with_subagent(tmp_path):
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=serial_loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
     parallel_results = _drive_parallel_inproc(
         serial_loader, parent_plans, child_plans, data
@@ -612,6 +637,9 @@ def test_directory_with_multiple_traces_parallel_path_byte_exact(tmp_path):
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=serial_loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
 
     parallel_results = _drive_parallel_inproc(

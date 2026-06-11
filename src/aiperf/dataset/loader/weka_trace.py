@@ -316,16 +316,6 @@ def _child_plans_for_active_subagents(
     ]
 
 
-def _count_seen_prefix_blocks(hash_ids: list[int], seen: set[int]) -> int:
-    """Return leading blocks already present in ``seen`` for prefix-cache math."""
-    hits = 0
-    for hash_id in hash_ids:
-        if hash_id not in seen:
-            break
-        hits += 1
-    return hits
-
-
 def _build_trace_idle_timing(
     *,
     plan: _ParentPlan,
@@ -717,6 +707,58 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             )
         return parent_plans, child_plans
 
+    def _build_shared_metric_values(
+        self,
+        parent_plans: list[_ParentPlan],
+        child_plans: list[_ChildPlan],
+    ) -> dict[str, dict[tuple[str, int], tuple[int, int]]]:
+        """Per-trace ``{(session_id, k): (hits, total)}`` from ONE shared
+        seen-set consumed in global (t, outer_idx, stream_idx, k) order.
+
+        ``hash_id_scope: "local"`` means one namespace per trace file, so a
+        block first sent by the parent is a cache hit when a subagent child
+        re-sends it (and vice versa). Dropped subagents are excluded to
+        match emission.
+        """
+        from aiperf.dataset.loader.weka_agent_chains import (
+            MetricRecord,
+            compute_shared_prefix_cache_metrics,
+        )
+
+        out: dict[str, dict[tuple[str, int], tuple[int, int]]] = {}
+        for plan in parent_plans:
+            records: list[MetricRecord] = []
+            for k, (outer_idx, req) in enumerate(plan.normals):
+                records.append(
+                    MetricRecord(
+                        sort_key=(req.t, outer_idx, 0, 0),
+                        session_id=plan.trace_id,
+                        k=k,
+                        hash_ids=list(req.hash_ids),
+                    )
+                )
+            sa_outer_by_index = {
+                sa_index: outer_idx
+                for sa_index, (outer_idx, _) in enumerate(plan.subagents)
+            }
+            for cp in _child_plans_for_active_subagents(plan, child_plans):
+                for k, creq in enumerate(cp.stream_requests):
+                    records.append(
+                        MetricRecord(
+                            sort_key=(
+                                _subagent_request_absolute_t(cp.entry, creq),
+                                sa_outer_by_index[cp.subagent_index],
+                                cp.stream_index,
+                                k,
+                            ),
+                            session_id=cp.session_id,
+                            k=k,
+                            hash_ids=list(creq.hash_ids),
+                        )
+                    )
+            out[plan.trace_id] = compute_shared_prefix_cache_metrics(records)
+        return out
+
     def _build_trace_idle_timing_by_trace(
         self, parent_plans: list[_ParentPlan], child_plans: list[_ChildPlan]
     ) -> dict[str, _TraceIdleTiming]:
@@ -835,6 +877,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             data = self._filter_traces_by_max_context(data, max_ctx)
 
         parent_plans, child_plans = self._build_reconstruction_plans(data)
+        metric_values_by_trace = self._build_shared_metric_values(
+            parent_plans, child_plans
+        )
 
         # Per-trace model rewrite map. Built once here, applied in both the
         # serial and parallel reconstruction paths so workers don't need
@@ -883,6 +928,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     t_start=_t1,
                     model_map_per_trace=model_map_per_trace,
                     trace_idle_timing_by_trace=trace_idle_timing_by_trace,
+                    metric_values_by_trace=metric_values_by_trace,
                 )
             else:
                 conversations = self._reconstruct_serial(
@@ -896,6 +942,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     t_start=_t1,
                     model_map_per_trace=model_map_per_trace,
                     trace_idle_timing_by_trace=trace_idle_timing_by_trace,
+                    metric_values_by_trace=metric_values_by_trace,
                 )
         finally:
             # Don't hold trace content past this call. The caller may process
@@ -936,6 +983,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         t_start: float,
         model_map_per_trace: dict[str, dict[str, str]],
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
+        metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
     ) -> list[Conversation]:
         """In-process serial reconstruction."""
         import time as _time
@@ -991,7 +1039,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
             # First pass: emit turns from normal requests; track outer-index → turn-pos.
             outer_to_turn_pos: dict[int, int] = {}
-            parent_seen_hash_ids: set[int] = set()
+            trace_metric_values = metric_values_by_trace[plan.trace_id]
             for k, (outer_idx, req) in enumerate(plan.normals):
                 seed = f"{plan.trace_id}:turn_{k}:partial_tail"
                 if k == 0:
@@ -1033,11 +1081,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     # the load generator to dispatch a request in the past.
                     delay_ms = max(delay_ms, 0.0)
                 delta = recon.turn_delta()
-                theoretical_hit_blocks = _count_seen_prefix_blocks(
-                    req.hash_ids, parent_seen_hash_ids
-                )
-                theoretical_total_blocks = len(req.hash_ids)
-                parent_seen_hash_ids.update(req.hash_ids)
+                theoretical_hit_blocks, theoretical_total_blocks = trace_metric_values[
+                    (plan.trace_id, k)
+                ]
                 conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
@@ -1225,7 +1271,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 agent_depth=1,
                 parent_conversation_id=cp.parent_trace_id,
             )
-            child_seen_hash_ids: set[int] = set()
+            child_metric_values = metric_values_by_trace[cp.parent_trace_id]
             for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
                 if k == 0:
@@ -1264,11 +1310,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
-                theoretical_hit_blocks = _count_seen_prefix_blocks(
-                    creq.hash_ids, child_seen_hash_ids
-                )
-                theoretical_total_blocks = len(creq.hash_ids)
-                child_seen_hash_ids.update(creq.hash_ids)
+                theoretical_hit_blocks, theoretical_total_blocks = child_metric_values[
+                    (cp.session_id, k)
+                ]
                 child_conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
@@ -1296,6 +1340,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         cap_seconds: float | None,
         model_map_per_trace: dict[str, dict[str, str]],
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
+        metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
     ):
         from aiperf.dataset.loader.weka_parallel_convert import (
             _WekaNormalRequestPayload,
@@ -1319,8 +1364,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             if cp.subagent_index in dropped_per_trace.get(cp.parent_trace_id, set()):
                 continue
             trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
+            child_metric_values = metric_values_by_trace[cp.parent_trace_id]
             requests_dicts: list[_WekaNormalRequestPayload] = []
             for k, creq in enumerate(cp.stream_requests):
+                hit_blocks, total_blocks = child_metric_values[(cp.session_id, k)]
                 req_payload: _WekaNormalRequestPayload = {
                     "hash_ids": list(creq.hash_ids),
                     "input_length": creq.input_length,
@@ -1328,6 +1375,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "model": creq.model,
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
+                    "theoretical_hit_blocks": hit_blocks,
+                    "theoretical_total_blocks": total_blocks,
                 }
                 if trace_idle_timing is not None:
                     timing = trace_idle_timing.child_by_session_request[
@@ -1359,7 +1408,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     trace_id=plan.trace_id,
                     parent={
                         "normals": self._parallel_parent_normals(
-                            plan, trace_idle_timing_by_trace
+                            plan, trace_idle_timing_by_trace, metric_values_by_trace
                         ),
                         "subagents": self._parallel_subagents(
                             plan, sids_by_subagent, trace_idle_timing_by_trace
@@ -1382,14 +1431,17 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self,
         plan: _ParentPlan,
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
+        metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
     ):
         from aiperf.dataset.loader.weka_parallel_convert import (
             _WekaNormalRequestPayload,
         )
 
         trace_idle_timing = trace_idle_timing_by_trace.get(plan.trace_id)
+        trace_metric_values = metric_values_by_trace[plan.trace_id]
         normals_dicts: list[tuple[int, _WekaNormalRequestPayload]] = []
-        for outer_idx, req in plan.normals:
+        for k, (outer_idx, req) in enumerate(plan.normals):
+            hit_blocks, total_blocks = trace_metric_values[(plan.trace_id, k)]
             req_payload: _WekaNormalRequestPayload = {
                 "hash_ids": list(req.hash_ids),
                 "input_length": req.input_length,
@@ -1398,6 +1450,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 "t": req.t,
                 "think_time": getattr(req, "think_time", None),
                 "capped_output_length": self._cap_output(req),
+                "theoretical_hit_blocks": hit_blocks,
+                "theoretical_total_blocks": total_blocks,
             }
             if trace_idle_timing is not None:
                 timing = trace_idle_timing.parent_by_outer_idx[outer_idx]
@@ -1455,6 +1509,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         t_start: float,
         model_map_per_trace: dict[str, dict[str, str]],
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
+        metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
     ) -> list[Conversation]:
         """Per-trace parallel reconstruction across a multiprocessing Pool.
 
@@ -1489,6 +1544,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             cap_seconds=cap_seconds,
             model_map_per_trace=model_map_per_trace,
             trace_idle_timing_by_trace=trace_idle_timing_by_trace,
+            metric_values_by_trace=metric_values_by_trace,
         )
 
         n_plans = len(tasks)

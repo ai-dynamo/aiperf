@@ -102,6 +102,10 @@ class _WekaNormalRequestPayload(TypedDict):
     # timeline before workers compute turns.
     effective_t: NotRequired[float]
     effective_delay_ms: NotRequired[float | None]
+    # Theoretical prefix-cache values precomputed parent-side from the
+    # per-trace shared seen-set (one hash namespace per trace file).
+    theoretical_hit_blocks: int
+    theoretical_total_blocks: int
 
 
 class _WekaSubagentMarkerPayload(TypedDict):
@@ -149,16 +153,6 @@ class _WekaChildPayload(TypedDict):
 _DecodeBlocksFn: TypeAlias = Callable[[list[int]], list[int]]
 _SamplePartialTailFn: TypeAlias = Callable[[int, str], list[int]]
 _DecodeTokensFn: TypeAlias = Callable[[list[int]], str]
-
-
-def _count_seen_prefix_blocks(hash_ids: list[int], seen: set[int]) -> int:
-    """Return leading blocks already present in ``seen`` for prefix-cache math."""
-    hits = 0
-    for hash_id in hash_ids:
-        if hash_id not in seen:
-            break
-        hits += 1
-    return hits
 
 
 @dataclass(slots=True)
@@ -346,7 +340,6 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     parent_turns: list[_WekaParentTurnDict] = []
     outer_to_turn_pos: dict[int, int] = {}
     normals: list[tuple[int, _WekaNormalRequestPayload]] = parent["normals"]
-    parent_seen_hash_ids: set[int] = set()
     for k, (outer_idx, req) in enumerate(normals):
         seed = f"{task.trace_id}:turn_{k}:partial_tail"
         if k == 0:
@@ -383,11 +376,8 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             delay_ms = delay_tracker.clamp(delay_ms)
 
         parent_delta = parent_recon.turn_delta()
-        theoretical_hit_blocks = _count_seen_prefix_blocks(
-            req["hash_ids"], parent_seen_hash_ids
-        )
-        theoretical_total_blocks = len(req["hash_ids"])
-        parent_seen_hash_ids.update(req["hash_ids"])
+        theoretical_hit_blocks = req["theoretical_hit_blocks"]
+        theoretical_total_blocks = req["theoretical_total_blocks"]
         parent_turns.append(
             {
                 "timestamp": None if task.ignore_delays else t_ms,
@@ -523,7 +513,6 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
 
         child_turns: list[_WekaParentTurnDict] = []
         creqs: list[_WekaNormalRequestPayload] = cp["requests"]
-        child_seen_hash_ids: set[int] = set()
         for k, creq in enumerate(creqs):
             seed = f"{cp['session_id']}:turn_{k}:partial_tail"
             if k == 0:
@@ -559,11 +548,8 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
 
             child_delta = child_recon.turn_delta()
-            theoretical_hit_blocks = _count_seen_prefix_blocks(
-                creq["hash_ids"], child_seen_hash_ids
-            )
-            theoretical_total_blocks = len(creq["hash_ids"])
-            child_seen_hash_ids.update(creq["hash_ids"])
+            theoretical_hit_blocks = creq["theoretical_hit_blocks"]
+            theoretical_total_blocks = creq["theoretical_total_blocks"]
             child_turns.append(
                 {
                     "timestamp": None if task.ignore_delays else t_ms,
