@@ -45,6 +45,48 @@ def _combined_metrics(throughput_avg: float, ttft_p95: float) -> dict:
 class TestEvaluateTiersOnGrid:
     """Core functionality of multi-tier grid evaluation."""
 
+    def test_grid_scrubs_non_finite_observed_in_binding_constraint(self) -> None:
+        """A non-finite metric value at a grid point must not leak into
+        ``binding_constraint['observed']`` (which is serialized to
+        search_history.json). NaN comparisons fail the filter, so the value
+        reaches the breach dict and must be scrubbed to None."""
+        tier = _make_tier(
+            "fast",
+            [
+                SLAFilter(
+                    metric_tag="output_token_throughput",
+                    stat="avg",
+                    op="gt",
+                    threshold=100.0,
+                )
+            ],
+        )
+        rows = [_make_row(8, _throughput_metrics(float("nan")))]
+        results = evaluate_tiers_on_grid(rows, [tier], "phases.profiling.concurrency")
+        assert len(results) == 1
+        binding = results[0].binding_constraint
+        assert binding is not None
+        assert binding["observed"] is None
+
+    def test_grid_keeps_finite_observed_in_binding_constraint(self) -> None:
+        """A finite (but failing) metric value is preserved in the breach dict."""
+        tier = _make_tier(
+            "fast",
+            [
+                SLAFilter(
+                    metric_tag="output_token_throughput",
+                    stat="avg",
+                    op="gt",
+                    threshold=100.0,
+                )
+            ],
+        )
+        rows = [_make_row(8, _throughput_metrics(50.0))]
+        results = evaluate_tiers_on_grid(rows, [tier], "phases.profiling.concurrency")
+        binding = results[0].binding_constraint
+        assert binding is not None
+        assert binding["observed"] == 50.0
+
     def test_basic_two_tier_boundary_detection(self) -> None:
         """Two tiers with different thresholds find different boundaries."""
         strict = _make_tier(
