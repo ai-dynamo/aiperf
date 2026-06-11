@@ -19,6 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import orjson
+
 from aiperf.cli_runner._pareto import _resolve_pareto_axes
 
 if TYPE_CHECKING:
@@ -101,6 +103,20 @@ def _plan_post_process(plan: BenchmarkPlan) -> Any:
     return plan.sweep.post_process
 
 
+def _hashable_value(value: Any) -> Any:
+    """Return ``value``, or its sorted-key JSON string when it is unhashable.
+
+    Scenario sweeps put nested override dicts in ``variation_values``, and
+    those can't go in a dict key directly. Sorted keys keep equal overrides
+    grouping together.
+    """
+    try:
+        hash(value)
+    except TypeError:
+        return orjson.dumps(value, option=orjson.OPT_SORT_KEYS).decode()
+    return value
+
+
 def _variation_key(label: str, values: dict[str, Any]) -> VariationKey:
     """Hashable, order-stable key for a variation cell.
 
@@ -114,7 +130,7 @@ def _variation_key(label: str, values: dict[str, Any]) -> VariationKey:
         >>> _variation_key("sobol_0006", {"concurrency": 3})
         ('sobol_0006', (('concurrency', 3),))
     """
-    return (label, tuple(sorted(values.items())))
+    return (label, tuple(sorted((k, _hashable_value(v)) for k, v in values.items())))
 
 
 def _key_values(key: VariationKey) -> tuple[tuple[str, Any], ...]:

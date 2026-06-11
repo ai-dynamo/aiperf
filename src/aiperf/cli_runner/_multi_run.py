@@ -26,6 +26,7 @@ from aiperf.cli_runner._strategy import (
     validate_convergence_config,
 )
 from aiperf.cli_runner._sweep_aggregate import (
+    _variation_key,
     aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
 )
@@ -316,10 +317,7 @@ def _log_failed_sweep_variations(
     """
     by_variation: dict[tuple, list[RunResult]] = {}
     for r in failed_runs:
-        key = (
-            r.variation_label or "",
-            tuple(sorted((r.variation_values or {}).items())),
-        )
+        key = _variation_key(r.variation_label or "", r.variation_values or {})
         by_variation.setdefault(key, []).append(r)
 
     def _format_key(label: str, params: tuple) -> str:
