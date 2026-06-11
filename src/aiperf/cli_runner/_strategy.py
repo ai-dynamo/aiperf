@@ -19,6 +19,7 @@ multi-run path can't honor before any setup work begins.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.orchestrator.strategies import ExecutionStrategy
+
+logger = logging.getLogger(__name__)
 
 
 def validate_convergence_config(plan: BenchmarkPlan) -> None:
@@ -144,18 +147,17 @@ def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
         from aiperf.orchestrator.search_planner.multi_tier_planner import (
             MultiTierPlanner,
         )
+        from aiperf.plugin.enums import SearchPlannerType
 
-        # Warn if user specified a non-default search style that multi-tier won't use
-        if str(cfg.planner) not in (
-            "smooth_isotonic",
-            "SearchPlannerType.SMOOTH_ISOTONIC",
-        ):
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "--search-style %s is ignored when --search-sla-tier is active. "
-                "Multi-tier search uses its own bracket/bisection method with "
-                "shared warmup and precision settings from the configured style.",
+        # The search style's *algorithm* is not used by multi-tier (it runs its
+        # own bracket/bisection); warn so the user isn't surprised. The style's
+        # precision and warmup settings ARE still applied.
+        if cfg.planner != SearchPlannerType.SMOOTH_ISOTONIC:
+            logger.warning(
+                "The search algorithm for --search-style %s is not used when "
+                "--search-sla-tier is active; multi-tier uses its own "
+                "bracket/bisection method. The style's precision and warmup "
+                "settings still apply.",
                 cfg.planner,
             )
         return MultiTierPlanner(plan.configs[0], cfg, cfg.sla_tiers)
