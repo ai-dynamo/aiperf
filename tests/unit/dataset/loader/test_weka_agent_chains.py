@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from aiperf.dataset.loader.weka_agent_chains import (
+    MetricRecord,
     compute_chain_prefix_blocks,
+    compute_shared_prefix_cache_metrics,
     detect_agent_chains,
     looks_hash_poisoned,
 )
@@ -259,3 +261,22 @@ def test_healthy_fanout_not_flagged():
 def test_small_trace_never_flagged():
     r = detect_agent_chains(_normals(_req(0.0, [1]), _req(1.0, [5])))
     assert looks_hash_poisoned(r) is False
+
+
+def test_shared_seen_set_counts_cross_conversation_hits_in_time_order():
+    records = [
+        MetricRecord(
+            sort_key=(0.0, 0, 0, 0), session_id="root", k=0, hash_ids=[1, 2, 3]
+        ),
+        MetricRecord(sort_key=(1.0, 2, 0, 0), session_id="w0", k=0, hash_ids=[1, 2, 9]),
+        MetricRecord(
+            sort_key=(2.0, 3, 0, 0), session_id="root", k=1, hash_ids=[1, 2, 3, 4]
+        ),
+        # Same t as the w0 row above: stable tiebreak by position.
+        MetricRecord(sort_key=(1.0, 1, 0, 0), session_id="sa", k=0, hash_ids=[1, 5]),
+    ]
+    out = compute_shared_prefix_cache_metrics(records)
+    assert out[("root", 0)] == (0, 3)
+    assert out[("sa", 0)] == (1, 2)  # processed before w0 (position 1 < 2)
+    assert out[("w0", 0)] == (2, 3)
+    assert out[("root", 1)] == (3, 4)  # block 4 is globally novel

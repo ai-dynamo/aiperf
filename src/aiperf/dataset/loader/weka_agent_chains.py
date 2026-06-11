@@ -305,6 +305,38 @@ def compute_chain_prefix_blocks(
     return prefixes
 
 
+@dataclass(slots=True, frozen=True)
+class MetricRecord:
+    """One request's contribution to the per-trace shared seen-set."""
+
+    sort_key: tuple[float, int, int, int]
+    """(absolute_t, outer_idx, stream_idx, k) — deterministic global order."""
+    session_id: str
+    """Conversation the value is looked up under at emission time."""
+    k: int
+    """Turn index within that conversation."""
+    hash_ids: list[int]
+    """The request's input hash blocks."""
+
+
+def compute_shared_prefix_cache_metrics(
+    records: list[MetricRecord],
+) -> dict[tuple[str, int], tuple[int, int]]:
+    """{(session_id, k): (hit_blocks, total_blocks)} over ONE shared
+    per-trace seen-set, consumed in global time order (spec §5.5)."""
+    out: dict[tuple[str, int], tuple[int, int]] = {}
+    seen: set[int] = set()
+    for rec in sorted(records, key=lambda r: r.sort_key):
+        hits = 0
+        for hid in rec.hash_ids:
+            if hid not in seen:
+                break
+            hits += 1
+        out[(rec.session_id, rec.k)] = (hits, len(rec.hash_ids))
+        seen.update(rec.hash_ids)
+    return out
+
+
 def looks_hash_poisoned(
     result: ChainDetectionResult, *, min_chains: int = 8, ratio: float = 0.5
 ) -> bool:
