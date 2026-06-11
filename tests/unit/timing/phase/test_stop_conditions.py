@@ -41,9 +41,17 @@ def lc(
     return m
 
 
-def ctr(sent: int = 0, sessions: int = 0, turns: int = 0) -> MagicMock:
+def ctr(
+    sent: int = 0,
+    sessions: int = 0,
+    turns: int = 0,
+    root_sent: int | None = None,
+) -> MagicMock:
     m = MagicMock(spec=CreditCounter)
     m.requests_sent = sent
+    # No DAG children in most unit cases, so root_requests_sent tracks
+    # requests_sent unless a test explicitly drives them apart.
+    m.root_requests_sent = sent if root_sent is None else root_sent
     m.sent_sessions = sessions
     m.total_session_turns = turns
     return m
@@ -135,6 +143,21 @@ class TestSessionCountStopCondition:
             cfg(sessions=10), lc(), ctr(sessions=10, sent=20, turns=20)
         )
         assert cond.can_send_any_turn() is False
+
+    def test_dag_children_do_not_close_gate_on_unsent_root_turns(self) -> None:
+        """Regression: DAG children inflate ``requests_sent`` but inherit the
+        parent's session slot and add no root turns. The gate must compare
+        ``root_requests_sent`` (not ``requests_sent``) against
+        ``total_session_turns`` so a multi-turn root's remaining continuations
+        still dispatch. Pre-fix, ``requests_sent (20) >= total_session_turns
+        (20)`` closed the gate while ``root_requests_sent (5) < 20`` meant
+        ``is_final_credit`` never fired -> dropped root turns / hang."""
+        cond = SessionCountStopCondition(
+            cfg(sessions=10),
+            lc(),
+            ctr(sessions=10, sent=20, turns=20, root_sent=5),
+        )
+        assert cond.can_send_any_turn() is True
 
     def test_can_start_new_session_when_under_limit(self) -> None:
         cond = SessionCountStopCondition(cfg(sessions=10), lc(), ctr(sessions=5))

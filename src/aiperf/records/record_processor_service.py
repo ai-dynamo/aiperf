@@ -216,7 +216,17 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
-        """Handle an inference results message."""
+        """Handle an inference results message.
+
+        Lockstep contract: every received message forwards exactly one
+        ``MetricRecordsMessage``. The worker has already returned the credit as
+        completed by the time the record arrives here, so a dropped record
+        leaves the RecordsManager completion barrier (``success_records +
+        error_records >= final_requests_completed``, which has no timeout)
+        permanently short and hangs the run at end-of-phase. A parse/process
+        failure is therefore forwarded as an error record instead of being
+        allowed to escape the handler.
+        """
         record = message.record
 
         # Capture last response timestamp before parsing frees raw SSE data.
@@ -224,6 +234,26 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             record.responses[-1].perf_ns if record.responses else None
         )
 
+        try:
+            await self._process_and_forward_record(
+                message, record, last_response_perf_ns
+            )
+        except Exception as e:  # noqa: BLE001
+            # Never drop the record: the worker already returned this credit as
+            # completed, so forward an error record to keep the records-side
+            # count in lockstep and let the completion barrier converge.
+            self.exception(
+                f"Failed to process inference record; forwarding as error: {e!r}"
+            )
+            await self._forward_failed_record(message, record, last_response_perf_ns, e)
+
+    async def _process_and_forward_record(
+        self,
+        message: InferenceResultsMessage,
+        record: RequestRecord,
+        last_response_perf_ns: int | None,
+    ) -> None:
+        """Parse, process, and forward the metric record for a single request."""
         parsed_record = await self.inference_result_parser.parse_request_record(record)
 
         # Free raw SSE messages now that parsing extracted what it needs.
@@ -276,6 +306,28 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 results=results,
                 trace_data=trace_data,
                 error=error,
+            )
+        )
+
+    async def _forward_failed_record(
+        self,
+        message: InferenceResultsMessage,
+        record: RequestRecord,
+        last_response_perf_ns: int | None,
+        exc: Exception,
+    ) -> None:
+        """Forward an error record after a parse/process failure so the
+        records-side count stays in lockstep with the already-returned credit."""
+        metadata = self._create_metric_record_metadata(
+            record, message.service_id, last_response_perf_ns
+        )
+        await self.records_push_client.push(
+            MetricRecordsMessage(
+                service_id=self.service_id,
+                metadata=metadata,
+                results=[],
+                trace_data=None,
+                error=record.error or ErrorDetails.from_exception(exc),
             )
         )
 

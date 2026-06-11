@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, ExportLevel
+from aiperf.common.messages import InferenceResultsMessage, MetricRecordsMessage
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -126,3 +127,88 @@ class TestRecordProcessorCreateMetricRecordMetadata:
 
         assert getattr(metadata, expected_metadata_field) is None
         assert metadata.worker_id == worker_id
+
+
+class TestRecordProcessorForwardsRecordOnFailure:
+    """Lockstep invariant: every received InferenceResultsMessage must forward
+    exactly one MetricRecordsMessage, even when parsing/processing raises.
+
+    The RecordsManager completion barrier waits until
+    ``success_records + error_records >= final_requests_completed`` with no
+    timeout. The worker has already returned the credit as completed by the
+    time the record reaches the RecordProcessor, so a dropped record leaves
+    that count permanently short and hangs the run at end-of-phase. A parse
+    failure (e.g. on a pathological over-context response) must therefore
+    still produce a forwarded error record, not vanish.
+    """
+
+    def _make_instance(self) -> MagicMock:
+        instance = MagicMock(spec=RecordProcessor)
+        instance.service_id = "test-processor-id"
+        instance._drop_agentic_overflow_records = False
+        instance.user_config = MagicMock()
+        instance.user_config.output.export_level = ExportLevel.SUMMARY
+        for name in ("debug", "info", "warning", "error", "exception"):
+            setattr(instance, name, MagicMock())
+        # Bind the real dispatch helpers + metadata builder so the handler
+        # exercises the genuine forward-on-failure path rather than auto-mocks.
+        for name in (
+            "_process_and_forward_record",
+            "_forward_failed_record",
+            "_create_metric_record_metadata",
+        ):
+            setattr(instance, name, getattr(RecordProcessor, name).__get__(instance))
+        instance.records_push_client = MagicMock()
+        instance.records_push_client.push = AsyncMock()
+        return instance
+
+    @pytest.mark.asyncio
+    async def test_parse_failure_still_forwards_error_record(
+        self, sample_request_record
+    ):
+        """When parse_request_record raises, the handler must not propagate and
+        must forward one error-classified MetricRecordsMessage."""
+        instance = self._make_instance()
+        instance.inference_result_parser = MagicMock()
+        instance.inference_result_parser.parse_request_record = AsyncMock(
+            side_effect=ValueError("boom while parsing over-context response")
+        )
+
+        message = InferenceResultsMessage(
+            service_id="worker-1", record=sample_request_record
+        )
+
+        await RecordProcessor._on_inference_results(instance, message)
+
+        instance.records_push_client.push.assert_awaited_once()
+        pushed = instance.records_push_client.push.await_args.args[0]
+        assert isinstance(pushed, MetricRecordsMessage)
+        assert pushed.error is not None
+        assert pushed.valid is False
+
+    @pytest.mark.asyncio
+    async def test_successful_record_forwards_exactly_one_valid_record(
+        self, sample_request_record
+    ):
+        """Regression guard: the happy path still forwards exactly one valid
+        (error-free) record after the parse/process failure wrapping."""
+        instance = self._make_instance()
+        instance.inference_result_parser = MagicMock()
+        instance.inference_result_parser.parse_request_record = AsyncMock(
+            return_value=MagicMock()
+        )
+        instance._process_record = AsyncMock(return_value=[{"some_metric": 1.0}])
+        instance._free_record_data = MagicMock(return_value=(None, None))
+
+        message = InferenceResultsMessage(
+            service_id="worker-1", record=sample_request_record
+        )
+
+        await RecordProcessor._on_inference_results(instance, message)
+
+        instance.records_push_client.push.assert_awaited_once()
+        pushed = instance.records_push_client.push.await_args.args[0]
+        assert isinstance(pushed, MetricRecordsMessage)
+        assert pushed.error is None
+        assert pushed.valid is True
+        assert pushed.results == [{"some_metric": 1.0}]

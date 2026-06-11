@@ -123,11 +123,13 @@ class CreditIssuer:
             5. Create and send Credit
             6. If final credit: freeze counts + set event
         """
-        is_first_turn = turn.turn_index == 0
+        # A session start is turn 0 OR an agentic mid-trace resume (flagged via
+        # is_session_start, only emitted at a phase's initial dispatch).
+        is_session_start = turn.turn_index == 0 or turn.is_session_start
         is_child = turn.agent_depth > 0
 
         # Select appropriate check function based on turn type.
-        # - Root first turns need can_start_new_session (session-quota check).
+        # - Root session starts need can_start_new_session (session-quota check).
         # - Root continuations use can_send_any_turn (finish existing sessions).
         # - DAG children use can_send_child_turn: bypasses only the
         #   ``is_sending_complete`` flag (root sampler done) while still
@@ -140,15 +142,15 @@ class CreditIssuer:
         else:
             can_proceed_fn = (
                 self._stop_checker.can_start_new_session
-                if is_first_turn
+                if is_session_start
                 else self._stop_checker.can_send_any_turn
             )
 
-        # Session concurrency: one slot per root conversation, acquired on
-        # first turn only. DAG children inherit the root's slot and must not
-        # acquire their own — fanout would otherwise consume the user's
-        # configured session budget.
-        needs_session_slot = is_first_turn and not is_child
+        # Session concurrency: one slot per root conversation, acquired on its
+        # first credit in the phase (turn 0, or a mid-trace resume). DAG
+        # children inherit the root's slot and must not acquire their own —
+        # fanout would otherwise consume the user's configured session budget.
+        needs_session_slot = is_session_start and not is_child
         if needs_session_slot:
             acquired = await self._concurrency_manager.acquire_session_slot(
                 self._phase, self._stop_checker.can_start_new_session
@@ -184,7 +186,7 @@ class CreditIssuer:
             False: Credit issued but this was final, OR stop condition triggered.
             None: No slots available, credit NOT issued. Retry later.
         """
-        is_first_turn = turn.turn_index == 0
+        is_session_start = turn.turn_index == 0 or turn.is_session_start
         is_child = turn.agent_depth > 0
 
         # See issue_credit for the rationale on these three cases.
@@ -193,7 +195,7 @@ class CreditIssuer:
         else:
             can_proceed_fn = (
                 self._stop_checker.can_start_new_session
-                if is_first_turn
+                if is_session_start
                 else self._stop_checker.can_send_any_turn
             )
 
@@ -201,7 +203,7 @@ class CreditIssuer:
         if not can_proceed_fn():
             return False
 
-        needs_session_slot = is_first_turn and not is_child
+        needs_session_slot = is_session_start and not is_child
         if needs_session_slot:
             acquired = self._concurrency_manager.try_acquire_session_slot(
                 self._phase, can_proceed_fn
@@ -235,13 +237,14 @@ class CreditIssuer:
             time.perf_counter_ns() - self._lifecycle.started_at_perf_ns
         )
 
-        # Get URL index from strategy (for multi-URL load balancing)
-        # Only advance the round-robin on the first turn of a conversation.
-        # Subsequent turns will use the url_index stored in the worker's UserSession.
-        is_first_turn = turn.turn_index == 0
+        # Get URL index from strategy (for multi-URL load balancing).
+        # Only advance the round-robin when a session starts (turn 0 or a
+        # mid-trace resume). Continuations reuse the url_index stored in the
+        # worker's UserSession.
+        is_session_start = turn.turn_index == 0 or turn.is_session_start
         url_index = (
             self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_first_turn
+            if self._url_selection_strategy and is_session_start
             else None
         )
 
@@ -348,6 +351,12 @@ class CreditIssuer:
             num_turns=pending.parent_num_turns,
             agent_depth=pending.parent_agent_depth,
             parent_correlation_id=pending.parent_parent_correlation_id,
+            # A nested parent (itself a DAG child, agent_depth > 0) resuming its
+            # gated turn is reactive DAG work spawned after root sampling, so it
+            # must NOT count toward the phase target (mirrors dispatch_child_turn
+            # stripping the flag). Only a top-level parent's join turn is part of
+            # the sampled root plan and counts.
+            counts_toward_phase_target=pending.parent_agent_depth == 0,
             has_forks=pending.parent_has_forks_on_gated_turn,
             branch_mode=pending.parent_branch_mode,
             cache_bust_marker=pending.parent_cache_bust_marker,
