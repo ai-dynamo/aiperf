@@ -28,6 +28,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.environment import Environment
+from aiperf.common.finite import is_finite_value
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation
 from aiperf.config.sweep.adaptive import SLAFilter, SLOTier
@@ -74,16 +75,23 @@ _ALL_STATS = (
 
 
 class MultiTierPlanner(SearchPlanner):
-    """Multi-tier SLA-saturation planner.
+    """Multi-tier SLA-saturation planner using bracket/bisection search.
 
-    Wraps an underlying search algorithm and manages per-tier bracket
-    state, cross-tier observation sharing, and ordering inference.
+    Manages per-tier bracket state, cross-tier observation sharing, and
+    ordering inference. Reuses the underlying algorithm's warmup strategy,
+    precision settings, and convergence thresholds (via _shared_warmup.py),
+    but owns the bracket/bisect loop directly.
 
-    Composition means: the planner reuses the underlying algorithm's warmup
-    strategy, precision settings, and convergence thresholds (via _shared_warmup.py),
-    but owns the bracket/bisect loop directly. It does not delegate ask/tell to the
-    single-tier planner because multi-tier bracket state (N brackets, ordering
-    inference, widest-gap allocation) requires a fundamentally different outer loop.
+    Unlike single-tier smooth_isotonic (which denoises via isotonic regression
+    and replicates), this planner uses single-run verdicts per probe. When a
+    non-monotonic observation is detected, it clears the stale bound and
+    continues probing rather than re-running the same concurrency. This is
+    intentional: multi-tier search trades per-probe denoising for faster
+    global convergence across N tiers by sharing observations and exploiting
+    tier ordering.
+
+    Future: replicate-based stability can be added as an opt-in mode if
+    noisy endpoints require it (tracked as a follow-up).
     """
 
     def __init__(
@@ -506,7 +514,13 @@ class MultiTierPlanner(SearchPlanner):
         self._next_value = next_value
 
     def _find_missing_bound_probe(self) -> int | None:
-        """Find a probe to establish missing bounds for tiers that need them."""
+        """Find a probe to establish missing bounds for tiers that need them.
+
+        Called when the main allocator returns None (all fully-bracketed tiers
+        are converged) but some tiers still lack one bound. Unlike the bracket
+        ramp (which doubles during the initial exponential phase), this uses
+        2x as a heuristic to find the missing bound efficiently.
+        """
         for bracket in self._brackets:
             if bracket.converged:
                 continue
@@ -578,7 +592,7 @@ class MultiTierPlanner(SearchPlanner):
             stat_values: dict[str, float] = {}
             for stat in _ALL_STATS:
                 val = getattr(metric, stat, None)
-                if isinstance(val, (int, float)):
+                if isinstance(val, int | float) and is_finite_value(val):
                     stat_values[stat] = val
             if stat_values:
                 result[tag] = stat_values

@@ -145,6 +145,19 @@ def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
             MultiTierPlanner,
         )
 
+        # Warn if user specified a non-default search style that multi-tier won't use
+        if str(cfg.planner) not in (
+            "smooth_isotonic",
+            "SearchPlannerType.SMOOTH_ISOTONIC",
+        ):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "--search-style %s is ignored when --search-sla-tier is active. "
+                "Multi-tier search uses its own bracket/bisection method with "
+                "shared warmup and precision settings from the configured style.",
+                cfg.planner,
+            )
         return MultiTierPlanner(plan.configs[0], cfg, cfg.sla_tiers)
 
     from aiperf.plugin import plugins

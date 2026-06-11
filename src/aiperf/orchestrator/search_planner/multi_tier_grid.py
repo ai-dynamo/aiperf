@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aiperf.common.finite import is_finite_value
 from aiperf.config.sweep.adaptive import SLOTier
 from aiperf.orchestrator.aggregation.sweep_sla_filter import (
     OP_TO_FN,
@@ -179,6 +180,6 @@ def _tier_passes(
                 "stat": f.stat,
                 "op": f.op,
                 "threshold": f.threshold,
-                "observed": observed,
+                "observed": observed if is_finite_value(observed) else None,
             }
     return True, None
