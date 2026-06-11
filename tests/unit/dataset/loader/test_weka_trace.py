@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
@@ -1032,3 +1033,150 @@ def test_trace_idle_gap_cap_is_per_trace_and_uses_request_starts(tmp_path):
     trace_b_turns = conv_by_id["trace_idle_b"].turns
     assert trace_b_turns[0].timestamp == 150_000.0
     assert trace_b_turns[1].timestamp == 210_000.0
+
+
+# =============================================================================
+# hash_id_scope: subagents share the parent trace's hash_id namespace.
+#
+# A weka trace declares ``hash_id_scope: "local"`` == one hash_id namespace per
+# trace FILE: the same hash_id must decode to identical tokens across the parent
+# conversation and every subagent/sibling conversation of that trace, so replay
+# reproduces the cross-agent shared prefixes a real server serves from KV cache.
+#
+# NOTE: these tests deliberately wire the REAL, scope-sensitive
+# ``HashIdRandomGenerator`` (seeds from ``sha256(f"{seed}:{trace_id}:{hash_id}")``)
+# instead of ``stub_hash_id_corpus_rng``. The stub ignores ``set_trace_id``, so a
+# given hash_id decodes identically under any scope -- it cannot detect a
+# per-child scope regression.
+# =============================================================================
+
+
+def _wire_real_scope_rng(loader, *, block_size: int, seed: int = 1234) -> None:
+    """Wire a MagicMock prompt_generator backed by the real, scope-sensitive RNG.
+
+    ``tokenizer.decode`` is a token-reflecting string so identical token lists
+    round-trip to identical text and differing token lists to differing text --
+    letting a turn's ``raw_messages`` stand in for "what tokens this block decoded
+    to under the active scope".
+    """
+    pg = MagicMock()
+    pg._cache = {}
+    pg._tokenized_corpus = list(range(4096))
+    pg._corpus_size = 4096
+    pg._hash_id_corpus_rng = HashIdRandomGenerator(seed, _internal=True)
+    pg.tokenizer.decode.side_effect = lambda toks: "|".join(str(t) for t in toks)
+    loader.prompt_generator = pg
+    loader._tokenizer_name = "test-tok"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = block_size
+
+
+def _write_trace(tmp_path: Path, trace: dict) -> str:
+    p = tmp_path / f"{trace['id']}.json"
+    p.write_text(json.dumps(trace))
+    return str(p)
+
+
+def _normal_req(
+    *, t: float, in_tokens: int, hash_ids: list[int], stop: str = "end_turn"
+):
+    return {
+        "t": t,
+        "type": "n",
+        "model": "m",
+        "in": in_tokens,
+        "out": 10,
+        "hash_ids": hash_ids,
+        "input_types": ["text"],
+        "output_types": ["text"],
+        "stop": stop,
+        "api_time": 1.0,
+        "think_time": 0.0,
+    }
+
+
+def _subagent(*, agent_id: str, t: float, in_tokens: int, hash_ids: list[int]):
+    return {
+        "t": t,
+        "type": "subagent",
+        "agent_id": agent_id,
+        "subagent_type": "Explore",
+        "duration_ms": 1000,
+        "total_tokens": 100,
+        "tool_use_count": 1,
+        "status": "completed",
+        "requests": [_normal_req(t=0.0, in_tokens=in_tokens, hash_ids=hash_ids)],
+        "models": ["m"],
+        "tool_tokens": 0,
+        "system_tokens": 0,
+    }
+
+
+def test_convert_to_conversations_subagent_inherits_parent_hash_id_scope(tmp_path):
+    """A hash_id shared by a parent request and a subagent inner request decodes
+    to identical tokens -- the subagent shares the parent trace's scope, it does
+    NOT get a private per-child decode scope."""
+    bs = 16
+    shared = [100, 101, 102]
+    trace = {
+        "id": "trace_scope",
+        "models": ["m"],
+        "block_size": bs,
+        "hash_id_scope": "local",
+        "requests": [
+            _normal_req(t=0.0, in_tokens=bs * len(shared), hash_ids=shared),
+            _subagent(
+                agent_id="agent_001",
+                t=2.0,
+                in_tokens=bs * len(shared),
+                hash_ids=shared,
+            ),
+        ],
+    }
+    loader = WekaTraceLoader(
+        filename=_write_trace(tmp_path, trace), user_config=_mk_user_config()
+    )
+    _wire_real_scope_rng(loader, block_size=bs)
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    parent = next(c for c in convs if c.session_id == "trace_scope")
+    child = next(c for c in convs if c.parent_conversation_id == "trace_scope")
+
+    # in == n*bs and tool/system == 0, so turn-0 content is PURELY the decoded
+    # shared blocks (no partial tail, no system segment). Equal iff same scope.
+    assert child.turns[0].raw_messages == parent.turns[0].raw_messages
+
+
+def test_convert_to_conversations_sibling_subagents_share_hash_id_scope(tmp_path):
+    """Two sibling subagents that reference the same hash_id blocks decode them
+    identically -- both share the parent trace's scope, not per-agent scopes.
+    Sibling sharing is the dominant cross-conversation block-reuse mode in real
+    captures, so this is the case a per-child scope regression corrupts most."""
+    bs = 16
+    shared = [200, 201]
+    trace = {
+        "id": "trace_sib",
+        "models": ["m"],
+        "block_size": bs,
+        "hash_id_scope": "local",
+        "requests": [
+            _normal_req(t=0.0, in_tokens=bs * 3, hash_ids=[1, 2, 3], stop="tool_use"),
+            _subagent(
+                agent_id="agent_001", t=2.0, in_tokens=bs * len(shared), hash_ids=shared
+            ),
+            _subagent(
+                agent_id="agent_002", t=3.0, in_tokens=bs * len(shared), hash_ids=shared
+            ),
+        ],
+    }
+    loader = WekaTraceLoader(
+        filename=_write_trace(tmp_path, trace), user_config=_mk_user_config()
+    )
+    _wire_real_scope_rng(loader, block_size=bs)
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    children = [c for c in convs if c.parent_conversation_id == "trace_sib"]
+    assert len(children) == 2
+    sib_a, sib_b = children
+    assert sib_a.turns[0].raw_messages == sib_b.turns[0].raw_messages
