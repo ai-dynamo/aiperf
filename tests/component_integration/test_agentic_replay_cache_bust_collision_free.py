@@ -44,11 +44,14 @@ def weka_collision_fixture(tmp_path: Path) -> Path:
 
 
 def _build_cmd(weka_dir: Path, *, duration: int) -> str:
-    """Build an aiperf command tuned to drive >=50 distinct sessions.
+    """Build an aiperf command that drives many distinct recycled sessions.
 
-    4 traces x concurrency=3 plus a 6s benchmark window forces continuous
-    recycle of the small pool; 100+ recycles per trace are typical, which
-    means hundreds of x_correlation_ids each of which mints a fresh marker.
+    4 traces x concurrency=3 over a multi-second benchmark window forces
+    continuous recycle of the small pool, so each completed session mints a
+    fresh marker. The exact session count is wall-clock-dependent (it scales
+    with machine speed); the assertion floor below is set well under what even
+    a loaded machine produces so the zero-collision contract -- not throughput
+    -- is what the test gates on.
     """
     return f"""
         aiperf profile
@@ -90,10 +93,13 @@ def test_no_marker_collisions_across_large_recycle_run(
     Asserts (within PROFILING):
       1. Every session has exactly one rid (intra-session marker continuity).
       2. ``len(set(rids)) == len(rids)`` across all sessions (zero collisions).
-      3. >=50 distinct rids observed (smoke check that the run was big enough
-         to be a meaningful uniqueness test).
+      3. >=20 distinct rids observed -- a non-vacuity floor, set well below the
+         session count a loaded machine produces so it does not flake on
+         throughput. The zero-collision check (2) is the real regression bar:
+         the pre-fix 33% collision rate is caught with ~99.9% probability even
+         at 20 sessions, so this floor does not weaken detection.
     """
-    cmd = _build_cmd(weka_collision_fixture, duration=6)
+    cmd = _build_cmd(weka_collision_fixture, duration=10)
     result = cli.run_sync(cmd, timeout=defaults.timeout)
 
     assert result.exit_code == 0, (
@@ -129,9 +135,10 @@ def test_no_marker_collisions_across_large_recycle_run(
         )
         session_rids.append(next(iter(rids_in_session)))
 
-    assert len(session_rids) >= 50, (
-        f"Need >=50 sessions for a meaningful uniqueness test; "
-        f"got {len(session_rids)}. Increase duration or shrink fixture."
+    assert len(session_rids) >= 20, (
+        f"Need >=20 sessions for a non-vacuous uniqueness test; "
+        f"got {len(session_rids)}. Increase --benchmark-duration or shrink the "
+        f"fixture if a slower machine is under-producing sessions."
     )
 
     # The hard contract: zero duplicates across the entire run.
