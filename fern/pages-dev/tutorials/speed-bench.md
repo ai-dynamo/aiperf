@@ -187,7 +187,7 @@ aiperf speed-bench-report ./artifacts/ --format both
 This produces a CSV (`speed_bench_report.csv`) and console table:
 
 ```
-                         SPEED-Bench Acceptance Length Report
+                         Acceptance Length Report
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
 ┃ Model                      ┃ coding ┃ humanities ┃ math ┃ writing ┃ Overall ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
@@ -206,6 +206,87 @@ aiperf speed-bench-report ./artifacts/ --metric accept_rate
 # Throughput matrix (output tokens/sec per category)
 aiperf speed-bench-report ./artifacts/ --metric throughput
 ```
+
+---
+
+## Literature Acceptance-Length Datasets (GSM8K, MT-Bench, MATH-500, HumanEval, MBPP)
+
+The speculative-decoding literature overwhelmingly reports acceptance length against five standard benchmarks. AIPerf registers each as a public dataset that is auto-downloaded from HuggingFace at runtime, so there is no prepare-data step: just select one with `--public-dataset` and run the same `aiperf speed-bench-report` workflow shown above.
+
+| Dataset Name | HuggingFace Source | Prompts | Turns | License |
+|---|---|---|---|---|
+| `spec_al_gsm8k` | `openai/gsm8k` (`main`, `test`) | 1,319 | single | MIT |
+| `spec_al_math500` | `HuggingFaceH4/MATH-500` (`test`) | 500 | single | MIT |
+| `spec_al_humaneval` | `openai/openai_humaneval` (`test`) | 164 | single | MIT |
+| `spec_al_mbpp` | `google-research-datasets/mbpp` (`full`, `test`) | 500 | single | CC-BY-4.0 |
+| `spec_al_mtbench` | `HuggingFaceH4/mt_bench_prompts` (`train`) | 80 | two-turn | Apache-2.0 |
+
+Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. Note that `--osl` does not apply to public datasets, so cap generation with `--extra-inputs max_tokens:N` instead. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them - size it with `--num-conversations` rather than `--request-count` (see below).
+
+### Run All Five with a Matrix Report
+
+```bash
+MODEL="meta/llama-3.1-8b-instruct"
+ART=./artifacts/spec-al   # dedicated root so this matrix never merges with speed_bench_* runs
+
+# Single-turn datasets: size each run to the full dataset with --request-count.
+for pair in spec_al_gsm8k:1319 spec_al_math500:500 spec_al_humaneval:164 spec_al_mbpp:500; do
+  ds="${pair%%:*}"; count="${pair##*:}"
+  echo "=== Running dataset: $ds ($count requests) ==="
+  aiperf profile \
+      --model "$MODEL" \
+      --endpoint-type chat \
+      --streaming \
+      --url localhost:8000 \
+      --public-dataset "$ds" \
+      --server-metrics http://localhost:8000/metrics \
+      --request-count "$count" \
+      --extra-inputs temperature:0 max_tokens:4096 \
+      --concurrency 16 \
+      --output-artifact-dir "$ART/$ds"
+done
+
+# MT-Bench is multi-turn (80 two-turn conversations). Size it with
+# --num-conversations so every session runs exactly once; --request-count
+# recycles the 80 sessions to reach the count and would dispatch each prompt
+# more than once.
+aiperf profile \
+    --model "$MODEL" \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --public-dataset spec_al_mtbench \
+    --server-metrics http://localhost:8000/metrics \
+    --num-conversations 80 \
+    --extra-inputs temperature:0 max_tokens:4096 \
+    --concurrency 16 \
+    --output-artifact-dir "$ART/spec_al_mtbench"
+
+# Assemble the acceptance-length matrix (one column per dataset)
+aiperf speed-bench-report "$ART" --metric accept_length --format both
+```
+
+> Size each run to the full dataset — without an explicit count AIPerf defaults
+> to 10 requests. Single-turn datasets use `--request-count`; the multi-turn
+> `spec_al_mtbench` uses `--num-conversations 80` (one run per conversation),
+> since `--request-count` recycles its 80 sessions to reach the count. Cap
+> generation with `--extra-inputs max_tokens:N` (`--osl` is ignored for public
+> datasets), and keep these runs in their own artifacts directory so
+> `speed-bench-report` does not average them into an unrelated `speed_bench_*`
+> matrix.
+
+The report recognizes these runs the same way it recognizes the `speed_bench_*` runs, producing one matrix column per dataset:
+
+```
+                         Acceptance Length Report
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┓
+┃ Model                      ┃ gsm8k ┃ math500 ┃ mtbench ┃ humaneval ┃ mbpp ┃ Overall ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━┩
+│ meta/llama-3.1-8b-instruct │  2.40 │    2.31 │    1.95 │      2.62 │ 2.55 │    2.37 │
+└────────────────────────────┴───────┴─────────┴─────────┴───────────┴──────┴─────────┘
+```
+
+The `accept_rate` and `throughput` metrics work identically (`aiperf speed-bench-report ./artifacts/ --metric accept_rate`).
 
 ---
 
