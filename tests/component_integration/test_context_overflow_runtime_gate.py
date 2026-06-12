@@ -66,7 +66,10 @@ def _export_and_load_sync(aggregate: AggregateResult, tmp_path: Path) -> dict:
 
     config = AggregateExporterConfig(result=aggregate, output_dir=tmp_path)
     exporter = AggregateConfidenceJsonExporter(config)
-    out_path = asyncio.get_event_loop().run_until_complete(exporter.export())
+    # asyncio.run creates a fresh loop: get_event_loop() raises on 3.12 when
+    # a previously-run in-process CLI test (e.g. the agentic-replay e2e) has
+    # consumed the main thread's loop and the xdist worker reuses the process.
+    out_path = asyncio.run(exporter.export())
     with open(out_path) as f:
         return json.load(f)
 
