@@ -22,6 +22,9 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
         "weka_hf",
     ),
     min_benchmark_duration_seconds=900,
+    default_benchmark_duration_seconds=1800,
+    default_trajectory_start_min_ratio=0.25,
+    default_trajectory_start_max_ratio=0.75,
     trace_idle_gap_cap_seconds=60.0,
     require_cache_bust=CacheBustTarget.FIRST_TURN_PREFIX,
 )
