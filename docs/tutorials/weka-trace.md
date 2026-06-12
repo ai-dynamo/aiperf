@@ -71,7 +71,7 @@ Standard trace filters apply:
 If you don't already have the trace corpus on disk, SemiAnalysis-published HuggingFace mirrors are available and can be pulled directly by AIPerf with a single flag:
 
 - [`semianalysisai/cc-traces-weka-no-subagents-051826`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-no-subagents-051826) — pinned no-subagents current corpus: 98 traces, **main-agent only** (all `WekaSubagentEntry` blocks stripped at publication time). This is also the legacy/default target for the plain `semianalysis_cc_traces_weka` alias.
-- [`semianalysisai/cc-traces-weka-with-subagents-051926`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-with-subagents-051926) — pinned with-subagents corpus: 219 traces with full subagent fan-out (parent + child SPAWN/JOIN topology).
+- [`semianalysisai/cc-traces-weka-with-subagents-060826`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-with-subagents-060826) — pinned with-subagents corpus: 391 traces with full subagent fan-out (parent + child SPAWN/JOIN topology).
 
 ```bash
 aiperf profile \
@@ -88,7 +88,7 @@ Use `semianalysis_cc_traces_weka_no_subagents` if you want the main-agent-only c
 
 On first run, the full corpus downloads upfront and is cached locally by the HuggingFace `datasets` library; subsequent runs reuse the cache. Both datasets are public — no HuggingFace authentication or token is required.
 
-> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full corpus, pass `--num-dataset-entries N` where N is the variant's trace count (98 for the no-subagents/current corpus, 219 for the with-subagents corpus). The loader logs `Loading <n>/<total> traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path loads every JSON file it finds; there is no per-trace cap on that path. Use a smaller directory or the HF loader with `--num-dataset-entries N` if you want a controlled subset.)
+> **`--num-dataset-entries` caps the loaded subset.** The HF loader reads at most `--num-dataset-entries` rows out of the cached download (default 100). To load the full corpus, pass `--num-dataset-entries N` where N is the variant's trace count (98 for the no-subagents/current corpus, 391 for the with-subagents corpus). The loader logs `Loading <n>/<total> traces` at INFO so you can see the actual count. (The file-based `--input-file <dir>` path loads every JSON file it finds; there is no per-trace cap on that path. Use a smaller directory or the HF loader with `--num-dataset-entries N` if you want a controlled subset.)
 
 The HuggingFace path and the file-based `--input-file` path produce **byte-identical conversations** for the same source rows because the public-dataset loader is a thin wrapper that delegates 100% of trace reconstruction (hash_id replay, per-trace model mapping, branch + spawn-join topology, delay capping, parallel reconstruction) to the same `WekaTraceLoader.convert_to_conversations()` used by `--input-file`. There is one source of truth for trace reconstruction.
 
@@ -99,9 +99,9 @@ The HuggingFace path and the file-based `--input-file` path produce **byte-ident
 | `--input-file <dir-or-file>` (file-based) | You already have a local trace directory, you need offline runs (no outbound network), or you're developing/debugging the loader against a specific subset of traces. |
 | `--public-dataset semianalysis_cc_traces_weka_no_subagents` (HuggingFace, no subagents) | Pinned no-subagents current corpus for benchmarks where you want a single linear agent stream per trace and don't care about parent/child fan-out. 98 traces. |
 | `--public-dataset semianalysis_cc_traces_weka` (HuggingFace, legacy/default no-subagents alias) | Legacy/default pinned alias for the same current no-subagents corpus as `semianalysis_cc_traces_weka_no_subagents`. |
-| `--public-dataset semianalysis_cc_traces_weka_with_subagents` (HuggingFace, with subagents) | Pinned with-subagents corpus for zero-setup runs with full subagent SPAWN/JOIN topology. 219 traces. |
+| `--public-dataset semianalysis_cc_traces_weka_with_subagents` (HuggingFace, with subagents) | Pinned with-subagents corpus for zero-setup runs with full subagent SPAWN/JOIN topology. 391 traces. |
 
-Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. For `--scenario inferencex-agentx-mvp`, the validator accepts the with-subagents alias, an explicit local `weka_trace` loader, or `weka_hf` constrained to `semianalysisai/cc-traces-weka-with-subagents-051926`; it does not accept the no-subagents aliases.
+Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. For `--scenario inferencex-agentx-mvp`, the validator accepts the with-subagents alias, an explicit local `weka_trace` loader, or `weka_hf` constrained to `semianalysisai/cc-traces-weka-with-subagents-060826`; it does not accept the no-subagents aliases.
 
 For newly published compatible HuggingFace Weka trace corpora, use the neutral `weka_hf` public dataset and provide the repo explicitly:
 
@@ -110,12 +110,12 @@ aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --public-dataset weka_hf \
-    --hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-051926 \
+    --hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-060826 \
     --streaming \
     --url localhost:8000
 ```
 
-Use the pinned `semianalysis_cc_traces_weka...` aliases, including the plain `semianalysis_cc_traces_weka` alias, when you want the exact corpus named by that alias. Use `weka_hf` when testing a new compatible `semianalysisai/cc-traces-weka-*` release before deciding whether it deserves a pinned alias. For AgentX MVP runs, generic `weka_hf` is valid only with `--hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-051926`; other `weka_hf` repos are rejected by the scenario validator.
+Use the pinned `semianalysis_cc_traces_weka...` aliases, including the plain `semianalysis_cc_traces_weka` alias, when you want the exact corpus named by that alias. Use `weka_hf` when testing a new compatible `semianalysisai/cc-traces-weka-*` release before deciding whether it deserves a pinned alias. For AgentX MVP runs, generic `weka_hf` is valid only with `--hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-060826`; other `weka_hf` repos are rejected by the scenario validator.
 
 A tokenizer is required in both paths (the prompt is reconstructed from `hash_ids`); pass `--tokenizer <name-or-path>` if your `--model` doesn't resolve a default tokenizer.
 
