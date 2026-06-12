@@ -269,12 +269,30 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             f"PROFILING execute: resuming {len(self.conversation_source.trajectories)} "
             f"trajectory sessions"
         )
-        await asyncio.gather(
-            *[
+        # return_exceptions=True keeps ownership of every lane until it
+        # settles: a bare gather would re-raise the first failure while the
+        # sibling coroutines keep issuing credits into a failing phase,
+        # unreachable by the phase runner's cancellation.
+        results = await asyncio.gather(
+            *(
                 self._dispatch_one_profiling_trajectory(lane, trajectory)
                 for lane, trajectory in enumerate(self.conversation_source.trajectories)
-            ]
+            ),
+            return_exceptions=True,
         )
+        first_error: BaseException | None = None
+        for lane, result in enumerate(results):
+            if not isinstance(result, BaseException):
+                continue
+            trace_id = self.conversation_source.trajectories[lane].conversation_id
+            self.error(
+                f"PROFILING dispatch failed for lane {lane} "
+                f"(trace_id={trace_id!r}): {result!r}"
+            )
+            if first_error is None:
+                first_error = result
+        if first_error is not None:
+            raise first_error
 
     async def _dispatch_one_profiling_trajectory(
         self, lane: int, trajectory: Trajectory
