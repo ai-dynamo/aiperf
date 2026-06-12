@@ -118,6 +118,8 @@ def _drive_parallel_inproc(
             parent_plans, child_plans
         )
 
+        from aiperf.dataset.loader.weka_trace import _subagent_request_absolute_t
+
         children_by_trace = defaultdict(list)
         sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
@@ -128,7 +130,7 @@ def _drive_parallel_inproc(
                     "input_length": creq.input_length,
                     "output_length": creq.output_length,
                     "model": creq.model,
-                    "t": creq.t,
+                    "t": _subagent_request_absolute_t(cp.entry, creq),
                     "think_time": getattr(creq, "think_time", None),
                     # Dropped children have no pre-pass entry; they are
                     # skipped by _process_task so the fallback is unused.
@@ -147,8 +149,8 @@ def _drive_parallel_inproc(
                     "parent_trace_id": cp.parent_trace_id,
                     "subagent_index": cp.subagent_index,
                     "agent_id": cp.entry.agent_id,
-                    "tool_tokens": cp.entry.tool_tokens,
-                    "system_tokens": cp.entry.system_tokens,
+                    "tool_tokens": cp.init_tool_tokens,
+                    "system_tokens": cp.init_system_tokens,
                     "requests": requests_dicts,
                 }
             )
@@ -245,6 +247,7 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
     consume them as inputs."""
     from dataclasses import dataclass
 
+    from aiperf.dataset.loader.weka_trace import _expand_subagent_to_child_plans
     from aiperf.dataset.loader.weka_trace_models import (
         WekaNormalRequest,
         WekaStreamingRequest,
@@ -255,16 +258,6 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
         trace_id: str
         normals: list
         subagents: list
-        block_size: int
-
-    @dataclass
-    class _ChildPlan:
-        session_id: str
-        parent_trace_id: str
-        subagent_index: int
-        entry: object
-        stream_index: int
-        stream_requests: list
         block_size: int
 
     parent_plans: list = []
@@ -283,27 +276,9 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
             else:
                 sa_index = len(subagents)
                 subagents.append((idx, req))
-                from aiperf.dataset.loader.weka_trace import _pack_into_streams
-
-                streams = _pack_into_streams(list(req.requests))
-                if not streams:
-                    streams = [[]]
-                for stream_idx, stream_reqs in enumerate(streams):
-                    if len(streams) == 1:
-                        child_sid = f"{trace_id}::sa:{req.agent_id}"
-                    else:
-                        child_sid = f"{trace_id}::sa:{req.agent_id}:s{stream_idx}"
-                    child_plans.append(
-                        _ChildPlan(
-                            session_id=child_sid,
-                            parent_trace_id=trace_id,
-                            subagent_index=sa_index,
-                            entry=req,
-                            stream_index=stream_idx,
-                            stream_requests=stream_reqs,
-                            block_size=trace_bs,
-                        )
-                    )
+                child_plans.extend(
+                    _expand_subagent_to_child_plans(trace_id, sa_index, req, trace_bs)
+                )
         parent_plans.append(_ParentPlan(trace_id, normals, subagents, trace_bs))
 
     return parent_plans, child_plans, {}

@@ -240,6 +240,57 @@ def test_subagent_with_overlapping_inner_requests_emits_separate_child_conversat
         )
 
 
+def test_interleaved_inner_threads_route_to_streams_by_hash_prefix(
+    tmp_path, monkeypatch
+):
+    """Once two streams exist, later requests join by hash-prefix affinity.
+
+    Two interleaved inner context threads (A: blocks [1, ...], B: blocks
+    [50, ...]) overlap once at the start (forcing two streams) and then
+    alternate without overlapping. Earliest-fit would pack [A1, A2, B2] into
+    stream 0 and leave stream 1 with only [B1], splicing B's disjoint context
+    into A's conversation; prefix affinity keeps each thread together.
+    """
+
+    def inner(t, api_time, hash_ids):
+        return {
+            "t": t,
+            "type": "n",
+            "model": "m",
+            "in": 10,
+            "out": 1,
+            "api_time": api_time,
+            "hash_ids": hash_ids,
+        }
+
+    sa = {
+        "t": 1.0,
+        "type": "subagent",
+        "agent_id": "a1",
+        "subagent_type": "X",
+        "duration_ms": 20_000,
+        "total_tokens": 0,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            inner(1.0, 10.0, [1]),  # thread A founds stream 0: [1, 11)
+            inner(6.0, 3.0, [50]),  # thread B overlaps -> stream 1: [6, 9)
+            inner(12.0, 0.5, [1, 2]),  # both streams free; prefix -> stream 0
+            inner(13.0, 1.0, [50, 51]),  # both streams free; prefix -> stream 1
+        ],
+        "models": ["m"],
+    }
+    data = _build_trace("t_affinity", [_normal(t=0.0), sa, _normal(t=30.0)])
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    convs = loader.convert_to_conversations(loader.load_dataset())
+
+    s0 = next(c for c in convs if c.session_id == "t_affinity::sa:a1:s0")
+    s1 = next(c for c in convs if c.session_id == "t_affinity::sa:a1:s1")
+    assert len(s0.turns) == 2
+    assert len(s1.turns) == 2
+
+
 def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
     tmp_path, monkeypatch
 ):
