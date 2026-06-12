@@ -222,21 +222,25 @@ class ConversationReconstructor:
 
         # User segment: consume whatever hash_ids remain, then synthesize the
         # missing-blocks region + the recorded partial tail as one synth-tail
-        # call.
+        # call. When the system prefix covers the entire prompt, appending a
+        # zero-token user segment would be deleted by the next turn's
+        # boundary cut and flag a spurious disturbance (reset_context) on a
+        # pure-growth turn — skip it unless it is the only segment.
         user_blocks = covered_blocks - cursor
         user_tokens = self.decode_block_tokens(hash_ids[cursor : cursor + user_blocks])
         synth_tail_n = missing_block_tokens + partial_tail_tokens_n
         if synth_tail_n > 0:
             user_tokens.extend(self.sample_partial_tail_tokens(synth_tail_n, seed))
-        segs.append(
-            RoleSegment(
-                role="user",
-                block_start=cursor,
-                block_count=user_blocks,
-                tokens=user_tokens,
-                content=self.decode_tokens_to_text(user_tokens),
+        if user_tokens or not segs:
+            segs.append(
+                RoleSegment(
+                    role="user",
+                    block_start=cursor,
+                    block_count=user_blocks,
+                    tokens=user_tokens,
+                    content=self.decode_tokens_to_text(user_tokens),
+                )
             )
-        )
 
         self._segments = segs
         self._emitted_segment_count = 0
