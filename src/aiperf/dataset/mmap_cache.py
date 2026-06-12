@@ -74,7 +74,15 @@ _logger = AIPerfLogger(__name__)
 # scope, so shared blocks decode to different tokens than v5 produced).
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
-MANIFEST_VERSION = 7
+MANIFEST_VERSION = (
+    # v10: merge of the flattened-agent-splitting lineage (keyed v7 without
+    # tool shaping) and the tool-shaping lineage (keyed v9 without splitting)
+    # -- decoded content differs from BOTH prior keys. Carries the v9 fixes:
+    # boundary cuts strip the trailing segment's full overhang, and tool
+    # shaping is decided at first emission so reset re-emits reproduce the
+    # shape each turn was first sent with.
+    10
+)
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
@@ -527,6 +535,7 @@ def _settings_payload_from_user_config(
         "weka_split_flattened_agents": (
             Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
         ),
+        "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
         "max_context_length": inp.max_context_length,

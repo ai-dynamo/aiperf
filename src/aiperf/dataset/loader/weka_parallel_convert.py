@@ -52,6 +52,7 @@ class _WekaParentTurnDict(TypedDict):
     reset_context: bool
     theoretical_prefix_cache_hit_blocks: int
     theoretical_prefix_cache_total_blocks: int
+    input_kind: str | None
 
 
 class _WekaBranchDict(TypedDict):
@@ -96,6 +97,9 @@ class _WekaNormalRequestPayload(TypedDict):
     model: str
     t: float
     think_time: float | None
+    # Turn classification computed in the orchestrator (one source of truth in
+    # weka_trace._classify_turn_input); workers copy it into the turn dict.
+    input_kind: NotRequired[str | None]
     # Only present in parent normals (not in child requests):
     capped_output_length: NotRequired[int]
     # Present when --trace-idle-gap-cap-seconds has rewritten the per-trace
@@ -214,6 +218,7 @@ class _WekaTraceTask:
     model_map: dict[str, str]
     block_size: int
     emit_assistant_segments: bool = True
+    tool_shaped_messages: bool = False
 
 
 @dataclass(slots=True)
@@ -351,6 +356,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         decode_tokens_to_text=parent_decode_text,
         bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
         emit_assistant_segments=task.emit_assistant_segments,
+        tool_shaped_messages=task.tool_shaped_messages,
     )
 
     parent_turns: list[_WekaParentTurnDict] = []
@@ -358,6 +364,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     normals: list[tuple[int, _WekaNormalRequestPayload]] = parent["normals"]
     for k, (outer_idx, req) in enumerate(normals):
         seed = f"{task.trace_id}:turn_{k}:partial_tail"
+        is_tool_result = req.get("input_kind") == "tool_result"
         if k == 0:
             parent_recon.init_turn_0(
                 hash_ids=req["hash_ids"],
@@ -365,6 +372,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 tool_tokens=parent.get("init_tool_tokens", parent["tool_tokens"]),
                 system_tokens=parent.get("init_system_tokens", parent["system_tokens"]),
                 seed=seed,
+                is_tool_result=is_tool_result,
             )
         else:
             prev_req = normals[k - 1][1]
@@ -375,6 +383,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 curr_hash_ids=req["hash_ids"],
                 curr_in_tokens=req["input_length"],
                 seed=seed,
+                is_tool_result=is_tool_result,
             )
 
         if "effective_t" in req:
@@ -404,6 +413,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 "reset_context": parent_delta.reset_context,
                 "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                 "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,
+                "input_kind": req.get("input_kind"),
             }
         )
         outer_to_turn_pos[outer_idx] = len(parent_turns) - 1
@@ -565,12 +575,14 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             decode_tokens_to_text=child_decode_text,
             bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
             emit_assistant_segments=task.emit_assistant_segments,
+            tool_shaped_messages=task.tool_shaped_messages,
         )
 
         child_turns: list[_WekaParentTurnDict] = []
         creqs: list[_WekaNormalRequestPayload] = cp["requests"]
         for k, creq in enumerate(creqs):
             seed = f"{cp['session_id']}:turn_{k}:partial_tail"
+            is_tool_result = creq.get("input_kind") == "tool_result"
             if k == 0:
                 child_recon.init_turn_0(
                     hash_ids=creq["hash_ids"],
@@ -578,6 +590,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     tool_tokens=cp["tool_tokens"],
                     system_tokens=cp["system_tokens"],
                     seed=seed,
+                    is_tool_result=is_tool_result,
                 )
             else:
                 prev_creq = creqs[k - 1]
@@ -588,6 +601,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     curr_hash_ids=creq["hash_ids"],
                     curr_in_tokens=creq["input_length"],
                     seed=seed,
+                    is_tool_result=is_tool_result,
                 )
             if "effective_t" in creq:
                 t_ms = creq["effective_t"] * 1000.0
@@ -621,6 +635,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     "reset_context": child_delta.reset_context,
                     "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                     "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,
+                    "input_kind": creq.get("input_kind"),
                 }
             )
         children_out.append(

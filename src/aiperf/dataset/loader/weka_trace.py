@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationContextMode, TurnInputKind
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
@@ -449,6 +449,29 @@ def _populate_flat_chain_timing(
     return flat_chain_end_by_session
 
 
+def _classify_turn_input(
+    req: _NormalRequestT, prev_req: _NormalRequestT | None
+) -> TurnInputKind | None:
+    """Classify what produced a turn's new input.
+
+    The own-turn ``input_types`` (recorded content-block types of the
+    triggering input message) wins when present. Otherwise the PREVIOUS
+    request's ``stop`` reason is the API-invariant fallback: a ``tool_use``
+    stop is always answered by a tool-result turn, any other recorded stop
+    means the assistant yielded and new input arrived. Legacy traces that
+    carry neither signal classify as None.
+    """
+    if req.input_types:
+        if "tool_result" in req.input_types:
+            return TurnInputKind.TOOL_RESULT
+        return TurnInputKind.USER_INPUT
+    if prev_req is not None and prev_req.stop:
+        if prev_req.stop == "tool_use":
+            return TurnInputKind.TOOL_RESULT
+        return TurnInputKind.USER_INPUT
+    return None
+
+
 def _build_trace_idle_timing(
     *,
     plan: _ParentPlan,
@@ -608,6 +631,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             cap_seconds=user_config.loadgen.inter_turn_delay_cap_seconds
         )
         self._use_live_assistant = Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
+        self._tool_shaped_messages = Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES
 
     def _block_size_for_trace(self, trace: WekaTrace) -> int:
         """Resolve block_size with precedence: user-override > trace-declared > 64.
@@ -1323,6 +1347,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
                 emit_assistant_segments=not self._use_live_assistant,
+                tool_shaped_messages=self._tool_shaped_messages,
             )
 
             # First pass: emit turns from normal requests; track outer-index → turn-pos.
@@ -1330,6 +1355,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             trace_metric_values = metric_values_by_trace[plan.trace_id]
             for k, (outer_idx, req) in enumerate(plan.normals):
                 seed = f"{plan.trace_id}:turn_{k}:partial_tail"
+                input_kind = _classify_turn_input(
+                    req, plan.normals[k - 1][1] if k else None
+                )
+                is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
                 if k == 0:
                     # When detection's observed namespace-group prefix beats
                     # the declared tool/system tokens (spec §5.4 "keep the
@@ -1356,6 +1385,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         tool_tokens=init_tool,
                         system_tokens=init_system,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
                 else:
                     prev_req = plan.normals[k - 1][1]
@@ -1366,6 +1396,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_hash_ids=req.hash_ids,
                         curr_in_tokens=req.input_length,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
 
                 # Turn.timestamp/delay are in milliseconds; weka traces record seconds.
@@ -1401,6 +1432,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         reset_context=delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
+                        input_kind=input_kind,
                     )
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
@@ -1646,6 +1678,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
                 emit_assistant_segments=not self._use_live_assistant,
+                tool_shaped_messages=self._tool_shaped_messages,
             )
             child_conv = Conversation(
                 session_id=cp.session_id,
@@ -1657,6 +1690,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             child_metric_values = metric_values_by_trace[cp.parent_trace_id]
             for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
+                input_kind = _classify_turn_input(
+                    creq, cp.stream_requests[k - 1] if k else None
+                )
+                is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
                 if k == 0:
                     child_recon.init_turn_0(
                         hash_ids=creq.hash_ids,
@@ -1664,6 +1701,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         tool_tokens=cp.entry.tool_tokens,
                         system_tokens=cp.entry.system_tokens,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
                 else:
                     prev_creq = cp.stream_requests[k - 1]
@@ -1674,6 +1712,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_hash_ids=creq.hash_ids,
                         curr_in_tokens=creq.input_length,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
                 trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
                 if trace_idle_timing is not None:
@@ -1706,6 +1745,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         reset_context=child_delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
+                        input_kind=input_kind,
                     )
                 )
             conversations.append(child_conv)
@@ -1747,6 +1787,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         for k, (_outer_idx, req) in enumerate(fp.requests):
             seed = f"{fp.session_id}:turn_{k}:partial_tail"
+            input_kind = _classify_turn_input(req, fp.requests[k - 1][1] if k else None)
+            is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
             if k == 0:
                 recon.init_turn_0(
                     hash_ids=req.hash_ids,
@@ -1754,6 +1796,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     tool_tokens=0,
                     system_tokens=fp.prefix_blocks * fp.block_size,
                     seed=seed,
+                    is_tool_result=is_tool_result,
                 )
             else:
                 prev_req = fp.requests[k - 1][1]
@@ -1764,6 +1807,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     curr_hash_ids=req.hash_ids,
                     curr_in_tokens=req.input_length,
                     seed=seed,
+                    is_tool_result=is_tool_result,
                 )
             t_ms, delay_ms = self._flat_turn_timing(
                 fp=fp,
@@ -1784,6 +1828,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     reset_context=delta.reset_context,
                     theoretical_prefix_cache_hit_blocks=hit_blocks,
                     theoretical_prefix_cache_total_blocks=total_blocks,
+                    input_kind=input_kind,
                 )
             )
         return conv
@@ -1799,6 +1844,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             decode_tokens_to_text=self._decode_tokens_to_text,
             bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
             emit_assistant_segments=not self._use_live_assistant,
+            tool_shaped_messages=self._tool_shaped_messages,
         )
 
     def _flat_turn_timing(
@@ -1887,6 +1933,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "think_time": getattr(creq, "think_time", None),
                     "theoretical_hit_blocks": hit_blocks,
                     "theoretical_total_blocks": total_blocks,
+                    "input_kind": _classify_turn_input(
+                        creq, cp.stream_requests[k - 1] if k else None
+                    ),
                 }
                 if trace_idle_timing is not None:
                     timing = trace_idle_timing.child_by_session_request[
@@ -1951,6 +2000,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     think_time_only=think_time_only,
                     model_map=model_map_per_trace.get(plan.trace_id, {}),
                     emit_assistant_segments=not self._use_live_assistant,
+                    tool_shaped_messages=self._tool_shaped_messages,
                     block_size=plan.block_size,
                 )
             )
@@ -2030,6 +2080,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 "model": req.model,
                 "t": req.t,
                 "think_time": getattr(req, "think_time", None),
+                "input_kind": _classify_turn_input(
+                    req, fp.requests[k - 1][1] if k else None
+                ),
                 "capped_output_length": self._cap_output(req),
                 "theoretical_hit_blocks": hit_blocks,
                 "theoretical_total_blocks": total_blocks,
@@ -2071,6 +2124,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 "model": req.model,
                 "t": req.t,
                 "think_time": getattr(req, "think_time", None),
+                "input_kind": _classify_turn_input(
+                    req, plan.normals[k - 1][1] if k else None
+                ),
                 "capped_output_length": self._cap_output(req),
                 "theoretical_hit_blocks": hit_blocks,
                 "theoretical_total_blocks": total_blocks,
@@ -2236,6 +2292,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         theoretical_prefix_cache_total_blocks=t_dict[
                             "theoretical_prefix_cache_total_blocks"
                         ],
+                        input_kind=t_dict.get("input_kind"),
                     )
                 )
             for branch in result["branches"]:
@@ -2287,6 +2344,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             theoretical_prefix_cache_total_blocks=t_dict[
                                 "theoretical_prefix_cache_total_blocks"
                             ],
+                            input_kind=t_dict.get("input_kind"),
                         )
                     )
                 conversations.append(child_conv)
