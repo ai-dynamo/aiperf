@@ -510,6 +510,17 @@ def _settings_payload_from_user_config(
         "model_name": user_config.endpoint.model_names[0],
         "fixed_schedule_start_offset": inp.fixed_schedule_start_offset,
         "fixed_schedule_end_offset": inp.fixed_schedule_end_offset,
+        # Load-time timing knobs bake into the cached Turn timestamps/delays
+        # (applied during reconstruction, not at request time), so they must
+        # key the cache or a warm entry silently serves the other mode.
+        "ignore_trace_delays": inp.ignore_trace_delays,
+        "use_think_time_only": inp.use_think_time_only,
+        "inter_turn_delay_cap_seconds": (
+            user_config.loadgen.inter_turn_delay_cap_seconds
+        ),
+        "trace_idle_gap_cap_seconds": getattr(
+            user_config.loadgen, "trace_idle_gap_cap_seconds", None
+        ),
         "weka_live_assistant_responses": (
             Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
         ),
