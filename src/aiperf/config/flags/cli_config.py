@@ -2206,6 +2206,47 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    wandb_project: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases project name. Setting this enables wandb export.",
+        ),
+        CLIParameter(name=("--wandb-project",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_entity: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases entity (team or user). Defaults to the API key's default entity.",
+        ),
+        CLIParameter(name=("--wandb-entity",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_run_name: Annotated[
+        str | None,
+        Field(default=None, description="Weights & Biases run name."),
+        CLIParameter(name=("--wandb-run-name",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_tags: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Additional Weights & Biases run tags to attach on upload. "
+                "Can be specified multiple times or as a comma-separated list."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--wandb-tag",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
     ##############################################################################
     # HTTP Trace
     ##############################################################################

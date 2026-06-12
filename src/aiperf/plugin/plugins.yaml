@@ -1098,6 +1098,13 @@ data_exporter:
       and generated artifacts (including plots) to an MLflow Tracking server.
       Enabled when --mlflow-tracking-uri is configured.
 
+  wandb:
+    class: aiperf.exporters.wandb_data_exporter:WandbDataExporter
+    description: |
+      Weights & Biases post-run exporter that uploads benchmark config, metrics,
+      tags, and generated artifacts to a wandb project.
+      Enabled when --wandb-project is configured.
+
   raw_record_aggregator:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator
     description: |
