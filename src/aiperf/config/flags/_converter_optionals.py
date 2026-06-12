@@ -259,6 +259,7 @@ def build_sweep(
     if recipe_output is None and "search_recipe" in sw.model_fields_set:
         raise ValueError("recipe_output must be precomputed before build_sweep")
     extra_sla_dumps = _parse_search_sla_flags(sw)
+    sla_tier_dumps = _parse_search_sla_tier_flags(sw)
     adaptive_search = _resolve_adaptive_search(sw, recipe_output)
     if adaptive_search is None:
         if recipe_output is None or not recipe_output.get("sweep_parameters"):
@@ -273,6 +274,8 @@ def build_sweep(
     if extra_sla_dumps:
         existing = list(adaptive_search.get("sla_filters") or [])
         adaptive_search["sla_filters"] = existing + extra_sla_dumps
+    if sla_tier_dumps:
+        adaptive_search["sla_tiers"] = sla_tier_dumps
     return adaptive_search
 
 
@@ -288,6 +291,24 @@ def _parse_search_sla_flags(sw: Any) -> list[dict[str, Any]]:
     from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
 
     return [parse_sla_filter(s).model_dump(mode="json") for s in sw.search_sla]
+
+
+def _parse_search_sla_tier_flags(sw: Any) -> list[dict[str, Any]]:
+    """Parse `--search-sla-tier` flag values into model-dumped SLOTier dicts.
+
+    Returns an empty list when the flag is unset or empty. Validates tier
+    count and label uniqueness via :func:`validate_tier_list`.
+    """
+    if "search_sla_tier" not in sw.model_fields_set or not sw.search_sla_tier:
+        return []
+    from aiperf.orchestrator.search_planner.parsing import (
+        parse_sla_tier,
+        validate_tier_list,
+    )
+
+    tiers = [parse_sla_tier(s, _auto_index=i) for i, s in enumerate(sw.search_sla_tier)]
+    validate_tier_list(tiers)
+    return [t.model_dump(mode="json") for t in tiers]
 
 
 def _resolve_adaptive_search(

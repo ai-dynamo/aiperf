@@ -2887,6 +2887,28 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    search_sla_tier: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Multi-tier SLO grouping flag. Each invocation defines one tier "
+                "of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or "
+                "'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). "
+                "Requires 2-10 invocations. Example: --search-sla-tier "
+                "'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' "
+                "--search-sla-tier "
+                "'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. "
+                "When used, all --search-sla filters are still parsed and compose "
+                "with tier definitions."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-sla-tier",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
     search_recipe: Annotated[
         str | None,
         Field(

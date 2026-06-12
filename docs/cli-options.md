@@ -1199,6 +1199,10 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
 
+#### `--search-sla-tier` `<list>`
+
+Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or 'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). Requires 2-10 invocations. Example: --search-sla-tier 'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' --search-sla-tier 'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. When used, all --search-sla filters are still parsed and compose with tier definitions.
+
 #### `--search-recipe` `<str>`
 
 Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
@@ -2523,6 +2527,10 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 #### `--search-sla` `<list>`
 
 SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+
+#### `--search-sla-tier` `<list>`
+
+Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or 'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). Requires 2-10 invocations. Example: --search-sla-tier 'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' --search-sla-tier 'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. When used, all --search-sla filters are still parsed and compose with tier definitions.
 
 #### `--search-recipe` `<str>`
 
