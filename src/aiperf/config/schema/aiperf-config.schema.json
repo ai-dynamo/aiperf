@@ -554,6 +554,14 @@
           ],
           "title": "Constraintmode",
           "type": "string"
+        },
+        "slaTiers": {
+          "description": "Multi-tier SLO definitions parsed from --search-sla-tier flags. Each tier is a named group of SLA filters sharing a common boundary search. When non-empty (2-10 tiers), the MultiTierPlanner is activated instead of single-tier planners.",
+          "items": {
+            "$ref": "#/$defs/SLOTier"
+          },
+          "title": "Slatiers",
+          "type": "array"
         }
       },
       "required": [
@@ -9884,10 +9892,17 @@
           "description": "Statistic on the metric to compare against the threshold.",
           "enum": [
             "avg",
+            "p1",
+            "p5",
+            "p10",
+            "p25",
             "p50",
+            "p75",
             "p90",
             "p95",
-            "p99"
+            "p99",
+            "min",
+            "max"
           ],
           "title": "Stat",
           "type": "string"
@@ -9932,6 +9947,57 @@
         "threshold"
       ],
       "title": "SLAFilter",
+      "type": "object"
+    },
+    "SLOTier": {
+      "additionalProperties": false,
+      "description": "Named group of SLA filters representing one service-level objective.\n\nDefines a single tier for multi-tier SLO boundary search. Each tier\ncontains one or more SLA filters that must ALL pass for the tier to be\nconsidered feasible at a given concurrency level.\n\nLives in the config layer (alongside SLAFilter) to avoid circular imports\nbetween config and orchestrator packages. Re-exported from\n``aiperf.orchestrator.search_planner.multi_tier_models`` for ergonomic\norchestrator usage.",
+      "properties": {
+        "label": {
+          "description": "Unique tier identifier for output artifacts",
+          "title": "Label",
+          "type": "string"
+        },
+        "filters": {
+          "description": "SLA filters that must ALL pass for this tier to be feasible",
+          "items": {
+            "$ref": "#/$defs/SLAFilter"
+          },
+          "minItems": 1,
+          "title": "Filters",
+          "type": "array"
+        },
+        "orderingRank": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Rank in detected monotonic ordering (0=strictest); None if unordered",
+          "title": "Orderingrank",
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "label",
+        "filters"
+      ],
+      "title": "SLOTier",
       "type": "object"
     },
     "SamplingDimension": {

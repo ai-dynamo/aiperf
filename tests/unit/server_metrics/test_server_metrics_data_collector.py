@@ -63,6 +63,29 @@ class TestServerMetricsDataCollectorInitialization:
 class TestPrometheusMetricParsing:
     """Test Prometheus metric parsing functionality."""
 
+    @pytest.fixture(autouse=True)
+    def _normalize_collector_logger(self):
+        """Normalize the process-shared ``server_metrics_collector`` logger.
+
+        The collector logs to that top-level (non-``aiperf``) logger. Under
+        xdist another test can leave its level raised or ``propagate=False``,
+        which silently suppresses the warnings the warn-once tests assert on
+        (observed as a CI flake: the warning was captured 0 times). Reset to a
+        known-good state per test and restore afterward so this fixture does
+        not itself leak state.
+        """
+        import logging
+
+        lg = logging.getLogger("server_metrics_collector")
+        prev_level, prev_propagate = lg.level, lg.propagate
+        lg.setLevel(logging.NOTSET)
+        lg.propagate = True
+        try:
+            yield
+        finally:
+            lg.setLevel(prev_level)
+            lg.propagate = prev_propagate
+
     def test_parse_counter_metrics(self):
         """Test parsing simple counter metrics."""
         metrics_text = """# HELP requests_total Total requests
@@ -336,7 +359,7 @@ sglang:fwd_occupancy{rank="0"} NaN
 """
         collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
 
-        with caplog.at_level(logging.WARNING, logger="aiperf"):
+        with caplog.at_level(logging.WARNING):
             # Scrape twice — both produce NaN for the same metric.
             collector._parse_metrics_to_records(make_fetch_result(metrics_text))
             collector._parse_metrics_to_records(make_fetch_result(metrics_text))
@@ -385,7 +408,7 @@ my_gauge{which="good"} 2.0
         monkeypatch.setattr(dc_mod, "MetricSample", selective_metric_sample)
 
         collector = dc_mod.ServerMetricsDataCollector("http://localhost:8081/metrics")
-        with caplog.at_level(logging.WARNING, logger="aiperf"):
+        with caplog.at_level(logging.WARNING):
             # Scrape twice to verify warn-once.
             record = collector._parse_metrics_to_records(
                 make_fetch_result(metrics_text)
@@ -445,7 +468,7 @@ my_histogram_count{which="good"} 7.0
         monkeypatch.setattr(dc_mod, "MetricSample", selective_metric_sample)
 
         collector = dc_mod.ServerMetricsDataCollector("http://localhost:8081/metrics")
-        with caplog.at_level(logging.WARNING, logger="aiperf"):
+        with caplog.at_level(logging.WARNING):
             record = collector._parse_metrics_to_records(
                 make_fetch_result(metrics_text)
             )

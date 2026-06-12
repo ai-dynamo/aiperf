@@ -75,7 +75,7 @@ def _samples_from_jsonl(raw: bytes, metric_tag: str) -> list[float]:
         if not isinstance(metric, dict):
             continue
         value = metric.get("value")
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             out.append(float(value))
     return out
 
