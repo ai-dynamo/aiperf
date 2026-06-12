@@ -199,8 +199,45 @@ Per turn:
 - **Model** is rewritten via a per-trace mapping (see [Per-Trace Model Rewriting](#per-trace-model-rewriting)) — the trace's per-request `model` field is used to *pick which* configured model gets sent for that request, not as the routing model itself.
 - **Max tokens** comes from the `out` field (after `--synthesis-max-osl` capping).
 - **Timing** preserves the recorded `t` field for `--fixed-schedule`. By default, inter-turn `delay` is computed as `t_n - t_{n-1}`. With `--use-think-time-only`, `delay` instead uses the recorded per-request `think_time`. With `--ignore-trace-delays`, both `timestamp` and `delay` are stripped at load time. See [Replay Timing Controls](#replay-timing-controls) above.
+- **Input kind** classifies what produced each turn's new input, surfaced as `Turn.input_kind` (`tool_result` or `user_input`). The own-turn `input_types` field decides when recorded (a `tool_result` membership marks a machine-paced agentic-loop continuation; `text`/multimodal marks genuine user/agent input); otherwise the previous request's `stop` reason is the fallback (`tool_use` is always answered by a tool result). Traces recorded before these fields existed classify as `None` and replay exactly as before.
+- **Tool-shaped messages** (opt-in, `AIPERF_DATASET_WEKA_TOOL_SHAPED_MESSAGES=true`): turns classified `tool_result` are sent in the OpenAI tool-call wire shape -- the same-delta assistant message carries a synthetic `tool_calls` entry and the turn's new input becomes a `role: "tool"` message (content text unchanged). Exercises the server's tool-message chat-template path at the cost of exact ISL fidelity, since tool messages tokenize differently than plain user text. Turn 0 and live-assistant mode fall back to the plain user shape automatically; legacy traces without the tool signal are unaffected. Shaping is decided once, at the turn's first emission: a `reset_context` full re-emission reproduces exactly the shape (and synthetic call id) each turn was first sent with, never reshaping already-sent context.
 
 The trace's recorded `type: "s"` (streaming) vs `type: "n"` (non-streaming) is independent of how AIPerf sends the request — the transport is controlled by `--streaming`. Both types are replayed identically.
+
+---
+
+## Flattened-Agent Detection
+
+Many captures record parallel agent fan-outs (e.g. Workflow-tool agents, which carry no agent-id header) as **flat top-level requests** interleaved with the real main agent's turns, instead of nested `type: "subagent"` entries. Replaying that stream as one conversation collapses the recorded concurrency and forces context resets at every interleave boundary.
+
+The loader detects these hidden agents from `hash_ids` longest-common-prefix (LCP) evidence and splits them into per-agent child conversations:
+
+- **Chain**: a request whose hash list fully extends a chain's tail, starts after that tail's interval ends, and runs on the same model is that agent's next turn.
+- **Join seam**: a request that keeps only a prefix of a tail (compaction / context edit) is the same agent's continuation **iff** the longer state is never touched again — otherwise:
+- **Spawn**: the request is a separate agent forked from the shared prefix and becomes a child conversation (session id `<trace_id>::fa:NNN`) linked with SPAWN/SPAWN_JOIN like a proper subagent.
+
+```mermaid
+flowchart LR
+    subgraph recorded [Recorded flat stream]
+        M1["main t=0<br/>[1,2,3]"] --> W1["worker A t=2<br/>[1,2,50,51]"] --> W2["worker B t=2.5<br/>[1,2,60,61]"] --> M2["main t=9<br/>[1,2,3,4,5]"]
+    end
+    subgraph replayed [Replayed structure]
+        R1["main turn 0"] -->|SPAWN| A0["fa:000 (worker A)"]
+        R1 -->|SPAWN| B0["fa:001 (worker B)"]
+        R1 --> R2["main turn 1<br/>SPAWN_JOIN fa:001"]
+        R2 --> R3["main turn 2<br/>SPAWN_JOIN fa:000"]
+    end
+    recorded -.->|LCP chain detection| replayed
+```
+
+Details worth knowing:
+
+- **One hash namespace per trace file.** `hash_id_scope: "local"` is enforced for everything in a file — root, subagent children, and detected chains share one decode scope, so the same `hash_id` yields identical tokens everywhere and the server observes the genuine shared prefixes. The theoretical prefix-cache metric uses one shared per-trace seen-set in global time order for the same reason.
+- **Setup prefix ("keep the longer one").** The latest captures declare `tool_tokens: 0` / `system_tokens: 0`, so the system-segment boundary is derived empirically per namespace group (the LCP over member chains' first requests) and the longer of declared vs observed wins. Every turn 0 in a group places the system|user boundary at the same block offset, which keeps rendered prompts byte-shared across conversations.
+- **Same-model rule.** A chain is only ever continued by requests of the same model; cross-model attachment is always a spawn (a Haiku worker reading Opus context is a different agent).
+- **Escape hatch.** `AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false` restores the legacy single-stream chaining.
+
+Log lines to look for: per trace `detected N agents (...)`, the corpus summary `flattened-agent detection split N trace(s) into M extra agent chain(s) (...)`, and per-chain fork detail (true fork parent and depth) at DEBUG.
 
 ---
 

@@ -65,12 +65,24 @@ _logger = AIPerfLogger(__name__)
 # Bump when the on-disk layout, side-data schema, OR the decoded content the
 # loaders produce for a given key changes -- the key has no source-code
 # component, so a content-semantics fix must bump this or warm caches keep
-# serving the old (wrong) dataset. Version 6 invalidates entries built before
+# serving the old (wrong) dataset. Version 7 invalidates entries built before
+# the weka context-loss rule (a turn whose truncation removes every user
+# segment now resumes at a USER turn instead of opening with a fabricated
+# assistant segment -- role boundaries moved for seam/reset re-emits).
+# Version 6 invalidates entries built before
 # the weka subagent hash_id-scope fix (subagents now share the parent trace's
 # scope, so shared blocks decode to different tokens than v5 produced).
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
-MANIFEST_VERSION = 6
+MANIFEST_VERSION = (
+    # v11: the system role is never fabricated from the observed
+    # namespace-group prefix (0/0-declared chains bake all-user turn 0s) --
+    # role boundaries changed again relative to v10.
+    # v10: merge of the flattened-agent-splitting lineage and the
+    # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
+    # first emission so reset re-emits reproduce the first-sent shape).
+    11
+)
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
@@ -506,9 +518,24 @@ def _settings_payload_from_user_config(
         "model_name": user_config.endpoint.model_names[0],
         "fixed_schedule_start_offset": inp.fixed_schedule_start_offset,
         "fixed_schedule_end_offset": inp.fixed_schedule_end_offset,
+        # Load-time timing knobs bake into the cached Turn timestamps/delays
+        # (applied during reconstruction, not at request time), so they must
+        # key the cache or a warm entry silently serves the other mode.
+        "ignore_trace_delays": inp.ignore_trace_delays,
+        "use_think_time_only": inp.use_think_time_only,
+        "inter_turn_delay_cap_seconds": (
+            user_config.loadgen.inter_turn_delay_cap_seconds
+        ),
+        "trace_idle_gap_cap_seconds": getattr(
+            user_config.loadgen, "trace_idle_gap_cap_seconds", None
+        ),
         "weka_live_assistant_responses": (
             Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
         ),
+        "weka_split_flattened_agents": (
+            Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
+        ),
+        "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
         "max_context_length": inp.max_context_length,
