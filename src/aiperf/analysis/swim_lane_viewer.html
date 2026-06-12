@@ -334,6 +334,7 @@
       <span class="title">Swim Lanes — one row per session slot</span>
       <div class="legend">
         <span class="key"><span class="swatch" style="background:#62a0ea"></span>active request</span>
+        <span class="key" id="legend-sub"><span class="swatch" style="background:rgba(98,160,234,0.66)"></span>subagent request</span>
         <span class="key"><span class="swatch" style="background:rgba(98,160,234,0.28)"></span>inter-turn delay</span>
         <span class="key"><span class="tickline"></span>new session</span>
       </div>
@@ -396,17 +397,19 @@ const alpha = (hex, a) => {
 /* ---------- derived structures ---------- */
 const N_SLOTS = DATA.nSlots;
 const T_MAX = DATA.tMax;
-// per-slot segment lists for hit-testing and drawing; parallel turns within a
-// session carry a sub-row depth (t[6]) so they stack instead of over-painting
+// per-slot segment lists for hit-testing and drawing; each session carries a
+// row offset within its slot (subagent sessions tier below their root lane)
+// and parallel turns within a session carry a sub-row depth (t[6])
 const slotSegs = Array.from({ length: N_SLOTS }, () => []);
 let totalTurns = 0;
 DATA.sessions.forEach((s, si) => {
+  const sub = !!s.sub;
   s.turns.forEach((t, ti) => {
     totalTurns++;
-    slotSegs[s.slot].push({ t0: t[0], t1: t[1], si, ti, depth: t[6], rows: s.rows, idle: false });
+    slotSegs[s.slot].push({ t0: t[0], t1: t[1], si, ti, row: s.row0 + t[6], rows: 1, sub, idle: false });
   });
   s.gaps.forEach(([g0, g1]) =>
-    slotSegs[s.slot].push({ t0: g0, t1: g1, si, ti: -1, depth: 0, rows: 1, idle: true }));
+    slotSegs[s.slot].push({ t0: g0, t1: g1, si, ti: -1, row: s.row0, rows: s.rows, sub, idle: true }));
 });
 // sort by start and carry a running max-end so interval stabbing can binary
 // search even though parallel turns make t1 non-monotonic
@@ -416,9 +419,14 @@ slotSegs.forEach((list) => {
   list.forEach((seg) => { m = Math.max(m, seg.t1); seg.pmax = m; });
 });
 const sessStarts = DATA.sessions.map((s) => s.turns.reduce((a, t) => Math.min(a, t[0]), Infinity));
-// each slot expands to one full-size sub-lane per concurrently-running turn
+// lane-group key (root session id) per session, for group hover dimming
+const sessRoot = DATA.sessions.map((s) => s.root ?? s.id);
+const laneColor = (si) => sessColor(DATA.sessions[si].ci);
+const N_SUB = DATA.sessions.reduce((a, s) => a + (s.sub ? 1 : 0), 0);
+// each slot expands to one full-size sub-lane per concurrently-running turn,
+// plus one child tier per concurrently-running subagent session
 const slotRows = Array.from({ length: N_SLOTS }, () => 1);
-DATA.sessions.forEach((s) => { slotRows[s.slot] = Math.max(slotRows[s.slot], s.rows); });
+DATA.sessions.forEach((s) => { slotRows[s.slot] = Math.max(slotRows[s.slot], s.row0 + s.rows); });
 const slotRow0 = [0];
 for (let s = 1; s < N_SLOTS; s++) slotRow0[s] = slotRow0[s - 1] + slotRows[s - 1];
 const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
@@ -433,7 +441,8 @@ const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
     : `${T_MAX.toFixed(1)}s`;
   const pk = DATA.peaks || {};
   const chips = [
-    ["sessions", DATA.sessions.length],
+    ["sessions", DATA.sessions.length - N_SUB],
+    ...(N_SUB ? [["subagents", N_SUB]] : []),
     ["slots", N_SLOTS],
     ...(TOTAL_ROWS > N_SLOTS ? [["sub-lanes", TOTAL_ROWS]] : []),
     ["turns", totalTurns],
@@ -446,6 +455,7 @@ const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
   document.getElementById("chips").innerHTML = chips
     .map(([k, v, hot]) => `<div class="chip${hot ? " hot" : ""}"><b>${v}</b><span>${k}</span></div>`)
     .join("");
+  if (!N_SUB) document.getElementById("legend-sub").style.display = "none";
 }
 
 /* ---------- canvas helpers ---------- */
@@ -580,30 +590,33 @@ function drawLanes() {
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, LANES_H); ctx.stroke();
   }
 
-  const focus = hoverSeg && !hoverSeg.idle ? hoverSeg.si : selectedSession;
+  const focusSi = hoverSeg && !hoverSeg.idle ? hoverSeg.si : selectedSession;
+  const focusRoot = focusSi >= 0 ? sessRoot[focusSi] : null;
 
   for (let s = 0; s < N_SLOTS; s++) {
     const list = slotSegs[s];
     const yBase = slotRow0[s] * ROW_H;
-    const slotH = slotRows[s] * ROW_H;
     for (let i = startIndex(list, view.t0); i < list.length; i++) {
       const seg = list[i];
       if (seg.t0 > view.t1) break;
       if (seg.t1 < view.t0) continue;
       let x0 = xOf(seg.t0), x1 = xOf(seg.t1);
       if (x1 - x0 < 0.6) x1 = x0 + 0.6;
-      const c = sessColor(seg.si);
-      const dimmed = focus >= 0 && seg.si !== focus;
-      // idle spans the whole slot; each parallel turn gets a full-size sub-lane
-      const y = seg.idle ? yBase + BAR_PAD : yBase + seg.depth * ROW_H + BAR_PAD;
-      const h = seg.idle ? slotH - BAR_PAD * 2 : BAR_H;
+      const c = laneColor(seg.si);
+      const dimmed = focusRoot !== null && sessRoot[seg.si] !== focusRoot;
+      // idle spans the session's own rows; each parallel turn gets a
+      // full-size sub-lane; subagent turns render lighter in their child tier
+      const y = yBase + seg.row * ROW_H + BAR_PAD;
+      const h = seg.idle ? seg.rows * ROW_H - BAR_PAD * 2 : BAR_H;
       ctx.fillStyle = seg.idle
-        ? alpha(c, dimmed ? 0.07 : 0.24)
-        : dimmed ? alpha(c, 0.16) : c;
+        ? alpha(c, dimmed ? 0.06 : seg.sub ? 0.15 : 0.24)
+        : seg.sub
+          ? alpha(c, dimmed ? 0.13 : 0.66)
+          : dimmed ? alpha(c, 0.16) : c;
       ctx.beginPath();
       ctx.roundRect(x0, y, x1 - x0, h, Math.min(2.5, h / 3));
       ctx.fill();
-      if (!seg.idle && focus === seg.si) {
+      if (!seg.idle && focusSi === seg.si) {
         ctx.shadowColor = c; ctx.shadowBlur = 7;
         ctx.fill();
         ctx.shadowBlur = 0;
@@ -611,9 +624,10 @@ function drawLanes() {
     }
   }
 
-  // new-session ticks
+  // new-session ticks (lane roots only; subagent tiers are visible inline)
   ctx.fillStyle = "rgba(255,255,255,0.92)";
   DATA.sessions.forEach((s, si) => {
+    if (s.root) return;
     const t = sessStarts[si];
     if (t < view.t0 || t > view.t1) return;
     const x = xOf(t);
@@ -773,17 +787,18 @@ function segAt(px, py) {
   const row = Math.floor(py / ROW_H);
   if (row < 0 || row >= TOTAL_ROWS) return null;
   const slot = slotOfRow(row);
-  const depth = row - slotRow0[slot];
+  const rowIn = row - slotRow0[slot];
   const t = tOf(px);
   const list = slotSegs[slot];
   const hits = [];
   for (let i = startIndex(list, t); i < list.length && list[i].t0 <= t; i++)
     if (t >= list[i].t0 && t <= list[i].t1) hits.push(list[i]);
   if (!hits.length) return null;
-  // the sub-lane directly under the cursor, else the slot-wide idle band
+  // the sub-lane directly under the cursor, else the idle band whose
+  // session rows contain the cursor row
   return (
-    hits.find((seg) => !seg.idle && seg.depth === depth) ||
-    hits.find((seg) => seg.idle) ||
+    hits.find((seg) => !seg.idle && seg.row === rowIn) ||
+    hits.find((seg) => seg.idle && rowIn >= seg.row && rowIn < seg.row + seg.rows) ||
     null
   );
 }
@@ -793,15 +808,16 @@ const fmtMs = (n) => (n == null ? "—" : `${n.toLocaleString("en-US", { maximum
 
 function showTooltip(ev, seg) {
   const s = DATA.sessions[seg.si];
-  const c = sessColor(seg.si);
+  const c = laneColor(seg.si);
   const head = seg.idle
     ? `<span class="sw" style="background:${alpha(c, 0.4)}"></span>INTER-TURN DELAY`
-    : `<span class="sw" style="background:${c}"></span>TURN ${seg.ti} · SLOT ${s.slot}`;
+    : `<span class="sw" style="background:${seg.sub ? alpha(c, 0.66) : c}"></span>${seg.sub ? "SUBAGENT TURN" : "TURN"} ${seg.ti} · SLOT ${s.slot}`;
   let rows;
   if (seg.idle) {
     rows = [
       ["gap", `${(seg.t1 - seg.t0).toFixed(3)} s`],
       ["window", `${seg.t0.toFixed(2)} → ${seg.t1.toFixed(2)} s`],
+      ...(s.root ? [["parent", s.root.slice(0, 18) + "…"]] : []),
       ["session", s.id.slice(0, 18) + "…"],
       ["conv", s.conv.slice(0, 18) + "…"],
     ];
@@ -813,8 +829,9 @@ function showTooltip(ev, seg) {
       ["ttft", fmtMs(t[2])],
       ["latency", fmtMs(t[3])],
       ["isl / osl", `${fmtN(t[4])} / ${fmtN(t[5])} tok`],
-      ...(seg.rows > 1 ? [["sub-row", `${seg.depth + 1} of ${seg.rows} (parallel)`]] : []),
+      ...(s.rows > 1 ? [["sub-row", `${t[6] + 1} of ${s.rows} (parallel)`]] : []),
       ...(t[7] ? [["agent depth", t[7]]] : []),
+      ...(s.root ? [["parent", s.root.slice(0, 18) + "…"]] : []),
       ["session", s.id.slice(0, 18) + "…"],
       ["conv", s.conv.slice(0, 18) + "…"],
     ];
@@ -946,11 +963,12 @@ const detail = document.getElementById("detail");
 function openDetail(si) {
   selectedSession = si;
   const s = DATA.sessions[si];
-  const c = sessColor(si);
+  const c = laneColor(si);
   document.getElementById("d-title-text").innerHTML =
-    `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c};margin-right:8px"></span>SESSION · SLOT ${s.slot}`;
+    `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c};margin-right:8px"></span>${s.sub ? "SUBAGENT" : "SESSION"} · SLOT ${s.slot}`;
   document.getElementById("d-conv").innerHTML =
-    `session ${s.id}<br>conv&nbsp;&nbsp;&nbsp; ${s.conv}`;
+    `session ${s.id}<br>conv&nbsp;&nbsp;&nbsp; ${s.conv}` +
+    (s.root ? `<br>parent&nbsp; ${s.root}` : "");
   const start = s.turns.reduce((a, t) => Math.min(a, t[0]), Infinity);
   const end = s.turns.reduce((a, t) => Math.max(a, t[1]), -Infinity);
   const span = end - start;
@@ -959,6 +977,7 @@ function openDetail(si) {
   const active = span - gapTime;
   const ttfts = s.turns.map((t) => t[2]).filter((v) => v != null);
   const avgTtft = ttfts.length ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null;
+  const nKids = DATA.sessions.reduce((a, x) => a + (x.root === s.id ? 1 : 0), 0);
   document.getElementById("d-stats").innerHTML = [
     [s.turns.length, "turns"],
     [`${span.toFixed(1)}s`, "span"],
@@ -966,6 +985,7 @@ function openDetail(si) {
     [s.rows, "max parallel"],
     [fmtMs(avgTtft), "avg ttft"],
     [fmtN(s.turns[s.turns.length - 1][4]), "final isl"],
+    ...(nKids ? [[nKids, "subagents"]] : []),
   ].map(([v, k]) => `<div class="d-stat"><b>${v}</b><span>${k}</span></div>`).join("");
   document.getElementById("d-rows").innerHTML = s.turns
     .map((t, ti) =>

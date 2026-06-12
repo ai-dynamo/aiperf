@@ -5,6 +5,10 @@
 Renders one horizontal lane per concurrent session slot (greedy reuse once a
 session retires) plus a concurrency line chart driven by the same
 ``aiperf.analysis.sweepline`` primitives the metrics accumulator uses.
+Subagent sessions (``agent_depth > 0``) do not get their own slots: they nest
+as child tiers below their root session's lane, linked via
+``parent_correlation_id``. Subagents whose parent is absent from the export
+fall back to standalone lanes.
 
 Inputs per run directory:
   - ``profile_export.jsonl``        (required)  per-record AIPerf export
@@ -16,6 +20,7 @@ CLI: ``aiperf analyze swim-lane <run_dir> [<run_dir>...] [-o OUT]``
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.patches as mpatches
@@ -123,23 +128,154 @@ def _turn_depths(turns: list[dict]) -> tuple[list[int], int]:
     return depths, len(row_ends)
 
 
-def _assign_slots(sessions: dict[str, list[dict]]) -> list[tuple[str, int]]:
-    """Greedy slot packing: reuse a slot once its previous session retired."""
-    spans = {conv_id: _session_span_ns(turns) for conv_id, turns in sessions.items()}
-    ordered = sorted(sessions, key=lambda conv_id: spans[conv_id][0])
+def _assign_slots(spans: dict[str, tuple[int, int]]) -> list[tuple[str, int]]:
+    """Greedy slot packing: reuse a slot once its previous occupant retired."""
+    ordered = sorted(spans, key=lambda key: spans[key][0])
     slot_ends: list[int] = []
     assignments: list[tuple[str, int]] = []
-    for conv_id in ordered:
-        start, end = spans[conv_id]
+    for key in ordered:
+        start, end = spans[key]
         for i, slot_end in enumerate(slot_ends):
             if start >= slot_end:
                 slot_ends[i] = end
-                assignments.append((conv_id, i))
+                assignments.append((key, i))
                 break
         else:
             slot_ends.append(end)
-            assignments.append((conv_id, len(slot_ends) - 1))
+            assignments.append((key, len(slot_ends) - 1))
     return assignments
+
+
+def _is_sub_session(turns: list[dict]) -> bool:
+    """True when any record in the session was produced at agent_depth > 0."""
+    return any((t["metadata"].get("agent_depth") or 0) > 0 for t in turns)
+
+
+def _root_map(sessions: dict[str, list[dict]]) -> dict[str, str]:
+    """Resolve each session to its root ancestor via parent_correlation_id.
+
+    Subagent sessions whose parent is absent from the export (cancelled, or a
+    pre-session background spawn with no parent) stay their own root and render
+    as a standalone lane.
+    """
+    parent: dict[str, str | None] = {}
+    for sid, turns in sessions.items():
+        pid = next(
+            (
+                t["metadata"].get("parent_correlation_id")
+                for t in turns
+                if t["metadata"].get("parent_correlation_id")
+            ),
+            None,
+        )
+        parent[sid] = pid if pid in sessions and pid != sid else None
+    roots: dict[str, str] = {}
+    for sid in sessions:
+        seen = {sid}
+        cur = sid
+        while (nxt := parent[cur]) is not None and nxt not in seen:
+            cur = nxt
+            seen.add(cur)
+        roots[sid] = cur
+    # parent cycles (malformed exports) resolve to a non-self-rooted "root";
+    # detach those sessions so every group has a genuine root
+    return {sid: root if roots[root] == root else sid for sid, root in roots.items()}
+
+
+@dataclass(slots=True)
+class _SessionLayout:
+    """Row placement of one session inside its lane group."""
+
+    sid: str
+    """Session instance id (x_correlation_id, or conversation_id fallback)."""
+    is_sub: bool
+    """True when the session ran at agent_depth > 0 (a subagent)."""
+    row0: int
+    """First row the session occupies within the lane group."""
+    rows: int
+    """Rows occupied by the session's own (possibly parallel) turns."""
+    depths: list[int]
+    """Per-turn sub-row within the session, aligned with the turn list."""
+
+
+@dataclass(slots=True)
+class _LaneGroup:
+    """One swim lane: a root session plus its nested subagent sessions."""
+
+    root_sid: str
+    """Root session id of the lane."""
+    slot: int
+    """Assigned swim-lane slot."""
+    rows: int
+    """Total rows of the lane (root rows + packed subagent child rows)."""
+    span_ns: tuple[int, int]
+    """(first request start, last request end) over all member sessions."""
+    members: list[_SessionLayout]
+    """Root session first, then subagent sessions ordered by start time."""
+
+
+def _layout_groups(sessions: dict[str, list[dict]]) -> list[_LaneGroup]:
+    """Nest subagent sessions as child tiers below their root session's lane.
+
+    The root session keeps the top rows of the lane (one per parallel turn);
+    each subagent session is greedy-packed into child rows underneath, reusing
+    a row once the previous subagent on it retired. Lane groups are then
+    slot-packed exactly like plain sessions, ordered by group start time.
+    """
+    root_of = _root_map(sessions)
+    children: dict[str, list[str]] = defaultdict(list)
+    for sid, root in root_of.items():
+        if sid != root:
+            children[root].append(sid)
+    spans: dict[str, tuple[int, int]] = {}
+    for sid in sessions:
+        if root_of[sid] != sid:
+            continue
+        member_spans = [
+            _session_span_ns(sessions[m]) for m in (sid, *children.get(sid, ()))
+        ]
+        spans[sid] = (
+            min(s for s, _ in member_spans),
+            max(e for _, e in member_spans),
+        )
+
+    groups: list[_LaneGroup] = []
+    for root_sid, slot in _assign_slots(spans):
+        depths, root_rows = _turn_depths(sessions[root_sid])
+        members = [
+            _SessionLayout(
+                root_sid, _is_sub_session(sessions[root_sid]), 0, root_rows, depths
+            )
+        ]
+        kids = sorted(
+            children.get(root_sid, ()),
+            key=lambda k: _session_span_ns(sessions[k])[0],
+        )
+        row_ends: list[int] = []
+        for kid in kids:
+            kid_depths, kid_rows = _turn_depths(sessions[kid])
+            start, end = _session_span_ns(sessions[kid])
+            # first-fit: lowest child row window where every row retired before
+            # this subagent starts (rows past the end of the list are free)
+            for row in range(len(row_ends) + 1):
+                if all(
+                    row_ends[row + j] <= start
+                    for j in range(kid_rows)
+                    if row + j < len(row_ends)
+                ):
+                    break
+            row_ends.extend([0] * (row + kid_rows - len(row_ends)))
+            for j in range(kid_rows):
+                row_ends[row + j] = end
+            members.append(
+                _SessionLayout(kid, True, root_rows + row, kid_rows, kid_depths)
+            )
+        groups.append(
+            _LaneGroup(
+                root_sid, slot, root_rows + len(row_ends), spans[root_sid], members
+            )
+        )
+    return groups
 
 
 def _load_bench_config(run_dir: Path) -> tuple[float | None, float | None]:
@@ -226,9 +362,11 @@ def plot_swim_lane(
 ) -> Path:
     """Render a swim-lane PNG for ``run_dir``. Returns the output path.
 
-    When ``concurrency`` is given, the bottom panel draws a horizontal
-    target-concurrency reference line at that value. ``ramp`` overrides the
-    ramp duration read from ``profile_export_aiperf.json``.
+    Subagent sessions render inline as child tiers below their root session's
+    lane rather than occupying their own slots. When ``concurrency`` is given,
+    the bottom panel draws a horizontal target-concurrency reference line at
+    that value. ``ramp`` overrides the ramp duration read from
+    ``profile_export_aiperf.json``.
     """
     jsonl_path = run_dir / PROFILE_JSONL
     if not jsonl_path.is_file():
@@ -239,7 +377,7 @@ def plot_swim_lane(
         raise SwimLaneError(f"no valid records in {jsonl_path}")
 
     sessions = _group_into_sessions(records)
-    assignments = _assign_slots(sessions)
+    groups = _layout_groups(sessions)
     ramp_dur_s, bench_dur_s = _load_bench_config(run_dir)
     if ramp is not None:
         ramp_dur_s = ramp
@@ -258,56 +396,29 @@ def plot_swim_lane(
             for t in turns
         )
     )
-    n_slots = max(slot for _, slot in assignments) + 1
+    n_slots = max(g.slot for g in groups) + 1
 
     cmap = plt.colormaps["tab20"]
-    session_color = {
-        conv_id: cmap(i % 20) for i, (conv_id, _) in enumerate(assignments)
-    }
+    lane_color = {g.root_sid: cmap(i % 20) for i, g in enumerate(groups)}
 
-    bars: list[
-        tuple[
-            str,
-            int,
-            list[tuple[float, float, int]],
-            list[tuple[float, float]],
-            int,
-        ]
-    ] = []
-    for conv_id, slot in assignments:
-        turns = sessions[conv_id]
-        depths, n_rows = _turn_depths(turns)
-        active: list[tuple[float, float, int]] = []
-        for turn, depth in zip(turns, depths, strict=True):
-            rs = (turn["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
-            re = (turn["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
-            active.append((rs, re - rs, depth))
-        merged = _merged_active_ns(turns)
-        idle = [
-            (
-                (prev_end - t0_ns) / NANOS_PER_SECOND,
-                (start - prev_end) / NANOS_PER_SECOND,
-            )
-            for (_, prev_end), (start, _) in zip(merged, merged[1:], strict=False)
-        ]
-        bars.append((conv_id, slot, active, idle, n_rows))
-
-    slot_session_starts: dict[int, list[float]] = defaultdict(list)
-    for conv_id, slot in assignments:
-        first = (_session_span_ns(sessions[conv_id])[0] - t0_ns) / NANOS_PER_SECOND
-        slot_session_starts[slot].append(first)
+    slot_lane_starts: dict[int, list[float]] = defaultdict(list)
+    for g in groups:
+        slot_lane_starts[g.slot].append((g.span_ns[0] - t0_ns) / NANOS_PER_SECOND)
     reuse_markers = [
-        (slot, s) for slot, starts in slot_session_starts.items() for s in starts[1:]
+        (slot, s)
+        for slot, starts in slot_lane_starts.items()
+        for s in sorted(starts)[1:]
     ]
 
     active_ts, active_vals, idle_ts, idle_vals = _concurrency_curves(
         sessions, len(records), t0_ns
     )
 
-    # each slot expands to one full-size sub-lane per concurrently-running turn
+    # each slot expands to one full-size sub-lane per concurrently-running turn,
+    # plus one child tier per concurrently-running subagent session
     slot_rows = [1] * n_slots
-    for _, slot, _, _, n_rows in bars:
-        slot_rows[slot] = max(slot_rows[slot], n_rows)
+    for g in groups:
+        slot_rows[g.slot] = max(slot_rows[g.slot], g.rows)
     slot_offset = [0] * n_slots
     for s in range(1, n_slots):
         slot_offset[s] = slot_offset[s - 1] + slot_rows[s - 1]
@@ -325,11 +436,10 @@ def plot_swim_lane(
     )
 
     slot_spans: dict[int, list[tuple[float, float]]] = defaultdict(list)
-    for conv_id, slot in assignments:
-        start_ns, end_ns = _session_span_ns(sessions[conv_id])
-        s = (start_ns - t0_ns) / NANOS_PER_SECOND
-        e = (end_ns - t0_ns) / NANOS_PER_SECOND
-        slot_spans[slot].append((s, e))
+    for g in groups:
+        s = (g.span_ns[0] - t0_ns) / NANOS_PER_SECOND
+        e = (g.span_ns[1] - t0_ns) / NANOS_PER_SECOND
+        slot_spans[g.slot].append((s, e))
 
     for slot in range(n_slots):
         slot_center = slot_offset[slot] + (slot_rows[slot] - 1) / 2
@@ -357,32 +467,39 @@ def plot_swim_lane(
                 linewidth=0,
             )
 
-    for conv_id, slot, active, idle, _n_rows in bars:
-        color = session_color[conv_id]
-        idle_color = (*color[:3], 0.25)
-        slot_center = slot_offset[slot] + (slot_rows[slot] - 1) / 2
-        slot_height = slot_rows[slot] - (1 - bar_height)
-        for left, width in idle:
-            ax_swim.barh(
-                slot_center,
-                width,
-                left=left,
-                height=slot_height,
-                color=idle_color,
-                edgecolor="none",
-                linewidth=0,
-            )
-        # parallel turns occupy their own full-size sub-lane within the slot
-        for left, width, depth in active:
-            ax_swim.barh(
-                slot_offset[slot] + depth,
-                width,
-                left=left,
-                height=bar_height,
-                color=color,
-                edgecolor="none",
-                linewidth=0,
-            )
+    for g in groups:
+        color = lane_color[g.root_sid]
+        for m in g.members:
+            turns = sessions[m.sid]
+            row_base = slot_offset[g.slot] + m.row0
+            idle_color = (*color[:3], 0.15 if m.is_sub else 0.25)
+            merged = _merged_active_ns(turns)
+            # idle bands span only this session's own rows within the lane
+            for (_, prev_end), (start, _) in zip(merged, merged[1:], strict=False):
+                ax_swim.barh(
+                    row_base + (m.rows - 1) / 2,
+                    (start - prev_end) / NANOS_PER_SECOND,
+                    left=(prev_end - t0_ns) / NANOS_PER_SECOND,
+                    height=m.rows - (1 - bar_height),
+                    color=idle_color,
+                    edgecolor="none",
+                    linewidth=0,
+                )
+            # parallel turns occupy their own full-size sub-lane within the slot;
+            # subagent turns render lighter in their child tier
+            bar_color = (*color[:3], 0.55) if m.is_sub else color
+            for turn, depth in zip(turns, m.depths, strict=True):
+                rs = (turn["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
+                re = (turn["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
+                ax_swim.barh(
+                    row_base + depth,
+                    re - rs,
+                    left=rs,
+                    height=bar_height,
+                    color=bar_color,
+                    edgecolor="none",
+                    linewidth=0,
+                )
 
     for slot, x in reuse_markers:
         ax_swim.plot(
@@ -402,11 +519,17 @@ def plot_swim_lane(
                 slot_offset[slot] - 0.5, color="#999999", linewidth=0.4, alpha=0.6
             )
 
+    n_sub = sum(1 for turns in sessions.values() if _is_sub_session(turns))
+    session_counts = (
+        f"{len(sessions) - n_sub} sessions + {n_sub} subagents"
+        if n_sub
+        else f"{len(sessions)} sessions"
+    )
     ax_swim.set_xlim(0, max(t_max_s * 1.01, 1.0))
     ax_swim.set_ylim(-0.5, total_rows - 0.5)
     ax_swim.set_ylabel("Session Slot", fontsize=12)
     ax_swim.set_title(
-        f"{run_dir.name}  —  {len(sessions)} sessions across {n_slots} slots",
+        f"{run_dir.name}  —  {session_counts} across {n_slots} slots",
         fontsize=13,
         fontweight="bold",
         pad=30,
@@ -419,18 +542,22 @@ def plot_swim_lane(
     ax_swim.grid(axis="x", alpha=0.3, linewidth=0.5)
 
     legend_color = cmap(0)
+    legend_handles = [
+        mpatches.Patch(color=legend_color, label="Active request"),
+        *(
+            [mpatches.Patch(color=(*legend_color[:3], 0.55), label="Subagent request")]
+            if n_sub
+            else []
+        ),
+        mpatches.Patch(color=(*legend_color[:3], 0.25), label="Inter-turn delay"),
+        plt.Line2D([0], [0], color="black", linewidth=1.5, label="New session in slot"),
+    ]
     ax_swim.legend(
-        handles=[
-            mpatches.Patch(color=legend_color, label="Active request"),
-            mpatches.Patch(color=(*legend_color[:3], 0.25), label="Inter-turn delay"),
-            plt.Line2D(
-                [0], [0], color="black", linewidth=1.5, label="New session in slot"
-            ),
-        ],
+        handles=legend_handles,
         loc="lower center",
         bbox_to_anchor=(0.5, 1.0),
         fontsize=9,
-        ncol=3,
+        ncol=len(legend_handles),
         frameon=False,
     )
 
@@ -550,7 +677,7 @@ def _agent_peaks(sessions: dict[str, list[dict]]) -> dict[str, int]:
     turn_ivs: dict[bool, list[tuple[int, int]]] = {False: [], True: []}
     span_ivs: dict[bool, list[tuple[int, int]]] = {False: [], True: []}
     for turns in sessions.values():
-        is_sub = any((t["metadata"].get("agent_depth") or 0) > 0 for t in turns)
+        is_sub = _is_sub_session(turns)
         span_ivs[is_sub].append(_session_span_ns(turns))
         for t in turns:
             turn_ivs[is_sub].append(
@@ -574,6 +701,7 @@ def write_swim_lane_html(
 
     Embeds a compact JSON payload (sessions, per-turn metrics, concurrency
     sweep curves) into the canvas-based viewer template next to this module.
+    Subagent sessions tier inline below their root session's lane.
     ``ramp`` overrides the ramp duration read from ``profile_export_aiperf.json``.
     Returns the output path.
     """
@@ -585,8 +713,7 @@ def write_swim_lane_html(
         raise SwimLaneError(f"no valid records in {jsonl_path}")
 
     sessions = _group_into_sessions(records)
-    assignments = _assign_slots(sessions)
-    slot_of = dict(assignments)
+    groups = _layout_groups(sessions)
     ramp_dur_s, bench_dur_s = _load_bench_config(run_dir)
     if ramp is not None:
         ramp_dur_s = ramp
@@ -602,53 +729,58 @@ def write_swim_lane_html(
     )
 
     session_payload = []
-    for conv_id, slot in assignments:
-        session = sessions[conv_id]
-        depths, n_rows = _turn_depths(session)
-        turns = []
-        for r, depth in zip(session, depths, strict=True):
-            start_s = (r["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
-            end_s = (r["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
-            ttft = _metric_value(r, "time_to_first_token")
-            latency = _metric_value(r, "request_latency")
-            isl = _metric_value(r, "input_sequence_length")
-            osl = _metric_value(r, "output_sequence_length")
-            turns.append(
+    for ci, g in enumerate(groups):
+        for m in g.members:
+            session = sessions[m.sid]
+            turns = []
+            for r, depth in zip(session, m.depths, strict=True):
+                start_s = (r["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
+                end_s = (r["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
+                ttft = _metric_value(r, "time_to_first_token")
+                latency = _metric_value(r, "request_latency")
+                isl = _metric_value(r, "input_sequence_length")
+                osl = _metric_value(r, "output_sequence_length")
+                turns.append(
+                    [
+                        round(start_s, 4),
+                        round(end_s, 4),
+                        round(ttft, 1) if ttft is not None else None,
+                        round(latency, 1) if latency is not None else None,
+                        int(isl) if isl is not None else None,
+                        int(osl) if osl is not None else None,
+                        depth,
+                        r["metadata"].get("agent_depth"),
+                    ]
+                )
+            merged = _merged_active_ns(session)
+            gaps = [
                 [
-                    round(start_s, 4),
-                    round(end_s, 4),
-                    round(ttft, 1) if ttft is not None else None,
-                    round(latency, 1) if latency is not None else None,
-                    int(isl) if isl is not None else None,
-                    int(osl) if osl is not None else None,
-                    depth,
-                    r["metadata"].get("agent_depth"),
+                    round((prev_end - t0_ns) / NANOS_PER_SECOND, 4),
+                    round((start - t0_ns) / NANOS_PER_SECOND, 4),
                 ]
-            )
-        merged = _merged_active_ns(session)
-        gaps = [
-            [
-                round((prev_end - t0_ns) / NANOS_PER_SECOND, 4),
-                round((start - t0_ns) / NANOS_PER_SECOND, 4),
+                for (_, prev_end), (start, _) in zip(merged, merged[1:], strict=False)
             ]
-            for (_, prev_end), (start, _) in zip(merged, merged[1:], strict=False)
-        ]
-        session_payload.append(
-            {
-                "id": conv_id,
+            entry = {
+                "id": m.sid,
                 "conv": session[0]["metadata"]["conversation_id"],
-                "slot": slot,
-                "rows": n_rows,
+                "slot": g.slot,
+                "ci": ci,
+                "row0": m.row0,
+                "rows": m.rows,
                 "turns": turns,
                 "gaps": gaps,
             }
-        )
+            if m.is_sub:
+                entry["sub"] = True
+            if m.sid != g.root_sid:
+                entry["root"] = g.root_sid
+            session_payload.append(entry)
 
     t_max_s = max(turn[1] for s in session_payload for turn in s["turns"])
     payload = {
         "run": run_dir.name,
         "tMax": round(t_max_s, 4),
-        "nSlots": max(slot_of.values()) + 1,
+        "nSlots": max(g.slot for g in groups) + 1,
         "target": concurrency,
         "rampS": ramp_dur_s,
         "benchEnd": bench_dur_s,
