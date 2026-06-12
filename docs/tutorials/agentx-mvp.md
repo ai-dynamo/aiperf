@@ -69,8 +69,6 @@ uv run aiperf profile \
     --streaming \
     --use-server-token-count \
     --public-dataset semianalysis_cc_traces_weka_with_subagents \
-    --num-dataset-entries 391 \
-    --benchmark-duration 900 \
     --concurrency 32 \
     --ui simple
 ```
@@ -90,8 +88,10 @@ That's the whole thing. A few notes:
 - **`--max-context-length 128_000`** drops traces whose peak input length exceeds
   128k tokens before replay. This should match the maximum context your server
   is configured to accept.
-- **`--benchmark-duration 900`** is the minimum AgentX MVP allows (15 minutes).
-  Longer is fine. AIPerf will reject anything shorter.
+- **`--benchmark-duration`** defaults to 1800 seconds (30 minutes) under the
+  scenario when you don't pass it. You can set it explicitly; 900 seconds
+  (15 minutes) is the minimum AgentX MVP allows and AIPerf will reject
+  anything shorter.
 - **`--concurrency`** is up to you and reflects the load you want to sustain,
   but it must be a single integer under `--scenario`; comma-list sweeps are
   rejected. 32 is a reasonable starting point.
@@ -104,12 +104,11 @@ That's the whole thing. A few notes:
   `--num-profile-runs >= 2`, the aggregate file). With a single run you still
   get the validity stamp on the per-run file; multi-run adds the aggregate. See
   [Reading the Result](#reading-the-result-submission_valid) below.
-- **`--num-dataset-entries 391`** loads the full pinned with-subagents corpus.
-  Without this flag, the loader caps at the AIPerf default of 100 rows and
-  you'll benchmark against a 100-trace subset (the loader logs the loaded and
-  total trace counts at INFO so you can spot it). For a canonical AgentX MVP
-  submission, use 391. Passing a value larger than the corpus size simply loads
-  all available traces (logged at INFO as `Loading 391/391 traces`).
+- **`--num-dataset-entries`** is optional for Weka corpus loaders. When omitted,
+  the loader automatically loads the full corpus (391 traces for the pinned
+  with-subagents corpus) and logs `Loading all 391 traces` at INFO. Pass an
+  explicit value only if you intentionally want a subset — the loader will log
+  `Loading N/391 traces` so you can see the cap in effect.
 
 You don't need to pass `--ignore-trace-delays`,
 `--trace-idle-gap-cap-seconds=60`, `--fixed-schedule`, or anything related to
@@ -160,11 +159,11 @@ flag.
 | `--trace-idle-gap-cap-seconds = 60` | Gaps between recorded request starts over 60s are compressed to 60s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
 | `--cache-bust first_turn_prefix` | Inject a unique per-conversation marker at the start of the first user turn for every play | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. Auto-injected when you don't pass `--cache-bust` yourself. |
 | Loader is `semianalysis_cc_traces_weka_with_subagents`, `weka_trace`, or constrained `weka_hf` | The dataset is the public `semianalysisai/cc-traces-weka-with-subagents-060826` HF dataset (via `--public-dataset semianalysis_cc_traces_weka_with_subagents`), a local compatible Weka-format corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; under the scenario, pass the explicit type so the scenario validator sees `detected_loader=weka_trace` before dataset auto-detection runs), or generic `--public-dataset weka_hf` only when paired with `--hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-060826`. These paths produce byte-identical conversations when given the same source rows — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against exact, hash-verifiable corpora so submissions are reproducible. |
-| `--benchmark-duration ≥ 900` | The run lasts at least 15 minutes | Steady-state needs time to stabilize; short runs are noise. |
+| `--benchmark-duration ≥ 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; omitted, it runs for 30 | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` is rejected (it drops traces whose input length exceeds the cap, falsifying the workload) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
 
-If you forgot to pass `ignore_eos`, `--cache-bust`, or `--random-seed`, AIPerf injects the locked value and tells you at INFO log level. The same goes for `--trace-idle-gap-cap-seconds` when you didn't set it explicitly. If you did pass one of these explicitly with a value that conflicts with the scenario, AIPerf errors with all the violations listed at once — you don't have to fix them one at a time.
+If you forgot to pass `ignore_eos`, `--cache-bust`, or `--random-seed`, AIPerf injects the locked value and tells you at INFO log level. The same goes for `--trace-idle-gap-cap-seconds` and `--benchmark-duration` (1800s default) when you didn't set them explicitly. If you did pass one of these explicitly with a value that conflicts with the scenario, AIPerf errors with all the violations listed at once — you don't have to fix them one at a time.
 
 ---
 
@@ -227,9 +226,9 @@ active trajectory lanes. It uses distinct conversations when enough usable
 traces exist; if the usable pool is smaller than the requested concurrency,
 it wrap-fills the remaining lanes by cycling through the usable traces with
 deterministic per-lane start positions. For each lane, it samples a random
-"starting turn" `k_i` somewhere in roughly the first 70% of that
-conversation's turns (clamped to leave at least one profile turn after
-warmup). Then, in the warmup phase, it dispatches the warmup turn(s) per lane:
+"starting turn" `k_i` somewhere between 25% and 75% of that conversation's
+turns (the default `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio`
+window, clamped to leave at least one profile turn after warmup). Then, in the warmup phase, it dispatches the warmup turn(s) per lane:
 turn `k_i` for simple (non-subagent) trajectories, with the full prefix history
 (turns 0 through `k_i-1`) attached as message context. Lanes with live subagent
 branches at `k_i` may dispatch one warmup credit per ready branch.
