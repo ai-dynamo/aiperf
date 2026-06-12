@@ -808,15 +808,15 @@ Abort the run early when (failed_records / total_records) exceeds this ratio. De
 
 #### `--trajectory-start-min-ratio` `<float>`
 
-AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed. Default 0.0 keeps the prior behavior where every trajectory could start at turn 0.
+AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
-<br/>_Default: `0.0`_
+<br/>_Default: `0.25`_
 
 #### `--trajectory-start-max-ratio` `<float>`
 
-AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup. Default 0.7 preserves the previously hardcoded value.
+AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
-<br/>_Default: `0.7`_
+<br/>_Default: `0.75`_
 
 #### `--concurrency` `<str>`
 

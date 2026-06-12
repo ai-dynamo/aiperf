@@ -189,13 +189,13 @@ def test_benchmark_duration_zero_violates() -> None:
     assert any(v.flag == "--benchmark-duration" for v in exc_info.value.violations)
 
 
-def test_benchmark_duration_none_violates() -> None:
-    """`None` benchmark_duration short-circuits via `or 0.0` and falls below
-    the 900s floor, producing a violation rather than passing silently."""
+def test_benchmark_duration_none_auto_fills_scenario_default() -> None:
+    """`None` benchmark_duration is auto-filled from the scenario's
+    default_benchmark_duration_seconds (1800) instead of violating."""
     cfg = _user_config(extra_inputs={"ignore_eos": True}, benchmark_duration=None)
-    with pytest.raises(ScenarioLockError) as exc_info:
-        validate_scenario(cfg)
-    assert any(v.flag == "--benchmark-duration" for v in exc_info.value.violations)
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert cfg.loadgen.benchmark_duration == 1800.0
 
 
 # ---------------------------------------------------------------------------
