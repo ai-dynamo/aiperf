@@ -107,8 +107,12 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
 
     def _validate_rows(self, ds: Any) -> dict[str, list[WekaTrace]]:
         total_rows = len(ds)
+        explicit_cap = (
+            "num_dataset_entries"
+            in self.user_config.input.conversation.model_fields_set
+        )
         cap = self.user_config.input.conversation.num_dataset_entries
-        n_rows = min(cap, total_rows)
+        n_rows = min(cap, total_rows) if explicit_cap else total_rows
         if n_rows < total_rows:
             ds = ds.select(range(n_rows))
             self.info(
