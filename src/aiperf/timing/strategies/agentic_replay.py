@@ -265,9 +265,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """Resume each trajectory at ``k_i + 1`` to seed the steady state.
 
         All trajectories are dispatched concurrently so the full concurrency
-        target is reached immediately rather than serializing over N credit
-        round-trips. Subsequent turns and recycle-pool sessions are dispatched
-        from handle_credit_return.
+        target is reached as fast as slot limits allow, rather than
+        serializing over N credit round-trips. Subsequent turns and
+        recycle-pool sessions are dispatched from handle_credit_return.
         """
         self.info(
             f"PROFILING execute: resuming {len(self.conversation_source.trajectories)} "
@@ -279,7 +279,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # unreachable by the phase runner's cancellation.
         results = await asyncio.gather(
             *(
-                self._dispatch_one_profiling_trajectory(lane, trajectory)
+                self._dispatch_one_profiling_trajectory(trajectory, lane)
                 for lane, trajectory in enumerate(self.conversation_source.trajectories)
             ),
             return_exceptions=True,
@@ -299,8 +299,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             raise first_error
 
     async def _dispatch_one_profiling_trajectory(
-        self, lane: int, trajectory: Trajectory
+        self, trajectory: Trajectory, lane: int
     ) -> None:
+        """Dispatch one lane's initial PROFILING credit (run under gather)."""
         if trajectory.snapshot is not None:
             await self._dispatch_snapshot_for_profiling(trajectory, lane)
             return
@@ -318,9 +319,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             # Trajectory's k_i was already the last turn (rare: happens
             # only for very short traces). Skip directly to recycle.
             self.debug(
-                lambda cid=trajectory.conversation_id,
-                k=trajectory.start_turn_index,
-                n=num_turns: f"Trajectory {cid} k_i={k} >= last turn (n={n}); recycling immediately"
+                lambda: (
+                    f"Trajectory {trajectory.conversation_id} "
+                    f"k_i={trajectory.start_turn_index} >= last turn "
+                    f"(n={num_turns}); recycling immediately"
+                )
             )
             await self._spawn_from_recycle_or_id(
                 trajectory.conversation_id,

@@ -624,34 +624,21 @@ async def test_profiling_snapshot_recycles_root_after_terminal_warmup():
 async def test_terminal_root_snapshot_recycles_are_concurrent_not_serial():
     """Regression: terminal-root recycles must not serialize profiling startup.
 
-    Commit f47bd5537e introduced `await _spawn_from_recycle_or_id(...)` inside
-    the per-trajectory loop in _dispatch_snapshot_for_profiling. With N terminal-
-    root trajectories this blocked the Kth dispatch until the (K-1)th recycle
-    completed, causing all 256 sessions to trickle in over ~54 s instead of
-    bursting at t=0 on a real cluster.
+    Commit f47bd5537e introduced an awaited recycle per trajectory in the
+    startup dispatch loop. With N terminal-root trajectories this blocked the
+    Kth dispatch until the (K-1)th recycle completed, causing all 256 sessions
+    to trickle in over ~54 s instead of bursting at t=0 on a real cluster.
     """
     N = 3
     # N single-turn traces become terminal roots: snapshot root is at turn 0
     # (the only turn), so _snapshot_continuation_after_warmup drops the state
     # (resume_index=1 >= len(turns)=1) and it lands in terminal_roots.
-    # Extra traces give the recycle queue enough depth for N concurrent pops.
-    conversations = [
-        ConversationMetadata(
-            conversation_id=f"trace_{i}",
-            turns=[TurnMetadata(timestamp_ms=float(i * 1000))],
-        )
-        for i in range(N * 2)
-    ]
-    ds = DatasetMetadata(
-        conversations=conversations,
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
     trajectories = [
         Trajectory(
             conversation_id=f"trace_{i}",
             start_turn_index=0,
             snapshot=TrajectorySnapshot(
-                t_star_ms=float(i * 1000),
+                t_star_ms=0.0,
                 states=(
                     ConversationState(
                         conversation_id=f"trace_{i}",
@@ -664,44 +651,29 @@ async def test_terminal_root_snapshot_recycles_are_concurrent_not_serial():
         for i in range(N)
     ]
 
-    src = TrajectorySource.__new__(TrajectorySource)
-    src._dataset_metadata = ds
-    src._dataset_sampler = MagicMock()
-    src._metadata_lookup = {c.conversation_id: c for c in conversations}
-    src._random_seed = 0
-    src._target_size = N
-    src.trajectories = trajectories
-
-    # Gate that blocks each recycled credit until we release it.
-    # in_flight tracks how many issue_credit calls are simultaneously blocked
-    # at the gate — if serial only 1 is ever in-flight, if concurrent all N are.
+    # Gate that blocks each recycled credit until we release it. in_flight
+    # counts issue_credit calls simultaneously blocked at the gate - if
+    # serial only 1 is ever in-flight, if concurrent all N are.
     gate = asyncio.Event()
     in_flight = 0
-    max_in_flight = 0
+    captured: list = []
 
     async def gated_issue_credit(turn):
-        nonlocal in_flight, max_in_flight
+        nonlocal in_flight
         in_flight += 1
-        max_in_flight = max(max_in_flight, in_flight)
+        captured.append(turn)
         await gate.wait()
         in_flight -= 1
         return True
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = gated_issue_credit
-    stop_checker = MagicMock()
-    stop_checker.can_start_new_session.return_value = True
-    cfg = MagicMock()
-    cfg.phase = CreditPhase.PROFILING
-    cfg.concurrency = N
-
-    strategy = AgenticReplayStrategy(
-        config=cfg,
-        conversation_source=src,
-        scheduler=MagicMock(),
-        stop_checker=stop_checker,
-        credit_issuer=issuer,
-        lifecycle=MagicMock(),
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=N,
+        turns_per_trace=1,
+        issuer=issuer,
     )
 
     await strategy.setup_phase()
@@ -715,12 +687,63 @@ async def test_terminal_root_snapshot_recycles_are_concurrent_not_serial():
 
     concurrent_at_gate = in_flight
     gate.set()
-    await task
+    await asyncio.wait_for(task, timeout=5.0)
 
     assert concurrent_at_gate == N, (
         f"Expected {N} recycled credits in-flight simultaneously at profiling "
         f"startup, but only {concurrent_at_gate} were. Terminal-root recycles "
         "appear to be dispatched serially, blocking the startup loop."
+    )
+    # Exactly one recycled turn-0 session per lane, each a distinct session -
+    # N-at-the-gate must not be satisfiable by the wrong N credits.
+    assert issuer.issue_credit.await_count == N
+    assert all(turn.turn_index == 0 for turn in captured)
+    assert len({turn.x_correlation_id for turn in captured}) == N
+
+
+@pytest.mark.asyncio
+async def test_plain_trajectory_resumes_are_concurrent_not_serial():
+    """The k_i+1 resume path (timestamp-less trajectories) must burst at t=0.
+
+    Companion to the terminal-root regression test: a refactor that
+    re-serializes only the snapshot-less resume dispatch would otherwise
+    ship green.
+    """
+    N = 3
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(N)
+    ]
+    gate = asyncio.Event()
+    in_flight = 0
+
+    async def gated_issue_credit(turn):
+        nonlocal in_flight
+        in_flight += 1
+        await gate.wait()
+        in_flight -= 1
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = gated_issue_credit
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=N,
+        turns_per_trace=4,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    task = asyncio.create_task(strategy.execute_phase())
+    for _ in range(N + 4):
+        await asyncio.sleep(0)
+
+    concurrent_at_gate = in_flight
+    gate.set()
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert concurrent_at_gate == N, (
+        f"Expected {N} resume credits in-flight simultaneously at profiling "
+        f"startup, but only {concurrent_at_gate} were."
     )
 
 
