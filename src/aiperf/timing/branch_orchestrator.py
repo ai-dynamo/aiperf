@@ -258,6 +258,12 @@ class BranchOrchestrator:
         # early when one branch completes before another branch's spawning
         # turn has been reached.
         self._gated_turn_prereq_keys: dict[tuple[str, int], set[str]] = {}
+        # (conv_id, gated_turn_idx, prereq_key) -> spawning turn index.
+        # Snapshot seeding consults this to tell prereqs whose spawning turn
+        # already fired before t* (their children either appear live in the
+        # snapshot or completed entirely pre-t*) apart from prereqs whose
+        # spawning turn will fire during replay.
+        self._prereq_spawning_turn: dict[tuple[str, int, str], int] = {}
         # Defense-in-depth duplicate detection against future loaders that
         # bypass ``validate_for_orchestrator_v1``. A given
         # ``(branch_id, gated_turn_idx)`` tuple must not appear twice — that
@@ -294,6 +300,9 @@ class BranchOrchestrator:
                     self._gated_turn_prereq_keys.setdefault(
                         (conv.conversation_id, gated_idx), set()
                     ).add(prereq_key)
+                    self._prereq_spawning_turn[
+                        (conv.conversation_id, gated_idx, prereq_key)
+                    ] = spawning_idx
 
     def get_branch_ids(self, credit) -> list[str]:
         """Look up the completed turn's ``branch_ids`` from metadata.
@@ -514,7 +523,19 @@ class BranchOrchestrator:
         for prereq_key in self._gated_turn_prereq_keys.get(
             (parent_state.conversation_id, gated_idx), set()
         ):
-            pending.outstanding[prereq_key] = PrereqState()
+            state = PrereqState()
+            spawning_idx = self._prereq_spawning_turn.get(
+                (parent_state.conversation_id, gated_idx, prereq_key)
+            )
+            if spawning_idx is not None and spawning_idx < parent_state.next_turn_index:
+                # The spawning turn fired before t* and will never replay.
+                # Children still alive at t* re-register with expected
+                # counts during this same seeding pass; a branch with no
+                # live children completed entirely pre-t* and must seed as
+                # satisfied, or the gate is permanently unsatisfiable and
+                # the parent lane silently wedges for the whole phase.
+                state.registered = True
+            pending.outstanding[prereq_key] = state
 
         if (
             parent_state.waiting_on_children
