@@ -1426,19 +1426,6 @@ def test_flattened_fanout_per_chain_delays():
     assert root.turns[2].delay == pytest.approx(3000.0)
 
 
-def test_flattened_fanout_observed_prefix_becomes_system_segment():
-    loader = _fanout_loader()
-    convs = {
-        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
-    }
-    # Observed prefix = 2 blocks -> turn 0 of root and workers opens with a
-    # system segment of exactly 2 * 64 decoded tokens.
-    for sid in ("trace_fanout", "trace_fanout::fa:000", "trace_fanout::fa:001"):
-        msgs = convs[sid].turns[0].raw_messages
-        assert msgs[0]["role"] == "system", sid
-        assert msgs[0]["content"] == "<dec:128>", sid
-
-
 def test_flattened_fanout_shares_decode_scope_with_root():
     """Worker chains decode under the trace scope, never their own."""
     loader = _fanout_loader()
@@ -1473,3 +1460,25 @@ def test_flattened_fanout_logs_detection_summary(caplog):
     text = caplog.text
     assert "detected 3 agents" in text
     assert "split 1 trace(s) into 2 extra agent chain(s)" in text
+
+
+def test_flattened_fanout_zero_declared_emits_no_fabricated_system_role():
+    """The system role comes ONLY from declared header counts. The fanout
+    fixture declares tool_tokens=0/system_tokens=0, so no message may carry
+    a fabricated system role; the shared observed prefix lives inside the
+    user content (byte-sharing is content-based, not role-based)."""
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    for sid, conv in convs.items():
+        for k, turn in enumerate(conv.turns):
+            roles = [m["role"] for m in turn.raw_messages]
+            assert "system" not in roles, (sid, k, roles)
+    # Turn 0 of every conversation is one user message with the full input.
+    assert [m["role"] for m in convs["trace_fanout"].turns[0].raw_messages] == ["user"]
+    assert convs["trace_fanout"].turns[0].raw_messages[0]["content"] == "<dec:192>"
+    for wid, total in (("trace_fanout::fa:000", 256), ("trace_fanout::fa:001", 256)):
+        msgs = convs[wid].turns[0].raw_messages
+        assert [m["role"] for m in msgs] == ["user"], wid
+        assert msgs[0]["content"] == f"<dec:{total}>", wid

@@ -147,10 +147,6 @@ class _WekaParentPayload(TypedDict):
     subagents: list[tuple[int, _WekaSubagentMarkerPayload]]
     tool_tokens: int
     system_tokens: int
-    # Turn-0 override when the observed namespace-group prefix beats the
-    # declared tool/system tokens (spec §5.4 "keep the longer one").
-    init_tool_tokens: NotRequired[int]
-    init_system_tokens: NotRequired[int]
     flat_markers: NotRequired[list[_WekaFlatChainMarkerPayload]]
 
 
@@ -362,8 +358,8 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             parent_recon.init_turn_0(
                 hash_ids=req["hash_ids"],
                 in_tokens=req["input_length"],
-                tool_tokens=parent.get("init_tool_tokens", parent["tool_tokens"]),
-                system_tokens=parent.get("init_system_tokens", parent["system_tokens"]),
+                tool_tokens=parent["tool_tokens"],
+                system_tokens=parent["system_tokens"],
                 seed=seed,
             )
         else:

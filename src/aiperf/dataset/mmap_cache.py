@@ -74,7 +74,13 @@ _logger = AIPerfLogger(__name__)
 # scope, so shared blocks decode to different tokens than v5 produced).
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
-MANIFEST_VERSION = 7
+MANIFEST_VERSION = (
+    # v8: the system role is never fabricated from the observed
+    # namespace-group prefix -- 0/0-declared traces and non-covered worker
+    # chains now bake all-user turn 0s (role boundaries changed for
+    # existing keys).
+    8
+)
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
