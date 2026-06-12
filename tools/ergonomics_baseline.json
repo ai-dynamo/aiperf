@@ -1154,6 +1154,11 @@
     [
       "function-size",
       "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._log_trajectory_summary"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/trajectory_source.py",
       "TrajectorySource._snapshot_for"
     ],
     [
