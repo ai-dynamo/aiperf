@@ -451,6 +451,139 @@ def _reset_trace(trace_id: str) -> dict:
     }
 
 
+def _mk_recon(tool_shaped: bool = True):
+    from aiperf.dataset.loader.weka_synth_buf import ConversationReconstructor
+
+    bs = 16
+
+    def decode_block_tokens(hash_ids):
+        out = []
+        for h in hash_ids:
+            out.extend(range(h * 1000, h * 1000 + bs))
+        return out
+
+    def sample_partial_tail_tokens(n, seed):
+        return list(range(900_000, 900_000 + n))
+
+    return ConversationReconstructor(
+        block_size=bs,
+        decode_block_tokens=decode_block_tokens,
+        sample_partial_tail_tokens=sample_partial_tail_tokens,
+        decode_tokens_to_text=lambda toks: f"<dec:{len(toks)}>",
+        tool_shaped_messages=tool_shaped,
+    )
+
+
+def test_unpaired_tool_turn_stays_plain_across_reset_reemit():
+    """A tool-result turn whose pairing assistant was NOT in its first
+    emission window is sent plain. A later reset re-emission must keep it
+    plain: re-sending it as ``role: tool`` (and retroactively injecting
+    ``tool_calls`` into the already-sent assistant) changes the wire shape
+    of previously-sent context across the reset."""
+    bs = 16
+    r = _mk_recon()
+    r.init_turn_0(
+        hash_ids=[1, 2], in_tokens=2 * bs, tool_tokens=0, system_tokens=0, seed="s0"
+    )
+    r.turn_delta()
+    # Turn 1: new region exactly covers prev_out -> appends assistant only.
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=2 * bs,
+        prev_out_tokens=bs,
+        curr_hash_ids=[1, 2, 3],
+        curr_in_tokens=3 * bs,
+        seed="s1",
+    )
+    r.turn_delta()
+    # Turn 2: tool result after a zero-output response -> the whole 2-block
+    # new region becomes a marked user segment appended ALONE, directly
+    # after turn 1's assistant segment.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3],
+        prev_in_tokens=3 * bs,
+        prev_out_tokens=0,
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * bs,
+        seed="s2",
+        is_tool_result=True,
+    )
+    d2 = r.turn_delta()
+    # First emission: assistant not in the window -> plain user on the wire.
+    assert [m["role"] for m in d2.delta_messages] == ["user"]
+    # Turn 3: diverge inside the marked segment -> it survives the cut with
+    # one of its two blocks, and the disturbance forces a reset re-emit.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4, 5],
+        prev_in_tokens=5 * bs,
+        prev_out_tokens=8,
+        curr_hash_ids=[1, 2, 3, 4, 99, 100],
+        curr_in_tokens=6 * bs,
+        seed="s3",
+    )
+    d3 = r.turn_delta()
+    assert d3.reset_context is True
+    # Stability across the reset: the turn was SENT plain, so the re-emitted
+    # history must stay plain — no tool role, no retroactive tool_calls.
+    assert all(m["role"] != "tool" for m in d3.delta_messages), d3.delta_messages
+    assert all("tool_calls" not in m for m in d3.delta_messages), d3.delta_messages
+
+
+def test_paired_tool_turn_first_emitted_in_reset_window_stays_shaped():
+    """The mirror case: a tool-result turn whose FIRST emission is a reset
+    full window pairs against the surviving assistant directly before it,
+    ships shaped, and must re-emit shaped (same call id) on later resets."""
+    bs = 16
+    r = _mk_recon()
+    r.init_turn_0(
+        hash_ids=[1, 2], in_tokens=2 * bs, tool_tokens=0, system_tokens=0, seed="s0"
+    )
+    r.turn_delta()
+    # Turn 1: appends [assistant, user] (prev_out=1 block, +1 user block).
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=2 * bs,
+        prev_out_tokens=bs,
+        curr_hash_ids=[1, 2, 3, 4],
+        curr_in_tokens=4 * bs,
+        seed="s1",
+    )
+    r.turn_delta()
+    # Turn 2: tool result whose hash chain replaces turn 1's user block
+    # (diverges at block 3) -> truncation disturbs emitted context, so the
+    # FIRST emission of the marked segment is the reset full window, where
+    # it pairs with turn 1's surviving assistant.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4],
+        prev_in_tokens=4 * bs,
+        prev_out_tokens=0,
+        curr_hash_ids=[1, 2, 3, 50, 51],
+        curr_in_tokens=5 * bs,
+        seed="s2",
+        is_tool_result=True,
+    )
+    d2 = r.turn_delta()
+    assert d2.reset_context is True
+    roles2 = [m["role"] for m in d2.delta_messages]
+    assert "tool" in roles2, roles2
+    call_id = next(m for m in d2.delta_messages if m["role"] == "tool")["tool_call_id"]
+    # Turn 3: diverge inside the marked segment (it keeps 1 of 2 blocks, the
+    # pair survives) -> reset re-emit must reproduce the identical shape and
+    # call id.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 50, 51],
+        prev_in_tokens=5 * bs,
+        prev_out_tokens=0,
+        curr_hash_ids=[1, 2, 3, 50, 61, 62],
+        curr_in_tokens=6 * bs,
+        seed="s3",
+    )
+    d3 = r.turn_delta()
+    assert d3.reset_context is True
+    tools3 = [m for m in d3.delta_messages if m["role"] == "tool"]
+    assert [m["tool_call_id"] for m in tools3] == [call_id]
+
+
 def test_reset_reemit_preserves_tool_shape(tool_shaped_env, tmp_path):
     loader = _make_loader(tmp_path, _reset_trace("trace_reset"))
     convs = {

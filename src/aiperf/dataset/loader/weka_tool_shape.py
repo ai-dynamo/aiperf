@@ -13,6 +13,32 @@ the serial loader and the parallel worker.
 from __future__ import annotations
 
 
+def demote_unpaired_tool_marks(segments: list) -> None:
+    """Clear ``tool_result_turn`` marks that cannot pair in this window.
+
+    Called by the reconstructor on each emission window BEFORE shaping. A
+    marked user segment without an assistant directly before it in the window
+    ships in the plain user shape — and once sent plain it must STAY plain:
+    a later ``reset_context`` full re-emission sees the whole segment list,
+    where the same segment may sit directly after an assistant from an
+    earlier turn and would otherwise shape retroactively (re-sending already
+    transmitted context as ``role: tool`` plus a ``tool_calls`` entry the
+    assistant was never sent with). Demoting the mark at first emission makes
+    every re-emission reproduce the shape the turn was first sent with.
+
+    Idempotent: a mark that pairs in its first window keeps pairing in every
+    later full window (truncation only deletes suffixes or slices in place,
+    so adjacency and roles of surviving segments never change).
+    """
+    for i, seg in enumerate(segments):
+        if getattr(seg, "tool_result_turn", None) is None:
+            continue
+        if getattr(seg, "role", None) != "user":
+            continue
+        if i == 0 or getattr(segments[i - 1], "role", None) != "assistant":
+            seg.tool_result_turn = None
+
+
 def tool_shape_segment_messages(messages: list[dict], segments: list) -> list[dict]:
     """Shape an emitted message window from its source segments.
 

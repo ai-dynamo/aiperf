@@ -75,7 +75,13 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
-    8  # v8: tool shaping persists across reset re-emits (shaped content changed)
+    # v9: weka boundary cuts strip the trailing segment's full overhang
+    # (block-aligned segments no longer lose hash-block tokens) and tool
+    # shaping is decided at first emission (reset re-emits reproduce the
+    # shape each turn was first sent with). Both change decoded content
+    # for existing keys.
+    # v8: tool shaping persists across reset re-emits (shaped content changed)
+    9
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
