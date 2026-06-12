@@ -721,6 +721,56 @@ async def test_terminal_root_snapshot_recycles_are_concurrent_not_serial():
 
 
 @pytest.mark.asyncio
+async def test_profiling_dispatch_error_waits_for_siblings_and_reraises():
+    """One lane's dispatch failure must not detach the sibling dispatches.
+
+    execute_phase must keep ownership of every sibling lane until it settles,
+    then re-raise the failure. A bare gather would return the exception while
+    the remaining lanes keep issuing credits into a failing phase unsupervised.
+    """
+    N = 3
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(N)
+    ]
+    gate = asyncio.Event()
+    completed: list[str] = []
+
+    async def gated_issue_credit(turn):
+        if turn.conversation_id == "trace_1":
+            raise RuntimeError("lane boom")
+        await gate.wait()
+        completed.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = gated_issue_credit
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=N,
+        turns_per_trace=4,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    task = asyncio.create_task(strategy.execute_phase())
+    for _ in range(N + 4):
+        await asyncio.sleep(0)
+
+    # Lane 1 has already raised, but lanes 0 and 2 are still blocked at the
+    # gate: phase execution must still be in flight rather than finished
+    # with an exception while its siblings run detached.
+    assert not task.done(), (
+        "execute_phase finished while sibling dispatches were still in "
+        "flight - one lane's failure detached the remaining lanes"
+    )
+
+    gate.set()
+    with pytest.raises(RuntimeError, match="lane boom"):
+        await asyncio.wait_for(task, timeout=5.0)
+    assert sorted(completed) == ["trace_0", "trace_2"]
+
+
+@pytest.mark.asyncio
 async def test_profiling_skips_trajectory_at_last_turn_and_recycles():
     """If k_i is already the last turn, k_i+1 is out of range. Recycle immediately."""
     trajectories = [
