@@ -132,17 +132,18 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
         # phase), while the shared TrajectorySource keeps each sampled lane's
-        # x_correlation_id stable across the phase boundary. The MARKER text is
-        # also warmup-coherent: the digest is computed from
-        # ``(benchmark_id, recycle_pass, trajectory_index, trace_id)`` —
-        # phase-agnostic — so warmup turn k_i and profile turn k_i+1 get
-        # the same marker within the continued session. That preserves the
-        # KV-cache lineage warmup is meant to prime.
-        # trajectory_index is stable per "lane" (slot in the trajectory list)
-        # and reused on recycle, so the digest changes only across recycle
-        # passes for a given trace_id.
-        self._recycle_pass: dict[str, int] = {}
-        self._session_marker: dict[str, str | None] = {}
+        # x_correlation_id stable across the phase boundary AND carries the
+        # marker ledger across it. A session continuing into PROFILING reuses
+        # the exact marker minted for it during WARMUP (see
+        # ``_mint_marker_for_session``), so warmup turn k_i and profile turn
+        # k_i+1 share the same marker within the continued session - the
+        # KV-cache lineage warmup is meant to prime is preserved by identity,
+        # not by replaying mint order. New sessions draw from the shared
+        # ``recycle_pass`` counter, which never restarts, so a recycled
+        # session's digest can never collide with a warmed one.
+        ledger = conversation_source.cache_bust_ledger
+        self._recycle_pass: dict[str, int] = ledger.recycle_pass
+        self._session_marker: dict[str, str | None] = ledger.session_marker
         self._correlation_to_lane: dict[str, int] = {}
         self._cache_bust_target: CacheBustTarget = (
             user_config.input.prompt.cache_bust.target
@@ -679,22 +680,26 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     def _mint_marker_for_session(
         self, x_correlation_id: str, trace_id: str, trajectory_index: int
     ) -> str | None:
-        """Mint and store a per-session cache-bust marker.
+        """Mint (or reuse) and store a per-session cache-bust marker.
 
         Returns None when the feature is disabled (target=NONE), in which
         case the session map records None so callers can unconditionally
         look it up. Increments _recycle_pass[trace_id] each time a new
         session is minted for the same trace_id, so digest rotates across
-        recycles within a single phase.
+        recycles.
 
-        The strategy is constructed FRESH for each phase (per the
-        TimingStrategyProtocol contract; PhaseRunner builds a new instance for
-        WARMUP and another for PROFILING). Both phases start with empty
-        ``_recycle_pass``, so the first mint for a given trace_id in PROFILING
-        produces ``pass=0`` — matching WARMUP's pass=0 digest for the same
-        (trace_id, lane) pair. The shared ``TrajectorySource`` also preserves
-        the lane's x_correlation_id across the phase boundary.
+        Both ``_session_marker`` and ``_recycle_pass`` live on the shared
+        ``TrajectorySource`` ledger, surviving the WARMUP -> PROFILING
+        boundary (strategies are constructed fresh per phase). A session
+        whose x_correlation_id was already minted - a continuing lane
+        resuming at k_i+1 - keeps its WARMUP marker verbatim instead of
+        re-minting, so a continued session's digest can never rotate at the
+        phase boundary regardless of mint order. The pass counter never
+        restarts, so fresh sessions (recycles, parents unblocked after t*)
+        can never collide with a warmed digest.
         """
+        if x_correlation_id in self._session_marker:
+            return self._session_marker[x_correlation_id]
         if self._cache_bust_target == CacheBustTarget.NONE:
             self._session_marker[x_correlation_id] = None
             return None

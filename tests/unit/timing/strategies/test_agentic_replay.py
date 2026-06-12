@@ -725,6 +725,98 @@ async def test_terminal_root_snapshot_recycles_are_concurrent_not_serial():
 
 
 @pytest.mark.asyncio
+async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
+    """A continued session's cache-bust marker must not rotate at the boundary.
+
+    Under wrap-fill, two lanes share trace_X: lane 0's root is blocked on
+    children at t* (skipped by WARMUP dispatch) while lane 1's root is ready.
+    WARMUP therefore mints only lane 1; PROFILING mints both. Positional
+    re-minting hands lane 0 the pass=0 digest and bumps lane 1's continuing
+    session to pass=1 - the warmed KV prefix becomes unreachable for the
+    measured turns. The marker minted in WARMUP must be reused verbatim for
+    the same x_correlation_id in PROFILING.
+    """
+    ds = _make_dataset(num_traces=1, turns_per_trace=3)
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="A-root",
+                        next_turn_index=2,
+                        waiting_on_children=True,
+                        join_target_turn_index=2,
+                    ),
+                ),
+            ),
+        ),
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="B-root",
+                        next_turn_index=0,
+                    ),
+                ),
+            ),
+        ),
+    ]
+    src = _build_real_trajectory_source(1, 3, trajectories, dataset=ds)
+    user_config = MagicMock()
+    user_config.input.prompt.cache_bust.target = CacheBustTarget.FIRST_TURN_PREFIX
+    user_config.benchmark_id = "bench"
+
+    def _strategy_for(phase: CreditPhase, issuer: AsyncMock) -> AgenticReplayStrategy:
+        cfg = MagicMock()
+        cfg.phase = phase
+        return AgenticReplayStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=MagicMock(),
+            user_config=user_config,
+        )
+
+    warmup_issuer = AsyncMock()
+    warmup = _strategy_for(CreditPhase.WARMUP, warmup_issuer)
+    await warmup.setup_phase()
+    await warmup.execute_phase()
+    warmup_turns = [c.args[0] for c in warmup_issuer.issue_credit.await_args_list]
+    warmup_marker = warmup._session_marker["B-root"]
+    assert warmup_marker is not None
+    assert [t.cache_bust_marker for t in warmup_turns] == [warmup_marker]
+
+    profiling_issuer = AsyncMock()
+    profiling = _strategy_for(CreditPhase.PROFILING, profiling_issuer)
+    await profiling.setup_phase()
+    await profiling.execute_phase()
+    profiling_turns = {
+        t.conversation_id: t
+        for c in profiling_issuer.issue_credit.await_args_list
+        for t in [c.args[0]]
+        if t.turn_index == 1
+    }
+    continuing = profiling_turns["trace_0"]
+    assert continuing.cache_bust_marker == warmup_marker, (
+        "Continuing session's marker rotated at the WARMUP->PROFILING "
+        "boundary - the warmed KV prefix is unreachable for measured turns"
+    )
+    # The unblocked lane-0 parent is a distinct session and must NOT share
+    # the continuing session's digest.
+    assert profiling._session_marker["A-root"] != warmup_marker
+
+
+@pytest.mark.asyncio
 async def test_startup_recycle_does_not_pop_live_trajectory_trace():
     """A startup recycle must not spawn a trace whose own lane hasn't dispatched.
 
