@@ -155,7 +155,16 @@ class _WekaParentPayload(TypedDict):
 
 
 class _WekaChildPayload(TypedDict):
-    """Per-subagent child payload shipped to a worker."""
+    """Per-subagent child payload shipped to a worker.
+
+    ``tool_tokens`` / ``system_tokens`` are the stream's gated turn-0
+    attribution values (stream 0 keeps the entry's declared counts; overflow
+    streams carry them only when their first request provably starts with the
+    same declared-prefix blocks -- see
+    ``weka_trace._expand_subagent_to_child_plans``), not necessarily the raw
+    entry-declared counts. Child request ``t`` values are in root-trace
+    coordinates.
+    """
 
     session_id: str
     parent_trace_id: str

@@ -168,6 +168,10 @@ def _make_subagent_trace_with_two_child_turns(
 ) -> dict:
     """Parent has one normal request + one subagent block; the subagent has two
     child requests so the child path computes a delay for child turn 1.
+
+    The subagent marker sits at t=0.0 so both inner requests are absolute on
+    the root timeline (an inner ``t`` before the marker would be treated as
+    spawn-relative by ``_subagent_request_absolute_t`` and shift the delay).
     """
     return {
         "id": "trace_clamp_child",
@@ -189,7 +193,7 @@ def _make_subagent_trace_with_two_child_turns(
                 "think_time": 0.0,
             },
             {
-                "t": 1.0,
+                "t": 0.0,
                 "type": "subagent",
                 "agent_id": "agent_clamp",
                 "subagent_type": "Explore",
