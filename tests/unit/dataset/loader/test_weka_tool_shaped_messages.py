@@ -391,7 +391,6 @@ def test_parallel_tool_shaping_matches_serial(tool_shaped_env, tmp_path):
             parent_plans, child_plans, plans.flat_plans
         ),
         flat_plans=plans.flat_plans,
-        main_prefix_by_trace=plans.main_prefix_by_trace,
     )
     serial = loader._reconstruct_serial(dropped_per_trace={}, **common)
     with (

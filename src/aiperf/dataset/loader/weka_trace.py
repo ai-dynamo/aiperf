@@ -311,7 +311,8 @@ class _FlatChainPlan:
     parent_trace_id: str
     chain_index: int
     requests: list[tuple[int, _NormalRequestT]]
-    prefix_blocks: int
+    init_tool_tokens: int
+    init_system_tokens: int
     fork_parent_chain: int | None
     fork_depth: int
     block_size: int
@@ -339,7 +340,6 @@ class _ReconstructionPlans:
     parent_plans: list[_ParentPlan]
     child_plans: list[_ChildPlan]
     flat_plans: list[_FlatChainPlan]
-    main_prefix_by_trace: dict[str, int]
     split_stats: _SplitStats
 
 
@@ -424,6 +424,33 @@ def _child_plans_for_active_subagents(
         for cp in child_plans
         if cp.parent_trace_id == plan.trace_id and cp.subagent_index not in dropped
     ]
+
+
+def _chain_init_tokens(
+    trace: WekaTrace,
+    trace_bs: int,
+    main_first_hash: list[int],
+    chain_first_hash: list[int],
+) -> tuple[int, int]:
+    """(tool_tokens, system_tokens) for a detected worker chain's turn 0.
+
+    The system role is never fabricated: the trace's DECLARED counts apply
+    only when the chain's first request provably starts with the same
+    declared-prefix blocks as the main chain (recorded truth); otherwise
+    everything is user content. The latest captures declare 0/0, so their
+    chains are all-user and the shared prefix stays byte-aligned inside the
+    user message.
+    """
+    declared_blocks = math.ceil((trace.tool_tokens + trace.system_tokens) / trace_bs)
+    declared_covered = (
+        declared_blocks > 0
+        and len(chain_first_hash) >= declared_blocks
+        and len(main_first_hash) >= declared_blocks
+        and chain_first_hash[:declared_blocks] == main_first_hash[:declared_blocks]
+    )
+    if declared_covered:
+        return trace.tool_tokens, trace.system_tokens
+    return 0, 0
 
 
 def _populate_flat_chain_timing(
@@ -857,7 +884,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         parent_plans: list[_ParentPlan] = []
         child_plans: list[_ChildPlan] = []
         flat_plans: list[_FlatChainPlan] = []
-        main_prefix_by_trace: dict[str, int] = {}
         split_stats = _SplitStats()
         split_enabled = Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
         for trace_id, wekas in data.items():
@@ -877,19 +903,15 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             trace_id, sa_index, req, trace_bs
                         )
                     )
-            main_prefix_blocks = math.ceil(
-                (trace.tool_tokens + trace.system_tokens) / trace_bs
-            )
             if split_enabled and len(normals) > 1:
-                normals, main_prefix_blocks = self._detect_and_split_flat_chains(
+                normals = self._detect_and_split_flat_chains(
                     trace_id=trace_id,
                     normals=normals,
-                    declared_prefix_blocks=main_prefix_blocks,
+                    trace=trace,
                     trace_bs=trace_bs,
                     flat_plans=flat_plans,
                     split_stats=split_stats,
                 )
-            main_prefix_by_trace[trace_id] = main_prefix_blocks
             parent_plans.append(
                 _ParentPlan(trace_id, normals, subagents, block_size=trace_bs)
             )
@@ -897,7 +919,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             parent_plans=parent_plans,
             child_plans=child_plans,
             flat_plans=flat_plans,
-            main_prefix_by_trace=main_prefix_by_trace,
             split_stats=split_stats,
         )
 
@@ -906,21 +927,18 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         *,
         trace_id: str,
         normals: list[tuple[int, _NormalRequestT]],
-        declared_prefix_blocks: int,
+        trace: WekaTrace,
         trace_bs: int,
         flat_plans: list[_FlatChainPlan],
         split_stats: _SplitStats,
-    ) -> tuple[list[tuple[int, _NormalRequestT]], int]:
+    ) -> list[tuple[int, _NormalRequestT]]:
         """Run LCP chain detection on one trace's retained top-level requests.
 
         Appends one :class:`_FlatChainPlan` per detected worker chain to
-        ``flat_plans`` and returns the (possibly reduced) main-chain normals
-        plus the effective main-chain setup-prefix block count.
+        ``flat_plans`` and returns the (possibly reduced) main-chain normals.
+        Worker turn-0 tool/system attribution: see :func:`_chain_init_tokens`.
         """
-        from aiperf.dataset.loader.weka_agent_chains import (
-            compute_chain_prefix_blocks,
-            detect_agent_chains,
-        )
+        from aiperf.dataset.loader.weka_agent_chains import detect_agent_chains
 
         # Set aside leading title-generation / one-shot preamble requests so
         # they don't hijack main_index (earliest request) and skew the
@@ -929,20 +947,29 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         detection = detect_agent_chains(detect_normals)
         if not detection.worker_indices:
-            return normals, declared_prefix_blocks
+            return normals
 
-        prefixes = compute_chain_prefix_blocks(
-            detection, declared_prefix_blocks=declared_prefix_blocks
+        main_first_hash = next(
+            (
+                req.hash_ids
+                for _, req in detection.chains[detection.main_index].requests
+                if req.hash_ids
+            ),
+            [],
         )
         for n, ci in enumerate(detection.worker_indices):
             chain = detection.chains[ci]
+            init_tool, init_system = _chain_init_tokens(
+                trace, trace_bs, main_first_hash, chain.requests[0][1].hash_ids
+            )
             flat_plans.append(
                 _FlatChainPlan(
                     session_id=f"{trace_id}::fa:{n:03d}",
                     parent_trace_id=trace_id,
                     chain_index=n,
                     requests=list(chain.requests),
-                    prefix_blocks=prefixes[ci],
+                    init_tool_tokens=init_tool,
+                    init_system_tokens=init_system,
                     fork_parent_chain=chain.fork.parent_chain if chain.fork else None,
                     fork_depth=chain.fork.depth if chain.fork else 0,
                     block_size=trace_bs,
@@ -974,7 +1001,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             main_normals = sorted(
                 preamble + main_normals, key=lambda item: (item[1].t, item[0])
             )
-        return main_normals, prefixes[detection.main_index]
+        return main_normals
 
     def _build_shared_metric_values(
         self,
@@ -1221,7 +1248,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     trace_idle_timing_by_trace=trace_idle_timing_by_trace,
                     metric_values_by_trace=metric_values_by_trace,
                     flat_plans=flat_plans,
-                    main_prefix_by_trace=plans.main_prefix_by_trace,
                 )
             else:
                 conversations = self._reconstruct_serial(
@@ -1237,7 +1263,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     trace_idle_timing_by_trace=trace_idle_timing_by_trace,
                     metric_values_by_trace=metric_values_by_trace,
                     flat_plans=flat_plans,
-                    main_prefix_by_trace=plans.main_prefix_by_trace,
                 )
         finally:
             # Don't hold trace content past this call. The caller may process
@@ -1290,7 +1315,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
         metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
         flat_plans: list[_FlatChainPlan] | None = None,
-        main_prefix_by_trace: dict[str, int] | None = None,
     ) -> list[Conversation]:
         """In-process serial reconstruction."""
         import time as _time
@@ -1311,7 +1335,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         flat_plans_by_trace: dict[str, list[_FlatChainPlan]] = defaultdict(list)
         for fp in flat_plans or []:
             flat_plans_by_trace[fp.parent_trace_id].append(fp)
-        main_prefix_by_trace = main_prefix_by_trace or {}
 
         conversations: list[Conversation] = []
         n_plans = len(parent_plans)
@@ -1360,30 +1383,16 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
                 if k == 0:
-                    # When detection's observed namespace-group prefix beats
-                    # the declared tool/system tokens (spec §5.4 "keep the
-                    # longer one"), emit it as a synthetic system segment so
-                    # the system|user boundary sits at the same block offset
-                    # in every conversation of the group. Declared values
-                    # pass through untouched when they win or tie.
-                    declared_blocks = math.ceil(
-                        (trace.tool_tokens + trace.system_tokens) / plan.block_size
-                    )
-                    eff_blocks = main_prefix_by_trace.get(
-                        plan.trace_id, declared_blocks
-                    )
-                    if eff_blocks > declared_blocks and len(req.hash_ids) >= eff_blocks:
-                        init_tool, init_system = 0, eff_blocks * plan.block_size
-                    else:
-                        init_tool, init_system = (
-                            trace.tool_tokens,
-                            trace.system_tokens,
-                        )
+                    # The system role comes ONLY from the trace's declared
+                    # tool/system counts (recorded truth) — never fabricated
+                    # from the observed namespace-group prefix. On 0/0
+                    # captures turn 0 is all user content; cross-conversation
+                    # byte sharing is content-based, not role-based.
                     recon.init_turn_0(
                         hash_ids=req.hash_ids,
                         in_tokens=req.input_length,
-                        tool_tokens=init_tool,
-                        system_tokens=init_system,
+                        tool_tokens=trace.tool_tokens,
+                        system_tokens=trace.system_tokens,
                         seed=seed,
                         is_tool_result=is_tool_result,
                     )
@@ -1793,8 +1802,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 recon.init_turn_0(
                     hash_ids=req.hash_ids,
                     in_tokens=req.input_length,
-                    tool_tokens=0,
-                    system_tokens=fp.prefix_blocks * fp.block_size,
+                    tool_tokens=fp.init_tool_tokens,
+                    system_tokens=fp.init_system_tokens,
                     seed=seed,
                     is_tool_result=is_tool_result,
                 )
@@ -1891,7 +1900,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
         metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
         flat_plans: list[_FlatChainPlan] | None = None,
-        main_prefix_by_trace: dict[str, int] | None = None,
     ):
         from aiperf.dataset.loader.weka_parallel_convert import (
             _WekaNormalRequestPayload,
@@ -1901,7 +1909,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         flat_plans_by_trace: dict[str, list[_FlatChainPlan]] = defaultdict(list)
         for fp in flat_plans or []:
             flat_plans_by_trace[fp.parent_trace_id].append(fp)
-        main_prefix_by_trace = main_prefix_by_trace or {}
 
         # Drop the same child_plans the serial path drops at line ~1172.
         # _build_trace_idle_timing only populates timing for active subagents
@@ -1987,7 +1994,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 plan=plan,
                 trace=trace,
                 flat_for_trace=flat_plans_by_trace.get(plan.trace_id, []),
-                main_prefix_by_trace=main_prefix_by_trace,
                 trace_idle_timing=trace_idle_timing_by_trace.get(plan.trace_id),
             )
             tasks.append(
@@ -2013,26 +2019,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         plan: _ParentPlan,
         trace: WekaTrace,
         flat_for_trace: list[_FlatChainPlan],
-        main_prefix_by_trace: dict[str, int],
         trace_idle_timing: _TraceIdleTiming | None,
     ) -> None:
-        """Add turn-0 prefix override and flat-chain markers to the payload.
-
-        Mirrors the serial path: the synthetic system boundary applies only
-        when the observed namespace-group prefix beats the declared
-        tool/system tokens and turn 0's hash list can cover it.
-        """
-        declared_blocks = math.ceil(
-            (trace.tool_tokens + trace.system_tokens) / plan.block_size
-        )
-        eff_blocks = main_prefix_by_trace.get(plan.trace_id, declared_blocks)
-        if (
-            eff_blocks > declared_blocks
-            and plan.normals
-            and len(plan.normals[0][1].hash_ids) >= eff_blocks
-        ):
-            parent_payload["init_tool_tokens"] = 0
-            parent_payload["init_system_tokens"] = eff_blocks * plan.block_size
+        """Add flat-chain branch markers to the parent payload."""
         if not flat_for_trace:
             return
         markers = []
@@ -2059,10 +2048,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
     ) -> dict[str, Any]:
         """Build the worker child payload for one detected flat chain.
 
-        ``tool_tokens=0`` / ``system_tokens=prefix_blocks * block_size`` make
-        the worker's generic child turn-0 init produce the namespace-group
-        system segment; ``capped_output_length`` makes its max_tokens honor
-        ``--max-osl`` like the top-level rows these used to be.
+        ``init_tool_tokens``/``init_system_tokens`` carry the trace's
+        DECLARED counts when the chain provably shares the declared prefix
+        (0/0 otherwise — the system role is never fabricated);
+        ``capped_output_length`` makes its max_tokens honor ``--max-osl``
+        like the top-level rows these used to be.
         """
         from aiperf.dataset.loader.weka_parallel_convert import (
             _WekaNormalRequestPayload,
@@ -2097,8 +2087,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             "parent_trace_id": fp.parent_trace_id,
             "subagent_index": -1,  # never collides with dropped subagent sets
             "agent_id": f"fa:{fp.chain_index:03d}",
-            "tool_tokens": 0,
-            "system_tokens": fp.prefix_blocks * fp.block_size,
+            "tool_tokens": fp.init_tool_tokens,
+            "system_tokens": fp.init_system_tokens,
             "requests": requests_dicts,
         }
 
@@ -2189,7 +2179,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         trace_idle_timing_by_trace: dict[str, _TraceIdleTiming],
         metric_values_by_trace: dict[str, dict[tuple[str, int], tuple[int, int]]],
         flat_plans: list[_FlatChainPlan] | None = None,
-        main_prefix_by_trace: dict[str, int] | None = None,
     ) -> list[Conversation]:
         """Per-trace parallel reconstruction across a multiprocessing Pool.
 
@@ -2226,7 +2215,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             trace_idle_timing_by_trace=trace_idle_timing_by_trace,
             metric_values_by_trace=metric_values_by_trace,
             flat_plans=flat_plans,
-            main_prefix_by_trace=main_prefix_by_trace,
         )
 
         n_plans = len(tasks)

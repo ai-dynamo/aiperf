@@ -334,7 +334,6 @@ def test_parallel_reconstruction_input_kind_matches_serial(tmp_path):
             parent_plans, child_plans, plans.flat_plans
         ),
         flat_plans=plans.flat_plans,
-        main_prefix_by_trace=plans.main_prefix_by_trace,
     )
     serial = loader._reconstruct_serial(dropped_per_trace={}, **common)
 

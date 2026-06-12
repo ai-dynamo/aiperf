@@ -75,13 +75,13 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
-    # v10: merge of the flattened-agent-splitting lineage (keyed v7 without
-    # tool shaping) and the tool-shaping lineage (keyed v9 without splitting)
-    # -- decoded content differs from BOTH prior keys. Carries the v9 fixes:
-    # boundary cuts strip the trailing segment's full overhang, and tool
-    # shaping is decided at first emission so reset re-emits reproduce the
-    # shape each turn was first sent with.
-    10
+    # v11: the system role is never fabricated from the observed
+    # namespace-group prefix (0/0-declared chains bake all-user turn 0s) --
+    # role boundaries changed again relative to v10.
+    # v10: merge of the flattened-agent-splitting lineage and the
+    # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
+    # first emission so reset re-emits reproduce the first-sent shape).
+    11
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

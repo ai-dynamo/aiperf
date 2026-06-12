@@ -529,14 +529,16 @@ def test_max_osl_caps_flat_chain_but_not_subagent_child():
 # --------------------------------------------------------------------------
 
 
-def test_observed_prefix_becomes_shared_system_segment_for_root_and_workers():
-    """Observed-wins path (spec §5.4 'keep the longer one'): a 0/0-declared
-    fan-out trace where the main namespace group shares a 2-block LCP must emit
-    a 2-block system segment at the SAME block offset in the root and every
-    worker chain of that group -- the byte-shared-prefix invariant.
+def test_zero_declared_fanout_keeps_shared_prefix_in_user_content():
+    """The system role is never fabricated: a 0/0-declared fan-out trace
+    keeps its observed shared prefix INSIDE the user content. Byte sharing
+    across the group is content-based, not role-based, so turn 0 of the root
+    and every worker chain is a single user message carrying the request's
+    full token count.
     """
     # Main group: main founder [1,2,3] + two workers forking at depth 2 on
-    # [1,2,...]. Observed group prefix = LCP over first requests = [1,2] = 2.
+    # [1,2,...]. Observed group prefix = LCP over first requests = [1,2] = 2,
+    # but with 0/0 declared it must NOT surface as a system segment.
     requests = [
         _normal(0.0, [1, 2, 3], api_time=1.0),  # main founder
         _normal(2.0, [1, 2, 50, 51], api_time=2.0, model=_HAIKU),  # worker A
@@ -545,11 +547,14 @@ def test_observed_prefix_becomes_shared_system_segment_for_root_and_workers():
     ]
     loader = _build_loader()
     convs = _convert(loader, _trace("flt_obs", requests))
-    # Root + both workers open turn 0 with a 2-block (=128 token) system segment.
-    for sid in ("flt_obs", "flt_obs::fa:000", "flt_obs::fa:001"):
+    for sid, total in (
+        ("flt_obs", 192),
+        ("flt_obs::fa:000", 256),
+        ("flt_obs::fa:001", 256),
+    ):
         msgs0 = convs[sid].turns[0].raw_messages
-        assert msgs0[0]["role"] == "system", sid
-        assert msgs0[0]["content"] == "<dec:128>", sid
+        assert [m["role"] for m in msgs0] == ["user"], sid
+        assert msgs0[0]["content"] == f"<dec:{total}>", sid
     assert _retained_request_count(convs) == 4
 
 

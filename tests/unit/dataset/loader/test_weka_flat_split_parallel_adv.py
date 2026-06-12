@@ -510,13 +510,9 @@ def test_convert_main_chain_compaction_seam_reset_context_parallel_byte_identica
     assert root.turns[2].reset_context is True  # the compaction seam
     # Worker never joins (ends t=12.5, no later main turn) -> background.
     assert root.branches[0].is_background is True
-    # Observed group prefix = 3 blocks -> synthetic system segment + the
-    # unshared user block.
-    assert root.turns[0].raw_messages[0] == {
-        "role": "system",
-        "content": "<dec:192>",
-    }
-    assert root.turns[0].raw_messages[1] == {"role": "user", "content": "<dec:64>"}
+    # 0/0 declared -> no fabricated system role: turn 0 is one user message
+    # carrying all 4 blocks (the shared prefix lives inside the user content).
+    assert root.turns[0].raw_messages == [{"role": "user", "content": "<dec:256>"}]
 
 
 def test_convert_all_prefix_turn0_pure_growth_has_no_reset(tmp_path, monkeypatch):
@@ -585,9 +581,9 @@ def test_convert_max_osl_cross_model_batch_rewrite_parallel_byte_identical(
     rewriting to endpoint.model_names.
 
     max_tokens of flat-chain children must honor max-osl in BOTH paths (the
-    parallel path ships capped_output_length in the child payload); the
-    worker namespace group of two gets its own observed-prefix system
-    boundary while the singleton main group stays all-user.
+    parallel path ships capped_output_length in the child payload); with 0/0
+    declared, both the worker group and the singleton main group keep their
+    shared prefixes inside user content (no fabricated system role).
     """
     requests = [
         _nreq(0.0, [1, 2, 3], model="opus", api_time=1.0, out=10),
@@ -612,39 +608,42 @@ def test_convert_max_osl_cross_model_batch_rewrite_parallel_byte_identical(
         w = convs[wid]
         assert all(t.model == "served-worker" for t in w.turns), wid
         assert all(t.max_tokens == 5 for t in w.turns), wid
-        # Worker group of 2 -> own observed prefix (2 blocks) system segment.
-        assert w.turns[0].raw_messages[0]["role"] == "system", wid
-        assert w.turns[0].raw_messages[0]["content"] == "<dec:128>", wid
+        # 0/0 declared -> worker turn 0 is one user message with all 3 blocks.
+        assert w.turns[0].raw_messages[0]["role"] == "user", wid
+        assert w.turns[0].raw_messages[0]["content"] == "<dec:192>", wid
     # Main group is a singleton with 0/0 declared -> all-user turn 0.
     assert root.turns[0].raw_messages[0]["role"] == "user"
 
 
-def test_convert_effective_prefix_override_system_segment_parallel_byte_identical(
+def test_convert_zero_declared_fanout_all_user_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 5.4 "keep the longer one": 0/0-declared fan-out -> observed
-    namespace-group prefix (2 blocks) becomes the turn-0 system segment of
-    the PARENT too, byte-identical across paths (the parallel path ships
-    init_tool_tokens/init_system_tokens overrides in the parent payload)."""
+    """The system role is never fabricated: a 0/0-declared fan-out keeps the
+    observed namespace-group prefix inside the user content for the parent
+    AND every worker chain, byte-identical across paths (no turn-0 override
+    keys ship in the parallel payload)."""
     serial, parallel = _run_both(
         tmp_path, monkeypatch, [_trace("trace_obs", _fanout_requests())]
     )
     for convs in (serial, parallel):
         by_sid = _by_sid(convs)
-        for sid in ("trace_obs", "trace_obs::fa:000", "trace_obs::fa:001"):
+        for sid, total in (
+            ("trace_obs", 192),
+            ("trace_obs::fa:000", 256),
+            ("trace_obs::fa:001", 256),
+        ):
             msgs = by_sid[sid].turns[0].raw_messages
-            assert msgs[0]["role"] == "system", sid
-            assert msgs[0]["content"] == "<dec:128>", sid
+            assert [m["role"] for m in msgs] == ["user"], sid
+            assert msgs[0]["content"] == f"<dec:{total}>", sid
 
 
 def test_convert_declared_prefix_wins_main_observed_for_workers_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
-    """Spec 5.4: declared tool/system tokens (3 blocks) beat the observed
-    group prefix (2 blocks) for the MAIN chain only; worker chains keep their
-    own observed prefix. No init override keys ship in the parallel payload
-    (eff == declared), so any drift between the two turn-0 code paths shows
-    up as a byte mismatch here."""
+    """Declared tool/system tokens (3 blocks) emit the root's system segment
+    (recorded truth). Worker chains do NOT share the declared-prefix blocks
+    ([1,2,50..] vs [1,2,3..] diverge at block 2), so their turn 0 is honest
+    user content -- the system role is never fabricated for them."""
     requests = [
         _nreq(0.0, [1, 2, 3, 4], api_time=1.0),  # 4 blocks: covers declared 3
         _nreq(2.0, [1, 2, 50, 51], api_time=6.0),
@@ -665,8 +664,8 @@ def test_convert_declared_prefix_wins_main_observed_for_workers_parallel_byte_id
     assert root_msgs[0]["content"] == "<dec:192>"  # declared 3 blocks wins
     for wid in ("trace_decl::fa:000", "trace_decl::fa:001"):
         w_msgs = convs[wid].turns[0].raw_messages
-        assert w_msgs[0]["role"] == "system", wid
-        assert w_msgs[0]["content"] == "<dec:128>", wid  # observed 2 blocks
+        assert [m["role"] for m in w_msgs] == ["user"], wid
+        assert w_msgs[0]["content"] == "<dec:256>", wid  # all 4 blocks, no system
 
 
 def test_convert_empty_hash_first_request_split_parallel_byte_identical(
