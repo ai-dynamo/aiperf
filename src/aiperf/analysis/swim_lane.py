@@ -8,7 +8,9 @@ session retires) plus a concurrency line chart driven by the same
 Subagent sessions (``agent_depth > 0``) do not get their own slots: they nest
 as child tiers below their root session's lane, linked via
 ``parent_correlation_id``. Subagents whose parent is absent from the export
-fall back to standalone lanes.
+nest under a zero-row phantom root per source trace (conversation_id prefix)
+when the trace has several of them; a lone orphan falls back to a standalone
+lane.
 
 Inputs per run directory:
   - ``profile_export.jsonl``        (required)  per-record AIPerf export
@@ -155,8 +157,8 @@ def _root_map(sessions: dict[str, list[dict]]) -> dict[str, str]:
     """Resolve each session to its root ancestor via parent_correlation_id.
 
     Subagent sessions whose parent is absent from the export (cancelled, or a
-    pre-session background spawn with no parent) stay their own root and render
-    as a standalone lane.
+    pre-session background spawn with no parent) stay their own root here;
+    ``_phantom_roots`` later regroups same-trace orphans under a synthetic root.
     """
     parent: dict[str, str | None] = {}
     for sid, turns in sessions.items():
@@ -214,39 +216,71 @@ class _LaneGroup:
     """Root session first, then subagent sessions ordered by start time."""
 
 
+def _phantom_roots(
+    sessions: dict[str, list[dict]], root_of: dict[str, str]
+) -> dict[str, str]:
+    """Group orphaned subagent sessions from one trace under a synthetic root.
+
+    Orphan subs (self-rooted at agent_depth > 0) whose main session never made
+    it into the export still share a source trace, recoverable as the
+    conversation_id prefix before ``::``. When two or more orphans share that
+    prefix, map each to a phantom root sid (the prefix itself) so they pack
+    into one lane instead of each burning a slot. The phantom root has no
+    session records of its own.
+    """
+    by_prefix: dict[str, list[str]] = defaultdict(list)
+    for sid, root in root_of.items():
+        if root == sid and _is_sub_session(sessions[sid]):
+            prefix = sessions[sid][0]["metadata"]["conversation_id"].split("::")[0]
+            by_prefix[prefix].append(sid)
+    return {
+        sid: prefix
+        for prefix, sids in by_prefix.items()
+        if len(sids) > 1 and prefix not in sessions
+        for sid in sids
+    }
+
+
 def _layout_groups(sessions: dict[str, list[dict]]) -> list[_LaneGroup]:
     """Nest subagent sessions as child tiers below their root session's lane.
 
     The root session keeps the top rows of the lane (one per parallel turn);
     each subagent session is greedy-packed into child rows underneath, reusing
-    a row once the previous subagent on it retired. Lane groups are then
+    a row once the previous subagent on it retired. Orphaned subagents sharing
+    a trace nest under a zero-row phantom root. Lane groups are then
     slot-packed exactly like plain sessions, ordered by group start time.
     """
     root_of = _root_map(sessions)
+    root_of.update(_phantom_roots(sessions, root_of))
     children: dict[str, list[str]] = defaultdict(list)
     for sid, root in root_of.items():
         if sid != root:
             children[root].append(sid)
     spans: dict[str, tuple[int, int]] = {}
-    for sid in sessions:
-        if root_of[sid] != sid:
-            continue
+    for root in set(root_of.values()):
         member_spans = [
-            _session_span_ns(sessions[m]) for m in (sid, *children.get(sid, ()))
+            _session_span_ns(sessions[m])
+            for m in (root, *children.get(root, ()))
+            if m in sessions
         ]
-        spans[sid] = (
+        spans[root] = (
             min(s for s, _ in member_spans),
             max(e for _, e in member_spans),
         )
 
     groups: list[_LaneGroup] = []
     for root_sid, slot in _assign_slots(spans):
-        depths, root_rows = _turn_depths(sessions[root_sid])
-        members = [
-            _SessionLayout(
-                root_sid, _is_sub_session(sessions[root_sid]), 0, root_rows, depths
-            )
-        ]
+        if root_sid in sessions:
+            depths, root_rows = _turn_depths(sessions[root_sid])
+            members = [
+                _SessionLayout(
+                    root_sid, _is_sub_session(sessions[root_sid]), 0, root_rows, depths
+                )
+            ]
+        else:
+            # phantom root: no records of its own, subs start at row 0
+            root_rows = 0
+            members = []
         kids = sorted(
             children.get(root_sid, ()),
             key=lambda k: _session_span_ns(sessions[k])[0],

@@ -156,6 +156,36 @@ class TestLayoutGroups:
         assert orphan.members[0].is_sub
         assert orphan.slot != _group_for(groups, "root").slot
 
+    def test_orphan_subs_from_same_trace_share_phantom_slot(self):
+        # conversation_id "conv-t1::sa:N" -> shared trace prefix "conv-t1"
+        sessions = _sessions(
+            [
+                _rec("root", 0, 0.0, 2.0),
+                _rec("t1::sa:0", 0, 0.5, 1.5, parent="gone", depth=1),
+                _rec("t1::sa:1", 0, 1.0, 2.5, parent="gone", depth=1),
+            ]
+        )
+        groups = _layout_groups(sessions)
+        assert len(groups) == 2
+        phantom = _group_for(groups, "conv-t1")
+        # zero-row synthetic root: only the orphan subs are members
+        assert [m.sid for m in phantom.members] == ["t1::sa:0", "t1::sa:1"]
+        assert all(m.is_sub for m in phantom.members)
+        assert {m.row0 for m in phantom.members} == {0, 1}
+        assert phantom.rows == 2
+        assert phantom.span_ns == (int(0.5 * NS), int(2.5 * NS))
+        assert phantom.slot != _group_for(groups, "root").slot
+
+    def test_orphan_subs_from_different_traces_stay_separate(self):
+        sessions = _sessions(
+            [
+                _rec("t1::sa:0", 0, 0.0, 1.0, parent="gone", depth=1),
+                _rec("t2::sa:0", 0, 0.5, 1.5, parent="gone", depth=1),
+            ]
+        )
+        groups = _layout_groups(sessions)
+        assert {g.root_sid for g in groups} == {"t1::sa:0", "t2::sa:0"}
+
     def test_group_span_covers_subagent_overhang(self):
         sessions = _sessions(
             [
