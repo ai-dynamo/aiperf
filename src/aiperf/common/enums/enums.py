@@ -132,6 +132,24 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
     """Child gets a fresh context; free routing (no sticky pin to parent)."""
 
 
+class TurnInputKind(CaseInsensitiveStrEnum):
+    """What produced a turn's new input content, for trace replays that record it.
+
+    Classified by trace loaders from the recorded per-request content-block
+    types (``input_types``) and assistant stop reasons (``stop``). Lets
+    downstream consumers distinguish machine-paced agentic-loop continuations
+    from human-paced input turns.
+    """
+
+    USER_INPUT = "user_input"
+    """Genuine user/agent text (or multimodal) input arriving at a yield point
+    (the previous assistant turn ended without calling a tool)."""
+
+    TOOL_RESULT = "tool_result"
+    """Tool output fed back after the assistant stopped with ``tool_use`` --
+    an immediate machine-paced continuation, not human input."""
+
+
 class PrerequisiteKind(CaseInsensitiveStrEnum):
     """Types of conditions that can gate a turn's dispatch.
 

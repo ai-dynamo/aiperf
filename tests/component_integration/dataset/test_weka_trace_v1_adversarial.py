@@ -25,6 +25,21 @@ FIXTURES = Path(__file__).parents[2] / "fixtures" / "weka_traces"
 pytestmark = pytest.mark.component_integration
 
 
+@pytest.fixture(autouse=True)
+def _legacy_single_stream(monkeypatch):
+    """Pin the legacy collapsed single-stream loader shape.
+
+    These tests stress orchestrator-v1 validation of collapsed subagent /
+    mixed top-level shapes. Their ``_normal``/``_streaming`` builders mint a
+    unique single-block hash per request, which flattened-agent detection
+    would (correctly) classify as one disjoint chain per request — a
+    different shape than the one under test.
+    """
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", False)
+
+
 def _mk_user_config(
     *,
     max_isl=None,

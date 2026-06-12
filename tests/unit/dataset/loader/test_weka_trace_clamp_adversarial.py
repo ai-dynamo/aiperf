@@ -148,7 +148,9 @@ def _make_two_turn_parent_trace(
                 "model": "claude-opus-4-5-20251101",
                 "in": 200,
                 "out": 20,
-                "hash_ids": [3, 4],
+                # Extends turn 0's [1, 2] prefix: consecutive same-agent turns
+                # must chain or flattened-agent detection will split them.
+                "hash_ids": [1, 2, 3],
                 "input_types": ["text"],
                 "output_types": ["text"],
                 "stop": "end_turn",

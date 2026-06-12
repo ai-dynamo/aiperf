@@ -344,7 +344,6 @@ def test_truncate_at_boundary_strips_partial_tail():
         target_blocks=block_count,
         block_size=bs,
         decode_tokens_to_text=_stub_decode_tokens_to_text,
-        prev_partial_tail=partial_tail,
     )
     assert len(segs) == 1
     seg = segs[0]
@@ -373,7 +372,6 @@ def test_truncate_at_boundary_no_partial_tail_keeps_all_tokens():
         target_blocks=block_count,
         block_size=bs,
         decode_tokens_to_text=_stub_decode_tokens_to_text,
-        prev_partial_tail=0,
     )
     assert len(segs) == 1
     seg = segs[0]
@@ -590,6 +588,37 @@ def test_advance_zero_user_skips_user_segment():
     # asst_blocks = ceil(64/64) = 1 -> asst_tokens = 64. user empty.
     roles = [s.role for s in r._segments]
     assert roles == ["user", "assistant"]
+
+
+def test_advance_boundary_cut_strips_missing_block_overhang():
+    """A boundary cut on the trailing segment strips its ENTIRE overhang past
+    ``block_count * bs`` — missing-block synth tokens AND the partial tail.
+    Stripping only the partial tail leaves stale synth tokens behind, so the
+    rebuilt context exceeds ``curr_in_tokens`` and reset re-emissions drift.
+
+    Shape: a truncated hash recording (hash_ids shorter than
+    ``in_tokens // bs``) puts missing-block synth tokens on the trailing
+    user segment; the next turn's pure-growth LCP cut lands exactly on its
+    covered-block boundary."""
+    r = _make_recon()
+    # in=242, hash covers 2 of floor(242/64)=3 blocks -> user seg holds
+    # 2*64 block tokens + (64 missing + 50 tail) = 242 tokens.
+    r.init_turn_0(
+        hash_ids=[1, 2], in_tokens=242, tool_tokens=0, system_tokens=0, seed="s0"
+    )
+    assert sum(len(s.tokens) for s in r._segments) == 242
+    # Pure growth: LCP=2 is a boundary cut at the trailing user segment.
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=242,
+        prev_out_tokens=0,
+        curr_hash_ids=[1, 2, 3],
+        curr_in_tokens=300,
+        seed="s1",
+    )
+    assert sum(len(s.tokens) for s in r._segments) == 300
+    # The surviving turn-0 segment holds exactly its covered block content.
+    assert r._segments[0].tokens == _stub_decode_block_tokens([1, 2])
 
 
 def test_advance_token_level_slicing_asst_user_split():

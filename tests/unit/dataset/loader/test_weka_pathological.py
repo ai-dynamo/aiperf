@@ -270,8 +270,12 @@ def test_parallel_subagent_payload_carries_mapped_spawn_time(tmp_path):
     loader = _make_loader(path, uc)
 
     data = loader.load_dataset()
-    parent_plans, child_plans = loader._build_reconstruction_plans(data)
+    plans = loader._build_reconstruction_plans(data)
+    parent_plans, child_plans = plans.parent_plans, plans.child_plans
     timing = loader._build_trace_idle_timing_by_trace(parent_plans, child_plans)
+    metric_values = loader._build_shared_metric_values(
+        parent_plans, child_plans, plans.flat_plans
+    )
     tasks = loader._build_parallel_reconstruction_tasks(
         parent_plans=parent_plans,
         child_plans=child_plans,
@@ -281,6 +285,7 @@ def test_parallel_subagent_payload_carries_mapped_spawn_time(tmp_path):
         cap_seconds=None,
         model_map_per_trace={"idle_parallel": {}},
         trace_idle_timing_by_trace=timing,
+        metric_values_by_trace=metric_values,
     )
     _, marker = tasks[0].parent["subagents"][0]
     # The mapped end time is plumbed through; the mapped spawn time must be too.
