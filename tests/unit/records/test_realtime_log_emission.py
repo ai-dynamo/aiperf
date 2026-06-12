@@ -81,8 +81,12 @@ async def test_report_realtime_metrics_emits_log_block() -> None:
         await rm_module.RecordsManager._report_realtime_metrics(rm)
 
     assert rm.info.called, "expected RecordsManager.info to be called with the block"
-    rendered = rm.info.call_args.args[0]
-    assert rendered.startswith("[realtime 00:10 profiling] rps=")
+    lines = [call.args[0] for call in rm.info.call_args_list]
+    assert all("\n" not in line for line in lines), (
+        "each block line must be its own log record"
+    )
+    assert lines[0].startswith("[realtime 00:10 profiling] rps=")
+    rendered = "\n".join(lines)
     assert "ttft p50=" in rendered
     assert "e2e  p50=" in rendered
     rm.publish.assert_awaited_once()
