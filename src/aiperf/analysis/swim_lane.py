@@ -1,0 +1,676 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Session swim-lane plot for an AIPerf run.
+
+Renders one horizontal lane per concurrent session slot (greedy reuse once a
+session retires) plus a concurrency line chart driven by the same
+``aiperf.analysis.sweepline`` primitives the metrics accumulator uses.
+
+Inputs per run directory:
+  - ``profile_export.jsonl``        (required)  per-record AIPerf export
+  - ``profile_export_aiperf.json``  (optional)  used for ramp/benchmark axvlines
+
+CLI: ``aiperf analyze swim-lane <run_dir> [<run_dir>...] [-o OUT]``
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
+import orjson
+from numpy.typing import NDArray
+
+from aiperf.analysis.sweepline import add_step_functions, concurrency_sweep_line
+from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.common.constants import NANOS_PER_SECOND
+
+PROFILE_JSONL = OutputDefaults.PROFILE_EXPORT_JSONL_FILE.name
+PROFILE_JSON = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE.name
+VIEWER_TEMPLATE = Path(__file__).with_name("swim_lane_viewer.html")
+
+
+class SwimLaneError(RuntimeError):
+    """Raised when a swim-lane plot cannot be produced for a run directory."""
+
+
+def _load_records(jsonl_path: Path) -> list[dict]:
+    records: list[dict] = []
+    with open(jsonl_path, "rb") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            r = orjson.loads(line)
+            meta = r.get("metadata") or {}
+            if meta.get("was_cancelled"):
+                continue
+            if (
+                meta.get("request_start_ns") is None
+                or meta.get("request_end_ns") is None
+            ):
+                continue
+            records.append(r)
+    return records
+
+
+def _group_into_sessions(records: list[dict]) -> dict[str, list[dict]]:
+    """Group records into benchmark session instances by x_correlation_id.
+
+    The same source conversation can be replayed concurrently by several
+    sessions, all sharing its conversation_id; x_correlation_id identifies the
+    actual session instance. Falls back to conversation_id for exports that
+    predate correlation ids.
+    """
+    sessions: dict[str, list[dict]] = defaultdict(list)
+    for r in records:
+        meta = r["metadata"]
+        sessions[meta.get("x_correlation_id") or meta["conversation_id"]].append(r)
+    for turns in sessions.values():
+        turns.sort(key=lambda r: r["metadata"]["turn_index"])
+    return dict(sessions)
+
+
+def _session_span_ns(turns: list[dict]) -> tuple[int, int]:
+    """True session time span. Turns are sorted by turn_index, and with parallel
+    subagent requests the last turn by index is not necessarily the latest-ending."""
+    return (
+        min(t["metadata"]["request_start_ns"] for t in turns),
+        max(t["metadata"]["request_end_ns"] for t in turns),
+    )
+
+
+def _merged_active_ns(turns: list[dict]) -> list[tuple[int, int]]:
+    """Union of the session's request intervals; gaps between them are true idle."""
+    intervals = sorted(
+        (t["metadata"]["request_start_ns"], t["metadata"]["request_end_ns"])
+        for t in turns
+    )
+    merged = [list(intervals[0])]
+    for start, end in intervals[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(s, e) for s, e in merged]
+
+
+def _turn_depths(turns: list[dict]) -> tuple[list[int], int]:
+    """Greedy sub-row packing of possibly-parallel turns within one session.
+
+    Returns (depth per turn, row count) so overlapping requests render stacked
+    instead of over-painting each other in the lane.
+    """
+    order = sorted(
+        range(len(turns)), key=lambda i: turns[i]["metadata"]["request_start_ns"]
+    )
+    row_ends: list[int] = []
+    depths = [0] * len(turns)
+    for i in order:
+        start = turns[i]["metadata"]["request_start_ns"]
+        end = turns[i]["metadata"]["request_end_ns"]
+        for d, row_end in enumerate(row_ends):
+            if start >= row_end:
+                row_ends[d] = end
+                depths[i] = d
+                break
+        else:
+            row_ends.append(end)
+            depths[i] = len(row_ends) - 1
+    return depths, len(row_ends)
+
+
+def _assign_slots(sessions: dict[str, list[dict]]) -> list[tuple[str, int]]:
+    """Greedy slot packing: reuse a slot once its previous session retired."""
+    spans = {conv_id: _session_span_ns(turns) for conv_id, turns in sessions.items()}
+    ordered = sorted(sessions, key=lambda conv_id: spans[conv_id][0])
+    slot_ends: list[int] = []
+    assignments: list[tuple[str, int]] = []
+    for conv_id in ordered:
+        start, end = spans[conv_id]
+        for i, slot_end in enumerate(slot_ends):
+            if start >= slot_end:
+                slot_ends[i] = end
+                assignments.append((conv_id, i))
+                break
+        else:
+            slot_ends.append(end)
+            assignments.append((conv_id, len(slot_ends) - 1))
+    return assignments
+
+
+def _load_bench_config(run_dir: Path) -> tuple[float | None, float | None]:
+    """Return (concurrency_ramp_duration_s, benchmark_duration_s) when available."""
+    path = run_dir / PROFILE_JSON
+    if not path.is_file():
+        return None, None
+    with open(path, "rb") as f:
+        data = orjson.loads(f.read())
+    loadgen = data.get("input_config", {}).get("loadgen", {}) or {}
+    ramp = loadgen.get("concurrency_ramp_duration")
+    # benchmark_duration lives at top-level on the export, but fall back to loadgen.
+    bench = data.get("benchmark_duration") or loadgen.get("benchmark_duration")
+    bench_value = bench.get("avg") if isinstance(bench, dict) else bench
+    return (
+        float(ramp) if ramp is not None else None,
+        float(bench_value) if bench_value is not None else None,
+    )
+
+
+def _per_session_spans_ns(
+    sessions: dict[str, list[dict]],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return per-session (first_start_ns, last_end_ns) arrays for alive-session sweep."""
+    if not sessions:
+        empty = np.zeros(0, dtype=np.float64)
+        return empty, empty
+    spans = [_session_span_ns(turns) for turns in sessions.values()]
+    starts = np.fromiter(
+        (span[0] for span in spans), dtype=np.float64, count=len(spans)
+    )
+    ends = np.fromiter((span[1] for span in spans), dtype=np.float64, count=len(spans))
+    return starts, ends
+
+
+def _concurrency_curves(
+    sessions: dict[str, list[dict]], n_records: int, t0_ns: float
+) -> tuple[
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+]:
+    """Return (active_ts, active_vals, idle_ts, idle_vals) in seconds from t0.
+
+    Sweep-line curves reuse the accumulator's primitive. Work in seconds-from-t0
+    so float64 has enough precision (absolute ns timestamps are ~1.7e18, eating
+    ~16 sig figs and collapsing sub-second resolution).
+    """
+    starts_ns = np.fromiter(
+        (
+            r["metadata"]["request_start_ns"]
+            for turns in sessions.values()
+            for r in turns
+        ),
+        dtype=np.float64,
+        count=n_records,
+    )
+    ends_ns = np.fromiter(
+        (r["metadata"]["request_end_ns"] for turns in sessions.values() for r in turns),
+        dtype=np.float64,
+        count=n_records,
+    )
+    starts_s = (starts_ns - t0_ns) / NANOS_PER_SECOND
+    ends_s = (ends_ns - t0_ns) / NANOS_PER_SECOND
+    active_ts, active_vals = concurrency_sweep_line(starts_s, ends_s)
+    alive_starts_ns, alive_ends_ns = _per_session_spans_ns(sessions)
+    alive_starts_s = (alive_starts_ns - t0_ns) / NANOS_PER_SECOND
+    alive_ends_s = (alive_ends_ns - t0_ns) / NANOS_PER_SECOND
+    alive_ts, alive_vals = concurrency_sweep_line(alive_starts_s, alive_ends_s)
+    # idle = alive - active. ``add_step_functions`` aligns onto the merged event grid.
+    idle_ts, idle_vals = add_step_functions(
+        alive_ts, alive_vals, active_ts, -active_vals
+    )
+    idle_vals = np.maximum(idle_vals, 0.0)
+    return active_ts, active_vals, idle_ts, idle_vals
+
+
+def plot_swim_lane(
+    run_dir: Path,
+    out: Path | None = None,
+    concurrency: int | None = None,
+    ramp: float | None = None,
+) -> Path:
+    """Render a swim-lane PNG for ``run_dir``. Returns the output path.
+
+    When ``concurrency`` is given, the bottom panel draws a horizontal
+    target-concurrency reference line at that value. ``ramp`` overrides the
+    ramp duration read from ``profile_export_aiperf.json``.
+    """
+    jsonl_path = run_dir / PROFILE_JSONL
+    if not jsonl_path.is_file():
+        raise SwimLaneError(f"{jsonl_path} not found")
+
+    records = _load_records(jsonl_path)
+    if not records:
+        raise SwimLaneError(f"no valid records in {jsonl_path}")
+
+    sessions = _group_into_sessions(records)
+    assignments = _assign_slots(sessions)
+    ramp_dur_s, bench_dur_s = _load_bench_config(run_dir)
+    if ramp is not None:
+        ramp_dur_s = ramp
+
+    t0_ns = float(
+        min(
+            t["metadata"]["request_start_ns"]
+            for turns in sessions.values()
+            for t in turns
+        )
+    )
+    t_max_s = float(
+        max(
+            (t["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
+            for turns in sessions.values()
+            for t in turns
+        )
+    )
+    n_slots = max(slot for _, slot in assignments) + 1
+
+    cmap = plt.colormaps["tab20"]
+    session_color = {
+        conv_id: cmap(i % 20) for i, (conv_id, _) in enumerate(assignments)
+    }
+
+    bars: list[
+        tuple[
+            str,
+            int,
+            list[tuple[float, float, int]],
+            list[tuple[float, float]],
+            int,
+        ]
+    ] = []
+    for conv_id, slot in assignments:
+        turns = sessions[conv_id]
+        depths, n_rows = _turn_depths(turns)
+        active: list[tuple[float, float, int]] = []
+        for turn, depth in zip(turns, depths, strict=True):
+            rs = (turn["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
+            re = (turn["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
+            active.append((rs, re - rs, depth))
+        merged = _merged_active_ns(turns)
+        idle = [
+            (
+                (prev_end - t0_ns) / NANOS_PER_SECOND,
+                (start - prev_end) / NANOS_PER_SECOND,
+            )
+            for (_, prev_end), (start, _) in zip(merged, merged[1:], strict=False)
+        ]
+        bars.append((conv_id, slot, active, idle, n_rows))
+
+    slot_session_starts: dict[int, list[float]] = defaultdict(list)
+    for conv_id, slot in assignments:
+        first = (_session_span_ns(sessions[conv_id])[0] - t0_ns) / NANOS_PER_SECOND
+        slot_session_starts[slot].append(first)
+    reuse_markers = [
+        (slot, s) for slot, starts in slot_session_starts.items() for s in starts[1:]
+    ]
+
+    active_ts, active_vals, idle_ts, idle_vals = _concurrency_curves(
+        sessions, len(records), t0_ns
+    )
+
+    # each slot expands to one full-size sub-lane per concurrently-running turn
+    slot_rows = [1] * n_slots
+    for _, slot, _, _, n_rows in bars:
+        slot_rows[slot] = max(slot_rows[slot], n_rows)
+    slot_offset = [0] * n_slots
+    for s in range(1, n_slots):
+        slot_offset[s] = slot_offset[s - 1] + slot_rows[s - 1]
+    total_rows = slot_offset[-1] + slot_rows[-1]
+
+    bar_height = 0.7
+    row_inches = min(0.45, 58.0 / total_rows)
+    swim_height = max(4.0, total_rows * row_inches + 1.0)
+    fig, (ax_swim, ax_conc) = plt.subplots(
+        2,
+        1,
+        figsize=(20, swim_height + 2.5),
+        gridspec_kw={"height_ratios": [swim_height, 2.5]},
+        sharex=True,
+    )
+
+    slot_spans: dict[int, list[tuple[float, float]]] = defaultdict(list)
+    for conv_id, slot in assignments:
+        start_ns, end_ns = _session_span_ns(sessions[conv_id])
+        s = (start_ns - t0_ns) / NANOS_PER_SECOND
+        e = (end_ns - t0_ns) / NANOS_PER_SECOND
+        slot_spans[slot].append((s, e))
+
+    for slot in range(n_slots):
+        slot_center = slot_offset[slot] + (slot_rows[slot] - 1) / 2
+        slot_height = slot_rows[slot] - (1 - bar_height)
+        spans = sorted(slot_spans.get(slot, []))
+        gaps: list[tuple[float, float]] = []
+        if not spans:
+            gaps.append((0.0, t_max_s))
+        else:
+            if spans[0][0] > 0:
+                gaps.append((0.0, spans[0][0]))
+            for i in range(1, len(spans)):
+                if spans[i][0] > spans[i - 1][1]:
+                    gaps.append((spans[i - 1][1], spans[i][0]))
+            if spans[-1][1] < t_max_s:
+                gaps.append((spans[-1][1], t_max_s))
+        for left, right in gaps:
+            ax_swim.barh(
+                slot_center,
+                right - left,
+                left=left,
+                height=slot_height,
+                color="#f0f0f0",
+                edgecolor="none",
+                linewidth=0,
+            )
+
+    for conv_id, slot, active, idle, _n_rows in bars:
+        color = session_color[conv_id]
+        idle_color = (*color[:3], 0.25)
+        slot_center = slot_offset[slot] + (slot_rows[slot] - 1) / 2
+        slot_height = slot_rows[slot] - (1 - bar_height)
+        for left, width in idle:
+            ax_swim.barh(
+                slot_center,
+                width,
+                left=left,
+                height=slot_height,
+                color=idle_color,
+                edgecolor="none",
+                linewidth=0,
+            )
+        # parallel turns occupy their own full-size sub-lane within the slot
+        for left, width, depth in active:
+            ax_swim.barh(
+                slot_offset[slot] + depth,
+                width,
+                left=left,
+                height=bar_height,
+                color=color,
+                edgecolor="none",
+                linewidth=0,
+            )
+
+    for slot, x in reuse_markers:
+        ax_swim.plot(
+            [x, x],
+            [
+                slot_offset[slot] - bar_height / 2,
+                slot_offset[slot] + slot_rows[slot] - 1 + bar_height / 2,
+            ],
+            color="black",
+            linewidth=1.5,
+            solid_capstyle="butt",
+        )
+
+    if total_rows > n_slots:
+        for slot in range(1, n_slots):
+            ax_swim.axhline(
+                slot_offset[slot] - 0.5, color="#999999", linewidth=0.4, alpha=0.6
+            )
+
+    ax_swim.set_xlim(0, max(t_max_s * 1.01, 1.0))
+    ax_swim.set_ylim(-0.5, total_rows - 0.5)
+    ax_swim.set_ylabel("Session Slot", fontsize=12)
+    ax_swim.set_title(
+        f"{run_dir.name}  —  {len(sessions)} sessions across {n_slots} slots",
+        fontsize=13,
+        fontweight="bold",
+        pad=30,
+    )
+    stride = 1 if n_slots <= 30 else 2 if n_slots <= 60 else 5
+    tick_slots = list(range(0, n_slots, stride))
+    ax_swim.set_yticks([slot_offset[s] + (slot_rows[s] - 1) / 2 for s in tick_slots])
+    ax_swim.set_yticklabels([str(s) for s in tick_slots])
+    ax_swim.invert_yaxis()
+    ax_swim.grid(axis="x", alpha=0.3, linewidth=0.5)
+
+    legend_color = cmap(0)
+    ax_swim.legend(
+        handles=[
+            mpatches.Patch(color=legend_color, label="Active request"),
+            mpatches.Patch(color=(*legend_color[:3], 0.25), label="Inter-turn delay"),
+            plt.Line2D(
+                [0], [0], color="black", linewidth=1.5, label="New session in slot"
+            ),
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+        fontsize=9,
+        ncol=3,
+        frameon=False,
+    )
+
+    if ramp_dur_s is not None:
+        ax_swim.axvline(
+            ramp_dur_s, color="orange", linestyle="--", linewidth=1.5, alpha=0.8
+        )
+    if bench_dur_s is not None:
+        ax_swim.axvline(
+            bench_dur_s, color="red", linestyle="--", linewidth=1.5, alpha=0.8
+        )
+
+    peak_active = int(active_vals.max()) if active_vals.size else 0
+    ax_conc.fill_between(
+        active_ts, active_vals, step="post", alpha=0.3, color="#2196F3"
+    )
+    ax_conc.step(
+        active_ts,
+        active_vals,
+        where="post",
+        color="#2196F3",
+        linewidth=0.8,
+        label=f"Active requests (peak {peak_active})",
+    )
+    ax_conc.step(
+        idle_ts,
+        idle_vals,
+        where="post",
+        color="#999999",
+        linewidth=0.8,
+        alpha=0.8,
+        label="Idle sessions (between turns)",
+    )
+    ax_conc.axhline(
+        n_slots,
+        color="red",
+        linestyle=":",
+        linewidth=1,
+        alpha=0.7,
+        label=f"Slot count ({n_slots})",
+    )
+    if concurrency is not None:
+        ax_conc.axhline(
+            concurrency,
+            color="green",
+            linestyle="--",
+            linewidth=1.2,
+            alpha=0.8,
+            label=f"Target concurrency ({concurrency})",
+        )
+    if ramp_dur_s is not None:
+        ax_conc.axvline(
+            ramp_dur_s,
+            color="orange",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"Ramp done ({ramp_dur_s:.0f}s)",
+        )
+    if bench_dur_s is not None:
+        ax_conc.axvline(
+            bench_dur_s,
+            color="red",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"Benchmark end ({bench_dur_s:.0f}s)",
+        )
+    ax_conc.set_xlabel("Time (seconds)", fontsize=12)
+    ax_conc.set_ylabel("Sessions", fontsize=11)
+    ax_conc.set_ylim(
+        0, max(peak_active * 1.15, n_slots * 1.15, (concurrency or 0) * 1.15, 1.0)
+    )
+    handles, _ = ax_conc.get_legend_handles_labels()
+    ax_conc.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.32),
+        fontsize=9,
+        ncol=len(handles),
+        frameon=False,
+    )
+    ax_conc.grid(alpha=0.3, linewidth=0.5)
+
+    plt.tight_layout()
+    out_path = out or (run_dir / "swim_lane.png")
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def _metric_value(record: dict, name: str) -> float | None:
+    metric = record.get("metrics", {}).get(name)
+    return metric.get("value") if isinstance(metric, dict) else None
+
+
+def _peak_concurrent(intervals: list[tuple[int, int]]) -> int:
+    """Max number of simultaneously-open (start_ns, end_ns) intervals."""
+    if not intervals:
+        return 0
+    events = sorted(
+        [(s, 1) for s, _ in intervals] + [(e, -1) for _, e in intervals],
+        key=lambda ev: (ev[0], ev[1]),
+    )
+    current = peak = 0
+    for _, delta in events:
+        current += delta
+        peak = max(peak, current)
+    return peak
+
+
+def _agent_peaks(sessions: dict[str, list[dict]]) -> dict[str, int]:
+    """Peak concurrency split by main agents (agent_depth 0) vs subagents.
+
+    "Active" counts in-flight requests; "alive" counts whole session spans,
+    inter-turn idle included.
+    """
+    turn_ivs: dict[bool, list[tuple[int, int]]] = {False: [], True: []}
+    span_ivs: dict[bool, list[tuple[int, int]]] = {False: [], True: []}
+    for turns in sessions.values():
+        is_sub = any((t["metadata"].get("agent_depth") or 0) > 0 for t in turns)
+        span_ivs[is_sub].append(_session_span_ns(turns))
+        for t in turns:
+            turn_ivs[is_sub].append(
+                (t["metadata"]["request_start_ns"], t["metadata"]["request_end_ns"])
+            )
+    return {
+        "mainActive": _peak_concurrent(turn_ivs[False]),
+        "mainAlive": _peak_concurrent(span_ivs[False]),
+        "subActive": _peak_concurrent(turn_ivs[True]),
+        "subAlive": _peak_concurrent(span_ivs[True]),
+    }
+
+
+def write_swim_lane_html(
+    run_dir: Path,
+    out: Path | None = None,
+    concurrency: int | None = None,
+    ramp: float | None = None,
+) -> Path:
+    """Write an interactive single-file HTML trace viewer for ``run_dir``.
+
+    Embeds a compact JSON payload (sessions, per-turn metrics, concurrency
+    sweep curves) into the canvas-based viewer template next to this module.
+    ``ramp`` overrides the ramp duration read from ``profile_export_aiperf.json``.
+    Returns the output path.
+    """
+    jsonl_path = run_dir / PROFILE_JSONL
+    if not jsonl_path.is_file():
+        raise SwimLaneError(f"{jsonl_path} not found")
+    records = _load_records(jsonl_path)
+    if not records:
+        raise SwimLaneError(f"no valid records in {jsonl_path}")
+
+    sessions = _group_into_sessions(records)
+    assignments = _assign_slots(sessions)
+    slot_of = dict(assignments)
+    ramp_dur_s, bench_dur_s = _load_bench_config(run_dir)
+    if ramp is not None:
+        ramp_dur_s = ramp
+    t0_ns = float(
+        min(
+            t["metadata"]["request_start_ns"]
+            for turns in sessions.values()
+            for t in turns
+        )
+    )
+    active_ts, active_vals, idle_ts, idle_vals = _concurrency_curves(
+        sessions, len(records), t0_ns
+    )
+
+    session_payload = []
+    for conv_id, slot in assignments:
+        session = sessions[conv_id]
+        depths, n_rows = _turn_depths(session)
+        turns = []
+        for r, depth in zip(session, depths, strict=True):
+            start_s = (r["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
+            end_s = (r["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
+            ttft = _metric_value(r, "time_to_first_token")
+            latency = _metric_value(r, "request_latency")
+            isl = _metric_value(r, "input_sequence_length")
+            osl = _metric_value(r, "output_sequence_length")
+            turns.append(
+                [
+                    round(start_s, 4),
+                    round(end_s, 4),
+                    round(ttft, 1) if ttft is not None else None,
+                    round(latency, 1) if latency is not None else None,
+                    int(isl) if isl is not None else None,
+                    int(osl) if osl is not None else None,
+                    depth,
+                    r["metadata"].get("agent_depth"),
+                ]
+            )
+        merged = _merged_active_ns(session)
+        gaps = [
+            [
+                round((prev_end - t0_ns) / NANOS_PER_SECOND, 4),
+                round((start - t0_ns) / NANOS_PER_SECOND, 4),
+            ]
+            for (_, prev_end), (start, _) in zip(merged, merged[1:], strict=False)
+        ]
+        session_payload.append(
+            {
+                "id": conv_id,
+                "conv": session[0]["metadata"]["conversation_id"],
+                "slot": slot,
+                "rows": n_rows,
+                "turns": turns,
+                "gaps": gaps,
+            }
+        )
+
+    t_max_s = max(turn[1] for s in session_payload for turn in s["turns"])
+    payload = {
+        "run": run_dir.name,
+        "tMax": round(t_max_s, 4),
+        "nSlots": max(slot_of.values()) + 1,
+        "target": concurrency,
+        "rampS": ramp_dur_s,
+        "benchEnd": bench_dur_s,
+        "peakActive": int(active_vals.max()) if active_vals.size else 0,
+        "peaks": _agent_peaks(sessions),
+        "sessions": session_payload,
+        "active": {
+            "t": np.round(active_ts, 3).tolist(),
+            "v": active_vals.astype(int).tolist(),
+        },
+        "idle": {
+            "t": np.round(idle_ts, 3).tolist(),
+            "v": idle_vals.astype(int).tolist(),
+        },
+    }
+    # "</" cannot appear inside the inline <script> payload.
+    payload_js = orjson.dumps(payload).decode().replace("</", "<\\/")
+    html = (
+        VIEWER_TEMPLATE.read_text()
+        .replace("__AIPERF_TITLE__", run_dir.name)
+        .replace("__AIPERF_PAYLOAD__", payload_js)
+    )
+    out_path = out or (run_dir / "swim_lane.html")
+    out_path.write_text(html)
+    return out_path
