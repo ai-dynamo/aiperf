@@ -8,6 +8,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/analysis/swim_lane.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -320,6 +325,16 @@
       "function-size",
       "src/aiperf/analysis/sweepline_kv_cache.py",
       "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
     ],
     [
       "function-size",
@@ -1133,11 +1148,6 @@
     ],
     [
       "function-size",
-      "src/aiperf/timing/strategies/agentic_replay.py",
-      "AgenticReplayStrategy.handle_credit_return"
-    ],
-    [
-      "function-size",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1213,6 +1223,11 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/cli_commands/swim_lane.py",
+      "swim_lane"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
       "TaskManagerMixin._background_task_loop"
     ],
@@ -1240,11 +1255,6 @@
       "keyword-only-args",
       "src/aiperf/dataset/loader/weka_synth_buf.py",
       "ConversationReconstructor.init_turn_0"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/weka_synth_buf.py",
-      "truncate_synth_buf_at_block"
     ],
     [
       "keyword-only-args",

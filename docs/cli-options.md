@@ -16,6 +16,10 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
+### [`analyze swim-lane`](#aiperf-analyze-swim-lane)
+
+Render a per-session swim-lane PNG with concurrency curve underneath.
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -84,6 +88,32 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
+
+<hr/>
+
+## `aiperf analyze swim-lane`
+
+Render a per-session swim-lane PNG with concurrency curve underneath.
+
+#### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+
+One or more AIPerf run directories.
+
+#### `-o`, `--out` `<str>`
+
+Output PNG path. Only valid when a single run directory is given.
+
+#### `-c`, `--concurrency` `<int>`
+
+Target concurrency to draw as a reference line in the concurrency panel.
+
+#### `--ramp` `<float>`
+
+Ramp duration in seconds for the ramp-done marker; overrides the value read from ``profile_export_aiperf.json`` (useful when only the jsonl was exported).
+
+#### `--html`, `--no-html`
+
+Also write an interactive HTML trace viewer (``swim_lane.html``, or the ``--out`` path with an ``.html`` suffix).
 
 <hr/>
 
