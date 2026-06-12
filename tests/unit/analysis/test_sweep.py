@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -341,6 +343,33 @@ class TestThroughputSweepIcl:
         # Per-request rate = 0.05; overlap peak ≈ 0.10 (>0.05 single-rate)
         assert float(np.max(tput)) > 0.05
         assert float(np.max(tput)) == pytest.approx(0.1)
+
+    def test_all_zero_icl_record_no_divide_warning(self) -> None:
+        """A record whose ICL gaps are all zero must not warn or leak inf.
+
+        Zero-length intervals are excluded from the nonzero divisor count, so
+        such a record divides by a zero count inside the eagerly-evaluated
+        np.where branch; the guard must prevent the RuntimeWarning and the
+        record must contribute no rate events.
+        """
+        gen_start = np.array([0.0, 5.0])
+        output_tokens = np.array([3.0, 4.0])
+        icl_values = np.array([10.0, 10.0, 0.0, 0.0])
+        icl_record_indices = np.array([0, 0, 1, 1], dtype=np.int32)
+        icl_offsets = np.array([0, 2], dtype=np.int64)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            ts, tput = throughput_sweep_line_icl(
+                gen_start,
+                output_tokens,
+                icl_values,
+                icl_record_indices,
+                icl_offsets=icl_offsets,
+            )
+        assert len(ts) == 4  # only record 0's 2 chunks emit +/- events
+        assert np.isfinite(tput).all()
+        assert float(np.max(tput)) == pytest.approx(1.0 / 10.0)  # (3-1)/2 / 10
 
     def test_rescaling_with_variable_tokens(self) -> None:
         """6 output tokens across 3 chunks → (6-1)/3 = 5/3 tok/msg.

@@ -307,9 +307,14 @@ def throughput_sweep_line_icl(
     # gen_start_ns and can't be modeled as a continuous rate over an interval.
     # Matches the non-ICL throughput_sweep_line which uses (osl - 1) / gen_dur.
     # Integrates to (osl - 1) tokens per record over the K nonzero intervals.
+    # The inner where guards the divisor: np.where evaluates both branches
+    # eagerly, and records whose ICL gaps are all zero have a nonzero-count
+    # of 0, which would warn on divide-by-zero even though the result is
+    # discarded by the outer mask.
     tokens_per_msg = np.where(
         per_req_icl_count > 0,
-        (per_req_tokens - 1.0) / per_req_icl_count,
+        (per_req_tokens - 1.0)
+        / np.where(per_req_icl_count > 0, per_req_icl_count, 1.0),
         0.0,
     )
     rates = np.where(
