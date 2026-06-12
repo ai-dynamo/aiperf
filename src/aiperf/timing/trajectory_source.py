@@ -221,7 +221,7 @@ class TrajectorySource(ConversationSource):
         return ledger
 
     def _log_trajectory_summary(self) -> None:
-        """Log a one-block table of every trajectory's start position.
+        """Log a table of every trajectory's start position, one record per line.
 
         Format::
 
@@ -235,6 +235,11 @@ class TrajectorySource(ConversationSource):
         start-range produced sensible per-trajectory positions before any
         request fires, without needing to wait for warmup-completion lines
         or correlate per-credit return logs.
+
+        Each line is its own log record: a single record carrying the whole
+        table as embedded newlines exceeds the atomic pipe-write size at high
+        concurrency and tears mid-line when other services write to the same
+        console stream.
         """
         rows: list[str] = []
         pcts: list[float] = []
@@ -291,14 +296,14 @@ class TrajectorySource(ConversationSource):
                 f"{self._start_max_ratio:.2f}]  (no trajectories built)"
             )
 
-        body = "\n".join(rows)
         _logger.info(
-            "TrajectorySource: built %d trajectories from %d traces\n%s\n%s",
+            "TrajectorySource: built %d trajectories from %d traces",
             len(self.trajectories),
             self._pool_size,
-            obs_line,
-            body,
         )
+        _logger.info(obs_line)
+        for row in rows:
+            _logger.info(row)
 
     @property
     def warmup_credit_count(self) -> int:
