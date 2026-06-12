@@ -73,6 +73,41 @@ def _public_user(*, prompt_kwargs: dict | None = None) -> CLIConfig:
             "--prompt-prefix-length",
             id="prefix-prompt-length",
         ),
+        param(
+            {"prompt_prefix_pool_size": 5},
+            "--prompt-prefix-pool-size",
+            id="prefix-prompt-pool-size",
+        ),
+        param(
+            {"prompt_prefix_shared_system_length": 10},
+            "--shared-system-prompt-length",
+            id="shared-system-prompt-length",
+        ),
+        param(
+            {"prompt_prefix_user_context_length": 10},
+            "--user-context-prompt-length",
+            id="user-context-prompt-length",
+        ),
+        param(
+            {"image_batch_size": 2},
+            "--image-batch-size",
+            id="image-batch-size",
+        ),
+        param(
+            {"image_source": "https://example.com/x.png"},
+            "--image-source",
+            id="image-source",
+        ),
+        param(
+            {"audio_batch_size": 2},
+            "--audio-batch-size",
+            id="audio-batch-size",
+        ),
+        param(
+            {"video_batch_size": 2},
+            "--video-batch-size",
+            id="video-batch-size",
+        ),
     ],
 )  # fmt: skip
 def test_synthetic_only_flag_rejected_on_public_dataset(
