@@ -14,6 +14,18 @@ in parallel, and only suspends on the turn that immediately precedes the
 gated turn. This matches the conflux author model and is validated at load
 time by ``validate_for_orchestrator_v1``.
 
+Dispatch offsets (SPAWN mode)
+-----------------------------
+A SPAWN child whose recorded first request starts after the branch spawn
+(child turn-0 ``timestamp_ms`` past the branch ``start_timestamp_ms``)
+dispatches via a delayed background task at that offset instead of firing
+immediately, reproducing the recorded in-subagent timing (e.g. a weka
+overflow stream whose first request landed minutes after the subagent
+spawned). Join gates and descendant counts are registered before the sleep,
+so gated parents wait for sleeping children; ``cleanup()`` cancels pending
+sleepers. Datasets without timing (``--ignore-trace-delays``) carry None
+timestamps and keep the immediate-dispatch behavior.
+
 Sticky-routing locality (FORK mode)
 -----------------------------------
 FORK-mode children are routed to the parent's worker via the sticky router
@@ -77,6 +89,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -99,6 +112,21 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def _as_timestamp_ms(value) -> float | None:
+    """Coerce a metadata timestamp to float ms; anything non-numeric is None."""
+    if isinstance(value, int | float) and math.isfinite(value):
+        return float(value)
+    return None
+
+
+def _turn0_timestamp_ms(meta) -> float | None:
+    """First-turn timestamp of a conversation metadata, or None."""
+    turns = getattr(meta, "turns", None)
+    if not isinstance(turns, list | tuple) or not turns:
+        return None
+    return _as_timestamp_ms(getattr(turns[0], "timestamp_ms", None))
 
 
 @dataclass
@@ -232,6 +260,10 @@ class BranchOrchestrator:
         self._pre_dispatched_branches: set[tuple[str, str]] = set()
         self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
+        # SPAWN children whose recorded first request starts after the branch
+        # spawn dispatch via delayed background tasks (see
+        # _start_delayed_first_turn). cleanup() cancels pending sleepers.
+        self._delayed_dispatch_tasks: set[asyncio.Task] = set()
         # Drain observer: sync callback fired after state mutations that may
         # drain has_pending_branch_work() to False. Wired by
         # CreditCallbackHandler.set_branch_orchestrator to re-evaluate the
@@ -613,6 +645,7 @@ class BranchOrchestrator:
         all_children: list = []
         per_child_gates: dict[str, list[tuple[int, str]]] = {}
         per_child_branch_mode: dict[str, ConversationBranchMode] = {}
+        dispatch_offset_by_corr: dict[str, float] = {}
         # Track gates we intended to create for a branch even when every
         # start_branch_child fails under that branch. We still must surface
         # a zero-outstanding gate so the parent doesn't hang.
@@ -637,6 +670,15 @@ class BranchOrchestrator:
             for gate in branch_gates:
                 expected_gates.add(gate)
 
+            # SPAWN children carry recorded dispatch offsets (child turn-0
+            # timestamp relative to the branch spawn). FORK children continue
+            # the parent context and always dispatch immediately.
+            branch_start_ms = (
+                self._branch_start_timestamp_ms(branch)
+                if branch.mode == ConversationBranchMode.SPAWN
+                else None
+            )
+
             for child_conv_id in branch.child_conversation_ids:
                 try:
                     child = self._cs.start_branch_child(
@@ -656,6 +698,9 @@ class BranchOrchestrator:
                 self._child_modes[child_corr] = branch.mode
                 per_child_branch_mode[child_corr] = branch.mode
                 per_child_gates[child_corr] = list(branch_gates)
+                dispatch_offset_by_corr[child_corr] = self._child_dispatch_offset_ms(
+                    branch_start_ms, child
+                )
                 all_children.append(child)
 
                 # Only FORK-mode children sticky-route to the parent's worker.
@@ -717,72 +762,99 @@ class BranchOrchestrator:
             # expected, 0 completed, registered=True -> is_done).
             state.registered = True
 
-        # Dispatch children. try_issue_credit returning False/None rolls back
-        # per-child bookkeeping below.
+        # Dispatch children. A SPAWN child whose recorded first request
+        # starts after the branch spawn dispatches via a delayed background
+        # task at that offset; everything else dispatches immediately.
+        # try_issue_credit returning False/None rolls back per-child
+        # bookkeeping (shared between both paths).
+        immediate_children: list = []
+        for child in all_children:
+            offset_ms = dispatch_offset_by_corr.get(child.x_correlation_id, 0.0)
+            if offset_ms > 0.0:
+                self._start_delayed_first_turn(child, offset_ms, parent_corr)
+            else:
+                immediate_children.append(child)
+
         results = await asyncio.gather(
-            *(self._dispatch_first_turn(child) for child in all_children),
+            *(self._dispatch_first_turn(child) for child in immediate_children),
             return_exceptions=True,
         )
-        for child, result in zip(all_children, results, strict=True):
-            if result is True:
-                continue
-            child_corr = child.x_correlation_id
-            child_mode = per_child_branch_mode.get(child_corr)
-            self._child_modes.pop(child_corr, None)
-            entries = self._child_to_join.pop(child_corr, [])
-            for entry in entries:
-                if entry.prereq_key is None:
-                    continue
-                pending = self._get_join(
-                    parent_corr,
-                    entry.gated_turn_index,  # type: ignore[arg-type]
-                )
-                if pending is None:
-                    continue
-                state = pending.outstanding.get(entry.prereq_key)
-                if state is not None and state.expected > 0:
-                    # Rollback decrements ``expected`` without touching
-                    # ``completed``. The child never landed so it cannot
-                    # have reported, and discard-on-completed would be a
-                    # no-op. Clamp at >= len(completed) so an already-
-                    # delivered completion (unlikely but possible under
-                    # aggressive reordering) doesn't revert is_done.
-                    state.expected = max(len(state.completed), state.expected - 1)
-            if (
-                child_mode == ConversationBranchMode.FORK
-                and self._sticky_router is not None
-            ):
-                self._sticky_router.release_child_routing(parent_corr)
-            if parent_corr in self._descendant_counts:
-                self._descendant_counts[parent_corr] -= 1
-            # Three-way classification of non-True gather results:
-            #   * BaseException -> genuine error (mirror commit 05d02720b
-            #     which fixed the analogous bug in
-            #     ``dispatch_pre_session_branches``).
-            #   * False -> ``dispatch_child_turn`` stop-condition refusal
-            #     (``can_send_child_turn`` False or no prefill slot under
-            #     ``--request-count`` cap); not an error.
-            #   * None -> issuer suppressed silently; observable no-op.
-            if isinstance(result, BaseException):
-                logger.error(
-                    "dispatch_first_turn failed for child %s",
-                    child_corr,
-                    exc_info=result,
-                )
-                self.stats.children_errored += 1
-            elif result is False:
-                self.stats.children_truncated += 1
-            elif result is None:
-                pass
-            else:
-                logger.warning(
-                    "dispatch_first_turn returned unexpected value %r for child %s",
-                    result,
-                    child_corr,
-                )
-                self.stats.children_errored += 1
-            self.stats.children_spawned -= 1
+        for child, result in zip(immediate_children, results, strict=True):
+            if result is not True:
+                self._rollback_failed_first_turn(child, result, parent_corr)
+        self._finalize_failed_dispatches(parent_corr)
 
+    def _rollback_failed_first_turn(self, child, result, parent_corr: str) -> None:
+        """Undo per-child bookkeeping for a turn-0 dispatch that didn't land.
+
+        Shared by the immediate gather path and the delayed-dispatch tasks so
+        both classify results identically (BaseException -> errored, False ->
+        truncated, None -> silent no-op).
+        """
+        child_corr = child.x_correlation_id
+        child_mode = self._child_modes.pop(child_corr, None)
+        entries = self._child_to_join.pop(child_corr, [])
+        for entry in entries:
+            if entry.prereq_key is None:
+                continue
+            pending = self._get_join(
+                parent_corr,
+                entry.gated_turn_index,  # type: ignore[arg-type]
+            )
+            if pending is None:
+                continue
+            state = pending.outstanding.get(entry.prereq_key)
+            if state is not None and state.expected > 0:
+                # Rollback decrements ``expected`` without touching
+                # ``completed``. The child never landed so it cannot
+                # have reported, and discard-on-completed would be a
+                # no-op. Clamp at >= len(completed) so an already-
+                # delivered completion (unlikely but possible under
+                # aggressive reordering) doesn't revert is_done.
+                state.expected = max(len(state.completed), state.expected - 1)
+        if (
+            child_mode == ConversationBranchMode.FORK
+            and self._sticky_router is not None
+        ):
+            self._sticky_router.release_child_routing(parent_corr)
+        if parent_corr in self._descendant_counts:
+            self._descendant_counts[parent_corr] -= 1
+        # Three-way classification of non-True dispatch results:
+        #   * BaseException -> genuine error (mirror commit 05d02720b
+        #     which fixed the analogous bug in
+        #     ``dispatch_pre_session_branches``).
+        #   * False -> ``dispatch_child_turn`` stop-condition refusal
+        #     (``can_send_child_turn`` False or no prefill slot under
+        #     ``--request-count`` cap); not an error.
+        #   * None -> issuer suppressed silently; observable no-op.
+        if isinstance(result, BaseException):
+            logger.error(
+                "dispatch_first_turn failed for child %s",
+                child_corr,
+                exc_info=result,
+            )
+            self.stats.children_errored += 1
+        elif result is False:
+            self.stats.children_truncated += 1
+        elif result is None:
+            pass
+        else:
+            logger.warning(
+                "dispatch_first_turn returned unexpected value %r for child %s",
+                result,
+                child_corr,
+            )
+            self.stats.children_errored += 1
+        self.stats.children_spawned -= 1
+
+    def _finalize_failed_dispatches(self, parent_corr: str) -> None:
+        """Drain end-game after one or more turn-0 dispatch rollbacks.
+
+        Pops vestigial gates, releases a fully-drained parent, and notifies
+        the drain observer (no credit return follows a rollback to do it).
+        Runs after the immediate gather settles and after each delayed
+        dispatch settles; a no-op when nothing rolled back.
+        """
         # If no children at all landed (all failed), pop gates that are now
         # zero-outstanding so the parent is not left suspended on a join
         # that can never fire via the child-leaf decrement path.
@@ -819,6 +891,88 @@ class BranchOrchestrator:
             self._release_slot(parent_corr)
             del self._descendant_counts[parent_corr]
         self._notify_drain()  # all-children-rolled-back path: no credit return follows
+
+    def _branch_start_timestamp_ms(self, branch) -> float | None:
+        """Branch spawn time in ms; falls back to min child turn-0 timestamp.
+
+        Mirrors ``trajectory_source._branch_runtimes`` so snapshot seeding
+        and live replay agree on when a branch enters the timeline. Returns
+        None when no timing evidence exists (e.g. --ignore-trace-delays
+        datasets), which disables offsets for the branch.
+        """
+        start = _as_timestamp_ms(getattr(branch, "start_timestamp_ms", None))
+        if start is not None:
+            return start
+        child_starts: list[float] = []
+        for child_id in branch.child_conversation_ids:
+            try:
+                meta = self._cs.get_metadata(child_id)
+            except Exception:  # noqa: BLE001 - missing metadata = no timing evidence
+                continue
+            ts = _turn0_timestamp_ms(meta)
+            if ts is not None:
+                child_starts.append(ts)
+        if child_starts:
+            return min(child_starts)
+        return None
+
+    @staticmethod
+    def _child_dispatch_offset_ms(branch_start_ms: float | None, child) -> float:
+        """Recorded offset of a child's first request from the branch spawn.
+
+        Zero (immediate dispatch) when either timestamp is missing or the
+        child's first request is at/before the spawn.
+        """
+        if branch_start_ms is None:
+            return 0.0
+        child_ts = _turn0_timestamp_ms(getattr(child, "metadata", None))
+        if child_ts is None:
+            return 0.0
+        return max(0.0, child_ts - branch_start_ms)
+
+    def _start_delayed_first_turn(
+        self, child, offset_ms: float, parent_corr: str
+    ) -> None:
+        """Schedule a SPAWN child's turn-0 dispatch at its recorded offset.
+
+        Join gates, descendant counts, and ``_child_to_join`` were registered
+        at spawn time, so a gated parent keeps waiting while the child sleeps
+        and ``has_pending_branch_work()`` stays True (the phase drain's
+        existing timeout backstop bounds the wait if the run ends mid-sleep).
+        ``cleanup()`` cancels pending sleepers and clears all bookkeeping
+        itself, so a cancelled task performs no rollback of its own.
+        """
+        task = asyncio.create_task(
+            self._dispatch_first_turn_after_offset(child, offset_ms, parent_corr)
+        )
+        self._delayed_dispatch_tasks.add(task)
+        task.add_done_callback(self._delayed_dispatch_tasks.discard)
+        self.stats.children_delayed += 1
+
+    async def _sleep_offset_ms(self, offset_ms: float) -> None:
+        """Sleep out a dispatch offset. Separate method so tests can gate it."""
+        await asyncio.sleep(offset_ms / 1000.0)
+
+    async def _dispatch_first_turn_after_offset(
+        self, child, offset_ms: float, parent_corr: str
+    ) -> None:
+        """Delayed-dispatch task body: sleep, then dispatch + settle.
+
+        A post-sleep stop-condition refusal (issuer returns False) rolls back
+        exactly like an immediate refusal. Dispatch and settlement run under
+        the parent lock, matching the intercept path's locking.
+        """
+        await self._sleep_offset_ms(offset_ms)
+        if self._cleaning_up:
+            return
+        async with self._parent_locks[parent_corr]:
+            try:
+                result = await self._dispatch_first_turn(child)
+            except Exception as exc:  # noqa: BLE001 - classified like the gather path
+                result = exc
+            if result is not True:
+                self._rollback_failed_first_turn(child, result, parent_corr)
+                self._finalize_failed_dispatches(parent_corr)
 
     def _ensure_future_join(
         self,
@@ -1180,11 +1334,14 @@ class BranchOrchestrator:
             return
         self._cleaning_up = True
         self._drain_observer = None
+        for task in self._delayed_dispatch_tasks:
+            task.cancel()
+        self._delayed_dispatch_tasks.clear()
         s = self.stats
         logger.info(
             "BranchOrchestrator stats: spawned=%d completed=%d errored=%d "
             "suspended=%d resumed=%d parents_failed_due_to_child_error=%d "
-            "joins_suppressed=%d",
+            "joins_suppressed=%d delayed=%d",
             s.children_spawned,
             s.children_completed,
             s.children_errored,
@@ -1192,6 +1349,7 @@ class BranchOrchestrator:
             s.parents_resumed,
             s.parents_failed_due_to_child_error,
             s.joins_suppressed,
+            s.children_delayed,
         )
         leaked = self._iter_pending_joins()
         if leaked or self._child_to_join or self._descendant_counts:
