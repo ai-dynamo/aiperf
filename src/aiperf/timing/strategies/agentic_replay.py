@@ -176,10 +176,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         TimingManager construction time.
 
         PROFILING: build the FIFO recycle queue with the FULL set of loader
-        trace_ids (including trajectory ids). Trajectories run live at
-        PROFILING start (resumed at k_i+1); the pop loop in
-        ``_spawn_from_recycle_or_id`` skips trace_ids whose session is
-        currently active so we never spawn a duplicate concurrent session.
+        trace_ids (including trajectory ids), and pre-register every live
+        trajectory lane in ``_active_traces``. Trajectories run live at
+        PROFILING start (resumed at k_i+1); pre-registering them here -
+        rather than lane-by-lane during dispatch - means a lane that
+        recycles immediately at startup can never pop a trace whose own
+        lane simply hasn't dispatched yet (a duplicate concurrent session).
         """
         if self.config.phase == CreditPhase.PROFILING:
             if not self.conversation_source.trajectories:
@@ -188,6 +190,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     "WARMUP must complete with at least one trajectory before "
                     "PROFILING can start. Check loader output and warmup failures."
                 )
+            self._active_traces.update(self._lanes_per_trace)
             self._recycle_queue = asyncio.Queue()
             # Recycle pool spans the FULL dataset, not (full - trajectories).
             # Trajectories run live at PROFILING start (resumed at k_i+1) and
@@ -303,7 +306,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         session = self.conversation_source.session_for(trajectory)
         self._correlation_to_lane[session.x_correlation_id] = lane
-        self._active_traces[trajectory.conversation_id] += 1
+        # The lane's trace was pre-registered in _active_traces by setup_phase.
         self._mint_marker_for_session(
             session.x_correlation_id, trajectory.conversation_id, lane
         )
@@ -425,8 +428,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         The initial recycle queue spans the full dataset pool (including
         trajectory trace_ids whose sessions are running live at PROFILING
-        start). The pop loop skips trace_ids in ``_active_traces`` and
-        re-enqueues them to avoid duplicate concurrent sessions.
+        start; every live lane is pre-registered in ``_active_traces`` by
+        ``setup_phase``). The pop loop skips trace_ids in ``_active_traces``
+        and re-enqueues them to avoid duplicate concurrent sessions.
         """
         # Prune unconditionally so every early-return path leaves dicts clean.
         self._session_marker.pop(finished_correlation_id, None)
@@ -481,10 +485,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     ) -> None:
         warmup_snapshot = self._get_snapshot(trajectory)
         snapshot = self._snapshot_continuation_after_warmup(trajectory)
+        # Each lane's single root session (continuing or terminal) was
+        # pre-registered in _active_traces by setup_phase.
         for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
-            if state.agent_depth == 0:
-                self._active_traces[state.conversation_id] += 1
             self._mint_marker_for_session(
                 state.x_correlation_id, state.conversation_id, lane
             )
@@ -501,7 +505,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         ]
         for state in terminal_roots:
             self._correlation_to_lane[state.x_correlation_id] = lane
-            self._active_traces[state.conversation_id] += 1
             self._mint_marker_for_session(
                 state.x_correlation_id, state.conversation_id, lane
             )

@@ -155,9 +155,8 @@ async def test_single_trace_concurrency_one_recycles_self():
     assert strategy._recycle_queue.qsize() == 1
 
     # Register the in-flight session's lane (normally done by _execute_profiling).
-    # Seed _active_traces so the new pop loop skips trace_0 while it is alive.
+    # _active_traces was already pre-registered by setup_phase.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     # Final turn (last index = 2 of num_turns=3)
     final = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
@@ -212,13 +211,10 @@ async def test_pool_one_concurrency_two_no_deadlock():
 
     # Register lane bookkeeping for both in-flight sessions (normally seeded by
     # _execute_profiling). handle_credit_return's recycle path requires
-    # finished_correlation_id to be in _correlation_to_lane. Seed
-    # _active_traces too: the new full-pool pop loop skips trace_ids whose
-    # session is currently alive, mirroring _execute_profiling behavior.
+    # finished_correlation_id to be in _correlation_to_lane. _active_traces
+    # was already pre-registered by setup_phase.
     strategy._correlation_to_lane["xcorr_a"] = 0
     strategy._correlation_to_lane["xcorr_b"] = 1
-    strategy._active_traces["trace_0"] += 1
-    strategy._active_traces["trace_1"] += 1
 
     # Two parallel consumers complete. We use asyncio.gather to drive them
     # concurrently within the same event-loop tick. asyncio.Queue is non-blocking
@@ -287,12 +283,10 @@ async def test_burst_of_ten_completions_preserves_completion_order():
     # Full pool: queue holds all 12 traces at setup.
     assert strategy._recycle_queue.qsize() == 12
 
-    # Register lane bookkeeping for the 10 in-flight sessions. Seed
-    # _active_traces too so the new pop loop skips trace_ids whose session
-    # is alive (mirroring _execute_profiling).
+    # Register lane bookkeeping for the 10 in-flight sessions.
+    # _active_traces was already pre-registered by setup_phase.
     for i in range(10):
         strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces[f"trace_{i}"] += 1
 
     # Fire 10 completions in completion order: trace_0..trace_9 finish in order.
     for i in range(10):
@@ -368,11 +362,10 @@ async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
     # Full pool: queue holds all 70 traces at setup.
     assert len(initial_queue) == 70
 
-    # Register lane bookkeeping for the 50 in-flight sessions. Seed
-    # _active_traces too so the new pop loop skips alive trace_ids.
+    # Register lane bookkeeping for the 50 in-flight sessions.
+    # _active_traces was already pre-registered by setup_phase.
     for i in range(50):
         strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces[f"trace_{i}"] += 1
 
     finals = [
         _make_credit(
@@ -475,11 +468,10 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
     # Full pool: queue holds all 5 traces at setup.
     assert initial_size == 5
 
-    # Register the in-flight session's lane bookkeeping. Seed _active_traces
-    # so the cooldown gate is reached after the discard at the top of
-    # _spawn_from_recycle_or_id.
+    # Register the in-flight session's lane bookkeeping. _active_traces was
+    # pre-registered by setup_phase; the cooldown gate is reached after the
+    # discard at the top of _spawn_from_recycle_or_id.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     # Final turn arrives during cooldown.
     final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
@@ -550,16 +542,13 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
     # dispatched session's (trace_id, correlation_id) to the tail.
     from collections import deque
 
-    # Seed the trajectory's correlation_ids and _active_traces:
-    # handle_credit_return now requires finished_correlation_id to be present
-    # in _correlation_to_lane, and the new full-pool pop loop skips trace_ids
-    # in _active_traces. Mimic _execute_profiling's bookkeeping for the
-    # initial trajectory cohort.
+    # Seed the trajectory's correlation_ids: handle_credit_return requires
+    # finished_correlation_id to be present in _correlation_to_lane.
+    # _active_traces was already pre-registered by setup_phase.
     in_flight: deque[tuple[str, str]] = deque()
     for lane in range(trajectory_count):
         corr = f"xcorr_traj_{lane}"
         strategy._correlation_to_lane[corr] = lane
-        strategy._active_traces[f"trace_{lane}"] += 1
         in_flight.append((f"trace_{lane}", corr))
 
     total_completions = 1500
@@ -907,7 +896,6 @@ async def test_root_final_turn_still_recycles_after_child_shortcircuit():
     )
     await strategy.setup_phase()
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     # Root credit: agent_depth defaults to 0 via _make_credit.
     root_final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
