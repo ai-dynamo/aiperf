@@ -74,7 +74,9 @@ _logger = AIPerfLogger(__name__)
 # scope, so shared blocks decode to different tokens than v5 produced).
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
-MANIFEST_VERSION = 7
+MANIFEST_VERSION = (
+    8  # v8: tool shaping persists across reset re-emits (shaped content changed)
+)
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 

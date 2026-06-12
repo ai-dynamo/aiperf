@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from multiprocessing import shared_memory
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -31,7 +32,7 @@ import pytest
 
 from aiperf.common import environment as env_mod
 from aiperf.dataset.loader import weka_parallel_convert as wpc
-from aiperf.dataset.loader.weka_tool_shape import tool_shape_delta_messages
+from aiperf.dataset.loader.weka_tool_shape import tool_shape_segment_messages
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 
 _MODEL = "claude-opus-4-5-20251101"
@@ -168,52 +169,94 @@ def tool_shaped_env(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# tool_shape_delta_messages helper
+# tool_shape_segment_messages helper
 # ---------------------------------------------------------------------------
 
 
-def test_tool_shape_delta_messages_shapes_assistant_user_pair():
-    delta = [
+def _seg(role: str, tool_result_turn: int | None = None):
+    return SimpleNamespace(role=role, tool_result_turn=tool_result_turn)
+
+
+def test_tool_shape_segment_messages_shapes_marked_pair():
+    msgs = [
         {"role": "assistant", "content": "calling a tool"},
         {"role": "user", "content": "tool output"},
     ]
-    shaped = tool_shape_delta_messages(delta, turn_index=3, is_tool_result=True)
-    asst, tool = shaped
+    segs = [_seg("assistant"), _seg("user", tool_result_turn=3)]
+    asst, tool = tool_shape_segment_messages(msgs, segs)
     call_id = asst["tool_calls"][0]["id"]
     assert call_id == "call_turn_3"
     assert asst["tool_calls"][0]["type"] == "function"
     assert tool == {"role": "tool", "tool_call_id": call_id, "content": "tool output"}
 
 
-def test_tool_shape_delta_messages_noop_for_user_input_turn():
-    delta = [
+def test_tool_shape_segment_messages_noop_for_unmarked_segments():
+    msgs = [
         {"role": "assistant", "content": "a"},
         {"role": "user", "content": "b"},
     ]
-    assert tool_shape_delta_messages(delta, turn_index=1, is_tool_result=False) == delta
+    segs = [_seg("assistant"), _seg("user")]
+    assert tool_shape_segment_messages(msgs, segs) == msgs
 
 
-def test_tool_shape_delta_messages_noop_without_preceding_assistant():
-    turn0 = [{"role": "user", "content": "first prompt"}]
-    assert tool_shape_delta_messages(turn0, turn_index=0, is_tool_result=True) == turn0
-    sys_user = [
+def test_tool_shape_segment_messages_noop_without_preceding_assistant():
+    turn0_msgs = [{"role": "user", "content": "first prompt"}]
+    assert tool_shape_segment_messages(turn0_msgs, [_seg("user", 0)]) == turn0_msgs
+    sys_user_msgs = [
         {"role": "system", "content": "s"},
         {"role": "user", "content": "u"},
     ]
-    assert (
-        tool_shape_delta_messages(sys_user, turn_index=1, is_tool_result=True)
-        == sys_user
-    )
+    segs = [_seg("system"), _seg("user", 1)]
+    assert tool_shape_segment_messages(sys_user_msgs, segs) == sys_user_msgs
 
 
-def test_tool_shape_delta_messages_does_not_mutate_input():
-    delta = [
+def test_tool_shape_segment_messages_shapes_every_marked_pair_in_window():
+    """A reset re-emit window carries the whole history: every marked pair
+    must shape, each with its own recorded turn's call id."""
+    msgs = [
+        {"role": "user", "content": "t0"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "tool out 1"},
+        {"role": "assistant", "content": "a2"},
+        {"role": "user", "content": "real input"},
+        {"role": "assistant", "content": "a3"},
+        {"role": "user", "content": "tool out 3"},
+    ]
+    segs = [
+        _seg("user"),
+        _seg("assistant"),
+        _seg("user", 1),
+        _seg("assistant"),
+        _seg("user"),
+        _seg("assistant"),
+        _seg("user", 3),
+    ]
+    shaped = tool_shape_segment_messages(msgs, segs)
+    assert [m["role"] for m in shaped] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert shaped[2]["tool_call_id"] == "call_turn_1"
+    assert shaped[6]["tool_call_id"] == "call_turn_3"
+    assert shaped[1]["tool_calls"][0]["id"] == "call_turn_1"
+    assert shaped[5]["tool_calls"][0]["id"] == "call_turn_3"
+    assert "tool_calls" not in shaped[3]
+
+
+def test_tool_shape_segment_messages_does_not_mutate_input():
+    msgs = [
         {"role": "assistant", "content": "a"},
         {"role": "user", "content": "b"},
     ]
-    tool_shape_delta_messages(delta, turn_index=1, is_tool_result=True)
-    assert delta[0] == {"role": "assistant", "content": "a"}
-    assert delta[1] == {"role": "user", "content": "b"}
+    segs = [_seg("assistant"), _seg("user", 1)]
+    tool_shape_segment_messages(msgs, segs)
+    assert msgs[0] == {"role": "assistant", "content": "a"}
+    assert msgs[1] == {"role": "user", "content": "b"}
 
 
 # ---------------------------------------------------------------------------
@@ -367,3 +410,66 @@ def test_parallel_tool_shaping_matches_serial(tool_shaped_env, tmp_path):
             if any(m["role"] == "tool" for m in st.raw_messages):
                 shaped_seen = True
     assert shaped_seen, "expected at least one tool-shaped turn in this trace"
+
+
+# ---------------------------------------------------------------------------
+# Shaping must survive reset_context re-emits: a reset REPLACES the wire
+# context, so if the full re-emission renders previously-shaped tool turns as
+# plain user, the reset retroactively unshapes everything already sent.
+# ---------------------------------------------------------------------------
+
+
+def _reset_trace(trace_id: str) -> dict:
+    """Turn 1 is a shaped tool-result. Turn 3's hash chain diverges INSIDE
+    turn-2's already-emitted region (LCP cut past turn-1's pair -> the pair
+    SURVIVES truncation and must re-emit shaped in the reset full state)."""
+    return {
+        "id": trace_id,
+        "models": [_MODEL, _HAIKU],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "tool_tokens": 0,
+        "system_tokens": 0,
+        "requests": [
+            _req(t=0.0, hash_ids=[1, 2], input_types=["text"], stop="tool_use"),
+            _req(
+                t=1.0,
+                hash_ids=[1, 2, 3, 4],
+                input_types=["tool_result"],
+                stop="tool_use",
+            ),
+            _req(
+                t=2.0,
+                hash_ids=[1, 2, 3, 4, 5, 6],
+                input_types=["text"],
+                stop="tool_use",
+            ),
+            # diverges at block index 5 (inside turn-2's emitted content,
+            # after turn-1's marked pair at blocks 2-3) -> reset re-emit.
+            _req(t=3.0, hash_ids=[1, 2, 3, 4, 5, 9, 10], input_types=["tool_result"]),
+        ],
+    }
+
+
+def test_reset_reemit_preserves_tool_shape(tool_shaped_env, tmp_path):
+    loader = _make_loader(tmp_path, _reset_trace("trace_reset"))
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    turns = convs["trace_reset"].turns
+    # turn 1: shaped append delta
+    assert [m["role"] for m in turns[1].raw_messages] == ["assistant", "tool"]
+    t1_id = turns[1].raw_messages[1]["tool_call_id"]
+    # turn 2 (user_input): plain append, no shaping
+    assert all(m["role"] != "tool" for m in turns[2].raw_messages)
+    # turn 3: reset full re-emit -- turn-1's surviving tool pair must STILL be
+    # shaped, with the SAME deterministic call id it was first sent with.
+    assert turns[3].reset_context is True
+    roles = [m["role"] for m in turns[3].raw_messages]
+    assert "tool" in roles, f"reset re-emit unshaped the history: {roles}"
+    reemit_tools = [m for m in turns[3].raw_messages if m["role"] == "tool"]
+    assert any(m["tool_call_id"] == t1_id for m in reemit_tools)
+    reemit_calls = [
+        c["id"] for m in turns[3].raw_messages for c in m.get("tool_calls") or []
+    ]
+    assert t1_id in reemit_calls

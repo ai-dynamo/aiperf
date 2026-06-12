@@ -1,52 +1,53 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Opt-in OpenAI tool-call wire shaping for weka trace replay deltas.
+"""Opt-in OpenAI tool-call wire shaping for weka trace replay.
 
-Kept in its own dependency-free module so both the serial loader
-(:mod:`aiperf.dataset.loader.weka_trace`) and the parallel worker
-(:mod:`aiperf.dataset.loader.weka_parallel_convert`) import one source of
-truth without pulling either module into the other.
+Shaping operates on the reconstructor's emitted segment window so it applies
+uniformly to append deltas AND ``reset_context`` full re-emissions -- a reset
+replaces the wire context, so emission-time-only shaping would retroactively
+unshape every previously-sent tool turn. Segments are duck-typed (``role`` +
+``tool_result_turn`` attributes) to keep this module dependency-free for both
+the serial loader and the parallel worker.
 """
 
 from __future__ import annotations
 
 
-def tool_shape_delta_messages(
-    messages: list[dict], *, turn_index: int, is_tool_result: bool
-) -> list[dict]:
-    """Reshape a tool-result turn's delta into the OpenAI tool-call wire shape.
+def tool_shape_segment_messages(messages: list[dict], segments: list) -> list[dict]:
+    """Shape an emitted message window from its source segments.
 
-    The same-delta assistant segment (the one that "made the call") gains a
-    synthetic ``tool_calls`` entry and the new-input user segment becomes a
-    ``role: "tool"`` message referencing it; content text is unchanged, so
-    only the message framing differs from the default plain-user shape.
+    ``messages[i]`` must correspond 1:1 to ``segments[i]``. A user segment
+    marked with ``tool_result_turn`` becomes a ``role: "tool"`` message and
+    the assistant segment immediately before it (in the same window) gains
+    the matching synthetic ``tool_calls`` entry. The call id is keyed to the
+    turn recorded on the segment, so re-emissions reproduce the id the turn
+    was first sent with.
 
-    Only the current turn's trailing assistant -> user pair is shaped (on a
-    ``reset_context`` full re-emit, earlier history keeps the plain shape).
-    Guarded: requires an assistant segment immediately before the final user
-    segment, so turn 0 (no prior assistant) and live-assistant deltas
-    (assistant segments not emitted) fall through unchanged. The call id is
-    deterministic per turn index for reproducible payloads.
+    Pairing is window-local and guarded: a marked segment without an
+    assistant directly before it (turn 0, post-context-loss user heads,
+    window boundaries) falls back to the plain user shape.
     """
-    if not is_tool_result or len(messages) < 2:
-        return messages
-    if messages[-1].get("role") != "user" or messages[-2].get("role") != "assistant":
-        return messages
-    call_id = f"call_turn_{turn_index}"
     shaped = list(messages)
-    shaped[-2] = {
-        **messages[-2],
-        "tool_calls": [
-            {
-                "id": call_id,
-                "type": "function",
-                "function": {"name": "recorded_tool", "arguments": "{}"},
-            }
-        ],
-    }
-    shaped[-1] = {
-        "role": "tool",
-        "tool_call_id": call_id,
-        "content": messages[-1].get("content", ""),
-    }
+    for i, seg in enumerate(segments):
+        turn = getattr(seg, "tool_result_turn", None)
+        if turn is None or getattr(seg, "role", None) != "user":
+            continue
+        if i == 0 or getattr(segments[i - 1], "role", None) != "assistant":
+            continue
+        call_id = f"call_turn_{turn}"
+        shaped[i - 1] = {
+            **shaped[i - 1],
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "recorded_tool", "arguments": "{}"},
+                }
+            ],
+        }
+        shaped[i] = {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": shaped[i].get("content", ""),
+        }
     return shaped

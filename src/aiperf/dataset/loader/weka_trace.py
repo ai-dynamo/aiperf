@@ -976,7 +976,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         from aiperf.dataset.loader.weka_synth_buf import (
             ConversationReconstructor,
         )
-        from aiperf.dataset.loader.weka_tool_shape import tool_shape_delta_messages
 
         conversations: list[Conversation] = []
         n_plans = len(parent_plans)
@@ -1012,6 +1011,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
                 emit_assistant_segments=not self._use_live_assistant,
+                tool_shaped_messages=self._tool_shaped_messages,
             )
 
             # First pass: emit turns from normal requests; track outer-index → turn-pos.
@@ -1019,6 +1019,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             parent_seen_hash_ids: set[int] = set()
             for k, (outer_idx, req) in enumerate(plan.normals):
                 seed = f"{plan.trace_id}:turn_{k}:partial_tail"
+                input_kind = _classify_turn_input(
+                    req, plan.normals[k - 1][1] if k else None
+                )
+                is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
                 if k == 0:
                     recon.init_turn_0(
                         hash_ids=req.hash_ids,
@@ -1026,6 +1030,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         tool_tokens=trace.tool_tokens,
                         system_tokens=trace.system_tokens,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
                 else:
                     prev_req = plan.normals[k - 1][1]
@@ -1036,6 +1041,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_hash_ids=req.hash_ids,
                         curr_in_tokens=req.input_length,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
 
                 # Turn.timestamp/delay are in milliseconds; weka traces record seconds.
@@ -1063,23 +1069,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 theoretical_total_blocks = len(req.hash_ids)
                 parent_seen_hash_ids.update(req.hash_ids)
-                input_kind = _classify_turn_input(
-                    req, plan.normals[k - 1][1] if k else None
-                )
-                raw_messages = delta.delta_messages
-                if self._tool_shaped_messages:
-                    raw_messages = tool_shape_delta_messages(
-                        raw_messages,
-                        turn_index=k,
-                        is_tool_result=input_kind == TurnInputKind.TOOL_RESULT,
-                    )
                 conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
                         delay=None if ignore_delays else delay_ms,
                         model=model_map.get(req.model, req.model),
                         max_tokens=self._cap_output(req),
-                        raw_messages=raw_messages,
+                        raw_messages=delta.delta_messages,
                         reset_context=delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
@@ -1253,6 +1249,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
                 emit_assistant_segments=not self._use_live_assistant,
+                tool_shaped_messages=self._tool_shaped_messages,
             )
             child_conv = Conversation(
                 session_id=cp.session_id,
@@ -1264,6 +1261,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             child_seen_hash_ids: set[int] = set()
             for k, creq in enumerate(cp.stream_requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
+                input_kind = _classify_turn_input(
+                    creq, cp.stream_requests[k - 1] if k else None
+                )
+                is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
                 if k == 0:
                     child_recon.init_turn_0(
                         hash_ids=creq.hash_ids,
@@ -1271,6 +1272,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         tool_tokens=cp.entry.tool_tokens,
                         system_tokens=cp.entry.system_tokens,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
                 else:
                     prev_creq = cp.stream_requests[k - 1]
@@ -1281,6 +1283,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_hash_ids=creq.hash_ids,
                         curr_in_tokens=creq.input_length,
                         seed=seed,
+                        is_tool_result=is_tool_result,
                     )
                 trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
                 if trace_idle_timing is not None:
@@ -1305,23 +1308,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 theoretical_total_blocks = len(creq.hash_ids)
                 child_seen_hash_ids.update(creq.hash_ids)
-                input_kind = _classify_turn_input(
-                    creq, cp.stream_requests[k - 1] if k else None
-                )
-                child_raw_messages = child_delta.delta_messages
-                if self._tool_shaped_messages:
-                    child_raw_messages = tool_shape_delta_messages(
-                        child_raw_messages,
-                        turn_index=k,
-                        is_tool_result=input_kind == TurnInputKind.TOOL_RESULT,
-                    )
                 child_conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
                         delay=None if ignore_delays else child_delay_ms,
                         model=child_model_map.get(creq.model, creq.model),
                         max_tokens=creq.output_length,
-                        raw_messages=child_raw_messages,
+                        raw_messages=child_delta.delta_messages,
                         reset_context=child_delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,

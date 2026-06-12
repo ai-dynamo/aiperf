@@ -14,45 +14,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
-
-def compose_weka_prompt_tokens(
-    *,
-    hash_ids: list[int],
-    input_length: int,
-    decode_block_tokens: Callable[[list[int]], list[int]],
-    sample_partial_tail_tokens: Callable[[int, str], list[int]],
-    seed: str,
-) -> list[int]:
-    """Build the prompt token sequence for a weka turn.
-
-    Replaces the ``synthesize_prompts_from_hash_ids`` parent-side phase: the
-    same hash-id-seeded RNG used by :class:`ConversationReconstructor` for
-    LCP segments is reused here for the prompt itself, so workers can
-    produce both byte-deterministically without a separate ``parallel_decode``
-    pool.
-
-    Three layouts:
-
-    - ``hash_ids`` empty: prompt is entirely a sha256-keyed sample of length
-      ``input_length``.
-    - ``input_length <= len(hash_ids) * block_size``: exact-tile or
-      last-block-partial; truncate the hashed prefix to ``input_length``.
-      Byte-identical to ``_build_token_sequence``'s last-block-partial path
-      because ``sample_tokens_from_corpus`` calls ``randrange`` exactly once
-      regardless of block size, so prefix truncation matches.
-    - ``input_length > len(hash_ids) * block_size``: prefix-only — append a
-      sha256-keyed partial tail. Byte content of the tail differs from
-      ``_build_token_sequence``'s order-dependent ``_corpus_rng`` path; the
-      sha256-keyed seed makes the tail position-deterministic and
-      reproducible across processes.
-    """
-    if not hash_ids:
-        return sample_partial_tail_tokens(input_length, seed)
-    block_tokens = decode_block_tokens(hash_ids)
-    if input_length <= len(block_tokens):
-        return block_tokens[:input_length]
-    tail = input_length - len(block_tokens)
-    return block_tokens + sample_partial_tail_tokens(tail, seed)
+# Re-exported for backwards compatibility; the composer lives in its own
+# module since it is independent of the synthesis-buffer state machine.
+from aiperf.dataset.loader.weka_prompt_compose import (  # noqa: E402
+    compose_weka_prompt_tokens as compose_weka_prompt_tokens,
+)
+from aiperf.dataset.loader.weka_tool_shape import tool_shape_segment_messages
 
 
 @dataclass
@@ -90,6 +57,11 @@ class RoleSegment:
     block_count: int
     tokens: list[int]
     content: str
+    tool_result_turn: int | None = None
+    """Set on a user segment whose content is the tool output answering the
+    immediately-preceding assistant segment's tool call. Holds the turn index
+    the segment was created on, keying the deterministic synthetic call id so
+    re-emissions reproduce the id the turn was first sent with."""
 
     @property
     def content_token_count(self) -> int:
@@ -133,9 +105,14 @@ class ConversationReconstructor:
     cache-hit reuse across turns at the cost of hash-id fidelity past
     turn 0).
     """
+    tool_shaped_messages: bool = False
+    """When True, ``turn_delta`` emits marked tool-result user segments in
+    the OpenAI tool-call wire shape (see weka_tool_shape). Requires emitted
+    assistant segments for pairing, so live-assistant deltas stay plain."""
     _segments: list[RoleSegment] = field(default_factory=list)
     _emitted_segment_count: int = 0
     _last_disturbance_at: int | None = None
+    _turn_index: int = 0
 
     def init_turn_0(
         self,
@@ -144,6 +121,7 @@ class ConversationReconstructor:
         tool_tokens: int,
         system_tokens: int,
         seed: str,
+        is_tool_result: bool = False,
     ) -> None:
         """Initialize segments for turn 0 from a tool+system / user prefix split.
 
@@ -242,6 +220,8 @@ class ConversationReconstructor:
                 )
             )
 
+        self._turn_index = 0
+        del is_tool_result  # turn 0 has no preceding assistant to pair with
         self._segments = segs
         self._emitted_segment_count = 0
         self._last_disturbance_at = None
@@ -254,6 +234,7 @@ class ConversationReconstructor:
         curr_hash_ids: list[int],
         curr_in_tokens: int,
         seed: str,
+        is_tool_result: bool = False,
     ) -> None:
         """Advance synth_buf to turn k via LCP-driven symmetric attribution.
 
@@ -305,6 +286,7 @@ class ConversationReconstructor:
             )
         new_blocks_count = m_curr - lcp
 
+        self._turn_index += 1
         asst_blocks_target = (
             math.ceil(prev_out_tokens / bs) if prev_out_tokens > 0 else 0
         )
@@ -341,6 +323,10 @@ class ConversationReconstructor:
                     block_count=user_blocks,
                     tokens=user_tokens,
                     content=self.decode_tokens_to_text(user_tokens),
+                    # Window-local pairing in emission guards the degenerate
+                    # cases (post-context-loss heads, missing assistant), so
+                    # the mark itself is unconditional on the turn kind.
+                    tool_result_turn=self._turn_index if is_tool_result else None,
                 )
             )
 
@@ -372,14 +358,11 @@ class ConversationReconstructor:
             source = self._segments[self._emitted_segment_count :]
             reset = False
 
-        if self.emit_assistant_segments:
-            messages = [{"role": s.role, "content": s.content} for s in source]
-        else:
-            messages = [
-                {"role": s.role, "content": s.content}
-                for s in source
-                if s.role != "assistant"
-            ]
+        messages = [{"role": s.role, "content": s.content} for s in source]
+        if self.tool_shaped_messages and self.emit_assistant_segments:
+            messages = tool_shape_segment_messages(messages, source)
+        if not self.emit_assistant_segments:
+            messages = [m for m in messages if m["role"] != "assistant"]
 
         self._emitted_segment_count = len(self._segments)
         self._last_disturbance_at = None
