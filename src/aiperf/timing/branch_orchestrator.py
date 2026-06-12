@@ -783,22 +783,22 @@ class BranchOrchestrator:
                 self.stats.children_errored += 1
             self.stats.children_spawned -= 1
 
-        # If no children at all landed (all failed), check for gates that
-        # are now zero-outstanding and dispatch the gated turn immediately
-        # to avoid hanging the parent.
+        # If no children at all landed (all failed), pop gates that are now
+        # zero-outstanding so the parent is not left suspended on a join
+        # that can never fire via the child-leaf decrement path.
         gates_for_parent = self._future_joins.get(parent_corr, {})
-        drained_gates: list[PendingBranchJoin] = []
         for gated_idx, pending in list(gates_for_parent.items()):
             # A gate may be vestigial (created this call and immediately
             # satisfied) if every child under every prereq rolled back.
             if pending.is_satisfied:
-                # Only fire NOW if the gate is the parent's IMMEDIATE next
-                # turn. A delayed gate (intervening turns precede it) must not
-                # dispatch out of order: pop it silently and let the parent
-                # advance turns normally; when it reaches the (now un-gated)
-                # turn, the strategy sends it as an ordinary continuation.
-                if gated_idx == credit.turn_index + 1:
-                    drained_gates.append(pending)
+                # Pop silently regardless of position. With the gate gone,
+                # _maybe_suspend_parent returns False and the strategy's
+                # normal continuation dispatches the (now un-gated) turn as
+                # an ordinary next turn - exactly once. Dispatching the
+                # immediate-next gate here as well double-dispatched the
+                # same turn: intercept still returned False, so the callback
+                # handler fell through to handle_credit_return ->
+                # _dispatch_next_turn for the identical turn_index.
                 self._pop_future_join(parent_corr, gated_idx)
         # If no successful children AND no gated turns, release the
         # reserved parent state so the parent can drain.
@@ -819,11 +819,6 @@ class BranchOrchestrator:
             self._release_slot(parent_corr)
             del self._descendant_counts[parent_corr]
         self._notify_drain()  # all-children-rolled-back path: no credit return follows
-
-        for pending in drained_gates:
-            # Zero-outstanding gate with no way to fire via child-leaf
-            # decrement: dispatch immediately (matches Phase 0 hang-fix).
-            await self._release_blocked_join(pending)
 
     def _ensure_future_join(
         self,
