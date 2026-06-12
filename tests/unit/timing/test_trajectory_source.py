@@ -104,7 +104,8 @@ def test_k_i_within_bounds_for_each_trajectory():
         random_seed=7,
     )
     for trajectory in src.trajectories:
-        assert 0 <= trajectory.start_turn_index <= 7  # floor(0.7 * 10) = 7
+        # defaults: floor(0.25 * 10) = 2, floor(0.75 * 10) = 7
+        assert 2 <= trajectory.start_turn_index <= 7
 
 
 def test_seed_determinism():

@@ -45,6 +45,34 @@ class ScenarioSpec(AIPerfBaseModel):
     min_benchmark_duration_seconds: int = Field(
         description="Floor on --benchmark-duration in seconds."
     )
+    default_benchmark_duration_seconds: int | None = Field(
+        default=None,
+        description=(
+            "Value auto-filled into --benchmark-duration when the user leaves "
+            "it unset. Explicit user values are honored (subject to the "
+            "min_benchmark_duration_seconds floor). None disables auto-fill."
+        ),
+    )
+    default_trajectory_start_min_ratio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Value auto-filled into --trajectory-start-min-ratio when the user "
+            "leaves it unset. Explicit user values are honored. None disables "
+            "auto-fill."
+        ),
+    )
+    default_trajectory_start_max_ratio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Value auto-filled into --trajectory-start-max-ratio when the user "
+            "leaves it unset. Explicit user values are honored. None disables "
+            "auto-fill."
+        ),
+    )
     inter_turn_delay_cap_seconds: float | None = Field(
         default=None,
         description="Hard ceiling for trace inter-turn delays in seconds. None disables.",

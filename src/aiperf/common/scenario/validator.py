@@ -328,6 +328,19 @@ def validate_scenario(
             )
         )
 
+    if (
+        spec.default_benchmark_duration_seconds is not None
+        and user_config.loadgen.benchmark_duration is None
+    ):
+        user_config.loadgen.benchmark_duration = float(
+            spec.default_benchmark_duration_seconds
+        )
+        _logger.info(
+            "Scenario %r: auto-set --benchmark-duration=%s (was unset).",
+            spec.name,
+            spec.default_benchmark_duration_seconds,
+        )
+
     duration = user_config.loadgen.benchmark_duration or 0.0
     if duration < spec.min_benchmark_duration_seconds:
         violations.append(
@@ -342,6 +355,25 @@ def validate_scenario(
                 ),
             )
         )
+
+    for ratio_field, spec_default in (
+        ("trajectory_start_min_ratio", spec.default_trajectory_start_min_ratio),
+        ("trajectory_start_max_ratio", spec.default_trajectory_start_max_ratio),
+    ):
+        if spec_default is None:
+            continue
+        explicit = getattr(user_config.loadgen, f"_{ratio_field}_explicitly_set", False)
+        if not explicit:
+            current = getattr(user_config.loadgen, ratio_field, None)
+            if current != spec_default:
+                setattr(user_config.loadgen, ratio_field, spec_default)
+                _logger.info(
+                    "Scenario %r: auto-set --%s=%s (was at default %s).",
+                    spec.name,
+                    ratio_field.replace("_", "-"),
+                    spec_default,
+                    current,
+                )
 
     if user_config.input.random_seed is None:
         seed = secrets.randbits(63)

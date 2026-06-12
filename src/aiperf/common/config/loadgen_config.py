@@ -20,6 +20,8 @@ class LoadGeneratorConfig(BaseConfig):
 
     _inter_turn_delay_cap_explicitly_set: bool = False
     _trace_idle_gap_cap_explicitly_set: bool = False
+    _trajectory_start_min_ratio_explicitly_set: bool = False
+    _trajectory_start_max_ratio_explicitly_set: bool = False
 
     @model_validator(mode="after")
     def _record_explicit_set_flags(self) -> Self:
@@ -35,6 +37,12 @@ class LoadGeneratorConfig(BaseConfig):
         )
         self._trace_idle_gap_cap_explicitly_set = (
             "trace_idle_gap_cap_seconds" in self.model_fields_set
+        )
+        self._trajectory_start_min_ratio_explicitly_set = (
+            "trajectory_start_min_ratio" in self.model_fields_set
+        )
+        self._trajectory_start_max_ratio_explicitly_set = (
+            "trajectory_start_max_ratio" in self.model_fields_set
         )
         return self
 
@@ -219,14 +227,13 @@ class LoadGeneratorConfig(BaseConfig):
             description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
             "position within each trajectory, expressed as a fraction of the "
             "trace's total turn count. Sampled per trajectory at trajectory-build "
-            "time; deterministic given --random-seed. Default 0.0 keeps the prior "
-            "behavior where every trajectory could start at turn 0.",
+            "time; deterministic given --random-seed.",
         ),
         CLIParameter(
             name=("--trajectory-start-min-ratio",),
             group=Groups.LOAD_GENERATOR,
         ),
-    ] = 0.0
+    ] = 0.25
 
     trajectory_start_max_ratio: Annotated[
         float,
@@ -237,13 +244,13 @@ class LoadGeneratorConfig(BaseConfig):
             "position within each trajectory, expressed as a fraction of the "
             "trace's total turn count. The effective per-trace ceiling is "
             "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
-            "after warmup. Default 0.7 preserves the previously hardcoded value.",
+            "after warmup.",
         ),
         CLIParameter(
             name=("--trajectory-start-max-ratio",),
             group=Groups.LOAD_GENERATOR,
         ),
-    ] = 0.7
+    ] = 0.75
 
     concurrency: Annotated[
         Any,  # CLI accepts string, validator converts to Union[int, list[int], None]

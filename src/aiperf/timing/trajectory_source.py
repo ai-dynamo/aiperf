@@ -148,8 +148,8 @@ class TrajectorySource(ConversationSource):
         dataset_sampler: DatasetSamplingStrategyProtocol,
         concurrency: int,
         random_seed: int,
-        start_min_ratio: float = 0.0,
-        start_max_ratio: float = 0.7,
+        start_min_ratio: float = 0.25,
+        start_max_ratio: float = 0.75,
     ) -> None:
         super().__init__(
             dataset_metadata=dataset_metadata, dataset_sampler=dataset_sampler
