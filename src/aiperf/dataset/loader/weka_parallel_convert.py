@@ -206,6 +206,7 @@ class _WekaTraceTask:
     model_map: dict[str, str]
     block_size: int
     emit_assistant_segments: bool = True
+    tool_shaped_messages: bool = False
 
 
 @dataclass(slots=True)
@@ -325,6 +326,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     from aiperf.dataset.loader.weka_synth_buf import (
         ConversationReconstructor,
     )
+    from aiperf.dataset.loader.weka_tool_shape import tool_shape_delta_messages
 
     state = _worker_state
     bs = task.block_size
@@ -390,13 +392,20 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         )
         theoretical_total_blocks = len(req["hash_ids"])
         parent_seen_hash_ids.update(req["hash_ids"])
+        parent_raw_messages = parent_delta.delta_messages
+        if task.tool_shaped_messages:
+            parent_raw_messages = tool_shape_delta_messages(
+                parent_raw_messages,
+                turn_index=len(parent_turns),
+                is_tool_result=req.get("input_kind") == "tool_result",
+            )
         parent_turns.append(
             {
                 "timestamp": None if task.ignore_delays else t_ms,
                 "delay": None if task.ignore_delays else delay_ms,
                 "model": task.model_map.get(req["model"], req["model"]),
                 "max_tokens": req["capped_output_length"],
-                "raw_messages": parent_delta.delta_messages,
+                "raw_messages": parent_raw_messages,
                 "reset_context": parent_delta.reset_context,
                 "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                 "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,
@@ -567,13 +576,20 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             )
             theoretical_total_blocks = len(creq["hash_ids"])
             child_seen_hash_ids.update(creq["hash_ids"])
+            child_raw_messages = child_delta.delta_messages
+            if task.tool_shaped_messages:
+                child_raw_messages = tool_shape_delta_messages(
+                    child_raw_messages,
+                    turn_index=len(child_turns),
+                    is_tool_result=creq.get("input_kind") == "tool_result",
+                )
             child_turns.append(
                 {
                     "timestamp": None if task.ignore_delays else t_ms,
                     "delay": None if task.ignore_delays else child_delay_ms,
                     "model": task.model_map.get(creq["model"], creq["model"]),
                     "max_tokens": creq["output_length"],
-                    "raw_messages": child_delta.delta_messages,
+                    "raw_messages": child_raw_messages,
                     "reset_context": child_delta.reset_context,
                     "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                     "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,

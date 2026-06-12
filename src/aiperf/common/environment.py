@@ -291,6 +291,19 @@ class _DatasetSettings(BaseSettings):
         "the trace's hash_ids). Default False preserves the pre-canned-"
         "assistant behavior that matches recorded hash_ids byte-for-byte.",
     )
+    WEKA_TOOL_SHAPED_MESSAGES: bool = Field(
+        default=False,
+        description="When True, WekaTraceLoader emits the OpenAI tool-call "
+        "wire shape for turns classified as tool-result continuations: the "
+        "same-delta assistant message gains a synthetic tool_calls entry and "
+        "the turn's new input is sent as a role='tool' message instead of "
+        "plain user text (content unchanged). Exercises the server's "
+        "tool-message chat-template path at the cost of exact ISL fidelity "
+        "(tool messages tokenize differently than plain user text). Only "
+        "turns with a recorded tool signal (input_types / prior stop) shape; "
+        "legacy traces are unaffected. Default False keeps the byte-exact "
+        "plain-user replay shape.",
+    )
 
 
 class _DeveloperSettings(BaseSettings):

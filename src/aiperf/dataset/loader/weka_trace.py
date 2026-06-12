@@ -494,6 +494,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             cap_seconds=user_config.loadgen.inter_turn_delay_cap_seconds
         )
         self._use_live_assistant = Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
+        self._tool_shaped_messages = Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES
 
     def _block_size_for_trace(self, trace: WekaTrace) -> int:
         """Resolve block_size with precedence: user-override > trace-declared > 64.
@@ -975,6 +976,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         from aiperf.dataset.loader.weka_synth_buf import (
             ConversationReconstructor,
         )
+        from aiperf.dataset.loader.weka_tool_shape import tool_shape_delta_messages
 
         conversations: list[Conversation] = []
         n_plans = len(parent_plans)
@@ -1061,19 +1063,27 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 theoretical_total_blocks = len(req.hash_ids)
                 parent_seen_hash_ids.update(req.hash_ids)
+                input_kind = _classify_turn_input(
+                    req, plan.normals[k - 1][1] if k else None
+                )
+                raw_messages = delta.delta_messages
+                if self._tool_shaped_messages:
+                    raw_messages = tool_shape_delta_messages(
+                        raw_messages,
+                        turn_index=k,
+                        is_tool_result=input_kind == TurnInputKind.TOOL_RESULT,
+                    )
                 conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
                         delay=None if ignore_delays else delay_ms,
                         model=model_map.get(req.model, req.model),
                         max_tokens=self._cap_output(req),
-                        raw_messages=delta.delta_messages,
+                        raw_messages=raw_messages,
                         reset_context=delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
-                        input_kind=_classify_turn_input(
-                            req, plan.normals[k - 1][1] if k else None
-                        ),
+                        input_kind=input_kind,
                     )
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
@@ -1295,19 +1305,27 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 )
                 theoretical_total_blocks = len(creq.hash_ids)
                 child_seen_hash_ids.update(creq.hash_ids)
+                input_kind = _classify_turn_input(
+                    creq, cp.stream_requests[k - 1] if k else None
+                )
+                child_raw_messages = child_delta.delta_messages
+                if self._tool_shaped_messages:
+                    child_raw_messages = tool_shape_delta_messages(
+                        child_raw_messages,
+                        turn_index=k,
+                        is_tool_result=input_kind == TurnInputKind.TOOL_RESULT,
+                    )
                 child_conv.turns.append(
                     Turn(
                         timestamp=None if ignore_delays else t_ms,
                         delay=None if ignore_delays else child_delay_ms,
                         model=child_model_map.get(creq.model, creq.model),
                         max_tokens=creq.output_length,
-                        raw_messages=child_delta.delta_messages,
+                        raw_messages=child_raw_messages,
                         reset_context=child_delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
-                        input_kind=_classify_turn_input(
-                            creq, cp.stream_requests[k - 1] if k else None
-                        ),
+                        input_kind=input_kind,
                     )
                 )
             conversations.append(child_conv)
@@ -1405,6 +1423,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     think_time_only=think_time_only,
                     model_map=model_map_per_trace.get(plan.trace_id, {}),
                     emit_assistant_segments=not self._use_live_assistant,
+                    tool_shaped_messages=self._tool_shaped_messages,
                     block_size=plan.block_size,
                 )
             )
