@@ -493,21 +493,24 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
-    """Reject synthetic-only flags when --input-file is set.
+def _reject_non_synthetic_incompatible(cli: CLIConfig) -> None:
+    """Reject synthetic-only flags when --input-file or --public-dataset is set.
 
     Flags rejected: prefix prompts, ISL shaping (--isl/--isl-stddev/
     --isl-block-size), --prompt-batch-size, --seq-dist, multimodal
-    batch_size. These are only meaningful for synthetic datasets; on file
-    datasets they were previously silently dropped by the strip in
-    ``_apply_dataset_type`` (or worse, leaked through and crashed
-    AIPerfConfig validation with ``extra_forbidden`` on the
-    FileDataset). Surface a clear message instead.
+    batch_size. These are only meaningful for synthetic datasets. On file
+    datasets they previously leaked through ``_apply_dataset_type``'s strip
+    (or crashed AIPerfConfig validation with ``extra_forbidden`` on the
+    FileDataset). Public datasets strip the same subtables in
+    ``_apply_dataset_type`` and so silently dropped these flags too — the
+    benchmark ran as if they were never passed, with no error or warning.
+    Surface a clear message for both instead.
 
-    --osl / --osl-stddev are NOT rejected — they're routed onto
-    ``FileDataset.osl`` by ``_apply_file_osl`` as a per-record fallback.
+    --osl / --osl-stddev are NOT rejected — for file datasets they're routed
+    onto ``FileDataset.osl`` by ``_apply_file_osl`` as a per-record fallback,
+    so leaving them out preserves the existing file-dataset contract.
     """
-    if not cli.input_file:
+    if not (cli.input_file or cli.public_dataset):
         return
     s = cli.model_fields_set
     violations = [
@@ -516,7 +519,7 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     if violations:
         raise ValueError(
             f"{', '.join(violations)} is only supported with synthetic datasets; "
-            "use a synthetic dataset (no --input-file) to apply synthetic-only "
+            "remove --input-file/--public-dataset to apply synthetic-only "
             "prompt shaping (ISL, prefix prompts, multimodal generation, etc)."
         )
 
@@ -643,13 +646,13 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     flat input fields and sub-config holders on ``cli``, then assembles the
     sub-fields into the correct dataset shape. Rejects synthetic-only
     flags (prefix, ISL shaping, batch_size, seq-dist, multimodal batch_size)
-    when --input-file is set.
+    when --input-file or --public-dataset is set.
 
     Returns:
         A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``.
     """
     needs_text = _determine_needs_text(cli)
-    _reject_file_dataset_incompatible(cli)
+    _reject_non_synthetic_incompatible(cli)
 
     d = _flat_dataset_fields(cli)
     _attach_subtables(d, cli)
