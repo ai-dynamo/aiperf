@@ -742,3 +742,91 @@ def test_turn_delta_user_only_lcp_invariant_preserved_across_turns():
     )
     blocks_after = sum(s.block_count for s in r._segments)
     assert blocks_after == 4, "LCP truncation should have shrunk segments to 4 blocks"
+
+
+# ---------------------------------------------------------------------------
+# Context-loss rule: a conversation resumes at a USER turn. When truncation
+# removes every user segment (or turn 0 was system-only), the new region
+# must not open with an assistant segment — the wire cannot present
+# assistant output before any user input.
+# ---------------------------------------------------------------------------
+
+
+def test_context_loss_to_system_boundary_resumes_with_user_turn():
+    r = _make_recon()
+    # Turn 0: 1 system block + 3 user blocks.
+    r.init_turn_0(
+        hash_ids=[1, 2, 3, 4],
+        in_tokens=4 * BLOCK_SIZE,
+        tool_tokens=BLOCK_SIZE,
+        system_tokens=0,
+        seed="s0",
+    )
+    r.turn_delta()
+    # Compaction: only the system block survives; prev_out would normally
+    # attribute the head of the new region as assistant.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4],
+        prev_in_tokens=4 * BLOCK_SIZE,
+        prev_out_tokens=20,
+        curr_hash_ids=[1, 90, 91],
+        curr_in_tokens=3 * BLOCK_SIZE,
+        seed="s1",
+    )
+    delta = r.turn_delta()
+    assert delta.reset_context is True
+    roles = [m["role"] for m in delta.delta_messages]
+    assert roles == ["system", "user"], roles
+
+
+def test_system_only_turn0_next_turn_resumes_with_user_turn():
+    r = _make_recon()
+    # Turn 0 fully covered by the system prefix (exact-prefix worker shape).
+    r.init_turn_0(
+        hash_ids=[1, 2],
+        in_tokens=2 * BLOCK_SIZE,
+        tool_tokens=0,
+        system_tokens=2 * BLOCK_SIZE,
+        seed="s0",
+    )
+    d0 = r.turn_delta()
+    assert [m["role"] for m in d0.delta_messages] == ["system"]
+    # Pure growth: no user segment exists yet, so the new region is user.
+    r.advance_turn(
+        prev_hash_ids=[1, 2],
+        prev_in_tokens=2 * BLOCK_SIZE,
+        prev_out_tokens=20,
+        curr_hash_ids=[1, 2, 9],
+        curr_in_tokens=3 * BLOCK_SIZE,
+        seed="s1",
+    )
+    delta = r.turn_delta()
+    assert delta.reset_context is False
+    assert [m["role"] for m in delta.delta_messages] == ["user"]
+
+
+def test_context_loss_with_surviving_user_keeps_assistant_attribution():
+    r = _make_recon()
+    # Turn 0: 1 system block + 3 user blocks.
+    r.init_turn_0(
+        hash_ids=[1, 2, 3, 4],
+        in_tokens=4 * BLOCK_SIZE,
+        tool_tokens=BLOCK_SIZE,
+        system_tokens=0,
+        seed="s0",
+    )
+    r.turn_delta()
+    # Truncation keeps system + part of the user segment: a user turn still
+    # precedes the new region, so normal symmetric attribution applies.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4],
+        prev_in_tokens=4 * BLOCK_SIZE,
+        prev_out_tokens=20,
+        curr_hash_ids=[1, 2, 90, 91, 92],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="s1",
+    )
+    delta = r.turn_delta()
+    assert delta.reset_context is True
+    roles = [m["role"] for m in delta.delta_messages]
+    assert roles == ["system", "user", "assistant", "user"], roles
