@@ -975,7 +975,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_stats.records_elapsed_time,
             )
             if self.service_config.ui_type != UIType.DASHBOARD:
-                self.info(rendered)
+                # One record per line: multi-line records interleave with
+                # other services' writes on the shared console stream.
+                for line in rendered.splitlines():
+                    self.info(line)
         return True
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
