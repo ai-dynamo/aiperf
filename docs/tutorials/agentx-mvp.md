@@ -201,6 +201,9 @@ Three possible states for `submission_valid`:
     is rejecting prompts the benchmark requires it to handle. This usually
     points at the server being started with a reduced max model length;
     AgentX MVP requires the model's default.
+  - `"run_cancelled"` — the run was cancelled early (Ctrl+C). AIPerf still
+    writes the export files with whatever partial metrics it collected, but
+    a cancelled run is never a valid submission.
 - **Field absent** — you ran without `--scenario`. The submission-validity
   machinery is gated on the scenario flag.
 

@@ -27,6 +27,7 @@ def __getattr__(name: str) -> float:
 
 
 CONTEXT_OVERFLOW_REASON = "context_overflow_rate_exceeded"
+RUN_CANCELLED_REASON = "run_cancelled"
 
 
 def _build_run_metadata_dict(
@@ -76,13 +77,15 @@ def compute_submission_outcome(
     validator_reasons: list[str] | None = None,
     total_responses: int = 0,
     context_overflow_count: int = 0,
+    was_cancelled: bool = False,
 ) -> tuple[bool | None, list[str]]:
     """Combine validator outcome with runtime threshold checks into a final verdict.
 
     The validator-side outcome covers static config violations (handled at
     UserConfig.model_post_init by ``validate_scenario``). This helper folds
-    in runtime-only thresholds that are only knowable post-run -- presently
-    just the >1% context-overflow rate per spec §7.
+    in runtime-only signals that are only knowable post-run -- the >1%
+    context-overflow rate per spec §7, and early cancellation (Ctrl+C): a
+    cancelled run produces partial metrics and is never a valid submission.
 
     Rate semantics: strictly greater than
     ``Environment.AGENTX.CONTEXT_OVERFLOW_RATE_LIMIT`` (default 0.01 per
@@ -108,6 +111,9 @@ def compute_submission_outcome(
             (successes + overflow + other failures).
         context_overflow_count: Count of context-overflow responses
             during the run.
+        was_cancelled: Whether the run was cancelled early (graceful
+            Ctrl+C). True flips ``submission_valid`` to False with reason
+            ``"run_cancelled"``.
 
     Returns:
         A ``(submission_valid, reasons)`` tuple suitable for feeding into
@@ -130,6 +136,11 @@ def compute_submission_outcome(
             valid = False
             if CONTEXT_OVERFLOW_REASON not in reasons:
                 reasons.append(CONTEXT_OVERFLOW_REASON)
+
+    if was_cancelled:
+        valid = False
+        if RUN_CANCELLED_REASON not in reasons:
+            reasons.append(RUN_CANCELLED_REASON)
 
     return valid, reasons
 

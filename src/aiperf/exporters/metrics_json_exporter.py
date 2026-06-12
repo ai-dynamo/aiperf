@@ -140,6 +140,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
                 validator_reasons=validator_reasons,
                 total_responses=total_responses,
                 context_overflow_count=context_overflow_count,
+                was_cancelled=bool(self._results.was_cancelled),
             )
             run_metadata = _build_run_metadata_dict(
                 scenario_name=scenario_name,
