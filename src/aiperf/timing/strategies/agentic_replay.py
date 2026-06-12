@@ -260,43 +260,54 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _execute_profiling(self) -> None:
         """Resume each trajectory at ``k_i + 1`` to seed the steady state.
 
-        Subsequent turns and recycle-pool sessions are dispatched from
-        handle_credit_return.
+        All trajectories are dispatched concurrently so the full concurrency
+        target is reached immediately rather than serializing over N credit
+        round-trips. Subsequent turns and recycle-pool sessions are dispatched
+        from handle_credit_return.
         """
         self.info(
             f"PROFILING execute: resuming {len(self.conversation_source.trajectories)} "
             f"trajectory sessions"
         )
-        for lane, trajectory in enumerate(self.conversation_source.trajectories):
-            if trajectory.snapshot is not None:
-                await self._dispatch_snapshot_for_profiling(trajectory, lane)
-                continue
+        await asyncio.gather(
+            *[
+                self._dispatch_one_profiling_trajectory(lane, trajectory)
+                for lane, trajectory in enumerate(self.conversation_source.trajectories)
+            ]
+        )
 
-            session = self.conversation_source.session_for(trajectory)
-            self._correlation_to_lane[session.x_correlation_id] = lane
-            self._active_traces[trajectory.conversation_id] += 1
-            self._mint_marker_for_session(
-                session.x_correlation_id, trajectory.conversation_id, lane
+    async def _dispatch_one_profiling_trajectory(
+        self, lane: int, trajectory: Trajectory
+    ) -> None:
+        if trajectory.snapshot is not None:
+            await self._dispatch_snapshot_for_profiling(trajectory, lane)
+            return
+
+        session = self.conversation_source.session_for(trajectory)
+        self._correlation_to_lane[session.x_correlation_id] = lane
+        self._active_traces[trajectory.conversation_id] += 1
+        self._mint_marker_for_session(
+            session.x_correlation_id, trajectory.conversation_id, lane
+        )
+        resume_index = trajectory.start_turn_index + 1
+        num_turns = len(session.metadata.turns)
+
+        if resume_index >= num_turns:
+            # Trajectory's k_i was already the last turn (rare: happens
+            # only for very short traces). Skip directly to recycle.
+            self.debug(
+                lambda cid=trajectory.conversation_id,
+                k=trajectory.start_turn_index,
+                n=num_turns: f"Trajectory {cid} k_i={k} >= last turn (n={n}); recycling immediately"
             )
-            resume_index = trajectory.start_turn_index + 1
-            num_turns = len(session.metadata.turns)
+            await self._spawn_from_recycle_or_id(
+                trajectory.conversation_id,
+                finished_correlation_id=session.x_correlation_id,
+            )
+            return
 
-            if resume_index >= num_turns:
-                # Trajectory's k_i was already the last turn (rare: happens
-                # only for very short traces). Skip directly to recycle.
-                self.debug(
-                    lambda cid=trajectory.conversation_id,
-                    k=trajectory.start_turn_index,
-                    n=num_turns: f"Trajectory {cid} k_i={k} >= last turn (n={n}); recycling immediately"
-                )
-                await self._spawn_from_recycle_or_id(
-                    trajectory.conversation_id,
-                    finished_correlation_id=session.x_correlation_id,
-                )
-                continue
-
-            turn = self._build_turn_for_session(session, resume_index)
-            await self.credit_issuer.issue_credit(turn)
+        turn = self._build_turn_for_session(session, resume_index)
+        await self.credit_issuer.issue_credit(turn)
 
     async def handle_credit_return(
         self, credit: Credit, *, error: str | None = None

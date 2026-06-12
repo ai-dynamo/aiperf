@@ -617,6 +617,110 @@ async def test_profiling_snapshot_recycles_root_after_terminal_warmup():
 
 
 @pytest.mark.asyncio
+async def test_terminal_root_snapshot_recycles_are_concurrent_not_serial():
+    """Regression: terminal-root recycles must not serialize profiling startup.
+
+    Commit f47bd5537e introduced `await _spawn_from_recycle_or_id(...)` inside
+    the per-trajectory loop in _dispatch_snapshot_for_profiling. With N terminal-
+    root trajectories this blocked the Kth dispatch until the (K-1)th recycle
+    completed, causing all 256 sessions to trickle in over ~54 s instead of
+    bursting at t=0 on a real cluster.
+    """
+    N = 3
+    # N single-turn traces become terminal roots: snapshot root is at turn 0
+    # (the only turn), so _snapshot_continuation_after_warmup drops the state
+    # (resume_index=1 >= len(turns)=1) and it lands in terminal_roots.
+    # Extra traces give the recycle queue enough depth for N concurrent pops.
+    conversations = [
+        ConversationMetadata(
+            conversation_id=f"trace_{i}",
+            turns=[TurnMetadata(timestamp_ms=float(i * 1000))],
+        )
+        for i in range(N * 2)
+    ]
+    ds = DatasetMetadata(
+        conversations=conversations,
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id=f"trace_{i}",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=float(i * 1000),
+                states=(
+                    ConversationState(
+                        conversation_id=f"trace_{i}",
+                        x_correlation_id=f"warmed-{i}",
+                        next_turn_index=0,
+                    ),
+                ),
+            ),
+        )
+        for i in range(N)
+    ]
+
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in conversations}
+    src._random_seed = 0
+    src._target_size = N
+    src.trajectories = trajectories
+
+    # Gate that blocks each recycled credit until we release it.
+    # in_flight tracks how many issue_credit calls are simultaneously blocked
+    # at the gate — if serial only 1 is ever in-flight, if concurrent all N are.
+    gate = asyncio.Event()
+    in_flight = 0
+    max_in_flight = 0
+
+    async def gated_issue_credit(turn):
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await gate.wait()
+        in_flight -= 1
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = gated_issue_credit
+    stop_checker = MagicMock()
+    stop_checker.can_start_new_session.return_value = True
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = N
+
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=MagicMock(),
+        stop_checker=stop_checker,
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+    )
+
+    await strategy.setup_phase()
+    task = asyncio.create_task(strategy.execute_phase())
+
+    # Pump the event loop enough times for all concurrent dispatches to reach
+    # the gate. With the serial bug only 1 will be in-flight; with the fix
+    # all N will be blocked at gate.wait() simultaneously.
+    for _ in range(N + 4):
+        await asyncio.sleep(0)
+
+    concurrent_at_gate = in_flight
+    gate.set()
+    await task
+
+    assert concurrent_at_gate == N, (
+        f"Expected {N} recycled credits in-flight simultaneously at profiling "
+        f"startup, but only {concurrent_at_gate} were. Terminal-root recycles "
+        "appear to be dispatched serially, blocking the startup loop."
+    )
+
+
+@pytest.mark.asyncio
 async def test_profiling_skips_trajectory_at_last_turn_and_recycles():
     """If k_i is already the last turn, k_i+1 is out of range. Recycle immediately."""
     trajectories = [
