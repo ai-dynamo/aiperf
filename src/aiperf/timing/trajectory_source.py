@@ -81,6 +81,24 @@ class Trajectory:
     )
 
 
+@dataclass(slots=True)
+class CacheBustLedger:
+    """Cross-phase cache-bust marker state.
+
+    Lives on the shared ``TrajectorySource`` (constructed once at
+    TimingManager level) so the WARMUP and PROFILING strategy instances see
+    one ledger. A session that continues across the phase boundary keeps the
+    exact marker minted for it during WARMUP, and new sessions draw pass
+    numbers from a counter that never restarts - so a recycled session's
+    digest can never collide with a warmed one.
+    """
+
+    recycle_pass: dict[str, int] = field(default_factory=dict)
+    """Next-pass counter per trace_id; incremented on every fresh mint."""
+    session_marker: dict[str, str | None] = field(default_factory=dict)
+    """Minted marker per live x_correlation_id (None when cache-bust is off)."""
+
+
 @dataclass(slots=True, frozen=True)
 class _BranchRuntime:
     branch_id: str
@@ -188,6 +206,19 @@ class TrajectorySource(ConversationSource):
             )
 
         self._log_trajectory_summary()
+
+    @property
+    def cache_bust_ledger(self) -> CacheBustLedger:
+        """Marker ledger shared by the WARMUP and PROFILING strategy instances.
+
+        Created lazily so sources built through ``__new__`` in tests get a
+        ledger on first access without extra setup.
+        """
+        ledger = getattr(self, "_cache_bust_ledger", None)
+        if ledger is None:
+            ledger = CacheBustLedger()
+            self._cache_bust_ledger = ledger
+        return ledger
 
     def _log_trajectory_summary(self) -> None:
         """Log a one-block table of every trajectory's start position.
