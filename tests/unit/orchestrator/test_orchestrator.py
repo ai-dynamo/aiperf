@@ -465,6 +465,86 @@ class TestMultiRunOrchestrator:
         assert metrics["request_throughput"].avg == 25.4
         assert metrics["request_throughput"].unit == "requests/sec"
 
+    def test_extract_was_cancelled_true(self, mock_service_config, tmp_path):
+        """A cancelled run's export JSON carries was_cancelled=true."""
+        orchestrator = MultiRunOrchestrator(tmp_path, mock_service_config)
+
+        artifacts_path = tmp_path / "run_0001"
+        artifacts_path.mkdir(parents=True)
+
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.output.artifact_directory = artifacts_path
+
+        with open(artifacts_path / "profile_export_aiperf.json", "w") as f:
+            json.dump({"was_cancelled": True}, f)
+
+        assert orchestrator._extract_was_cancelled(config) is True
+
+    def test_extract_was_cancelled_absent_or_missing_file(
+        self, mock_service_config, tmp_path
+    ):
+        """Missing flag and missing file both read as not-cancelled."""
+        orchestrator = MultiRunOrchestrator(tmp_path, mock_service_config)
+
+        artifacts_path = tmp_path / "run_0001"
+        artifacts_path.mkdir(parents=True)
+
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config.output.artifact_directory = artifacts_path
+
+        # File doesn't exist yet.
+        assert orchestrator._extract_was_cancelled(config) is False
+
+        # File exists but has no was_cancelled key.
+        with open(artifacts_path / "profile_export_aiperf.json", "w") as f:
+            json.dump({"request_count": {"unit": "requests", "avg": 10.0}}, f)
+
+        assert orchestrator._extract_was_cancelled(config) is False
+
+    @pytest.mark.parametrize(
+        ("per_run_cancelled", "expected"),
+        [
+            ([False, False], False),
+            ([False, True], True),
+        ],
+    )
+    def test_stamp_scenario_submission_metadata_carries_was_cancelled(
+        self, per_run_cancelled, expected
+    ):
+        """Any cancelled run in the batch flips the `_was_cancelled` carrier key."""
+        from aiperf.orchestrator.aggregation.base import AggregateResult
+
+        user_config = Mock()
+        user_config.scenario = "inferencex-agentx-mvp"
+        user_config._scenario_outcome = None
+
+        results = [
+            RunResult(
+                label=f"run_{i:04d}",
+                success=True,
+                metadata={"was_cancelled": cancelled},
+            )
+            for i, cancelled in enumerate(per_run_cancelled)
+        ]
+        aggregate = AggregateResult(
+            aggregation_type="confidence",
+            num_runs=len(results),
+            num_successful_runs=len(results),
+            failed_runs=[],
+            metrics={},
+            metadata={},
+        )
+
+        MultiRunOrchestrator._stamp_scenario_submission_metadata(
+            aggregate, results, user_config
+        )
+
+        assert aggregate.metadata["_was_cancelled"] is expected
+
     def test_extract_summary_metrics_missing_file(self, mock_service_config, tmp_path):
         """Test extracting metrics when file doesn't exist."""
         orchestrator = MultiRunOrchestrator(tmp_path, mock_service_config)
