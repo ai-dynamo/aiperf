@@ -308,6 +308,12 @@ class ConversationReconstructor:
         asst_blocks_target = (
             math.ceil(prev_out_tokens / bs) if prev_out_tokens > 0 else 0
         )
+        if not any(seg.role == "user" for seg in self._segments):
+            # Context-loss rule: the truncation removed every user segment
+            # (or turn 0 was system-only), so the conversation resumes at a
+            # USER turn — the wire cannot present assistant output before
+            # any user input. The whole new region becomes user content.
+            asst_blocks_target = 0
         asst_blocks = min(asst_blocks_target, new_blocks_count)
         asst_emit_size = asst_blocks * bs
 

@@ -152,7 +152,6 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     assert "assistant" not in turn_0_roles
     assert conv.turns[0].reset_context is False
     turn_1_roles = [m["role"] for m in conv.turns[1].raw_messages]
-    assert "assistant" in turn_1_roles
     assert "user" in turn_1_roles
     # If turn 1 was a strict append, system stays in turn 0 only; if it
     # was a reset, turn 1 carries the full state including system. Either
@@ -162,8 +161,11 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     else:
         assert "system" not in turn_1_roles
     # Accumulated state across both turns (mimicking what
-    # BaseEndpoint.build_messages produces at request time) must contain
-    # the full message-array prefix.
+    # BaseEndpoint.build_messages produces at request time): the first
+    # non-system message is ALWAYS user. simple.json's tool+system prefix
+    # covers every full block of turn 0, so the turn-1 LCP boundary strip
+    # deletes turn 0's user tail — a context loss; the context-loss rule
+    # resumes the conversation at a user turn (no fabricated assistant).
     accumulated: list[dict] = []
     for t in conv.turns:
         if t.reset_context:
@@ -172,13 +174,20 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
             accumulated.extend(t.raw_messages)
     accumulated_roles = [m["role"] for m in accumulated]
     assert "system" in accumulated_roles
-    assert "assistant" in accumulated_roles
     assert "user" in accumulated_roles
+    non_system = [r for r in accumulated_roles if r != "system"]
+    assert non_system and non_system[0] == "user", accumulated_roles
 
 
 def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
-    """Turn 1+ should have an assistant segment between the prefix-user content
-    and the new user_k content (symmetric attribution rule, spec section 4.4.1)."""
+    """Turn 1+ keeps the assistant segment between the surviving user
+    content and the new user_k content (symmetric attribution, spec section
+    4.4.1) — when a user turn survives. simple.json's prefix covers all of
+    turn 0's full blocks, so its turn 1 exercises the CONTEXT-LOSS rule
+    instead (resume at a user turn); the alternation case uses an inline
+    trace whose turn-0 user segment owns real blocks."""
+    import orjson
+
     uc = _mk_user_config()
     loader = WekaTraceLoader(filename=str(FIXTURES / "simple.json"), user_config=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -194,8 +203,52 @@ def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
     turn_0_roles = [m["role"] for m in conv.turns[0].raw_messages]
     assert "assistant" not in turn_0_roles
 
-    # Turn 1: asst should appear before the new user_k segment.
+    # simple.json turn 1: context loss (the boundary strip deletes turn 0's
+    # tail-only user segment) -> resume at a user turn, no assistant.
     turn_1_roles = [m["role"] for m in conv.turns[1].raw_messages]
+    assert conv.turns[1].reset_context is True
+    assert turn_1_roles == ["system", "user"]
+
+    # Alternation case: turn 0's user segment owns a full block (in=448 =
+    # 7 blocks > 3 prefix blocks), so it survives the turn-1 truncation and
+    # the assistant segment is attributed before the new user_k content.
+    trace = {
+        "id": "trace_alt",
+        "models": ["claude-opus-4-5-20251101"],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "tool_tokens": 100,
+        "system_tokens": 50,
+        "requests": [
+            {
+                "t": 0.0,
+                "type": "n",
+                "model": "claude-opus-4-5-20251101",
+                "in": 448,
+                "out": 30,
+                "hash_ids": [1, 2, 3, 4, 5, 6, 7],
+                "api_time": 1.0,
+            },
+            {
+                "t": 5.0,
+                "type": "n",
+                "model": "claude-opus-4-5-20251101",
+                "in": 576,
+                "out": 40,
+                "hash_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "api_time": 1.2,
+            },
+        ],
+    }
+    from aiperf.dataset.loader.weka_trace_models import WekaTrace
+
+    loader2 = WekaTraceLoader(filename=None, user_config=_mk_user_config())
+    _stub_prompt_generator_for_reconstructor(loader2)
+    convs2 = loader2.convert_to_conversations(
+        {"trace_alt": [WekaTrace.model_validate(orjson.loads(orjson.dumps(trace)))]}
+    )
+    alt = convs2[0]
+    turn_1_roles = [m["role"] for m in alt.turns[1].raw_messages]
     assert "assistant" in turn_1_roles
     asst_idx = turn_1_roles.index("assistant")
     user_indices = [i for i, r in enumerate(turn_1_roles) if r == "user"]

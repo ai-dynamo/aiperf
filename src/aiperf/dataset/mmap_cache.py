@@ -65,12 +65,16 @@ _logger = AIPerfLogger(__name__)
 # Bump when the on-disk layout, side-data schema, OR the decoded content the
 # loaders produce for a given key changes -- the key has no source-code
 # component, so a content-semantics fix must bump this or warm caches keep
-# serving the old (wrong) dataset. Version 6 invalidates entries built before
+# serving the old (wrong) dataset. Version 7 invalidates entries built before
+# the weka context-loss rule (a turn whose truncation removes every user
+# segment now resumes at a USER turn instead of opening with a fabricated
+# assistant segment -- role boundaries moved for seam/reset re-emits).
+# Version 6 invalidates entries built before
 # the weka subagent hash_id-scope fix (subagents now share the parent trace's
 # scope, so shared blocks decode to different tokens than v5 produced).
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
-MANIFEST_VERSION = 6
+MANIFEST_VERSION = 7
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
