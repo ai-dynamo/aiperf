@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationContextMode, TurnInputKind
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
@@ -324,6 +324,29 @@ def _count_seen_prefix_blocks(hash_ids: list[int], seen: set[int]) -> int:
             break
         hits += 1
     return hits
+
+
+def _classify_turn_input(
+    req: _NormalRequestT, prev_req: _NormalRequestT | None
+) -> TurnInputKind | None:
+    """Classify what produced a turn's new input.
+
+    The own-turn ``input_types`` (recorded content-block types of the
+    triggering input message) wins when present. Otherwise the PREVIOUS
+    request's ``stop`` reason is the API-invariant fallback: a ``tool_use``
+    stop is always answered by a tool-result turn, any other recorded stop
+    means the assistant yielded and new input arrived. Legacy traces that
+    carry neither signal classify as None.
+    """
+    if req.input_types:
+        if "tool_result" in req.input_types:
+            return TurnInputKind.TOOL_RESULT
+        return TurnInputKind.USER_INPUT
+    if prev_req is not None and prev_req.stop:
+        if prev_req.stop == "tool_use":
+            return TurnInputKind.TOOL_RESULT
+        return TurnInputKind.USER_INPUT
+    return None
 
 
 def _build_trace_idle_timing(
@@ -1048,6 +1071,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         reset_context=delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
+                        input_kind=_classify_turn_input(
+                            req, plan.normals[k - 1][1] if k else None
+                        ),
                     )
                 )
                 outer_to_turn_pos[outer_idx] = len(conv.turns) - 1
@@ -1279,6 +1305,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         reset_context=child_delta.reset_context,
                         theoretical_prefix_cache_hit_blocks=theoretical_hit_blocks,
                         theoretical_prefix_cache_total_blocks=theoretical_total_blocks,
+                        input_kind=_classify_turn_input(
+                            creq, cp.stream_requests[k - 1] if k else None
+                        ),
                     )
                 )
             conversations.append(child_conv)
@@ -1328,6 +1357,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "model": creq.model,
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
+                    "input_kind": _classify_turn_input(
+                        creq, cp.stream_requests[k - 1] if k else None
+                    ),
                 }
                 if trace_idle_timing is not None:
                     timing = trace_idle_timing.child_by_session_request[
@@ -1389,7 +1421,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         trace_idle_timing = trace_idle_timing_by_trace.get(plan.trace_id)
         normals_dicts: list[tuple[int, _WekaNormalRequestPayload]] = []
-        for outer_idx, req in plan.normals:
+        for k, (outer_idx, req) in enumerate(plan.normals):
             req_payload: _WekaNormalRequestPayload = {
                 "hash_ids": list(req.hash_ids),
                 "input_length": req.input_length,
@@ -1397,6 +1429,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 "model": req.model,
                 "t": req.t,
                 "think_time": getattr(req, "think_time", None),
+                "input_kind": _classify_turn_input(
+                    req, plan.normals[k - 1][1] if k else None
+                ),
                 "capped_output_length": self._cap_output(req),
             }
             if trace_idle_timing is not None:
@@ -1554,6 +1589,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         theoretical_prefix_cache_total_blocks=t_dict[
                             "theoretical_prefix_cache_total_blocks"
                         ],
+                        input_kind=t_dict.get("input_kind"),
                     )
                 )
             for branch in result["branches"]:
@@ -1605,6 +1641,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             theoretical_prefix_cache_total_blocks=t_dict[
                                 "theoretical_prefix_cache_total_blocks"
                             ],
+                            input_kind=t_dict.get("input_kind"),
                         )
                     )
                 conversations.append(child_conv)

@@ -199,6 +199,7 @@ Per turn:
 - **Model** is rewritten via a per-trace mapping (see [Per-Trace Model Rewriting](#per-trace-model-rewriting)) — the trace's per-request `model` field is used to *pick which* configured model gets sent for that request, not as the routing model itself.
 - **Max tokens** comes from the `out` field (after `--synthesis-max-osl` capping).
 - **Timing** preserves the recorded `t` field for `--fixed-schedule`. By default, inter-turn `delay` is computed as `t_n - t_{n-1}`. With `--use-think-time-only`, `delay` instead uses the recorded per-request `think_time`. With `--ignore-trace-delays`, both `timestamp` and `delay` are stripped at load time. See [Replay Timing Controls](#replay-timing-controls) above.
+- **Input kind** classifies what produced each turn's new input, surfaced as `Turn.input_kind` (`tool_result` or `user_input`). The own-turn `input_types` field decides when recorded (a `tool_result` membership marks a machine-paced agentic-loop continuation; `text`/multimodal marks genuine user/agent input); otherwise the previous request's `stop` reason is the fallback (`tool_use` is always answered by a tool result). Traces recorded before these fields existed classify as `None` and replay exactly as before.
 
 The trace's recorded `type: "s"` (streaming) vs `type: "n"` (non-streaming) is independent of how AIPerf sends the request — the transport is controlled by `--streaming`. Both types are replayed identically.
 

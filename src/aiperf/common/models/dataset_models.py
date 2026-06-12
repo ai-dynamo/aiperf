@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     ConversationContextMode,
     MediaType,
     MemoryMapFormat,
+    TurnInputKind,
 )
 from aiperf.common.enums.enums import SubagentType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -158,6 +159,14 @@ class TurnMetadata(AIPerfBaseModel):
             "hit accounting. Pairs with theoretical_prefix_cache_hit_blocks."
         ),
     )
+    input_kind: TurnInputKind | None = Field(
+        default=None,
+        description=(
+            "Classification of what produced this turn's new input: genuine "
+            "user/agent text input vs tool-result continuation. None when the "
+            "dataset loader did not provide the signal."
+        ),
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -263,6 +272,15 @@ class Turn(AIPerfBaseModel):
             "hit accounting for this turn."
         ),
     )
+    input_kind: TurnInputKind | None = Field(
+        default=None,
+        description=(
+            "Classification of what produced this turn's new input: genuine "
+            "user/agent text input vs tool-result continuation. Set by trace "
+            "loaders whose source records the signal (weka input_types/stop); "
+            "None otherwise."
+        ),
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -280,6 +298,7 @@ class Turn(AIPerfBaseModel):
             theoretical_prefix_cache_total_blocks=(
                 self.theoretical_prefix_cache_total_blocks
             ),
+            input_kind=self.input_kind,
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -336,6 +355,7 @@ class Turn(AIPerfBaseModel):
             theoretical_prefix_cache_total_blocks=(
                 self.theoretical_prefix_cache_total_blocks
             ),
+            input_kind=self.input_kind,
         )
 
 

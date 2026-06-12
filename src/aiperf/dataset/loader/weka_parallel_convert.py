@@ -50,6 +50,7 @@ class _WekaParentTurnDict(TypedDict):
     reset_context: bool
     theoretical_prefix_cache_hit_blocks: int
     theoretical_prefix_cache_total_blocks: int
+    input_kind: str | None
 
 
 class _WekaBranchDict(TypedDict):
@@ -94,6 +95,9 @@ class _WekaNormalRequestPayload(TypedDict):
     model: str
     t: float
     think_time: float | None
+    # Turn classification computed in the orchestrator (one source of truth in
+    # weka_trace._classify_turn_input); workers copy it into the turn dict.
+    input_kind: NotRequired[str | None]
     # Only present in parent normals (not in child requests):
     capped_output_length: NotRequired[int]
     # Present when --trace-idle-gap-cap-seconds has rewritten the per-trace
@@ -396,6 +400,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 "reset_context": parent_delta.reset_context,
                 "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                 "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,
+                "input_kind": req.get("input_kind"),
             }
         )
         outer_to_turn_pos[outer_idx] = len(parent_turns) - 1
@@ -572,6 +577,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     "reset_context": child_delta.reset_context,
                     "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                     "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,
+                    "input_kind": creq.get("input_kind"),
                 }
             )
         children_out.append(
