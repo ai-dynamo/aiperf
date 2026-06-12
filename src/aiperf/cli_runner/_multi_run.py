@@ -26,10 +26,10 @@ from aiperf.cli_runner._strategy import (
     validate_convergence_config,
 )
 from aiperf.cli_runner._sweep_aggregate import (
-    _variation_key,
     aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
 )
+from aiperf.orchestrator.models import _variation_key
 from aiperf.plugin.enums import UIType
 
 if TYPE_CHECKING:
