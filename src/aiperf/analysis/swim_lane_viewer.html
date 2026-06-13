@@ -391,7 +391,7 @@
 
   <section class="card" id="kv-card">
     <div class="card-head">
-      <span class="title">KV cache — tokens in flight (GPU memory pressure)</span>
+      <span class="title">Tokens in flight — resident input + output tokens across active requests</span>
       <div class="legend" id="kv-legend"></div>
     </div>
     <div class="vresize" id="kv-wrap" style="height:120px"><canvas id="kv"></canvas></div>
@@ -1312,12 +1312,12 @@ function drawKvCache() {
     ctx.fillText(fmtTick(t, step), Math.round(xOf(t)) + 3, KV_H - 8);
 
   drawCrosshair(ctx, xOf, KV_PAD_T, KV_H - KV_PAD_B, [
-    ["KV " + fmtTokens(valAt(DATA.kvCache.t, DATA.kvCache.v, hoverT)) + " tok", KV_COLOR],
+    ["in flight " + fmtTokens(valAt(DATA.kvCache.t, DATA.kvCache.v, hoverT)) + " tok", KV_COLOR],
   ]);
 }
 
 document.getElementById("kv-legend").innerHTML =
-  `<span class="key"><span class="swatch" style="background:${KV_COLOR}"></span>tokens resident in KV cache (peak ${fmtTokens(DATA.peakKv || 0)} tok)</span>`;
+  `<span class="key"><span class="swatch" style="background:${KV_COLOR}"></span>tokens in flight (peak ${fmtTokens(DATA.peakKv || 0)} tok)</span>`;
 
 /* ---------- render loop ---------- */
 let drawQueued = false;
