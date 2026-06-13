@@ -866,6 +866,133 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
 
 
 @pytest.mark.asyncio
+async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_spacing():
+    """A trajectory idle at t* (every stream's first request far past t*) caps
+    only the LEADING idle (t* -> earliest stream) and shifts every stream left
+    by the same amount, preserving recorded subagent spacing.
+
+    Regression for the per-stream ``min(offset, cap)`` clamp, which collapsed
+    every idle subagent onto t=cap. Three children at offsets 100s/130s/220s
+    with a 60s cap: leading idle 100s -> 60s (shift 40s), so they fire at
+    60s/90s/180s -- the recorded 30s and 90s gaps survive, not 60s/60s/60s.
+    """
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=12_000.0),
+                    TurnMetadata(timestamp_ms=300_000.0),
+                ],
+            ),
+            *(
+                ConversationMetadata(
+                    conversation_id=cid,
+                    turns=[TurnMetadata(timestamp_ms=offset + 13_000.0)],
+                    is_root=False,
+                    agent_depth=1,
+                    parent_conversation_id="trace_0",
+                )
+                for cid, offset in (
+                    ("trace_0::sa:a:c000", 100_000.0),
+                    ("trace_0::sa:a:c001", 130_000.0),
+                    ("trace_0::sa:a:c002", 220_000.0),
+                )
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=2,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    children = [
+        ConversationState(
+            conversation_id=cid,
+            x_correlation_id=xc,
+            next_turn_index=0,
+            next_dispatch_offset_ms=offset,
+            agent_depth=1,
+            parent_correlation_id="parent",
+            join_target_turn_index=2,
+            branch_id="b0",
+            branch_mode=ConversationBranchMode.SPAWN,
+        )
+        for xc, cid, offset in (
+            ("kid-a", "trace_0::sa:a:c000", 100_000.0),
+            ("kid-b", "trace_0::sa:a:c001", 130_000.0),
+            ("kid-c", "trace_0::sa:a:c002", 220_000.0),
+        )
+    ]
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=2,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=13_000.0,
+            states=(parent_state, *children),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[tuple[float, object]] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
+        (delay, coro)
+    )
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+        branch_orchestrator=MagicMock(),
+    )
+    strategy._phase_offset_cap_ms = 60_000.0  # agentx idle-gap cap of 60s
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # Leading idle (t* -> earliest child, 100s) capped to 60s via a 40s uniform
+    # shift; subagents keep their recorded 30s and 90s spacing -- NOT collapsed
+    # to a single 60s/60s/60s instant.
+    assert issued == []
+    assert [delay for delay, _ in scheduled] == [
+        pytest.approx(60.0),
+        pytest.approx(90.0),
+        pytest.approx(180.0),
+    ]
+    for _, coro in scheduled:
+        await coro
+    assert issued == [
+        "trace_0::sa:a:c000",
+        "trace_0::sa:a:c001",
+        "trace_0::sa:a:c002",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_profiling_preserve_start_gap_delays_first_request_by_default():
     """By default (spread), a trajectory's first post-t* request waits out its
     recorded offset from t* instead of firing at 0.

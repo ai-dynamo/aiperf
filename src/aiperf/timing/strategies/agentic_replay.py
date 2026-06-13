@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import Counter
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -179,15 +180,15 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._burst_phase_starts: bool = (
             getattr(loadgen, "burst_phase_starts", False) is True
         )
-        # Phase-start offsets (warmup lead before t*, profiling first-request
-        # gap after t*) are PER-CONVERSATION idle measures relative to a global
-        # t*. The idle-gap warp only caps globally-consecutive request gaps, so
-        # a stream idle while other streams are busy accrues a large gap to its
-        # next turn (hours on multi-day agentic traces). Clamp these phase-start
-        # offsets to the same idle-gap cap (no single idle gap exceeds it) so
-        # the warmup/profiling start spread stays bounded by the cap instead of
-        # ballooning to the raw per-conversation idle. None when no cap is set
-        # (raw faithful timing -- the user's explicit choice).
+        # Idle-gap cap (ms) for the t* boundary the load-time warp can't see (t*
+        # is the sampling instant, not a request). Consumed two ways:
+        #   - WARMUP: clamps each warmup lead so priming doesn't start hours
+        #     early (``_capped_warmup_lead_ms``); priming spacing is meaningless.
+        #   - PROFILING: a single uniform shift caps the leading idle (t* ->
+        #     earliest stream) while preserving recorded inter-stream spacing
+        #     (``_leading_idle_shift_ms``); a per-stream clamp would collapse
+        #     every idle subagent onto t=cap.
+        # None when no cap is set (raw faithful timing -- the user's choice).
         idle_cap_s = getattr(loadgen, "trace_idle_gap_cap_seconds", None)
         self._phase_offset_cap_ms: float | None = (
             idle_cap_s * MILLIS_PER_SECOND
@@ -259,16 +260,46 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         else:
             await self._execute_profiling()
 
-    def _capped_phase_offset_ms(self, offset_ms: float) -> float:
-        """Clamp a phase-start offset to the idle-gap cap (if set).
+    def _capped_warmup_lead_ms(self, lead_ms: float) -> float:
+        """Clamp a WARMUP lead (t* - the warmed turn) to the idle-gap cap.
 
-        Bounds the per-conversation idle around t* (warmup lead / profiling
-        first-request gap) so a stream idle while others are busy doesn't get
-        a multi-hour phase-start offset. No-op when no idle-gap cap is set.
+        Warmup is a cache-priming pass, not faithful replay: warming a stream
+        that last fired hours before t* that far ahead would make the warmup
+        phase itself take hours. Clamping each lead bounds the priming window
+        to the cap; the relative timing among warmup requests carries no replay
+        meaning (each primes its own session, all converge at t*), so an
+        independent per-lead clamp is fine here. No-op when no cap is set.
+
+        PROFILING dispatch offsets are NOT clamped this way -- see
+        :meth:`_leading_idle_shift_ms`.
         """
         if self._phase_offset_cap_ms is not None:
-            return min(offset_ms, self._phase_offset_cap_ms)
-        return offset_ms
+            return min(lead_ms, self._phase_offset_cap_ms)
+        return lead_ms
+
+    def _leading_idle_shift_ms(self, offsets: Iterable[float]) -> float:
+        """Excess to subtract UNIFORMLY from every PROFILING dispatch offset so
+        a trajectory's leading idle (t* -> its earliest post-t* request) is
+        capped to the idle-gap cap.
+
+        The idle-gap warp (applied at load time across ALL of a trace's request
+        timestamps) already bounds every inter-request gap to the cap, so the
+        dispatch offsets carry faithful relative spacing. The ONE gap the warp
+        cannot see is t* -> first request: t* is the trajectory sampling
+        instant, not a request. A single uniform shift caps that leading gap
+        while keeping every stream's recorded offset relative to the others
+        intact -- unlike a per-stream ``min(offset, cap)`` clamp, which collapses
+        every offset above the cap onto it, firing every idle subagent at the
+        same instant.
+
+        Returns 0 when no cap is set or the leading idle is already within it.
+        """
+        if self._phase_offset_cap_ms is None:
+            return 0.0
+        present = [o for o in offsets if o is not None]
+        if not present:
+            return 0.0
+        return max(0.0, min(present) - self._phase_offset_cap_ms)
 
     async def _execute_warmup(self) -> None:
         """Warm turn n-1 of every session active (mid-flight) at t*.
@@ -340,7 +371,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                         getattr(meta.turns[warm_index], "timestamp_ms", None)
                     )
                     if warm_ts is not None:
-                        lead_ms = self._capped_phase_offset_ms(t_star_ms - warm_ts)
+                        lead_ms = self._capped_warmup_lead_ms(t_star_ms - warm_ts)
                 prepared.append((turn, lead_ms))
 
         # Pass 2: dispatch.
@@ -437,9 +468,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             ]
             if not dispatchable:
                 continue
+            leading_shift_ms = self._leading_idle_shift_ms(
+                s.next_dispatch_offset_ms for s in dispatchable
+            )
             lane_offsets = [
-                self._capped_phase_offset_ms(s.next_dispatch_offset_ms)
-                for s in dispatchable
+                s.next_dispatch_offset_ms - leading_shift_ms for s in dispatchable
             ]
             lane_t0 = min(lane_offsets) if self._burst_phase_starts else 0.0
             offsets.extend(o - lane_t0 for o in lane_offsets)
@@ -670,13 +703,21 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
         dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
-        # Per-state offset, clamped to the idle-gap cap so an idle-at-t* lane
-        # doesn't get a multi-hour leading gap (which would leave it dead for
-        # the whole run). Spread (default): t0 = 0, each lane fires at its
-        # (capped) offset from t*. Burst (--burst-phase-starts): t0 = the lane's
-        # min offset, anchoring the earliest post-t* request at profiling-0.
+        # Cap the leading idle (t* -> the trajectory's earliest post-t* request)
+        # by shifting EVERY stream left by the same excess, so an idle-at-t*
+        # trajectory ramps in within the cap instead of going dead for the whole
+        # run -- while preserving the recorded spacing among streams. A per-stream
+        # min(offset, cap) clamp would instead collapse every idle subagent onto
+        # t=cap. The idle-gap warp already bounded inter-request gaps at load
+        # time; this fixes the one gap it cannot see (t* is not a request).
+        # Spread (default): t0 = 0, each lane fires at its (shifted) offset from
+        # t*. Burst (--burst-phase-starts): t0 = the lane's min offset, anchoring
+        # the earliest post-t* request at profiling-0.
+        leading_shift_ms = self._leading_idle_shift_ms(
+            s.next_dispatch_offset_ms for s in dispatchable
+        )
         offset_by_corr = {
-            s.x_correlation_id: self._capped_phase_offset_ms(s.next_dispatch_offset_ms)
+            s.x_correlation_id: s.next_dispatch_offset_ms - leading_shift_ms
             for s in dispatchable
         }
         if self._burst_phase_starts and offset_by_corr:
