@@ -89,9 +89,9 @@ async def test_report_realtime_metrics_emits_log_block() -> None:
     # row so the header line no longer wraps in narrow terminals.
     assert lines[0] == "[realtime 00:10 profiling]"
     assert lines[1].startswith("  rps=")
-    rendered = "\n".join(lines)
-    assert "  ttft p50=" in rendered
-    assert "  e2e  p50=" in rendered
+    packed = "\n".join(lines).replace(" ", "")
+    assert "ttftp50=" in packed
+    assert "e2ep50=" in packed
     rm.publish.assert_awaited_once()
 
 

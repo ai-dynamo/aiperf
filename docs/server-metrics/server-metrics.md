@@ -173,9 +173,9 @@ When server metrics are enabled and the inference server actually serves Prometh
 
 ```text
 [realtime 02:30 profiling]
-  rps=12.4 (avg 11.8) tput_in=15234/s tput_out=812/s done=...
+  rps=12.4 (avg 11.8)  tput_in=15,234/s  tput_out=812/s  done=...
   ...
-  srv  prefix_cache_hit=68.3% unique_in_srv=123,456 ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
+  srv    prefix_cache_hit=68.3% unique_in_srv=123,456 ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
 ```
 
 | Token | Source metric(s) | Notes |
