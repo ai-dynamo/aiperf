@@ -992,6 +992,51 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
     ]
 
 
+def test_profiling_spread_reports_first_request_per_trajectory_not_all_streams():
+    """The logged PROFILING spread is the ramp-in window of each trajectory's
+    FIRST request, not the full span of every stream. A late subagent within a
+    trajectory must not inflate it.
+
+    Two trajectories, each a root firing early plus a subagent ~83 min out. The
+    first-request spread is 10s (root offsets 0 and 10s); the late subagents are
+    excluded -- summing them would report ~8000s instead.
+    """
+
+    def _traj(cid: str, offsets: list[float]) -> Trajectory:
+        states = tuple(
+            ConversationState(
+                conversation_id=f"{cid}:s{i}",
+                x_correlation_id=f"{cid}-{i}",
+                next_turn_index=0,
+                next_dispatch_offset_ms=off,
+                waiting_on_children=False,
+            )
+            for i, off in enumerate(offsets)
+        )
+        return Trajectory(
+            conversation_id=cid,
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(t_star_ms=0.0, states=states),
+        )
+
+    src = TrajectorySource.__new__(TrajectorySource)
+    src.trajectories = [
+        _traj("t0", [0.0, 5_000_000.0]),
+        _traj("t1", [10_000.0, 8_000_000.0]),
+    ]
+    strategy = AgenticReplayStrategy.__new__(AgenticReplayStrategy)
+    strategy.conversation_source = src
+    strategy._burst_phase_starts = False
+    strategy._phase_offset_cap_ms = 60_000.0
+
+    assert strategy._profiling_spread_seconds() == pytest.approx(10.0)
+
+    # An idle-at-t* trajectory's first request is capped to the idle-gap cap,
+    # so the spread stays bounded by the cap rather than the raw leading idle.
+    src.trajectories.append(_traj("t2", [200_000.0, 9_000_000.0]))
+    assert strategy._profiling_spread_seconds() == pytest.approx(60.0)
+
+
 @pytest.mark.asyncio
 async def test_profiling_preserve_start_gap_delays_first_request_by_default():
     """By default (spread), a trajectory's first post-t* request waits out its

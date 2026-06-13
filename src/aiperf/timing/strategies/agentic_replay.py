@@ -450,16 +450,18 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             raise first_error
 
     def _profiling_spread_seconds(self) -> float:
-        """Window over which PROFILING first-dispatches fire, in seconds.
+        """Window over which each trajectory's FIRST request fires, in seconds.
 
-        Mirrors the per-lane offset math in ``_dispatch_snapshot_for_profiling``
-        (spread: t0=0 so each fires at its t*-relative offset; burst: t0 = the
-        lane's min offset so its earliest fires at 0). Returns max-minus-min of
-        those dispatch offsets across every timestamped lane -- i.e. how long
-        after PROFILING start the last first-request fires. Logged once at
-        phase start; 0.0 when there is nothing to spread.
+        Per trajectory the first request is its earliest dispatchable stream
+        (``min`` of the lane offsets after the leading-idle shift; t0=0 spread,
+        or t0=lane-min burst). This returns max-minus-min of those per-trajectory
+        first-request offsets -- the ramp-in window. Later streams in a
+        trajectory (subagents that spawn further out at their own faithful
+        offsets) are excluded: including them would report the full per-
+        trajectory replay span, not how long the trajectories take to start.
+        Logged once at phase start; 0.0 when there is nothing to spread.
         """
-        offsets: list[float] = []
+        first_offsets: list[float] = []
         for trajectory in self.conversation_source.trajectories:
             if trajectory.snapshot is None:
                 continue
@@ -475,10 +477,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 s.next_dispatch_offset_ms - leading_shift_ms for s in dispatchable
             ]
             lane_t0 = min(lane_offsets) if self._burst_phase_starts else 0.0
-            offsets.extend(o - lane_t0 for o in lane_offsets)
-        if not offsets:
+            first_offsets.append(min(lane_offsets) - lane_t0)
+        if not first_offsets:
             return 0.0
-        return (max(offsets) - min(offsets)) / MILLIS_PER_SECOND
+        return (max(first_offsets) - min(first_offsets)) / MILLIS_PER_SECOND
 
     async def _dispatch_one_profiling_trajectory(
         self, trajectory: Trajectory, lane: int
