@@ -395,6 +395,7 @@
         <span class="key" id="legend-sub"><span class="swatch" style="background:rgba(98,160,234,0.66)"></span>subagent request</span>
         <span class="key"><span class="swatch" style="background:rgba(98,160,234,0.28)"></span>inter-turn delay</span>
         <span class="key"><span class="tickline"></span>new session</span>
+        <span class="key" id="legend-spawn"><span class="tickline" style="background:rgba(150,225,245,0.9)"></span>new spawn</span>
       </div>
     </div>
     <div id="ruler-wrap"><canvas id="ruler"></canvas></div>
@@ -472,9 +473,17 @@
   </div>
 </aside>
 
-<script>
+<script type="module">
 "use strict";
-const DATA = __AIPERF_PAYLOAD__;
+// payload is gzip-compressed then base64-encoded at export time; inflate it
+// with the native DecompressionStream. Top-level await (module-only) lets the
+// rest of the script keep reading DATA synchronously once it resolves.
+const DATA = await (async () => {
+  const bytes = Uint8Array.from(atob("__AIPERF_PAYLOAD_B64__"), (c) => c.charCodeAt(0));
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const buf = await new Response(stream).arrayBuffer();
+  return JSON.parse(new TextDecoder().decode(buf));
+})();
 
 /* ---------- palette ---------- */
 const PALETTE = [
@@ -602,7 +611,10 @@ function metricColor(t) {
   document.getElementById("chips").innerHTML = chips
     .map(([k, v, hot]) => `<div class="chip${hot ? " hot" : ""}"><b>${v}</b><span>${k}</span></div>`)
     .join("");
-  if (!N_SUB) document.getElementById("legend-sub").style.display = "none";
+  if (!N_SUB) {
+    document.getElementById("legend-sub").style.display = "none";
+    document.getElementById("legend-spawn").style.display = "none";
+  }
   // conditional legend keys for errored / context-overflow turns
   const hasErr = DATA.sessions.some((s) => s.turns.some((t) => t[9] === 1));
   const hasOvf = DATA.sessions.some((s) => s.turns.some((t) => t[9] === 2));
@@ -925,15 +937,26 @@ function drawLanes() {
     });
   }
 
-  // new-session ticks (lane roots only; subagent tiers are visible inline)
+  // new-session ticks: main session starts span the full slot (white); subagent
+  // spawn starts sit in their own child tier, tinted a slightly different cyan
   ctx.fillStyle = "rgba(255,255,255,0.92)";
   DATA.sessions.forEach((s, si) => {
-    if (s.root) return;
+    if (s.root || s.sub) return;
     const t = sessStarts[si];
     if (t < view.t0 || t > view.t1) return;
     const x = xOf(t);
     ctx.fillRect(x - 0.75, slotRow0[s.slot] * ROW_H + 1.5, 1.5, slotRows[s.slot] * ROW_H - 3);
   });
+  if (N_SUB && !foldSubs) {
+    ctx.fillStyle = "rgba(150,225,245,0.9)";
+    DATA.sessions.forEach((s, si) => {
+      if (!s.sub) return;
+      const t = sessStarts[si];
+      if (t < view.t0 || t > view.t1) return;
+      const x = xOf(t);
+      ctx.fillRect(x - 0.75, (slotRow0[s.slot] + s.row0) * ROW_H + 1.5, 1.5, s.rows * ROW_H - 3);
+    });
+  }
 
   // ramp / bench markers
   for (const [t, color] of [[DATA.rampS, "#f5b942"], [DATA.benchEnd, "#ef6a6a"]]) {

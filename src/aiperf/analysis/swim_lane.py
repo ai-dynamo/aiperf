@@ -21,6 +21,8 @@ CLI: ``aiperf analyze swim-lane <run_dir> [<run_dir>...] [-o OUT]``
 
 from __future__ import annotations
 
+import base64
+import gzip
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -548,7 +550,9 @@ def _latency_band(
             ttft = _metric_value(r, "time_to_first_token")
             if ttft is None:
                 continue
-            starts.append((r["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND)
+            starts.append(
+                (r["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
+            )
             ttfts.append(ttft)
     if not starts:
         return [], [], []
@@ -1102,12 +1106,16 @@ def write_swim_lane_html(
         "peakLat": max(lat_p99) if lat_p99 else 0,
         "latencyBand": {"t": lat_t, "p50": lat_p50, "p99": lat_p99},
     }
-    # "</" cannot appear inside the inline <script> payload.
-    payload_js = orjson.dumps(payload).decode().replace("</", "<\\/")
+    # gzip + base64 the payload so the single-file viewer stays small (the JSON
+    # is mostly dense numeric arrays; gzip ~3x, base64 gives back ~33%, ~2.3x net
+    # on large runs). The template inflates it client-side via the native
+    # DecompressionStream; base64 is the safe way to carry the binary blob inside
+    # a JS string literal (no "</", quote, or non-UTF8 hazards).
+    payload_b64 = base64.b64encode(gzip.compress(orjson.dumps(payload), 6)).decode()
     html = (
         VIEWER_TEMPLATE.read_text()
         .replace("__AIPERF_TITLE__", run_dir.name)
-        .replace("__AIPERF_PAYLOAD__", payload_js)
+        .replace("__AIPERF_PAYLOAD_B64__", payload_b64)
     )
     out_path = out or (run_dir / "swim_lane.html")
     out_path.write_text(html)

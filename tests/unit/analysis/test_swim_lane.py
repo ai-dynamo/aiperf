@@ -8,6 +8,8 @@ their root session's lane instead of occupying their own slots.
 
 from __future__ import annotations
 
+import base64
+import gzip
 import re
 from pathlib import Path
 
@@ -240,9 +242,11 @@ def agentic_run_dir(tmp_path: Path) -> Path:
 
 
 def _extract_payload(html_path: Path) -> dict:
-    match = re.search(r"const DATA = (\{.*?\});\n", html_path.read_text())
+    # payload is embedded as a gzip+base64 blob inflated client-side via
+    # DecompressionStream; mirror that decode here to inspect it.
+    match = re.search(r'atob\("([A-Za-z0-9+/=]+)"\)', html_path.read_text())
     assert match, "embedded payload not found"
-    return orjson.loads(match.group(1))
+    return orjson.loads(gzip.decompress(base64.b64decode(match.group(1))))
 
 
 class TestRenderers:
