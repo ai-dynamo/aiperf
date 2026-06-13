@@ -31,8 +31,8 @@ probes exactly one thing:
       (characterization).
     * wrap-fill + cache_bust=NONE emits the byte-identical-traffic warning;
       non-NONE suppresses it (characterization).
-    * snapshot terminal-root immediate-recycle rotates the cache-bust marker
-      pass for the FRESH session while the warmed terminal root keeps pass=0
+    * snapshot single-turn root sampled at t* == turn-0 ts (n == 0) profiles
+      its own turn 0 with a minted marker instead of recycling at startup
       (characterization).
 """
 
@@ -564,12 +564,12 @@ def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
 
 
 @pytest.mark.asyncio
-async def test_snapshot_terminal_root_recycle_rotates_marker_for_fresh_session() -> (
-    None
-):
-    """A snapshot whose warmed root is already at its last turn recycles
-    immediately in PROFILING; the FRESH recycled session gets a rotated marker
-    (recycle_pass advances), while the terminal root retained its warmup pass=0.
+async def test_snapshot_single_turn_root_profiles_own_turn_zero_with_marker() -> None:
+    """A single-turn root sampled at t* == its turn-0 timestamp (n == 0) has
+    nothing to warm, so PROFILING measures its own turn 0 rather than
+    recycling at startup. The dispatched credit keeps the snapshot's own
+    correlation id and carries a minted cache-bust marker; recycle (and its
+    marker rotation) happens only later on the turn's completion.
     """
     ds = DatasetMetadata(
         conversations=[
@@ -581,7 +581,7 @@ async def test_snapshot_terminal_root_recycle_rotates_marker_for_fresh_session()
     )
     root_state = ConversationState(
         conversation_id="trace_0",
-        x_correlation_id="warmed-root",
+        x_correlation_id="snap-root",
         next_turn_index=0,
     )
     trajectory = Trajectory(
@@ -609,9 +609,10 @@ async def test_snapshot_terminal_root_recycle_rotates_marker_for_fresh_session()
     await strategy.execute_phase()
 
     assert len(issued) == 1
-    fresh = issued[0]
-    # The dispatched session is the recycled one (fresh uuid, not the warmed id).
-    assert fresh.x_correlation_id != "warmed-root"
-    # recycle_pass advanced past the warmed root's pass=0.
-    assert strategy._recycle_pass["trace_0"] == 1
-    assert _rid(fresh.cache_bust_marker) is not None
+    profiled = issued[0]
+    # The snapshot's own session profiles turn 0 (no startup recycle).
+    assert profiled.x_correlation_id == "snap-root"
+    assert profiled.turn_index == 0
+    # No recycle yet -> pass counter has not advanced for a fresh session.
+    assert strategy._recycle_pass.get("trace_0", 0) == 0
+    assert _rid(profiled.cache_bust_marker) is not None

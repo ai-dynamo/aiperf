@@ -53,17 +53,18 @@ class ConversationState:
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
     @property
-    def is_pending_start(self) -> bool:
-        """True when this stream had not issued its first request at t*.
+    def warmup_turn_index(self) -> int | None:
+        """Turn index to warm for this stream, or None if there is nothing.
 
-        An already-spawned branch can carry children whose recorded first
-        request starts after the snapshot instant (weka subagent chain
-        children carry spawn offsets up to minutes). Such streams must not
-        be warmed (the server had not seen them at t*) and must dispatch
-        their turn 0 at the recorded offset during PROFILING instead of
-        being advanced past it by the warmup continuation.
+        The stream's state at t* is reproduced by replaying its last request
+        before t* -- turn ``next_turn_index - 1`` (a full-prefix request that
+        primes the server cache to the t* state). A stream whose first
+        request is at/after t* (``next_turn_index == 0``; e.g. a subagent
+        whose chain was spawned after t*) had not issued anything at t*, so
+        there is nothing to warm: it dispatches turn 0 during PROFILING at
+        its normalized offset instead.
         """
-        return self.next_turn_index == 0 and self.next_dispatch_offset_ms > 0.0
+        return self.next_turn_index - 1 if self.next_turn_index >= 1 else None
 
 
 @dataclass(slots=True, frozen=True)
@@ -320,12 +321,13 @@ class TrajectorySource(ConversationSource):
 
     @property
     def warmup_credit_count(self) -> int:
-        """Number of ready snapshot conversations warmup will dispatch.
+        """Number of streams warmup will dispatch a priming request for.
 
-        Excludes parents gated on child joins and pending-start streams
-        (first request after t*); both are skipped by the warmup dispatch
-        loop, and PhaseRunner re-anchors the warmup barrier to this count,
-        so the two must agree exactly.
+        One per stream that has a turn before t* (``warmup_turn_index`` is
+        not None) and is not gated on child joins. Streams whose first
+        request is at/after t* contribute nothing to warm. PhaseRunner
+        re-anchors the warmup barrier to this count, so it must match the
+        warmup dispatch loop exactly.
         """
         total = 0
         for trajectory in self.trajectories:
@@ -335,7 +337,8 @@ class TrajectorySource(ConversationSource):
                 total += sum(
                     1
                     for state in trajectory.snapshot.states
-                    if not state.waiting_on_children and not state.is_pending_start
+                    if not state.waiting_on_children
+                    and state.warmup_turn_index is not None
                 )
         return total
 
