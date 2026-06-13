@@ -36,6 +36,7 @@ from aiperf.analysis.sweepline import (
     concurrency_sweep_line,
     prefill_throughput_sweep_line,
     throughput_sweep_line,
+    tokens_in_flight_sweep_line,
     total_throughput_sweep_line,
     weighted_concurrency_sweep_line,
 )
@@ -455,6 +456,33 @@ def _throughput_curves(
     rates come out directly in tokens/sec. Returns ((pf_ts, pf), (dec_ts, dec),
     (tot_ts, tot)); each value array is clamped at 0.
     """
+    start_s, gen_s, end_s, isl_a, osl_a = _record_arrays(sessions, t0_ns)
+    pf_ts, pf = prefill_throughput_sweep_line(start_s, gen_s, isl_a)
+    dec_ts, dec = throughput_sweep_line(gen_s, end_s, osl_a)
+    tot_ts, tot = total_throughput_sweep_line(
+        start_s, gen_s, end_s, isl_a, output_tokens=osl_a
+    )
+    return (
+        (pf_ts, np.maximum(pf, 0.0)),
+        (dec_ts, np.maximum(dec, 0.0)),
+        (tot_ts, np.maximum(tot, 0.0)),
+    )
+
+
+def _record_arrays(
+    sessions: dict[str, list[dict]], t0_ns: float
+) -> tuple[
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+]:
+    """Per-record (start, generation_start, end) in seconds-from-t0 plus ISL/OSL.
+
+    ``generation_start = start + TTFT`` (the post-hoc jsonl path); entries are
+    NaN where the metric is missing so the sweep primitives skip them.
+    """
     starts: list[float] = []
     gens: list[float] = []
     ends: list[float] = []
@@ -477,21 +505,30 @@ def _throughput_curves(
             )
             isls.append(float(isl) if isl is not None else nan)
             osls.append(float(osl) if osl is not None else nan)
-    start_s = np.array(starts, dtype=np.float64)
-    gen_s = np.array(gens, dtype=np.float64)
-    end_s = np.array(ends, dtype=np.float64)
-    isl_a = np.array(isls, dtype=np.float64)
-    osl_a = np.array(osls, dtype=np.float64)
-    pf_ts, pf = prefill_throughput_sweep_line(start_s, gen_s, isl_a)
-    dec_ts, dec = throughput_sweep_line(gen_s, end_s, osl_a)
-    tot_ts, tot = total_throughput_sweep_line(
+    return (
+        np.array(starts, dtype=np.float64),
+        np.array(gens, dtype=np.float64),
+        np.array(ends, dtype=np.float64),
+        np.array(isls, dtype=np.float64),
+        np.array(osls, dtype=np.float64),
+    )
+
+
+def _tokens_in_flight_curve(
+    sessions: dict[str, list[dict]], t0_ns: float
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """KV-cache token load over time (the GPU-memory-pressure view).
+
+    Input tokens are held for the whole request lifetime and output tokens
+    accumulate during generation: ISL over ``[start, generation_start)`` then
+    ISL+OSL over ``[generation_start, end)``, summed across in-flight requests.
+    Returns (timestamps seconds-from-t0, tokens), clamped at 0.
+    """
+    start_s, gen_s, end_s, isl_a, osl_a = _record_arrays(sessions, t0_ns)
+    ts, vals = tokens_in_flight_sweep_line(
         start_s, gen_s, end_s, isl_a, output_tokens=osl_a
     )
-    return (
-        (pf_ts, np.maximum(pf, 0.0)),
-        (dec_ts, np.maximum(dec, 0.0)),
-        (tot_ts, np.maximum(tot, 0.0)),
-    )
+    return ts, np.maximum(vals, 0.0)
 
 
 def plot_swim_lane(
@@ -909,6 +946,7 @@ def write_swim_lane_html(
     (pf_ts, pf_vals), (dec_ts, dec_vals), (tot_ts, tot_vals) = _throughput_curves(
         sessions, t0_ns
     )
+    kv_ts, kv_vals = _tokens_in_flight_curve(sessions, t0_ns)
 
     session_payload = []
     for ci, g in enumerate(groups):
@@ -998,6 +1036,11 @@ def write_swim_lane_html(
         "totalTput": {
             "t": np.round(tot_ts, 3).tolist(),
             "v": np.round(tot_vals).astype(int).tolist(),
+        },
+        "peakKv": int(kv_vals.max()) if kv_vals.size else 0,
+        "kvCache": {
+            "t": np.round(kv_ts, 3).tolist(),
+            "v": np.round(kv_vals).astype(int).tolist(),
         },
     }
     # "</" cannot appear inside the inline <script> payload.
