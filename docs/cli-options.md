@@ -818,6 +818,11 @@ AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
 <br/>_Default: `0.75`_
 
+#### `--burst-phase-starts`
+
+AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches into synchronized bursts instead of spreading them by each request's recorded offset from t*. By default (False) the phase starts are SPREAD: WARMUP requests are aligned globally so every trajectory reaches its t* at the same instant (the warmup end), and each lane's first PROFILING request waits out its recorded gap after t* -- reproducing the recorded arrival pattern at both phase boundaries. The rest of the replay (inter-turn delays) is timing-faithful regardless of this flag; it governs ONLY the burst-vs-spread of the two phase starts. Pass --burst-phase-starts to fire each phase's first requests together (faster concurrency ramp, synchronized start), e.g. for a throughput-oriented run rather than a faithful arrival replay.
+<br/>_Flag (no value required)_
+
 #### `--concurrency` `<str>`
 
 Number of concurrent requests to maintain OR list of concurrency values for parameter sweep. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate. When a list is provided (e.g., [10, 20, 30]), AIPerf runs benchmarks sequentially for each value.
