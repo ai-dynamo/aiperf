@@ -469,6 +469,7 @@ const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
     ...(TOTAL_ROWS > N_SLOTS ? [["sub-lanes", TOTAL_ROWS]] : []),
     ["turns", totalTurns],
     ["peak active", DATA.peakActive, true],
+    ...(DATA.peakTotal != null ? [["peak total", DATA.peakTotal, true]] : []),
     ["main peak act / tot", `${pk.mainActive} / ${pk.mainAlive}`],
     ["subagent peak act / tot", `${pk.subActive} / ${pk.subAlive}`],
     ...(DATA.target != null ? [["target conc", DATA.target, true]] : []),
@@ -1144,6 +1145,17 @@ lanesCv.addEventListener("dblclick", () => {
   view.t0 = 0; view.t1 = T_MAX * 1.005;
   scheduleDraw();
 });
+// double-click the lanes resize grip (bottom-right corner) to reset the panel
+// to its natural 100% height; capture-phase + stopPropagation so the corner
+// dblclick doesn't also reset the time view
+wrap.addEventListener("dblclick", (ev) => {
+  const r = wrap.getBoundingClientRect();
+  if (ev.clientX > r.right - 20 && ev.clientY > r.bottom - 20) {
+    wrap.style.height = NATURAL_LANES_H + "px";
+    ev.stopPropagation();
+    ev.preventDefault();
+  }
+}, true);
 lanesCv.addEventListener("wheel", (ev) => {
   ev.preventDefault();
   const rect = lanesCv.getBoundingClientRect();

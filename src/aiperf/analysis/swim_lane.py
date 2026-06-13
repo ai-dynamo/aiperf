@@ -899,6 +899,11 @@ def write_swim_lane_html(
     active_ts, active_vals, idle_ts, idle_vals = _concurrency_curves(
         sessions, len(records), t0_ns
     )
+    peak_active = int(active_vals.max()) if active_vals.size else 0
+    # peak of the active+idle curve at each instant (NOT the sum of their
+    # separate peaks): the most sessions concurrently in flight, idle included
+    _, total_vals = add_step_functions(active_ts, active_vals, idle_ts, idle_vals)
+    peak_total = int(total_vals.max()) if total_vals.size else 0
     new_isl_map = {sid: _session_new_isls(turns) for sid, turns in sessions.items()}
     new_isl_ts, new_isl_vals = _new_isl_curve(sessions, new_isl_map, t0_ns)
     (pf_ts, pf_vals), (dec_ts, dec_vals), (tot_ts, tot_vals) = _throughput_curves(
@@ -964,7 +969,8 @@ def write_swim_lane_html(
         "target": concurrency,
         "rampS": ramp_dur_s,
         "benchEnd": bench_dur_s,
-        "peakActive": int(active_vals.max()) if active_vals.size else 0,
+        "peakActive": peak_active,
+        "peakTotal": peak_total,
         "peakNewIsl": int(new_isl_vals.max()) if new_isl_vals.size else 0,
         "peaks": _agent_peaks(sessions),
         "sessions": session_payload,
