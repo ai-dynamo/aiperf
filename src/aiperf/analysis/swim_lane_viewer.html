@@ -527,7 +527,7 @@ const wrap = document.getElementById("lanes-wrap");
 // resizes the panel taller than the stacked lanes, and stay at base (panel
 // scrolls) when shrunk smaller. ROW_H/LANES_H/BAR_* are recomputed by
 // computeLaneGeometry() from the panel height.
-const BASE_ROW_H = Math.max(6, Math.round(Math.min(20, Math.floor((window.innerHeight * 0.40) / TOTAL_ROWS)) * 0.8));
+const BASE_ROW_H = Math.max(14, Math.min(30, Math.floor((window.innerHeight * 0.54) / TOTAL_ROWS)));
 const NATURAL_LANES_H = TOTAL_ROWS * BASE_ROW_H;
 let ROW_H = BASE_ROW_H, LANES_H = NATURAL_LANES_H, BAR_PAD = 1, BAR_H = 1;
 wrap.style.minHeight = Math.min(48, NATURAL_LANES_H) + "px";
@@ -596,6 +596,7 @@ function* ticks() {
 /* ---------- hover / selection state ---------- */
 let hoverSeg = null;
 let selectedSession = -1;
+let hoverT = null; // wall-clock seconds under the cursor, synced across all charts
 const tooltip = document.getElementById("tooltip");
 
 /* ---------- draw: ruler ---------- */
@@ -719,6 +720,8 @@ function drawLanes() {
     ctx.fillText(String(s), GUTTER - 9, (slotRow0[s] + slotRows[s] / 2) * ROW_H);
   }
   ctx.textAlign = "left";
+
+  drawCrosshair(ctx, xOf, 0, LANES_H, hoverT == null ? null : [[hoverT.toFixed(2) + "s", "#f5b942"]]);
 }
 
 /* ---------- draw: navigator ---------- */
@@ -817,6 +820,11 @@ function drawNav() {
   ctx.strokeRect(x0, 1, x1 - x0, NAV_H - NAV_PAD_B + 4);
   ctx.fillStyle = "#f5b942";
   for (const x of [x0, x1]) ctx.fillRect(x - 2, (NAV_H - NAV_PAD_B) / 2 - 9, 4, 18);
+
+  drawCrosshair(ctx, navX, NAV_PAD_T, NAV_H - NAV_PAD_B, [
+    ["active " + Math.round(valAt(DATA.active.t, DATA.active.v, hoverT)), "#56c8dd"],
+    ["idle " + Math.round(valAt(DATA.idle.t, DATA.idle.v, hoverT)), "rgba(178,186,200,0.95)"],
+  ]);
 }
 
 /* ---------- legend for nav ---------- */
@@ -832,7 +840,7 @@ document.getElementById("nav-legend").innerHTML = [
 /* ---------- new-ISL-in-flight chart (prefill window, shares lane time axis) ---------- */
 let ISL_H = 120;
 const ISL_PAD_T = 14, ISL_PAD_B = 20;
-const islYMax = (DATA.peakNewIsl || 0) * 1.12 || 1;
+let islYMax = (DATA.peakNewIsl || 0) * 1.12 || 1;
 const islY = (v) => ISL_H - ISL_PAD_B - (v / islYMax) * (ISL_H - ISL_PAD_T - ISL_PAD_B);
 const fmtTokens = (v) =>
   v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + "M"
@@ -875,10 +883,51 @@ function stepPathV(ctx, ts, vs, yMap, close) {
     ctx.closePath();
   }
 }
+// max series value over the visible window, for per-chart y-autoscale
+function visMax(ts, vs) {
+  let m = valAt(ts, vs, view.t0);
+  for (let i = 0; i < ts.length; i++) {
+    if (ts[i] < view.t0) continue;
+    if (ts[i] > view.t1) break;
+    if (vs[i] > m) m = vs[i];
+  }
+  return m;
+}
+// synced hover line + value tags on a chart at hoverT (xFn maps t->px)
+function drawCrosshair(ctx, xFn, top, bottom, labels) {
+  if (hoverT == null) return;
+  const x = xFn(hoverT);
+  if (x < GUTTER - 0.5 || x > W) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(245,185,66,0.5)";
+  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x + 0.5, top); ctx.lineTo(x + 0.5, bottom); ctx.stroke();
+  ctx.setLineDash([]);
+  if (labels && labels.length) {
+    ctx.font = "11px 'IBM Plex Mono', monospace";
+    ctx.textBaseline = "top";
+    const right = x > W - 110;
+    ctx.textAlign = right ? "right" : "left";
+    const lx = right ? x - 5 : x + 5;
+    let ly = top + 2;
+    for (const [txt, col] of labels) {
+      const tw = ctx.measureText(txt).width;
+      ctx.fillStyle = "rgba(8,11,16,0.72)";
+      ctx.fillRect(right ? lx - tw - 3 : lx - 1, ly - 1, tw + 4, 13);
+      ctx.fillStyle = col;
+      ctx.fillText(txt, lx, ly);
+      ly += 13;
+    }
+    ctx.textAlign = "left";
+  }
+  ctx.restore();
+}
 
 function drawNewIsl() {
   const ctx = islCtx;
   ctx.clearRect(0, 0, W, ISL_H);
+  islYMax = Math.max(visMax(DATA.newIsl.t, DATA.newIsl.v) * 1.12, 1); // autoscale to view
 
   // y gridlines + token labels
   ctx.font = "12px 'IBM Plex Mono', monospace";
@@ -929,6 +978,10 @@ function drawNewIsl() {
   ctx.fillStyle = "rgba(186,196,212,0.95)";
   for (const [t, step] of ticks())
     ctx.fillText(fmtTick(t, step), Math.round(xOf(t)) + 3, ISL_H - 8);
+
+  drawCrosshair(ctx, xOf, ISL_PAD_T, ISL_H - ISL_PAD_B, [
+    ["new ISL " + fmtTokens(valAt(DATA.newIsl.t, DATA.newIsl.v, hoverT)) + " tok", "#f5b942"],
+  ]);
 }
 
 /* ---------- legend for new-ISL chart ---------- */
@@ -939,12 +992,13 @@ document.getElementById("isl-legend").innerHTML =
 let TPUT_H = 132;
 const TPUT_PAD_T = 14, TPUT_PAD_B = 20;
 const TPUT_PREFILL = "#56c8dd", TPUT_DECODE = "#82d472", TPUT_TOTAL = "#f2a64e";
-const tputYMax = (DATA.peakTput || 0) * 1.12 || 1;
+let tputYMax = (DATA.peakTput || 0) * 1.12 || 1;
 const tputY = (v) => TPUT_H - TPUT_PAD_B - (v / tputYMax) * (TPUT_H - TPUT_PAD_T - TPUT_PAD_B);
 
 function drawThroughput() {
   const ctx = tputCtx;
   ctx.clearRect(0, 0, W, TPUT_H);
+  tputYMax = Math.max(visMax(DATA.totalTput.t, DATA.totalTput.v) * 1.12, 1); // autoscale to view
 
   // y gridlines + tokens/sec labels
   ctx.font = "12px 'IBM Plex Mono', monospace";
@@ -1003,6 +1057,12 @@ function drawThroughput() {
   ctx.fillStyle = "rgba(186,196,212,0.95)";
   for (const [t, step] of ticks())
     ctx.fillText(fmtTick(t, step), Math.round(xOf(t)) + 3, TPUT_H - 8);
+
+  drawCrosshair(ctx, xOf, TPUT_PAD_T, TPUT_H - TPUT_PAD_B, [
+    ["total " + fmtTokens(valAt(DATA.totalTput.t, DATA.totalTput.v, hoverT)) + "/s", TPUT_TOTAL],
+    ["prefill " + fmtTokens(valAt(DATA.prefillTput.t, DATA.prefillTput.v, hoverT)), TPUT_PREFILL],
+    ["decode " + fmtTokens(valAt(DATA.decodeTput.t, DATA.decodeTput.v, hoverT)), TPUT_DECODE],
+  ]);
 }
 
 /* ---------- legend for throughput chart ---------- */
@@ -1122,15 +1182,14 @@ lanesCv.addEventListener("mousemove", (ev) => {
     scheduleDraw();
     return;
   }
-  const seg = segAt(ev.clientX - rect.left, ev.clientY - rect.top);
-  if (seg !== hoverSeg) {
-    hoverSeg = seg;
-    scheduleDraw();
-  }
-  if (seg) showTooltip(ev, seg); else hideTooltip();
+  hoverT = tOf(ev.clientX - rect.left);
+  hoverSeg = segAt(ev.clientX - rect.left, ev.clientY - rect.top);
+  scheduleDraw();
+  if (hoverSeg) showTooltip(ev, hoverSeg); else hideTooltip();
 });
 lanesCv.addEventListener("mouseleave", () => {
   hoverSeg = null;
+  hoverT = null;
   hideTooltip();
   scheduleDraw();
 });
@@ -1184,13 +1243,18 @@ function attachTimePanZoom(cv) {
     if (panning) { panning = false; cv.style.cursor = "grab"; }
   });
   cv.addEventListener("mousemove", (ev) => {
-    if (!panning) return;
-    const dx = ev.clientX - lastX; lastX = ev.clientX;
-    const span = view.t1 - view.t0;
-    view.t0 -= (dx / (W - GUTTER)) * span;
-    view.t1 = view.t0 + span;
+    if (panning) {
+      const dx = ev.clientX - lastX; lastX = ev.clientX;
+      const span = view.t1 - view.t0;
+      view.t0 -= (dx / (W - GUTTER)) * span;
+      view.t1 = view.t0 + span;
+      scheduleDraw();
+      return;
+    }
+    hoverT = tOf(ev.clientX - cv.getBoundingClientRect().left);
     scheduleDraw();
   });
+  cv.addEventListener("mouseleave", () => { hoverT = null; scheduleDraw(); });
   cv.addEventListener("wheel", (ev) => {
     ev.preventDefault();
     const rect = cv.getBoundingClientRect();
@@ -1237,6 +1301,8 @@ window.addEventListener("mousemove", (ev) => {
       navCv.style.cursor =
         Math.abs(x - x0) < 7 || Math.abs(x - x1) < 7 ? "ew-resize"
         : x > x0 && x < x1 ? "grab" : "crosshair";
+      hoverT = navT(x);
+      scheduleDraw();
     }
     return;
   }
@@ -1253,6 +1319,7 @@ navCv.addEventListener("dblclick", () => {
   view.t0 = 0; view.t1 = T_MAX * 1.005;
   scheduleDraw();
 });
+navCv.addEventListener("mouseleave", () => { hoverT = null; scheduleDraw(); });
 
 /* ---------- detail panel ---------- */
 const detail = document.getElementById("detail");
