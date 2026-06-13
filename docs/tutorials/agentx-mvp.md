@@ -322,8 +322,18 @@ AIPerf constructs this topology from `WekaSubagentEntry` blocks in the trace:
 subagents with preceding and following parent anchors become SPAWN/JOIN
 branches, background subagents with no following anchor do not block the parent,
 and adjacent subagents sharing the same anchors collapse into one multi-child
-branch. For the format details and SPAWN/JOIN mechanics, see the
-[Weka Traces tutorial](weka-trace.md).
+branch.
+
+Within each subagent entry, nested hash-id LCP chain detection splits the
+inner requests into per-context-chain children (the subagent's own thread
+`::sa:<agent_id>` plus `:c000`, `:c001`, ... siblings for one-shot disjoint
+calls, parallel forks, and flattened worker threads — on the 060826 corpus the
+615 subagent entries expand to ~3.1k chain children). Each chain child
+dispatches at its **recorded offset** from the spawn rather than bursting when
+the parent turn completes, so the in-subagent request schedule replays on the
+recorded timeline. The parent's SPAWN_JOIN waits on all of a subagent's chain
+children. For the format details, detection rules, and SPAWN/JOIN mechanics,
+see the [Weka Traces tutorial](weka-trace.md).
 
 ---
 

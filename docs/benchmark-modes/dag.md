@@ -151,6 +151,7 @@ Each listed `session_id` must be declared as its own top-level conversation in t
 
 - Starts with an **empty** accumulator — only its own `messages` go on the wire.
 - Routes freely (no sticky pin to the parent's worker).
+- Dispatches its first turn at its **recorded offset** from the spawn when the dataset carries timing: a child whose turn-0 `timestamp` is later than the branch's `start_timestamp_ms` (fallback: the earliest turn-0 timestamp across the branch's children) sleeps out the difference in a background task before its first request is issued. Join gates register before the sleep, so a SPAWN_JOIN-gated parent still waits for sleeping children, and run teardown cancels pending sleepers. Children without timestamps (e.g. `--ignore-trace-delays`, or hand-authored `dag_jsonl` without `timestamp` fields) dispatch immediately, exactly as before. The `branch_stats.children_delayed` counter reports how many children took the delayed path.
 
 SPAWN targets may be referenced from multiple parents — the child conversation is effectively a fresh-context template. Use SPAWN when you're benchmarking agent-tree shapes where each sub-agent is semantically independent, not a continuation of the parent.
 

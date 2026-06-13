@@ -75,13 +75,19 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v12: weka subagent inner requests split by nested LCP chain detection
+    # instead of time-interval stream packing -- child session ids changed
+    # (::sa:{agent_id} main chain + :c{NNN} spawned chains replace the
+    # :s{i} streams), child counts and SPAWN branch memberships changed,
+    # child turn timestamps moved to root-trace coordinates, and
+    # spawned-chain turn-0 tool/system attribution is proof-gated.
     # v11: the system role is never fabricated from the observed
     # namespace-group prefix (0/0-declared chains bake all-user turn 0s) --
     # role boundaries changed again relative to v10.
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    11
+    12
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

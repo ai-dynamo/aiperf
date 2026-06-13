@@ -293,13 +293,16 @@ class _DatasetSettings(BaseSettings):
     )
     WEKA_SPLIT_FLATTENED_AGENTS: bool = Field(
         default=True,
-        description="When True (default), WekaTraceLoader detects untagged "
-        "agent fan-outs recorded as flat top-level requests (hash_id LCP "
-        "chain detection), splitting them into per-agent child conversations "
-        "with SPAWN/SPAWN_JOIN linkage so replay reproduces the recorded "
-        "concurrency. Set to False to restore the legacy single-stream "
-        "chaining that serializes all top-level requests into one root "
-        "conversation.",
+        description="When True (default), WekaTraceLoader runs hash_id LCP "
+        "chain detection at both layers: untagged agent fan-outs recorded as "
+        "flat top-level requests split into per-agent child conversations "
+        "(::fa:NNN), and each subagent entry's inner requests split into "
+        "per-context-chain children (::sa:<agent_id> plus :cNNN siblings), "
+        "all with SPAWN/SPAWN_JOIN linkage so replay reproduces the recorded "
+        "concurrency. Set to False to disable detection at both layers: all "
+        "top-level requests serialize into one root conversation and each "
+        "subagent emits exactly one child with its inner requests in time "
+        "order.",
     )
     WEKA_TOOL_SHAPED_MESSAGES: bool = Field(
         default=False,
