@@ -106,7 +106,10 @@ _SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
     ("isl", "input_sequence_length"),
     ("osl", "output_sequence_length"),
 )
-_LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "
+# Each block line is its own log record (carries its own log prefix), so the
+# continuation rows sit at a small fixed indent under the header line rather
+# than aligning under the old inline "[realtime MM:SS profiling] " text.
+_REALTIME_ROW_INDENT = 2
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -139,17 +142,29 @@ def _render_realtime_block(
     prev_snapshot: tuple[int, float] | None,
     server_snapshot: dict[str, float] | None = None,
 ) -> str:
-    """Render a compact 4-line realtime stats block for the aiperf logger.
+    """Render a compact realtime stats block for the aiperf logger.
+
+    Format (``[realtime MM:SS profiling]`` header, then one indented row per
+    stat group)::
+
+        [realtime 01:39 profiling]
+          rps=0.5 (avg 0.4) tput_in=123/s tput_out=456/s done=10 ok=10 err=0
+          ttft p50=80ms  p75=-      p95=180ms p99=240ms
+          ...
+
+    The header sits on its own line and the summary counters drop to the
+    first indented row so the line no longer wraps in narrow terminals; each
+    line is emitted as a separate log record (see ``_report_realtime_metrics``).
 
     Latency MetricResult percentile values are already in display units
     (milliseconds for time-based metrics, see ``to_display_unit`` and the
     accumulator's ``summarize`` path), so ``_format_ms`` consumes them as-is.
     Returns an empty string when no requests have completed yet so callers
-    can suppress the log line entirely on the first tick.
+    can suppress the block entirely on the first tick.
 
     Records-side stats only — ``in_flight_requests`` is a credit-side concept
     that this function doesn't have access to and is therefore omitted from
-    the output line.
+    the output.
     """
     if phase_stats.total_records == 0:
         return ""
@@ -177,18 +192,17 @@ def _render_realtime_block(
     tput_in_avg = getattr(tput_in_mr, "avg", None)
     tput_in_str = str(int(round(tput_in_avg))) if tput_in_avg is not None else "-"
 
-    line1 = (
-        f"[realtime {_format_elapsed(elapsed)} profiling] "
-        f"rps={rps_delta_str} (avg {rps_avg_str}) "
+    header = f"[realtime {_format_elapsed(elapsed)} profiling]"
+
+    indent = " " * _REALTIME_ROW_INDENT
+    rows: list[str] = [
+        f"{indent}rps={rps_delta_str} (avg {rps_avg_str}) "
         f"tput_in={tput_in_str}/s "
         f"tput_out={tput_out_str}/s "
         f"done={phase_stats.total_records} "
         f"ok={phase_stats.success_records} "
         f"err={phase_stats.error_records}"
-    )
-
-    indent = " " * _LATENCY_PREFIX_WIDTH
-    rows: list[str] = []
+    ]
     for label, tag in _LATENCY_LINE_LABELS:
         mr = by_tag.get(tag)
         p50 = _format_ms(getattr(mr, "p50", None))
@@ -291,7 +305,7 @@ def _render_realtime_block(
         if srv_parts:
             rows.append(f"{indent}srv  {' '.join(srv_parts)}")
 
-    return "\n".join([line1, *rows])
+    return "\n".join([header, *rows])
 
 
 @dataclass
