@@ -401,6 +401,35 @@ def concurrency_sweep_line(
     return sorted_ts, concurrency
 
 
+def weighted_concurrency_sweep_line(
+    start_ns: FloatArray,
+    end_ns: FloatArray,
+    weights: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
+    """Concurrency sweep where each interval contributes ``weights[i]`` instead of 1.
+
+    The resulting step function is the sum of every active interval's weight at
+    each event boundary -- e.g. "tokens in flight" when ``weights`` holds the
+    per-request token counts held over ``[start_ns, end_ns)``.
+
+    Args:
+        start_ns: Interval start timestamps. NaN for missing records.
+        end_ns: Interval end timestamps. NaN for missing records.
+        weights: Per-interval contribution. NaN for missing records.
+
+    Returns:
+        Tuple of (sorted_timestamps, summed_weight_values).
+    """
+    valid = ~np.isnan(start_ns) & ~np.isnan(end_ns) & ~np.isnan(weights)
+    if not valid.any():
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    w = weights[valid]
+    timestamps = np.concatenate([start_ns[valid], end_ns[valid]])
+    deltas = np.concatenate([w, -w])
+    return _sweep_line_cumsum(timestamps, deltas)
+
+
 def throughput_sweep_line(
     generation_start_ns: FloatArray,
     end_ns: FloatArray,
