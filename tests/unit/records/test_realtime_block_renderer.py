@@ -70,9 +70,10 @@ def test_render_full_block_first_tick() -> None:
     block = _render_realtime_block(
         _baseline_metrics(), _phase_stats(), prev_snapshot=None
     )
-    assert block.startswith(
-        "[realtime 00:45 profiling] rps=39.8 (avg 39.8) tput_in=-/s "
-        "tput_out=1820/s done=1903 ok=1903 err=0"
+    lines = block.splitlines()
+    assert lines[0] == "[realtime 00:45 profiling]"
+    assert lines[1] == (
+        "  rps=39.8 (avg 39.8) tput_in=-/s tput_out=1820/s done=1903 ok=1903 err=0"
     )
     assert "ttft p50=80ms" in block
     assert "p95=180ms" in block
@@ -87,9 +88,9 @@ def test_render_uses_prev_snapshot_for_delta_rps() -> None:
         _phase_stats(completed=1080, sent=1208, elapsed_s=35.0),
         prev_snapshot=(900, 30.0),
     )
-    assert block.startswith(
-        "[realtime 00:35 profiling] rps=36.0 (avg 39.8) tput_in=-/s tput_out=1820/s"
-    )
+    lines = block.splitlines()
+    assert lines[0] == "[realtime 00:35 profiling]"
+    assert lines[1].startswith("  rps=36.0 (avg 39.8) tput_in=-/s tput_out=1820/s")
 
 
 def test_render_missing_itl_renders_dashes() -> None:
