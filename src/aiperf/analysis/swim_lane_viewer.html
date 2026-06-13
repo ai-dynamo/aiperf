@@ -530,6 +530,11 @@ const sessRoot = DATA.sessions.map((s) => s.root ?? s.id);
 const idToSi = {};
 DATA.sessions.forEach((s, si) => { idToSi[s.id] = si; });
 const laneColor = (si) => sessColor(DATA.sessions[si].ci);
+// categorical role of a session for the "role" color mode: the main/root
+// conversation, a sustained (sub)agent, or a one-shot ::aux: sidecar.
+const ROLE_COLOR = { main: "#62a0ea", agent: "#57c994", sidecar: "#f5b942" };
+const sessRole = (s) => (!s.sub ? "main" : s.aux ? "sidecar" : "agent");
+const roleColor = (s) => ROLE_COLOR[sessRole(s)];
 const N_SUB = DATA.sessions.reduce((a, s) => a + (s.sub ? 1 : 0), 0);
 // aux (sidecar) sessions are a subset of subagents (agent_depth > 0); count
 // them separately so the stats and legend can distinguish one-shot tool calls
@@ -552,7 +557,7 @@ function relayout() {
 relayout();
 
 /* ---------- lane encoding state (color-by-metric, prefill/decode split) ---------- */
-let colorBy = null; // null | dur | ttft | lat | isl | osl | new
+let colorBy = null; // null | dur | ttft | lat | isl | osl | new | role
 let split = false;
 let spawnLinks = false; // draw connector lines from subagents to their group root
 // turn-tuple index + label + formatter per colorable metric
@@ -634,7 +639,7 @@ function metricColor(t) {
 /* ---------- lane controls (color-by-metric + prefill/decode split) ---------- */
 {
   const el = document.getElementById("lane-ctrls");
-  const opts = [["none", null], ["dur", "dur"], ["ttft", "ttft"], ["lat", "lat"], ["isl", "isl"], ["osl", "osl"], ["new ISL", "new"]];
+  const opts = [["none", null], ["dur", "dur"], ["ttft", "ttft"], ["lat", "lat"], ["isl", "isl"], ["osl", "osl"], ["new ISL", "new"], ...(N_SUB ? [["role", "role"]] : [])];
   el.innerHTML =
     `<span class="lbl">color</span>` +
     opts.map(([lbl, v]) => `<button class="ctrl${v === colorBy ? " on" : ""}" data-c="${v}">${lbl}</button>`).join("") +
@@ -648,8 +653,14 @@ function metricColor(t) {
   const hint = el.querySelector("#scale-hint");
   function updateHint() {
     if (!colorBy) { hint.style.display = "none"; return; }
-    const r = metricRange[colorBy], m = METRICS[colorBy];
     hint.style.display = "flex";
+    if (colorBy === "role") {
+      hint.innerHTML = ["main", "agent", "sidecar"]
+        .map((r) => `<span class="key" style="margin-right:8px"><span class="swatch" style="background:${ROLE_COLOR[r]}"></span>${r}</span>`)
+        .join("");
+      return;
+    }
+    const r = metricRange[colorBy], m = METRICS[colorBy];
     hint.innerHTML = `<span>${m.fmt(r.min)}</span><span class="bar"></span><span>${m.fmt(r.max)}</span>`;
   }
   el.querySelectorAll("[data-c]").forEach((b) =>
@@ -878,8 +889,10 @@ function drawLanes() {
       if (x1 - x0 < 0.6) x1 = x0 + 0.6;
       const lc = laneColor(seg.si);
       const turn = seg.idle ? null : DATA.sessions[seg.si].turns[seg.ti];
-      // base bar color: metric heatmap when color-by is on, else session color
-      const c = !seg.idle && colorBy ? metricColor(turn) : lc;
+      // base bar color: role color / metric heatmap when color-by is on, else session color
+      const c = !seg.idle && colorBy
+        ? (colorBy === "role" ? roleColor(DATA.sessions[seg.si]) : metricColor(turn))
+        : lc;
       const dimmed = activeRoots !== null && !activeRoots.has(sessRoot[seg.si]);
       // idle spans the session's own rows; each parallel turn gets a
       // full-size sub-lane; subagent turns render lighter in their child tier
