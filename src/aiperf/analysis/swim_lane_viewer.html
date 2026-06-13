@@ -204,7 +204,7 @@
 
   #nav-card .card-head { border-bottom: none; border-top: 1px solid var(--hairline); }
   #nav { display: block; width: 100%; height: 100%; cursor: crosshair; }
-  #isl, #tput { display: block; width: 100%; height: 100%; }
+  #isl, #tput, #kv { display: block; width: 100%; height: 100%; }
   .vresize { overflow: hidden; resize: vertical; min-height: 64px; max-height: 70vh; }
   .vresize::-webkit-resizer { background: linear-gradient(135deg, transparent 45%, var(--ink-mute) 45%, var(--ink-mute) 55%, transparent 55%); }
 
@@ -387,6 +387,14 @@
       <div class="legend" id="tput-legend"></div>
     </div>
     <div class="vresize" id="tput-wrap" style="height:132px"><canvas id="tput"></canvas></div>
+  </section>
+
+  <section class="card" id="kv-card">
+    <div class="card-head">
+      <span class="title">KV cache — tokens in flight (GPU memory pressure)</span>
+      <div class="legend" id="kv-legend"></div>
+    </div>
+    <div class="vresize" id="kv-wrap" style="height:120px"><canvas id="kv"></canvas></div>
   </section>
 
   <section class="card" id="nav-card">
@@ -619,6 +627,7 @@ const rulerCv = document.getElementById("ruler");
 const navCv = document.getElementById("nav");
 const islCv = document.getElementById("isl");
 const tputCv = document.getElementById("tput");
+const kvCv = document.getElementById("kv");
 const wrap = document.getElementById("lanes-wrap");
 // Base (default/minimum) lane height; lanes grow above this when the user
 // resizes the panel taller than the stacked lanes, and stay at base (panel
@@ -646,7 +655,7 @@ function slotOfRow(row) {
   }
   return lo;
 }
-let lanesCtx, rulerCtx, navCtx, islCtx, tputCtx, W;
+let lanesCtx, rulerCtx, navCtx, islCtx, tputCtx, kvCtx, W;
 
 function layout() {
   W = document.getElementById("timeline-card").clientWidth;
@@ -666,6 +675,8 @@ function sizeCharts() {
   ISL_H = islCv.clientHeight;
   tputCtx = sizeCanvasFill(tputCv);
   TPUT_H = tputCv.clientHeight;
+  kvCtx = sizeCanvasFill(kvCv);
+  KV_H = kvCv.clientHeight;
 }
 
 const xOf = (t) => GUTTER + ((t - view.t0) / (view.t1 - view.t0)) * (W - GUTTER);
@@ -1244,6 +1255,70 @@ document.getElementById("tput-log").addEventListener("click", (e) => {
     }));
 }
 
+/* ---------- KV-cache (tokens-in-flight) chart ---------- */
+let KV_H = 120;
+const KV_PAD_T = 14, KV_PAD_B = 20, KV_COLOR = "#b18cf2";
+let kvYMax = (DATA.peakKv || 0) * 1.12 || 1;
+const kvY = (v) => KV_H - KV_PAD_B - (v / kvYMax) * (KV_H - KV_PAD_T - KV_PAD_B);
+
+function drawKvCache() {
+  const ctx = kvCtx;
+  ctx.clearRect(0, 0, W, KV_H);
+  kvYMax = Math.max(visMax(DATA.kvCache.t, DATA.kvCache.v) * 1.12, 1); // autoscale to view
+
+  ctx.font = "12px 'IBM Plex Mono', monospace";
+  ctx.textBaseline = "middle";
+  const ystep = niceStep(kvYMax);
+  for (let v = 0; v <= kvYMax; v += ystep) {
+    const y = Math.round(kvY(v)) + 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath(); ctx.moveTo(GUTTER, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.fillStyle = "rgba(186,196,212,0.95)";
+    ctx.textAlign = "right";
+    ctx.fillText(fmtTokens(v), GUTTER - 8, y);
+  }
+  ctx.textAlign = "left";
+
+  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+  for (const [t] of ticks()) {
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, KV_H - KV_PAD_B); ctx.stroke();
+  }
+
+  if (DATA.kvCache.t.length) {
+    stepPathV(ctx, DATA.kvCache.t, DATA.kvCache.v, kvY, true);
+    const grad = ctx.createLinearGradient(0, KV_PAD_T, 0, KV_H - KV_PAD_B);
+    grad.addColorStop(0, "rgba(177,140,242,0.30)");
+    grad.addColorStop(1, "rgba(177,140,242,0.04)");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    stepPathV(ctx, DATA.kvCache.t, DATA.kvCache.v, kvY, false);
+    ctx.strokeStyle = KV_COLOR;
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+  }
+
+  for (const [t, color] of [[DATA.rampS, "#f5b942"], [DATA.benchEnd, "#ef6a6a"]]) {
+    if (t == null || t < view.t0 || t > view.t1) continue;
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(x, KV_PAD_T); ctx.lineTo(x, KV_H - KV_PAD_B); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.fillStyle = "rgba(186,196,212,0.95)";
+  for (const [t, step] of ticks())
+    ctx.fillText(fmtTick(t, step), Math.round(xOf(t)) + 3, KV_H - 8);
+
+  drawCrosshair(ctx, xOf, KV_PAD_T, KV_H - KV_PAD_B, [
+    ["KV " + fmtTokens(valAt(DATA.kvCache.t, DATA.kvCache.v, hoverT)) + " tok", KV_COLOR],
+  ]);
+}
+
+document.getElementById("kv-legend").innerHTML =
+  `<span class="key"><span class="swatch" style="background:${KV_COLOR}"></span>tokens resident in KV cache (peak ${fmtTokens(DATA.peakKv || 0)} tok)</span>`;
+
 /* ---------- render loop ---------- */
 let drawQueued = false;
 function scheduleDraw() {
@@ -1256,6 +1331,7 @@ function scheduleDraw() {
     drawLanes();
     drawNewIsl();
     drawThroughput();
+    drawKvCache();
     drawNav();
   });
 }
@@ -1446,6 +1522,7 @@ function attachTimePanZoom(cv) {
 }
 attachTimePanZoom(islCv);
 attachTimePanZoom(tputCv);
+attachTimePanZoom(kvCv);
 
 /* ---------- interactions: navigator ---------- */
 let navDrag = null;
@@ -1568,6 +1645,7 @@ if (window.ResizeObserver) {
   ro.observe(document.getElementById("nav-wrap"));
   ro.observe(document.getElementById("isl-wrap"));
   ro.observe(document.getElementById("tput-wrap"));
+  ro.observe(document.getElementById("kv-wrap"));
 }
 layout();
 </script>
