@@ -459,7 +459,7 @@ def test_nested_chain_equal_t_disjoint_requests_split_deterministically():
         ],
     )
     plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
-    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:c000"]
+    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:fa:000"]
     assert [r.hash_ids[0] for r in plans[0].requests] == [3, 1]
     assert [r.hash_ids[0] for r in plans[1].requests] == [2]
 
@@ -486,7 +486,7 @@ def test_nested_chain_detection_uses_root_trace_timeline():
         ],
     )
     plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
-    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:c000"]
+    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:fa:000"]
     # Normalized coordinates carried on the plan requests themselves.
     assert plans[0].requests[0].t == pytest.approx(110.0)
     assert plans[1].requests[0].t == pytest.approx(150.0)
@@ -526,12 +526,12 @@ def test_spawned_chain_inherits_declared_prefix_only_when_proven():
     # declared_blocks = ceil((128 + 64) / 64) = 3; [1, 2, 3] matches the main
     # chain's first request, so the fork provably carries the declared prefix.
     proven = _expand_subagent_to_child_plans("tr", 0, entry_with([1, 2, 3, 9]), 64)
-    assert [p.session_id for p in proven] == ["tr::sa:a", "tr::sa:a:c000"]
+    assert [p.session_id for p in proven] == ["tr::sa:a", "tr::sa:a:fa:000"]
     assert (proven[0].init_tool_tokens, proven[0].init_system_tokens) == (128, 64)
     assert (proven[1].init_tool_tokens, proven[1].init_system_tokens) == (128, 64)
 
     unproven = _expand_subagent_to_child_plans("tr", 0, entry_with([7, 8, 9, 10]), 64)
-    assert [p.session_id for p in unproven] == ["tr::sa:a", "tr::sa:a:c000"]
+    assert [p.session_id for p in unproven] == ["tr::sa:a", "tr::sa:a:fa:000"]
     assert (unproven[0].init_tool_tokens, unproven[0].init_system_tokens) == (128, 64)
     assert (unproven[1].init_tool_tokens, unproven[1].init_system_tokens) == (0, 0)
 

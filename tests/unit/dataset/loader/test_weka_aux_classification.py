@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for auxiliary one-shot (``::aux:``) classification of detected chains.
+"""Tests for auxiliary one-shot (sidecar) classification of detected chains.
 
-``is_aux_chain`` decides whether a flattened-agent worker chain is a genuine
-agent (``::fa:``) or a tool-issued sidecar (``::aux:``): short and starting from
-a small, fresh context relative to the conversation's own peak.
+``is_aux_chain`` decides whether a detected worker chain is a genuine agent or
+a tool-issued sidecar: short and starting from a small, fresh context relative
+to the enclosing main chain's peak. Applies to top-level flat chains
+(``::fa:`` -> ``::aux:``) and subagent overflow (``:cNNN`` -> ``:auxNNN``).
 """
 
-from aiperf.dataset.loader.weka_agent_chains import AgentChain, is_aux_chain
+from aiperf.dataset.loader.weka_agent_chains import is_aux_chain
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
 # Defaults mirroring Environment.DATASET.WEKA_AUX_* so the tests read as the
@@ -16,23 +17,19 @@ PARAMS = {"max_requests": 1, "isl_ratio": 0.10, "isl_floor": 16384}
 MAIN_PEAK = 134_144  # representative main-chain peak context (corpus median-ish)
 
 
-def _chain(*input_lengths: int) -> AgentChain:
-    """A worker chain with one request per given input length."""
-    reqs = [
-        (
-            i,
-            WekaNormalRequest(
-                type="n",
-                t=float(i),
-                model="m",
-                input_length=isl,
-                output_length=10,
-                hash_ids=[1],
-            ),
+def _chain(*input_lengths: int) -> list[WekaNormalRequest]:
+    """A worker chain's request list, one request per given input length."""
+    return [
+        WekaNormalRequest(
+            type="n",
+            t=float(i),
+            model="m",
+            input_length=isl,
+            output_length=10,
+            hash_ids=[1],
         )
         for i, isl in enumerate(input_lengths)
     ]
-    return AgentChain(requests=reqs)
 
 
 def test_singleton_small_fresh_context_is_aux():
@@ -88,4 +85,4 @@ def test_threshold_is_strict_less_than():
 
 
 def test_empty_chain_is_not_aux():
-    assert is_aux_chain(AgentChain(requests=[]), MAIN_PEAK, **PARAMS) is False
+    assert is_aux_chain([], MAIN_PEAK, **PARAMS) is False
