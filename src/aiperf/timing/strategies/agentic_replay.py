@@ -10,11 +10,17 @@ subagent chain) splits at t*: turns before t* are history, turns at/after t*
 are profiled.
 
 WARMUP: for every session active (mid-flight) at t*, replay its last request
-before t* (turn ``next_turn_index - 1``) as a full-prefix request, priming
-the server cache to the stream's state at t*. This includes parents gated on
-a child join (they sent turn n-1 before t* and resume at the join turn during
-PROFILING, so n-1 primes that turn). Streams whose first request is at/after
-t* (``next_turn_index == 0``) have nothing to warm. By default the priming
+before t* (turn ``next_turn_index - 1``) as a session start. The chat prefix
+is rebuilt worker-side by ``UserSession.advance_turn``, and what it reproduces
+is context-mode dependent: under ``DELTAS_WITH_RESPONSES`` (the weka default)
+it back-seeds the earlier turns so the warmup request carries the full prefix
+and primes the server cache to the stream's state at t*; under
+``DELTAS_WITHOUT_RESPONSES`` the prior turns are not seeded (live responses
+aren't captured yet), so only that turn's delta is sent and the t* prefix is
+not reproduced. This includes parents gated on a child join (they sent turn
+n-1 before t* and resume at the join turn during PROFILING, so n-1 warms that
+turn). Streams whose first request is at/after t* (``next_turn_index == 0``)
+have nothing to warm. By default the priming
 requests are SPREAD -- aligned globally on t* so every trajectory's t* lands
 at the warmup end (see ``_execute_warmup``); ``--burst-phase-starts`` fires
 them all at once instead. The phase exits via the standard

@@ -56,13 +56,22 @@ class ConversationState:
     def warmup_turn_index(self) -> int | None:
         """Turn index to warm for this stream, or None if there is nothing.
 
-        The stream's state at t* is reproduced by replaying its last request
-        before t* -- turn ``next_turn_index - 1`` (a full-prefix request that
-        primes the server cache to the t* state). A stream whose first
-        request is at/after t* (``next_turn_index == 0``; e.g. a subagent
-        whose chain was spawned after t*) had not issued anything at t*, so
-        there is nothing to warm: it dispatches turn 0 during PROFILING at
-        its normalized offset instead.
+        Warmup dispatches the stream's last request before t* -- turn
+        ``next_turn_index - 1`` -- as a session start. The chat prefix is
+        rebuilt worker-side by ``UserSession.advance_turn`` (the worker calls
+        it with the credit's ``turn_index`` after ``create_and_store``), and
+        what that reproduces is context-mode dependent: under
+        ``DELTAS_WITH_RESPONSES`` (the weka default) it back-seeds turns
+        ``0..next_turn_index - 2`` so the request carries the full prefix and
+        primes the server cache to the stream's t* state; under
+        ``DELTAS_WITHOUT_RESPONSES``
+        (``AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES``) prior turns are not
+        seeded -- only that turn's delta is sent and the t* prefix is not
+        reproduced (see ``_warn_if_live_delta_snapshot_needs_prior_responses``).
+        A stream whose first request is at/after t* (``next_turn_index == 0``;
+        e.g. a subagent whose chain was spawned after t*) had not issued
+        anything at t*, so there is nothing to warm: it dispatches turn 0
+        during PROFILING at its normalized offset instead.
         """
         return self.next_turn_index - 1 if self.next_turn_index >= 1 else None
 
@@ -326,10 +335,10 @@ class TrajectorySource(ConversationSource):
         One per session active (mid-flight) at t*: any stream with a turn
         before t* (``warmup_turn_index`` is not None), INCLUDING a parent
         gated on a child join (it sent turn n-1 before t* and is waiting to
-        send the join turn n, so n-1 still primes that join turn's prefix).
-        Streams whose first request is at/after t* contribute nothing to
-        warm. PhaseRunner re-anchors the warmup barrier to this count, so it
-        must match the warmup dispatch loop exactly.
+        send the join turn n, so n-1 is still its warmup turn). Streams whose
+        first request is at/after t* contribute nothing to warm. PhaseRunner
+        re-anchors the warmup barrier to this count, so it must match the
+        warmup dispatch loop exactly.
         """
         total = 0
         for trajectory in self.trajectories:
