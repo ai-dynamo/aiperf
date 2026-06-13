@@ -576,6 +576,9 @@ function metricColor(t) {
     opts.map(([lbl, v]) => `<button class="ctrl${v === colorBy ? " on" : ""}" data-c="${v}">${lbl}</button>`).join("") +
     `<button class="ctrl" id="split-btn" title="split each bar into prefill | decode at first-token">split</button>` +
     (N_SUB ? `<button class="ctrl" id="spawn-btn" title="draw links from subagents to their group root">spawns</button>` : "") +
+    `<span class="lbl" style="margin-left:6px">&middot;</span>` +
+    `<button class="ctrl" id="link-btn" title="copy a shareable link to the current view">link</button>` +
+    `<button class="ctrl" id="png-btn" title="export all panels as a PNG">png</button>` +
     `<span class="scale-hint" id="scale-hint" style="display:none"></span>`;
   const hint = el.querySelector("#scale-hint");
   function updateHint() {
@@ -595,6 +598,14 @@ function metricColor(t) {
   sb.addEventListener("click", () => { split = !split; sb.classList.toggle("on", split); scheduleDraw(); });
   const spb = el.querySelector("#spawn-btn");
   if (spb) spb.addEventListener("click", () => { spawnLinks = !spawnLinks; spb.classList.toggle("on", spawnLinks); scheduleDraw(); });
+  const lb = el.querySelector("#link-btn");
+  lb.addEventListener("click", () => {
+    writeHash();
+    if (navigator.clipboard) navigator.clipboard.writeText(location.href).catch(() => {});
+    const was = lb.textContent; lb.textContent = "copied"; lb.classList.add("on");
+    setTimeout(() => { lb.textContent = was; lb.classList.remove("on"); }, 1100);
+  });
+  el.querySelector("#png-btn").addEventListener("click", exportPng);
 }
 
 /* ---------- canvas helpers ---------- */
@@ -1348,6 +1359,7 @@ function scheduleDraw() {
     drawThroughput();
     drawKvCache();
     drawNav();
+    syncHash();
   });
 }
 
@@ -1687,6 +1699,41 @@ window.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") { closeDetail(); pinned.clear(); scheduleDraw(); }
 });
 
+/* ---------- shareable view (URL hash) + PNG export ---------- */
+function writeHash() {
+  const sel = selectedSession >= 0 ? `,${selectedSession}` : "";
+  try { history.replaceState(null, "", `#${view.t0.toFixed(2)},${view.t1.toFixed(2)}${sel}`); } catch (e) {}
+}
+let hashTimer = null;
+function syncHash() {
+  if (hashTimer) clearTimeout(hashTimer);
+  hashTimer = setTimeout(writeHash, 350);
+}
+function restoreHash() {
+  const p = location.hash.slice(1).split(",").map(Number);
+  if (p.length >= 2 && isFinite(p[0]) && isFinite(p[1]) && p[1] > p[0]) {
+    view.t0 = p[0];
+    view.t1 = p[1];
+    if (p.length >= 3 && Number.isInteger(p[2]) && DATA.sessions[p[2]]) selectedSession = p[2];
+  }
+}
+// stack every panel canvas into one image for download
+function exportPng() {
+  const list = [rulerCv, lanesCv, islCv, tputCv, kvCv, navCv];
+  const out = document.createElement("canvas");
+  out.width = Math.max(...list.map((c) => c.width));
+  out.height = list.reduce((a, c) => a + c.height, 0);
+  const c = out.getContext("2d");
+  c.fillStyle = "#0a0d13";
+  c.fillRect(0, 0, out.width, out.height);
+  let y = 0;
+  for (const cv of list) { c.drawImage(cv, 0, y); y += cv.height; }
+  const a = document.createElement("a");
+  a.download = `${DATA.run}-swimlane.png`;
+  a.href = out.toDataURL("image/png");
+  a.click();
+}
+
 /* ---------- boot ---------- */
 window.addEventListener("resize", layout);
 // drag-to-resize panels: charts re-rasterize; the lanes panel recomputes lane
@@ -1706,7 +1753,9 @@ if (window.ResizeObserver) {
   ro.observe(document.getElementById("tput-wrap"));
   ro.observe(document.getElementById("kv-wrap"));
 }
+restoreHash();
 layout();
+if (selectedSession >= 0) openDetail(selectedSession);
 </script>
 </body>
 </html>
