@@ -4,10 +4,17 @@
 
 Phase-aware timing strategy for the ``agentic_replay`` timing mode (spec §4.2).
 
-WARMUP: dispatch one credit per trajectory at that trajectory's sampled turn
-index ``k_i``. The phase exits via the standard ``SendingCompleteStopCondition``
-plus ``grace_period_sec=inf`` semantics already in CreditPhaseConfig (the
-warmup barrier).
+Each trajectory is a wall-clock snapshot of a trace at a sampled instant t*
+(25-75% through the trace's recorded duration). Every stream (root + each
+subagent chain) splits at t*: turns before t* are history, turns at/after t*
+are profiled.
+
+WARMUP: for each stream, replay its last request before t* (turn
+``next_turn_index - 1``) as a full-prefix request, priming the server cache
+to the stream's state at t*. Streams whose first request is at/after t*
+(``next_turn_index == 0``) have nothing to warm. The phase exits via the
+standard ``SendingCompleteStopCondition`` plus ``grace_period_sec=inf``
+semantics already in CreditPhaseConfig (the warmup barrier).
 
 Warmup-failure accumulation: terminal failures (``credit_return.error`` or
 ``credit_return.cancelled``) on a WARMUP credit's final turn are routed by
@@ -17,9 +24,13 @@ raises ``TrajectoryWarmupFailedError`` if any failures were recorded. This
 aborts PROFILING so steady-state metrics aren't silently biased by a
 degraded trajectory pool.
 
-PROFILING: each trajectory resumes at ``k_i + 1``; subsequent turns honor
-trace inter-turn ``delay_ms`` (already clamped upstream in the loader). When
-a session reaches its final turn, its trace_id is recycled FIFO-style and a
+PROFILING: each stream resumes at its first turn at/after t*
+(``next_turn_index``). Dispatch times are normalized so the trajectory's
+earliest post-t* request fires at profiling-time 0 and all other requests
+preserve their recorded relative offsets; subsequent turns honor trace
+inter-turn ``delay_ms`` (already clamped upstream in the loader). Gated
+parents fire their join turn when blocking children complete. When a root
+session reaches its final turn, its trace_id is recycled FIFO-style and a
 fresh session (starting at turn 0) is spawned from the next trace_id in the
 queue.
 """
@@ -29,7 +40,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import Counter
-from dataclasses import replace as _dataclass_replace
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -43,7 +53,6 @@ from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 from aiperf.timing.trajectory_source import (
-    ConversationState,
     Trajectory,
     TrajectorySnapshot,
     TrajectorySource,
@@ -241,18 +250,22 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             for state in states:
                 if state.waiting_on_children:
                     continue
-                if state.is_pending_start:
-                    # First request is after t*: the server had not seen this
-                    # stream at the snapshot instant, so there is nothing to
-                    # warm. PROFILING dispatches its turn 0 at the recorded
-                    # offset (see _snapshot_continuation_after_warmup).
+                warm_index = state.warmup_turn_index
+                if warm_index is None:
+                    # First request is at/after t*: the server had not seen
+                    # this stream at the snapshot instant, so there is nothing
+                    # to warm. PROFILING dispatches its turn 0 at the
+                    # normalized offset.
                     continue
                 session = self.conversation_source.session_for_state(state)
                 self._correlation_to_lane[session.x_correlation_id] = lane
                 self._mint_marker_for_session(
                     session.x_correlation_id, state.conversation_id, lane
                 )
-                turn = self._build_turn_for_session(session, state.next_turn_index)
+                # Warm the last request before t* (turn next_turn_index - 1),
+                # priming the cache to the stream's t* state. PROFILING then
+                # measures from turn next_turn_index.
+                turn = self._build_turn_for_session(session, warm_index)
                 await self.credit_issuer.issue_credit(turn)
         # Trajectory dispatch complete; signal the phase that no more credits
         # will be issued. SendingCompleteStopCondition watches this flag and
@@ -493,27 +506,22 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _dispatch_snapshot_for_profiling(
         self, trajectory: Trajectory, lane: int
     ) -> None:
-        warmup_snapshot = self._get_snapshot(trajectory)
-        snapshot = self._snapshot_continuation_after_warmup(trajectory)
-        # Each lane's single root session (continuing or terminal) was
-        # pre-registered in _active_traces by setup_phase.
-        for state in snapshot.states:
-            self._correlation_to_lane[state.x_correlation_id] = lane
-            self._mint_marker_for_session(
-                state.x_correlation_id, state.conversation_id, lane
-            )
+        """Resume one trajectory's streams for PROFILING.
 
-        continuing_roots = {
-            state.x_correlation_id
-            for state in snapshot.states
-            if state.agent_depth == 0
-        }
-        terminal_roots = [
-            state
-            for state in warmup_snapshot.states
-            if state.agent_depth == 0 and state.x_correlation_id not in continuing_roots
-        ]
-        for state in terminal_roots:
+        Each stream profiles from turn ``next_turn_index`` (the first turn at
+        or after t*; its predecessor, if any, was primed during WARMUP).
+        Dispatch times are normalized so the trajectory's earliest post-t*
+        request fires at profiling-time 0 and every other request preserves
+        its recorded offset from that anchor (cross-stream and inter-turn).
+
+        Gated parents (``waiting_on_children``) are not dispatched here; their
+        join is seeded with the orchestrator and their gated turn fires when
+        the blocking children complete during PROFILING. No stream completes
+        during WARMUP (warmup only ever sends a non-terminal turn), so there
+        is no warmup-continuation or terminal-root recycle step.
+        """
+        snapshot = self._get_snapshot(trajectory)
+        for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
             self._mint_marker_for_session(
                 state.x_correlation_id, state.conversation_id, lane
@@ -525,13 +533,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 cache_bust_markers=self._session_marker,
             )
 
-        for state in snapshot.states:
-            if state.waiting_on_children:
-                continue
-
+        dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
+        # T0 = earliest post-t* request across the trajectory's dispatchable
+        # streams; subtracting it anchors that first request at profiling-time
+        # 0 while preserving all relative timing.
+        t0_offset_ms = (
+            min(s.next_dispatch_offset_ms for s in dispatchable)
+            if dispatchable
+            else 0.0
+        )
+        for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)
-            delay_s = state.next_dispatch_offset_ms / MILLIS_PER_SECOND
+            delay_s = (state.next_dispatch_offset_ms - t0_offset_ms) / MILLIS_PER_SECOND
             if delay_s > 0:
                 self.scheduler.schedule_later(
                     delay_s,
@@ -539,84 +553,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 )
             else:
                 await self.credit_issuer.issue_credit(turn)
-
-        for state in terminal_roots:
-            await self._spawn_from_recycle_or_id(
-                state.conversation_id,
-                finished_correlation_id=state.x_correlation_id,
-            )
-
-    def _snapshot_continuation_after_warmup(
-        self, trajectory: Trajectory
-    ) -> TrajectorySnapshot:
-        """Advance every warmed snapshot stream to its profiling continuation.
-
-        Ready states dispatched turn ``k_i`` during WARMUP. PROFILING must
-        continue those same sessions at ``k_i + 1`` instead of replaying the
-        warmed request. Parents blocked on child joins were not dispatched
-        during WARMUP, so they remain at their gated turn. If every blocking
-        child completed its terminal turn during WARMUP, the parent is
-        unblocked and its gated turn becomes ready immediately.
-
-        Pending-start streams (first request after t*; see
-        ``ConversationState.is_pending_start``) were not warmed either: they
-        pass through unchanged so PROFILING dispatches their turn 0 at the
-        recorded offset, and their presence keeps the parent's join gate
-        registered in ``live_join_keys``.
-        """
-        snapshot = self._get_snapshot(trajectory)
-        states: list[ConversationState] = []
-        for state in snapshot.states:
-            if state.waiting_on_children:
-                states.append(state)
-                continue
-
-            if state.is_pending_start:
-                # Skipped by warmup (first request after t*, nothing to
-                # warm): dispatch turn 0 at the recorded offset instead of
-                # advancing past it. Keeping the state here also keeps the
-                # parent's join gate waiting for it (live_join_keys below) --
-                # a single-turn pending child must hold the gate until its
-                # scheduled request completes during PROFILING.
-                states.append(state)
-                continue
-
-            metadata = self.conversation_source.get_metadata(state.conversation_id)
-            resume_index = state.next_turn_index + 1
-            if resume_index >= len(metadata.turns):
-                continue
-
-            states.append(
-                _dataclass_replace(
-                    state,
-                    next_turn_index=resume_index,
-                    # The phase begins after the warmup barrier. Dispatch the
-                    # first measured continuation immediately, matching the
-                    # timestamp-less k_i + 1 path. Later turns honor delay_ms
-                    # through _dispatch_next_turn.
-                    next_dispatch_offset_ms=0.0,
-                )
-            )
-
-        live_join_keys = {
-            (state.parent_correlation_id, state.join_target_turn_index)
-            for state in states
-            if state.agent_depth > 0 and state.parent_correlation_id is not None
-        }
-        states = [
-            _dataclass_replace(
-                state,
-                waiting_on_children=False,
-                join_target_turn_index=None,
-                next_dispatch_offset_ms=0.0,
-            )
-            if state.waiting_on_children
-            and (state.x_correlation_id, state.join_target_turn_index)
-            not in live_join_keys
-            else state
-            for state in states
-        ]
-        return TrajectorySnapshot(t_star_ms=snapshot.t_star_ms, states=tuple(states))
 
     def _get_snapshot(self, trajectory: Trajectory) -> TrajectorySnapshot:
         """Return the persistent sampled snapshot for a trajectory lane.
