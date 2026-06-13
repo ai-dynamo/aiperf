@@ -22,7 +22,7 @@ Each trace file is a single JSON object describing one coding conversation:
 AIPerf maps the format directly onto its DAG datastructure:
 
 - One root `Conversation` per trace file.
-- One or more child `Conversation`s per `type: "subagent"` entry. Single-stream subagents use session id `<trace_id>::sa:<agent_id>`; subagents whose inner requests overlap are split into sibling streams with `<trace_id>::sa:<agent_id>:s0`, `<trace_id>::sa:<agent_id>:s1`, ... .
+- One or more child `Conversation`s per `type: "subagent"` entry. The same hash-id LCP chain detection used for flat top-level fan-outs (see below) runs nested on each subagent's inner requests: the subagent's own thread keeps session id `<trace_id>::sa:<agent_id>`, and every detected inner chain (a one-shot disjoint call, a parallel fork of the subagent's context, or a flattened worker thread) becomes a sibling child with `<trace_id>::sa:<agent_id>:c000`, `:c001`, ... — each dispatched at its recorded offset from the spawn. Inner requests without `hash_ids` stay on the subagent's main chain in time order.
 - A `SPAWN` branch on the parent's preceding turn; a `SPAWN_JOIN` prerequisite on the parent's following turn. Three nuances: (a) subagents with no preceding parent turn are dropped (logged at load time); (b) subagents with no following parent turn become `is_background=True` branches with no `SPAWN_JOIN` prerequisite (the parent doesn't wait); (c) adjacent subagents sharing the same `(preceding, following)` anchors collapse into one multi-child branch.
 
 ---

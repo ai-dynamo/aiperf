@@ -25,12 +25,12 @@ Confirmed bugs (xfail, strict):
 Passing characterizations (surprising-but-intended):
   * idle-gap cap uses a strict ``>`` so a gap exactly equal to the cap is left
     uncompressed.
-  * ``_pack_into_streams`` clamps NaN / infinite / negative ``api_time`` to
-    zero duration (regression: a NaN or +inf interval end once blocked its
-    stream forever, forcing every later request into a fresh stream).
-  * equal-``t`` inner requests pack deterministically in recorded order.
-  * stream packing prefers the free stream with the deepest hash-prefix
-    affinity and runs on the normalized root-trace timeline.
+  * nested LCP chain detection clamps NaN / infinite / negative inner
+    ``api_time`` to zero duration (a non-finite chain-tail end would block
+    same-context extensions forever and explode a subagent into one-turn
+    children).
+  * equal-``t`` context-disjoint inner requests split deterministically.
+  * nested chain detection runs on the normalized root-trace timeline.
   * duplicate hash-ids within a single request inflate the theoretical
     prefix-cache hit count to a (still <= total) 100%.
   * an empty-``requests`` trace reconstructs to an empty conversation.
@@ -50,9 +50,7 @@ from aiperf.dataset.loader.weka_trace import (
     WekaTraceLoader,
     _expand_subagent_to_child_plans,
     _IdleGapTimeWarp,
-    _pack_into_streams,
     _sa_end_seconds,
-    _subagent_request_absolute_t,
 )
 from aiperf.dataset.loader.weka_trace_models import (
     WekaNormalRequest,
@@ -387,87 +385,94 @@ def test_idle_gap_collapsed_tail_event_maps_to_cap_boundary():
     assert warp.map(300.0) == pytest.approx(160.0)  # after: shifted left by excess
 
 
-def test_pack_into_streams_nan_api_time_treated_as_zero_duration():
-    """A NaN ``api_time`` is clamped to zero duration instead of poisoning the
-    stream end.
+def test_nested_chain_nan_api_time_treated_as_zero_duration():
+    """A NaN inner ``api_time`` is clamped to zero duration in chain detection.
 
-    Interval ends go through ``_request_end_seconds``, so a NaN duration
-    counts as zero and the stream stays reusable. Previously ``r.t + nan``
-    made ``end <= r.t`` False forever, and every later request opened a
-    redundant parallel stream.
+    ``weka_agent_chains._req_end`` treats non-finite durations as zero, so a
+    same-context continuation can still extend the chain (a NaN tail end
+    would otherwise make the temporal-feasibility comparison unreliable).
     """
-    reqs = [
-        _inner_request(t=0.0, api_time=float("nan"), hash_ids=[1]),
-        _inner_request(t=100.0, api_time=1.0, hash_ids=[2]),
-    ]
-    streams = _pack_into_streams([(r.t, r) for r in reqs])
-    assert len(streams) == 1
+    entry = _make_subagent_entry(
+        t=0.0,
+        requests=[
+            _inner_request(t=0.0, api_time=float("nan"), hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=100.0, api_time=1.0, hash_ids=[1, 2]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
+    assert [p.session_id for p in plans] == ["tr::sa:a"]
+    assert [r.hash_ids for r in plans[0].requests] == [[1], [1, 2]]
 
 
-def test_pack_into_streams_infinite_api_time_does_not_block_stream():
-    """A +inf ``api_time`` must not permanently occupy a stream.
+def test_nested_chain_infinite_api_time_does_not_block_extension():
+    """A +inf inner ``api_time`` must not permanently occupy a chain tail.
 
-    Without the ``_request_end_seconds`` clamp an infinite interval end blocks
-    its stream forever, exploding an N-request subagent into N sibling child
-    conversations (each dispatched concurrently at spawn during replay).
+    Without the finite clamp in ``weka_agent_chains._req_end`` an infinite
+    tail end blocks every same-context extension forever, exploding an
+    N-request subagent into N sibling one-turn children.
     """
-    reqs = [
-        _inner_request(t=0.0, api_time=float("inf"), hash_ids=[1]),
-        _inner_request(t=10.0, api_time=1.0, hash_ids=[1, 2]),
-        _inner_request(t=20.0, api_time=1.0, hash_ids=[1, 2, 3]),
-    ]
-    streams = _pack_into_streams([(r.t, r) for r in reqs])
-    assert len(streams) == 1
+    entry = _make_subagent_entry(
+        t=0.0,
+        requests=[
+            _inner_request(t=0.0, api_time=float("inf"), hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=10.0, api_time=1.0, hash_ids=[1, 2]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=20.0, api_time=1.0, hash_ids=[1, 2, 3]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
+    assert [p.session_id for p in plans] == ["tr::sa:a"]
+    assert len(plans[0].requests) == 3
 
 
-def test_pack_into_streams_equal_t_zero_duration_is_deterministic_order():
-    """Equal-``t`` zero-duration inner requests pack in recorded order.
+def test_nested_chain_equal_t_disjoint_requests_split_deterministically():
+    """Equal-``t`` context-disjoint inner requests split deterministically.
 
-    ``api_time=None`` is treated as a zero-width interval that never overlaps,
-    so requests sharing an instant collapse into one stream; Python's stable
-    sort preserves their recorded order, keeping reconstruction reproducible.
+    Three zero-duration requests share an instant and no hash prefix. The
+    stable ``(t, index)`` order makes the first recorded request the
+    preamble-eligible leader (fully block-disjoint, so it re-attaches to the
+    main chain), the second founds the main chain's identity, and the third
+    becomes the one spawned chain. Pinned for reproducibility, not as deep
+    semantics: disjoint one-shots are independent sessions either way.
     """
-    reqs = [
-        _inner_request(t=5.0, api_time=None, hash_ids=[3]),
-        _inner_request(t=5.0, api_time=None, hash_ids=[1]),
-        _inner_request(t=5.0, api_time=None, hash_ids=[2]),
-    ]
-    streams = _pack_into_streams([(r.t, r) for r in reqs])
-    assert len(streams) == 1
-    assert [r.hash_ids[0] for r in streams[0]] == [3, 1, 2]
+    entry = _make_subagent_entry(
+        t=5.0,
+        requests=[
+            _inner_request(t=5.0, api_time=None, hash_ids=[3]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=5.0, api_time=None, hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=5.0, api_time=None, hash_ids=[2]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
+    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:c000"]
+    assert [r.hash_ids[0] for r in plans[0].requests] == [3, 1]
+    assert [r.hash_ids[0] for r in plans[1].requests] == [2]
 
 
-def test_pack_into_streams_best_fit_routes_by_hash_prefix():
-    """When several streams are free, a request joins the stream whose tail
-    shares the deepest hash-id prefix, not the lowest-index one.
-
-    Two interleaved context threads (A: blocks [1, ...], B: blocks [50, ...])
-    overlap once at the start (forcing two streams) and then alternate without
-    overlapping. Earliest-fit would stitch B's continuation onto A's stream
-    the moment it frees up, splicing disjoint contexts into one conversation
-    (spurious ``reset_context`` turns, wrong ``input_kind`` classification);
-    prefix affinity keeps each thread in its own stream.
-    """
-    a1 = _inner_request(t=0.0, api_time=10.0, hash_ids=[1])
-    b1 = _inner_request(t=5.0, api_time=3.0, hash_ids=[50])
-    a2 = _inner_request(t=11.0, api_time=0.5, hash_ids=[1, 2])
-    b2 = _inner_request(t=12.0, api_time=1.0, hash_ids=[50, 51])
-    streams = _pack_into_streams([(r.t, r) for r in (a1, b1, a2, b2)])
-    assert len(streams) == 2
-    assert [r.hash_ids for r in streams[0]] == [[1], [1, 2]]
-    assert [r.hash_ids for r in streams[1]] == [[50], [50, 51]]
-
-
-def test_pack_into_streams_uses_root_trace_timeline_for_overlap():
-    """Mixed relative/absolute inner timestamps pack on the normalized
+def test_nested_chain_detection_uses_root_trace_timeline():
+    """Mixed relative/absolute inner timestamps chain on the normalized
     root-trace timeline, not raw ``t``.
 
-    ``_subagent_request_absolute_t`` maps an inner ``t`` recorded before the
-    spawn marker to ``entry.t + t``; on that shared timeline the two requests
-    below overlap ([110, 160) vs [150, 151)) and need two streams, while
-    their raw intervals ([10, 60) vs [150, 151)) are disjoint. Turn timing
-    and metric ordering already use the normalized timeline; packing must
-    agree or within-stream delays can go negative.
+    The relative first request ([110, 160) after normalization) is still in
+    flight when the absolute second request starts at t=150, so the prefix
+    continuation cannot extend the chain and forks into a spawned sibling.
+    On the raw timeline ([10, 60) vs [150, 151)) it would have extended into
+    one chain — detection must agree with turn timing and metric ordering.
     """
     entry = _make_subagent_entry(
         t=100.0,
@@ -481,46 +486,73 @@ def test_pack_into_streams_uses_root_trace_timeline_for_overlap():
         ],
     )
     plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
-    assert [p.session_id for p in plans] == ["tr::sa:a:s0", "tr::sa:a:s1"]
-    streams = _pack_into_streams(
-        [(_subagent_request_absolute_t(entry, r), r) for r in entry.requests]
-    )
-    assert len(streams) == 2
+    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:c000"]
+    # Normalized coordinates carried on the plan requests themselves.
+    assert plans[0].requests[0].t == pytest.approx(110.0)
+    assert plans[1].requests[0].t == pytest.approx(150.0)
 
 
-def test_multi_stream_overflow_inherits_declared_prefix_only_when_proven():
-    """Stream >= 1 turn-0 tool/system attribution requires hash proof.
+def test_spawned_chain_inherits_declared_prefix_only_when_proven():
+    """Spawned-chain turn-0 tool/system attribution requires hash proof.
 
-    The subagent's declared prefix is attributed to an overflow stream's
-    first turn only when that stream's first hash-bearing request starts
-    with the same declared-prefix blocks as stream 0 (mirroring the
-    flat-chain rule: the system role is never fabricated). Stream 0 always
-    keeps the entry's declared counts.
+    The subagent's declared prefix is attributed to a spawned chain's first
+    turn only when that chain's first hash-bearing request starts with the
+    same declared-prefix blocks as the main chain (mirroring the flat-chain
+    rule: the system role is never fabricated). The main chain always keeps
+    the entry's declared counts.
     """
 
-    def entry_with(second_hash: list[int]) -> WekaSubagentEntry:
+    def entry_with(worker_hash: list[int]) -> WekaSubagentEntry:
+        # Main thread = r0 + r2 (r2 extends r0's prefix, anchoring the main
+        # chain so the preamble rule cannot peel r0); the worker chain forks
+        # off at t=1 with ``worker_hash``.
         return _make_subagent_entry(
             t=0.0,
             tool_tokens=128,
             system_tokens=64,
             requests=[
                 _inner_request(
-                    t=0.0, api_time=100.0, hash_ids=[1, 2, 3, 4], **{"in": 256}
+                    t=0.0, api_time=0.5, hash_ids=[1, 2, 3, 4], **{"in": 256}
                 ).model_dump(by_alias=True),
                 _inner_request(
-                    t=1.0, api_time=100.0, hash_ids=second_hash, **{"in": 256}
+                    t=1.0, api_time=100.0, hash_ids=worker_hash, **{"in": 256}
+                ).model_dump(by_alias=True),
+                _inner_request(
+                    t=2.0, api_time=0.5, hash_ids=[1, 2, 3, 4, 5], **{"in": 320}
                 ).model_dump(by_alias=True),
             ],
         )
 
-    # declared_blocks = ceil((128 + 64) / 64) = 3; [1, 2, 3] matches stream 0.
+    # declared_blocks = ceil((128 + 64) / 64) = 3; [1, 2, 3] matches the main
+    # chain's first request, so the fork provably carries the declared prefix.
     proven = _expand_subagent_to_child_plans("tr", 0, entry_with([1, 2, 3, 9]), 64)
+    assert [p.session_id for p in proven] == ["tr::sa:a", "tr::sa:a:c000"]
     assert (proven[0].init_tool_tokens, proven[0].init_system_tokens) == (128, 64)
     assert (proven[1].init_tool_tokens, proven[1].init_system_tokens) == (128, 64)
 
     unproven = _expand_subagent_to_child_plans("tr", 0, entry_with([7, 8, 9, 10]), 64)
+    assert [p.session_id for p in unproven] == ["tr::sa:a", "tr::sa:a:c000"]
     assert (unproven[0].init_tool_tokens, unproven[0].init_system_tokens) == (128, 64)
     assert (unproven[1].init_tool_tokens, unproven[1].init_system_tokens) == (0, 0)
+
+
+def test_split_chains_disabled_emits_one_sequential_child():
+    """``split_chains=False`` (WEKA_SPLIT_FLATTENED_AGENTS escape hatch) skips
+    nested detection: one child with every inner request in time order."""
+    entry = _make_subagent_entry(
+        t=0.0,
+        requests=[
+            _inner_request(t=0.0, api_time=100.0, hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=1.0, api_time=100.0, hash_ids=[50]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64, split_chains=False)
+    assert [p.session_id for p in plans] == ["tr::sa:a"]
+    assert [r.hash_ids for r in plans[0].requests] == [[1], [50]]
 
 
 def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):

@@ -3,8 +3,10 @@
 """WekaTraceLoader: native AIPerf loader for kv-cache-tester agentic traces.
 
 Accepts a single JSON file or a directory of per-conversation JSON files.
-Each trace emits one root Conversation plus one child Conversation per
-``type: "subagent"`` entry, linked via SPAWN + SPAWN_JOIN prerequisites.
+Each trace emits one root Conversation plus one or more child Conversations
+per ``type: "subagent"`` entry (hash-id LCP chain detection runs nested on
+the entry's inner requests; see :func:`_expand_subagent_to_child_plans`),
+linked via SPAWN + SPAWN_JOIN prerequisites.
 """
 
 from __future__ import annotations
@@ -119,62 +121,6 @@ def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> 
     return peak
 
 
-def _pack_into_streams(
-    timed_requests: list[tuple[float, WekaNormalRequest]],
-) -> list[list[WekaNormalRequest]]:
-    """Partition inner requests into the minimum number of non-overlapping
-    sequential streams (interval-graph chromatic decomposition, greedy with
-    hash-prefix affinity).
-
-    ``timed_requests`` pairs each request with its start time in root-trace
-    coordinates (:func:`_subagent_request_absolute_t`), so packing shares the
-    timeline used for turn timing and metric ordering. Two requests overlap
-    when their ``[start, end)`` intervals intersect, with ends from
-    :func:`_request_end_seconds` (missing, negative, or non-finite
-    ``api_time`` counts as zero duration rather than poisoning the stream's
-    availability). Each returned stream is a chain of non-overlapping
-    requests in start order; equal starts keep recorded order (stable sort).
-
-    Stream choice: among the streams free at a request's start (``end <=
-    start``), the one whose most recent hash-bearing request shares the
-    deepest ``hash_ids`` prefix wins, so interleaved context threads stay
-    coherent instead of round-robining into the lowest free slot. Ties --
-    including requests or stream tails without hash evidence -- fall back to
-    the lowest stream index (the legacy earliest-fit behavior). The choice
-    among free streams never changes the stream count: every free end is
-    ``<=`` the current start and therefore ``<=`` every later start, so
-    future "no stream free" events are identical for any choice. The count
-    equals the maximum number of concurrent inner requests at any instant,
-    except that a zero-duration request (``api_time = None``, telemetry not
-    captured) strictly inside another request's interval still requires its
-    own free stream -- placement demands ``end <= start``, erring toward
-    preserving recorded concurrency.
-    """
-    ordered = sorted(timed_requests, key=lambda item: item[0])
-    streams: list[list[WekaNormalRequest]] = []
-    stream_ends: list[float] = []
-    stream_tail_hashes: list[list[int]] = []
-    for start, req in ordered:
-        free = [i for i, end in enumerate(stream_ends) if end <= start]
-        if not free:
-            streams.append([req])
-            stream_ends.append(_request_end_seconds(start, req.api_time))
-            stream_tail_hashes.append(req.hash_ids)
-            continue
-        best = free[0]
-        if req.hash_ids:
-            best_depth = 0
-            for i in free:
-                depth = _hash_list_lcp(stream_tail_hashes[i], req.hash_ids)
-                if depth > best_depth:
-                    best, best_depth = i, depth
-        streams[best].append(req)
-        stream_ends[best] = _request_end_seconds(start, req.api_time)
-        if req.hash_ids:
-            stream_tail_hashes[best] = req.hash_ids
-    return streams
-
-
 def _clamp_delay_ms(delay_ms: float, cap_seconds: float | None) -> float:
     """Clamp a delay to at most cap_seconds * 1000 ms.
 
@@ -286,14 +232,18 @@ class _ChildPlan:
     parent_trace_id: str
     subagent_index: int
     entry: WekaSubagentEntry
-    stream_index: int
-    stream_requests: list[WekaNormalRequest]
+    chain_index: int
+    """0 = the subagent's main chain; >0 = a spawned chain (see
+    :func:`_expand_subagent_to_child_plans`)."""
+    requests: list[WekaNormalRequest]
+    """The chain's requests in time order, with ``t`` normalized to
+    root-trace coordinates."""
     block_size: int
     init_tool_tokens: int
-    """Turn-0 tools-prefix attribution for this stream; see
+    """Turn-0 tools-prefix attribution for this chain; see
     :func:`_expand_subagent_to_child_plans` for the proof gate."""
     init_system_tokens: int
-    """Turn-0 system-prefix attribution for this stream (same gate)."""
+    """Turn-0 system-prefix attribution for this chain (same gate)."""
 
 
 def _expand_subagent_to_child_plans(
@@ -301,44 +251,87 @@ def _expand_subagent_to_child_plans(
     sa_index: int,
     entry: WekaSubagentEntry,
     block_size: int,
+    *,
+    split_chains: bool = True,
 ) -> list[_ChildPlan]:
-    """Pack a subagent's inner requests into per-stream child plans.
+    """Partition a subagent's inner requests into per-chain child plans.
 
-    Single-stream subagents keep the legacy ``::sa:{agent_id}`` session-id
-    shape; multi-stream subagents append ``:s{stream_index}``. Subagents with
-    zero recorded inner requests still emit one (empty) child to preserve
-    the parent SPAWN branch's child-conversation target.
+    The same hash-id LCP spawn + seam-join detection that splits flattened
+    top-level agent fan-outs (:func:`weka_agent_chains.detect_agent_chains`)
+    runs NESTED on the subagent's inner requests. The chain containing the
+    subagent's first retained request keeps the legacy ``::sa:{agent_id}``
+    session id; every spawned chain (a one-shot disjoint call, a parallel
+    fork of the subagent's context, or a separate worker thread the capture
+    flattened into this entry) becomes a sibling ``::sa:{agent_id}:c{NNN}``
+    child, dispatched at its recorded offset from the spawn by the branch
+    orchestrator. Compaction continuations splice back onto their chain via
+    the seam-join election, so a context edit never fabricates an agent.
 
-    Turn-0 prefix attribution: stream 0 (the subagent's own thread, founded
-    by its earliest request) keeps the entry's declared ``tool_tokens`` /
-    ``system_tokens``. Overflow streams inherit them only when their first
-    hash-bearing request provably starts with the same declared-prefix
-    blocks as stream 0's (see :func:`_chain_init_tokens`); otherwise their
-    turn 0 is all-user content -- the system role is never fabricated for a
-    concurrent inner thread that did not record the declared prefix.
+    Inner timestamps are normalized to root-trace coordinates up front
+    (legacy captures recorded them relative to the spawn marker), so the
+    detection's temporal-feasibility rule, turn timing, and metric ordering
+    all share one timeline. Requests without hash evidence ride the main
+    chain in time order (no LCP evidence, spec section 8); a fully
+    evidence-less subagent is therefore exactly one sequential child.
+
+    ``split_chains=False`` (the ``WEKA_SPLIT_FLATTENED_AGENTS`` escape
+    hatch, applied at both layers) skips detection entirely: one child with
+    every inner request in time order. Subagents with zero recorded inner
+    requests still emit one (empty) child to preserve the parent SPAWN
+    branch's child-conversation target.
+
+    Turn-0 prefix attribution: the main chain keeps the entry's declared
+    ``tool_tokens`` / ``system_tokens``. Spawned chains inherit them only
+    when their first hash-bearing request provably starts with the same
+    declared-prefix blocks as the main chain's (see
+    :func:`_chain_init_tokens`); otherwise their turn 0 is all-user content
+    -- the system role is never fabricated for a thread that did not record
+    the declared prefix.
     """
-    streams = _pack_into_streams(
-        [(_subagent_request_absolute_t(entry, r), r) for r in entry.requests]
-    )
-    if not streams:
-        streams = [[]]
-    base_first_hash = next((r.hash_ids for r in streams[0] if r.hash_ids), [])
+    normalized = [
+        req.model_copy(update={"t": _subagent_request_absolute_t(entry, req)})
+        if req.t + _JOIN_EPSILON_SECONDS < entry.t
+        else req
+        for req in entry.requests
+    ]
+
+    chains: list[list[WekaNormalRequest]]
+    if not split_chains or not normalized:
+        ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
+        chains = [[req for _, req in ordered]]
+    else:
+        from aiperf.dataset.loader.weka_agent_chains import detect_agent_chains
+
+        # Same preamble rule as the top level: a leading prefix-disjoint
+        # throwaway call must not found the main chain and hijack the
+        # subagent's identity; it re-attaches to the main chain for replay.
+        preamble, detect_inner = _split_off_preamble(list(enumerate(normalized)))
+        detection = detect_agent_chains(detect_inner)
+        main_requests = list(detection.chains[detection.main_index].requests)
+        if preamble:
+            main_requests = sorted(
+                preamble + main_requests, key=lambda it: (it[1].t, it[0])
+            )
+        chains = [[req for _, req in main_requests]]
+        chains.extend(
+            [req for _, req in detection.chains[ci].requests]
+            for ci in detection.worker_indices
+        )
+
+    main_first_hash = next((r.hash_ids for r in chains[0] if r.hash_ids), [])
     plans: list[_ChildPlan] = []
-    multi = len(streams) > 1
-    for stream_idx, stream_reqs in enumerate(streams):
-        if multi:
-            child_sid = f"{trace_id}::sa:{entry.agent_id}:s{stream_idx}"
-        else:
+    for chain_idx, chain_requests in enumerate(chains):
+        if chain_idx == 0:
             child_sid = f"{trace_id}::sa:{entry.agent_id}"
-        if stream_idx == 0:
             init_tool, init_system = entry.tool_tokens, entry.system_tokens
         else:
-            first_hash = next((r.hash_ids for r in stream_reqs if r.hash_ids), [])
+            child_sid = f"{trace_id}::sa:{entry.agent_id}:c{chain_idx - 1:03d}"
+            first_hash = next((r.hash_ids for r in chain_requests if r.hash_ids), [])
             init_tool, init_system = _chain_init_tokens(
                 entry.tool_tokens,
                 entry.system_tokens,
                 block_size,
-                base_first_hash,
+                main_first_hash,
                 first_hash,
             )
         plans.append(
@@ -347,8 +340,8 @@ def _expand_subagent_to_child_plans(
                 parent_trace_id=trace_id,
                 subagent_index=sa_index,
                 entry=entry,
-                stream_index=stream_idx,
-                stream_requests=stream_reqs,
+                chain_index=chain_idx,
+                requests=chain_requests,
                 block_size=block_size,
                 init_tool_tokens=init_tool,
                 init_system_tokens=init_system,
@@ -589,8 +582,8 @@ def _build_trace_idle_timing(
 
     child_plans_for_trace = _child_plans_for_active_subagents(plan, child_plans)
     for cp in child_plans_for_trace:
-        for req in cp.stream_requests:
-            request_starts.append(_subagent_request_absolute_t(cp.entry, req))
+        for req in cp.requests:
+            request_starts.append(req.t)
 
     warp = _IdleGapTimeWarp(request_starts, cap_seconds)
     parent_by_outer_idx: dict[int, _RequestTiming] = {}
@@ -604,8 +597,8 @@ def _build_trace_idle_timing(
     child_by_session_request: dict[tuple[str, int], _RequestTiming] = {}
     for cp in child_plans_for_trace:
         prev_child_t: float | None = None
-        for k, req in enumerate(cp.stream_requests):
-            t = warp.map(_subagent_request_absolute_t(cp.entry, req))
+        for k, req in enumerate(cp.requests):
+            t = warp.map(req.t)
             delay_ms = None if prev_child_t is None else (t - prev_child_t) * 1000.0
             child_by_session_request[(cp.session_id, k)] = _RequestTiming(t, delay_ms)
             prev_child_t = t
@@ -645,8 +638,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
     (auto-detected via :meth:`can_load`). Each trace produces:
 
     - one root :class:`Conversation` from the trace's normal/streaming requests
-    - one child :class:`Conversation` per ``type: "subagent"`` entry, linked
-      via SPAWN + SPAWN_JOIN prerequisites on the parent's turns
+    - one or more child :class:`Conversation`s per ``type: "subagent"``
+      entry (one per detected inner context chain), linked via SPAWN +
+      SPAWN_JOIN prerequisites on the parent's turns
 
     Reconstruction is byte-deterministic across the in-process serial path
     and the multiprocessing pool path (gated by ``WEKA_PARALLEL_THRESHOLD``
@@ -953,7 +947,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     subagents.append((idx, req))
                     child_plans.extend(
                         _expand_subagent_to_child_plans(
-                            trace_id, sa_index, req, trace_bs
+                            trace_id,
+                            sa_index,
+                            req,
+                            trace_bs,
+                            split_chains=split_enabled,
                         )
                     )
             if split_enabled and len(normals) > 1:
@@ -1134,13 +1132,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 for sa_index, (outer_idx, _) in enumerate(plan.subagents)
             }
             for cp in _child_plans_for_active_subagents(plan, child_plans):
-                for k, creq in enumerate(cp.stream_requests):
+                for k, creq in enumerate(cp.requests):
                     records.append(
                         MetricRecord(
                             sort_key=(
-                                _subagent_request_absolute_t(cp.entry, creq),
+                                creq.t,
                                 sa_outer_by_index[cp.subagent_index],
-                                cp.stream_index,
+                                cp.chain_index,
                                 k,
                             ),
                             session_id=cp.session_id,
@@ -1635,7 +1633,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     if len(subagent_child_sids) > 1:
                         _logger.info(
                             f"Trace {plan.trace_id}: subagent '{e.agent_id}' has "
-                            f"{len(subagent_child_sids)} parallel inner-request streams; "
+                            f"{len(subagent_child_sids)} inner context chains; "
                             f"emitting as sibling child conversations."
                         )
                 branch_id = f"{plan.trace_id}:spawn:{entries[0][1].agent_id}"
@@ -1778,10 +1776,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 parent_conversation_id=cp.parent_trace_id,
             )
             child_metric_values = metric_values_by_trace[cp.parent_trace_id]
-            for k, creq in enumerate(cp.stream_requests):
+            for k, creq in enumerate(cp.requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
                 input_kind = _classify_turn_input(
-                    creq, cp.stream_requests[k - 1] if k else None
+                    creq, cp.requests[k - 1] if k else None
                 )
                 is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
                 if k == 0:
@@ -1794,7 +1792,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         is_tool_result=is_tool_result,
                     )
                 else:
-                    prev_creq = cp.stream_requests[k - 1]
+                    prev_creq = cp.requests[k - 1]
                     child_recon.advance_turn(
                         prev_hash_ids=prev_creq.hash_ids,
                         prev_in_tokens=prev_creq.input_length,
@@ -1812,19 +1810,16 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     t_ms = timing.timestamp_seconds * 1000.0
                     child_delay_ms = timing.delay_ms
                 else:
-                    # Root-trace coordinates, matching the warp path, metric
-                    # ordering, and parent turn timestamps (legacy fixtures
-                    # record inner t relative to the spawn marker).
-                    t_ms = _subagent_request_absolute_t(cp.entry, creq) * 1000.0
+                    # Plan requests are already in root-trace coordinates
+                    # (normalized at expansion), matching the warp path,
+                    # metric ordering, and parent turn timestamps.
+                    t_ms = creq.t * 1000.0
                     if k == 0:
                         child_delay_ms = None
                     elif think_time_only and creq.think_time is not None:
                         child_delay_ms = creq.think_time * 1000.0
                     else:
-                        prev_t = _subagent_request_absolute_t(
-                            cp.entry, cp.stream_requests[k - 1]
-                        )
-                        child_delay_ms = t_ms - prev_t * 1000.0
+                        child_delay_ms = t_ms - cp.requests[k - 1].t * 1000.0
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
                 child_delta = child_recon.turn_delta()
@@ -2016,22 +2011,22 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
             child_metric_values = metric_values_by_trace[cp.parent_trace_id]
             requests_dicts: list[_WekaNormalRequestPayload] = []
-            for k, creq in enumerate(cp.stream_requests):
+            for k, creq in enumerate(cp.requests):
                 hit_blocks, total_blocks = child_metric_values[(cp.session_id, k)]
                 req_payload: _WekaNormalRequestPayload = {
                     "hash_ids": list(creq.hash_ids),
                     "input_length": creq.input_length,
                     "output_length": creq.output_length,
                     "model": creq.model,
-                    # Root-trace coordinates so worker-side turn timestamps and
-                    # delay deltas match the serial path (legacy fixtures
-                    # record inner t relative to the spawn marker).
-                    "t": _subagent_request_absolute_t(cp.entry, creq),
+                    # Already root-trace coordinates (normalized at expansion)
+                    # so worker-side turn timestamps and delay deltas match
+                    # the serial path.
+                    "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
                     "theoretical_hit_blocks": hit_blocks,
                     "theoretical_total_blocks": total_blocks,
                     "input_kind": _classify_turn_input(
-                        creq, cp.stream_requests[k - 1] if k else None
+                        creq, cp.requests[k - 1] if k else None
                     ),
                 }
                 if trace_idle_timing is not None:

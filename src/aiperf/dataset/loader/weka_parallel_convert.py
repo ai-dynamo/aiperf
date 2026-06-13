@@ -115,12 +115,13 @@ class _WekaNormalRequestPayload(TypedDict):
 class _WekaSubagentMarkerPayload(TypedDict):
     """Wire-format dict for one subagent marker (in parent.subagents).
 
-    Stream packing happens in the parent process (parity with the serial path):
-    ``child_session_ids`` enumerates the per-stream child SIDs the worker must
-    register on the SPAWN branch (legacy single-stream subagents emit one
-    SID; multi-stream subagents emit ``:s0`` / ``:s1`` / ...).
-    ``sa_end_seconds`` is the subagent's recorded end time, used by the worker
-    to select the first later parent turn that should join this child.
+    Chain detection happens in the parent process (parity with the serial
+    path): ``child_session_ids`` enumerates the per-chain child SIDs the
+    worker must register on the SPAWN branch (single-chain subagents emit
+    one ``::sa:{agent_id}`` SID; detected spawned chains add ``:c000`` /
+    ``:c001`` / ... siblings). ``sa_end_seconds`` is the subagent's recorded
+    end time, used by the worker to select the first later parent turn that
+    should join this child.
     """
 
     agent_id: str
@@ -157,10 +158,10 @@ class _WekaParentPayload(TypedDict):
 class _WekaChildPayload(TypedDict):
     """Per-subagent child payload shipped to a worker.
 
-    ``tool_tokens`` / ``system_tokens`` are the stream's gated turn-0
-    attribution values (stream 0 keeps the entry's declared counts; overflow
-    streams carry them only when their first request provably starts with the
-    same declared-prefix blocks -- see
+    ``tool_tokens`` / ``system_tokens`` are the chain's gated turn-0
+    attribution values (the main chain keeps the entry's declared counts;
+    spawned chains carry them only when their first request provably starts
+    with the same declared-prefix blocks -- see
     ``weka_trace._expand_subagent_to_child_plans``), not necessarily the raw
     entry-declared counts. Child request ``t`` values are in root-trace
     coordinates.

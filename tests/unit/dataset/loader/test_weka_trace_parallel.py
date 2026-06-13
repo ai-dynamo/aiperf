@@ -118,8 +118,6 @@ def _drive_parallel_inproc(
             parent_plans, child_plans
         )
 
-        from aiperf.dataset.loader.weka_trace import _subagent_request_absolute_t
-
         children_by_trace = defaultdict(list)
         sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
@@ -130,7 +128,7 @@ def _drive_parallel_inproc(
                     "input_length": creq.input_length,
                     "output_length": creq.output_length,
                     "model": creq.model,
-                    "t": _subagent_request_absolute_t(cp.entry, creq),
+                    "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
                     # Dropped children have no pre-pass entry; they are
                     # skipped by _process_task so the fallback is unused.
@@ -141,7 +139,7 @@ def _drive_parallel_inproc(
                         (cp.session_id, k), (0, len(creq.hash_ids))
                     )[1],
                 }
-                for k, creq in enumerate(cp.stream_requests)
+                for k, creq in enumerate(cp.requests)
             ]
             children_by_trace[cp.parent_trace_id].append(
                 {
