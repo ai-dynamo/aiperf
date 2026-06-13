@@ -46,6 +46,7 @@ from msgspec.structs import replace as _struct_replace
 
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
@@ -161,6 +162,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         )
         self._benchmark_id: str = (
             user_config.benchmark_id if user_config is not None else "unknown"
+        )
+        # When True, PROFILING preserves each trajectory's t*->first-request
+        # idle gap instead of anchoring the earliest request at profiling-time
+        # 0. See _dispatch_snapshot_for_profiling and the env-var docstring.
+        self._preserve_trajectory_start_gap: bool = (
+            Environment.TIMING.PRESERVE_TRAJECTORY_START_GAP
         )
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
@@ -510,9 +517,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         Each stream profiles from turn ``next_turn_index`` (the first turn at
         or after t*; its predecessor, if any, was primed during WARMUP).
-        Dispatch times are normalized so the trajectory's earliest post-t*
-        request fires at profiling-time 0 and every other request preserves
-        its recorded offset from that anchor (cross-stream and inter-turn).
+
+        Dispatch anchoring depends on ``PRESERVE_TRAJECTORY_START_GAP``:
+        by default the trajectory's earliest post-t* request is anchored at
+        profiling-time 0 (subtracting T0, the min offset) so all lanes burst
+        at once; when the flag is set, T0 is 0 so each stream waits out its
+        recorded offset from t* (the leading idle gap is preserved). Relative
+        timing among the trajectory's streams and turns is identical either
+        way -- only the per-lane start offset differs.
 
         Gated parents (``waiting_on_children``) are not dispatched here; their
         join is seeded with the orchestrator and their gated turn fires when
@@ -534,14 +546,17 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
         dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
-        # T0 = earliest post-t* request across the trajectory's dispatchable
-        # streams; subtracting it anchors that first request at profiling-time
-        # 0 while preserving all relative timing.
-        t0_offset_ms = (
-            min(s.next_dispatch_offset_ms for s in dispatchable)
-            if dispatchable
-            else 0.0
-        )
+        # T0 anchors the trajectory's earliest post-t* request at profiling-
+        # time 0; with PRESERVE_TRAJECTORY_START_GAP the anchor is t* itself
+        # (T0 = 0), so the leading t*->first-request idle gap is preserved.
+        if self._preserve_trajectory_start_gap:
+            t0_offset_ms = 0.0
+        else:
+            t0_offset_ms = (
+                min(s.next_dispatch_offset_ms for s in dispatchable)
+                if dispatchable
+                else 0.0
+            )
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)
