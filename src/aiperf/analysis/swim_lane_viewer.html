@@ -467,6 +467,8 @@ slotSegs.forEach((list) => {
 const sessStarts = DATA.sessions.map((s) => s.turns.reduce((a, t) => Math.min(a, t[0]), Infinity));
 // lane-group key (root session id) per session, for group hover dimming
 const sessRoot = DATA.sessions.map((s) => s.root ?? s.id);
+const idToSi = {};
+DATA.sessions.forEach((s, si) => { idToSi[s.id] = si; });
 const laneColor = (si) => sessColor(DATA.sessions[si].ci);
 const N_SUB = DATA.sessions.reduce((a, s) => a + (s.sub ? 1 : 0), 0);
 // each slot expands to one full-size sub-lane per concurrently-running turn,
@@ -480,6 +482,7 @@ const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
 /* ---------- lane encoding state (color-by-metric, prefill/decode split) ---------- */
 let colorBy = null; // null | dur | ttft | lat | isl | osl | new
 let split = false;
+let spawnLinks = false; // draw connector lines from subagents to their group root
 // turn-tuple index + label + formatter per colorable metric
 const METRICS = {
   dur: { i: -1, label: "duration", fmt: (v) => v.toFixed(2) + "s" },
@@ -553,6 +556,7 @@ function metricColor(t) {
     `<span class="lbl">color</span>` +
     opts.map(([lbl, v]) => `<button class="ctrl${v === colorBy ? " on" : ""}" data-c="${v}">${lbl}</button>`).join("") +
     `<button class="ctrl" id="split-btn" title="split each bar into prefill | decode at first-token">split</button>` +
+    (N_SUB ? `<button class="ctrl" id="spawn-btn" title="draw links from subagents to their group root">spawns</button>` : "") +
     `<span class="scale-hint" id="scale-hint" style="display:none"></span>`;
   const hint = el.querySelector("#scale-hint");
   function updateHint() {
@@ -570,6 +574,8 @@ function metricColor(t) {
     }));
   const sb = el.querySelector("#split-btn");
   sb.addEventListener("click", () => { split = !split; sb.classList.toggle("on", split); scheduleDraw(); });
+  const spb = el.querySelector("#spawn-btn");
+  if (spb) spb.addEventListener("click", () => { spawnLinks = !spawnLinks; spb.classList.toggle("on", spawnLinks); scheduleDraw(); });
 }
 
 /* ---------- canvas helpers ---------- */
@@ -791,6 +797,27 @@ function drawLanes() {
         ctx.restore();
       }
     }
+  }
+
+  // spawn links: connector from each subagent's first turn up to its group root
+  if (spawnLinks && N_SUB) {
+    ctx.lineWidth = 1;
+    DATA.sessions.forEach((s, si) => {
+      if (!s.root) return;
+      const rootSi = idToSi[s.root];
+      if (rootSi == null) return;
+      const root = DATA.sessions[rootSi];
+      if (root.slot !== s.slot) return;
+      const x = xOf(sessStarts[si]);
+      if (x < GUTTER || x > W) return;
+      const yChild = (slotRow0[s.slot] + s.row0 + 0.5) * ROW_H;
+      const yRoot = (slotRow0[root.slot] + root.row0 + 0.5) * ROW_H;
+      const col = laneColor(rootSi);
+      ctx.strokeStyle = alpha(col, 0.5);
+      ctx.beginPath(); ctx.moveTo(x + 0.5, yRoot); ctx.lineTo(x + 0.5, yChild); ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(x + 0.5, yChild, 2, 0, 6.283); ctx.fill();
+    });
   }
 
   // new-session ticks (lane roots only; subagent tiers are visible inline)
