@@ -677,6 +677,88 @@ async def test_profiling_normalizes_offsets_first_request_fires_at_zero():
 
 
 @pytest.mark.asyncio
+async def test_profiling_preserve_start_gap_delays_first_request(monkeypatch):
+    """With PRESERVE_TRAJECTORY_START_GAP, the trajectory's first post-t*
+    request waits out its recorded offset from t* instead of firing at 0.
+
+    A lone root resuming 8s after t* fires immediately under the default
+    (T0 collapses the leading gap) but is scheduled 8s out when the flag is
+    set -- the leading idle gap is preserved.
+    """
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.TIMING, "PRESERVE_TRAJECTORY_START_GAP", True)
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=18_000.0),
+                ],
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    # t* = 10_000: turn 0 < t* (warmed), turn 1 (18s) is 8s out from t*.
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root",
+        next_turn_index=1,
+        next_dispatch_offset_ms=8_000.0,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=1,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=10_000.0,
+            states=(root_state,),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+
+    issued: list[tuple[str, int]] = []
+
+    async def capture(turn):
+        issued.append((turn.conversation_id, turn.turn_index))
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[tuple[float, object]] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
+        (delay, coro)
+    )
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # Leading gap preserved: nothing fires inline; turn 1 scheduled 8s out.
+    assert issued == []
+    assert [delay for delay, _ in scheduled] == [pytest.approx(8.0)]
+    for _, coro in scheduled:
+        await coro
+    assert issued == [("trace_0", 1)]
+
+
+@pytest.mark.asyncio
 async def test_profiling_gated_parent_not_dispatched_child_profiles():
     """A parent gated on a child join at t* is not dispatched in PROFILING;
     its join is seeded and the blocking child profiles its remaining turns.

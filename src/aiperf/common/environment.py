@@ -726,6 +726,20 @@ class _TimingSettings(BaseSettings):
         default=0.1,
         description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
     )
+    PRESERVE_TRAJECTORY_START_GAP: bool = Field(
+        default=False,
+        description="Agentic-replay PROFILING dispatch anchoring. When False "
+        "(default), each trajectory's earliest post-t* request fires at "
+        "profiling-time 0 (the t*->first-request idle gap is collapsed, so all "
+        "lanes burst at once and reach full concurrency immediately). When "
+        "True, that leading gap is preserved instead: each trajectory waits "
+        "out its recorded offset from t* before its first request, so a "
+        "trajectory sampled at a quiet point ramps in rather than firing at 0. "
+        "Relative timing within and across a trajectory's streams is identical "
+        "either way; only the per-lane start offset differs. Because each "
+        "trajectory samples its own t*, preserving the gap staggers lane "
+        "starts over the first turns of PROFILING rather than aligning them.",
+    )
 
 
 class _ServiceSettings(BaseSettings):
