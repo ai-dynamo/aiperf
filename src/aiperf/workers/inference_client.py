@@ -60,10 +60,21 @@ def detect_transport_from_url(url: str) -> str:
 class InferenceClient(AIPerfLifecycleMixin):
     """Inference client for the worker."""
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, service_id: str, **kwargs):
+    def __init__(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        service_id: str,
+        *,
+        strip_record_payload_bytes: bool = False,
+        **kwargs,
+    ):
         super().__init__(model_endpoint=model_endpoint, service_id=service_id, **kwargs)
         self.model_endpoint = model_endpoint
         self.service_id = service_id
+        # When True, omit canonical request payload bytes from the slim
+        # RecordContext after dispatch (memory optimization for large prompts).
+        # Resolved by the worker via record payload-retention auto-detection.
+        self.strip_record_payload_bytes = strip_record_payload_bytes
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -242,7 +253,8 @@ class InferenceClient(AIPerfLifecycleMixin):
         hop to the record processor.
 
         The tokeniser and the raw-record exporter both read
-        ``request_info.payload_bytes``; ``osl_mismatch`` reads
+        ``request_info.payload_bytes`` unless ``strip_record_payload_bytes``
+        is set (see ``AIPERF_RECORD_STRIP_PAYLOAD_BYTES``); ``osl_mismatch`` reads
         ``max_tokens``; image/audio/video metrics derive their counts from
         the endpoint's single-pass ``extract_payload_inputs`` at
         parse-time. ``turns`` is never populated on the attached context
@@ -259,6 +271,10 @@ class InferenceClient(AIPerfLifecycleMixin):
             else None
         )
 
+        payload_bytes = (
+            None if self.strip_record_payload_bytes else request_info.payload_bytes
+        )
+
         record.request_info = RecordContext(
             credit_num=request_info.credit_num,
             credit_phase=request_info.credit_phase,
@@ -269,7 +285,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             credit_issued_ns=request_info.credit_issued_ns,
             agent_depth=request_info.agent_depth,
             parent_correlation_id=request_info.parent_correlation_id,
-            payload_bytes=request_info.payload_bytes,
+            payload_bytes=payload_bytes,
             max_tokens=max_tokens,
             audio_duration_seconds=audio_duration_seconds,
             cache_bust_marker=request_info.cache_bust_marker,

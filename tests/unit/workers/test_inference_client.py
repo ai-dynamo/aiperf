@@ -444,6 +444,55 @@ class TestInferenceClient:
                 f"RecordContext must not carry pre-send field {attr!r}"
             )
 
+    def _enrich_with_payload(self, inference_client, model_endpoint):
+        turn = Turn(texts=[Text(contents=["x"])], role="user", model="test-model")
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            turn_index=0,
+            credit_num=7,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="rid",
+            x_correlation_id="cid",
+            conversation_id="conv",
+            payload_bytes=b'{"model":"x","messages":[{"role":"user","content":"x"}]}',
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+        enriched = inference_client._enrich_request_record(
+            record=record, request_info=request_info
+        )
+        return enriched, request_info
+
+    def test_enrich_strips_payload_bytes_when_flag_set(
+        self, inference_client, model_endpoint
+    ):
+        """strip_record_payload_bytes=True omits huge request payloads from the
+        record while leaving the source RequestInfo untouched."""
+        inference_client.strip_record_payload_bytes = True
+        enriched, request_info = self._enrich_with_payload(
+            inference_client, model_endpoint
+        )
+        assert enriched.request_info is not None
+        assert enriched.request_info.payload_bytes is None
+        # Source RequestInfo is not mutated (transport already consumed it).
+        assert request_info.payload_bytes is not None
+
+    def test_enrich_keeps_payload_bytes_by_default(
+        self, inference_client, model_endpoint
+    ):
+        """Default (flag False) preserves the canonical wire body on the record."""
+        assert inference_client.strip_record_payload_bytes is False
+        enriched, request_info = self._enrich_with_payload(
+            inference_client, model_endpoint
+        )
+        assert enriched.request_info is not None
+        assert enriched.request_info.payload_bytes == request_info.payload_bytes
+
 
 class TestInferenceClientDynamoSessionControl:
     """Chokepoint injection of nvext.session_control for Dynamo routing.
