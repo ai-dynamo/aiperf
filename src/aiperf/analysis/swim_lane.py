@@ -31,9 +31,16 @@ import numpy as np
 import orjson
 from numpy.typing import NDArray
 
-from aiperf.analysis.sweepline import add_step_functions, concurrency_sweep_line
+from aiperf.analysis.sweepline import (
+    add_step_functions,
+    concurrency_sweep_line,
+    prefill_throughput_sweep_line,
+    throughput_sweep_line,
+    total_throughput_sweep_line,
+    weighted_concurrency_sweep_line,
+)
 from aiperf.common.config.config_defaults import OutputDefaults
-from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.constants import NANOS_PER_MILLIS, NANOS_PER_SECOND
 
 PROFILE_JSONL = OutputDefaults.PROFILE_EXPORT_JSONL_FILE.name
 PROFILE_JSON = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE.name
@@ -388,6 +395,105 @@ def _concurrency_curves(
     return active_ts, active_vals, idle_ts, idle_vals
 
 
+def _new_isl_curve(
+    sessions: dict[str, list[dict]],
+    new_isl_map: dict[str, list[float]],
+    t0_ns: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Sweep-line of "new" input tokens being prefilled, summed across requests.
+
+    Each turn's ``new_isl`` (see ``_session_new_isls``) is in flight only during
+    prefill -- the window ``[start_ns, generation_start_ns)`` where
+    ``generation_start_ns = start_ns + TTFT`` -- after which generation begins
+    and the prompt is no longer "new". This curve sums those weights at every
+    event boundary, the token-weighted prefill analogue of the concurrency
+    curve. Returns (timestamps, values) in seconds-from-t0. Zero-weight turns
+    are dropped since they add no events; turns missing TTFT fall back to the
+    request end.
+    """
+    starts: list[float] = []
+    ends: list[float] = []
+    weights: list[float] = []
+    for sid, turns in sessions.items():
+        for r, w in zip(turns, new_isl_map[sid], strict=True):
+            if w <= 0.0:
+                continue
+            start_ns = r["metadata"]["request_start_ns"]
+            end_ns = r["metadata"]["request_end_ns"]
+            ttft_ms = _metric_value(r, "time_to_first_token")
+            generation_start_ns = (
+                min(start_ns + ttft_ms * NANOS_PER_MILLIS, end_ns)
+                if ttft_ms is not None
+                else end_ns
+            )
+            starts.append(start_ns)
+            ends.append(generation_start_ns)
+            weights.append(w)
+    if not starts:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+    starts_s = (np.array(starts, dtype=np.float64) - t0_ns) / NANOS_PER_SECOND
+    ends_s = (np.array(ends, dtype=np.float64) - t0_ns) / NANOS_PER_SECOND
+    return weighted_concurrency_sweep_line(
+        starts_s, ends_s, np.array(weights, dtype=np.float64)
+    )
+
+
+def _throughput_curves(
+    sessions: dict[str, list[dict]], t0_ns: float
+) -> tuple[
+    tuple[NDArray[np.float64], NDArray[np.float64]],
+    tuple[NDArray[np.float64], NDArray[np.float64]],
+    tuple[NDArray[np.float64], NDArray[np.float64]],
+]:
+    """Prefill, decode, and total throughput sweep curves (tokens/sec over time).
+
+    Reuses the same sweep-line primitives the metrics accumulator uses, but fed
+    from the exported records: prefill runs over ``[start, generation_start)``
+    weighted by ISL, decode over ``[generation_start, end)`` weighted by
+    ``OSL - 1``, and total combines both. ``generation_start`` is derived from
+    TTFT (this is the post-hoc jsonl path). Timestamps are seconds-from-t0 so
+    rates come out directly in tokens/sec. Returns ((pf_ts, pf), (dec_ts, dec),
+    (tot_ts, tot)); each value array is clamped at 0.
+    """
+    starts: list[float] = []
+    gens: list[float] = []
+    ends: list[float] = []
+    isls: list[float] = []
+    osls: list[float] = []
+    nan = float("nan")
+    for turns in sessions.values():
+        for r in turns:
+            meta = r["metadata"]
+            s = meta["request_start_ns"]
+            ttft_ms = _metric_value(r, "time_to_first_token")
+            isl = _metric_value(r, "input_sequence_length")
+            osl = _metric_value(r, "output_sequence_length")
+            starts.append((s - t0_ns) / NANOS_PER_SECOND)
+            ends.append((meta["request_end_ns"] - t0_ns) / NANOS_PER_SECOND)
+            gens.append(
+                (s + ttft_ms * NANOS_PER_MILLIS - t0_ns) / NANOS_PER_SECOND
+                if ttft_ms is not None
+                else nan
+            )
+            isls.append(float(isl) if isl is not None else nan)
+            osls.append(float(osl) if osl is not None else nan)
+    start_s = np.array(starts, dtype=np.float64)
+    gen_s = np.array(gens, dtype=np.float64)
+    end_s = np.array(ends, dtype=np.float64)
+    isl_a = np.array(isls, dtype=np.float64)
+    osl_a = np.array(osls, dtype=np.float64)
+    pf_ts, pf = prefill_throughput_sweep_line(start_s, gen_s, isl_a)
+    dec_ts, dec = throughput_sweep_line(gen_s, end_s, osl_a)
+    tot_ts, tot = total_throughput_sweep_line(
+        start_s, gen_s, end_s, isl_a, output_tokens=osl_a
+    )
+    return (
+        (pf_ts, np.maximum(pf, 0.0)),
+        (dec_ts, np.maximum(dec, 0.0)),
+        (tot_ts, np.maximum(tot, 0.0)),
+    )
+
+
 def plot_swim_lane(
     run_dir: Path,
     out: Path | None = None,
@@ -687,6 +793,38 @@ def _metric_value(record: dict, name: str) -> float | None:
     return metric.get("value") if isinstance(metric, dict) else None
 
 
+CACHE_READ_METRIC = "usage_prompt_cache_read_tokens"
+
+
+def _session_new_isls(turns: list[dict]) -> list[float]:
+    """Per-turn "new" input tokens: this turn's ISL minus the cached prefix
+    carried over from the conversation history.
+
+    The cached prefix is the server-reported cache-read count when the endpoint
+    exposes it (``usage_prompt_cache_read_tokens``), else it falls back to the
+    previous turn's ISL. The first turn (no predecessor) and any turn missing
+    ISL contribute their full ISL. ``turns`` must be turn_index-ordered.
+    Values are clamped at 0 -- "new" tokens are never negative.
+    """
+    out: list[float] = []
+    prev_isl: float | None = None
+    for r in turns:
+        isl = _metric_value(r, "input_sequence_length")
+        if isl is None:
+            out.append(0.0)
+            continue
+        cached = _metric_value(r, CACHE_READ_METRIC)
+        if cached is not None:
+            new = isl - cached
+        elif prev_isl is not None:
+            new = isl - prev_isl
+        else:
+            new = isl
+        out.append(max(new, 0.0))
+        prev_isl = isl
+    return out
+
+
 def _peak_concurrent(intervals: list[tuple[int, int]]) -> int:
     """Max number of simultaneously-open (start_ns, end_ns) intervals."""
     if not intervals:
@@ -761,13 +899,20 @@ def write_swim_lane_html(
     active_ts, active_vals, idle_ts, idle_vals = _concurrency_curves(
         sessions, len(records), t0_ns
     )
+    new_isl_map = {sid: _session_new_isls(turns) for sid, turns in sessions.items()}
+    new_isl_ts, new_isl_vals = _new_isl_curve(sessions, new_isl_map, t0_ns)
+    (pf_ts, pf_vals), (dec_ts, dec_vals), (tot_ts, tot_vals) = _throughput_curves(
+        sessions, t0_ns
+    )
 
     session_payload = []
     for ci, g in enumerate(groups):
         for m in g.members:
             session = sessions[m.sid]
             turns = []
-            for r, depth in zip(session, m.depths, strict=True):
+            for r, depth, new_isl in zip(
+                session, m.depths, new_isl_map[m.sid], strict=True
+            ):
                 start_s = (r["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND
                 end_s = (r["metadata"]["request_end_ns"] - t0_ns) / NANOS_PER_SECOND
                 ttft = _metric_value(r, "time_to_first_token")
@@ -784,6 +929,7 @@ def write_swim_lane_html(
                         int(osl) if osl is not None else None,
                         depth,
                         r["metadata"].get("agent_depth"),
+                        int(round(new_isl)),
                     ]
                 )
             merged = _merged_active_ns(session)
@@ -819,6 +965,7 @@ def write_swim_lane_html(
         "rampS": ramp_dur_s,
         "benchEnd": bench_dur_s,
         "peakActive": int(active_vals.max()) if active_vals.size else 0,
+        "peakNewIsl": int(new_isl_vals.max()) if new_isl_vals.size else 0,
         "peaks": _agent_peaks(sessions),
         "sessions": session_payload,
         "active": {
@@ -828,6 +975,23 @@ def write_swim_lane_html(
         "idle": {
             "t": np.round(idle_ts, 3).tolist(),
             "v": idle_vals.astype(int).tolist(),
+        },
+        "newIsl": {
+            "t": np.round(new_isl_ts, 3).tolist(),
+            "v": np.round(new_isl_vals).astype(int).tolist(),
+        },
+        "peakTput": int(tot_vals.max()) if tot_vals.size else 0,
+        "prefillTput": {
+            "t": np.round(pf_ts, 3).tolist(),
+            "v": np.round(pf_vals).astype(int).tolist(),
+        },
+        "decodeTput": {
+            "t": np.round(dec_ts, 3).tolist(),
+            "v": np.round(dec_vals).astype(int).tolist(),
+        },
+        "totalTput": {
+            "t": np.round(tot_ts, 3).tolist(),
+            "v": np.round(tot_vals).astype(int).tolist(),
         },
     }
     # "</" cannot appear inside the inline <script> payload.
