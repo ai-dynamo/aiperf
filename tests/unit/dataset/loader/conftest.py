@@ -38,6 +38,28 @@ def _disable_weka_parallel_reconstruction():
         env_mod.Environment.DATASET.WEKA_PARALLEL_WORKERS = saved
 
 
+@pytest.fixture(autouse=True)
+def _disable_weka_aux_classification():
+    """Keep flattened-agent worker chains tagged ``::fa:`` in the loader suite.
+
+    The ``::fa:`` -> ``::aux:`` sub-classification (``is_aux_chain``) reclassifies
+    short, small-fresh-context chains as auxiliary sidecars. The flat-split
+    mechanics tests assert ``::fa:`` session ids and byte-identical
+    reconstruction and are agnostic to that tag, so default aux classification
+    off here. Classification itself is covered directly by
+    ``test_weka_aux_classification`` and end-to-end by the aux case in
+    ``test_weka_flat_split_v1_contract_adv`` (which re-enables it via monkeypatch).
+    """
+    from aiperf.common import environment as env_mod
+
+    saved = env_mod.Environment.DATASET.WEKA_AUX_MAX_REQUESTS
+    env_mod.Environment.DATASET.WEKA_AUX_MAX_REQUESTS = 0
+    try:
+        yield
+    finally:
+        env_mod.Environment.DATASET.WEKA_AUX_MAX_REQUESTS = saved
+
+
 def stub_hash_id_corpus_rng(prompt_generator) -> None:
     """Wire a deterministic stub for ``_hash_id_corpus_rng`` on a MagicMock pg.
 

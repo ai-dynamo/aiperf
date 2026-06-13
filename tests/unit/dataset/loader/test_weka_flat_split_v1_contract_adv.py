@@ -469,6 +469,27 @@ def test_flat_session_ids_are_zero_padded_and_dense(tmp_path):
     assert len(suffixes) == 3, suffixes
 
 
+def test_small_fresh_context_singletons_emit_aux_session_ids(tmp_path, monkeypatch):
+    # With aux classification enabled, the same disjoint small singletons are
+    # reclassified ::fa: -> ::aux: (one request, fresh context far below the
+    # ISL floor). Same dense-index shape, just the sidecar tag.
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
+    reqs = [
+        _row(t=0.0, hash_ids=[1, 2, 3]),
+        _row(t=1.0, hash_ids=[10, 11], model="w0"),
+        _row(t=2.0, hash_ids=[20, 21], model="w1"),
+        _row(t=3.0, hash_ids=[30, 31], model="w2"),
+        _row(t=4.0, hash_ids=[1, 2, 3, 4]),
+    ]
+    p = _write_trace(tmp_path / "sc.json", trace_id="sc", requests=reqs)
+    convs = _convs_by_sid(_loader_for(p))
+    aux = sorted(sid for sid in convs if sid.startswith("sc::aux:"))
+    assert [sid.rsplit(":", 1)[-1] for sid in aux] == ["000", "001", "002"], sorted(
+        convs
+    )
+    assert not any(sid.startswith("sc::fa:") for sid in convs), sorted(convs)
+
+
 # ---------------------------------------------------------------------------
 # 10. Determinism: two identical loads produce identical session ids, turn
 #     counts, branch shapes, timestamps, and reset_context flags.

@@ -393,6 +393,7 @@
       <div class="legend" id="lane-legend">
         <span class="key"><span class="swatch" style="background:#62a0ea"></span>active request</span>
         <span class="key" id="legend-sub"><span class="swatch" style="background:rgba(98,160,234,0.66)"></span>subagent request</span>
+        <span class="key" id="legend-aux"><span class="swatch" style="background:rgba(98,160,234,0.40)"></span>aux (sidecar) request</span>
         <span class="key"><span class="swatch" style="background:rgba(98,160,234,0.28)"></span>inter-turn delay</span>
         <span class="key"><span class="tickline"></span>new session</span>
         <span class="key" id="legend-spawn"><span class="tickline" style="background:rgba(150,225,245,0.9)"></span>new spawn</span>
@@ -508,12 +509,13 @@ const slotSegs = Array.from({ length: N_SLOTS }, () => []);
 let totalTurns = 0;
 DATA.sessions.forEach((s, si) => {
   const sub = !!s.sub;
+  const aux = !!s.aux;
   s.turns.forEach((t, ti) => {
     totalTurns++;
-    slotSegs[s.slot].push({ t0: t[0], t1: t[1], si, ti, row: s.row0 + t[6], rows: 1, sub, idle: false });
+    slotSegs[s.slot].push({ t0: t[0], t1: t[1], si, ti, row: s.row0 + t[6], rows: 1, sub, aux, idle: false });
   });
   s.gaps.forEach(([g0, g1]) =>
-    slotSegs[s.slot].push({ t0: g0, t1: g1, si, ti: -1, row: s.row0, rows: s.rows, sub, idle: true }));
+    slotSegs[s.slot].push({ t0: g0, t1: g1, si, ti: -1, row: s.row0, rows: s.rows, sub, aux, idle: true }));
 });
 // sort by start and carry a running max-end so interval stabbing can binary
 // search even though parallel turns make t1 non-monotonic
@@ -529,6 +531,10 @@ const idToSi = {};
 DATA.sessions.forEach((s, si) => { idToSi[s.id] = si; });
 const laneColor = (si) => sessColor(DATA.sessions[si].ci);
 const N_SUB = DATA.sessions.reduce((a, s) => a + (s.sub ? 1 : 0), 0);
+// aux (sidecar) sessions are a subset of subagents (agent_depth > 0); count
+// them separately so the stats and legend can distinguish one-shot tool calls
+// from sustained subagents
+const N_AUX = DATA.sessions.reduce((a, s) => a + (s.aux ? 1 : 0), 0);
 // each slot expands to one full-size sub-lane per concurrently-running turn,
 // plus one child tier per concurrently-running subagent session
 let foldSubs = false; // when true, subagent tiers are hidden and lanes re-flow
@@ -597,7 +603,8 @@ function metricColor(t) {
   const pk = DATA.peaks || {};
   const chips = [
     ["sessions", DATA.sessions.length - N_SUB],
-    ...(N_SUB ? [["subagents", N_SUB]] : []),
+    ...(N_SUB - N_AUX ? [["subagents", N_SUB - N_AUX]] : []),
+    ...(N_AUX ? [["aux", N_AUX]] : []),
     ["slots", N_SLOTS],
     ...(TOTAL_ROWS > N_SLOTS ? [["sub-lanes", TOTAL_ROWS]] : []),
     ["turns", totalTurns],
@@ -615,6 +622,7 @@ function metricColor(t) {
     document.getElementById("legend-sub").style.display = "none";
     document.getElementById("legend-spawn").style.display = "none";
   }
+  if (!N_AUX) document.getElementById("legend-aux").style.display = "none";
   // conditional legend keys for errored / context-overflow turns
   const hasErr = DATA.sessions.some((s) => s.turns.some((t) => t[9] === 1));
   const hasOvf = DATA.sessions.some((s) => s.turns.some((t) => t[9] === 2));
@@ -882,7 +890,7 @@ function drawLanes() {
         ? alpha(lc, dimmed ? 0.06 : seg.sub ? 0.15 : 0.24)
         : dimmed
           ? colorBy ? c : alpha(lc, seg.sub ? 0.13 : 0.16)
-          : seg.sub && !colorBy ? alpha(lc, 0.66) : c;
+          : seg.sub && !colorBy ? alpha(lc, seg.aux ? 0.4 : 0.66) : c;
       ctx.beginPath();
       ctx.roundRect(x0, y, x1 - x0, h, rad);
       ctx.fill();
@@ -1562,7 +1570,7 @@ function showTooltip(ev, seg) {
   const c = laneColor(seg.si);
   const head = seg.idle
     ? `<span class="sw" style="background:${alpha(c, 0.4)}"></span>INTER-TURN DELAY`
-    : `<span class="sw" style="background:${seg.sub ? alpha(c, 0.66) : c}"></span>${seg.sub ? "SUBAGENT TURN" : "TURN"} ${seg.ti} · SLOT ${s.slot}`;
+    : `<span class="sw" style="background:${seg.sub ? alpha(c, seg.aux ? 0.4 : 0.66) : c}"></span>${seg.aux ? "AUX TURN" : seg.sub ? "SUBAGENT TURN" : "TURN"} ${seg.ti} · SLOT ${s.slot}`;
   let rows;
   if (seg.idle) {
     rows = [
@@ -1872,7 +1880,7 @@ function openDetail(si) {
   const s = DATA.sessions[si];
   const c = laneColor(si);
   document.getElementById("d-title-text").innerHTML =
-    `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c};margin-right:8px"></span>${s.sub ? "SUBAGENT" : "SESSION"} · SLOT ${s.slot}`;
+    `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c};margin-right:8px"></span>${s.aux ? "AUX (SIDECAR)" : s.sub ? "SUBAGENT" : "SESSION"} · SLOT ${s.slot}`;
   document.getElementById("d-conv").innerHTML =
     `session ${s.id}<br>conv&nbsp;&nbsp;&nbsp; ${s.conv}` +
     (s.root ? `<br>parent&nbsp; ${s.root}` : "");

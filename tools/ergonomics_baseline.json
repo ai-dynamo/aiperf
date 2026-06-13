@@ -138,6 +138,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/loader/weka_agent_chains.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/loader/weka_parallel_convert.py",
       ""
     ],
@@ -508,6 +513,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/dataset/loader/weka_agent_chains.py",
+      "_resolve_seams"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/loader/weka_parallel_convert.py",
       "_process_task"
     ],
@@ -529,6 +539,11 @@
     [
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._detect_and_split_flat_chains"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._reconstruct_parallel"
     ],
     [
@@ -540,6 +555,11 @@
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader.convert_to_conversations"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "_expand_subagent_to_child_plans"
     ],
     [
       "function-size",
@@ -1145,6 +1165,11 @@
       "function-size",
       "src/aiperf/timing/strategies/agentic_replay.py",
       "AgenticReplayStrategy.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._execute_warmup"
     ],
     [
       "function-size",
