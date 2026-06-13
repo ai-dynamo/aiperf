@@ -162,8 +162,30 @@
   }
   .legend { display: flex; gap: 16px; margin-left: auto; flex-wrap: wrap; }
   .legend .key { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-mute); }
+  .legend .key.off { opacity: 0.4; text-decoration: line-through; }
+  .legend .key.clk { cursor: pointer; }
   .key .swatch { width: 14px; height: 9px; border-radius: 2px; }
   .key .tickline { width: 2px; height: 12px; background: #fff; }
+
+  /* ---------- control chips (toolbar in card heads) ---------- */
+  .ctrls { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+  .ctrls .lbl { color: var(--ink-mute); letter-spacing: 0.14em; text-transform: uppercase; font-size: 10px; margin-right: 1px; }
+  .ctrl {
+    cursor: pointer;
+    border: 1px solid var(--panel-edge);
+    border-radius: 4px;
+    background: rgba(255,255,255,0.03);
+    color: var(--ink-mute);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 2px 7px;
+    line-height: 1.4;
+  }
+  .ctrl:hover { color: var(--ink); border-color: var(--ink-mute); }
+  .ctrl.on { color: #0a0d13; background: var(--amber); border-color: var(--amber); font-weight: 600; }
+  .scale-hint { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ink-mute); }
+  .scale-hint .bar { width: 84px; height: 9px; border-radius: 2px;
+    background: linear-gradient(90deg, rgb(40,90,170), rgb(60,170,200), rgb(90,200,120), rgb(230,180,70), rgb(230,90,90)); }
 
   #ruler-wrap { border-bottom: 1px solid var(--hairline); }
   #ruler { display: block; width: 100%; height: 30px; }
@@ -338,6 +360,7 @@
   <section class="card" id="timeline-card">
     <div class="card-head">
       <span class="title">Swim Lanes — one row per session slot</span>
+      <div class="ctrls" id="lane-ctrls"></div>
       <div class="legend">
         <span class="key"><span class="swatch" style="background:#62a0ea"></span>active request</span>
         <span class="key" id="legend-sub"><span class="swatch" style="background:rgba(98,160,234,0.66)"></span>subagent request</span>
@@ -453,6 +476,46 @@ const slotRow0 = [0];
 for (let s = 1; s < N_SLOTS; s++) slotRow0[s] = slotRow0[s - 1] + slotRows[s - 1];
 const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
 
+/* ---------- lane encoding state (color-by-metric, prefill/decode split) ---------- */
+let colorBy = null; // null | dur | ttft | lat | isl | osl | new
+let split = false;
+// turn-tuple index + label + formatter per colorable metric
+const METRICS = {
+  dur: { i: -1, label: "duration", fmt: (v) => v.toFixed(2) + "s" },
+  ttft: { i: 2, label: "ttft", fmt: (v) => Math.round(v) + " ms" },
+  lat: { i: 3, label: "latency", fmt: (v) => Math.round(v) + " ms" },
+  isl: { i: 4, label: "isl", fmt: (v) => fmtTokens(v) + " tok" },
+  osl: { i: 5, label: "osl", fmt: (v) => fmtTokens(v) + " tok" },
+  new: { i: 8, label: "new ISL", fmt: (v) => fmtTokens(v) + " tok" },
+};
+const metricVal = (t, key) => (key === "dur" ? t[1] - t[0] : t[METRICS[key].i]);
+// global min/max per metric over all turns (for color normalization)
+const metricRange = {};
+for (const key in METRICS) {
+  let lo = Infinity, hi = -Infinity;
+  DATA.sessions.forEach((s) => s.turns.forEach((t) => {
+    const v = metricVal(t, key);
+    if (v == null || Number.isNaN(v)) return;
+    if (v < lo) lo = v; if (v > hi) hi = v;
+  }));
+  metricRange[key] = lo <= hi ? { min: lo, max: hi } : { min: 0, max: 1 };
+}
+// perceptual-ish blue->cyan->green->amber->red ramp
+const SCALE = [[40,90,170],[60,170,200],[90,200,120],[230,180,70],[230,90,90]];
+function colorScale(f) {
+  f = Math.max(0, Math.min(1, f));
+  const n = SCALE.length - 1;
+  const i = Math.min(Math.floor(f * n), n - 1);
+  const u = f * n - i, a = SCALE[i], b = SCALE[i + 1];
+  return `rgb(${Math.round(a[0]+(b[0]-a[0])*u)},${Math.round(a[1]+(b[1]-a[1])*u)},${Math.round(a[2]+(b[2]-a[2])*u)})`;
+}
+function metricColor(t) {
+  const v = metricVal(t, colorBy);
+  if (v == null || Number.isNaN(v)) return "#5a6472";
+  const r = metricRange[colorBy];
+  return colorScale(r.max > r.min ? (v - r.min) / (r.max - r.min) : 0.5);
+}
+
 /* ---------- header ---------- */
 {
   const name = DATA.run;
@@ -479,6 +542,33 @@ const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
     .map(([k, v, hot]) => `<div class="chip${hot ? " hot" : ""}"><b>${v}</b><span>${k}</span></div>`)
     .join("");
   if (!N_SUB) document.getElementById("legend-sub").style.display = "none";
+}
+
+/* ---------- lane controls (color-by-metric + prefill/decode split) ---------- */
+{
+  const el = document.getElementById("lane-ctrls");
+  const opts = [["none", null], ["dur", "dur"], ["ttft", "ttft"], ["lat", "lat"], ["isl", "isl"], ["osl", "osl"], ["new ISL", "new"]];
+  el.innerHTML =
+    `<span class="lbl">color</span>` +
+    opts.map(([lbl, v]) => `<button class="ctrl${v === colorBy ? " on" : ""}" data-c="${v}">${lbl}</button>`).join("") +
+    `<button class="ctrl" id="split-btn" title="split each bar into prefill | decode at first-token">split</button>` +
+    `<span class="scale-hint" id="scale-hint" style="display:none"></span>`;
+  const hint = el.querySelector("#scale-hint");
+  function updateHint() {
+    if (!colorBy) { hint.style.display = "none"; return; }
+    const r = metricRange[colorBy], m = METRICS[colorBy];
+    hint.style.display = "flex";
+    hint.innerHTML = `<span>${m.fmt(r.min)}</span><span class="bar"></span><span>${m.fmt(r.max)}</span>`;
+  }
+  el.querySelectorAll("[data-c]").forEach((b) =>
+    b.addEventListener("click", () => {
+      colorBy = b.dataset.c === "null" ? null : b.dataset.c;
+      el.querySelectorAll("[data-c]").forEach((x) => x.classList.toggle("on", x.dataset.c === b.dataset.c));
+      updateHint();
+      scheduleDraw();
+    }));
+  const sb = el.querySelector("#split-btn");
+  sb.addEventListener("click", () => { split = !split; sb.classList.toggle("on", split); scheduleDraw(); });
 }
 
 /* ---------- canvas helpers ---------- */
@@ -664,24 +754,40 @@ function drawLanes() {
       if (seg.t1 < view.t0) continue;
       let x0 = xOf(seg.t0), x1 = xOf(seg.t1);
       if (x1 - x0 < 0.6) x1 = x0 + 0.6;
-      const c = laneColor(seg.si);
+      const lc = laneColor(seg.si);
+      const turn = seg.idle ? null : DATA.sessions[seg.si].turns[seg.ti];
+      // base bar color: metric heatmap when color-by is on, else session color
+      const c = !seg.idle && colorBy ? metricColor(turn) : lc;
       const dimmed = focusRoot !== null && sessRoot[seg.si] !== focusRoot;
       // idle spans the session's own rows; each parallel turn gets a
       // full-size sub-lane; subagent turns render lighter in their child tier
       const y = yBase + seg.row * ROW_H + BAR_PAD;
       const h = seg.idle ? seg.rows * ROW_H - BAR_PAD * 2 : BAR_H;
+      const rad = Math.min(2.5, h / 3);
       ctx.fillStyle = seg.idle
-        ? alpha(c, dimmed ? 0.06 : seg.sub ? 0.15 : 0.24)
-        : seg.sub
-          ? alpha(c, dimmed ? 0.13 : 0.66)
-          : dimmed ? alpha(c, 0.16) : c;
+        ? alpha(lc, dimmed ? 0.06 : seg.sub ? 0.15 : 0.24)
+        : dimmed
+          ? colorBy ? c : alpha(lc, seg.sub ? 0.13 : 0.16)
+          : seg.sub && !colorBy ? alpha(lc, 0.66) : c;
       ctx.beginPath();
-      ctx.roundRect(x0, y, x1 - x0, h, Math.min(2.5, h / 3));
+      ctx.roundRect(x0, y, x1 - x0, h, rad);
       ctx.fill();
       if (!seg.idle && focusSi === seg.si) {
-        ctx.shadowColor = c; ctx.shadowBlur = 7;
+        ctx.shadowColor = typeof c === "string" && c[0] === "#" ? c : "#fff";
+        ctx.shadowBlur = 7;
         ctx.fill();
         ctx.shadowBlur = 0;
+      }
+      // prefill/decode split: dim the prefill portion, divider at first-token
+      if (!seg.idle && split && x1 - x0 > 1.5 && turn[2] != null && turn[2] > 0) {
+        const gx = Math.max(x0, Math.min(x1, xOf(seg.t0 + turn[2] / 1000)));
+        ctx.save();
+        ctx.beginPath(); ctx.roundRect(x0, y, x1 - x0, h, rad); ctx.clip();
+        ctx.fillStyle = "rgba(0,0,0,0.36)";
+        ctx.fillRect(x0, y, gx - x0, h);
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.fillRect(gx - 0.5, y, 1, h);
+        ctx.restore();
       }
     }
   }
