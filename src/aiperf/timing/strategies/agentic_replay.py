@@ -319,6 +319,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         # Pass 2: dispatch.
         if not spread:
+            self.info(
+                "WARMUP burst: dispatching all warmup requests at once (spread 0.0s)"
+            )
             for turn, _ in prepared:
                 await self.credit_issuer.issue_credit(turn)
             if not self.lifecycle.is_sending_complete:
@@ -330,7 +333,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # the same instant (warmup-time ``max_lead``); the furthest-before-t*
         # request fires at 0. Do NOT mark sending complete -- the count path
         # finalizes once the last scheduled dispatch fires.
-        max_lead_ms = max((d for _, d in prepared if d is not None), default=0.0)
+        leads = [d for _, d in prepared if d is not None]
+        max_lead_ms = max(leads, default=0.0)
+        spread_s = (max_lead_ms - min(leads, default=0.0)) / MILLIS_PER_SECOND
+        self.info(
+            f"WARMUP spread: {spread_s:.1f}s ramp aligning {len(leads)} request(s) "
+            f"on t* (earliest fires at 0, last at {spread_s:.1f}s)"
+        )
         for turn, lead_ms in prepared:
             offset_s = (
                 (max_lead_ms - lead_ms) / MILLIS_PER_SECOND
@@ -352,9 +361,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         serializing over N credit round-trips. Subsequent turns and
         recycle-pool sessions are dispatched from handle_credit_return.
         """
+        spread_s = self._profiling_spread_seconds()
+        mode = "burst" if self._burst_phase_starts else "spread"
         self.info(
             f"PROFILING execute: resuming {len(self.conversation_source.trajectories)} "
-            f"trajectory sessions"
+            f"trajectory sessions ({mode}; first-request spread {spread_s:.1f}s)"
         )
         # return_exceptions=True keeps ownership of every lane until it
         # settles: a bare gather would re-raise the first failure while the
@@ -380,6 +391,35 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 first_error = result
         if first_error is not None:
             raise first_error
+
+    def _profiling_spread_seconds(self) -> float:
+        """Window over which PROFILING first-dispatches fire, in seconds.
+
+        Mirrors the per-lane offset math in ``_dispatch_snapshot_for_profiling``
+        (spread: t0=0 so each fires at its t*-relative offset; burst: t0 = the
+        lane's min offset so its earliest fires at 0). Returns max-minus-min of
+        those dispatch offsets across every timestamped lane -- i.e. how long
+        after PROFILING start the last first-request fires. Logged once at
+        phase start; 0.0 when there is nothing to spread.
+        """
+        offsets: list[float] = []
+        for trajectory in self.conversation_source.trajectories:
+            if trajectory.snapshot is None:
+                continue
+            dispatchable = [
+                s for s in trajectory.snapshot.states if not s.waiting_on_children
+            ]
+            if not dispatchable:
+                continue
+            lane_t0 = (
+                min(s.next_dispatch_offset_ms for s in dispatchable)
+                if self._burst_phase_starts
+                else 0.0
+            )
+            offsets.extend(s.next_dispatch_offset_ms - lane_t0 for s in dispatchable)
+        if not offsets:
+            return 0.0
+        return (max(offsets) - min(offsets)) / MILLIS_PER_SECOND
 
     async def _dispatch_one_profiling_trajectory(
         self, trajectory: Trajectory, lane: int
