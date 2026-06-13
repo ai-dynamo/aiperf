@@ -48,6 +48,8 @@ class EndpointDefaults:
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
+    USE_DYNAMO_CONV_AWARE_ROUTING = False
+    DYNAMO_SESSION_TIMEOUT_SECONDS = 300
     # Readiness probe defaults. Timeout 0 disables the probe (the default);
     # any positive value enables it. Interval is only consulted when the
     # probe is enabled but is validated positive so mis-configuration
