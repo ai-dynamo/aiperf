@@ -278,6 +278,111 @@ async def test_warmup_warms_every_active_session_including_gated_parent():
 
 
 @pytest.mark.asyncio
+async def test_warmup_spreads_globally_aligned_on_t_star_when_flagged(monkeypatch):
+    """PRESERVE_WARMUP_REQUEST_GAPS aligns warmup GLOBALLY across trajectories
+    so every trajectory's t* lands at the same instant.
+
+    Three trajectories, each one mid-flight root whose warmup request fired a
+    different lead before its own t*: 5s, 15s, 10s. The furthest-before-t*
+    (15s) fires immediately at warmup-time 0, the 10s one 5s later, the 5s one
+    10s later -- dispatch offset = max_lead(15s) - lead. Total spread = 10s
+    (15s - 5s). This is the exact example from the design discussion.
+    """
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.TIMING, "PRESERVE_WARMUP_REQUEST_GAPS", True)
+
+    # (conversation_id, x_corr, t*, warm_ts) -> lead = t* - warm_ts.
+    lanes = [
+        ("t_a", "r_a", 5_000.0, 0.0),  # lead 5s
+        ("t_b", "r_b", 15_000.0, 0.0),  # lead 15s (furthest before t*)
+        ("t_c", "r_c", 10_000.0, 0.0),  # lead 10s
+    ]
+    convs = [
+        ConversationMetadata(
+            conversation_id=cid,
+            turns=[
+                TurnMetadata(timestamp_ms=warm_ts),  # turn 0: warmup (before t*)
+                TurnMetadata(timestamp_ms=t_star + 1_000.0),  # turn 1: profiled
+            ],
+        )
+        for cid, _, t_star, warm_ts in lanes
+    ]
+    ds = DatasetMetadata(
+        conversations=convs,
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id=cid,
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=t_star,
+                states=(
+                    ConversationState(
+                        conversation_id=cid,
+                        x_correlation_id=xc,
+                        next_turn_index=1,  # mid-flight: warmup turn = 0
+                    ),
+                ),
+            ),
+        )
+        for cid, xc, t_star, _ in lanes
+    ]
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = trajectories
+
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.x_correlation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[tuple[float, object]] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
+        (delay, coro)
+    )
+    lifecycle = MagicMock()
+    lifecycle.is_sending_complete = False
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.WARMUP
+    cfg.concurrency = 3
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=lifecycle,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # The furthest-before-t* request (r_b, lead 15s) fires immediately at t=0.
+    assert issued == ["r_b"]
+    # r_c (lead 10s) at 5s; r_a (lead 5s) at 10s. Total spread = 10s.
+    delay_by_corr = {}
+    for delay, coro in scheduled:
+        await coro  # drains -> appends to issued
+        delay_by_corr[issued[-1]] = delay
+    assert delay_by_corr["r_c"] == pytest.approx(5.0)
+    assert delay_by_corr["r_a"] == pytest.approx(10.0)
+    assert set(issued) == {"r_a", "r_b", "r_c"}
+
+    # Spread path must NOT mark sending complete early (would refuse the
+    # scheduled dispatches); the count path drives completion.
+    lifecycle.mark_sending_complete.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_warmup_skips_pending_start_child():
     """A child whose recorded first request is after t* is not warmed.
 

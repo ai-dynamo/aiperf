@@ -14,9 +14,12 @@ before t* (turn ``next_turn_index - 1``) as a full-prefix request, priming
 the server cache to the stream's state at t*. This includes parents gated on
 a child join (they sent turn n-1 before t* and resume at the join turn during
 PROFILING, so n-1 primes that turn). Streams whose first request is at/after
-t* (``next_turn_index == 0``) have nothing to warm. The phase exits via the
-standard ``SendingCompleteStopCondition`` plus ``grace_period_sec=inf``
-semantics already in CreditPhaseConfig (the warmup barrier).
+t* (``next_turn_index == 0``) have nothing to warm. By default the priming
+requests fire at once; ``PRESERVE_WARMUP_REQUEST_GAPS`` instead aligns them
+globally on t* so every trajectory's t* lands at the warmup end (see
+``_execute_warmup``). The phase exits via the standard
+``SendingCompleteStopCondition`` plus ``grace_period_sec=inf`` semantics
+already in CreditPhaseConfig (count-driven: every turn-n-1 must return).
 
 Warmup-failure accumulation: terminal failures (``credit_return.error`` or
 ``credit_return.cancelled``) on a WARMUP credit's final turn are routed by
@@ -59,6 +62,7 @@ from aiperf.timing.trajectory_source import (
     Trajectory,
     TrajectorySnapshot,
     TrajectorySource,
+    _as_timestamp_ms,
 )
 
 if TYPE_CHECKING:
@@ -171,6 +175,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._preserve_trajectory_start_gap: bool = (
             Environment.TIMING.PRESERVE_TRAJECTORY_START_GAP
         )
+        # When True, WARMUP spaces priming requests by their recorded time
+        # differences (per trajectory, earliest at warmup-time 0) instead of
+        # bursting them. See _dispatch_warmup_snapshot and the env-var docstring.
+        self._preserve_warmup_request_gaps: bool = (
+            Environment.TIMING.PRESERVE_WARMUP_REQUEST_GAPS
+        )
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
         # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
@@ -237,58 +247,104 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             await self._execute_profiling()
 
     async def _execute_warmup(self) -> None:
-        """Dispatch one warmup credit for every ready trajectory state."""
+        """Warm turn n-1 of every session active (mid-flight) at t*.
+
+        Pass 1 prepares a warmup credit for every active session and records
+        its lead delta (how long before that trajectory's t* the warmed
+        request fired). Pass 2 dispatches them. Lane registration and marker
+        minting happen synchronously in pass 1 regardless of dispatch timing.
+
+        Every session mid-flight at t* is warmed at its last request before t*,
+        priming the server cache to its t* state. This INCLUDES a parent gated
+        on a child join: it sent turn n-1 before t* and resumes at the join
+        turn n during PROFILING, so warming n-1 primes that join turn's prefix.
+        Streams whose first request is at/after t* (``warmup_turn_index is
+        None``) have nothing to warm.
+
+        Dispatch timing:
+          - Default: all warmup credits fire at once (a burst).
+          - ``PRESERVE_WARMUP_REQUEST_GAPS``: aligned GLOBALLY across all
+            trajectories so every trajectory's t* lands at the same moment
+            (the warmup end). A request that fired ``lead`` ms before its t*
+            dispatches at ``max_lead - lead`` (max_lead over ALL warmup
+            requests): the one furthest before its t* fires at warmup-time 0,
+            requests closer to their t* fire later, total spread =
+            ``max_lead - min_lead``. ``mark_sending_complete`` is skipped in
+            this mode (the deferred dispatches must not be refused early); the
+            count path drives completion once the last scheduled dispatch
+            fires, and warmup has no duration timeout to cancel the spread.
+        """
         warmup_total_count = self.conversation_source.warmup_credit_count
         self.info(
             f"WARMUP execute: dispatching {warmup_total_count} trajectory credits"
         )
+        spread = self._preserve_warmup_request_gaps
+
+        # Pass 1: register lane + mint marker + build the turn for every active
+        # session. ``lead_ms`` = how long before that trajectory's t* the warmed
+        # request fired (None for timestamp-less lanes / missing timestamps).
+        prepared: list[tuple[TurnToSend, float | None]] = []
         for lane, trajectory in enumerate(self.conversation_source.trajectories):
             if trajectory.snapshot is None:
                 session = self.conversation_source.session_for(trajectory)
-                dispatch_index = trajectory.start_turn_index
                 self._correlation_to_lane[session.x_correlation_id] = lane
                 self._active_traces[trajectory.conversation_id] += 1
                 self._mint_marker_for_session(
                     session.x_correlation_id, trajectory.conversation_id, lane
                 )
-                turn = self._build_turn_for_session(session, dispatch_index)
-                await self.credit_issuer.issue_credit(turn)
+                turn = self._build_turn_for_session(
+                    session, trajectory.start_turn_index
+                )
+                prepared.append((turn, None))
                 continue
 
-            states = self._get_snapshot(trajectory).states
-            for state in states:
+            t_star_ms = trajectory.snapshot.t_star_ms
+            for state in trajectory.snapshot.states:
                 warm_index = state.warmup_turn_index
                 if warm_index is None:
-                    # First request is at/after t*: the server had not seen
-                    # this stream at the snapshot instant, so there is nothing
-                    # to warm. PROFILING dispatches its turn 0 at the
-                    # normalized offset.
                     continue
-                # Every session active (mid-flight) at t* is warmed, INCLUDING
-                # a parent gated on a child join: it sent turn n-1 before t*
-                # and is waiting to send the join turn n during PROFILING, so
-                # warming n-1 primes that join turn's prefix (it would cold-
-                # miss otherwise). Warmup is a separate phase, so this does not
-                # disturb the profiling-side join machinery.
                 session = self.conversation_source.session_for_state(state)
                 self._correlation_to_lane[session.x_correlation_id] = lane
                 self._mint_marker_for_session(
                     session.x_correlation_id, state.conversation_id, lane
                 )
                 turn = self._build_turn_for_session(session, warm_index)
+                lead_ms: float | None = None
+                if spread:
+                    meta = self.conversation_source.get_metadata(state.conversation_id)
+                    warm_ts = _as_timestamp_ms(
+                        getattr(meta.turns[warm_index], "timestamp_ms", None)
+                    )
+                    if warm_ts is not None:
+                        lead_ms = t_star_ms - warm_ts
+                prepared.append((turn, lead_ms))
+
+        # Pass 2: dispatch.
+        if not spread:
+            for turn, _ in prepared:
                 await self.credit_issuer.issue_credit(turn)
-        # Trajectory dispatch complete; signal the phase that no more credits
-        # will be issued. SendingCompleteStopCondition watches this flag and
-        # fires once all in-flight credits return (the warmup barrier).
-        # Normally redundant with the phase's count-based path: PhaseRunner
-        # re-anchors ``total_expected_requests`` to the actual trajectory count
-        # at __init__, so ``CreditCounter.is_final_credit`` flips on the last
-        # dispatched credit and ``CreditIssuer`` already fires
-        # ``all_credits_sent_event`` + freezes counts. Kept as a guarded fallback
-        # for defense-in-depth; the ``is_sending_complete`` guard avoids the
-        # double-transition ValueError when the count path won the race.
-        if not self.lifecycle.is_sending_complete:
-            self.lifecycle.mark_sending_complete()
+            if not self.lifecycle.is_sending_complete:
+                self.lifecycle.mark_sending_complete()
+            return
+
+        # Global t*-alignment: a request that fired ``lead`` before its t*
+        # dispatches at ``max_lead - lead`` so every trajectory's t* lands at
+        # the same instant (warmup-time ``max_lead``); the furthest-before-t*
+        # request fires at 0. Do NOT mark sending complete -- the count path
+        # finalizes once the last scheduled dispatch fires.
+        max_lead_ms = max((d for _, d in prepared if d is not None), default=0.0)
+        for turn, lead_ms in prepared:
+            offset_s = (
+                (max_lead_ms - lead_ms) / MILLIS_PER_SECOND
+                if lead_ms is not None
+                else 0.0
+            )
+            if offset_s > 0:
+                self.scheduler.schedule_later(
+                    offset_s, self.credit_issuer.issue_credit(turn)
+                )
+            else:
+                await self.credit_issuer.issue_credit(turn)
 
     async def _execute_profiling(self) -> None:
         """Resume each trajectory at ``k_i + 1`` to seed the steady state.

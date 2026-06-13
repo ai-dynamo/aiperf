@@ -740,6 +740,21 @@ class _TimingSettings(BaseSettings):
         "trajectory samples its own t*, preserving the gap staggers lane "
         "starts over the first turns of PROFILING rather than aligning them.",
     )
+    PRESERVE_WARMUP_REQUEST_GAPS: bool = Field(
+        default=False,
+        description="Agentic-replay WARMUP dispatch spacing. When False "
+        "(default), all warmup priming requests (turn n-1 of every session "
+        "active at t*) fire at once as a burst. When True, they are aligned "
+        "GLOBALLY across all trajectories so every trajectory's t* lands at "
+        "the same instant (the warmup end): a request that fired ``lead`` "
+        "seconds before its own t* dispatches at ``max_lead - lead`` (max_lead "
+        "over all warmup requests), so the request furthest before its t* "
+        "fires at warmup-time 0, requests closer to their t* fire later, and "
+        "the total spread is ``max_lead - min_lead``. This reproduces the "
+        "recorded lead-up arrival pattern instead of a synchronized burst. "
+        "Warmup completion stays count-driven (every turn-n-1 must return), so "
+        "spreading only changes WHEN each priming request fires, not how many.",
+    )
 
 
 class _ServiceSettings(BaseSettings):
