@@ -136,6 +136,8 @@ class ServerToolUsage(BaseModel):
 
 Streaming chunks use `MessageDeltaUsage`, which carries the same fields as `Usage` for cache and tokens (a non-streaming chunk + `MessageDeltaUsage` contain the same shape for our purposes).
 
+**Native endpoint:** AIPerf benchmarks the Messages API directly via `--endpoint-type messages` (`/v1/messages`, [`src/aiperf/endpoints/anthropic_messages.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/endpoints/anthropic_messages.py)). The shared system prompt is emitted in the top-level `system` field (not as a `system`-role message), `max_tokens` is always sent (the API requires it; absent turns fall back to a 16384 default), and streaming splits usage across `message_start` (`input_tokens`) and `message_delta` (`output_tokens`). The usage-field parsing below is shared by this endpoint and by any chat-shaped server that happens to report Anthropic-style fields.
+
 **Modelled:** `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`.
 
 **Not modelled (preserved on dict):**
