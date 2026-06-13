@@ -29,6 +29,7 @@ split).
 from __future__ import annotations
 
 import heapq
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -46,8 +47,19 @@ IndexedRequest = tuple[int, _NormalRequestT]
 
 
 def _req_end(req: _NormalRequestT) -> float:
-    """Interval end in seconds; missing/negative api_time counts as zero."""
-    return req.t + max(req.api_time or 0.0, 0.0)
+    """Interval end in seconds; missing/negative/non-finite api_time counts as zero.
+
+    The finite check matters for temporal feasibility: a NaN or +inf
+    ``api_time`` would otherwise poison a chain tail's end and either block
+    every same-context extension forever (+inf) or make comparisons
+    unreliable (NaN).
+    """
+    duration = (
+        req.api_time
+        if req.api_time is not None and math.isfinite(req.api_time)
+        else 0.0
+    )
+    return req.t + max(duration, 0.0)
 
 
 def _np_lcp(a: np.ndarray, b: np.ndarray) -> int:

@@ -224,7 +224,11 @@ def _make_subagent_trace_with_two_child_turns(
                         "model": "claude-haiku-4-5-20251001",
                         "in": 150,
                         "out": 40,
-                        "hash_ids": [12, 13],
+                        # Extends the first request's [10, 11] prefix so LCP
+                        # chain detection keeps both requests in ONE chain
+                        # (a disjoint hash list would split them into two
+                        # one-turn children and there would be no delay).
+                        "hash_ids": [10, 11, 12, 13],
                         "input_types": ["text"],
                         "output_types": ["text"],
                         "stop": "end_turn",
