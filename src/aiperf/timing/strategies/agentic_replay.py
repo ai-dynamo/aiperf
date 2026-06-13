@@ -15,9 +15,9 @@ the server cache to the stream's state at t*. This includes parents gated on
 a child join (they sent turn n-1 before t* and resume at the join turn during
 PROFILING, so n-1 primes that turn). Streams whose first request is at/after
 t* (``next_turn_index == 0``) have nothing to warm. By default the priming
-requests fire at once; ``PRESERVE_WARMUP_REQUEST_GAPS`` instead aligns them
-globally on t* so every trajectory's t* lands at the warmup end (see
-``_execute_warmup``). The phase exits via the standard
+requests are SPREAD -- aligned globally on t* so every trajectory's t* lands
+at the warmup end (see ``_execute_warmup``); ``--burst-phase-starts`` fires
+them all at once instead. The phase exits via the standard
 ``SendingCompleteStopCondition`` plus ``grace_period_sec=inf`` semantics
 already in CreditPhaseConfig (count-driven: every turn-n-1 must return).
 
@@ -51,7 +51,6 @@ from msgspec.structs import replace as _struct_replace
 
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CacheBustTarget, CreditPhase
-from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
@@ -169,17 +168,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._benchmark_id: str = (
             user_config.benchmark_id if user_config is not None else "unknown"
         )
-        # When True, PROFILING preserves each trajectory's t*->first-request
-        # idle gap instead of anchoring the earliest request at profiling-time
-        # 0. See _dispatch_snapshot_for_profiling and the env-var docstring.
-        self._preserve_trajectory_start_gap: bool = (
-            Environment.TIMING.PRESERVE_TRAJECTORY_START_GAP
-        )
-        # When True, WARMUP spaces priming requests by their recorded time
-        # differences (per trajectory, earliest at warmup-time 0) instead of
-        # bursting them. See _dispatch_warmup_snapshot and the env-var docstring.
-        self._preserve_warmup_request_gaps: bool = (
-            Environment.TIMING.PRESERVE_WARMUP_REQUEST_GAPS
+        # ``--burst-phase-starts`` (loadgen.burst_phase_starts). Default False:
+        # the WARMUP and PROFILING phase starts are SPREAD by each request's
+        # recorded offset from t* (warmup globally t*-aligned, profiling
+        # preserving each lane's leading gap). When True, both phase starts
+        # collapse into synchronized bursts. Governs ONLY the two phase-start
+        # dispatch patterns; the rest of replay timing is faithful regardless.
+        # ``is True`` guards MagicMock/None test configs -> default (spread).
+        loadgen = getattr(user_config, "loadgen", None)
+        self._burst_phase_starts: bool = (
+            getattr(loadgen, "burst_phase_starts", False) is True
         )
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
@@ -262,23 +260,23 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         None``) have nothing to warm.
 
         Dispatch timing:
-          - Default: all warmup credits fire at once (a burst).
-          - ``PRESERVE_WARMUP_REQUEST_GAPS``: aligned GLOBALLY across all
-            trajectories so every trajectory's t* lands at the same moment
-            (the warmup end). A request that fired ``lead`` ms before its t*
-            dispatches at ``max_lead - lead`` (max_lead over ALL warmup
-            requests): the one furthest before its t* fires at warmup-time 0,
-            requests closer to their t* fire later, total spread =
-            ``max_lead - min_lead``. ``mark_sending_complete`` is skipped in
-            this mode (the deferred dispatches must not be refused early); the
-            count path drives completion once the last scheduled dispatch
-            fires, and warmup has no duration timeout to cancel the spread.
+          - Default (spread): aligned GLOBALLY across all trajectories so every
+            trajectory's t* lands at the same moment (the warmup end). A
+            request that fired ``lead`` ms before its t* dispatches at
+            ``max_lead - lead`` (max_lead over ALL warmup requests): the one
+            furthest before its t* fires at warmup-time 0, requests closer to
+            their t* fire later, total spread = ``max_lead - min_lead``.
+            ``mark_sending_complete`` is skipped (the deferred dispatches must
+            not be refused early); the count path drives completion once the
+            last scheduled dispatch fires, and warmup has no duration timeout
+            to cancel the spread.
+          - ``--burst-phase-starts``: all warmup credits fire at once.
         """
         warmup_total_count = self.conversation_source.warmup_credit_count
         self.info(
             f"WARMUP execute: dispatching {warmup_total_count} trajectory credits"
         )
-        spread = self._preserve_warmup_request_gaps
+        spread = not self._burst_phase_starts
 
         # Pass 1: register lane + mint marker + build the turn for every active
         # session. ``lead_ms`` = how long before that trajectory's t* the warmed
@@ -577,13 +575,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         Each stream profiles from turn ``next_turn_index`` (the first turn at
         or after t*; its predecessor, if any, was primed during WARMUP).
 
-        Dispatch anchoring depends on ``PRESERVE_TRAJECTORY_START_GAP``:
-        by default the trajectory's earliest post-t* request is anchored at
-        profiling-time 0 (subtracting T0, the min offset) so all lanes burst
-        at once; when the flag is set, T0 is 0 so each stream waits out its
-        recorded offset from t* (the leading idle gap is preserved). Relative
-        timing among the trajectory's streams and turns is identical either
-        way -- only the per-lane start offset differs.
+        Dispatch anchoring depends on ``--burst-phase-starts``: by default
+        (spread) ``t0_offset = 0`` so each stream waits out its recorded offset
+        from t* -- the leading t*->first-request gap is preserved and lanes
+        ramp in. With ``--burst-phase-starts`` the trajectory's earliest
+        post-t* request is anchored at profiling-time 0 (subtracting T0, the
+        min offset) so the lane bursts at once. Relative timing among the
+        trajectory's streams and turns is identical either way -- only the
+        per-lane start offset differs.
 
         Gated parents (``waiting_on_children``) are not dispatched here; their
         join is seeded with the orchestrator and their gated turn fires when
@@ -605,17 +604,18 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
         dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
-        # T0 anchors the trajectory's earliest post-t* request at profiling-
-        # time 0; with PRESERVE_TRAJECTORY_START_GAP the anchor is t* itself
-        # (T0 = 0), so the leading t*->first-request idle gap is preserved.
-        if self._preserve_trajectory_start_gap:
-            t0_offset_ms = 0.0
-        else:
+        # Spread (default): t0 = 0, so each lane fires at its recorded offset
+        # from t* (leading gap preserved). Burst (--burst-phase-starts): t0 =
+        # the min offset, anchoring the earliest post-t* request at
+        # profiling-time 0 so the lane bursts at once.
+        if self._burst_phase_starts:
             t0_offset_ms = (
                 min(s.next_dispatch_offset_ms for s in dispatchable)
                 if dispatchable
                 else 0.0
             )
+        else:
+            t0_offset_ms = 0.0
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)

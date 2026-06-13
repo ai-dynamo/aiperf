@@ -278,9 +278,9 @@ async def test_warmup_warms_every_active_session_including_gated_parent():
 
 
 @pytest.mark.asyncio
-async def test_warmup_spreads_globally_aligned_on_t_star_when_flagged(monkeypatch):
-    """PRESERVE_WARMUP_REQUEST_GAPS aligns warmup GLOBALLY across trajectories
-    so every trajectory's t* lands at the same instant.
+async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
+    """By default (spread), warmup aligns GLOBALLY across trajectories so every
+    trajectory's t* lands at the same instant.
 
     Three trajectories, each one mid-flight root whose warmup request fired a
     different lead before its own t*: 5s, 15s, 10s. The furthest-before-t*
@@ -288,9 +288,6 @@ async def test_warmup_spreads_globally_aligned_on_t_star_when_flagged(monkeypatc
     10s later -- dispatch offset = max_lead(15s) - lead. Total spread = 10s
     (15s - 5s). This is the exact example from the design discussion.
     """
-    from aiperf.common.environment import Environment
-
-    monkeypatch.setattr(Environment.TIMING, "PRESERVE_WARMUP_REQUEST_GAPS", True)
 
     # (conversation_id, x_corr, t*, warm_ts) -> lead = t* - warm_ts.
     lanes = [
@@ -626,6 +623,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
         lifecycle=MagicMock(),
         branch_orchestrator=branch_orchestrator,
     )
+    strategy._burst_phase_starts = True  # exercise the burst (T0-normalize) path
 
     await strategy.setup_phase()
     await strategy.execute_phase()
@@ -654,9 +652,10 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
 
 
 @pytest.mark.asyncio
-async def test_profiling_normalizes_offsets_first_request_fires_at_zero():
-    """Profiling anchors the trajectory's earliest post-t* request at time 0
-    and preserves every other request's recorded relative offset.
+async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
+    """With --burst-phase-starts, profiling anchors the trajectory's earliest
+    post-t* request at time 0 and preserves every other request's recorded
+    relative offset.
 
     Two pending-start subagent chains spawn after t* under a gated parent.
     The earlier one (offset 20s from t*) fires immediately; the later one
@@ -764,6 +763,7 @@ async def test_profiling_normalizes_offsets_first_request_fires_at_zero():
         lifecycle=MagicMock(),
         branch_orchestrator=branch_orchestrator,
     )
+    strategy._burst_phase_starts = True  # exercise the burst (T0-normalize) path
 
     await strategy.setup_phase()
     await strategy.execute_phase()
@@ -783,17 +783,13 @@ async def test_profiling_normalizes_offsets_first_request_fires_at_zero():
 
 
 @pytest.mark.asyncio
-async def test_profiling_preserve_start_gap_delays_first_request(monkeypatch):
-    """With PRESERVE_TRAJECTORY_START_GAP, the trajectory's first post-t*
-    request waits out its recorded offset from t* instead of firing at 0.
+async def test_profiling_preserve_start_gap_delays_first_request_by_default():
+    """By default (spread), a trajectory's first post-t* request waits out its
+    recorded offset from t* instead of firing at 0.
 
-    A lone root resuming 8s after t* fires immediately under the default
-    (T0 collapses the leading gap) but is scheduled 8s out when the flag is
-    set -- the leading idle gap is preserved.
+    A lone root resuming 8s after t* is scheduled 8s out -- the leading idle
+    gap is preserved. (--burst-phase-starts would collapse it to fire at 0.)
     """
-    from aiperf.common.environment import Environment
-
-    monkeypatch.setattr(Environment.TIMING, "PRESERVE_TRAJECTORY_START_GAP", True)
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -951,6 +947,7 @@ async def test_profiling_gated_parent_not_dispatched_child_profiles():
         lifecycle=MagicMock(),
         branch_orchestrator=branch_orchestrator,
     )
+    strategy._burst_phase_starts = True  # exercise the burst (T0-normalize) path
 
     await strategy.setup_phase()
     await strategy.execute_phase()
@@ -1727,6 +1724,9 @@ async def test_warmup_marks_sending_complete():
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories
     )
+    # The strategy's belt-and-suspenders mark only fires in burst mode; in the
+    # default spread mode the count path / runner finalize sending instead.
+    strategy._burst_phase_starts = True
     strategy.lifecycle.is_sending_complete = False
     await strategy.setup_phase()
     await strategy.execute_phase()
@@ -1756,6 +1756,8 @@ async def test_warmup_marks_sending_complete_after_dispatch():
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories, issuer=issuer
     )
+    # Belt-and-suspenders mark only fires in burst mode (see sibling test).
+    strategy._burst_phase_starts = True
     strategy.lifecycle.is_sending_complete = False
 
     def record_mark() -> None:
@@ -1792,6 +1794,9 @@ async def test_warmup_skips_mark_sending_complete_when_already_complete():
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories
     )
+    # Burst mode is where the strategy would otherwise call mark; the guard
+    # must still suppress it when the count path already completed sending.
+    strategy._burst_phase_starts = True
     # Simulate the count-based path having already won the race.
     strategy.lifecycle.is_sending_complete = True
 
