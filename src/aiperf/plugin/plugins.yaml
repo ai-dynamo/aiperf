@@ -237,6 +237,21 @@ endpoint:
       supports_audio: true
       metrics_title: LLM Metrics
 
+  messages:
+    class: aiperf.endpoints.anthropic_messages:MessagesEndpoint
+    description: |
+      Anthropic Messages API endpoint. Supports text and image inputs and both
+      streaming and non-streaming responses. The shared system prompt lives in
+      the top-level system field and per-request max_tokens is required. Uses
+      /v1/messages path.
+    metadata:
+      endpoint_path: /v1/messages
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_images: true
+      metrics_title: LLM Metrics
+
   chat_embeddings:
     class: aiperf.endpoints.chat_embeddings:ChatEmbeddingsEndpoint
     description: |
