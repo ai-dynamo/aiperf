@@ -383,6 +383,7 @@
   <section class="card" id="tput-card">
     <div class="card-head">
       <span class="title">Throughput — prefill · decode · total, tokens/sec</span>
+      <div class="ctrls" id="tput-ctrls"></div>
       <div class="legend" id="tput-legend"></div>
     </div>
     <div class="vresize" id="tput-wrap" style="height:132px"><canvas id="tput"></canvas></div>
@@ -1099,18 +1100,42 @@ let TPUT_H = 132;
 const TPUT_PAD_T = 14, TPUT_PAD_B = 20;
 const TPUT_PREFILL = "#56c8dd", TPUT_DECODE = "#82d472", TPUT_TOTAL = "#f2a64e";
 let tputYMax = (DATA.peakTput || 0) * 1.12 || 1;
-const tputY = (v) => TPUT_H - TPUT_PAD_B - (v / tputYMax) * (TPUT_H - TPUT_PAD_T - TPUT_PAD_B);
+let tputLog = false;
+const tputVis = { total: true, prefill: true, decode: true };
+const tputSeries = [
+  ["total", DATA.totalTput, TPUT_TOTAL, true],
+  ["prefill", DATA.prefillTput, TPUT_PREFILL, false],
+  ["decode", DATA.decodeTput, TPUT_DECODE, false],
+];
+const tputY = (v) => {
+  const top = TPUT_PAD_T, bot = TPUT_H - TPUT_PAD_B;
+  if (tputLog) {
+    const lm = Math.log10(tputYMax + 1) || 1;
+    return bot - (Math.log10(Math.max(0, v) + 1) / lm) * (bot - top);
+  }
+  return bot - (v / tputYMax) * (bot - top);
+};
 
 function drawThroughput() {
   const ctx = tputCtx;
   ctx.clearRect(0, 0, W, TPUT_H);
-  tputYMax = Math.max(visMax(DATA.totalTput.t, DATA.totalTput.v) * 1.12, 1); // autoscale to view
+  // autoscale to the max of the visible series within the view
+  tputYMax = 1;
+  for (const [key, data] of tputSeries)
+    if (tputVis[key]) tputYMax = Math.max(tputYMax, visMax(data.t, data.v));
+  tputYMax *= 1.12;
 
-  // y gridlines + tokens/sec labels
+  // y gridlines + tokens/sec labels (decades in log mode, else nice linear step)
   ctx.font = "12px 'IBM Plex Mono', monospace";
   ctx.textBaseline = "middle";
-  const ystep = niceStep(tputYMax);
-  for (let v = 0; v <= tputYMax; v += ystep) {
+  const gridVals = [];
+  if (tputLog) {
+    for (let d = 1; d <= tputYMax; d *= 10) gridVals.push(d);
+  } else {
+    const ystep = niceStep(tputYMax);
+    for (let v = 0; v <= tputYMax; v += ystep) gridVals.push(v);
+  }
+  for (const v of gridVals) {
     const y = Math.round(tputY(v)) + 0.5;
     ctx.strokeStyle = "rgba(255,255,255,0.05)";
     ctx.beginPath(); ctx.moveTo(GUTTER, y); ctx.lineTo(W, y); ctx.stroke();
@@ -1127,25 +1152,20 @@ function drawThroughput() {
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, TPUT_H - TPUT_PAD_B); ctx.stroke();
   }
 
-  // total: area + line (most prominent)
-  if (DATA.totalTput.t.length) {
-    stepPathV(ctx, DATA.totalTput.t, DATA.totalTput.v, tputY, true);
-    const grad = ctx.createLinearGradient(0, TPUT_PAD_T, 0, TPUT_H - TPUT_PAD_B);
-    grad.addColorStop(0, "rgba(242,166,78,0.26)");
-    grad.addColorStop(1, "rgba(242,166,78,0.04)");
-    ctx.fillStyle = grad;
-    ctx.fill();
-    stepPathV(ctx, DATA.totalTput.t, DATA.totalTput.v, tputY, false);
-    ctx.strokeStyle = TPUT_TOTAL;
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-  }
-  // prefill + decode: lines only, overlaid on the same axis
-  for (const [series, color] of [[DATA.prefillTput, TPUT_PREFILL], [DATA.decodeTput, TPUT_DECODE]]) {
-    if (!series.t.length) continue;
-    stepPathV(ctx, series.t, series.v, tputY, false);
+  // series: total as area+line, prefill/decode as lines; only when visible
+  for (const [key, data, color, fill] of tputSeries) {
+    if (!tputVis[key] || !data.t.length) continue;
+    if (fill) {
+      stepPathV(ctx, data.t, data.v, tputY, true);
+      const grad = ctx.createLinearGradient(0, TPUT_PAD_T, 0, TPUT_H - TPUT_PAD_B);
+      grad.addColorStop(0, "rgba(242,166,78,0.26)");
+      grad.addColorStop(1, "rgba(242,166,78,0.04)");
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+    stepPathV(ctx, data.t, data.v, tputY, false);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = fill ? 1.2 : 1.1;
     ctx.stroke();
   }
 
@@ -1171,12 +1191,31 @@ function drawThroughput() {
   ]);
 }
 
-/* ---------- legend for throughput chart ---------- */
-document.getElementById("tput-legend").innerHTML = [
-  `<span class="key"><span class="swatch" style="background:${TPUT_TOTAL}"></span>total (peak ${fmtTokens(DATA.peakTput || 0)} tok/s)</span>`,
-  `<span class="key"><span class="swatch" style="background:${TPUT_PREFILL}"></span>prefill</span>`,
-  `<span class="key"><span class="swatch" style="background:${TPUT_DECODE}"></span>decode</span>`,
-].join("");
+/* ---------- legend + controls for throughput chart ---------- */
+document.getElementById("tput-ctrls").innerHTML =
+  `<button class="ctrl" id="tput-log" title="toggle log y-axis">log y</button>`;
+document.getElementById("tput-log").addEventListener("click", (e) => {
+  tputLog = !tputLog;
+  e.currentTarget.classList.toggle("on", tputLog);
+  scheduleDraw();
+});
+{
+  const leg = document.getElementById("tput-legend");
+  const items = [
+    ["total", `total (peak ${fmtTokens(DATA.peakTput || 0)} tok/s)`, TPUT_TOTAL],
+    ["prefill", "prefill", TPUT_PREFILL],
+    ["decode", "decode", TPUT_DECODE],
+  ];
+  leg.innerHTML = items
+    .map(([key, lbl, col]) => `<span class="key clk" data-s="${key}"><span class="swatch" style="background:${col}"></span>${lbl}</span>`)
+    .join("");
+  leg.querySelectorAll("[data-s]").forEach((k) =>
+    k.addEventListener("click", () => {
+      tputVis[k.dataset.s] = !tputVis[k.dataset.s];
+      k.classList.toggle("off", !tputVis[k.dataset.s]);
+      scheduleDraw();
+    }));
+}
 
 /* ---------- render loop ---------- */
 let drawQueued = false;
