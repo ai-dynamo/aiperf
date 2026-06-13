@@ -86,3 +86,31 @@ def test_threshold_is_strict_less_than():
 
 def test_empty_chain_is_not_aux():
     assert is_aux_chain([], MAIN_PEAK, **PARAMS) is False
+
+
+def test_cross_model_singleton_is_aux_regardless_of_size():
+    # a one-shot on a different model than the main agent is a tool sidecar
+    # (Haiku WebFetch under an Opus agent), even with a large fetched payload
+    big = _chain(200_000)  # one request, model "m", ISL far above the floor
+    assert is_aux_chain(big, MAIN_PEAK, main_model="m", **PARAMS) is False
+    assert is_aux_chain(big, MAIN_PEAK, main_model="opus", **PARAMS) is True
+
+
+def test_cross_model_arm_can_be_disabled():
+    big = _chain(200_000)
+    assert (
+        is_aux_chain(big, MAIN_PEAK, main_model="opus", cross_model=False, **PARAMS)
+        is False
+    )
+
+
+def test_cross_model_only_reclassifies_short_chains():
+    # a multi-request cross-model chain is a genuine cross-model agent (e.g. a
+    # Haiku Explore subagent looping), not a one-shot sidecar
+    multi = _chain(200_000, 200_000)  # 2 requests > max_requests=1
+    assert is_aux_chain(multi, MAIN_PEAK, main_model="opus", **PARAMS) is False
+
+
+def test_no_main_model_skips_cross_model_arm():
+    # without a main_model reference the cross-model arm is inert (size only)
+    assert is_aux_chain(_chain(200_000), MAIN_PEAK, **PARAMS) is False

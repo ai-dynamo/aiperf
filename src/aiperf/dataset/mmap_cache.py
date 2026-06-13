@@ -75,6 +75,11 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v15: aux classification gained a cross-model arm -- a one-shot worker
+    # chain on a different model than its enclosing main chain (e.g. a Haiku
+    # WebFetch summary under an Opus agent) is now a sidecar regardless of
+    # payload size, so large cross-model singletons move ::fa: -> ::aux: (and
+    # :fa: -> :aux: under subagents). Gated by WEKA_AUX_CROSS_MODEL.
     # v14: subagent nested-LCP overflow session ids restructured to match the
     # top-level vocabulary -- the agent marker is renamed and separated
     # (:cNNN -> :fa:NNN) and short, small-fresh-context overflow splits off as
@@ -97,7 +102,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    14
+    15
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -554,6 +559,7 @@ def _settings_payload_from_user_config(
         "weka_aux_max_requests": Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
         "weka_aux_isl_ratio": Environment.DATASET.WEKA_AUX_ISL_RATIO,
         "weka_aux_isl_floor": Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+        "weka_aux_cross_model": Environment.DATASET.WEKA_AUX_CROSS_MODEL,
         "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,

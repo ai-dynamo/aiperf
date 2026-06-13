@@ -490,6 +490,24 @@ def test_small_fresh_context_singletons_emit_aux_session_ids(tmp_path, monkeypat
     assert not any(sid.startswith("sc::fa:") for sid in convs), sorted(convs)
 
 
+def test_cross_model_large_singleton_emits_aux_sidecar(tmp_path, monkeypatch):
+    # A large one-shot on a DIFFERENT model than the main chain is a tool
+    # sidecar (a Haiku WebFetch summary under an Opus agent) -> ::aux: even
+    # though its fetched-page payload is far above the ISL floor.
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
+    reqs = [
+        _row(t=0.0, hash_ids=[1, 2, 3]),  # main chain, model "m"
+        _row(
+            t=1.0, hash_ids=[50], in_len=200_000, model="hk"
+        ),  # cross-model big one-shot
+        _row(t=2.0, hash_ids=[1, 2, 3, 4]),  # main continues
+    ]
+    p = _write_trace(tmp_path / "xm.json", trace_id="xm", requests=reqs)
+    convs = _convs_by_sid(_loader_for(p))
+    assert "xm::aux:000" in convs, sorted(convs)
+    assert not any(sid.startswith("xm::fa:") for sid in convs), sorted(convs)
+
+
 # ---------------------------------------------------------------------------
 # 10. Determinism: two identical loads produce identical session ids, turn
 #     counts, branch shapes, timestamps, and reset_context flags.
