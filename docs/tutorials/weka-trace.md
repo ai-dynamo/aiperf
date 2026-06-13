@@ -216,6 +216,15 @@ The loader detects these hidden agents from `hash_ids` longest-common-prefix (LC
 - **Join seam**: a request that keeps only a prefix of a tail (compaction / context edit) is the same agent's continuation **iff** the longer state is never touched again — otherwise:
 - **Spawn**: the request is a separate agent forked from the shared prefix and becomes a child conversation (session id `<trace_id>::fa:NNN`) linked with SPAWN/SPAWN_JOIN like a proper subagent.
 
+### Nested Detection Inside Subagents
+
+The same detection runs **nested** on every `type: "subagent"` entry's inner requests, because real captures flatten fan-outs inside subagents too (on the 060826 corpus, 615 subagent entries hide ~3.1k distinct context chains — mostly one-shot disjoint utility calls, plus genuine parallel forks and compaction seams). Per entry:
+
+- The chain containing the subagent's first retained request keeps the `<trace_id>::sa:<agent_id>` session id and the entry's declared `tool_tokens`/`system_tokens`.
+- Every spawned inner chain becomes a sibling child `<trace_id>::sa:<agent_id>:c000`, `:c001`, ... under the subagent's existing SPAWN branch, sharing its SPAWN_JOIN anchor. A spawned chain inherits the declared tool/system prefix only when its first request provably starts with the same declared-prefix blocks as the main chain (the system role is never fabricated).
+- Each chain child **dispatches at its recorded offset from the spawn** (chain start offsets reach minutes on real corpora; the branch orchestrator sleeps them out — see [DAG Benchmarking](../benchmark-modes/dag.md)). Recorded parallelism is preserved structurally: a chain can never contain two temporally overlapping requests, so concurrent recorded requests always land in separate sibling sessions.
+- Inner requests without `hash_ids` carry no LCP evidence and ride the main chain in time order — a fully evidence-less subagent is exactly one sequential child.
+
 ```mermaid
 flowchart LR
     subgraph recorded [Recorded flat stream]
@@ -235,7 +244,7 @@ Details worth knowing:
 - **One hash namespace per trace file.** `hash_id_scope: "local"` is enforced for everything in a file — root, subagent children, and detected chains share one decode scope, so the same `hash_id` yields identical tokens everywhere and the server observes the genuine shared prefixes. The theoretical prefix-cache metric uses one shared per-trace seen-set in global time order for the same reason.
 - **Setup prefix ("keep the longer one").** The latest captures declare `tool_tokens: 0` / `system_tokens: 0`, so the system-segment boundary is derived empirically per namespace group (the LCP over member chains' first requests) and the longer of declared vs observed wins. Every turn 0 in a group places the system|user boundary at the same block offset, which keeps rendered prompts byte-shared across conversations.
 - **Same-model rule.** A chain is only ever continued by requests of the same model; cross-model attachment is always a spawn (a Haiku worker reading Opus context is a different agent).
-- **Escape hatch.** `AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false` restores the legacy single-stream chaining.
+- **Escape hatch.** `AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false` disables detection at **both** layers: all top-level requests serialize into one root conversation, and each subagent entry emits exactly one child with its inner requests in time order.
 
 Log lines to look for: per trace `detected N agents (...)`, the corpus summary `flattened-agent detection split N trace(s) into M extra agent chain(s) (...)`, and per-chain fork detail (true fork parent and depth) at DEBUG.
 
