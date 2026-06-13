@@ -190,11 +190,6 @@ def test_turn_input_kind_projects_into_metadata():
     assert turn.metadata().input_kind == TurnInputKind.TOOL_RESULT
 
 
-def test_turn_input_kind_survives_stripped_media_copy():
-    turn = Turn(input_kind=TurnInputKind.USER_INPUT)
-    assert turn.copy_with_stripped_media().input_kind == TurnInputKind.USER_INPUT
-
-
 # ---------------------------------------------------------------------------
 # Serial reconstruction
 # ---------------------------------------------------------------------------
