@@ -204,7 +204,7 @@
 
   #nav-card .card-head { border-bottom: none; border-top: 1px solid var(--hairline); }
   #nav { display: block; width: 100%; height: 100%; cursor: crosshair; }
-  #isl, #tput, #kv { display: block; width: 100%; height: 100%; }
+  #isl, #tput, #kv, #lat { display: block; width: 100%; height: 100%; }
   .vresize { overflow: hidden; resize: vertical; min-height: 64px; max-height: 70vh; }
   .vresize::-webkit-resizer { background: linear-gradient(135deg, transparent 45%, var(--ink-mute) 45%, var(--ink-mute) 55%, transparent 55%); }
   #boxsel {
@@ -424,6 +424,14 @@
       <div class="legend" id="kv-legend"></div>
     </div>
     <div class="vresize" id="kv-wrap" style="height:120px"><canvas id="kv"></canvas></div>
+  </section>
+
+  <section class="card" id="lat-card">
+    <div class="card-head">
+      <span class="title">TTFT latency — p50 / p99 over time</span>
+      <div class="legend" id="lat-legend"></div>
+    </div>
+    <div class="vresize" id="lat-wrap" style="height:120px"><canvas id="lat"></canvas></div>
   </section>
 
   <section class="card" id="nav-card">
@@ -678,6 +686,7 @@ const navCv = document.getElementById("nav");
 const islCv = document.getElementById("isl");
 const tputCv = document.getElementById("tput");
 const kvCv = document.getElementById("kv");
+const latCv = document.getElementById("lat");
 const wrap = document.getElementById("lanes-wrap");
 // Base (default/minimum) lane height; lanes grow above this when the user
 // resizes the panel taller than the stacked lanes, and stay at base (panel
@@ -705,7 +714,7 @@ function slotOfRow(row) {
   }
   return lo;
 }
-let lanesCtx, rulerCtx, navCtx, islCtx, tputCtx, kvCtx, W;
+let lanesCtx, rulerCtx, navCtx, islCtx, tputCtx, kvCtx, latCtx, W;
 
 function layout() {
   W = document.getElementById("timeline-card").clientWidth;
@@ -727,6 +736,8 @@ function sizeCharts() {
   TPUT_H = tputCv.clientHeight;
   kvCtx = sizeCanvasFill(kvCv);
   KV_H = kvCv.clientHeight;
+  latCtx = sizeCanvasFill(latCv);
+  LAT_H = latCv.clientHeight;
 }
 
 const xOf = (t) => GUTTER + ((t - view.t0) / (view.t1 - view.t0)) * (W - GUTTER);
@@ -1383,6 +1394,83 @@ function drawKvCache() {
 document.getElementById("kv-legend").innerHTML =
   `<span class="key"><span class="swatch" style="background:${KV_COLOR}"></span>tokens in flight (peak ${fmtTokens(DATA.peakKv || 0)} tok)</span>`;
 
+/* ---------- TTFT latency band (p50/p99 over time) ---------- */
+let LAT_H = 120;
+const LAT_PAD_T = 14, LAT_PAD_B = 20, LAT_P99 = "#ef76b2", LAT_P50 = "#f5b942";
+let latYMax = (DATA.peakLat || 0) * 1.12 || 1;
+const latY = (v) => LAT_H - LAT_PAD_B - (v / latYMax) * (LAT_H - LAT_PAD_T - LAT_PAD_B);
+const fmtLatAxis = (v) => (v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + "s" : Math.round(v) + "ms");
+
+function drawLatency() {
+  const ctx = latCtx;
+  ctx.clearRect(0, 0, W, LAT_H);
+  const B = DATA.latencyBand;
+  let mx = 1;
+  for (let i = 0; i < B.t.length; i++)
+    if (B.t[i] >= view.t0 && B.t[i] <= view.t1) mx = Math.max(mx, B.p99[i]);
+  latYMax = mx * 1.12;
+
+  ctx.font = "12px 'IBM Plex Mono', monospace";
+  ctx.textBaseline = "middle";
+  for (let v = 0; v <= latYMax; v += niceStep(latYMax)) {
+    const y = Math.round(latY(v)) + 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath(); ctx.moveTo(GUTTER, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.fillStyle = "rgba(186,196,212,0.95)";
+    ctx.textAlign = "right";
+    ctx.fillText(fmtLatAxis(v), GUTTER - 8, y);
+  }
+  ctx.textAlign = "left";
+
+  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+  for (const [t] of ticks()) {
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, LAT_H - LAT_PAD_B); ctx.stroke();
+  }
+
+  if (B.t.length) {
+    // shaded band between p50 and p99
+    ctx.beginPath();
+    ctx.moveTo(xOf(B.t[0]), latY(B.p99[0]));
+    for (let i = 1; i < B.t.length; i++) ctx.lineTo(xOf(B.t[i]), latY(B.p99[i]));
+    for (let i = B.t.length - 1; i >= 0; i--) ctx.lineTo(xOf(B.t[i]), latY(B.p50[i]));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(239,118,178,0.15)";
+    ctx.fill();
+    for (const [arr, col] of [[B.p99, LAT_P99], [B.p50, LAT_P50]]) {
+      ctx.beginPath();
+      ctx.moveTo(xOf(B.t[0]), latY(arr[0]));
+      for (let i = 1; i < B.t.length; i++) ctx.lineTo(xOf(B.t[i]), latY(arr[i]));
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+    }
+  }
+
+  for (const [t, color] of [[DATA.rampS, "#f5b942"], [DATA.benchEnd, "#ef6a6a"]]) {
+    if (t == null || t < view.t0 || t > view.t1) continue;
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(x, LAT_PAD_T); ctx.lineTo(x, LAT_H - LAT_PAD_B); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.fillStyle = "rgba(186,196,212,0.95)";
+  for (const [t, step] of ticks())
+    ctx.fillText(fmtTick(t, step), Math.round(xOf(t)) + 3, LAT_H - 8);
+
+  drawCrosshair(ctx, xOf, LAT_PAD_T, LAT_H - LAT_PAD_B, [
+    ["p99 " + fmtMs(valAt(B.t, B.p99, hoverT)), LAT_P99],
+    ["p50 " + fmtMs(valAt(B.t, B.p50, hoverT)), LAT_P50],
+  ]);
+}
+
+document.getElementById("lat-legend").innerHTML = [
+  `<span class="key"><span class="swatch" style="background:${LAT_P99}"></span>p99 TTFT (peak ${fmtLatAxis(DATA.peakLat || 0)})</span>`,
+  `<span class="key"><span class="swatch" style="background:${LAT_P50}"></span>p50 TTFT</span>`,
+].join("");
+
 /* ---------- render loop ---------- */
 let drawQueued = false;
 function scheduleDraw() {
@@ -1396,6 +1484,7 @@ function scheduleDraw() {
     drawNewIsl();
     drawThroughput();
     drawKvCache();
+    drawLatency();
     drawNav();
     syncHash();
   });
@@ -1686,6 +1775,7 @@ function attachTimePanZoom(cv) {
 attachTimePanZoom(islCv);
 attachTimePanZoom(tputCv);
 attachTimePanZoom(kvCv);
+attachTimePanZoom(latCv);
 
 /* ---------- interactions: navigator ---------- */
 let navDrag = null;
@@ -1844,6 +1934,7 @@ if (window.ResizeObserver) {
   ro.observe(document.getElementById("isl-wrap"));
   ro.observe(document.getElementById("tput-wrap"));
   ro.observe(document.getElementById("kv-wrap"));
+  ro.observe(document.getElementById("lat-wrap"));
 }
 restoreHash();
 layout();
