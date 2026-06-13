@@ -531,6 +531,52 @@ def _tokens_in_flight_curve(
     return ts, np.maximum(vals, 0.0)
 
 
+def _latency_band(
+    sessions: dict[str, list[dict]], t0_ns: float, n_bins: int = 240
+) -> tuple[list[float], list[float], list[float]]:
+    """p50 / p99 TTFT (ms) over time bins keyed by request start.
+
+    Bins the run into ``n_bins`` equal time slices and reports the median and
+    99th-percentile TTFT of requests starting in each non-empty bin, so a
+    shaded band shows latency drift as load ramps. Returns (centers_s, p50, p99)
+    for non-empty bins only.
+    """
+    starts: list[float] = []
+    ttfts: list[float] = []
+    for turns in sessions.values():
+        for r in turns:
+            ttft = _metric_value(r, "time_to_first_token")
+            if ttft is None:
+                continue
+            starts.append((r["metadata"]["request_start_ns"] - t0_ns) / NANOS_PER_SECOND)
+            ttfts.append(ttft)
+    if not starts:
+        return [], [], []
+    starts_a = np.array(starts, dtype=np.float64)
+    ttfts_a = np.array(ttfts, dtype=np.float64)
+    t_max = float(starts_a.max())
+    if t_max <= 0:
+        return (
+            [0.0],
+            [round(float(np.percentile(ttfts_a, 50)), 1)],
+            [round(float(np.percentile(ttfts_a, 99)), 1)],
+        )
+    edges = np.linspace(0.0, t_max, n_bins + 1)
+    idx = np.clip(np.searchsorted(edges, starts_a, side="right") - 1, 0, n_bins - 1)
+    centers: list[float] = []
+    p50: list[float] = []
+    p99: list[float] = []
+    for b in range(n_bins):
+        mask = idx == b
+        if not mask.any():
+            continue
+        vals = ttfts_a[mask]
+        centers.append(round(float((edges[b] + edges[b + 1]) / 2.0), 3))
+        p50.append(round(float(np.percentile(vals, 50)), 1))
+        p99.append(round(float(np.percentile(vals, 99)), 1))
+    return centers, p50, p99
+
+
 def plot_swim_lane(
     run_dir: Path,
     out: Path | None = None,
@@ -947,6 +993,7 @@ def write_swim_lane_html(
         sessions, t0_ns
     )
     kv_ts, kv_vals = _tokens_in_flight_curve(sessions, t0_ns)
+    lat_t, lat_p50, lat_p99 = _latency_band(sessions, t0_ns)
 
     session_payload = []
     for ci, g in enumerate(groups):
@@ -1052,6 +1099,8 @@ def write_swim_lane_html(
             "t": np.round(kv_ts, 3).tolist(),
             "v": np.round(kv_vals).astype(int).tolist(),
         },
+        "peakLat": max(lat_p99) if lat_p99 else 0,
+        "latencyBand": {"t": lat_t, "p50": lat_p50, "p99": lat_p99},
     }
     # "</" cannot appear inside the inline <script> payload.
     payload_js = orjson.dumps(payload).decode().replace("</", "<\\/")
