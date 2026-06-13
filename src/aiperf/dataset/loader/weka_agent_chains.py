@@ -125,6 +125,38 @@ class ChainDetectionResult:
     """Requests with empty hash_ids kept on the main chain as-is."""
 
 
+def is_aux_chain(
+    chain: AgentChain,
+    main_peak_isl: int,
+    *,
+    max_requests: int,
+    isl_ratio: float,
+    isl_floor: int,
+) -> bool:
+    """Classify a detected worker chain as an auxiliary one-shot call.
+
+    A flattened-agent worker chain is reclassified as *auxiliary* -- a sidecar
+    (``::aux:``) rather than a genuine agent (``::fa:``) -- when it is short and
+    starts from a small, fresh context. That is the signature of a tool-issued
+    one-shot (web fetch / search summary, title generation, a classifier) that
+    rides alongside the main agent for a single call, not a sustained sub-agent:
+    it carries far less input context than the main conversation and never
+    continues.
+
+    Returns ``True`` iff the chain holds at most ``max_requests`` requests and
+    its first request's input length is below ``max(isl_floor, isl_ratio *
+    main_peak_isl)`` -- small both absolutely and relative to the conversation's
+    own peak context. ``main_peak_isl`` is the largest input length on the
+    trace's main chain. Set ``max_requests=0`` to disable reclassification
+    entirely (every worker chain stays ``::fa:``).
+    """
+    reqs = chain.requests
+    if not reqs or len(reqs) > max_requests:
+        return False
+    threshold = max(isl_floor, int(isl_ratio * main_peak_isl))
+    return reqs[0][1].input_length < threshold
+
+
 @dataclass(slots=True)
 class _Phase1State:
     """Working state for the greedy forward pass."""

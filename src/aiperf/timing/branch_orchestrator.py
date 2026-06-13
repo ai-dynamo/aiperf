@@ -907,7 +907,7 @@ class BranchOrchestrator:
         for child_id in branch.child_conversation_ids:
             try:
                 meta = self._cs.get_metadata(child_id)
-            except Exception:  # noqa: BLE001 - missing metadata = no timing evidence
+            except Exception:  # noqa: BLE001,S112 - missing metadata = no timing evidence
                 continue
             ts = _turn0_timestamp_ms(meta)
             if ts is not None:

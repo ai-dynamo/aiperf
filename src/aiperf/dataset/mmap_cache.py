@@ -75,6 +75,11 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v13: flattened-agent worker chains that are short, small-fresh-context
+    # one-shot calls are reclassified ::fa: -> ::aux: (auxiliary sidecars), so
+    # those child session ids changed (::fa:{NNN} -> ::aux:{NNN}). Governed by
+    # WEKA_AUX_MAX_REQUESTS / WEKA_AUX_ISL_RATIO / WEKA_AUX_ISL_FLOOR (also in
+    # the cache key, so tuning them re-keys without a version bump).
     # v12: weka subagent inner requests split by nested LCP chain detection
     # instead of time-interval stream packing -- child session ids changed
     # (::sa:{agent_id} main chain + :c{NNN} spawned chains replace the
@@ -87,7 +92,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    12
+    13
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -541,6 +546,9 @@ def _settings_payload_from_user_config(
         "weka_split_flattened_agents": (
             Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
         ),
+        "weka_aux_max_requests": Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
+        "weka_aux_isl_ratio": Environment.DATASET.WEKA_AUX_ISL_RATIO,
+        "weka_aux_isl_floor": Environment.DATASET.WEKA_AUX_ISL_FLOOR,
         "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,

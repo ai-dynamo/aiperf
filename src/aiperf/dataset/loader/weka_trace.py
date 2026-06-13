@@ -332,11 +332,11 @@ def _expand_subagent_to_child_plans(
             child_sid = f"{trace_id}::sa:{entry.agent_id}:c{chain_idx - 1:03d}"
             first_hash = next((r.hash_ids for r in chain_requests if r.hash_ids), [])
             init_tool, init_system = _chain_init_tokens(
-                entry.tool_tokens,
-                entry.system_tokens,
-                block_size,
-                main_first_hash,
-                first_hash,
+                tool_tokens=entry.tool_tokens,
+                system_tokens=entry.system_tokens,
+                block_size=block_size,
+                base_first_hash=main_first_hash,
+                chain_first_hash=first_hash,
             )
         plans.append(
             _ChildPlan(
@@ -372,6 +372,9 @@ class _FlatChainPlan:
     fork_parent_chain: int | None
     fork_depth: int
     block_size: int
+    is_aux: bool = False
+    """True when the chain is an auxiliary one-shot sidecar (emitted as
+    ``::aux:`` rather than ``::fa:``). See :func:`weka_agent_chains.is_aux_chain`."""
 
 
 def _flat_chain_end_seconds(fp: _FlatChainPlan) -> float:
@@ -385,6 +388,7 @@ class _SplitStats:
 
     traces_split: int = 0
     total_chains: int = 0
+    total_aux: int = 0
     total_seams: int = 0
     total_empty_hash: int = 0
 
@@ -474,6 +478,7 @@ def _child_plans_for_active_subagents(
 
 
 def _chain_init_tokens(
+    *,
     tool_tokens: int,
     system_tokens: int,
     block_size: int,
@@ -1017,7 +1022,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         ``flat_plans`` and returns the (possibly reduced) main-chain normals.
         Worker turn-0 tool/system attribution: see :func:`_chain_init_tokens`.
         """
-        from aiperf.dataset.loader.weka_agent_chains import detect_agent_chains
+        from aiperf.dataset.loader.weka_agent_chains import (
+            detect_agent_chains,
+            is_aux_chain,
+        )
 
         # Set aside leading title-generation / one-shot preamble requests so
         # they don't hijack main_index (earliest request) and skew the
@@ -1032,26 +1040,39 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         if not detection.worker_indices:
             return normals
 
+        main_chain = detection.chains[detection.main_index]
         main_first_hash = next(
-            (
-                req.hash_ids
-                for _, req in detection.chains[detection.main_index].requests
-                if req.hash_ids
-            ),
+            (req.hash_ids for _, req in main_chain.requests if req.hash_ids),
             [],
         )
+        # Largest input length on the main chain, i.e. the conversation's own
+        # peak accumulated context -- the yardstick a worker chain's first
+        # request is measured against when deciding agent (::fa:) vs sidecar
+        # (::aux:); see is_aux_chain.
+        main_peak_isl = max(
+            (req.input_length for _, req in main_chain.requests), default=0
+        )
+        n_aux = 0
         for n, ci in enumerate(detection.worker_indices):
             chain = detection.chains[ci]
             init_tool, init_system = _chain_init_tokens(
-                trace.tool_tokens,
-                trace.system_tokens,
-                trace_bs,
-                main_first_hash,
-                chain.requests[0][1].hash_ids,
+                tool_tokens=trace.tool_tokens,
+                system_tokens=trace.system_tokens,
+                block_size=trace_bs,
+                base_first_hash=main_first_hash,
+                chain_first_hash=chain.requests[0][1].hash_ids,
             )
+            aux = is_aux_chain(
+                chain,
+                main_peak_isl,
+                max_requests=Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
+                isl_ratio=Environment.DATASET.WEKA_AUX_ISL_RATIO,
+                isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+            )
+            n_aux += aux
             flat_plans.append(
                 _FlatChainPlan(
-                    session_id=f"{trace_id}::fa:{n:03d}",
+                    session_id=f"{trace_id}::{'aux' if aux else 'fa'}:{n:03d}",
                     parent_trace_id=trace_id,
                     chain_index=n,
                     requests=list(chain.requests),
@@ -1060,16 +1081,19 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     fork_parent_chain=chain.fork.parent_chain if chain.fork else None,
                     fork_depth=chain.fork.depth if chain.fork else 0,
                     block_size=trace_bs,
+                    is_aux=aux,
                 )
             )
         split_stats.traces_split += 1
         split_stats.total_chains += len(detection.worker_indices)
+        split_stats.total_aux += n_aux
         split_stats.total_seams += detection.seams_merged
         split_stats.total_empty_hash += detection.unclassified_empty_hash
         _logger.info(
             f"Trace {trace_id}: detected {1 + len(detection.worker_indices)} "
             f"agents ({detection.seams_merged} seams merged, "
-            f"{len(detection.worker_indices)} spawned chains, "
+            f"{len(detection.worker_indices)} spawned chains "
+            f"[{n_aux} aux sidecars], "
             f"{detection.unclassified_empty_hash} empty-hash kept on main)"
         )
         # True-DAG fork edges live only in this log in v1 (the orchestrator

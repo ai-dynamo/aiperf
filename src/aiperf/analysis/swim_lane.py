@@ -1056,6 +1056,8 @@ def write_swim_lane_html(
             }
             if m.is_sub:
                 entry["sub"] = True
+            if "::aux:" in entry["conv"]:
+                entry["aux"] = True
             if m.sid != g.root_sid:
                 entry["root"] = g.root_sid
             session_payload.append(entry)

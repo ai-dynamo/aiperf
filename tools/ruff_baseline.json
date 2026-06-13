@@ -1224,6 +1224,11 @@
     ],
     [
       "C901",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._execute_warmup"
+    ],
+    [
+      "C901",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
