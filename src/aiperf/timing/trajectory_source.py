@@ -323,11 +323,13 @@ class TrajectorySource(ConversationSource):
     def warmup_credit_count(self) -> int:
         """Number of streams warmup will dispatch a priming request for.
 
-        One per stream that has a turn before t* (``warmup_turn_index`` is
-        not None) and is not gated on child joins. Streams whose first
-        request is at/after t* contribute nothing to warm. PhaseRunner
-        re-anchors the warmup barrier to this count, so it must match the
-        warmup dispatch loop exactly.
+        One per session active (mid-flight) at t*: any stream with a turn
+        before t* (``warmup_turn_index`` is not None), INCLUDING a parent
+        gated on a child join (it sent turn n-1 before t* and is waiting to
+        send the join turn n, so n-1 still primes that join turn's prefix).
+        Streams whose first request is at/after t* contribute nothing to
+        warm. PhaseRunner re-anchors the warmup barrier to this count, so it
+        must match the warmup dispatch loop exactly.
         """
         total = 0
         for trajectory in self.trajectories:
@@ -337,8 +339,7 @@ class TrajectorySource(ConversationSource):
                 total += sum(
                     1
                     for state in trajectory.snapshot.states
-                    if not state.waiting_on_children
-                    and state.warmup_turn_index is not None
+                    if state.warmup_turn_index is not None
                 )
         return total
 

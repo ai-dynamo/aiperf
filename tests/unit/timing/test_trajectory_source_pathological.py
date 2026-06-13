@@ -392,9 +392,11 @@ def test_branch_child_missing_metadata_is_dropped_root_survives() -> None:
 
 def test_warmup_credit_count_matches_dispatchable_states_mixed_trajectories() -> None:
     """``warmup_credit_count`` must equal one-per-snapshotless-trajectory plus
-    one-per-non-waiting snapshot state -- exactly what ``_execute_warmup``
-    iterates (agentic_replay.py:223-246). Verified against a mix of a timestamp
-    -less lane and a timestamped lane with a gated (waiting) root + ready child.
+    one-per-snapshot-state-with-a-warmup-turn -- exactly what ``_execute_warmup``
+    iterates. Every session active (mid-flight) at t* is warmed, INCLUDING a
+    gated parent (it sent turn n-1 before t* and resumes at the join turn).
+    Verified against a mix of a timestamp-less lane and a timestamped lane with
+    a gated root + ready child.
     """
     branch_id = "trace:spawn:agent_0"
     convs = [
@@ -454,11 +456,12 @@ def test_warmup_credit_count_matches_dispatchable_states_mixed_trajectories() ->
             dispatchable += 1
         else:
             dispatchable += sum(
-                1 for st in traj.snapshot.states if not st.waiting_on_children
+                1 for st in traj.snapshot.states if st.warmup_turn_index is not None
             )
     assert src.warmup_credit_count == dispatchable
-    # plain(1) + trace child(1); trace root is waiting -> not counted.
-    assert dispatchable == 2
+    # plain(1) + trace gated-root(1) + trace child(1) = 3; the gated root is
+    # now warmed too (it sent turn n-1 before t*).
+    assert dispatchable == 3
 
 
 # =============================================================================
