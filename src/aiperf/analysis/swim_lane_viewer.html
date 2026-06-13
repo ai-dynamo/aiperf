@@ -207,6 +207,15 @@
   #isl, #tput, #kv { display: block; width: 100%; height: 100%; }
   .vresize { overflow: hidden; resize: vertical; min-height: 64px; max-height: 70vh; }
   .vresize::-webkit-resizer { background: linear-gradient(135deg, transparent 45%, var(--ink-mute) 45%, var(--ink-mute) 55%, transparent 55%); }
+  #boxsel {
+    position: fixed;
+    pointer-events: none;
+    z-index: 45;
+    display: none;
+    background: rgba(245, 185, 66, 0.16);
+    border-left: 1px solid rgba(245, 185, 66, 0.7);
+    border-right: 1px solid rgba(245, 185, 66, 0.7);
+  }
 
   /* ---------- tooltip ---------- */
   #tooltip {
@@ -409,13 +418,15 @@
 <footer>
   <span><kbd>wheel</kbd> zoom at cursor</span>
   <span><kbd>drag</kbd> pan time / scroll lanes</span>
-  <span><kbd>shift</kbd>+<kbd>wheel</kbd> pan</span>
+  <span><kbd>shift</kbd>+<kbd>drag</kbd> box-zoom</span>
   <span><kbd>dblclick</kbd> fit all</span>
   <span><kbd>click</kbd> inspect session</span>
-  <span><kbd>esc</kbd> close panel</span>
+  <span><kbd>shift</kbd>+<kbd>click</kbd> pin group</span>
+  <span><kbd>esc</kbd> close / unpin</span>
 </footer>
 
 <div id="tooltip"></div>
+<div id="boxsel"></div>
 
 <aside id="detail">
   <div class="d-head">
@@ -705,6 +716,7 @@ function* ticks() {
 let hoverSeg = null;
 let selectedSession = -1;
 let hoverT = null; // wall-clock seconds under the cursor, synced across all charts
+const pinned = new Set(); // pinned group-root ids; non-pinned lanes dim when set
 const tooltip = document.getElementById("tooltip");
 
 /* ---------- draw: ruler ---------- */
@@ -762,6 +774,9 @@ function drawLanes() {
 
   const focusSi = hoverSeg && !hoverSeg.idle ? hoverSeg.si : selectedSession;
   const focusRoot = focusSi >= 0 ? sessRoot[focusSi] : null;
+  // dim everything not in the active set (pinned groups + the hovered/selected group)
+  const activeRoots = pinned.size || focusRoot !== null ? new Set(pinned) : null;
+  if (activeRoots && focusRoot !== null) activeRoots.add(focusRoot);
 
   for (let s = 0; s < N_SLOTS; s++) {
     const list = slotSegs[s];
@@ -776,7 +791,7 @@ function drawLanes() {
       const turn = seg.idle ? null : DATA.sessions[seg.si].turns[seg.ti];
       // base bar color: metric heatmap when color-by is on, else session color
       const c = !seg.idle && colorBy ? metricColor(turn) : lc;
-      const dimmed = focusRoot !== null && sessRoot[seg.si] !== focusRoot;
+      const dimmed = activeRoots !== null && !activeRoots.has(sessRoot[seg.si]);
       // idle spans the session's own rows; each parallel turn gets a
       // full-size sub-lane; subagent turns render lighter in their child tier
       const y = yBase + seg.row * ROW_H + BAR_PAD;
@@ -1404,8 +1419,42 @@ function showTooltip(ev, seg) {
 }
 const hideTooltip = () => tooltip.classList.remove("show");
 
+/* ---------- box-zoom: shift+drag a time range on any chart to zoom to it ---------- */
+const boxsel = document.getElementById("boxsel");
+let boxState = null, boxJustZoomed = false;
+function startBox(cv, ev) {
+  boxState = { cv, x0: ev.clientX };
+  boxsel.style.display = "block";
+  boxMove(ev.clientX);
+}
+function boxMove(clientX) {
+  if (!boxState) return;
+  const r = boxState.cv.getBoundingClientRect();
+  const a = Math.max(Math.min(boxState.x0, clientX), r.left + GUTTER);
+  const b = Math.min(Math.max(boxState.x0, clientX), r.right);
+  boxsel.style.left = a + "px";
+  boxsel.style.top = r.top + "px";
+  boxsel.style.width = Math.max(0, b - a) + "px";
+  boxsel.style.height = r.height + "px";
+}
+window.addEventListener("mousemove", (ev) => boxMove(ev.clientX));
+window.addEventListener("mouseup", (ev) => {
+  if (!boxState) return;
+  const r = boxState.cv.getBoundingClientRect();
+  const pa = boxState.x0 - r.left, pb = ev.clientX - r.left;
+  boxState = null;
+  boxsel.style.display = "none";
+  if (Math.abs(pa - pb) < 4) return; // too small — treat as a click
+  view.t0 = tOf(Math.min(pa, pb));
+  view.t1 = tOf(Math.max(pa, pb));
+  boxJustZoomed = true;
+  setTimeout(() => { boxJustZoomed = false; }, 0);
+  scheduleDraw();
+});
+
 let dragging = false, dragMoved = false, dragX = 0, dragY = 0;
 lanesCv.addEventListener("mousedown", (ev) => {
+  if (ev.shiftKey) { startBox(lanesCv, ev); return; }
   dragging = true; dragMoved = false; dragX = ev.clientX; dragY = ev.clientY;
   lanesCv.classList.add("dragging");
 });
@@ -1442,9 +1491,18 @@ lanesCv.addEventListener("mouseleave", () => {
   scheduleDraw();
 });
 lanesCv.addEventListener("click", (ev) => {
-  if (dragMoved) return;
+  if (dragMoved || boxJustZoomed) return;
   const rect = lanesCv.getBoundingClientRect();
   const seg = segAt(ev.clientX - rect.left, ev.clientY - rect.top);
+  if (ev.shiftKey) {
+    // shift-click pins a group (toggle); shift-click empty space clears all pins
+    if (seg) {
+      const root = sessRoot[seg.si];
+      pinned.has(root) ? pinned.delete(root) : pinned.add(root);
+    } else pinned.clear();
+    scheduleDraw();
+    return;
+  }
   if (seg) openDetail(seg.si);
   else closeDetail();
 });
@@ -1485,6 +1543,7 @@ function attachTimePanZoom(cv) {
   let panning = false, lastX = 0;
   cv.style.cursor = "grab";
   cv.addEventListener("mousedown", (ev) => {
+    if (ev.shiftKey) { startBox(cv, ev); return; }
     panning = true; lastX = ev.clientX; cv.style.cursor = "grabbing";
   });
   window.addEventListener("mouseup", () => {
@@ -1625,7 +1684,7 @@ document.getElementById("d-rows").addEventListener("click", (ev) => {
   scheduleDraw();
 });
 window.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closeDetail();
+  if (ev.key === "Escape") { closeDetail(); pinned.clear(); scheduleDraw(); }
 });
 
 /* ---------- boot ---------- */
