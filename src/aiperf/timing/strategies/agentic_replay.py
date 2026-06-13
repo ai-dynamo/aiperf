@@ -241,6 +241,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             for state in states:
                 if state.waiting_on_children:
                     continue
+                if state.is_pending_start:
+                    # First request is after t*: the server had not seen this
+                    # stream at the snapshot instant, so there is nothing to
+                    # warm. PROFILING dispatches its turn 0 at the recorded
+                    # offset (see _snapshot_continuation_after_warmup).
+                    continue
                 session = self.conversation_source.session_for_state(state)
                 self._correlation_to_lane[session.x_correlation_id] = lane
                 self._mint_marker_for_session(
@@ -551,11 +557,27 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         during WARMUP, so they remain at their gated turn. If every blocking
         child completed its terminal turn during WARMUP, the parent is
         unblocked and its gated turn becomes ready immediately.
+
+        Pending-start streams (first request after t*; see
+        ``ConversationState.is_pending_start``) were not warmed either: they
+        pass through unchanged so PROFILING dispatches their turn 0 at the
+        recorded offset, and their presence keeps the parent's join gate
+        registered in ``live_join_keys``.
         """
         snapshot = self._get_snapshot(trajectory)
         states: list[ConversationState] = []
         for state in snapshot.states:
             if state.waiting_on_children:
+                states.append(state)
+                continue
+
+            if state.is_pending_start:
+                # Skipped by warmup (first request after t*, nothing to
+                # warm): dispatch turn 0 at the recorded offset instead of
+                # advancing past it. Keeping the state here also keeps the
+                # parent's join gate waiting for it (live_join_keys below) --
+                # a single-turn pending child must hold the gate until its
+                # scheduled request completes during PROFILING.
                 states.append(state)
                 continue
 

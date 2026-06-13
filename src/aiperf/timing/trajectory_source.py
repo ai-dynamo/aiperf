@@ -52,6 +52,19 @@ class ConversationState:
     branch_id: str | None = None
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
+    @property
+    def is_pending_start(self) -> bool:
+        """True when this stream had not issued its first request at t*.
+
+        An already-spawned branch can carry children whose recorded first
+        request starts after the snapshot instant (weka subagent chain
+        children carry spawn offsets up to minutes). Such streams must not
+        be warmed (the server had not seen them at t*) and must dispatch
+        their turn 0 at the recorded offset during PROFILING instead of
+        being advanced past it by the warmup continuation.
+        """
+        return self.next_turn_index == 0 and self.next_dispatch_offset_ms > 0.0
+
 
 @dataclass(slots=True, frozen=True)
 class TrajectorySnapshot:
@@ -307,7 +320,13 @@ class TrajectorySource(ConversationSource):
 
     @property
     def warmup_credit_count(self) -> int:
-        """Number of ready snapshot conversations warmup will dispatch."""
+        """Number of ready snapshot conversations warmup will dispatch.
+
+        Excludes parents gated on child joins and pending-start streams
+        (first request after t*); both are skipped by the warmup dispatch
+        loop, and PhaseRunner re-anchors the warmup barrier to this count,
+        so the two must agree exactly.
+        """
         total = 0
         for trajectory in self.trajectories:
             if trajectory.snapshot is None:
@@ -316,7 +335,7 @@ class TrajectorySource(ConversationSource):
                 total += sum(
                     1
                     for state in trajectory.snapshot.states
-                    if not state.waiting_on_children
+                    if not state.waiting_on_children and not state.is_pending_start
                 )
         return total
 
