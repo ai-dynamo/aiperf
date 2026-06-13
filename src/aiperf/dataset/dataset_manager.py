@@ -507,6 +507,20 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "type that produces structured turns "
                 "(e.g. single_turn / multi_turn / dag_jsonl)."
             )
+        if (
+            has_payload_bytes
+            and self.user_config is not None
+            and self.user_config.endpoint.use_dynamo_conv_aware_routing
+        ):
+            raise ValueError(
+                "--use-dynamo-conv-aware-routing is incompatible with the "
+                "PAYLOAD_BYTES mmap fast path. The selected dataset (raw_payload "
+                "/ inputs_json / mooncake_trace with payload field) ships "
+                "pre-encoded bytes verbatim, so nvext.session_control cannot be "
+                "injected. Either disable Dynamo conversation-aware routing, or "
+                "use a dataset type that produces structured turns "
+                "(e.g. single_turn / multi_turn / dag_jsonl)."
+            )
         return (
             MemoryMapFormat.PAYLOAD_BYTES
             if has_payload_bytes

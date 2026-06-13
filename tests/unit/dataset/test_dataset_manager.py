@@ -1324,3 +1324,44 @@ class TestSelectMmapFormat:
             initialized_dataset_manager._select_mmap_format(conversations)
             == MemoryMapFormat.CONVERSATION
         )
+
+    def test_select_format_rejects_payload_bytes_when_dynamo_routing_enabled(
+        self, initialized_dataset_manager
+    ):
+        """Dynamo session-control + raw_payload-producing loader must raise.
+
+        nvext.session_control mutates the request body, which the verbatim
+        PAYLOAD_BYTES fast path streams pre-encoded and cannot carry -- the
+        same conflict as cache-bust, refused early with an actionable error.
+        """
+        initialized_dataset_manager.user_config.endpoint.use_dynamo_conv_aware_routing = True
+
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", raw_payload={"a": 1})],
+            ),
+        ]
+        with pytest.raises(
+            ValueError,
+            match=r"--use-dynamo-conv-aware-routing is incompatible with the PAYLOAD_BYTES",
+        ):
+            initialized_dataset_manager._select_mmap_format(conversations)
+
+    def test_select_format_allows_conversation_when_dynamo_routing_enabled(
+        self, initialized_dataset_manager
+    ):
+        """Dynamo routing with structured turns (no raw_payload) -> CONVERSATION."""
+        from aiperf.common.enums import MemoryMapFormat
+
+        initialized_dataset_manager.user_config.endpoint.use_dynamo_conv_aware_routing = True
+        conversations = [
+            Conversation(
+                session_id="s1",
+                turns=[Turn(role="user", texts=[Text(contents=["hi"])])],
+            ),
+        ]
+        assert (
+            initialized_dataset_manager._select_mmap_format(conversations)
+            == MemoryMapFormat.CONVERSATION
+        )
