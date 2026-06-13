@@ -197,7 +197,10 @@ def test_timestamped_snapshot_includes_inflight_subagent_and_gated_parent():
     assert child.branch_id == branch_id
     assert child.branch_mode == ConversationBranchMode.SPAWN
     assert child.next_dispatch_offset_ms == pytest.approx(500.0)
-    assert src.warmup_credit_count == 1
+    # Both active-at-t* sessions are warmed: the mid-flight child (turn 0) and
+    # the gated parent (turn 1, priming its join turn). Gated parents are no
+    # longer excluded from warmup.
+    assert src.warmup_credit_count == 2
 
 
 def test_timestamped_summary_logs_sample_time_not_root_turn_pct(caplog):

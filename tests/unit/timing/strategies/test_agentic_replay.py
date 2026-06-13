@@ -220,10 +220,10 @@ async def test_warmup_dispatch_uses_start_turn_index():
 
 
 @pytest.mark.asyncio
-async def test_warmup_snapshot_subagent_counts_toward_phase_target():
-    """A mid-flight subagent (first request before t*) is warmed at its
-    last-before-t* turn and counts toward the warmup barrier; the gated
-    parent is not warmed."""
+async def test_warmup_warms_every_active_session_including_gated_parent():
+    """Every session mid-flight at t* is warmed at its turn n-1: the
+    mid-flight subagent (turn 0) AND the gated parent (turn 1, priming its
+    join turn). Both count toward the warmup barrier."""
     parent_state = ConversationState(
         conversation_id="trace_0",
         x_correlation_id="parent",
@@ -267,13 +267,14 @@ async def test_warmup_snapshot_subagent_counts_toward_phase_target():
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    # Child warmed at turn n-1 = 0; gated parent skipped.
-    assert len(issued) == 1
-    assert issued[0].conversation_id == "trace_1"
-    assert issued[0].turn_index == 0
-    assert issued[0].agent_depth == 1
-    assert issued[0].counts_toward_phase_target is True
-    assert src.warmup_credit_count == 1
+    # Gated parent warmed at turn 1 (n-1); mid-flight child at turn 0 (n-1).
+    by_cid = {t.conversation_id: t for t in issued}
+    assert set(by_cid) == {"trace_0", "trace_1"}
+    assert by_cid["trace_0"].turn_index == 1  # gated parent's last-before-t*
+    assert by_cid["trace_1"].turn_index == 0  # mid-flight child's last-before-t*
+    assert by_cid["trace_1"].agent_depth == 1
+    assert all(t.counts_toward_phase_target for t in issued)
+    assert src.warmup_credit_count == 2
 
 
 @pytest.mark.asyncio
@@ -1056,13 +1057,14 @@ async def test_plain_trajectory_resumes_are_concurrent_not_serial():
 async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
     """A continued session's cache-bust marker must not rotate at the boundary.
 
-    Under wrap-fill, two lanes share trace_X: lane 0's root is blocked on
-    children at t* (skipped by WARMUP dispatch) while lane 1's root is ready.
-    WARMUP therefore mints only lane 1; PROFILING mints both. Positional
-    re-minting hands lane 0 the pass=0 digest and bumps lane 1's continuing
-    session to pass=1 - the warmed KV prefix becomes unreachable for the
-    measured turns. The marker minted in WARMUP must be reused verbatim for
-    the same x_correlation_id in PROFILING.
+    Under wrap-fill, two lanes share trace_X and both are mid-flight at t*:
+    lane 0's root is gated on a child join, lane 1's root is ready. Both are
+    warmed now (gated parents included), each minting its own marker keyed by
+    x_correlation_id. Positional re-minting (by dispatch order/count rather
+    than identity) would hand the continuing session the wrong digest and make
+    its warmed KV prefix unreachable for the measured turns. The marker minted
+    in WARMUP must be reused verbatim for the same x_correlation_id in
+    PROFILING, and distinct sessions must get distinct markers.
     """
     ds = _make_dataset(num_traces=1, turns_per_trace=3)
     trajectories = [
@@ -1124,7 +1126,12 @@ async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
     warmup_turns = [c.args[0] for c in warmup_issuer.issue_credit.await_args_list]
     warmup_marker = warmup._session_marker["B-root"]
     assert warmup_marker is not None
-    assert [t.cache_bust_marker for t in warmup_turns] == [warmup_marker]
+    # Both lanes warmed (gated A-root at its turn n-1, ready B-root at turn 0),
+    # each carrying its own marker keyed by x_correlation_id.
+    by_corr = {t.x_correlation_id: t for t in warmup_turns}
+    assert set(by_corr) == {"A-root", "B-root"}
+    assert by_corr["B-root"].cache_bust_marker == warmup_marker
+    assert by_corr["A-root"].cache_bust_marker != warmup_marker
 
     profiling_issuer = AsyncMock()
     profiling = _strategy_for(CreditPhase.PROFILING, profiling_issuer)

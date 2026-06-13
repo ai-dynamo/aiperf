@@ -9,10 +9,12 @@ Each trajectory is a wall-clock snapshot of a trace at a sampled instant t*
 subagent chain) splits at t*: turns before t* are history, turns at/after t*
 are profiled.
 
-WARMUP: for each stream, replay its last request before t* (turn
-``next_turn_index - 1``) as a full-prefix request, priming the server cache
-to the stream's state at t*. Streams whose first request is at/after t*
-(``next_turn_index == 0``) have nothing to warm. The phase exits via the
+WARMUP: for every session active (mid-flight) at t*, replay its last request
+before t* (turn ``next_turn_index - 1``) as a full-prefix request, priming
+the server cache to the stream's state at t*. This includes parents gated on
+a child join (they sent turn n-1 before t* and resume at the join turn during
+PROFILING, so n-1 primes that turn). Streams whose first request is at/after
+t* (``next_turn_index == 0``) have nothing to warm. The phase exits via the
 standard ``SendingCompleteStopCondition`` plus ``grace_period_sec=inf``
 semantics already in CreditPhaseConfig (the warmup barrier).
 
@@ -255,8 +257,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
             states = self._get_snapshot(trajectory).states
             for state in states:
-                if state.waiting_on_children:
-                    continue
                 warm_index = state.warmup_turn_index
                 if warm_index is None:
                     # First request is at/after t*: the server had not seen
@@ -264,14 +264,17 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     # to warm. PROFILING dispatches its turn 0 at the
                     # normalized offset.
                     continue
+                # Every session active (mid-flight) at t* is warmed, INCLUDING
+                # a parent gated on a child join: it sent turn n-1 before t*
+                # and is waiting to send the join turn n during PROFILING, so
+                # warming n-1 primes that join turn's prefix (it would cold-
+                # miss otherwise). Warmup is a separate phase, so this does not
+                # disturb the profiling-side join machinery.
                 session = self.conversation_source.session_for_state(state)
                 self._correlation_to_lane[session.x_correlation_id] = lane
                 self._mint_marker_for_session(
                     session.x_correlation_id, state.conversation_id, lane
                 )
-                # Warm the last request before t* (turn next_turn_index - 1),
-                # priming the cache to the stream's t* state. PROFILING then
-                # measures from turn next_turn_index.
                 turn = self._build_turn_for_session(session, warm_index)
                 await self.credit_issuer.issue_credit(turn)
         # Trajectory dispatch complete; signal the phase that no more credits
