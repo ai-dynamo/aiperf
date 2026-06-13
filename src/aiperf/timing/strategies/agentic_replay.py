@@ -179,6 +179,21 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._burst_phase_starts: bool = (
             getattr(loadgen, "burst_phase_starts", False) is True
         )
+        # Phase-start offsets (warmup lead before t*, profiling first-request
+        # gap after t*) are PER-CONVERSATION idle measures relative to a global
+        # t*. The idle-gap warp only caps globally-consecutive request gaps, so
+        # a stream idle while other streams are busy accrues a large gap to its
+        # next turn (hours on multi-day agentic traces). Clamp these phase-start
+        # offsets to the same idle-gap cap (no single idle gap exceeds it) so
+        # the warmup/profiling start spread stays bounded by the cap instead of
+        # ballooning to the raw per-conversation idle. None when no cap is set
+        # (raw faithful timing -- the user's explicit choice).
+        idle_cap_s = getattr(loadgen, "trace_idle_gap_cap_seconds", None)
+        self._phase_offset_cap_ms: float | None = (
+            idle_cap_s * MILLIS_PER_SECOND
+            if isinstance(idle_cap_s, int | float)
+            else None
+        )
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
         # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
@@ -243,6 +258,17 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             await self._execute_warmup()
         else:
             await self._execute_profiling()
+
+    def _capped_phase_offset_ms(self, offset_ms: float) -> float:
+        """Clamp a phase-start offset to the idle-gap cap (if set).
+
+        Bounds the per-conversation idle around t* (warmup lead / profiling
+        first-request gap) so a stream idle while others are busy doesn't get
+        a multi-hour phase-start offset. No-op when no idle-gap cap is set.
+        """
+        if self._phase_offset_cap_ms is not None:
+            return min(offset_ms, self._phase_offset_cap_ms)
+        return offset_ms
 
     async def _execute_warmup(self) -> None:
         """Warm turn n-1 of every session active (mid-flight) at t*.
@@ -314,7 +340,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                         getattr(meta.turns[warm_index], "timestamp_ms", None)
                     )
                     if warm_ts is not None:
-                        lead_ms = t_star_ms - warm_ts
+                        lead_ms = self._capped_phase_offset_ms(t_star_ms - warm_ts)
                 prepared.append((turn, lead_ms))
 
         # Pass 2: dispatch.
@@ -411,12 +437,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             ]
             if not dispatchable:
                 continue
-            lane_t0 = (
-                min(s.next_dispatch_offset_ms for s in dispatchable)
-                if self._burst_phase_starts
-                else 0.0
-            )
-            offsets.extend(s.next_dispatch_offset_ms - lane_t0 for s in dispatchable)
+            lane_offsets = [
+                self._capped_phase_offset_ms(s.next_dispatch_offset_ms)
+                for s in dispatchable
+            ]
+            lane_t0 = min(lane_offsets) if self._burst_phase_starts else 0.0
+            offsets.extend(o - lane_t0 for o in lane_offsets)
         if not offsets:
             return 0.0
         return (max(offsets) - min(offsets)) / MILLIS_PER_SECOND
@@ -644,22 +670,25 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
         dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
-        # Spread (default): t0 = 0, so each lane fires at its recorded offset
-        # from t* (leading gap preserved). Burst (--burst-phase-starts): t0 =
-        # the min offset, anchoring the earliest post-t* request at
-        # profiling-time 0 so the lane bursts at once.
-        if self._burst_phase_starts:
-            t0_offset_ms = (
-                min(s.next_dispatch_offset_ms for s in dispatchable)
-                if dispatchable
-                else 0.0
-            )
+        # Per-state offset, clamped to the idle-gap cap so an idle-at-t* lane
+        # doesn't get a multi-hour leading gap (which would leave it dead for
+        # the whole run). Spread (default): t0 = 0, each lane fires at its
+        # (capped) offset from t*. Burst (--burst-phase-starts): t0 = the lane's
+        # min offset, anchoring the earliest post-t* request at profiling-0.
+        offset_by_corr = {
+            s.x_correlation_id: self._capped_phase_offset_ms(s.next_dispatch_offset_ms)
+            for s in dispatchable
+        }
+        if self._burst_phase_starts and offset_by_corr:
+            t0_offset_ms = min(offset_by_corr.values())
         else:
             t0_offset_ms = 0.0
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)
-            delay_s = (state.next_dispatch_offset_ms - t0_offset_ms) / MILLIS_PER_SECOND
+            delay_s = (
+                offset_by_corr[state.x_correlation_id] - t0_offset_ms
+            ) / MILLIS_PER_SECOND
             if delay_s > 0:
                 self.scheduler.schedule_later(
                     delay_s,

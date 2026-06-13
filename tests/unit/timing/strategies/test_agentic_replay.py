@@ -380,6 +380,89 @@ async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
 
 
 @pytest.mark.asyncio
+async def test_warmup_lead_clamped_to_idle_gap_cap():
+    """A per-conversation idle far exceeding the idle-gap cap is clamped so the
+    warmup spread stays bounded by the cap, not the raw multi-hour idle.
+
+    Two lanes: one warmed ~10s before its t*, one idle ~3h before its t*. With
+    a 60s cap, the 3h lead clamps to 60s -> spread = 60 - 10 = 50s, not ~3h.
+    """
+    lanes = [
+        ("t_near", "near", 10_000.0, 0.0),  # lead 10s
+        ("t_idle", "idle", 10_800_000.0, 0.0),  # lead 3h -> clamps to cap
+    ]
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=cid,
+                turns=[
+                    TurnMetadata(timestamp_ms=warm_ts),
+                    TurnMetadata(timestamp_ms=t_star + 1_000.0),
+                ],
+            )
+            for cid, _, t_star, warm_ts in lanes
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id=cid,
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=t_star,
+                states=(
+                    ConversationState(
+                        conversation_id=cid, x_correlation_id=xc, next_turn_index=1
+                    ),
+                ),
+            ),
+        )
+        for cid, xc, t_star, _ in lanes
+    ]
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = trajectories
+
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.x_correlation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[float] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda d, c: scheduled.append(d)
+    lifecycle = MagicMock()
+    lifecycle.is_sending_complete = False
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.WARMUP
+    cfg.concurrency = 2
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=lifecycle,
+    )
+    # Idle-gap cap of 60s (what the agentx scenario sets).
+    strategy._phase_offset_cap_ms = 60_000.0
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # idle lane's lead clamped 10800s -> 60s, so it is furthest-before-t* and
+    # fires at 0; near lane (lead 10s) fires (60 - 10) = 50s later.
+    assert issued == ["idle"]
+    assert scheduled == [pytest.approx(50.0)]
+
+
+@pytest.mark.asyncio
 async def test_warmup_skips_pending_start_child():
     """A child whose recorded first request is after t* is not warmed.
 
