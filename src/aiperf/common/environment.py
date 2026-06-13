@@ -317,6 +317,35 @@ class _DatasetSettings(BaseSettings):
         "legacy traces are unaffected. Default False keeps the byte-exact "
         "plain-user replay shape.",
     )
+    WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
+        ge=0.0,
+        default=3600.0,
+        description="LCP chain-detection seam guard: the maximum wall-clock gap "
+        "(seconds) between a chain's last request and a candidate continuation "
+        "before that continuation is only accepted when it also keeps enough of "
+        "the prior context (see WEKA_SEAM_MIN_OVERLAP_RATIO). A genuine context "
+        "compaction continues promptly (seconds to minutes), so a low-overlap "
+        "join hours later is treated as a distinct session that merely shares a "
+        "base prefix and is spawned as its own conversation instead of being "
+        "stitched onto the chain (which would fabricate a multi-hour intra-"
+        "conversation idle gap). The guard fires only when BOTH this gap is "
+        "exceeded AND overlap is below the ratio, so prompt compactions at any "
+        "overlap and verbatim long-gap resumes at high overlap are preserved. "
+        "Raise toward infinity to disable the temporal half of the guard.",
+    )
+    WEKA_SEAM_MIN_OVERLAP_RATIO: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.5,
+        description="LCP chain-detection seam guard: the minimum shared-prefix "
+        "ratio (continuation's fork depth / the chain tail's block count) for a "
+        "far-future continuation to still be accepted as the same agent. Below "
+        "this, a continuation past WEKA_SEAM_MAX_GAP_SECONDS is spawned as a new "
+        "conversation rather than spliced on. Corpus data is bimodal -- real "
+        "compactions and verbatim resumes keep >=94% of the prefix, while "
+        "coincidental base-prefix mis-merges keep <50% -- so 0.5 sits in a wide "
+        "safe valley. Set to 0.0 to disable the overlap half of the guard.",
+    )
 
 
 class _DeveloperSettings(BaseSettings):

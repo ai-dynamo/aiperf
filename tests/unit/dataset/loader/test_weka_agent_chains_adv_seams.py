@@ -447,3 +447,71 @@ def test_seams_merged_counts_one_per_splice_across_independent_tails():
     assert _chain_outer_indices(r, r.main_index) == [0, 1]
     assert len(r.worker_indices) == 1
     assert _chain_outer_indices(r, r.worker_indices[0]) == [2, 3]
+
+
+# --------------------------------------------------------------------------
+# Seam guard: a far-future low-overlap continuation is a distinct session
+# (spawn), not the same agent resuming. Prompt compactions and high-overlap
+# long-gap resumes are preserved.
+# --------------------------------------------------------------------------
+
+
+def test_seam_guard_splits_far_low_overlap_continuation():
+    # Tail [1,2,3,4] dies; a request 10000s later shares only [1] (overlap
+    # 0.25 < 0.5) — a distinct session reusing the base prefix, not a
+    # compaction. With the default guard (gap 3600s / overlap 0.5) it stays
+    # its own worker chain instead of being spliced onto main.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4], api_time=0.5),
+            _req(10000.0, [1, 9], api_time=0.5),
+        )
+    )
+    assert r.seams_merged == 0
+    assert _chain_outer_indices(r, r.main_index) == [0]
+    assert len(r.worker_indices) == 1
+    assert _chain_outer_indices(r, r.worker_indices[0]) == [1]
+
+
+def test_seam_guard_keeps_near_low_overlap_compaction():
+    # Same low overlap (0.25), but the continuation fires 2s later — a real
+    # mid-session compaction. The guard's gap condition is not met, so it
+    # splices onto main (one chain, no worker).
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4], api_time=0.5),
+            _req(2.0, [1, 9], api_time=0.5),
+        )
+    )
+    assert r.seams_merged == 1
+    assert _chain_outer_indices(r, r.main_index) == [0, 1]
+    assert len(r.worker_indices) == 0
+
+
+def test_seam_guard_keeps_far_high_overlap_resume():
+    # 10000s gap but the resume keeps [1,2,3] of the [1,2,3,4] tail (overlap
+    # 0.75 >= 0.5) — a verbatim resume of the same conversation. Not blocked.
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4], api_time=0.5),
+            _req(10000.0, [1, 2, 3, 9], api_time=0.5),
+        )
+    )
+    assert r.seams_merged == 1
+    assert _chain_outer_indices(r, r.main_index) == [0, 1]
+    assert len(r.worker_indices) == 0
+
+
+def test_seam_guard_disabled_by_zero_overlap_threshold_merges():
+    # Escape hatch: min_overlap_ratio=0.0 disables the overlap half, so even a
+    # far low-overlap join splices on (pre-guard behavior).
+    r = detect_agent_chains(
+        _normals(
+            _req(0.0, [1, 2, 3, 4], api_time=0.5),
+            _req(10000.0, [1, 9], api_time=0.5),
+        ),
+        seam_min_overlap_ratio=0.0,
+    )
+    assert r.seams_merged == 1
+    assert _chain_outer_indices(r, r.main_index) == [0, 1]
+    assert len(r.worker_indices) == 0
