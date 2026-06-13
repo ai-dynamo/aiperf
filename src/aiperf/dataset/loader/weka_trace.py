@@ -336,6 +336,7 @@ def _expand_subagent_to_child_plans(
     # Peak input length on the subagent's own main chain -- the yardstick a
     # spawned overflow chain is measured against for agent-vs-sidecar.
     main_peak_isl = max((r.input_length for r in chains[0]), default=0)
+    main_model = chains[0][0].model if chains[0] else None
     plans: list[_ChildPlan] = []
     for chain_idx, chain_requests in enumerate(chains):
         is_aux = False
@@ -360,6 +361,8 @@ def _expand_subagent_to_child_plans(
                 max_requests=Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
                 isl_ratio=Environment.DATASET.WEKA_AUX_ISL_RATIO,
                 isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+                main_model=main_model,
+                cross_model=Environment.DATASET.WEKA_AUX_CROSS_MODEL,
             )
             marker = "aux" if is_aux else "fa"
             child_sid = f"{trace_id}::sa:{entry.agent_id}:{marker}:{chain_idx - 1:03d}"
@@ -1078,6 +1081,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         main_peak_isl = max(
             (req.input_length for _, req in main_chain.requests), default=0
         )
+        main_model = main_chain.requests[0][1].model if main_chain.requests else None
         n_aux = 0
         for n, ci in enumerate(detection.worker_indices):
             chain = detection.chains[ci]
@@ -1094,6 +1098,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 max_requests=Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
                 isl_ratio=Environment.DATASET.WEKA_AUX_ISL_RATIO,
                 isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+                main_model=main_model,
+                cross_model=Environment.DATASET.WEKA_AUX_CROSS_MODEL,
             )
             n_aux += aux
             flat_plans.append(

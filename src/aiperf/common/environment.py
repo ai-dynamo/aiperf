@@ -386,6 +386,17 @@ class _DatasetSettings(BaseSettings):
         "fresh-context calls classified as sidecars even when the enclosing "
         "conversation is itself small.",
     )
+    WEKA_AUX_CROSS_MODEL: bool = Field(
+        default=True,
+        description="Auxiliary (sidecar) classification: when True (default), an "
+        "aux-eligible chain (<= WEKA_AUX_MAX_REQUESTS requests) whose first "
+        "request runs on a different model than its enclosing main chain is "
+        "treated as a sidecar regardless of input length. An agent does not "
+        "switch models for its own reasoning, so a one-shot on a different model "
+        "is a tool-internal call -- e.g. a Haiku WebFetch summary fired by an "
+        "Opus agent, which can carry a large fetched-page payload and so escape "
+        "the WEKA_AUX_ISL_* size test. Set to False to classify purely by size.",
+    )
 
 
 class _DeveloperSettings(BaseSettings):

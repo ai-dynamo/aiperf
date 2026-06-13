@@ -132,31 +132,44 @@ def is_aux_chain(
     max_requests: int,
     isl_ratio: float,
     isl_floor: int,
+    main_model: str | None = None,
+    cross_model: bool = True,
 ) -> bool:
     """Classify a detected worker chain as an auxiliary one-shot call.
 
     A detected worker chain is reclassified as *auxiliary* -- a sidecar rather
-    than a genuine agent -- when it is short and starts from a small, fresh
-    context. That is the signature of a tool-issued one-shot (web fetch / search
-    summary, title generation, a classifier) that rides alongside the agent for
-    a single call, not a sustained sub-agent: it carries far less input context
-    than the conversation it sits in and never continues. Applied at both
-    layers -- top-level flat chains (genuine ``::fa:`` vs sidecar ``::aux:``)
-    and a subagent's nested-LCP overflow chains (genuine ``:fa:`` vs sidecar
-    ``:aux:``).
+    than a genuine agent -- when it is short and either (a) starts from a small,
+    fresh context, or (b) runs on a different model than the enclosing agent.
+    Both are signatures of a tool-issued one-shot (web fetch / search summary,
+    title generation, a classifier) that rides alongside the agent for a single
+    call, not a sustained sub-agent. Applied at both layers -- top-level flat
+    chains (genuine ``::fa:`` vs sidecar ``::aux:``) and a subagent's nested-LCP
+    overflow chains (genuine ``:fa:`` vs sidecar ``:aux:``).
 
     ``requests`` is the chain's request list (time-ordered). Returns ``True``
-    iff it holds at most ``max_requests`` requests and the first request's input
-    length is below ``max(isl_floor, isl_ratio * main_peak_isl)`` -- small both
-    absolutely and relative to the surrounding context. ``main_peak_isl`` is the
-    largest input length on the enclosing main chain (the trace's for flat
-    chains, the subagent's for overflow). Set ``max_requests=0`` to disable
-    reclassification entirely (every worker chain keeps its agent tag).
+    iff it holds at most ``max_requests`` requests AND either:
+
+    - **cross-model** (``cross_model`` set and ``main_model`` given): the first
+      request runs on a model other than the enclosing main chain's. An agent
+      does not switch models for its own reasoning, so a one-shot on a different
+      model is a tool-internal call (e.g. a Haiku ``WebFetch`` summary under an
+      Opus agent) regardless of payload size; or
+    - **small fresh context**: the first request's input length is below
+      ``max(isl_floor, isl_ratio * main_peak_isl)`` -- small both absolutely and
+      relative to the surrounding context. ``main_peak_isl`` is the largest
+      input length on the enclosing main chain (the trace's for flat chains, the
+      subagent's for overflow).
+
+    Set ``max_requests=0`` to disable reclassification entirely (every worker
+    chain keeps its agent tag); ``cross_model=False`` disables only arm (a).
     """
     if not requests or len(requests) > max_requests:
         return False
+    first = requests[0]
+    if cross_model and main_model is not None and first.model != main_model:
+        return True
     threshold = max(isl_floor, int(isl_ratio * main_peak_isl))
-    return requests[0].input_length < threshold
+    return first.input_length < threshold
 
 
 @dataclass(slots=True)
