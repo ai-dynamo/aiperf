@@ -522,11 +522,19 @@ const laneColor = (si) => sessColor(DATA.sessions[si].ci);
 const N_SUB = DATA.sessions.reduce((a, s) => a + (s.sub ? 1 : 0), 0);
 // each slot expands to one full-size sub-lane per concurrently-running turn,
 // plus one child tier per concurrently-running subagent session
-const slotRows = Array.from({ length: N_SLOTS }, () => 1);
-DATA.sessions.forEach((s) => { slotRows[s.slot] = Math.max(slotRows[s.slot], s.row0 + s.rows); });
-const slotRow0 = [0];
-for (let s = 1; s < N_SLOTS; s++) slotRow0[s] = slotRow0[s - 1] + slotRows[s - 1];
-const TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
+let foldSubs = false; // when true, subagent tiers are hidden and lanes re-flow
+let slotRows = [], slotRow0 = [], TOTAL_ROWS = 0;
+function relayout() {
+  slotRows = Array.from({ length: N_SLOTS }, () => 1);
+  DATA.sessions.forEach((s) => {
+    if (foldSubs && s.sub) return; // folded: subagent rows don't occupy space
+    slotRows[s.slot] = Math.max(slotRows[s.slot], s.row0 + s.rows);
+  });
+  slotRow0 = [0];
+  for (let s = 1; s < N_SLOTS; s++) slotRow0[s] = slotRow0[s - 1] + slotRows[s - 1];
+  TOTAL_ROWS = slotRow0[N_SLOTS - 1] + slotRows[N_SLOTS - 1];
+}
+relayout();
 
 /* ---------- lane encoding state (color-by-metric, prefill/decode split) ---------- */
 let colorBy = null; // null | dur | ttft | lat | isl | osl | new
@@ -612,6 +620,7 @@ function metricColor(t) {
     opts.map(([lbl, v]) => `<button class="ctrl${v === colorBy ? " on" : ""}" data-c="${v}">${lbl}</button>`).join("") +
     `<button class="ctrl" id="split-btn" title="split each bar into prefill | decode at first-token">split</button>` +
     (N_SUB ? `<button class="ctrl" id="spawn-btn" title="draw links from subagents to their group root">spawns</button>` : "") +
+    (N_SUB ? `<button class="ctrl" id="fold-btn" title="hide subagent tiers and re-flow lanes">fold subs</button>` : "") +
     `<span class="lbl" style="margin-left:6px">&middot;</span>` +
     `<button class="ctrl" id="link-btn" title="copy a shareable link to the current view">link</button>` +
     `<button class="ctrl" id="png-btn" title="export all panels as a PNG">png</button>` +
@@ -634,6 +643,15 @@ function metricColor(t) {
   sb.addEventListener("click", () => { split = !split; sb.classList.toggle("on", split); scheduleDraw(); });
   const spb = el.querySelector("#spawn-btn");
   if (spb) spb.addEventListener("click", () => { spawnLinks = !spawnLinks; spb.classList.toggle("on", spawnLinks); scheduleDraw(); });
+  const fb = el.querySelector("#fold-btn");
+  if (fb) fb.addEventListener("click", () => {
+    foldSubs = !foldSubs;
+    fb.classList.toggle("on", foldSubs);
+    relayout();
+    computeLaneGeometry();
+    lanesCtx = sizeCanvas(lanesCv, LANES_H);
+    scheduleDraw();
+  });
   const lb = el.querySelector("#link-btn");
   lb.addEventListener("click", () => {
     writeHash();
@@ -835,6 +853,7 @@ function drawLanes() {
       const seg = list[i];
       if (seg.t0 > view.t1) break;
       if (seg.t1 < view.t0) continue;
+      if (foldSubs && seg.sub) continue;
       let x0 = xOf(seg.t0), x1 = xOf(seg.t1);
       if (x1 - x0 < 0.6) x1 = x0 + 0.6;
       const lc = laneColor(seg.si);
@@ -886,7 +905,7 @@ function drawLanes() {
   }
 
   // spawn links: connector from each subagent's first turn up to its group root
-  if (spawnLinks && N_SUB) {
+  if (spawnLinks && N_SUB && !foldSubs) {
     ctx.lineWidth = 1;
     DATA.sessions.forEach((s, si) => {
       if (!s.root) return;
@@ -1501,7 +1520,7 @@ function segAt(px, py) {
   const list = slotSegs[slot];
   const hits = [];
   for (let i = startIndex(list, t); i < list.length && list[i].t0 <= t; i++)
-    if (t >= list[i].t0 && t <= list[i].t1) hits.push(list[i]);
+    if (t >= list[i].t0 && t <= list[i].t1 && !(foldSubs && list[i].sub)) hits.push(list[i]);
   if (!hits.length) return null;
   // the sub-lane directly under the cursor, else the idle band whose
   // session rows contain the cursor row
