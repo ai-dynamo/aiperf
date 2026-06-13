@@ -297,14 +297,15 @@ class _DatasetSettings(BaseSettings):
         "chain detection at both layers: untagged agent fan-outs recorded as "
         "flat top-level requests split into per-agent child conversations "
         "(::fa:NNN), and each subagent entry's inner requests split into "
-        "per-context-chain children (::sa:<agent_id> plus :cNNN siblings), "
+        "per-context-chain children (::sa:<agent_id> plus :fa:NNN siblings), "
         "all with SPAWN/SPAWN_JOIN linkage so replay reproduces the recorded "
         "concurrency. Set to False to disable detection at both layers: all "
         "top-level requests serialize into one root conversation and each "
         "subagent emits exactly one child with its inner requests in time "
-        "order. Detected top-level ::fa: chains are further split into genuine "
-        "flattened agents (::fa:) and auxiliary one-shot sidecars (::aux:) per "
-        "WEKA_AUX_MAX_REQUESTS / WEKA_AUX_ISL_RATIO / WEKA_AUX_ISL_FLOOR.",
+        "order. Detected chains at both layers are further split into genuine "
+        "agents and auxiliary one-shot sidecars (top-level ::fa: vs ::aux:; "
+        "subagent overflow :fa: vs :aux:) per WEKA_AUX_MAX_REQUESTS / "
+        "WEKA_AUX_ISL_RATIO / WEKA_AUX_ISL_FLOOR.",
     )
     WEKA_TOOL_SHAPED_MESSAGES: bool = Field(
         default=False,
@@ -351,37 +352,39 @@ class _DatasetSettings(BaseSettings):
     WEKA_AUX_MAX_REQUESTS: int = Field(
         ge=0,
         default=1,
-        description="Flattened-agent classification: a detected ::fa: worker "
+        description="Auxiliary (sidecar) classification: a detected worker "
         "chain with at most this many requests is eligible to be reclassified "
-        "as an auxiliary one-shot call (::aux:) -- a tool-issued sidecar (web "
+        "as an auxiliary one-shot call -- a tool-issued sidecar (web "
         "fetch/search summary, title generation, a classifier) rather than a "
-        "sustained sub-agent -- when it also passes the WEKA_AUX_ISL_* size "
-        "test. Corpus sidecars are overwhelmingly single-request, so the "
-        "default is 1. Set to 0 to disable aux classification (every worker "
-        "chain stays ::fa:). Only applies when WEKA_SPLIT_FLATTENED_AGENTS is "
-        "True.",
+        "sustained agent -- when it also passes the WEKA_AUX_ISL_* size test. "
+        "Applies to both top-level flat chains (::fa: -> ::aux:) and a "
+        "subagent's nested-LCP overflow (:cNNN -> :auxNNN). Corpus sidecars are "
+        "overwhelmingly single-request, so the default is 1. Set to 0 to "
+        "disable aux classification (every worker chain keeps its agent tag). "
+        "Only applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
     )
     WEKA_AUX_ISL_RATIO: float = Field(
         ge=0.0,
         default=0.10,
-        description="Flattened-agent classification: an aux-eligible chain (see "
-        "WEKA_AUX_MAX_REQUESTS) is reclassified ::fa: -> ::aux: only when its "
+        description="Auxiliary (sidecar) classification: an aux-eligible chain "
+        "(see WEKA_AUX_MAX_REQUESTS) is reclassified to a sidecar only when its "
         "first request's input length is below max(WEKA_AUX_ISL_FLOOR, this "
-        "ratio * the trace main chain's peak input length). The ratio catches "
-        "calls that are small relative to a large conversation's accumulated "
-        "context; the floor catches them in absolute terms. Sidecars start from "
-        "a fresh few-thousand-token context vs the main agent's tens-to-"
-        "hundreds of thousands.",
+        "ratio * the enclosing main chain's peak input length -- the trace's for "
+        "flat chains, the subagent's for overflow). The ratio catches calls "
+        "small relative to a large conversation's accumulated context; the floor "
+        "catches them in absolute terms. Sidecars start from a fresh "
+        "few-thousand-token context vs the agent's tens-to-hundreds of "
+        "thousands.",
     )
     WEKA_AUX_ISL_FLOOR: int = Field(
         ge=0,
         default=16384,
-        description="Flattened-agent classification: absolute input-length floor "
-        "(tokens) for the aux size test (see WEKA_AUX_ISL_RATIO). A chain whose "
-        "first-request input length is below max(this, ratio * main peak ISL) "
-        "is treated as an auxiliary one-shot (::aux:). Keeps small fresh-context "
-        "calls classified as sidecars even when the main conversation is itself "
-        "small.",
+        description="Auxiliary (sidecar) classification: absolute input-length "
+        "floor (tokens) for the aux size test (see WEKA_AUX_ISL_RATIO). A chain "
+        "whose first-request input length is below max(this, ratio * main peak "
+        "ISL) is treated as an auxiliary one-shot sidecar. Keeps small "
+        "fresh-context calls classified as sidecars even when the enclosing "
+        "conversation is itself small.",
     )
 
 

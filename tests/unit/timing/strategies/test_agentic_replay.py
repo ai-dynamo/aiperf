@@ -756,14 +756,14 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
                 ],
             ),
             ConversationMetadata(
-                conversation_id="trace_0::sa:a:c000",
+                conversation_id="trace_0::sa:a:fa:000",
                 turns=[TurnMetadata(timestamp_ms=33_000.0)],
                 is_root=False,
                 agent_depth=1,
                 parent_conversation_id="trace_0",
             ),
             ConversationMetadata(
-                conversation_id="trace_0::sa:a:c001",
+                conversation_id="trace_0::sa:a:fa:001",
                 turns=[TurnMetadata(timestamp_ms=108_000.0)],
                 is_root=False,
                 agent_depth=1,
@@ -782,7 +782,7 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
     )
     # t* = 13_000: child A first request 20s out, child B 95s out.
     child_a = ConversationState(
-        conversation_id="trace_0::sa:a:c000",
+        conversation_id="trace_0::sa:a:fa:000",
         x_correlation_id="kid-a",
         next_turn_index=0,
         next_dispatch_offset_ms=20_000.0,
@@ -793,7 +793,7 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
         branch_mode=ConversationBranchMode.SPAWN,
     )
     child_b = ConversationState(
-        conversation_id="trace_0::sa:a:c001",
+        conversation_id="trace_0::sa:a:fa:001",
         x_correlation_id="kid-b",
         next_turn_index=0,
         next_dispatch_offset_ms=95_000.0,
@@ -852,12 +852,12 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
     await strategy.execute_phase()
 
     # Earliest child (T0 anchor) fires immediately; parent gated (not sent).
-    assert issued == [("trace_0::sa:a:c000", 0)]
+    assert issued == [("trace_0::sa:a:fa:000", 0)]
     # Later child scheduled 75s in (95s - 20s recorded gap).
     assert [delay for delay, _ in scheduled] == [pytest.approx(75.0)]
     for _, coro in scheduled:
         await coro
-    assert issued == [("trace_0::sa:a:c000", 0), ("trace_0::sa:a:c001", 0)]
+    assert issued == [("trace_0::sa:a:fa:000", 0), ("trace_0::sa:a:fa:001", 0)]
 
     # All three states seeded; parent stays gated until both children drain.
     seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
@@ -895,9 +895,9 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
                     parent_conversation_id="trace_0",
                 )
                 for cid, offset in (
-                    ("trace_0::sa:a:c000", 100_000.0),
-                    ("trace_0::sa:a:c001", 130_000.0),
-                    ("trace_0::sa:a:c002", 220_000.0),
+                    ("trace_0::sa:a:fa:000", 100_000.0),
+                    ("trace_0::sa:a:fa:001", 130_000.0),
+                    ("trace_0::sa:a:fa:002", 220_000.0),
                 )
             ),
         ],
@@ -924,9 +924,9 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
             branch_mode=ConversationBranchMode.SPAWN,
         )
         for xc, cid, offset in (
-            ("kid-a", "trace_0::sa:a:c000", 100_000.0),
-            ("kid-b", "trace_0::sa:a:c001", 130_000.0),
-            ("kid-c", "trace_0::sa:a:c002", 220_000.0),
+            ("kid-a", "trace_0::sa:a:fa:000", 100_000.0),
+            ("kid-b", "trace_0::sa:a:fa:001", 130_000.0),
+            ("kid-c", "trace_0::sa:a:fa:002", 220_000.0),
         )
     ]
     trajectory = Trajectory(
@@ -986,9 +986,9 @@ async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_s
     for _, coro in scheduled:
         await coro
     assert issued == [
-        "trace_0::sa:a:c000",
-        "trace_0::sa:a:c001",
-        "trace_0::sa:a:c002",
+        "trace_0::sa:a:fa:000",
+        "trace_0::sa:a:fa:001",
+        "trace_0::sa:a:fa:002",
     ]
 
 

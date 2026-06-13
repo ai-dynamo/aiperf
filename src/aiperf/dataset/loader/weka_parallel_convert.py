@@ -118,8 +118,8 @@ class _WekaSubagentMarkerPayload(TypedDict):
     Chain detection happens in the parent process (parity with the serial
     path): ``child_session_ids`` enumerates the per-chain child SIDs the
     worker must register on the SPAWN branch (single-chain subagents emit
-    one ``::sa:{agent_id}`` SID; detected spawned chains add ``:c000`` /
-    ``:c001`` / ... siblings). ``sa_end_seconds`` is the subagent's recorded
+    one ``::sa:{agent_id}`` SID; detected spawned chains add ``:fa:000`` /
+    ``:aux:000`` / ... siblings -- agents and one-shot sidecars). ``sa_end_seconds`` is the subagent's recorded
     end time, used by the worker to select the first later parent turn that
     should join this child.
     """

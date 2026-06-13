@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import orjson
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.environment import Environment
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
@@ -278,9 +279,56 @@ def test_interleaved_inner_threads_split_into_lineage_chains(tmp_path, monkeypat
     convs = loader.convert_to_conversations(loader.load_dataset())
 
     main = next(c for c in convs if c.session_id == "t_affinity::sa:a1")
-    worker = next(c for c in convs if c.session_id == "t_affinity::sa:a1:c000")
+    worker = next(c for c in convs if c.session_id == "t_affinity::sa:a1:fa:000")
     assert len(main.turns) == 2
     assert len(worker.turns) == 2
+
+
+def test_subagent_one_shot_overflow_is_tagged_aux_sidecar(tmp_path, monkeypatch):
+    """A single disjoint inner call is the subagent's own sidecar.
+
+    Thread B here is one fresh-context request (not the 2-request chain above),
+    so with aux classification on it is the subagent's one-shot sidecar:
+    ::sa:a1:aux:000, not the :fa:000 agent tag.
+    """
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
+
+    def inner(t, api_time, hash_ids):
+        return {
+            "t": t,
+            "type": "n",
+            "model": "m",
+            "in": 10,
+            "out": 1,
+            "api_time": api_time,
+            "hash_ids": hash_ids,
+        }
+
+    sa = {
+        "t": 1.0,
+        "type": "subagent",
+        "agent_id": "a1",
+        "subagent_type": "X",
+        "duration_ms": 20_000,
+        "total_tokens": 0,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            inner(1.0, 10.0, [1]),  # founds the main chain
+            inner(6.0, 1.0, [50]),  # single disjoint one-shot -> sidecar
+            inner(12.0, 0.5, [1, 2]),  # extends the main chain
+        ],
+        "models": ["m"],
+    }
+    data = _build_trace("t_aux", [_normal(t=0.0), sa, _normal(t=30.0)])
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    convs = {
+        c.session_id for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    assert "t_aux::sa:a1" in convs
+    assert "t_aux::sa:a1:aux:000" in convs, sorted(convs)
+    assert "t_aux::sa:a1:fa:000" not in convs, sorted(convs)
 
 
 def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
@@ -443,7 +491,7 @@ def test_parallel_inner_chains_under_parallel_reconstruction(tmp_path, monkeypat
     branch = parent.branches[0]
     assert branch.child_conversation_ids == [
         "t_par_split::sa:a1",
-        "t_par_split::sa:a1:c000",
+        "t_par_split::sa:a1:fa:000",
     ]
     children = {
         c.session_id: c for c in convs if c.session_id.startswith("t_par_split::sa")
@@ -465,7 +513,7 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
       - 1 SPAWN branch with is_background=False because the subagent end
         joins the later parent turn at t=280.18
       - 2 sibling child conversations: the main chain
-        '<trace>::sa:codex_subagent_001' plus one spawned chain ':c000'
+        '<trace>::sa:codex_subagent_001' plus one spawned chain ':fa:000'
         (the second inner request forks the shared 548-block prefix while
         the first is still in flight)
       - No SPAWN_JOIN prerequisite on the immediate t=36.54 parent turn
@@ -490,7 +538,7 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
     assert branch.is_background is False
     assert set(branch.child_conversation_ids) == {
         "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001",
-        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:c000",
+        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:fa:000",
     }
 
     join_turns = [
@@ -504,7 +552,7 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
 
     # Both children exist and each has exactly one turn.
     sid_main = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001"
-    sid_fork = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:c000"
+    sid_fork = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:fa:000"
     children_by_sid = {c.session_id: c for c in convs}
     assert sid_main in children_by_sid
     assert sid_fork in children_by_sid

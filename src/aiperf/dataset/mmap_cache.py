@@ -75,6 +75,11 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v14: subagent nested-LCP overflow session ids restructured to match the
+    # top-level vocabulary -- the agent marker is renamed and separated
+    # (:cNNN -> :fa:NNN) and short, small-fresh-context overflow splits off as
+    # sidecars (:aux:NNN), so those child session ids changed. Same WEKA_AUX_*
+    # knobs; yardstick is the subagent's own main-chain peak ISL.
     # v13: flattened-agent worker chains that are short, small-fresh-context
     # one-shot calls are reclassified ::fa: -> ::aux: (auxiliary sidecars), so
     # those child session ids changed (::fa:{NNN} -> ::aux:{NNN}). Governed by
@@ -92,7 +97,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    13
+    14
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

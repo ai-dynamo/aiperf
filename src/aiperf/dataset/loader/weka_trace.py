@@ -244,6 +244,10 @@ class _ChildPlan:
     :func:`_expand_subagent_to_child_plans` for the proof gate."""
     init_system_tokens: int
     """Turn-0 system-prefix attribution for this chain (same gate)."""
+    is_aux: bool = False
+    """True when an overflow chain is an auxiliary one-shot sidecar (emitted as
+    ``:auxNNN`` rather than ``:cNNN``). See
+    :func:`weka_agent_chains.is_aux_chain`. Always False for the main chain."""
 
 
 def _expand_subagent_to_child_plans(
@@ -262,10 +266,13 @@ def _expand_subagent_to_child_plans(
     subagent's first retained request keeps the legacy ``::sa:{agent_id}``
     session id; every spawned chain (a one-shot disjoint call, a parallel
     fork of the subagent's context, or a separate worker thread the capture
-    flattened into this entry) becomes a sibling ``::sa:{agent_id}:c{NNN}``
-    child, dispatched at its recorded offset from the spawn by the branch
-    orchestrator. Compaction continuations splice back onto their chain via
-    the seam-join election, so a context edit never fabricates an agent.
+    flattened into this entry) becomes a sibling child -- a genuine agent at
+    ``::sa:{agent_id}:fa:{NNN}`` or, when short and small-fresh-context, an
+    auxiliary one-shot sidecar at ``::sa:{agent_id}:aux:{NNN}`` (see
+    :func:`weka_agent_chains.is_aux_chain`) -- dispatched at its recorded offset
+    from the spawn by the branch orchestrator. Compaction continuations splice
+    back onto their chain via the seam-join election, so a context edit never
+    fabricates an agent.
 
     Inner timestamps are normalized to root-trace coordinates up front
     (legacy captures recorded them relative to the spawn marker), so the
@@ -300,7 +307,10 @@ def _expand_subagent_to_child_plans(
         ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
         chains = [[req for _, req in ordered]]
     else:
-        from aiperf.dataset.loader.weka_agent_chains import detect_agent_chains
+        from aiperf.dataset.loader.weka_agent_chains import (
+            detect_agent_chains,
+            is_aux_chain,
+        )
 
         # Same preamble rule as the top level: a leading prefix-disjoint
         # throwaway call must not found the main chain and hijack the
@@ -323,13 +333,16 @@ def _expand_subagent_to_child_plans(
         )
 
     main_first_hash = next((r.hash_ids for r in chains[0] if r.hash_ids), [])
+    # Peak input length on the subagent's own main chain -- the yardstick a
+    # spawned overflow chain is measured against for agent-vs-sidecar.
+    main_peak_isl = max((r.input_length for r in chains[0]), default=0)
     plans: list[_ChildPlan] = []
     for chain_idx, chain_requests in enumerate(chains):
+        is_aux = False
         if chain_idx == 0:
             child_sid = f"{trace_id}::sa:{entry.agent_id}"
             init_tool, init_system = entry.tool_tokens, entry.system_tokens
         else:
-            child_sid = f"{trace_id}::sa:{entry.agent_id}:c{chain_idx - 1:03d}"
             first_hash = next((r.hash_ids for r in chain_requests if r.hash_ids), [])
             init_tool, init_system = _chain_init_tokens(
                 tool_tokens=entry.tool_tokens,
@@ -338,6 +351,18 @@ def _expand_subagent_to_child_plans(
                 base_first_hash=main_first_hash,
                 chain_first_hash=first_hash,
             )
+            # A short, small-fresh-context overflow chain is the subagent's own
+            # one-shot sidecar (web fetch/search summary, classifier), not a
+            # nested agent -- tag it :aux: instead of the :fa: agent marker.
+            is_aux = is_aux_chain(
+                chain_requests,
+                main_peak_isl,
+                max_requests=Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
+                isl_ratio=Environment.DATASET.WEKA_AUX_ISL_RATIO,
+                isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+            )
+            marker = "aux" if is_aux else "fa"
+            child_sid = f"{trace_id}::sa:{entry.agent_id}:{marker}:{chain_idx - 1:03d}"
         plans.append(
             _ChildPlan(
                 session_id=child_sid,
@@ -349,6 +374,7 @@ def _expand_subagent_to_child_plans(
                 block_size=block_size,
                 init_tool_tokens=init_tool,
                 init_system_tokens=init_system,
+                is_aux=is_aux,
             )
         )
     return plans
@@ -1063,7 +1089,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 chain_first_hash=chain.requests[0][1].hash_ids,
             )
             aux = is_aux_chain(
-                chain,
+                [req for _, req in chain.requests],
                 main_peak_isl,
                 max_requests=Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
                 isl_ratio=Environment.DATASET.WEKA_AUX_ISL_RATIO,

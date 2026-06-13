@@ -1056,7 +1056,7 @@ def write_swim_lane_html(
             }
             if m.is_sub:
                 entry["sub"] = True
-            if "::aux:" in entry["conv"]:
+            if ":aux:" in entry["conv"]:  # ::aux: (flat) or ::sa:..:aux:NNN (subagent)
                 entry["aux"] = True
             if m.sid != g.root_sid:
                 entry["root"] = g.root_sid

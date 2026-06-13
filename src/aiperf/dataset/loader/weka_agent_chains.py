@@ -126,7 +126,7 @@ class ChainDetectionResult:
 
 
 def is_aux_chain(
-    chain: AgentChain,
+    requests: list[_NormalRequestT],
     main_peak_isl: int,
     *,
     max_requests: int,
@@ -135,26 +135,28 @@ def is_aux_chain(
 ) -> bool:
     """Classify a detected worker chain as an auxiliary one-shot call.
 
-    A flattened-agent worker chain is reclassified as *auxiliary* -- a sidecar
-    (``::aux:``) rather than a genuine agent (``::fa:``) -- when it is short and
-    starts from a small, fresh context. That is the signature of a tool-issued
-    one-shot (web fetch / search summary, title generation, a classifier) that
-    rides alongside the main agent for a single call, not a sustained sub-agent:
-    it carries far less input context than the main conversation and never
-    continues.
+    A detected worker chain is reclassified as *auxiliary* -- a sidecar rather
+    than a genuine agent -- when it is short and starts from a small, fresh
+    context. That is the signature of a tool-issued one-shot (web fetch / search
+    summary, title generation, a classifier) that rides alongside the agent for
+    a single call, not a sustained sub-agent: it carries far less input context
+    than the conversation it sits in and never continues. Applied at both
+    layers -- top-level flat chains (genuine ``::fa:`` vs sidecar ``::aux:``)
+    and a subagent's nested-LCP overflow chains (genuine ``:fa:`` vs sidecar
+    ``:aux:``).
 
-    Returns ``True`` iff the chain holds at most ``max_requests`` requests and
-    its first request's input length is below ``max(isl_floor, isl_ratio *
-    main_peak_isl)`` -- small both absolutely and relative to the conversation's
-    own peak context. ``main_peak_isl`` is the largest input length on the
-    trace's main chain. Set ``max_requests=0`` to disable reclassification
-    entirely (every worker chain stays ``::fa:``).
+    ``requests`` is the chain's request list (time-ordered). Returns ``True``
+    iff it holds at most ``max_requests`` requests and the first request's input
+    length is below ``max(isl_floor, isl_ratio * main_peak_isl)`` -- small both
+    absolutely and relative to the surrounding context. ``main_peak_isl`` is the
+    largest input length on the enclosing main chain (the trace's for flat
+    chains, the subagent's for overflow). Set ``max_requests=0`` to disable
+    reclassification entirely (every worker chain keeps its agent tag).
     """
-    reqs = chain.requests
-    if not reqs or len(reqs) > max_requests:
+    if not requests or len(requests) > max_requests:
         return False
     threshold = max(isl_floor, int(isl_ratio * main_peak_isl))
-    return reqs[0][1].input_length < threshold
+    return requests[0].input_length < threshold
 
 
 @dataclass(slots=True)
