@@ -962,6 +962,15 @@ def write_swim_lane_html(
                 latency = _metric_value(r, "request_latency")
                 isl = _metric_value(r, "input_sequence_length")
                 osl = _metric_value(r, "output_sequence_length")
+                # status: 1 = errored, 2 = context-overflow skip, 0 = ok
+                # (cancelled records are dropped upstream in _load_records)
+                status = (
+                    1
+                    if r.get("error")
+                    else 2
+                    if r["metadata"].get("context_overflow_skip")
+                    else 0
+                )
                 turns.append(
                     [
                         round(start_s, 4),
@@ -973,6 +982,7 @@ def write_swim_lane_html(
                         depth,
                         r["metadata"].get("agent_depth"),
                         int(round(new_isl)),
+                        status,
                     ]
                 )
             merged = _merged_active_ns(session)
