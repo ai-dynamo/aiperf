@@ -170,7 +170,10 @@
   #lanes-wrap {
     position: relative;
     overflow-y: auto;
-    max-height: 62vh;
+    height: 62vh;
+    min-height: 120px;
+    max-height: 88vh;
+    resize: vertical;
     scrollbar-width: thin;
     scrollbar-color: #2a3242 transparent;
   }
@@ -178,7 +181,10 @@
   #lanes.dragging { cursor: grabbing; }
 
   #nav-card .card-head { border-bottom: none; border-top: 1px solid var(--hairline); }
-  #nav { display: block; width: 100%; height: 132px; cursor: crosshair; }
+  #nav { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #isl, #tput { display: block; width: 100%; height: 100%; }
+  .vresize { overflow: hidden; resize: vertical; min-height: 64px; max-height: 70vh; }
+  .vresize::-webkit-resizer { background: linear-gradient(135deg, transparent 45%, var(--ink-mute) 45%, var(--ink-mute) 55%, transparent 55%); }
 
   /* ---------- tooltip ---------- */
   #tooltip {
@@ -343,8 +349,24 @@
     <div id="lanes-wrap"><canvas id="lanes"></canvas></div>
   </section>
 
+  <section class="card" id="isl-card">
+    <div class="card-head">
+      <span class="title">New ISL in flight — input tokens minus cached prefix, prefilled per turn</span>
+      <div class="legend" id="isl-legend"></div>
+    </div>
+    <div class="vresize" id="isl-wrap" style="height:120px"><canvas id="isl"></canvas></div>
+  </section>
+
+  <section class="card" id="tput-card">
+    <div class="card-head">
+      <span class="title">Throughput — prefill · decode · total, tokens/sec</span>
+      <div class="legend" id="tput-legend"></div>
+    </div>
+    <div class="vresize" id="tput-wrap" style="height:132px"><canvas id="tput"></canvas></div>
+  </section>
+
   <section class="card" id="nav-card">
-    <canvas id="nav"></canvas>
+    <div class="vresize" id="nav-wrap" style="height:132px"><canvas id="nav"></canvas></div>
     <div class="card-head">
       <span class="title">Concurrency · drag window to navigate</span>
       <div class="legend" id="nav-legend"></div>
@@ -470,6 +492,17 @@ function sizeCanvas(cv, cssH) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return ctx;
 }
+// rasterize a canvas to its CSS-laid-out box (height driven by a resizable
+// wrapper, not a fixed constant); does not touch style.height
+function sizeCanvasFill(cv) {
+  const w = cv.clientWidth || cv.parentElement.clientWidth;
+  const h = cv.clientHeight || cv.parentElement.clientHeight;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
 
 /* ---------- view state ---------- */
 const view = { t0: 0, t1: T_MAX * 1.005 };
@@ -486,8 +519,10 @@ function clampView() {
 const lanesCv = document.getElementById("lanes");
 const rulerCv = document.getElementById("ruler");
 const navCv = document.getElementById("nav");
+const islCv = document.getElementById("isl");
+const tputCv = document.getElementById("tput");
 const wrap = document.getElementById("lanes-wrap");
-const ROW_H = Math.max(16, Math.min(32, Math.floor((window.innerHeight * 0.58) / TOTAL_ROWS)));
+const ROW_H = Math.max(9, Math.min(20, Math.floor((window.innerHeight * 0.40) / TOTAL_ROWS)));
 const LANES_H = TOTAL_ROWS * ROW_H;
 function slotOfRow(row) {
   let lo = 0, hi = N_SLOTS - 1;
@@ -497,14 +532,25 @@ function slotOfRow(row) {
   }
   return lo;
 }
-let lanesCtx, rulerCtx, navCtx, W;
+let lanesCtx, rulerCtx, navCtx, islCtx, tputCtx, W;
 
 function layout() {
   W = document.getElementById("timeline-card").clientWidth;
   lanesCtx = sizeCanvas(lanesCv, LANES_H);
   rulerCtx = sizeCanvas(rulerCv, 30);
-  navCtx = sizeCanvas(navCv, 132);
+  sizeCharts();
   scheduleDraw();
+}
+
+// (re)rasterize the two resizable chart panels and capture their current
+// CSS heights so the y-mappings (navY/islY) scale to the dragged size
+function sizeCharts() {
+  navCtx = sizeCanvasFill(navCv);
+  NAV_H = navCv.clientHeight;
+  islCtx = sizeCanvasFill(islCv);
+  ISL_H = islCv.clientHeight;
+  tputCtx = sizeCanvasFill(tputCv);
+  TPUT_H = tputCv.clientHeight;
 }
 
 const xOf = (t) => GUTTER + ((t - view.t0) / (view.t1 - view.t0)) * (W - GUTTER);
@@ -553,7 +599,7 @@ function drawRuler() {
 }
 
 /* ---------- draw: lanes ---------- */
-const BAR_PAD = Math.max(2, Math.round(ROW_H * 0.16));
+const BAR_PAD = Math.max(1, Math.round(ROW_H * 0.08));
 const BAR_H = ROW_H - BAR_PAD * 2;
 
 function startIndex(list, t) {
@@ -661,7 +707,8 @@ function drawLanes() {
 }
 
 /* ---------- draw: navigator ---------- */
-const NAV_H = 132, NAV_PAD_T = 12, NAV_PAD_B = 20;
+let NAV_H = 132;
+const NAV_PAD_T = 12, NAV_PAD_B = 20;
 const navYMax = Math.max(DATA.peakActive, N_SLOTS, DATA.target || 0) * 1.12 || 1;
 const navX = (t) => GUTTER + (t / (T_MAX * 1.005)) * (W - GUTTER - 10);
 const navT = (x) => ((x - GUTTER) / (W - GUTTER - 10)) * (T_MAX * 1.005);
@@ -767,6 +814,189 @@ document.getElementById("nav-legend").innerHTML = [
     : []),
 ].join("");
 
+/* ---------- new-ISL-in-flight chart (prefill window, shares lane time axis) ---------- */
+let ISL_H = 120;
+const ISL_PAD_T = 14, ISL_PAD_B = 20;
+const islYMax = (DATA.peakNewIsl || 0) * 1.12 || 1;
+const islY = (v) => ISL_H - ISL_PAD_B - (v / islYMax) * (ISL_H - ISL_PAD_T - ISL_PAD_B);
+const fmtTokens = (v) =>
+  v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + "M"
+  : v >= 1e3 ? (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + "k"
+  : String(Math.round(v));
+function niceStep(max) {
+  if (max <= 0) return 1;
+  const raw = max / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+}
+// step value active at time t (0 before the first event), clamped at >=0
+function valAt(ts, vs, t) {
+  let lo = 0, hi = ts.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (ts[mid] <= t) lo = mid + 1; else hi = mid; }
+  return lo > 0 ? Math.max(0, vs[lo - 1]) : 0;
+}
+// step path over the visible window with a supplied y-map. Values are clamped
+// at the zero baseline so no curve ever renders below it, and x stays on-canvas
+// under zoom. close=true seals the path to the baseline for an area fill.
+function stepPathV(ctx, ts, vs, yMap, close) {
+  const a = view.t0, b = view.t1;
+  let y = yMap(valAt(ts, vs, a));
+  ctx.beginPath();
+  ctx.moveTo(xOf(a), y);
+  for (let i = 0; i < ts.length; i++) {
+    const t = ts[i];
+    if (t <= a) continue;
+    if (t > b) break;
+    const x = xOf(t);
+    ctx.lineTo(x, y);
+    y = yMap(Math.max(0, vs[i]));
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(xOf(b), y);
+  if (close) {
+    ctx.lineTo(xOf(b), yMap(0));
+    ctx.lineTo(xOf(a), yMap(0));
+    ctx.closePath();
+  }
+}
+
+function drawNewIsl() {
+  const ctx = islCtx;
+  ctx.clearRect(0, 0, W, ISL_H);
+
+  // y gridlines + token labels
+  ctx.font = "12px 'IBM Plex Mono', monospace";
+  ctx.textBaseline = "middle";
+  const ystep = niceStep(islYMax);
+  for (let v = 0; v <= islYMax; v += ystep) {
+    const y = Math.round(islY(v)) + 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath(); ctx.moveTo(GUTTER, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.fillStyle = "rgba(186,196,212,0.95)";
+    ctx.textAlign = "right";
+    ctx.fillText(fmtTokens(v), GUTTER - 8, y);
+  }
+  ctx.textAlign = "left";
+
+  // vertical time gridlines aligned with the lane ruler
+  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+  for (const [t] of ticks()) {
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ISL_H - ISL_PAD_B); ctx.stroke();
+  }
+
+  // area + line
+  if (DATA.newIsl.t.length) {
+    stepPathV(ctx, DATA.newIsl.t, DATA.newIsl.v, islY, true);
+    const grad = ctx.createLinearGradient(0, ISL_PAD_T, 0, ISL_H - ISL_PAD_B);
+    grad.addColorStop(0, "rgba(245,185,66,0.34)");
+    grad.addColorStop(1, "rgba(245,185,66,0.05)");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    stepPathV(ctx, DATA.newIsl.t, DATA.newIsl.v, islY, false);
+    ctx.strokeStyle = "#f5b942";
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+  }
+
+  // ramp / bench markers
+  for (const [t, color] of [[DATA.rampS, "#f5b942"], [DATA.benchEnd, "#ef6a6a"]]) {
+    if (t == null || t < view.t0 || t > view.t1) continue;
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(x, ISL_PAD_T); ctx.lineTo(x, ISL_H - ISL_PAD_B); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // x labels
+  ctx.fillStyle = "rgba(186,196,212,0.95)";
+  for (const [t, step] of ticks())
+    ctx.fillText(fmtTick(t, step), Math.round(xOf(t)) + 3, ISL_H - 8);
+}
+
+/* ---------- legend for new-ISL chart ---------- */
+document.getElementById("isl-legend").innerHTML =
+  `<span class="key"><span class="swatch" style="background:#f5b942"></span>new input tokens prefilling (peak ${fmtTokens(DATA.peakNewIsl || 0)} tok)</span>`;
+
+/* ---------- throughput chart (prefill / decode / total tokens/sec, overlaid) ---------- */
+let TPUT_H = 132;
+const TPUT_PAD_T = 14, TPUT_PAD_B = 20;
+const TPUT_PREFILL = "#56c8dd", TPUT_DECODE = "#82d472", TPUT_TOTAL = "#f2a64e";
+const tputYMax = (DATA.peakTput || 0) * 1.12 || 1;
+const tputY = (v) => TPUT_H - TPUT_PAD_B - (v / tputYMax) * (TPUT_H - TPUT_PAD_T - TPUT_PAD_B);
+
+function drawThroughput() {
+  const ctx = tputCtx;
+  ctx.clearRect(0, 0, W, TPUT_H);
+
+  // y gridlines + tokens/sec labels
+  ctx.font = "12px 'IBM Plex Mono', monospace";
+  ctx.textBaseline = "middle";
+  const ystep = niceStep(tputYMax);
+  for (let v = 0; v <= tputYMax; v += ystep) {
+    const y = Math.round(tputY(v)) + 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath(); ctx.moveTo(GUTTER, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.fillStyle = "rgba(186,196,212,0.95)";
+    ctx.textAlign = "right";
+    ctx.fillText(fmtTokens(v), GUTTER - 8, y);
+  }
+  ctx.textAlign = "left";
+
+  // vertical time gridlines aligned with the lane ruler
+  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+  for (const [t] of ticks()) {
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, TPUT_H - TPUT_PAD_B); ctx.stroke();
+  }
+
+  // total: area + line (most prominent)
+  if (DATA.totalTput.t.length) {
+    stepPathV(ctx, DATA.totalTput.t, DATA.totalTput.v, tputY, true);
+    const grad = ctx.createLinearGradient(0, TPUT_PAD_T, 0, TPUT_H - TPUT_PAD_B);
+    grad.addColorStop(0, "rgba(242,166,78,0.26)");
+    grad.addColorStop(1, "rgba(242,166,78,0.04)");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    stepPathV(ctx, DATA.totalTput.t, DATA.totalTput.v, tputY, false);
+    ctx.strokeStyle = TPUT_TOTAL;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+  // prefill + decode: lines only, overlaid on the same axis
+  for (const [series, color] of [[DATA.prefillTput, TPUT_PREFILL], [DATA.decodeTput, TPUT_DECODE]]) {
+    if (!series.t.length) continue;
+    stepPathV(ctx, series.t, series.v, tputY, false);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+  }
+
+  // ramp / bench markers
+  for (const [t, color] of [[DATA.rampS, "#f5b942"], [DATA.benchEnd, "#ef6a6a"]]) {
+    if (t == null || t < view.t0 || t > view.t1) continue;
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(x, TPUT_PAD_T); ctx.lineTo(x, TPUT_H - TPUT_PAD_B); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // x labels
+  ctx.fillStyle = "rgba(186,196,212,0.95)";
+  for (const [t, step] of ticks())
+    ctx.fillText(fmtTick(t, step), Math.round(xOf(t)) + 3, TPUT_H - 8);
+}
+
+/* ---------- legend for throughput chart ---------- */
+document.getElementById("tput-legend").innerHTML = [
+  `<span class="key"><span class="swatch" style="background:${TPUT_TOTAL}"></span>total (peak ${fmtTokens(DATA.peakTput || 0)} tok/s)</span>`,
+  `<span class="key"><span class="swatch" style="background:${TPUT_PREFILL}"></span>prefill</span>`,
+  `<span class="key"><span class="swatch" style="background:${TPUT_DECODE}"></span>decode</span>`,
+].join("");
+
 /* ---------- render loop ---------- */
 let drawQueued = false;
 function scheduleDraw() {
@@ -777,6 +1007,8 @@ function scheduleDraw() {
     clampView();
     drawRuler();
     drawLanes();
+    drawNewIsl();
+    drawThroughput();
     drawNav();
   });
 }
@@ -1018,6 +1250,13 @@ window.addEventListener("keydown", (ev) => {
 
 /* ---------- boot ---------- */
 window.addEventListener("resize", layout);
+// drag-to-resize the two chart panels: re-rasterize + redraw on height change
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(() => { sizeCharts(); scheduleDraw(); });
+  ro.observe(document.getElementById("nav-wrap"));
+  ro.observe(document.getElementById("isl-wrap"));
+  ro.observe(document.getElementById("tput-wrap"));
+}
 layout();
 </script>
 </body>
