@@ -509,9 +509,9 @@ const view = { t0: 0, t1: T_MAX * 1.005 };
 const MIN_SPAN = Math.max(T_MAX / 2e4, 0.02);
 function clampView() {
   const pad = T_MAX * 0.02;
-  let span = Math.min(Math.max(view.t1 - view.t0, MIN_SPAN), T_MAX * 1.05 + pad);
-  if (view.t0 < -pad) view.t0 = -pad;
+  let span = Math.min(Math.max(view.t1 - view.t0, MIN_SPAN), T_MAX + pad);
   if (view.t0 + span > T_MAX + pad) view.t0 = T_MAX + pad - span;
+  if (view.t0 < 0) view.t0 = 0; // never pan/zoom past 0 on the left edge
   view.t1 = view.t0 + span;
 }
 
@@ -522,8 +522,24 @@ const navCv = document.getElementById("nav");
 const islCv = document.getElementById("isl");
 const tputCv = document.getElementById("tput");
 const wrap = document.getElementById("lanes-wrap");
-const ROW_H = Math.max(9, Math.min(20, Math.floor((window.innerHeight * 0.40) / TOTAL_ROWS)));
-const LANES_H = TOTAL_ROWS * ROW_H;
+// Base (default/minimum) lane height; lanes grow above this when the user
+// resizes the panel taller than the stacked lanes, and stay at base (panel
+// scrolls) when shrunk smaller. ROW_H/LANES_H/BAR_* are recomputed by
+// computeLaneGeometry() from the panel height.
+const BASE_ROW_H = Math.max(6, Math.round(Math.min(20, Math.floor((window.innerHeight * 0.40) / TOTAL_ROWS)) * 0.8));
+const NATURAL_LANES_H = TOTAL_ROWS * BASE_ROW_H;
+let ROW_H = BASE_ROW_H, LANES_H = NATURAL_LANES_H, BAR_PAD = 1, BAR_H = 1;
+wrap.style.minHeight = Math.min(48, NATURAL_LANES_H) + "px";
+wrap.style.height = NATURAL_LANES_H + "px";
+function computeLaneGeometry() {
+  const wrapH = wrap.clientHeight || NATURAL_LANES_H;
+  // fill the panel when grown past natural height; otherwise base size + scroll
+  ROW_H = Math.max(BASE_ROW_H, wrapH / TOTAL_ROWS);
+  LANES_H = TOTAL_ROWS * ROW_H;
+  BAR_PAD = Math.max(1, Math.round(ROW_H * 0.08));
+  BAR_H = ROW_H - BAR_PAD * 2;
+}
+computeLaneGeometry();
 function slotOfRow(row) {
   let lo = 0, hi = N_SLOTS - 1;
   while (lo < hi) {
@@ -536,6 +552,7 @@ let lanesCtx, rulerCtx, navCtx, islCtx, tputCtx, W;
 
 function layout() {
   W = document.getElementById("timeline-card").clientWidth;
+  computeLaneGeometry();
   lanesCtx = sizeCanvas(lanesCv, LANES_H);
   rulerCtx = sizeCanvas(rulerCv, 30);
   sizeCharts();
@@ -599,9 +616,6 @@ function drawRuler() {
 }
 
 /* ---------- draw: lanes ---------- */
-const BAR_PAD = Math.max(1, Math.round(ROW_H * 0.08));
-const BAR_H = ROW_H - BAR_PAD * 2;
-
 function startIndex(list, t) {
   // first index whose running max-end reaches t (pmax is monotone)
   let lo = 0, hi = list.length;
@@ -1147,6 +1161,44 @@ lanesCv.addEventListener("wheel", (ev) => {
   scheduleDraw();
 }, { passive: false });
 
+/* ---------- synced pan/zoom on the chart panels (share the lanes' time view) ---------- */
+function attachTimePanZoom(cv) {
+  let panning = false, lastX = 0;
+  cv.style.cursor = "grab";
+  cv.addEventListener("mousedown", (ev) => {
+    panning = true; lastX = ev.clientX; cv.style.cursor = "grabbing";
+  });
+  window.addEventListener("mouseup", () => {
+    if (panning) { panning = false; cv.style.cursor = "grab"; }
+  });
+  cv.addEventListener("mousemove", (ev) => {
+    if (!panning) return;
+    const dx = ev.clientX - lastX; lastX = ev.clientX;
+    const span = view.t1 - view.t0;
+    view.t0 -= (dx / (W - GUTTER)) * span;
+    view.t1 = view.t0 + span;
+    scheduleDraw();
+  });
+  cv.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    const rect = cv.getBoundingClientRect();
+    const span = view.t1 - view.t0;
+    if (ev.shiftKey || Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
+      view.t0 += (ev.deltaX || ev.deltaY) * 0.0012 * span;
+      view.t1 = view.t0 + span;
+    } else {
+      const anchor = tOf(ev.clientX - rect.left);
+      const f = Math.exp(ev.deltaY * 0.0016);
+      view.t0 = anchor - (anchor - view.t0) * f;
+      view.t1 = anchor + (view.t1 - anchor) * f;
+    }
+    scheduleDraw();
+  }, { passive: false });
+  cv.addEventListener("dblclick", () => { view.t0 = 0; view.t1 = T_MAX * 1.005; scheduleDraw(); });
+}
+attachTimePanZoom(islCv);
+attachTimePanZoom(tputCv);
+
 /* ---------- interactions: navigator ---------- */
 let navDrag = null;
 navCv.addEventListener("mousedown", (ev) => {
@@ -1250,9 +1302,18 @@ window.addEventListener("keydown", (ev) => {
 
 /* ---------- boot ---------- */
 window.addEventListener("resize", layout);
-// drag-to-resize the two chart panels: re-rasterize + redraw on height change
+// drag-to-resize panels: charts re-rasterize; the lanes panel recomputes lane
+// geometry so dragging it taller than the stacked lanes grows the lanes to fill
 if (window.ResizeObserver) {
-  const ro = new ResizeObserver(() => { sizeCharts(); scheduleDraw(); });
+  const ro = new ResizeObserver((entries) => {
+    if (entries.some((e) => e.target === wrap)) {
+      computeLaneGeometry();
+      lanesCtx = sizeCanvas(lanesCv, LANES_H);
+    }
+    sizeCharts();
+    scheduleDraw();
+  });
+  ro.observe(wrap);
   ro.observe(document.getElementById("nav-wrap"));
   ro.observe(document.getElementById("isl-wrap"));
   ro.observe(document.getElementById("tput-wrap"));
