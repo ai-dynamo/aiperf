@@ -192,8 +192,21 @@ class _Phase1State:
             self.forks_by_tail.setdefault(fork.fork_outer_idx, []).append(new_idx)
 
 
-def detect_agent_chains(normals: list[IndexedRequest]) -> ChainDetectionResult:
-    """Partition retained top-level requests into per-agent chains."""
+def detect_agent_chains(
+    normals: list[IndexedRequest],
+    *,
+    seam_max_gap_seconds: float = 3600.0,
+    seam_min_overlap_ratio: float = 0.5,
+) -> ChainDetectionResult:
+    """Partition retained top-level requests into per-agent chains.
+
+    ``seam_max_gap_seconds`` / ``seam_min_overlap_ratio`` gate join-seam
+    splicing (see :func:`_elect_continuation`): a low-overlap continuation far
+    past the chain tail is spawned as its own conversation rather than stitched
+    on, so a distinct session that merely shares a base prefix does not get
+    folded into one conversation with a multi-hour internal gap. Defaults match
+    ``Environment.DATASET.WEKA_SEAM_*``; the WekaTraceLoader call sites pass the
+    configured values, while direct callers (tests) use these literals."""
     if not normals:
         return ChainDetectionResult(
             chains=[],
@@ -214,7 +227,12 @@ def detect_agent_chains(normals: list[IndexedRequest]) -> ChainDetectionResult:
     chains = state.chains
 
     seams = _resolve_seams(
-        chains, state.forks_by_tail, state.chain_of_request, state.req_by_outer
+        chains,
+        state.forks_by_tail,
+        state.chain_of_request,
+        state.req_by_outer,
+        max_gap_seconds=seam_max_gap_seconds,
+        min_overlap_ratio=seam_min_overlap_ratio,
     )
 
     alias = {
@@ -359,13 +377,34 @@ def _elect_continuation(
     chains: list[AgentChain],
     registered: list[int],
     t_req: _NormalRequestT,
+    *,
+    max_gap_seconds: float,
+    min_overlap_ratio: float,
 ) -> int | None:
     """Pick the seam continuation among forks registered on a dead tail.
 
     Eligibility: positive depth, no temporal overlap with the tail, same
     model. Election: deepest LCP, tie-break earliest fork_time, then lowest
-    chain index."""
+    chain index.
+
+    Seam guard (``max_gap_seconds`` / ``min_overlap_ratio``): a genuine context
+    compaction continues promptly, so a candidate that starts more than
+    ``max_gap_seconds`` after the tail ends AND shares less than
+    ``min_overlap_ratio`` of the tail's blocks is rejected -- it is a distinct
+    session that merely reuses the base prefix, and stitching it on would
+    fabricate a multi-hour intra-conversation idle gap. Both conditions must
+    hold, so prompt compactions (any overlap) and verbatim long-gap resumes
+    (high overlap) still elect."""
     t_end = _req_end(t_req)
+    tail_blocks = len(t_req.hash_ids)
+
+    def _seam_blocked(ci: int) -> bool:
+        if tail_blocks == 0:
+            return False
+        gap = chains[ci].requests[0][1].t - t_end
+        overlap = chains[ci].fork.depth / tail_blocks
+        return gap > max_gap_seconds and overlap < min_overlap_ratio
+
     candidates = [
         ci
         for ci in registered
@@ -373,6 +412,7 @@ def _elect_continuation(
         and chains[ci].fork.depth > 0
         and t_end <= chains[ci].requests[0][1].t + _EPSILON_SECONDS
         and chains[ci].requests[0][1].model == t_req.model
+        and not _seam_blocked(ci)
     ]
     if not candidates:
         return None
@@ -427,6 +467,9 @@ def _resolve_seams(
     forks_by_tail: dict[int, list[int]],
     chain_of_request: dict[int, int],
     req_by_outer: dict[int, _NormalRequestT],
+    *,
+    max_gap_seconds: float,
+    min_overlap_ratio: float,
 ) -> int:
     """Phase 2: splice join-seam continuations onto dead tails.
 
@@ -465,7 +508,13 @@ def _resolve_seams(
             for ci in forks_by_tail[fork_outer_idx]
             if chains[ci].spliced_into is None
         ]
-        elected = _elect_continuation(chains, registered, req_by_outer[fork_outer_idx])
+        elected = _elect_continuation(
+            chains,
+            registered,
+            req_by_outer[fork_outer_idx],
+            max_gap_seconds=max_gap_seconds,
+            min_overlap_ratio=min_overlap_ratio,
+        )
         if elected is None:
             continue
         target = chains[elected]

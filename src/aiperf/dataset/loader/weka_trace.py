@@ -306,7 +306,11 @@ def _expand_subagent_to_child_plans(
         # throwaway call must not found the main chain and hijack the
         # subagent's identity; it re-attaches to the main chain for replay.
         preamble, detect_inner = _split_off_preamble(list(enumerate(normalized)))
-        detection = detect_agent_chains(detect_inner)
+        detection = detect_agent_chains(
+            detect_inner,
+            seam_max_gap_seconds=Environment.DATASET.WEKA_SEAM_MAX_GAP_SECONDS,
+            seam_min_overlap_ratio=Environment.DATASET.WEKA_SEAM_MIN_OVERLAP_RATIO,
+        )
         main_requests = list(detection.chains[detection.main_index].requests)
         if preamble:
             main_requests = sorted(
@@ -1020,7 +1024,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         # namespace baseline; they re-attach to the main chain for replay.
         preamble, detect_normals = _split_off_preamble(normals)
 
-        detection = detect_agent_chains(detect_normals)
+        detection = detect_agent_chains(
+            detect_normals,
+            seam_max_gap_seconds=Environment.DATASET.WEKA_SEAM_MAX_GAP_SECONDS,
+            seam_min_overlap_ratio=Environment.DATASET.WEKA_SEAM_MIN_OVERLAP_RATIO,
+        )
         if not detection.worker_indices:
             return normals
 
