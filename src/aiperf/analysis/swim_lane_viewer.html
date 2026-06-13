@@ -216,6 +216,26 @@
     border-left: 1px solid rgba(245, 185, 66, 0.7);
     border-right: 1px solid rgba(245, 185, 66, 0.7);
   }
+  #boxsel.stats { background: rgba(86, 200, 221, 0.16); border-color: rgba(86, 200, 221, 0.75); }
+  #winstats {
+    position: fixed;
+    z-index: 55;
+    pointer-events: none;
+    display: none;
+    background: rgba(13, 17, 25, 0.97);
+    border: 1px solid rgba(86, 200, 221, 0.4);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.6;
+    box-shadow: 0 14px 40px -10px rgba(0, 0, 0, 0.9);
+    backdrop-filter: blur(6px);
+    max-width: 320px;
+  }
+  #winstats.show { display: block; }
+  #winstats .h { font-family: var(--display); font-weight: 600; letter-spacing: 0.14em; color: var(--cyan); margin-bottom: 4px; font-size: 12px; }
+  #winstats .row { display: flex; justify-content: space-between; gap: 16px; }
+  #winstats .row .k { color: var(--ink-mute); }
 
   /* ---------- tooltip ---------- */
   #tooltip {
@@ -419,6 +439,7 @@
   <span><kbd>wheel</kbd> zoom at cursor</span>
   <span><kbd>drag</kbd> pan time / scroll lanes</span>
   <span><kbd>shift</kbd>+<kbd>drag</kbd> box-zoom</span>
+  <span><kbd>alt</kbd>+<kbd>drag</kbd> window stats</span>
   <span><kbd>dblclick</kbd> fit all</span>
   <span><kbd>click</kbd> inspect session</span>
   <span><kbd>shift</kbd>+<kbd>click</kbd> pin group</span>
@@ -427,6 +448,7 @@
 
 <div id="tooltip"></div>
 <div id="boxsel"></div>
+<div id="winstats"></div>
 
 <aside id="detail">
   <div class="d-head">
@@ -1448,12 +1470,14 @@ function showTooltip(ev, seg) {
 }
 const hideTooltip = () => tooltip.classList.remove("show");
 
-/* ---------- box-zoom: shift+drag a time range on any chart to zoom to it ---------- */
+/* ---------- range select: shift+drag = box-zoom, alt+drag = window stats ---------- */
 const boxsel = document.getElementById("boxsel");
+const winstats = document.getElementById("winstats");
 let boxState = null, boxJustZoomed = false;
-function startBox(cv, ev) {
-  boxState = { cv, x0: ev.clientX };
+function startBox(cv, ev, mode) {
+  boxState = { cv, x0: ev.clientX, mode };
   boxsel.style.display = "block";
+  boxsel.classList.toggle("stats", mode === "stats");
   boxMove(ev.clientX);
 }
 function boxMove(clientX) {
@@ -1466,24 +1490,74 @@ function boxMove(clientX) {
   boxsel.style.width = Math.max(0, b - a) + "px";
   boxsel.style.height = r.height + "px";
 }
+// aggregate metrics over turns overlapping a [tA, tB] window
+function windowStats(tA, tB) {
+  let n = 0, ttftS = 0, ttftN = 0, latS = 0, latN = 0, islS = 0, islN = 0, oslS = 0, oslN = 0, newS = 0;
+  DATA.sessions.forEach((s) => s.turns.forEach((t) => {
+    if (t[0] >= tB || t[1] <= tA) return;
+    n++;
+    if (t[2] != null) { ttftS += t[2]; ttftN++; }
+    if (t[3] != null) { latS += t[3]; latN++; }
+    if (t[4] != null) { islS += t[4]; islN++; }
+    if (t[5] != null) { oslS += t[5]; oslN++; }
+    newS += t[8] || 0;
+  }));
+  const dur = tB - tA;
+  return {
+    n, dur,
+    avgTtft: ttftN ? ttftS / ttftN : null,
+    avgLat: latN ? latS / latN : null,
+    avgIsl: islN ? islS / islN : null,
+    avgOsl: oslN ? oslS / oslN : null,
+    oslRate: dur > 0 ? oslS / dur : 0,
+    newIsl: newS,
+  };
+}
+function showWinStats(st, cx, cy) {
+  const rows = [
+    ["requests", st.n],
+    ["window", `${st.dur.toFixed(2)} s`],
+    ["avg ttft", fmtMs(st.avgTtft)],
+    ["avg latency", fmtMs(st.avgLat)],
+    ["avg isl / osl", `${fmtN(st.avgIsl)} / ${fmtN(st.avgOsl)} tok`],
+    ["output tok/s", fmtTokens(st.oslRate)],
+    ["new ISL Σ", fmtTokens(st.newIsl) + " tok"],
+  ];
+  winstats.innerHTML = `<div class="h">WINDOW STATS</div>` +
+    rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
+  winstats.classList.add("show");
+  const ww = winstats.offsetWidth, wh = winstats.offsetHeight;
+  let x = cx + 14, y = cy + 12;
+  if (x + ww > window.innerWidth - 8) x = cx - ww - 12;
+  if (y + wh > window.innerHeight - 8) y = cy - wh - 10;
+  winstats.style.left = x + "px";
+  winstats.style.top = y + "px";
+}
+window.addEventListener("mousedown", () => winstats.classList.remove("show"));
 window.addEventListener("mousemove", (ev) => boxMove(ev.clientX));
 window.addEventListener("mouseup", (ev) => {
   if (!boxState) return;
-  const r = boxState.cv.getBoundingClientRect();
+  const mode = boxState.mode, r = boxState.cv.getBoundingClientRect();
   const pa = boxState.x0 - r.left, pb = ev.clientX - r.left;
   boxState = null;
   boxsel.style.display = "none";
   if (Math.abs(pa - pb) < 4) return; // too small — treat as a click
-  view.t0 = tOf(Math.min(pa, pb));
-  view.t1 = tOf(Math.max(pa, pb));
-  boxJustZoomed = true;
-  setTimeout(() => { boxJustZoomed = false; }, 0);
-  scheduleDraw();
+  const tA = tOf(Math.min(pa, pb)), tB = tOf(Math.max(pa, pb));
+  if (mode === "stats") {
+    showWinStats(windowStats(tA, tB), ev.clientX, ev.clientY);
+  } else {
+    view.t0 = tA;
+    view.t1 = tB;
+    boxJustZoomed = true;
+    setTimeout(() => { boxJustZoomed = false; }, 0);
+    scheduleDraw();
+  }
 });
 
 let dragging = false, dragMoved = false, dragX = 0, dragY = 0;
 lanesCv.addEventListener("mousedown", (ev) => {
-  if (ev.shiftKey) { startBox(lanesCv, ev); return; }
+  if (ev.shiftKey) { startBox(lanesCv, ev, "zoom"); return; }
+  if (ev.altKey) { startBox(lanesCv, ev, "stats"); return; }
   dragging = true; dragMoved = false; dragX = ev.clientX; dragY = ev.clientY;
   lanesCv.classList.add("dragging");
 });
@@ -1572,7 +1646,8 @@ function attachTimePanZoom(cv) {
   let panning = false, lastX = 0;
   cv.style.cursor = "grab";
   cv.addEventListener("mousedown", (ev) => {
-    if (ev.shiftKey) { startBox(cv, ev); return; }
+    if (ev.shiftKey) { startBox(cv, ev, "zoom"); return; }
+    if (ev.altKey) { startBox(cv, ev, "stats"); return; }
     panning = true; lastX = ev.clientX; cv.style.cursor = "grabbing";
   });
   window.addEventListener("mouseup", () => {
@@ -1713,7 +1788,7 @@ document.getElementById("d-rows").addEventListener("click", (ev) => {
   scheduleDraw();
 });
 window.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") { closeDetail(); pinned.clear(); scheduleDraw(); }
+  if (ev.key === "Escape") { closeDetail(); pinned.clear(); winstats.classList.remove("show"); scheduleDraw(); }
 });
 
 /* ---------- shareable view (URL hash) + PNG export ---------- */
