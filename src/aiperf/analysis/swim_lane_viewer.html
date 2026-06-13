@@ -370,7 +370,7 @@
     <div class="card-head">
       <span class="title">Swim Lanes — one row per session slot</span>
       <div class="ctrls" id="lane-ctrls"></div>
-      <div class="legend">
+      <div class="legend" id="lane-legend">
         <span class="key"><span class="swatch" style="background:#62a0ea"></span>active request</span>
         <span class="key" id="legend-sub"><span class="swatch" style="background:rgba(98,160,234,0.66)"></span>subagent request</span>
         <span class="key"><span class="swatch" style="background:rgba(98,160,234,0.28)"></span>inter-turn delay</span>
@@ -565,6 +565,12 @@ function metricColor(t) {
     .map(([k, v, hot]) => `<div class="chip${hot ? " hot" : ""}"><b>${v}</b><span>${k}</span></div>`)
     .join("");
   if (!N_SUB) document.getElementById("legend-sub").style.display = "none";
+  // conditional legend keys for errored / context-overflow turns
+  const hasErr = DATA.sessions.some((s) => s.turns.some((t) => t[9] === 1));
+  const hasOvf = DATA.sessions.some((s) => s.turns.some((t) => t[9] === 2));
+  const leg = document.getElementById("lane-legend");
+  if (hasErr) leg.insertAdjacentHTML("beforeend", `<span class="key"><span class="swatch" style="background:none;border:1.5px solid #ef6a6a"></span>error</span>`);
+  if (hasOvf) leg.insertAdjacentHTML("beforeend", `<span class="key"><span class="swatch" style="background:none;border:1.5px dashed #f5b942"></span>ctx overflow</span>`);
 }
 
 /* ---------- lane controls (color-by-metric + prefill/decode split) ---------- */
@@ -832,6 +838,16 @@ function drawLanes() {
         ctx.fillStyle = "rgba(255,255,255,0.5)";
         ctx.fillRect(gx - 0.5, y, 1, h);
         ctx.restore();
+      }
+      // error (red) / context-overflow (dashed amber) outline
+      if (!seg.idle && turn[9]) {
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = turn[9] === 1 ? "#ef6a6a" : "#f5b942";
+        if (turn[9] === 2) ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.roundRect(x0 - 0.75, y - 0.75, x1 - x0 + 1.5, h + 1.5, rad + 0.5);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
   }
@@ -1411,6 +1427,7 @@ function showTooltip(ev, seg) {
       ["ttft", fmtMs(t[2])],
       ["latency", fmtMs(t[3])],
       ["isl / osl", `${fmtN(t[4])} / ${fmtN(t[5])} tok`],
+      ...(t[9] ? [["status", t[9] === 1 ? "⚠ error" : "⚠ context overflow"]] : []),
       ...(s.rows > 1 ? [["sub-row", `${t[6] + 1} of ${s.rows} (parallel)`]] : []),
       ...(t[7] ? [["agent depth", t[7]]] : []),
       ...(s.root ? [["parent", s.root.slice(0, 18) + "…"]] : []),
