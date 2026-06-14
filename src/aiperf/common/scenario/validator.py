@@ -217,15 +217,17 @@ def validate_scenario(
                     spec.name,
                 )
 
-    if user_config.input.ignore_trace_delays and spec.require_use_think_time_only:
+    if user_config.input.ignore_trace_delays and spec.forbid_ignore_trace_delays:
         violations.append(
             ScenarioViolation(
                 flag="--ignore-trace-delays",
                 current_value=True,
                 required_value=False,
                 message=(
-                    f"scenario {spec.name!r} requires think-time delays; "
-                    "--ignore-trace-delays would zero them out"
+                    f"scenario {spec.name!r} replays recorded trace timing; "
+                    "--ignore-trace-delays would null every per-turn "
+                    "timestamp/delay and dispatch all turns back-to-back, "
+                    "falsifying the workload"
                 ),
             )
         )

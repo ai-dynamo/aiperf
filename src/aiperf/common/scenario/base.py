@@ -27,6 +27,16 @@ class ScenarioSpec(AIPerfBaseModel):
         default=False,
         description="Force --use-think-time-only=true to exclude response time from inter-turn delays.",
     )
+    forbid_ignore_trace_delays: bool = Field(
+        default=False,
+        description=(
+            "Reject --ignore-trace-delays. The scenario replays recorded trace "
+            "timing; --ignore-trace-delays nulls every per-turn timestamp/delay "
+            "in the loader, dispatching all turns back-to-back and falsifying the "
+            "workload while the run would otherwise still report "
+            "submission_valid=true."
+        ),
+    )
     forbid_input_truncation: bool = Field(
         description=(
             "Reject client-side input-length truncation. Currently checks "
