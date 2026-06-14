@@ -71,7 +71,7 @@ Standard trace filters apply:
 If you don't already have the trace corpus on disk, SemiAnalysis-published HuggingFace mirrors are available and can be pulled directly by AIPerf with a single flag:
 
 - [`semianalysisai/cc-traces-weka-no-subagents-051826`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-no-subagents-051826) — pinned no-subagents current corpus: 98 traces, **main-agent only** (all `WekaSubagentEntry` blocks stripped at publication time). This is also the legacy/default target for the plain `semianalysis_cc_traces_weka` alias.
-- [`semianalysisai/cc-traces-weka-with-subagents-060826`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-with-subagents-060826) — pinned with-subagents corpus: 391 traces with full subagent fan-out (parent + child SPAWN/JOIN topology).
+- [`semianalysisai/cc-traces-weka-061326`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-061326) — pinned current with-subagents corpus (alias `semianalysis_cc_traces_weka_061326`): 183 v7 traces with full subagent fan-out (parent + child SPAWN/JOIN topology). This is the canonical AgentX MVP corpus.
 
 ```bash
 aiperf profile \
@@ -101,7 +101,7 @@ The HuggingFace path and the file-based `--input-file` path produce **byte-ident
 | `--public-dataset semianalysis_cc_traces_weka` (HuggingFace, legacy/default no-subagents alias) | Legacy/default pinned alias for the same current no-subagents corpus as `semianalysis_cc_traces_weka_no_subagents`. |
 | `--public-dataset semianalysis_cc_traces_weka_with_subagents` (HuggingFace, with subagents) | Pinned with-subagents corpus for zero-setup runs with full subagent SPAWN/JOIN topology. 391 traces. |
 
-Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. For `--scenario inferencex-agentx-mvp`, the validator accepts the with-subagents alias, an explicit local `weka_trace` loader, or `weka_hf` constrained to `semianalysisai/cc-traces-weka-with-subagents-060826`; it does not accept the no-subagents aliases.
+Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. For `--scenario inferencex-agentx-mvp`, the validator accepts the with-subagents alias, an explicit local `weka_trace` loader, or `weka_hf` constrained to `semianalysisai/cc-traces-weka-061326`; it does not accept the no-subagents aliases.
 
 For newly published compatible HuggingFace Weka trace corpora, use the neutral `weka_hf` public dataset and provide the repo explicitly:
 
@@ -110,12 +110,12 @@ aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --public-dataset weka_hf \
-    --hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-060826 \
+    --hf-weka-repo semianalysisai/cc-traces-weka-061326 \
     --streaming \
     --url localhost:8000
 ```
 
-Use the pinned `semianalysis_cc_traces_weka...` aliases, including the plain `semianalysis_cc_traces_weka` alias, when you want the exact corpus named by that alias. Use `weka_hf` when testing a new compatible `semianalysisai/cc-traces-weka-*` release before deciding whether it deserves a pinned alias. For AgentX MVP runs, generic `weka_hf` is valid only with `--hf-weka-repo semianalysisai/cc-traces-weka-with-subagents-060826`; other `weka_hf` repos are rejected by the scenario validator.
+Use the pinned `semianalysis_cc_traces_weka...` aliases, including the plain `semianalysis_cc_traces_weka` alias, when you want the exact corpus named by that alias. Use `weka_hf` when testing a new compatible `semianalysisai/cc-traces-weka-*` release before deciding whether it deserves a pinned alias. For AgentX MVP runs, generic `weka_hf` is valid only with `--hf-weka-repo semianalysisai/cc-traces-weka-061326`; other `weka_hf` repos are rejected by the scenario validator.
 
 A tokenizer is required in both paths (the prompt is reconstructed from `hash_ids`); pass `--tokenizer <name-or-path>` if your `--model` doesn't resolve a default tokenizer.
 
