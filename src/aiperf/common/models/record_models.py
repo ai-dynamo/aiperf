@@ -165,6 +165,13 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this record's session via a "
         "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. Stable "
+        "across the whole tree (root + every descendant subagent at any depth); equals x_correlation_id "
+        "for a root session. Groups every record of one agentic session (root + subagents) under a single "
+        "lane and lets analysis reconstruct exactly-N session-tree concurrency.",
+    )
     credit_issued_ns: int | None = Field(
         default=None,
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
@@ -656,6 +663,14 @@ class RecordContext(AIPerfBaseModel):
         default=None,
         description="The x_correlation_id of the parent session that spawned this session via a DAG "
         "subagent fork. None for root sessions. Sourced from the originating Credit.",
+    )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. "
+        "Stable across the whole tree (root + every descendant subagent at any depth); equals "
+        "x_correlation_id for a root session. Sourced from the originating Credit. Use to group "
+        "every record of one agentic session (root + subagents) and to reconstruct exactly-N "
+        "session-tree concurrency in analysis.",
     )
 
     # --- Canonical wire payload ----------------------------------------------
