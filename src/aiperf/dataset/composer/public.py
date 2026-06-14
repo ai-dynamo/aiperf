@@ -86,9 +86,9 @@ class PublicDatasetComposer(BaseDatasetComposer):
         """
         loader_metadata = plugins.get_public_dataset_loader_metadata(dataset_type)
         kwargs: dict[str, Any] = {}
-        hf_weka_repo = self._validate_hf_weka_repo(dataset_type)
+        hf_weka_dataset = self._validate_hf_weka_dataset(dataset_type)
 
-        hf_dataset_name = hf_weka_repo or loader_metadata.hf_dataset_name
+        hf_dataset_name = hf_weka_dataset or loader_metadata.hf_dataset_name
         if hf_dataset_name is not None:
             kwargs["hf_dataset_name"] = hf_dataset_name
             kwargs["hf_split"] = loader_metadata.hf_split
@@ -125,23 +125,23 @@ class PublicDatasetComposer(BaseDatasetComposer):
 
         return kwargs
 
-    def _validate_hf_weka_repo(self, dataset_type: PublicDatasetType) -> str | None:
-        hf_weka_repo = self.config.input.hf_weka_repo
-        if hf_weka_repo is not None and str(dataset_type) != _WEKA_HF_PUBLIC_DATASET:
+    def _validate_hf_weka_dataset(self, dataset_type: PublicDatasetType) -> str | None:
+        hf_weka_dataset = self.config.input.hf_weka_dataset
+        if hf_weka_dataset is not None and str(dataset_type) != _WEKA_HF_PUBLIC_DATASET:
             raise ValueError(
-                "--hf-weka-repo can only be used with --public-dataset weka_hf"
+                "--hf-weka-dataset can only be used with --public-dataset weka_hf"
             )
         if str(dataset_type) != _WEKA_HF_PUBLIC_DATASET:
             return None
-        if hf_weka_repo is None:
-            raise ValueError("--public-dataset weka_hf requires --hf-weka-repo")
-        hf_weka_repo = hf_weka_repo.strip()
-        if not hf_weka_repo:
+        if hf_weka_dataset is None:
+            raise ValueError("--public-dataset weka_hf requires --hf-weka-dataset")
+        hf_weka_dataset = hf_weka_dataset.strip()
+        if not hf_weka_dataset:
             raise ValueError(
-                "--hf-weka-repo must be a non-empty HuggingFace dataset repo"
+                "--hf-weka-dataset must be a non-empty HuggingFace dataset repo"
             )
-        self.config.input.hf_weka_repo = hf_weka_repo
-        return hf_weka_repo
+        self.config.input.hf_weka_dataset = hf_weka_dataset
+        return hf_weka_dataset
 
     def _inject_trace_kwargs(
         self, loader_metadata: Any, kwargs: dict[str, Any]

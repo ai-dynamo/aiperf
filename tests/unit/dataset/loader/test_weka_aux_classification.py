@@ -9,12 +9,13 @@ parallel fan-out:
   one-shot, is a tool-issued sidecar (``::fa:`` -> ``::aux:``).
 - ``is_reduction_chain``: a same-model single large-input/short-output one-shot
   is a reduction sidecar (``::fa:`` -> ``::aux:red:``).
-- ``worker_group_members``: workers sharing a spawn block with enough forked
-  siblings are a parallel fan-out group (``::fa:`` -> ``::wg:``).
+- ``worker_group_assignment`` / ``worker_group_members``: among workers that
+  forked from shared context, those whose active intervals OVERLAP form a
+  concurrent parallel fan-out, tagged ``::fa:`` -> ``::wg:{group}_{member}``.
 
 All apply at both layers (top-level flat chains and subagent overflow). The
-``_worker_marker`` helper resolves the precedence (aux > reduction > worker-
-group > solo agent).
+``_worker_suffix`` helper resolves the precedence (aux > reduction > worker-
+group > solo agent) and builds the marker + index/coordinate.
 """
 
 from aiperf.dataset.loader.weka_agent_chains import (
@@ -23,9 +24,10 @@ from aiperf.dataset.loader.weka_agent_chains import (
     ChainFork,
     is_aux_chain,
     is_reduction_chain,
+    worker_group_assignment,
     worker_group_members,
 )
-from aiperf.dataset.loader.weka_trace import _worker_marker
+from aiperf.dataset.loader.weka_trace import _worker_suffix
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
 # Defaults mirroring Environment.DATASET.WEKA_AUX_* so the tests read as the
@@ -200,28 +202,35 @@ def test_reduction_empty_chain_is_not_reduction():
     assert is_reduction_chain([], **RED) is False
 
 
-# --- worker-group membership (worker_group_members) ---
+# --- worker-group membership + overlap assignment ---
 
 
-def _worker(first_block: int, fork_depth: int) -> AgentChain:
-    """A worker chain whose first request opens at ``first_block`` and which
-    forked from shared context at ``fork_depth`` blocks."""
+def _worker(
+    t: float = 0.0, dur: float = 10.0, fork_depth: int = 100, fork_outer: int = 0
+) -> AgentChain:
+    """A worker chain forked from shared context (``fork_depth`` blocks) at fork
+    point ``(parent 0, fork_outer)`` whose single request spans the active
+    interval ``[t, t + dur)`` (``api_time=dur``).
+
+    Grouping requires BOTH the same fork point AND temporal overlap; ``hash_ids``
+    are generic since block-0 is not used for grouping."""
     return AgentChain(
         requests=[
             (
                 0,
                 WekaNormalRequest(
                     type="n",
-                    t=0.0,
+                    t=t,
+                    api_time=dur,
                     model="m",
                     input_length=50_000,
                     output_length=200,
-                    hash_ids=[first_block, 2, 3],
+                    hash_ids=[1, 2, 3],
                 ),
             )
         ],
         fork=ChainFork(
-            parent_chain=0, fork_outer_idx=0, depth=fork_depth, fork_time=0.0
+            parent_chain=0, fork_outer_idx=fork_outer, depth=fork_depth, fork_time=t
         ),
     )
 
@@ -253,54 +262,148 @@ def _result(*workers: AgentChain) -> ChainDetectionResult:
     )
 
 
-def test_worker_group_shared_spawn_block_with_forks():
-    # 3 workers share spawn block 7 and forked from shared context -> all members
-    r = _result(_worker(7, 100), _worker(7, 100), _worker(7, 100))
+def test_worker_group_overlapping_intervals_are_members():
+    # 3 workers whose [t, t+dur) intervals all overlap -> one concurrent group
+    r = _result(_worker(0, 100), _worker(10, 100), _worker(20, 100))
     assert worker_group_members(r, group_min=3) == {1, 2, 3}
 
 
+def test_worker_group_non_overlapping_not_grouped():
+    # staggered starts AND no overlap (each ends before the next begins) -> none
+    r = _result(_worker(0, 50), _worker(100, 50), _worker(200, 50))
+    assert worker_group_members(r, group_min=3) == set()
+
+
+def test_worker_group_staggered_but_overlapping_still_one_group():
+    # the "started 230s later but still alive together" case: starts spread 200s
+    # yet every interval overlaps the next -> one concurrent swarm (the wg:017
+    # scenario that motivated overlap-based grouping)
+    r = _result(_worker(0, 300), _worker(100, 300), _worker(200, 300))
+    assert worker_group_members(r, group_min=3) == {1, 2, 3}
+
+
+def test_worker_group_transitive_overlap_chains_into_one_group():
+    # A[0,100]-B[90,190] overlap, B-C[180,280] overlap, A-C do NOT -> one component
+    r = _result(_worker(0, 100), _worker(90, 100), _worker(180, 100))
+    assert worker_group_members(r, group_min=3) == {1, 2, 3}
+
+
+def test_worker_group_overlap_does_not_bridge_distinct_fork_points():
+    # two trios that fully overlap in time but forked from DIFFERENT parent
+    # requests stay separate -- the fork-point scope stops overlap from bridging
+    # unrelated fan-outs (the failure mode of pure interval overlap).
+    r = _result(
+        _worker(0, 100, fork_outer=5),
+        _worker(1, 100, fork_outer=5),
+        _worker(2, 100, fork_outer=5),
+        _worker(0, 100, fork_outer=9),
+        _worker(1, 100, fork_outer=9),
+        _worker(2, 100, fork_outer=9),
+    )
+    a = worker_group_assignment(r, group_min=3)
+    assert len({a[c][0] for c in range(1, 7)}) == 2  # two groups despite full overlap
+    assert {a[c][0] for c in (1, 2, 3)} != {a[c][0] for c in (4, 5, 6)}
+
+
 def test_worker_group_below_min_not_members():
-    # only 2 share the block -> below group_min=3 -> none
-    r = _result(_worker(7, 100), _worker(7, 100))
+    # only 2 overlap -> below group_min=3 -> none
+    r = _result(_worker(0, 100), _worker(10, 100))
     assert worker_group_members(r, group_min=3) == set()
 
 
 def test_worker_group_requires_fork_depth():
-    # 3 share the block but none forked from shared context (depth 0) -> none
-    r = _result(_worker(7, 0), _worker(7, 0), _worker(7, 0))
+    # 3 overlap but depth 0 (didn't fork from shared context) -> none
+    r = _result(_worker(0, 100, 0), _worker(10, 100, 0), _worker(20, 100, 0))
     assert worker_group_members(r, group_min=3) == set()
 
 
-def test_worker_group_distinct_blocks_not_grouped():
-    # no shared spawn point -> no group
-    r = _result(_worker(1, 100), _worker(2, 100), _worker(3, 100))
+def test_worker_group_fork_none_never_groups():
+    # a chain with no fork is never a member
+    solo = _worker(0, 100)
+    solo.fork = None
+    r = _result(solo, _worker(10, 100), _worker(20, 100))  # only 2 real members
     assert worker_group_members(r, group_min=3) == set()
-
-
-def test_worker_group_only_forked_members_qualify():
-    # 3 share the block (group passes) but one has depth 0 -> only forked qualify
-    r = _result(_worker(7, 100), _worker(7, 0), _worker(7, 100))
-    assert worker_group_members(r, group_min=3) == {1, 3}
 
 
 def test_worker_group_min_zero_disables():
-    r = _result(_worker(7, 100), _worker(7, 100), _worker(7, 100))
+    r = _result(_worker(0, 100), _worker(10, 100), _worker(20, 100))
     assert worker_group_members(r, group_min=0) == set()
 
 
-# --- marker precedence (_worker_marker) ---
+# --- overlap coordinate assignment (group / member) ---
 
 
-def test_worker_marker_precedence():
-    # aux wins over everything; reduction over worker-group; wg over solo agent
-    assert _worker_marker(is_aux=True, is_reduction=True, is_worker_group=True) == "aux"
+def test_worker_group_assignment_group_and_member():
+    # one overlapping component -> group 0, members 0..2 in (t0, outer) order
+    r = _result(_worker(0, 100), _worker(1, 100), _worker(2, 100))
+    assert worker_group_assignment(r, group_min=3) == {
+        1: (0, 0),
+        2: (0, 1),
+        3: (0, 2),
+    }
+
+
+def test_worker_group_assignment_two_disjoint_components_two_groups():
+    # two overlap clusters separated by a quiet gap -> two distinct groups
+    r = _result(
+        _worker(0, 100),
+        _worker(1, 100),
+        _worker(2, 100),
+        _worker(1000, 100),
+        _worker(1001, 100),
+        _worker(1002, 100),
+    )
+    a = worker_group_assignment(r, group_min=3)
+    assert {a[c][0] for c in (1, 2, 3)} == {0}
+    assert {a[c][0] for c in (4, 5, 6)} == {1}
+    assert a[4] == (1, 0) and a[6] == (1, 2)
+
+
+def test_worker_group_assignment_groups_ordered_by_first_start():
+    # group ordinal follows the earliest member's start, not declaration order
+    r = _result(
+        _worker(1000, 100),
+        _worker(1001, 100),
+        _worker(1002, 100),
+        _worker(0, 100),
+        _worker(1, 100),
+        _worker(2, 100),
+    )
+    a = worker_group_assignment(r, group_min=3)
+    # the early cluster starts first -> group 0
+    assert {a[c][0] for c in (4, 5, 6)} == {0}
+    assert {a[c][0] for c in (1, 2, 3)} == {1}
+
+
+def test_worker_group_members_matches_assignment_keys():
+    # 3 overlapping depth>0 workers form a group; the depth-0 one is excluded
+    r = _result(
+        _worker(0, 100), _worker(10, 100), _worker(20, 100), _worker(30, 100, 0)
+    )
+    assert worker_group_members(r, group_min=3) == {1, 2, 3}
+    assert worker_group_members(r, group_min=3) == set(
+        worker_group_assignment(r, group_min=3)
+    )
+
+
+# --- session-id suffix precedence (_worker_suffix) ---
+
+
+def test_worker_suffix_precedence_and_shape():
+    # aux wins over everything; reduction next; then worker-group coordinate.
     assert (
-        _worker_marker(is_aux=False, is_reduction=True, is_worker_group=True)
-        == "aux:red"
+        _worker_suffix(n=2, is_aux=True, is_reduction=True, wg_coord=(1, 0))
+        == "aux:002"
     )
     assert (
-        _worker_marker(is_aux=False, is_reduction=False, is_worker_group=True) == "wg"
+        _worker_suffix(n=3, is_aux=False, is_reduction=True, wg_coord=(1, 0))
+        == "aux:red:003"
+    )
+    # worker-group: underscore-joined (group, member) value, colon stays structural
+    assert (
+        _worker_suffix(n=5, is_aux=False, is_reduction=False, wg_coord=(1, 2))
+        == "wg:001_002"
     )
     assert (
-        _worker_marker(is_aux=False, is_reduction=False, is_worker_group=False) == "fa"
+        _worker_suffix(n=7, is_aux=False, is_reduction=False, wg_coord=None) == "fa:007"
     )

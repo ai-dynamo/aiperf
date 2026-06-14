@@ -95,7 +95,7 @@ def _user_config(
     cfg.input.synthesis.max_isl = None
     cfg.input.detected_loader = loader
     cfg.input.public_dataset = None
-    cfg.input.hf_weka_repo = None
+    cfg.input.hf_weka_dataset = None
     cfg.loadgen.benchmark_duration = benchmark_duration
     cfg.loadgen.inter_turn_delay_cap_seconds = None
     cfg.loadgen.trace_idle_gap_cap_seconds = 60.0
