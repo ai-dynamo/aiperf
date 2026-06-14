@@ -548,6 +548,99 @@ def test_shared_spawn_fanout_emits_worker_group_ids(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 9b. Production-default classification: the cases above each monkeypatch one
+#     knob to a chosen value. These assert the END-TO-END loader output at the
+#     ACTUAL shipped (model-field) defaults, so a default drift moves the
+#     classification with it, and verify the arms COMPOSE in one reconstruction.
+# ---------------------------------------------------------------------------
+
+
+def _enable_production_classification(monkeypatch) -> None:
+    """Restore aux / reduction / worker-group classification to their real
+    shipped defaults, undoing the loader suite's autouse disable.
+
+    The loader-suite autouse fixture zeroes WEKA_AUX_MAX_REQUESTS /
+    WEKA_AUX_REDUCTION_OSL_MAX / WEKA_WORKER_GROUP_MIN to keep mechanics tests on
+    ``::fa:``. Here we re-read each one's pydantic model-field default (the value
+    a real run uses) rather than hardcoding, so these e2e classifications track
+    the shipped config. WEKA_AUX_CROSS_MODEL / ISL_FLOOR / ISL_RATIO /
+    REDUCTION_RATIO are not zeroed by the fixture, so they already hold their
+    production defaults.
+    """
+    ds = Environment.DATASET
+    fields = type(ds).model_fields
+    for name in (
+        "WEKA_AUX_MAX_REQUESTS",
+        "WEKA_AUX_REDUCTION_OSL_MAX",
+        "WEKA_WORKER_GROUP_MIN",
+    ):
+        monkeypatch.setattr(ds, name, fields[name].default)
+
+
+def test_production_defaults_agent_and_cross_model_sidecar_coexist(
+    tmp_path, monkeypatch
+):
+    """At the shipped defaults, one trace with a multi-request same-model agent
+    AND a cross-model one-shot emits both real tags together: a genuine ``::fa:``
+    agent and an ``::aux:`` sidecar. This is the headline agent-vs-sidecar split
+    the aux feature exists to produce, asserted end-to-end at production config.
+    """
+    _enable_production_classification(monkeypatch)
+    reqs = [
+        _row(t=0.0, hash_ids=[1, 2, 3]),  # main chain, model "m"
+        # Cross-model one-shot (Haiku WebFetch under an Opus agent) -> ::aux:.
+        _row(t=1.0, hash_ids=[50], model="hk"),
+        # Same-model agent, two requests on a disjoint namespace: two requests
+        # exceed WEKA_AUX_MAX_REQUESTS=1 (not aux-eligible) and the disjoint first
+        # block means fork depth 0 (not a worker-group member) -> ::fa:.
+        _row(t=2.0, hash_ids=[80, 81]),
+        _row(t=3.0, hash_ids=[80, 81, 82]),
+        _row(t=4.0, hash_ids=[1, 2, 3, 4]),  # main continues
+    ]
+    p = _write_trace(tmp_path / "prod_mix.json", trace_id="prod_mix", requests=reqs)
+    convs = _convs_by_sid(_loader_for(p))
+    sids = sorted(convs)
+    assert any(s.startswith("prod_mix::aux:") for s in sids), sids
+    assert any(s.startswith("prod_mix::fa:") for s in sids), sids
+
+
+def test_production_defaults_shared_spawn_fanout_is_worker_group(tmp_path, monkeypatch):
+    """At the shipped defaults (WEKA_WORKER_GROUP_MIN=3), three MULTI-request
+    workers forking from the still-open main chain's shared spawn block are a
+    parallel fan-out group -> ``::wg:``, the corpus's dominant agent population.
+
+    The workers are two-request so they escape aux-eligibility
+    (WEKA_AUX_MAX_REQUESTS=1) -- aux is classified before worker-group, so a small
+    SINGLE-request forked worker would be an ``::aux:`` size sidecar at these
+    defaults, not ``::wg:`` (the prior test_shared_spawn_fanout case only reaches
+    ``::wg:`` because it disables aux entirely). Genuine parallel sub-agents do
+    sustained multi-request work, which is exactly what keeps them ``::wg:``.
+    """
+    _enable_production_classification(monkeypatch)
+    # Each worker's two requests must be SEQUENTIAL (non-overlapping intervals):
+    # a request that starts before its own chain's prior request finishes is
+    # temporally infeasible as a continuation and splits into its own
+    # single-request chain (which would then be an aux size sidecar). Small
+    # api_time keeps each worker's turn 2 after its turn 1.
+    reqs = [
+        _row(t=0.0, hash_ids=[1, 2, 3, 4, 5, 6, 7, 8], api_time=100.0),  # deep, open
+        _row(
+            t=1.0, hash_ids=[1, 90], api_time=0.1
+        ),  # worker A t1: shares spawn block 1
+        _row(t=1.2, hash_ids=[1, 90, 93], api_time=0.1),  # worker A t2 -> multi-request
+        _row(t=2.0, hash_ids=[1, 91], api_time=0.1),  # worker B t1
+        _row(t=2.2, hash_ids=[1, 91, 94], api_time=0.1),  # worker B t2
+        _row(t=3.0, hash_ids=[1, 92], api_time=0.1),  # worker C t1
+        _row(t=3.2, hash_ids=[1, 92, 95], api_time=0.1),  # worker C t2
+    ]
+    p = _write_trace(tmp_path / "prod_wg.json", trace_id="prod_wg", requests=reqs)
+    convs = _convs_by_sid(_loader_for(p))
+    wg = sorted(s for s in convs if s.startswith("prod_wg::wg:"))
+    assert len(wg) == 3, sorted(convs)
+    assert not any(s.startswith("prod_wg::aux:") for s in convs), sorted(convs)
+
+
+# ---------------------------------------------------------------------------
 # 10. Determinism: two identical loads produce identical session ids, turn
 #     counts, branch shapes, timestamps, and reset_context flags.
 # ---------------------------------------------------------------------------
