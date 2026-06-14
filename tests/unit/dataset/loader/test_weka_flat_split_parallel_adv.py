@@ -329,6 +329,36 @@ def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypa
     assert w0.turns[2].delay == pytest.approx(10500.0)
 
 
+def test_convert_nonmonotonic_parent_delay_floored_parallel_byte_identical(
+    tmp_path, monkeypatch
+):
+    """A non-monotonic parent timestamp yields a negative raw inter-turn delay.
+
+    The serial parent loop floors it to 0.0; the parallel parent loop must too,
+    or the module's byte-identical serial/parallel contract breaks (and a
+    negative Turn.delay would tell the load generator to dispatch in the past).
+    All three turns share a growing prefix, so they stay one main chain (no flat
+    split) and exercise the parent path; trace-file order is preserved (the
+    loader does not re-sort parent normals by t).
+    """
+    reqs = [
+        _nreq(0.0, [1, 2, 3]),
+        _nreq(5.0, [1, 2, 3, 4]),
+        _nreq(3.0, [1, 2, 3, 4, 5]),  # t=3 < prev t=5 -> raw delay -2000 ms
+    ]
+    serial, _parallel = _run_both(
+        tmp_path, monkeypatch, [_trace("trace_nonmono", reqs)]
+    )
+    # _run_both already asserts serial/parallel byte-parity on every field
+    # including delay; an unfloored parallel path (-2000.0) fails there against
+    # the serial path's 0.0.
+    root = _by_sid(serial)["trace_nonmono"]
+    assert len(root.turns) == 3
+    assert root.turns[0].delay is None
+    assert root.turns[1].delay == pytest.approx(5000.0)
+    assert root.turns[2].delay == pytest.approx(0.0)  # floored, not -2000
+
+
 def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
     tmp_path, monkeypatch
 ):
