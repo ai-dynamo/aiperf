@@ -47,6 +47,7 @@ class ConversationState:
     next_dispatch_offset_ms: float = 0.0
     agent_depth: int = 0
     parent_correlation_id: str | None = None
+    root_correlation_id: str | None = None
     waiting_on_children: bool = False
     join_target_turn_index: int | None = None
     branch_id: str | None = None
@@ -646,6 +647,12 @@ class TrajectorySource(ConversationSource):
                         next_dispatch_offset_ms=_offset_ms(child_ts, t_star_ms),
                         agent_depth=getattr(child_meta, "agent_depth", 1) or 1,
                         parent_correlation_id=parent_corr,
+                        # All streams of one snapshot lane share the synthetic
+                        # parent_corr as their tree root id (it IS the root
+                        # state's x_correlation_id). For a rootless lane (no root
+                        # state) this still groups every background subagent into
+                        # one tree so they share a single session slot.
+                        root_correlation_id=parent_corr,
                         waiting_on_children=False,
                         join_target_turn_index=runtime.join_turn_index,
                         branch_id=runtime.branch_id,
@@ -668,6 +675,7 @@ class TrajectorySource(ConversationSource):
                 next_dispatch_offset_ms=_offset_ms(root_ts, t_star_ms),
                 agent_depth=getattr(root_meta, "agent_depth", 0),
                 parent_correlation_id=None,
+                root_correlation_id=parent_corr,
                 waiting_on_children=waiting,
                 join_target_turn_index=root_next_idx if waiting else None,
                 branch_id=None,
@@ -732,6 +740,8 @@ class TrajectorySource(ConversationSource):
     ) -> SampledSession:
         """Build a SampledSession for a trajectory with start_turn_index pre-set."""
         meta = self._metadata_lookup[trajectory.conversation_id]
+        # A timestamp-less legacy trajectory is a depth-0 root: it is its own
+        # tree root (root_correlation_id defaults to its x_correlation_id).
         return SampledSession(
             conversation_id=trajectory.conversation_id,
             metadata=meta,
@@ -748,6 +758,7 @@ class TrajectorySource(ConversationSource):
             x_correlation_id=state.x_correlation_id,
             agent_depth=state.agent_depth,
             parent_correlation_id=state.parent_correlation_id,
+            root_correlation_id=state.root_correlation_id,
             branch_mode=state.branch_mode,
             start_turn_index=state.next_turn_index,
         )

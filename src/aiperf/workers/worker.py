@@ -1096,6 +1096,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             payload_bytes=payload_bytes,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
+            root_correlation_id=credit.effective_root_correlation_id,
             cache_bust_marker=credit.cache_bust_marker,
             cache_bust_target=credit.cache_bust_target
             if credit.cache_bust_marker is not None

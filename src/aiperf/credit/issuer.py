@@ -286,6 +286,7 @@ class CreditIssuer:
             url_index=url_index,
             agent_depth=turn.agent_depth,
             parent_correlation_id=turn.parent_correlation_id,
+            root_correlation_id=turn.root_correlation_id,
             counts_toward_phase_target=turn.counts_toward_phase_target,
             has_forks=turn.has_forks,
             branch_mode=turn.branch_mode,

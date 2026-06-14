@@ -285,6 +285,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             credit_issued_ns=request_info.credit_issued_ns,
             agent_depth=request_info.agent_depth,
             parent_correlation_id=request_info.parent_correlation_id,
+            root_correlation_id=request_info.root_correlation_id,
             payload_bytes=payload_bytes,
             max_tokens=max_tokens,
             audio_duration_seconds=audio_duration_seconds,
