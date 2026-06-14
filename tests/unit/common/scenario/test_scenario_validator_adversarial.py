@@ -178,21 +178,34 @@ def test_extra_inputs_json_string_vs_dict_identical_clean_outcome() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: ignore_trace_delays + use_think_time_only combo is no longer flagged
-# under AgentX MVP. The scenario no longer requires use_think_time_only, so
-# the `if user_config.input.ignore_trace_delays and spec.require_use_think_time_only`
-# branch in validator.py is dormant for this scenario. Pin: no violation.
+# Test 7: --ignore-trace-delays is REJECTED for AgentX MVP. The scenario replays
+# recorded trace timing (timing_mode=AGENTIC_REPLAY); --ignore-trace-delays nulls
+# every per-turn timestamp/delay in the loader and dispatches all turns
+# back-to-back, falsifying the workload. The validator gates on the dedicated
+# spec.forbid_ignore_trace_delays invariant (decoupled from the now-unset
+# require_use_think_time_only), so it raises without --unsafe-override and stamps
+# submission_valid=false with it.
 # ---------------------------------------------------------------------------
-def test_ignore_trace_delays_with_use_think_time_only_no_longer_violates() -> None:
+def test_ignore_trace_delays_rejected_for_agentx() -> None:
     cfg = _user_config(
         ignore_trace_delays=True,
-        use_think_time_only=True,
+        use_think_time_only=False,
         extra_inputs={"ignore_eos": True},
     )
-    cfg.input._use_think_time_only_explicitly_set = True
+    with pytest.raises(ScenarioLockError, match="ignore-trace-delays"):
+        validate_scenario(cfg)
+
+
+def test_ignore_trace_delays_with_unsafe_override_marks_submission_invalid() -> None:
+    cfg = _user_config(
+        ignore_trace_delays=True,
+        use_think_time_only=False,
+        extra_inputs={"ignore_eos": True},
+        unsafe_override=True,
+    )
     outcome = validate_scenario(cfg)
-    assert outcome.violations == []
-    assert outcome.submission_valid is True
+    assert outcome.submission_valid is False
+    assert any(v.flag == "--ignore-trace-delays" for v in outcome.violations)
 
 
 # ---------------------------------------------------------------------------
