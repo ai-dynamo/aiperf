@@ -2017,9 +2017,10 @@ public_dataset_loader:
     description: |
       Generic HuggingFace-backed Weka trace dataset loader. Use this for newly
       published compatible semianalysisai/cc-traces-weka-* corpora without
-      adding a pinned alias for each release. Requires --hf-weka-dataset to provide
-      the HuggingFace dataset repo name.
-      Usage: --public-dataset weka_hf --hf-weka-dataset semianalysisai/cc-traces-weka-...
+      adding a pinned alias for each release. Selected automatically when you
+      pass --hf-weka-dataset (which supplies the HuggingFace dataset repo name);
+      passing --public-dataset weka_hf explicitly is equivalent.
+      Usage: --hf-weka-dataset semianalysisai/cc-traces-weka-...
     metadata:
       hf_split: train
       is_trace: true
