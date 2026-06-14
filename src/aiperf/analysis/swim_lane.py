@@ -1058,6 +1058,12 @@ def write_swim_lane_html(
                 entry["sub"] = True
             if ":aux:" in entry["conv"]:  # ::aux: (flat) or ::sa:..:aux:NNN (subagent)
                 entry["aux"] = True
+            if (
+                ":aux:red:" in entry["conv"]
+            ):  # reduction sidecar (compaction / summary / digest)
+                entry["red"] = True
+            if ":wg:" in entry["conv"]:  # parallel worker-group fan-out member
+                entry["wg"] = True
             if m.sid != g.root_sid:
                 entry["root"] = g.root_sid
             session_payload.append(entry)
