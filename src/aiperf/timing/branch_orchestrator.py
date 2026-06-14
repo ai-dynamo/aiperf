@@ -235,12 +235,23 @@ class BranchOrchestrator:
         *,
         benchmark_id: str = "unknown",
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
+        session_tree_registry=None,
     ) -> None:
         self._cs = conversation_source
         self._issuer = credit_issuer
         self._sticky_router = sticky_router
         self._benchmark_id = benchmark_id
         self._cache_bust_target = cache_bust_target
+        # Per-tree session-slot ledger (agentic replay only; None otherwise).
+        # Every descendant this orchestrator spawns or snapshot-seeds is
+        # registered against its tree's root_correlation_id so the tree's
+        # session slot is held until the last descendant drains. Acquisition of
+        # the slot happens in the credit issuer; the orchestrator only adjusts
+        # the per-tree outstanding count.
+        self._session_tree_registry = session_tree_registry
+        # child x_correlation_id -> its tree's root_correlation_id, so the
+        # terminal-completion / rollback paths can decrement the right tree.
+        self._child_root: dict[str, str] = {}
         self._child_modes: dict[str, ConversationBranchMode] = {}
         # Two-level pending-join state: a "future" join is registered at
         # spawn time and promoted to "active" once the parent reaches the
@@ -428,6 +439,27 @@ class BranchOrchestrator:
                     (conv.conversation_id, branch.branch_id)
                 )
 
+    def _register_tree_descendants(self, root_corr: str | None, n: int) -> None:
+        """Add ``n`` descendants to their session tree's outstanding count.
+
+        Mirrors the per-parent ``_descendant_counts`` bump but keyed on the
+        tree's root so the tree's session slot is held until the WHOLE tree
+        (root + every descendant at any depth) drains. No-op when tree
+        accounting is not engaged."""
+        if self._session_tree_registry is not None and root_corr is not None and n > 0:
+            self._session_tree_registry.register_descendants(root_corr, n)
+
+    def _tree_descendant_done(self, child_corr: str) -> None:
+        """Account one descendant terminally finishing against its tree.
+
+        Pops the child's recorded tree root and decrements that tree's
+        outstanding count; the registry releases the tree's session slot (and
+        recycles the freed lane) once the tree drains. Idempotent: a child with
+        no recorded root (already accounted, or never tracked) is a no-op."""
+        root_corr = self._child_root.pop(child_corr, None)
+        if self._session_tree_registry is not None and root_corr is not None:
+            self._session_tree_registry.on_descendant_done(root_corr)
+
     def _register_fork_routing(
         self, parent_corr: str, mode: ConversationBranchMode
     ) -> None:
@@ -512,12 +544,19 @@ class BranchOrchestrator:
                     )
 
                 self._child_to_join[child_state.x_correlation_id] = entries
+                self._child_root[child_state.x_correlation_id] = (
+                    child_state.root_correlation_id or parent_corr
+                )
                 tracked_children += 1
 
             if tracked_children:
                 self._descendant_counts[parent_corr] = (
                     self._descendant_counts.get(parent_corr, 0) + tracked_children
                 )
+                # All seeded children of one snapshot lane share the lane's tree
+                # root (the snapshot's synthetic parent_corr), which is also the
+                # id the lane credit opened the tree under.
+                self._register_tree_descendants(parent_corr, tracked_children)
                 self.stats.children_spawned += tracked_children
 
     def _ensure_seeded_join(
@@ -685,6 +724,7 @@ class BranchOrchestrator:
                         parent_correlation_id=parent_corr,
                         child_conversation_id=child_conv_id,
                         agent_depth=parent_depth + 1,
+                        root_correlation_id=credit.effective_root_correlation_id,
                         branch_mode=branch.mode,
                         cache_bust_marker=self._mint_child_marker(child_conv_id),
                         cache_bust_target=self._cache_bust_target,
@@ -695,6 +735,7 @@ class BranchOrchestrator:
                     continue
 
                 child_corr = child.x_correlation_id
+                self._child_root[child_corr] = credit.effective_root_correlation_id
                 self._child_modes[child_corr] = branch.mode
                 per_child_branch_mode[child_corr] = branch.mode
                 per_child_gates[child_corr] = list(branch_gates)
@@ -748,6 +789,12 @@ class BranchOrchestrator:
         if all_children:
             self._descendant_counts.setdefault(parent_corr, 0)
             self._descendant_counts[parent_corr] += len(all_children)
+            # Hold the tree's session slot until every one of these descendants
+            # drains. The spawning parent in this path is the depth-0 root, so
+            # the tree root is its effective_root_correlation_id.
+            self._register_tree_descendants(
+                credit.effective_root_correlation_id, len(all_children)
+            )
 
         # If any expected gate had zero children actually register, still
         # create a future-join entry with an empty outstanding dict keyed
@@ -819,6 +866,10 @@ class BranchOrchestrator:
             self._sticky_router.release_child_routing(parent_corr)
         if parent_corr in self._descendant_counts:
             self._descendant_counts[parent_corr] -= 1
+        # The child was counted into its tree at spawn time (register_descendants
+        # over len(all_children)); a turn-0 dispatch that never landed must
+        # decrement it too, or the tree's slot would never drain.
+        self._tree_descendant_done(child_corr)
         # Three-way classification of non-True dispatch results:
         #   * BaseException -> genuine error (mirror commit 05d02720b
         #     which fixed the analogous bug in
@@ -1231,6 +1282,11 @@ class BranchOrchestrator:
             ):
                 self._release_slot(parent)
                 del self._descendant_counts[parent]
+        # Decrement the child's TREE outstanding count; the registry releases the
+        # tree's session slot (and recycles its lane) once root + all descendants
+        # have drained. Keyed on the tree root, not the direct parent, so a
+        # subchild correctly holds the top root's slot.
+        self._tree_descendant_done(child_corr)
         self._notify_drain()  # cap-suppressed joins finalize w/o credit return
 
     async def on_child_errored(self, child_x_correlation_id: str) -> None:
@@ -1257,6 +1313,7 @@ class BranchOrchestrator:
         parent = entries[0].parent_correlation_id
         errored_mode = self._child_modes.pop(child_corr, None)
         self._child_to_join.pop(child_corr, None)
+        self._tree_descendant_done(child_corr)
 
         # Collect all tracked children for this parent as potential orphans.
         orphans = [
@@ -1280,6 +1337,7 @@ class BranchOrchestrator:
 
         for orphan in orphans:
             self._child_to_join.pop(orphan, None)
+            self._tree_descendant_done(orphan)
             orphan_mode = self._child_modes.pop(orphan, None)
             if (
                 orphan_mode == ConversationBranchMode.FORK
@@ -1376,6 +1434,7 @@ class BranchOrchestrator:
         self._active_joins.clear()
         self._future_joins.clear()
         self._child_to_join.clear()
+        self._child_root.clear()
         self._child_modes.clear()
         self._descendant_counts.clear()
         self._parent_locks.clear()

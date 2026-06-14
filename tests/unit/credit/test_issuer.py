@@ -961,7 +961,9 @@ class TestLaneCredit:
         self, credit_issuer, mock_concurrency, mock_router
     ):
         """Acquires a session slot; no prefill slot, no credit sent on the wire."""
-        acquired = await credit_issuer.acquire_lane_credit()
+        acquired = await credit_issuer.acquire_lane_credit(
+            "lane-root", root_pending=False
+        )
 
         assert acquired is True
         mock_concurrency.acquire_session_slot.assert_called_once()
@@ -972,7 +974,7 @@ class TestLaneCredit:
         self, credit_issuer, mock_concurrency, mock_stop_checker
     ):
         """The slot acquisition is gated on can_start_new_session (a new lane)."""
-        await credit_issuer.acquire_lane_credit()
+        await credit_issuer.acquire_lane_credit("lane-root", root_pending=False)
 
         _, kwargs = mock_concurrency.acquire_session_slot.call_args
         args = mock_concurrency.acquire_session_slot.call_args.args
@@ -986,7 +988,10 @@ class TestLaneCredit:
         """When the session limiter is saturated, acquisition fails (False)."""
         mock_concurrency.acquire_session_slot = AsyncMock(return_value=False)
 
-        assert await credit_issuer.acquire_lane_credit() is False
+        assert (
+            await credit_issuer.acquire_lane_credit("lane-root", root_pending=False)
+            is False
+        )
 
     def test_release_lane_credit_releases_one_session_slot(
         self, credit_issuer, mock_concurrency
