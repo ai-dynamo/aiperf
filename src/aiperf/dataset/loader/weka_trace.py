@@ -114,10 +114,18 @@ def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> 
     peak = 0
     for req in trace.requests:
         if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
+            # Parent (and flat-chain) turns honor --max-osl via _cap_output, so
+            # the keep/drop decision uses the capped output they will send.
             peak = max(peak, req.input_length + capped_output(req))
         elif isinstance(req, WekaSubagentEntry):
             for child_req in req.requests:
-                peak = max(peak, child_req.input_length + capped_output(child_req))
+                # Subagent child turns emit the RECORDED output_length (they are
+                # deliberately NOT subject to --max-osl; see the child emission
+                # in _reconstruct_serial / the parallel worker child loop). The
+                # keep/drop decision must use that same uncapped output, or a
+                # trace that fits only under the cap would be kept and then 4xx
+                # mid-run on the uncapped subagent request.
+                peak = max(peak, child_req.input_length + child_req.output_length)
     return peak
 
 
