@@ -22,7 +22,7 @@ Each trace file is a single JSON object describing one coding conversation:
 AIPerf maps the format directly onto its DAG datastructure:
 
 - One root `Conversation` per trace file.
-- One or more child `Conversation`s per `type: "subagent"` entry. The same hash-id LCP chain detection used for flat top-level fan-outs (see below) runs nested on each subagent's inner requests: the subagent's own thread keeps session id `<trace_id>::sa:<agent_id>`, and every detected inner chain (a one-shot disjoint call, a parallel fork of the subagent's context, or a flattened worker thread) becomes a sibling child with `<trace_id>::sa:<agent_id>:c000`, `:c001`, ... — each dispatched at its recorded offset from the spawn. Inner requests without `hash_ids` stay on the subagent's main chain in time order.
+- One or more child `Conversation`s per `type: "subagent"` entry. The same hash-id LCP chain detection used for flat top-level fan-outs (see below) runs nested on each subagent's inner requests: the subagent's own thread keeps session id `<trace_id>::sa:<agent_id>`, and every detected inner chain (a one-shot disjoint call, a parallel fork of the subagent's context, or a flattened worker thread) becomes a sibling child with `<trace_id>::sa:<agent_id>:fa:000`, `:fa:001`, ... (or `:wg:`/`:aux:`/`:aux:red:` per the classification below) — each dispatched at its recorded offset from the spawn. Inner requests without `hash_ids` stay on the subagent's main chain in time order.
 - A `SPAWN` branch on the parent's preceding turn; a `SPAWN_JOIN` prerequisite on the parent's following turn. Three nuances: (a) subagents with no preceding parent turn are dropped (logged at load time); (b) subagents with no following parent turn become `is_background=True` branches with no `SPAWN_JOIN` prerequisite (the parent doesn't wait); (c) adjacent subagents sharing the same `(preceding, following)` anchors collapse into one multi-child branch.
 
 ---
@@ -214,14 +214,20 @@ The loader detects these hidden agents from `hash_ids` longest-common-prefix (LC
 
 - **Chain**: a request whose hash list fully extends a chain's tail, starts after that tail's interval ends, and runs on the same model is that agent's next turn.
 - **Join seam**: a request that keeps only a prefix of a tail (compaction / context edit) is the same agent's continuation **iff** the longer state is never touched again — otherwise:
-- **Spawn**: the request is a separate agent forked from the shared prefix and becomes a child conversation (session id `<trace_id>::fa:NNN`) linked with SPAWN/SPAWN_JOIN like a proper subagent.
+- **Spawn**: the request is a separate agent forked from the shared prefix and becomes a child conversation linked with SPAWN/SPAWN_JOIN like a proper subagent. Each spawned chain is then **classified** to choose its session-id marker:
+  - `<trace_id>::fa:NNN` — a solo agent (the default).
+  - `<trace_id>::wg:NNN` — a **parallel worker-group** member: it shares a spawn block with at least `AIPERF_DATASET_WEKA_WORKER_GROUP_MIN` (default 3) sibling chains and forked from shared context. This is genuine parallel sub-agent fan-out (the dominant agent population, up to hundreds wide), distinguished from solo agents.
+  - `<trace_id>::aux:NNN` — an **auxiliary sidecar**: a short one-shot (at most `WEKA_AUX_MAX_REQUESTS` requests) from a small fresh context, or on a different model than the main agent (e.g. a Haiku WebFetch summary under an Opus agent). A tool-issued call, not an agent.
+  - `<trace_id>::aux:red:NNN` — a **reduction**: a same-model single large-input / short-output one-shot (context compaction, subagent-result summary, or tool-output digest). Auxiliary, but distinguished from fetch sidecars; governed by `WEKA_AUX_REDUCTION_OSL_MAX` / `WEKA_AUX_REDUCTION_RATIO`.
+
+  Precedence is auxiliary > reduction > worker-group > solo agent. Set `WEKA_AUX_MAX_REQUESTS=0`, `WEKA_AUX_REDUCTION_OSL_MAX=0`, or `WEKA_WORKER_GROUP_MIN=0` to disable each arm (matching chains fall back to `::fa:`).
 
 ### Nested Detection Inside Subagents
 
 The same detection runs **nested** on every `type: "subagent"` entry's inner requests, because real captures flatten fan-outs inside subagents too (on the 060826 corpus, 615 subagent entries hide ~3.1k distinct context chains — mostly one-shot disjoint utility calls, plus genuine parallel forks and compaction seams). Per entry:
 
 - The chain containing the subagent's first retained request keeps the `<trace_id>::sa:<agent_id>` session id and the entry's declared `tool_tokens`/`system_tokens`.
-- Every spawned inner chain becomes a sibling child `<trace_id>::sa:<agent_id>:c000`, `:c001`, ... under the subagent's existing SPAWN branch, sharing its SPAWN_JOIN anchor. A spawned chain inherits the declared tool/system prefix only when its first request provably starts with the same declared-prefix blocks as the main chain (the system role is never fabricated).
+- Every spawned inner chain becomes a sibling child `<trace_id>::sa:<agent_id>:fa:000`, `:fa:001`, ... under the subagent's existing SPAWN branch, sharing its SPAWN_JOIN anchor. The same classification as the top level applies, so a spawned inner chain may instead carry `:wg:NNN` (worker-group), `:aux:NNN` (sidecar), or `:aux:red:NNN` (reduction). A spawned chain inherits the declared tool/system prefix only when its first request provably starts with the same declared-prefix blocks as the main chain (the system role is never fabricated).
 - Each chain child **dispatches at its recorded offset from the spawn** (chain start offsets reach minutes on real corpora; the branch orchestrator sleeps them out — see [DAG Benchmarking](../benchmark-modes/dag.md)). Recorded parallelism is preserved structurally: a chain can never contain two temporally overlapping requests, so concurrent recorded requests always land in separate sibling sessions.
 - Inner requests without `hash_ids` carry no LCP evidence and ride the main chain in time order — a fully evidence-less subagent is exactly one sequential child.
 
