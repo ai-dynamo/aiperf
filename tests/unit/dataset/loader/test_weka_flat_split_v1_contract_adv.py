@@ -609,39 +609,33 @@ def test_production_defaults_agent_and_cross_model_sidecar_coexist(
 
 
 def test_production_defaults_shared_spawn_fanout_is_worker_group(tmp_path, monkeypatch):
-    """At the shipped defaults (WEKA_WORKER_GROUP_MIN=3), three MULTI-request
-    workers forking from the still-open main chain's shared spawn block are a
-    parallel fan-out group -> ``::wg:``, the corpus's dominant agent population.
+    """At the shipped defaults, workers that fork from the still-open main
+    request AND run with OVERLAPPING intervals are one concurrent fan-out ->
+    ``::wg:`` (the corpus's dominant agent population), not generic ``::fa:``.
 
-    The workers are two-request so they escape aux-eligibility
-    (WEKA_AUX_MAX_REQUESTS=1) -- aux is classified before worker-group, so a small
-    SINGLE-request forked worker would be an ``::aux:`` size sidecar at these
-    defaults, not ``::wg:`` (the prior test_shared_spawn_fanout case only reaches
-    ``::wg:`` because it disables aux entirely). Genuine parallel sub-agents do
-    sustained multi-request work, which is exactly what keeps them ``::wg:``.
+    Worker-group now requires a shared fork point AND temporal overlap
+    (overlapping ``[t, t+api_time)`` intervals). Each worker here is a single
+    request with a large fresh context (>= WEKA_AUX_ISL_FLOOR) and a generative
+    output (>= WEKA_AUX_REDUCTION_OSL_MAX) so it escapes BOTH aux arms (aux is
+    classified before worker-group): a small single-request fork would be an
+    ``::aux:`` size sidecar at these defaults, not ``::wg:``. The long api_time
+    makes the three intervals overlap into one group.
     """
     _enable_production_classification(monkeypatch)
-    # Each worker's two requests must be SEQUENTIAL (non-overlapping intervals):
-    # a request that starts before its own chain's prior request finishes is
-    # temporally infeasible as a continuation and splits into its own
-    # single-request chain (which would then be an aux size sidecar). Small
-    # api_time keeps each worker's turn 2 after its turn 1.
     reqs = [
         _row(t=0.0, hash_ids=[1, 2, 3, 4, 5, 6, 7, 8], api_time=100.0),  # deep, open
-        _row(
-            t=1.0, hash_ids=[1, 90], api_time=0.1
-        ),  # worker A t1: shares spawn block 1
-        _row(t=1.2, hash_ids=[1, 90, 93], api_time=0.1),  # worker A t2 -> multi-request
-        _row(t=2.0, hash_ids=[1, 91], api_time=0.1),  # worker B t1
-        _row(t=2.2, hash_ids=[1, 91, 94], api_time=0.1),  # worker B t2
-        _row(t=3.0, hash_ids=[1, 92], api_time=0.1),  # worker C t1
-        _row(t=3.2, hash_ids=[1, 92, 95], api_time=0.1),  # worker C t2
+        # Single-request forks off main block 1; large fresh ISL + generative
+        # output dodge the aux size/reduction arms; overlapping api -> one group.
+        _row(t=1.0, hash_ids=[1, 90], in_len=20000, out_len=5000, api_time=100.0),
+        _row(t=2.0, hash_ids=[1, 91], in_len=20000, out_len=5000, api_time=100.0),
+        _row(t=3.0, hash_ids=[1, 92], in_len=20000, out_len=5000, api_time=100.0),
     ]
     p = _write_trace(tmp_path / "prod_wg.json", trace_id="prod_wg", requests=reqs)
     convs = _convs_by_sid(_loader_for(p))
     wg = sorted(s for s in convs if s.startswith("prod_wg::wg:"))
     assert len(wg) == 3, sorted(convs)
     assert not any(s.startswith("prod_wg::aux:") for s in convs), sorted(convs)
+    assert not any(s.startswith("prod_wg::fa:") for s in convs), sorted(convs)
 
 
 # ---------------------------------------------------------------------------
