@@ -9,12 +9,13 @@ parallel fan-out:
   one-shot, is a tool-issued sidecar (``::fa:`` -> ``::aux:``).
 - ``is_reduction_chain``: a same-model single large-input/short-output one-shot
   is a reduction sidecar (``::fa:`` -> ``::aux:red:``).
-- ``worker_group_members``: workers sharing a spawn block with enough forked
-  siblings are a parallel fan-out group (``::fa:`` -> ``::wg:``).
+- ``worker_group_assignment`` / ``worker_group_members``: workers sharing a
+  spawn block with enough forked siblings are a parallel fan-out group, tagged
+  ``::fa:`` -> ``::wg:{lineage}_{burst}_{member}``.
 
 All apply at both layers (top-level flat chains and subagent overflow). The
-``_worker_marker`` helper resolves the precedence (aux > reduction > worker-
-group > solo agent).
+``_worker_suffix`` helper resolves the precedence (aux > reduction > worker-
+group > solo agent) and builds the marker + index/coordinate.
 """
 
 from aiperf.dataset.loader.weka_agent_chains import (
@@ -23,9 +24,10 @@ from aiperf.dataset.loader.weka_agent_chains import (
     ChainFork,
     is_aux_chain,
     is_reduction_chain,
+    worker_group_assignment,
     worker_group_members,
 )
-from aiperf.dataset.loader.weka_trace import _worker_marker
+from aiperf.dataset.loader.weka_trace import _worker_suffix
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
 # Defaults mirroring Environment.DATASET.WEKA_AUX_* so the tests read as the
@@ -203,16 +205,16 @@ def test_reduction_empty_chain_is_not_reduction():
 # --- worker-group membership (worker_group_members) ---
 
 
-def _worker(first_block: int, fork_depth: int) -> AgentChain:
-    """A worker chain whose first request opens at ``first_block`` and which
-    forked from shared context at ``fork_depth`` blocks."""
+def _worker(first_block: int, fork_depth: int, t: float = 0.0) -> AgentChain:
+    """A worker chain whose first request opens at ``first_block`` at time ``t``
+    and which forked from shared context at ``fork_depth`` blocks."""
     return AgentChain(
         requests=[
             (
                 0,
                 WekaNormalRequest(
                     type="n",
-                    t=0.0,
+                    t=t,
                     model="m",
                     input_length=50_000,
                     output_length=200,
@@ -220,9 +222,7 @@ def _worker(first_block: int, fork_depth: int) -> AgentChain:
                 ),
             )
         ],
-        fork=ChainFork(
-            parent_chain=0, fork_outer_idx=0, depth=fork_depth, fork_time=0.0
-        ),
+        fork=ChainFork(parent_chain=0, fork_outer_idx=0, depth=fork_depth, fork_time=t),
     )
 
 
@@ -288,19 +288,83 @@ def test_worker_group_min_zero_disables():
     assert worker_group_members(r, group_min=0) == set()
 
 
-# --- marker precedence (_worker_marker) ---
+# --- worker-group coordinate assignment (lineage / burst / member) ---
 
 
-def test_worker_marker_precedence():
-    # aux wins over everything; reduction over worker-group; wg over solo agent
-    assert _worker_marker(is_aux=True, is_reduction=True, is_worker_group=True) == "aux"
+def test_worker_group_assignment_lineage_and_member():
+    # one lineage (block 7, all within burst gap) -> lineage 0, burst 0, members 0..2
+    r = _result(_worker(7, 100, t=0.0), _worker(7, 100, t=1.0), _worker(7, 100, t=2.0))
+    assert worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0) == {
+        1: (0, 0, 0),
+        2: (0, 0, 1),
+        3: (0, 0, 2),
+    }
+
+
+def test_worker_group_assignment_temporal_bursts():
+    # same lineage, but a >gap jump opens a new burst; member index resets per burst
+    r = _result(
+        _worker(7, 100, t=0.0),  # burst 0, member 0
+        _worker(7, 100, t=5.0),  # within 30s -> burst 0, member 1
+        _worker(7, 100, t=100.0),  # +95s > 30s -> burst 1, member 0
+        _worker(7, 100, t=103.0),  # within 30s -> burst 1, member 1
+    )
+    assert worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0) == {
+        1: (0, 0, 0),
+        2: (0, 0, 1),
+        3: (0, 1, 0),
+        4: (0, 1, 1),
+    }
+
+
+def test_worker_group_assignment_infinite_gap_is_single_burst():
+    # burst_gap = inf collapses a lineage to one burst (lineage-only grouping)
+    r = _result(_worker(7, 100, t=0.0), _worker(7, 100, t=1e6), _worker(7, 100, t=2e6))
+    coords = worker_group_assignment(r, group_min=3, burst_gap_seconds=float("inf"))
+    assert {ci: c[:2] for ci, c in coords.items()} == {1: (0, 0), 2: (0, 0), 3: (0, 0)}
+
+
+def test_worker_group_assignment_lineages_ordered_by_first_start():
+    # two lineages (blocks 7 and 8); lineage ordinal follows earliest member start
+    r = _result(
+        _worker(8, 100, t=10.0),
+        _worker(8, 100, t=11.0),
+        _worker(8, 100, t=12.0),
+        _worker(7, 100, t=0.0),
+        _worker(7, 100, t=1.0),
+        _worker(7, 100, t=2.0),
+    )
+    coords = worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0)
+    # block-7 group starts earliest -> lineage 0; block-8 -> lineage 1
+    assert {coords[c][0] for c in (4, 5, 6)} == {0}
+    assert {coords[c][0] for c in (1, 2, 3)} == {1}
+
+
+def test_worker_group_members_matches_assignment_keys():
+    r = _result(_worker(7, 100), _worker(7, 0), _worker(7, 100))
+    assert worker_group_members(r, group_min=3) == set(
+        worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0)
+    )
+
+
+# --- session-id suffix precedence (_worker_suffix) ---
+
+
+def test_worker_suffix_precedence_and_shape():
+    # aux wins over everything; reduction next; then worker-group coordinate.
     assert (
-        _worker_marker(is_aux=False, is_reduction=True, is_worker_group=True)
-        == "aux:red"
+        _worker_suffix(n=2, is_aux=True, is_reduction=True, wg_coord=(1, 0, 0))
+        == "aux:002"
     )
     assert (
-        _worker_marker(is_aux=False, is_reduction=False, is_worker_group=True) == "wg"
+        _worker_suffix(n=3, is_aux=False, is_reduction=True, wg_coord=(1, 0, 0))
+        == "aux:red:003"
+    )
+    # worker-group: underscore-joined coordinate value, colon stays structural
+    assert (
+        _worker_suffix(n=5, is_aux=False, is_reduction=False, wg_coord=(1, 2, 3))
+        == "wg:001_002_003"
     )
     assert (
-        _worker_marker(is_aux=False, is_reduction=False, is_worker_group=False) == "fa"
+        _worker_suffix(n=7, is_aux=False, is_reduction=False, wg_coord=None) == "fa:007"
     )

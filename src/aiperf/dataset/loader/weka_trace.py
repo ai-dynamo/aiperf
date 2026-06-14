@@ -226,21 +226,32 @@ class _ParentPlan:
     block_size: int
 
 
-def _worker_marker(*, is_aux: bool, is_reduction: bool, is_worker_group: bool) -> str:
-    """Session-id marker for a detected worker chain.
+def _worker_suffix(
+    *,
+    n: int,
+    is_aux: bool,
+    is_reduction: bool,
+    wg_coord: tuple[int, int, int] | None,
+) -> str:
+    """Session-id suffix (marker + index) for a detected worker chain.
 
-    Auxiliary classification wins over worker-group (a one-shot sidecar is never
-    a parallel agent). ``aux:red`` keeps reductions inside the aux family (the
-    ``:aux:`` substring still flags them) while distinguishing them from
-    fetch/size sidecars; ``wg`` marks a parallel fan-out member; ``fa`` is a
-    solo agent."""
+    Precedence: auxiliary classification wins over worker-group (a one-shot
+    sidecar is never a parallel agent). ``aux:red`` keeps reductions inside the
+    aux family (the ``:aux:`` substring still flags them) while distinguishing
+    them from fetch/size sidecars. A worker-group member carries its parallel-
+    fan-out coordinate as an underscore-joined value ``wg:{lineage}_{burst}_
+    {member}`` (colon stays purely structural -- the coordinate is one value,
+    like the underscore-joined ``agent_id`` after an ``sa:`` key); ``fa`` is a
+    solo agent. ``n`` is the dense per-trace worker index used for the single-
+    valued markers."""
     if is_aux:
-        return "aux"
+        return f"aux:{n:03d}"
     if is_reduction:
-        return "aux:red"
-    if is_worker_group:
-        return "wg"
-    return "fa"
+        return f"aux:red:{n:03d}"
+    if wg_coord is not None:
+        lineage, burst, member = wg_coord
+        return f"wg:{lineage:03d}_{burst:03d}_{member:03d}"
+    return f"fa:{n:03d}"
 
 
 @dataclass
@@ -321,17 +332,17 @@ def _expand_subagent_to_child_plans(
     ]
 
     chains: list[list[WekaNormalRequest]]
-    chain_is_wg: list[bool]
+    chain_wg_coord: list[tuple[int, int, int] | None]
     if not split_chains or not normalized:
         ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
         chains = [[req for _, req in ordered]]
-        chain_is_wg = [False]
+        chain_wg_coord = [None]
     else:
         from aiperf.dataset.loader.weka_agent_chains import (
             detect_agent_chains,
             is_aux_chain,
             is_reduction_chain,
-            worker_group_members,
+            worker_group_assignment,
         )
 
         # Same preamble rule as the top level: a leading prefix-disjoint
@@ -353,10 +364,12 @@ def _expand_subagent_to_child_plans(
             [req for _, req in detection.chains[ci].requests]
             for ci in detection.worker_indices
         )
-        wg_members = worker_group_members(
-            detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
+        wg_coords = worker_group_assignment(
+            detection,
+            group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN,
+            burst_gap_seconds=Environment.DATASET.WEKA_WORKER_GROUP_BURST_GAP_SECONDS,
         )
-        chain_is_wg = [False] + [ci in wg_members for ci in detection.worker_indices]
+        chain_wg_coord = [None] + [wg_coords.get(ci) for ci in detection.worker_indices]
 
     main_first_hash = next((r.hash_ids for r in chains[0] if r.hash_ids), [])
     # Peak input length on the subagent's own main chain -- the yardstick a
@@ -365,7 +378,8 @@ def _expand_subagent_to_child_plans(
     main_model = chains[0][0].model if chains[0] else None
     plans: list[_ChildPlan] = []
     for chain_idx, chain_requests in enumerate(chains):
-        is_aux = is_reduction = is_wg = False
+        is_aux = is_reduction = False
+        wg_coord: tuple[int, int, int] | None = None
         if chain_idx == 0:
             child_sid = f"{trace_id}::sa:{entry.agent_id}"
             init_tool, init_system = entry.tool_tokens, entry.system_tokens
@@ -398,11 +412,15 @@ def _expand_subagent_to_child_plans(
                 ratio=Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
                 isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
             )
-            is_wg = not is_aux and not is_reduction and chain_is_wg[chain_idx]
-            marker = _worker_marker(
-                is_aux=is_aux, is_reduction=is_reduction, is_worker_group=is_wg
+            if not is_aux and not is_reduction:
+                wg_coord = chain_wg_coord[chain_idx]
+            suffix = _worker_suffix(
+                n=chain_idx - 1,
+                is_aux=is_aux,
+                is_reduction=is_reduction,
+                wg_coord=wg_coord,
             )
-            child_sid = f"{trace_id}::sa:{entry.agent_id}:{marker}:{chain_idx - 1:03d}"
+            child_sid = f"{trace_id}::sa:{entry.agent_id}:{suffix}"
         plans.append(
             _ChildPlan(
                 session_id=child_sid,
@@ -1096,7 +1114,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             detect_agent_chains,
             is_aux_chain,
             is_reduction_chain,
-            worker_group_members,
+            worker_group_assignment,
         )
 
         # Set aside leading title-generation / one-shot preamble requests so
@@ -1125,8 +1143,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             (req.input_length for _, req in main_chain.requests), default=0
         )
         main_model = main_chain.requests[0][1].model if main_chain.requests else None
-        wg_members = worker_group_members(
-            detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
+        wg_coords = worker_group_assignment(
+            detection,
+            group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN,
+            burst_gap_seconds=Environment.DATASET.WEKA_WORKER_GROUP_BURST_GAP_SECONDS,
         )
         n_aux = n_red = n_wg = 0
         for n, ci in enumerate(detection.worker_indices):
@@ -1159,16 +1179,16 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 ratio=Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
                 isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
             )
-            is_wg = not aux and not reduction and ci in wg_members
-            marker = _worker_marker(
-                is_aux=aux, is_reduction=reduction, is_worker_group=is_wg
+            wg_coord = wg_coords.get(ci) if (not aux and not reduction) else None
+            suffix = _worker_suffix(
+                n=n, is_aux=aux, is_reduction=reduction, wg_coord=wg_coord
             )
             n_aux += aux
             n_red += reduction
-            n_wg += is_wg
+            n_wg += wg_coord is not None
             flat_plans.append(
                 _FlatChainPlan(
-                    session_id=f"{trace_id}::{marker}:{n:03d}",
+                    session_id=f"{trace_id}::{suffix}",
                     parent_trace_id=trace_id,
                     chain_index=n,
                     requests=list(chain.requests),
