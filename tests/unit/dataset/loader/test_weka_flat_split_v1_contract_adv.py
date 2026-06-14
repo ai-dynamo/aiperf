@@ -527,23 +527,27 @@ def test_same_model_large_reduction_emits_aux_red_sidecar(tmp_path, monkeypatch)
 
 
 def test_shared_spawn_fanout_emits_worker_group_ids(tmp_path, monkeypatch):
-    # Three workers that fork from the still-running main chain's shared spawn
-    # block (depth 1) are a parallel fan-out group -> ::wg:, not generic ::fa:.
-    # The deep main request stays open (large api_time) so the concurrent forks
-    # are not spliced back as join-seam continuations.
+    # Three workers that fork from the still-open main request and run with
+    # OVERLAPPING [t, t+api_time) intervals are one concurrent fan-out ->
+    # ::wg:{group}_{member}, not generic ::fa:. The deep main request stays open
+    # (large api_time) so the forks are not spliced back as join-seam
+    # continuations; the workers' own long api_time makes their intervals
+    # overlap -> one group, members 000..002 by start time.
     monkeypatch.setattr(Environment.DATASET, "WEKA_WORKER_GROUP_MIN", 3)
     reqs = [
         _row(t=0.0, hash_ids=[1, 2, 3, 4, 5, 6, 7, 8], api_time=100.0),  # deep, open
-        _row(t=1.0, hash_ids=[1, 90]),  # worker A: shares spawn block 1, depth 1
-        _row(t=2.0, hash_ids=[1, 91]),  # worker B
-        _row(t=3.0, hash_ids=[1, 92]),  # worker C
+        _row(t=1.0, hash_ids=[1, 90], api_time=100.0),  # worker A: forks, overlaps
+        _row(t=2.0, hash_ids=[1, 91], api_time=100.0),  # worker B
+        _row(t=3.0, hash_ids=[1, 92], api_time=100.0),  # worker C
     ]
     p = _write_trace(tmp_path / "wg.json", trace_id="wg", requests=reqs)
     convs = _convs_by_sid(_loader_for(p))
     wg = sorted(sid for sid in convs if sid.startswith("wg::wg:"))
-    assert [sid.rsplit(":", 1)[-1] for sid in wg] == ["000", "001", "002"], sorted(
-        convs
-    )
+    assert [sid.rsplit(":", 1)[-1] for sid in wg] == [
+        "000_000",
+        "000_001",
+        "000_002",
+    ], sorted(convs)
     assert not any(sid.startswith("wg::fa:") for sid in convs), sorted(convs)
 
 

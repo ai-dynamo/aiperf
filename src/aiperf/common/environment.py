@@ -443,17 +443,23 @@ class _DatasetSettings(BaseSettings):
     WEKA_WORKER_GROUP_MIN: int = Field(
         ge=0,
         default=3,
-        description="Parallel worker-group tagging: a detected worker chain that "
-        "shares its first-request block (a common spawn point) with at least "
-        "this many sibling worker chains AND forked from shared context (fork "
-        "depth > 0) is a member of a parallel fan-out group and is emitted with "
-        "the ::wg: marker instead of the generic ::fa: agent marker. This "
-        "distinguishes genuine parallel sub-agent fan-out (the dominant agent "
-        "population in the corpus, up to hundreds wide) from solo agents. "
-        "Auxiliary chains are classified first, so a one-shot sidecar never "
-        "becomes a worker-group member. Set to 0 to disable worker-group "
-        "tagging (parallel workers keep the generic ::fa: tag). Only applies "
-        "when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+        description="Parallel worker-group tagging: a coordinated parallel fan-"
+        "out must BOTH share a deep spawned context AND run concurrently. Workers "
+        "that forked from shared context (fork depth > 0) are first scoped by "
+        "their fork point (the parent request they branched off), then within "
+        "each scope split into connected components of overlapping active "
+        "[t0, t1) intervals; a component with at least this many members is "
+        "emitted as ::wg:{group}_{member} (group = the concurrent fan-out, member "
+        "= index by start time) instead of the generic ::fa: agent marker. The "
+        "fork-point scope keeps unrelated fan-outs apart (pure interval overlap "
+        "bridges a busy trace into one blob); the overlap split drops members "
+        "that share the fork point but never run concurrently. This isolates "
+        "genuine parallel sub-agent fan-out (the dominant agent population) from "
+        "solo agents, unlike keying on the first context block (shared by ~every "
+        "worker all session). Auxiliary chains are classified first, so a one-"
+        "shot sidecar never becomes a worker-group member. Set to 0 to disable "
+        "worker-group tagging (parallel workers keep the generic ::fa: tag). Only "
+        "applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
     )
 
 

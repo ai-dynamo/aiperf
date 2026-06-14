@@ -106,6 +106,17 @@ class InputConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_dataset_type(self) -> Self:
         """Validate the different dataset type configuration."""
+        # --hf-weka-dataset names a HuggingFace repo for the generic weka_hf
+        # loader, so passing it implies --public-dataset weka_hf. Auto-select
+        # it when the user didn't name a dataset, so the repo flag works on its
+        # own instead of erroring with "requires --public-dataset weka_hf".
+        if self.hf_weka_dataset is not None and self.public_dataset is None:
+            if self.custom_dataset_type is not None:
+                raise ValueError(
+                    "--hf-weka-dataset selects --public-dataset weka_hf, which "
+                    "cannot be combined with --custom-dataset-type"
+                )
+            self.public_dataset = PublicDatasetType.WEKA_HF
         if self.public_dataset is not None and self.custom_dataset_type is not None:
             raise ValueError(
                 "The --public-dataset and --custom-dataset-type options cannot be set together"
@@ -395,13 +406,14 @@ class InputConfig(BaseConfig):
         CLIParameter(name=("--hf-subset",), group=Groups.INPUT),
     ] = None
 
-    hf_weka_repo: Annotated[
+    hf_weka_dataset: Annotated[
         str | None,
         Field(
-            description="HuggingFace dataset repo override for `--public-dataset weka_hf` (e.g. `semianalysisai/cc-traces-weka-with-subagents-052726`). "
-            "Only valid with `--public-dataset weka_hf`; pinned Weka public dataset aliases keep their registry-defined repo names.",
+            description="HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061326`). "
+            "Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other "
+            "`--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.",
         ),
-        CLIParameter(name=("--hf-weka-repo",), group=Groups.INPUT),
+        CLIParameter(name=("--hf-weka-dataset",), group=Groups.INPUT),
     ] = None
 
     custom_dataset_type: Annotated[
