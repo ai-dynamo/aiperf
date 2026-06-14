@@ -103,13 +103,12 @@ The HuggingFace path and the file-based `--input-file` path produce **byte-ident
 
 Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. For `--scenario inferencex-agentx-mvp`, the validator accepts the with-subagents alias, an explicit local `weka_trace` loader, or `weka_hf` constrained to `semianalysisai/cc-traces-weka-061326`; it does not accept the no-subagents aliases.
 
-For newly published compatible HuggingFace Weka trace corpora, use the neutral `weka_hf` public dataset and provide the repo explicitly:
+For newly published compatible HuggingFace Weka trace corpora, pass `--hf-weka-dataset <repo>` — it auto-selects the neutral `weka_hf` loader (passing `--public-dataset weka_hf` explicitly is equivalent):
 
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
-    --public-dataset weka_hf \
     --hf-weka-dataset semianalysisai/cc-traces-weka-061326 \
     --streaming \
     --url localhost:8000

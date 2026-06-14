@@ -333,7 +333,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 #### `--hf-weka-dataset` `<str>`
 
-HuggingFace dataset repo override for `--public-dataset weka_hf` (e.g. `semianalysisai/cc-traces-weka-061326`). Only valid with `--public-dataset weka_hf`; pinned Weka public dataset aliases keep their registry-defined repo names.
+HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061326`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
 #### `--custom-dataset-type` `<str>`
 
