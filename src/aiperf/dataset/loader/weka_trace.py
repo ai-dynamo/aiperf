@@ -166,6 +166,14 @@ class _TraceIdleTiming:
     # last turn whenever an idle gap is compressed.
     subagent_start_by_outer_idx: dict[int, float]
     flat_chain_end_by_session: dict[str, float] = field(default_factory=dict)
+    # Mapped flat-chain spawn time (warp.map of the chain's first request t),
+    # keyed by child session id. Same invariant as subagent_start_by_outer_idx:
+    # the flat-chain SPAWN branch start_timestamp_ms must live on the same
+    # compressed timeline as the chain's (already-warped) turns. The raw
+    # first-request t would land far past those turns whenever a leading idle
+    # gap is compressed, driving _child_dispatch_offset_ms negative -> clamped
+    # to 0, collapsing the recorded child dispatch offset.
+    flat_chain_start_by_session: dict[str, float] = field(default_factory=dict)
 
 
 class _IdleGapTimeWarp:
@@ -582,13 +590,17 @@ def _populate_flat_chain_timing(
     flat_plans_for_trace: list[_FlatChainPlan],
     warp: _IdleGapTimeWarp,
     child_by_session_request: dict[tuple[str, int], _RequestTiming],
-) -> dict[str, float]:
+) -> tuple[dict[str, float], dict[str, float]]:
     """Warp flat-chain request timing onto the shared per-trace timeline.
 
     Mutates ``child_by_session_request`` in place (flat chains share the
-    subagent children's keyspace) and returns the warped chain-end map used
-    for SPAWN_JOIN placement.
+    subagent children's keyspace) and returns
+    ``(flat_chain_start_by_session, flat_chain_end_by_session)``: the warped
+    first-request time used for the SPAWN branch start and the warped chain-end
+    used for SPAWN_JOIN placement. Both must live on the compressed timeline so
+    the branch anchors share it with the chain's (already-warped) turns.
     """
+    flat_chain_start_by_session: dict[str, float] = {}
     flat_chain_end_by_session: dict[str, float] = {}
     for fp in flat_plans_for_trace:
         prev_flat_t: float | None = None
@@ -596,9 +608,11 @@ def _populate_flat_chain_timing(
             t = warp.map(req.t)
             delay_ms = None if prev_flat_t is None else (t - prev_flat_t) * 1000.0
             child_by_session_request[(fp.session_id, k)] = _RequestTiming(t, delay_ms)
+            if k == 0:
+                flat_chain_start_by_session[fp.session_id] = t
             prev_flat_t = t
         flat_chain_end_by_session[fp.session_id] = warp.map(_flat_chain_end_seconds(fp))
-    return flat_chain_end_by_session
+    return flat_chain_start_by_session, flat_chain_end_by_session
 
 
 def _classify_turn_input(
@@ -682,8 +696,10 @@ def _build_trace_idle_timing(
             child_by_session_request[(cp.session_id, k)] = _RequestTiming(t, delay_ms)
             prev_child_t = t
 
-    flat_chain_end_by_session = _populate_flat_chain_timing(
-        flat_plans_for_trace, warp, child_by_session_request
+    flat_chain_start_by_session, flat_chain_end_by_session = (
+        _populate_flat_chain_timing(
+            flat_plans_for_trace, warp, child_by_session_request
+        )
     )
 
     subagent_end_by_outer_idx = {
@@ -699,6 +715,7 @@ def _build_trace_idle_timing(
         subagent_end_by_outer_idx=subagent_end_by_outer_idx,
         subagent_start_by_outer_idx=subagent_start_by_outer_idx,
         flat_chain_end_by_session=flat_chain_end_by_session,
+        flat_chain_start_by_session=flat_chain_start_by_session,
     )
 
 
@@ -1824,14 +1841,25 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             for preceding, join_turn in flat_group_order:
                 fps = flat_groups[(preceding, join_turn)]
                 branch_id = f"{plan.trace_id}:flatspawn:{fps[0].chain_index}"
+                # Mapped flat-chain spawn time when the idle-gap warp is active
+                # (raw first-request t otherwise), so the branch start shares the
+                # chain turns' compressed timeline. Mirrors the subagent SPAWN
+                # branch above; using raw t under a warp would drive the recorded
+                # child dispatch offset negative -> clamped to 0.
+                if trace_idle_timing is not None:
+                    flat_start_seconds = min(
+                        trace_idle_timing.flat_chain_start_by_session[fp.session_id]
+                        for fp in fps
+                    )
+                else:
+                    flat_start_seconds = min(fp.requests[0][1].t for fp in fps)
                 conv.branches.append(
                     ConversationBranchInfo(
                         branch_id=branch_id,
                         child_conversation_ids=[fp.session_id for fp in fps],
                         mode=ConversationBranchMode.SPAWN,
                         is_background=join_turn is None,
-                        start_timestamp_ms=min(fp.requests[0][1].t for fp in fps)
-                        * 1000.0,
+                        start_timestamp_ms=flat_start_seconds * 1000.0,
                     )
                 )
                 conv.turns[preceding].branch_ids.append(branch_id)
@@ -2255,6 +2283,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 marker["effective_end_seconds"] = (
                     trace_idle_timing.flat_chain_end_by_session[fp.session_id]
                 )
+                # Mapped spawn time -> _process_task reads it for the branch
+                # start_timestamp (m.get("effective_t", m["t"])); without it the
+                # parallel flat branch start silently reverts to raw seconds
+                # under a warp (mirrors the subagent marker's effective_t).
+                marker["effective_t"] = trace_idle_timing.flat_chain_start_by_session[
+                    fp.session_id
+                ]
             markers.append(marker)
         parent_payload["flat_markers"] = markers
 

@@ -143,6 +143,7 @@ class _WekaFlatChainMarkerPayload(TypedDict):
     end_seconds: float
     effective_end_seconds: NotRequired[float]
     t: float
+    effective_t: NotRequired[float]
 
 
 class _WekaParentPayload(TypedDict):
@@ -559,7 +560,12 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 "is_background": join_turn is None,
                 "preceding_turn": preceding,
                 "following_turn": join_turn,
-                "start_timestamp": min(m["t"] for m in markers) * 1000.0,
+                # Mapped spawn time under an idle-gap warp (effective_t), raw t
+                # otherwise. Mirrors the subagent branch above and the serial
+                # flat branch; raw t under a warp collapses the child dispatch
+                # offset to 0.
+                "start_timestamp": min(m.get("effective_t", m["t"]) for m in markers)
+                * 1000.0,
             }
         )
 
