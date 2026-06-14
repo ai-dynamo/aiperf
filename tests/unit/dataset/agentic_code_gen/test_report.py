@@ -15,6 +15,7 @@ from aiperf.dataset.agentic_code_gen.models import (
     DatasetManifest,
     ResetConfig,
     SessionDistributionConfig,
+    percentile_stats,
 )
 from aiperf.dataset.agentic_code_gen.reporting.cache_explorer import (
     _classify_turn_blocks,
@@ -412,6 +413,42 @@ class TestExtractCacheMetrics:
             cache["prefix_ratio"].tolist()
             == cache["per_session_cache_hit_rate"].tolist()
         )
+
+
+class TestBuildReportDataEmpty:
+    """Regression: report generation must survive an all-empty dataset."""
+
+    def test_percentile_stats_empty_array_is_zeroed_not_raising(self) -> None:
+        """percentile_stats on an empty array returns zeroed stats (count=0)
+        rather than raising IndexError from np.percentile([])."""
+        stats = percentile_stats(np.array([]))
+        assert stats.count == 0
+        assert stats.mean == 0.0
+        assert stats.median == 0.0
+        assert stats.p99 == 0.0
+
+    def test_build_report_data_all_zero_turn_sessions_does_not_crash(self) -> None:
+        """Sessions that all have zero turns must not crash build_report_data.
+
+        hash_id_block_count / request_latency / session_duration percentile
+        stats are computed unconditionally (unlike the cache fields, which are
+        guarded), so empty arrays must yield zeroed stats, not an IndexError.
+        """
+        sessions: dict[str, list[ParsedTurn]] = {"empty_a": [], "empty_b": []}
+        metrics = extract_metrics(sessions)
+        metrics.update(extract_cache_metrics(sessions))
+
+        data = build_report_data(metrics)
+
+        assert data.total_turns == 0
+        # Per-turn arrays are empty -> zeroed stats (the path that used to crash
+        # on np.percentile([])).
+        assert data.hash_id_block_stats.count == 0
+        assert data.hash_id_block_stats.mean == 0.0
+        assert data.request_latency_stats.count == 0
+        assert data.request_latency_stats.mean == 0.0
+        # Per-session duration has one (zero) entry per empty session.
+        assert data.session_duration_min_stats.mean == 0.0
 
 
 class TestRenderCacheExplorer:
