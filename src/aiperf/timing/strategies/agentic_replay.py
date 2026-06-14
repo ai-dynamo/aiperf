@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -58,6 +58,7 @@ from msgspec.structs import replace as _struct_replace
 
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
@@ -132,6 +133,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # wrap-filled lanes finished the same trace_id with distinct
         # correlation_ids.
         self._in_flight_recycled: set[str] = set()
+        # FIFO eviction order for _in_flight_recycled. The guard retains a
+        # recycled correlation_id so a duplicate final-turn return (which would
+        # double-recycle) still raises; retained UNBOUNDED that is one entry per
+        # recycled session for the whole PROFILING phase. Cap the retained window
+        # (oldest evicted first) so memory is bounded while the window still
+        # spans far more than any realistic duplicate-delivery gap.
+        self._recycle_guard_order: deque[str] = deque()
+        self._recycle_guard_max_window = Environment.AGENTX.RECYCLE_GUARD_MAX_WINDOW
         # Trace_ids whose session is currently dispatched (any turn in flight
         # or scheduled). Used by ``_spawn_from_recycle_or_id`` to skip
         # popping a trace whose every lane is already alive — prevents over-
@@ -646,6 +655,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 "invoked twice for the same final turn"
             )
         self._in_flight_recycled.add(finished_correlation_id)
+        # Bound the guard set: evict the oldest retained correlation_ids once the
+        # window is full so a long, high-throughput run does not accumulate one
+        # entry per recycled session forever.
+        self._recycle_guard_order.append(finished_correlation_id)
+        while len(self._recycle_guard_order) > self._recycle_guard_max_window:
+            self._in_flight_recycled.discard(self._recycle_guard_order.popleft())
 
         # Re-enqueue BEFORE the cooldown check so an in-flight credit returning
         # during cooldown can't drop the trace_id from the recycle pool.

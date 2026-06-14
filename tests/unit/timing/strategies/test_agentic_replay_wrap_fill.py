@@ -187,6 +187,52 @@ async def test_double_recycle_guard_still_fires_on_repeated_correlation_id():
 
 
 @pytest.mark.asyncio
+async def test_recycle_guard_window_is_bounded_fifo():
+    """The double-recycle guard set is FIFO-bounded by RECYCLE_GUARD_MAX_WINDOW.
+
+    Without a bound it retains one entry per recycled session for the entire
+    PROFILING phase (a memory leak on long, high-throughput runs). Once the
+    window is full the oldest recycled correlation_id is evicted; a duplicate
+    still within the window must still raise.
+    """
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=8, turns_per_trace=2)
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    strategy._recycle_guard_max_window = 2
+
+    for i in range(4):
+        corr = f"xcorr_{i}"
+        strategy._correlation_to_lane[corr] = 0
+        strategy._active_traces["trace_0"] = 1
+        await strategy._spawn_from_recycle_or_id(
+            "trace_0", finished_correlation_id=corr
+        )
+
+    # Bounded to the window: oldest two evicted, newest two retained.
+    assert len(strategy._in_flight_recycled) == 2
+    assert "xcorr_0" not in strategy._in_flight_recycled
+    assert "xcorr_1" not in strategy._in_flight_recycled
+    assert "xcorr_2" in strategy._in_flight_recycled
+    assert "xcorr_3" in strategy._in_flight_recycled
+
+    # A duplicate still within the window still raises (guard preserved).
+    strategy._correlation_to_lane["xcorr_3"] = 0
+    strategy._active_traces["trace_0"] = 1
+    with pytest.raises(RuntimeError, match="Double recycle"):
+        await strategy._spawn_from_recycle_or_id(
+            "trace_0", finished_correlation_id="xcorr_3"
+        )
+
+
+@pytest.mark.asyncio
 async def test_warning_emitted_when_wrap_fill_and_cache_bust_none(caplog):
     import logging
 
