@@ -156,7 +156,7 @@ def test_lane_credit_acquires_and_releases_one_session_slot_balanced() -> None:
     async def body() -> tuple[int, int, int]:
         issuer, cm = _build_issuer_with_real_concurrency()
         before = _session_effective_slots(cm)  # == _LIMIT
-        acquired = await issuer.acquire_lane_credit()
+        acquired = await issuer.acquire_lane_credit("lane-root", root_pending=False)
         held = before - _session_effective_slots(cm)
         issuer.release_lane_credit()
         return int(bool(acquired)), held, _session_effective_slots(cm)
@@ -173,8 +173,8 @@ def test_lane_credit_counts_against_the_session_concurrency_limit() -> None:
 
     async def body() -> tuple[bool, bool, int]:
         issuer, cm = _build_issuer_with_real_concurrency()
-        first = await issuer.acquire_lane_credit()
-        second = await issuer.acquire_lane_credit()
+        first = await issuer.acquire_lane_credit("lane-root-a", root_pending=False)
+        second = await issuer.acquire_lane_credit("lane-root-b", root_pending=False)
         return bool(first), bool(second), _session_effective_slots(cm)
 
     first, second, slots = asyncio.run(body())

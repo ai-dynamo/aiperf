@@ -102,6 +102,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         lifecycle: PhaseLifecycle,
         user_config: UserConfig | None = None,
         branch_orchestrator=None,
+        session_tree_registry=None,
         **kwargs,
     ) -> None:
         super().__init__(logger_name="AgenticReplayTiming")
@@ -125,6 +126,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self.credit_issuer = credit_issuer
         self.lifecycle = lifecycle
         self.branch_orchestrator = branch_orchestrator
+        # Per-tree session-slot ledger (agentic replay PROFILING only). When
+        # present, a lane's session slot is held until its whole TREE drains
+        # (root + every descendant), and recycle of the freed lane is driven by
+        # the registry's drain callback (``_on_tree_drained``) rather than fired
+        # synchronously on the root's final turn. None -> legacy per-root-credit
+        # release + the rootless lane-credit / ``_rootless_lane_outstanding``
+        # path below.
+        self._session_tree_registry = session_tree_registry
 
         # Double-recycle guard, keyed on x_correlation_id (not trace_id): the
         # guard's intent is to catch the same final turn firing
@@ -220,17 +229,65 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 sum(self._lanes_per_trace.values()),
             )
 
+    @property
+    def _has_tree_registry(self) -> bool:
+        """True when per-tree session-slot accounting is engaged (PROFILING)."""
+        return (
+            self._session_tree_registry is not None
+            and self.config.phase == CreditPhase.PROFILING
+        )
+
+    def _lane_root_corr(self, snapshot: TrajectorySnapshot) -> str | None:
+        """Tree-root id shared by every stream of a snapshot lane.
+
+        All states of one snapshot lane carry the same ``root_correlation_id``
+        (the snapshot's synthetic parent_corr -- the root state's own id when a
+        root is present, or the shared parent of the background subagents when
+        rootless). Falls back to a state's x_correlation_id for snapshots built
+        without the field (older fixtures)."""
+        return next(
+            (s.root_correlation_id or s.x_correlation_id for s in snapshot.states),
+            None,
+        )
+
+    def _on_tree_drained(self, root_corr: str, phase: CreditPhase) -> None:
+        """Registry drain callback: a session tree fully drained and freed its
+        slot, so recycle its lane into a fresh root.
+
+        Fired synchronously from the registry when the last of a tree's root +
+        descendants completes. Maps the tree root to its lane and schedules the
+        (async) recycle on the loop scheduler so it runs after the current
+        return finishes and is cancelled cleanly at phase teardown. The slot was
+        already released by the registry, so the recycled root's acquire keeps
+        occupancy at exactly the configured concurrency.
+        """
+        lane = self._correlation_to_lane.pop(root_corr, None)
+        self._session_marker.pop(root_corr, None)
+        if lane is None:
+            self.warning(
+                lambda: (
+                    f"Tree {root_corr!r} drained but has no lane mapping; cannot "
+                    "recycle (bookkeeping invariant violated)."
+                )
+            )
+            return
+        self.scheduler.schedule_later(0.0, self._dispatch_recycled_on_lane(lane))
+
     async def setup_phase(self) -> None:
         """Phase-specific async setup.
 
         WARMUP: nothing - trajectories already built by TrajectorySource at
         TimingManager construction time.
 
-        PROFILING: nothing to seed. Recycle draws the next root directly from
-        the shared dataset sampler (``TrajectorySource.next_recycle_conversation_id``),
-        so it honours the dataset's ``sampling_strategy`` and reuses every root
-        about equally -- no strategy-side recycle queue to keep in sync.
+        PROFILING: register the per-tree drain callback (when engaged) so a
+        drained lane recycles into a fresh root. Recycle otherwise draws the
+        next root directly from the shared dataset sampler
+        (``TrajectorySource.next_recycle_conversation_id``), so it honours the
+        dataset's ``sampling_strategy`` and reuses every root about equally --
+        no strategy-side recycle queue to keep in sync.
         """
+        if self._has_tree_registry:
+            self._session_tree_registry.set_drain_callback(self._on_tree_drained)
         if self.config.phase == CreditPhase.PROFILING:
             if not self.conversation_source.trajectories:
                 raise RuntimeError(
@@ -563,7 +620,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 await self.branch_orchestrator.on_child_stopped(credit.x_correlation_id)
             self._session_marker.pop(credit.x_correlation_id, None)
             lane = self._correlation_to_lane.pop(credit.x_correlation_id, None)
-            if lane is not None and lane in self._rootless_lane_outstanding:
+            # Under the registry the orchestrator's descendant-done hook drives
+            # tree drain + lane recycle (see _on_tree_drained); the legacy path
+            # tracks rootless drain here instead.
+            if (
+                not self._has_tree_registry
+                and lane is not None
+                and lane in self._rootless_lane_outstanding
+            ):
                 await self._on_rootless_child_done(lane)
             return
 
@@ -579,6 +643,15 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     f"context-overflow error from server"
                 )
             )
+
+        # Under the registry, the root's slot is held until its WHOLE tree
+        # drains: the callback handler already called registry.on_root_terminal
+        # (after intercept), and recycle of the freed lane is driven by the
+        # registry drain callback (_on_tree_drained) once every descendant has
+        # also finished. Recycling here would start a fresh root while this
+        # tree's background subagents are still running -> concurrency overshoot.
+        if self._has_tree_registry:
+            return
 
         await self._spawn_from_recycle_or_id(
             credit.conversation_id,
@@ -739,12 +812,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             s.conversation_id == trajectory.conversation_id for s in snapshot.states
         )
         if not has_dispatchable_root and dispatchable:
-            await self.credit_issuer.acquire_lane_credit()
-            # Only a TRULY rootless lane (no root state) recycles on child drain
-            # -- no root will ever run on it. A gated parent keeps the credit
-            # until it resumes its join turn and recycles through the normal
-            # depth-0 final-turn path, whose release balances this acquire.
-            if not has_root_state:
+            lane_root_corr = self._lane_root_corr(snapshot)
+            # The lane credit IS this tree's session slot. root_pending=True for
+            # a gated parent (its root credit will still run the join turn and
+            # reach a terminal turn); False for a truly rootless lane (no root
+            # credit ever -- it drains on its background subagents alone). Under
+            # the registry the slot is released and the lane recycled when the
+            # tree drains; the legacy path uses _rootless_lane_outstanding.
+            if self._has_tree_registry and lane_root_corr is not None:
+                self._correlation_to_lane[lane_root_corr] = lane
+            await self.credit_issuer.acquire_lane_credit(
+                lane_root_corr, root_pending=has_root_state
+            )
+            if not self._has_tree_registry and not has_root_state:
                 self._rootless_lane_outstanding[lane] = len(dispatchable)
         # Cap the leading idle (t* -> the trajectory's earliest post-t* request)
         # by shifting EVERY stream left by the same excess, so an idle-at-t*
