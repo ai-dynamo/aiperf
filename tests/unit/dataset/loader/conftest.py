@@ -42,22 +42,35 @@ def _disable_weka_parallel_reconstruction():
 def _disable_weka_aux_classification():
     """Keep flattened-agent worker chains tagged ``::fa:`` in the loader suite.
 
-    The ``::fa:`` -> ``::aux:`` sub-classification (``is_aux_chain``) reclassifies
-    short, small-fresh-context chains as auxiliary sidecars. The flat-split
-    mechanics tests assert ``::fa:`` session ids and byte-identical
-    reconstruction and are agnostic to that tag, so default aux classification
-    off here. Classification itself is covered directly by
-    ``test_weka_aux_classification`` and end-to-end by the aux case in
-    ``test_weka_flat_split_v1_contract_adv`` (which re-enables it via monkeypatch).
+    Worker-chain sub-classification (``is_aux_chain`` size/cross-model arms,
+    ``is_reduction_chain``, and ``worker_group_members``) relabels short
+    one-shots as ``::aux:``/``::aux:red:`` sidecars and shared-spawn fan-out as
+    ``::wg:``. The flat-split mechanics tests assert ``::fa:`` session ids and
+    byte-identical reconstruction and are agnostic to those tags, so default all
+    three off here. Classification itself is covered directly by
+    ``test_weka_aux_classification`` and end-to-end by the aux/reduction/
+    worker-group cases in ``test_weka_flat_split_v1_contract_adv`` (which
+    re-enable them via monkeypatch).
     """
     from aiperf.common import environment as env_mod
 
-    saved = env_mod.Environment.DATASET.WEKA_AUX_MAX_REQUESTS
-    env_mod.Environment.DATASET.WEKA_AUX_MAX_REQUESTS = 0
+    ds = env_mod.Environment.DATASET
+    saved = (
+        ds.WEKA_AUX_MAX_REQUESTS,
+        ds.WEKA_AUX_REDUCTION_OSL_MAX,
+        ds.WEKA_WORKER_GROUP_MIN,
+    )
+    ds.WEKA_AUX_MAX_REQUESTS = 0
+    ds.WEKA_AUX_REDUCTION_OSL_MAX = 0
+    ds.WEKA_WORKER_GROUP_MIN = 0
     try:
         yield
     finally:
-        env_mod.Environment.DATASET.WEKA_AUX_MAX_REQUESTS = saved
+        (
+            ds.WEKA_AUX_MAX_REQUESTS,
+            ds.WEKA_AUX_REDUCTION_OSL_MAX,
+            ds.WEKA_WORKER_GROUP_MIN,
+        ) = saved
 
 
 def stub_hash_id_corpus_rng(prompt_generator) -> None:

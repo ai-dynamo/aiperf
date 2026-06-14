@@ -508,6 +508,45 @@ def test_cross_model_large_singleton_emits_aux_sidecar(tmp_path, monkeypatch):
     assert not any(sid.startswith("xm::fa:") for sid in convs), sorted(convs)
 
 
+def test_same_model_large_reduction_emits_aux_red_sidecar(tmp_path, monkeypatch):
+    # A same-model single one-shot with a large input and a short output (a
+    # context compaction / result summary / tool-output digest) is a reduction
+    # sidecar -> ::aux:red:, distinct from a fetch/size ::aux: sidecar. It
+    # escapes the size arm (input above the floor) and the cross-model arm
+    # (same model "m"), so only the reduction arm catches it.
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_REDUCTION_OSL_MAX", 4000)
+    reqs = [
+        _row(t=0.0, hash_ids=[1, 2, 3]),  # main chain, model "m"
+        _row(t=1.0, hash_ids=[50], in_len=41_280, out_len=330),  # reduction one-shot
+        _row(t=2.0, hash_ids=[1, 2, 3, 4]),  # main continues
+    ]
+    p = _write_trace(tmp_path / "rd.json", trace_id="rd", requests=reqs)
+    convs = _convs_by_sid(_loader_for(p))
+    assert "rd::aux:red:000" in convs, sorted(convs)
+    assert not any(sid.startswith("rd::fa:") for sid in convs), sorted(convs)
+
+
+def test_shared_spawn_fanout_emits_worker_group_ids(tmp_path, monkeypatch):
+    # Three workers that fork from the still-running main chain's shared spawn
+    # block (depth 1) are a parallel fan-out group -> ::wg:, not generic ::fa:.
+    # The deep main request stays open (large api_time) so the concurrent forks
+    # are not spliced back as join-seam continuations.
+    monkeypatch.setattr(Environment.DATASET, "WEKA_WORKER_GROUP_MIN", 3)
+    reqs = [
+        _row(t=0.0, hash_ids=[1, 2, 3, 4, 5, 6, 7, 8], api_time=100.0),  # deep, open
+        _row(t=1.0, hash_ids=[1, 90]),  # worker A: shares spawn block 1, depth 1
+        _row(t=2.0, hash_ids=[1, 91]),  # worker B
+        _row(t=3.0, hash_ids=[1, 92]),  # worker C
+    ]
+    p = _write_trace(tmp_path / "wg.json", trace_id="wg", requests=reqs)
+    convs = _convs_by_sid(_loader_for(p))
+    wg = sorted(sid for sid in convs if sid.startswith("wg::wg:"))
+    assert [sid.rsplit(":", 1)[-1] for sid in wg] == ["000", "001", "002"], sorted(
+        convs
+    )
+    assert not any(sid.startswith("wg::fa:") for sid in convs), sorted(convs)
+
+
 # ---------------------------------------------------------------------------
 # 10. Determinism: two identical loads produce identical session ids, turn
 #     counts, branch shapes, timestamps, and reset_context flags.

@@ -397,6 +397,50 @@ class _DatasetSettings(BaseSettings):
         "Opus agent, which can carry a large fetched-page payload and so escape "
         "the WEKA_AUX_ISL_* size test. Set to False to classify purely by size.",
     )
+    WEKA_AUX_REDUCTION_OSL_MAX: int = Field(
+        ge=0,
+        default=4000,
+        description="Auxiliary (sidecar) classification, reduction arm: a "
+        "single-request worker chain on the SAME model as its enclosing main "
+        "chain is reclassified to an auxiliary one-shot when its output length "
+        "is in (0, this) tokens AND its input length is at least "
+        "WEKA_AUX_ISL_FLOOR AND its input/output ratio exceeds "
+        "WEKA_AUX_REDUCTION_RATIO. This catches large-input/short-output "
+        "reductions (context compaction, subagent-result summaries, tool-output "
+        "digests) that the size and cross-model arms miss because they are "
+        "same-model and large. The bound separates a bounded summary from "
+        "generative agent output (a real agent emits long completions); corpus "
+        "reductions cap well below 4k output across every capture. Reductions "
+        "are emitted as ::aux:red: (still aux, distinguishable from fetch/size "
+        "sidecars). Set to 0 to disable the reduction arm. Only applies when "
+        "WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_AUX_REDUCTION_RATIO: float = Field(
+        ge=0.0,
+        default=20.0,
+        description="Auxiliary (sidecar) classification, reduction arm: the "
+        "minimum input-to-output token ratio for a same-model single-request "
+        "large-input chain to be treated as a reduction sidecar (see "
+        "WEKA_AUX_REDUCTION_OSL_MAX). A reduction consumes a large body and "
+        "emits a short summary, so input/output is high (corpus median ~120); "
+        "20 is a conservative floor that still excludes balanced request/"
+        "response calls. Only applies when WEKA_AUX_REDUCTION_OSL_MAX > 0.",
+    )
+    WEKA_WORKER_GROUP_MIN: int = Field(
+        ge=0,
+        default=3,
+        description="Parallel worker-group tagging: a detected worker chain that "
+        "shares its first-request block (a common spawn point) with at least "
+        "this many sibling worker chains AND forked from shared context (fork "
+        "depth > 0) is a member of a parallel fan-out group and is emitted with "
+        "the ::wg: marker instead of the generic ::fa: agent marker. This "
+        "distinguishes genuine parallel sub-agent fan-out (the dominant agent "
+        "population in the corpus, up to hundreds wide) from solo agents. "
+        "Auxiliary chains are classified first, so a one-shot sidecar never "
+        "becomes a worker-group member. Set to 0 to disable worker-group "
+        "tagging (parallel workers keep the generic ::fa: tag). Only applies "
+        "when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
 
 
 class _DeveloperSettings(BaseSettings):

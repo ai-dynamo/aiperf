@@ -75,6 +75,13 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v16: aux classification gained a reduction arm and worker-group tagging.
+    # A same-model single-request large-input/short-output one-shot (context
+    # compaction, subagent-result summary, tool-output digest) is now a sidecar
+    # at ::aux:red: (and :aux:red: under subagents) via WEKA_AUX_REDUCTION_*;
+    # and a worker chain sharing a spawn block with >= WEKA_WORKER_GROUP_MIN
+    # siblings and a deep fork is tagged ::wg: (parallel fan-out agent) instead
+    # of the generic ::fa:, so those child session ids changed.
     # v15: aux classification gained a cross-model arm -- a one-shot worker
     # chain on a different model than its enclosing main chain (e.g. a Haiku
     # WebFetch summary under an Opus agent) is now a sidecar regardless of
@@ -102,7 +109,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    15
+    16
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -560,6 +567,9 @@ def _settings_payload_from_user_config(
         "weka_aux_isl_ratio": Environment.DATASET.WEKA_AUX_ISL_RATIO,
         "weka_aux_isl_floor": Environment.DATASET.WEKA_AUX_ISL_FLOOR,
         "weka_aux_cross_model": Environment.DATASET.WEKA_AUX_CROSS_MODEL,
+        "weka_aux_reduction_osl_max": (Environment.DATASET.WEKA_AUX_REDUCTION_OSL_MAX),
+        "weka_aux_reduction_ratio": Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
+        "weka_worker_group_min": Environment.DATASET.WEKA_WORKER_GROUP_MIN,
         "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
