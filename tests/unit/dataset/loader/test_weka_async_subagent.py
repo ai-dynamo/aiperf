@@ -331,6 +331,76 @@ def test_subagent_one_shot_overflow_is_tagged_aux_sidecar(tmp_path, monkeypatch)
     assert "t_aux::sa:a1:fa:000" not in convs, sorted(convs)
 
 
+def test_nested_subagent_preamble_does_not_contaminate_main_model(
+    tmp_path, monkeypatch
+):
+    """Regression: a leading prefix-disjoint preamble on a DIFFERENT model must
+    not redefine the subagent's classification yardstick.
+
+    Inner stream: a Haiku title-gen preamble (peeled by _split_off_preamble and
+    re-attached to the main chain only for replay), an Opus main chain, and an
+    Opus single-request spawned chain that is large (>= aux ISL floor) with a
+    generative output (>= reduction OSL max). That spawned chain is same-model
+    as the DETECTED main chain and neither small-fresh nor a reduction, so it is
+    a genuine agent (:fa:). Deriving main_model from chains[0] -- which has the
+    re-attached Haiku preamble sorted first -- would make it cross-model vs Haiku
+    and mis-tag it as an :aux: sidecar (the cross-model arm fires regardless of
+    size/output).
+    """
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_CROSS_MODEL", True)
+
+    def inner(t, model, in_, out, hash_ids, api_time=1.0):
+        return {
+            "t": t,
+            "type": "n",
+            "model": model,
+            "in": in_,
+            "out": out,
+            "api_time": api_time,
+            "hash_ids": hash_ids,
+        }
+
+    sa = {
+        "t": 1.0,
+        "type": "subagent",
+        "agent_id": "a1",
+        "subagent_type": "X",
+        "duration_ms": 20_000,
+        "total_tokens": 0,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            # Haiku title-gen preamble: earliest, prefix-disjoint, small output
+            # -> peeled and re-attached to the main chain only for replay.
+            inner(1.0, "haiku", in_=200, out=10, hash_ids=[900]),
+            # Opus main chain (two requests sharing a prefix) -> founds the chain.
+            inner(2.0, "opus", in_=64, out=10, hash_ids=[1]),
+            inner(4.0, "opus", in_=128, out=10, hash_ids=[1, 2]),
+            # Opus single-request spawned chain: large fresh context (>= aux ISL
+            # floor 16384) with generative output (>= reduction OSL max 4000), so
+            # only the cross-model arm could flip it -- a genuine nested agent.
+            inner(3.0, "opus", in_=20000, out=5000, hash_ids=[50]),
+        ],
+        "models": ["opus", "haiku"],
+    }
+    uc = _mk_user_config()
+    uc.endpoint.model_names = ["opus", "haiku"]
+    data = _build_trace(
+        "t_preamble",
+        [_normal(t=0.0, model="opus"), sa, _normal(t=30.0, model="opus")],
+        models=("opus", "haiku"),
+    )
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, uc, monkeypatch)
+    sids = {
+        c.session_id for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    # Same-model large spawned chain is a genuine agent, not a cross-model sidecar.
+    assert "t_preamble::sa:a1:fa:000" in sids, sorted(sids)
+    assert "t_preamble::sa:a1:aux:000" not in sids, sorted(sids)
+
+
 def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
     tmp_path, monkeypatch
 ):

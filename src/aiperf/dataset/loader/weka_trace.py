@@ -334,6 +334,7 @@ def _expand_subagent_to_child_plans(
         ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
         chains = [[req for _, req in ordered]]
         chain_is_wg = [False]
+        classify_main = chains[0]
     else:
         from aiperf.dataset.loader.weka_agent_chains import (
             detect_agent_chains,
@@ -351,10 +352,14 @@ def _expand_subagent_to_child_plans(
             seam_max_gap_seconds=Environment.DATASET.WEKA_SEAM_MAX_GAP_SECONDS,
             seam_min_overlap_ratio=Environment.DATASET.WEKA_SEAM_MIN_OVERLAP_RATIO,
         )
-        main_requests = list(detection.chains[detection.main_index].requests)
+        # chains[0] re-attaches the prefix-disjoint preamble for replay, but the
+        # DETECTED main chain (without it) is what defines this subagent's
+        # classification yardstick below.
+        detected_main = list(detection.chains[detection.main_index].requests)
+        main_requests = detected_main
         if preamble:
             main_requests = sorted(
-                preamble + main_requests, key=lambda it: (it[1].t, it[0])
+                preamble + detected_main, key=lambda it: (it[1].t, it[0])
             )
         chains = [[req for _, req in main_requests]]
         chains.extend(
@@ -365,12 +370,17 @@ def _expand_subagent_to_child_plans(
             detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
         )
         chain_is_wg = [False] + [ci in wg_members for ci in detection.worker_indices]
+        classify_main = [req for _, req in detected_main]
 
-    main_first_hash = next((r.hash_ids for r in chains[0] if r.hash_ids), [])
-    # Peak input length on the subagent's own main chain -- the yardstick a
-    # spawned overflow chain is measured against for agent-vs-sidecar.
-    main_peak_isl = max((r.input_length for r in chains[0]), default=0)
-    main_model = chains[0][0].model if chains[0] else None
+    # Classification yardstick = the DETECTED main chain (preamble excluded).
+    # Reading it from chains[0] would let a re-attached prefix-disjoint preamble
+    # (a Claude-Code title-gen / one-shot, frequently on a different/smaller
+    # model) redefine main_model / main_first_hash / main_peak_isl and mis-tag a
+    # genuine same-model nested agent as a cross-model :aux: sidecar. Mirrors the
+    # top-level _detect_and_split_flat_chains path.
+    main_first_hash = next((r.hash_ids for r in classify_main if r.hash_ids), [])
+    main_peak_isl = max((r.input_length for r in classify_main), default=0)
+    main_model = classify_main[0].model if classify_main else None
     plans: list[_ChildPlan] = []
     for chain_idx, chain_requests in enumerate(chains):
         is_aux = is_reduction = is_wg = False
