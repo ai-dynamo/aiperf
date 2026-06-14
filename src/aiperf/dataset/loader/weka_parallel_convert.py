@@ -406,6 +406,15 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 delay_ms = t_ms - normals[k - 1][1]["t"] * 1000.0
         if delay_ms is not None:
             delay_ms = delay_tracker.clamp(delay_ms)
+            # Floor at 0, mirroring the serial parent loop in
+            # weka_trace._reconstruct_serial: a negative inter-turn delay (corrupt
+            # think_time, or a non-monotonic main-chain timestamp gap) would tell
+            # the load generator to dispatch a request in the past. Omitting it
+            # here made the parallel parent path emit a negative Turn.delay where
+            # the serial path emits 0.0, breaking the module's byte-identical
+            # serial/parallel contract. (Child / flat-chain paths intentionally
+            # do not floor in either path, so they stay in parity untouched.)
+            delay_ms = max(delay_ms, 0.0)
 
         parent_delta = parent_recon.turn_delta()
         theoretical_hit_blocks = req["theoretical_hit_blocks"]
