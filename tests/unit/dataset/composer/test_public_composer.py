@@ -395,41 +395,41 @@ class TestBuildLoaderKwargsTraceBranch:
 class TestHFWekaRepoOverride:
     """Verify the Weka-only HuggingFace repo override."""
 
-    def test_weka_hf_requires_hf_weka_repo(
+    def test_weka_hf_requires_hf_weka_dataset(
         self, aimo_config: UserConfig, mock_tokenizer_cls
     ) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         aimo_config.input.public_dataset = PublicDatasetType.WEKA_HF
-        aimo_config.input.hf_weka_repo = None
+        aimo_config.input.hf_weka_dataset = None
         composer = PublicDatasetComposer(aimo_config, tokenizer)
 
         with pytest.raises(
             ValueError,
-            match="--public-dataset weka_hf requires --hf-weka-repo",
+            match="--public-dataset weka_hf requires --hf-weka-dataset",
         ):
             composer._build_loader_kwargs(PublicDatasetType.WEKA_HF)
 
-    @pytest.mark.parametrize("hf_weka_repo", ["", "   "])
-    def test_weka_hf_rejects_blank_hf_weka_repo(
-        self, aimo_config: UserConfig, mock_tokenizer_cls, hf_weka_repo: str
+    @pytest.mark.parametrize("hf_weka_dataset", ["", "   "])
+    def test_weka_hf_rejects_blank_hf_weka_dataset(
+        self, aimo_config: UserConfig, mock_tokenizer_cls, hf_weka_dataset: str
     ) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         aimo_config.input.public_dataset = PublicDatasetType.WEKA_HF
-        aimo_config.input.hf_weka_repo = hf_weka_repo
+        aimo_config.input.hf_weka_dataset = hf_weka_dataset
         composer = PublicDatasetComposer(aimo_config, tokenizer)
 
         with pytest.raises(
             ValueError,
-            match="--hf-weka-repo must be a non-empty HuggingFace dataset repo",
+            match="--hf-weka-dataset must be a non-empty HuggingFace dataset repo",
         ):
             composer._build_loader_kwargs(PublicDatasetType.WEKA_HF)
 
-    def test_weka_hf_uses_hf_weka_repo_as_dataset_name(
+    def test_weka_hf_uses_hf_weka_dataset_as_dataset_name(
         self, aimo_config: UserConfig, mock_tokenizer_cls
     ) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         aimo_config.input.public_dataset = PublicDatasetType.WEKA_HF
-        aimo_config.input.hf_weka_repo = "semianalysisai/cc-traces-weka-new"
+        aimo_config.input.hf_weka_dataset = "semianalysisai/cc-traces-weka-new"
         composer = PublicDatasetComposer(aimo_config, tokenizer)
 
         kwargs = composer._build_loader_kwargs(PublicDatasetType.WEKA_HF)
@@ -439,34 +439,34 @@ class TestHFWekaRepoOverride:
         assert kwargs["default_block_size"] == 64
         assert "prompt_generator" in kwargs
 
-    def test_hf_weka_repo_rejected_for_non_weka_hf_public_dataset(
+    def test_hf_weka_dataset_rejected_for_non_weka_hf_public_dataset(
         self, aimo_config: UserConfig
     ) -> None:
         aimo_config.input.public_dataset = PublicDatasetType.AIMO
-        aimo_config.input.hf_weka_repo = "semianalysisai/cc-traces-weka-new"
+        aimo_config.input.hf_weka_dataset = "semianalysisai/cc-traces-weka-new"
         composer = PublicDatasetComposer(aimo_config, tokenizer=None)
 
         with pytest.raises(
             ValueError,
-            match="--hf-weka-repo can only be used with --public-dataset weka_hf",
+            match="--hf-weka-dataset can only be used with --public-dataset weka_hf",
         ):
             composer._build_loader_kwargs(PublicDatasetType.AIMO)
 
-    def test_hf_weka_repo_rejected_for_pinned_weka_alias(
+    def test_hf_weka_dataset_rejected_for_pinned_weka_alias(
         self, aimo_config: UserConfig, mock_tokenizer_cls
     ) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         aimo_config.input.public_dataset = (
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_NO_SUBAGENTS
         )
-        aimo_config.input.hf_weka_repo = (
+        aimo_config.input.hf_weka_dataset = (
             "semianalysisai/cc-traces-weka-with-subagents-new"
         )
         composer = PublicDatasetComposer(aimo_config, tokenizer)
 
         with pytest.raises(
             ValueError,
-            match="--hf-weka-repo can only be used with --public-dataset weka_hf",
+            match="--hf-weka-dataset can only be used with --public-dataset weka_hf",
         ):
             composer._build_loader_kwargs(
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_NO_SUBAGENTS
@@ -479,7 +479,7 @@ class TestHFWekaRepoOverride:
         aimo_config.input.public_dataset = (
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
         )
-        aimo_config.input.hf_weka_repo = None
+        aimo_config.input.hf_weka_dataset = None
         composer = PublicDatasetComposer(aimo_config, tokenizer)
 
         kwargs = composer._build_loader_kwargs(

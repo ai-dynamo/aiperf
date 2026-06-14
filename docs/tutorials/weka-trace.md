@@ -110,12 +110,12 @@ aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --public-dataset weka_hf \
-    --hf-weka-repo semianalysisai/cc-traces-weka-061326 \
+    --hf-weka-dataset semianalysisai/cc-traces-weka-061326 \
     --streaming \
     --url localhost:8000
 ```
 
-Use the pinned `semianalysis_cc_traces_weka...` aliases, including the plain `semianalysis_cc_traces_weka` alias, when you want the exact corpus named by that alias. Use `weka_hf` when testing a new compatible `semianalysisai/cc-traces-weka-*` release before deciding whether it deserves a pinned alias. For AgentX MVP runs, generic `weka_hf` is valid only with `--hf-weka-repo semianalysisai/cc-traces-weka-061326`; other `weka_hf` repos are rejected by the scenario validator.
+Use the pinned `semianalysis_cc_traces_weka...` aliases, including the plain `semianalysis_cc_traces_weka` alias, when you want the exact corpus named by that alias. Use `weka_hf` when testing a new compatible `semianalysisai/cc-traces-weka-*` release before deciding whether it deserves a pinned alias. For AgentX MVP runs, generic `weka_hf` is valid only with `--hf-weka-dataset semianalysisai/cc-traces-weka-061326`; other `weka_hf` repos are rejected by the scenario validator.
 
 A tokenizer is required in both paths (the prompt is reconstructed from `hash_ids`); pass `--tokenizer <name-or-path>` if your `--model` doesn't resolve a default tokenizer.
 

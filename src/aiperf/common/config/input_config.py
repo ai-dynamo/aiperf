@@ -395,13 +395,13 @@ class InputConfig(BaseConfig):
         CLIParameter(name=("--hf-subset",), group=Groups.INPUT),
     ] = None
 
-    hf_weka_repo: Annotated[
+    hf_weka_dataset: Annotated[
         str | None,
         Field(
             description="HuggingFace dataset repo override for `--public-dataset weka_hf` (e.g. `semianalysisai/cc-traces-weka-061326`). "
             "Only valid with `--public-dataset weka_hf`; pinned Weka public dataset aliases keep their registry-defined repo names.",
         ),
-        CLIParameter(name=("--hf-weka-repo",), group=Groups.INPUT),
+        CLIParameter(name=("--hf-weka-dataset",), group=Groups.INPUT),
     ] = None
 
     custom_dataset_type: Annotated[

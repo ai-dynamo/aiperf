@@ -265,16 +265,16 @@ def validate_scenario(
                 )
             )
         if spec.name == _AGENTX_SCENARIO and detected == "weka_hf":
-            hf_weka_repo = getattr(user_config.input, "hf_weka_repo", None)
-            if hf_weka_repo != _AGENTX_WEKA_HF_REPO:
+            hf_weka_dataset = getattr(user_config.input, "hf_weka_dataset", None)
+            if hf_weka_dataset != _AGENTX_WEKA_HF_REPO:
                 violations.append(
                     ScenarioViolation(
-                        flag="--hf-weka-repo",
-                        current_value=hf_weka_repo,
+                        flag="--hf-weka-dataset",
+                        current_value=hf_weka_dataset,
                         required_value=_AGENTX_WEKA_HF_REPO,
                         message=(
                             f"scenario {spec.name!r} only allows --public-dataset "
-                            f"weka_hf with hf_weka_repo={_AGENTX_WEKA_HF_REPO}"
+                            f"weka_hf with hf_weka_dataset={_AGENTX_WEKA_HF_REPO}"
                         ),
                     )
                 )

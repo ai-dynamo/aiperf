@@ -526,7 +526,7 @@ def _public_dataset_source_from_user_config(
 
     public_dataset = str(inp.public_dataset)
     metadata = plugins.get_public_dataset_loader_metadata(public_dataset)
-    hf_dataset_name = inp.hf_weka_repo or metadata.hf_dataset_name
+    hf_dataset_name = inp.hf_weka_dataset or metadata.hf_dataset_name
     if hf_dataset_name is None:
         return {"plugin": public_dataset}
 
