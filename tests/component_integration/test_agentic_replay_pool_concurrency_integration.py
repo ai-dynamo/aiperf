@@ -38,6 +38,7 @@ from aiperf.common.scenario.base import (
     EmptyTracePoolError,
 )
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import TrajectorySource
@@ -62,21 +63,6 @@ class _DispatchLog:
 
     def trace_ids_in_phase(self, phase: CreditPhase) -> list[str]:
         return [cid for ph, cid, _ in self.entries if ph == phase]
-
-
-class _SequentialSampler:
-    """Deterministic sampler over a fixed conversation_id list."""
-
-    def __init__(self, conversation_ids: list[str]) -> None:
-        self._ids = list(conversation_ids)
-        self._idx = 0
-
-    def next_conversation_id(self) -> str:
-        if self._idx >= len(self._ids):
-            raise StopIteration
-        cid = self._ids[self._idx]
-        self._idx += 1
-        return cid
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -232,7 +218,7 @@ async def test_concurrency_one_pool_ten_one_trajectory_nine_in_recycle() -> None
     dataset = _make_variable_length_dataset()
     assert len(dataset.conversations) == 10
 
-    sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
     source = TrajectorySource(
         dataset_metadata=dataset,
         dataset_sampler=sampler,
@@ -248,13 +234,6 @@ async def test_concurrency_one_pool_ten_one_trajectory_nine_in_recycle() -> None
         phase=CreditPhase.PROFILING, source=source, issuer=issuer
     )
     await profiling.setup_phase()
-
-    assert profiling._recycle_queue is not None
-    assert profiling._recycle_queue.qsize() == 10, (
-        "recycle queue spans the FULL pool (including the trajectory id); "
-        "the pop loop skips trace_ids whose session is currently active"
-    )
-
     await profiling.execute_phase()
 
     metadata_lookup = source._metadata_lookup
@@ -296,18 +275,16 @@ async def test_concurrency_one_pool_ten_one_trajectory_nine_in_recycle() -> None
 
 
 @pytest.mark.asyncio
-async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None:
-    """concurrency == pool_size: every trace is a trajectory; the recycle
-    queue spans the full pool, but every entry begins active.
+async def test_concurrency_equals_pool_size_recycle_follows_sampler_rotation() -> None:
+    """concurrency == pool_size: every trace becomes a lane, and recycle draws
+    the next root from the shared dataset sampler.
 
-    Pin the put-then-pop behavior of ``_spawn_from_recycle_or_id`` when
-    every queued trace is currently in flight: finalizing one trajectory
-    discards it from ``_active_traces`` BEFORE the pop loop, the queue
-    head (now non-active) is popped, and the just-finished trace_id is
-    dispatched again at turn 0.
+    The build consumed trace_0..trace_3 for the four lanes; recycle reuses the
+    same sampler, which wraps round-robin back to trace_0. Finalizing one
+    trajectory therefore produces exactly one fresh turn-0 dispatch of trace_0.
     """
     dataset = _make_dataset(num_traces=4, turns_per_trace=3)
-    sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
     source = TrajectorySource(
         dataset_metadata=dataset,
         dataset_sampler=sampler,
@@ -323,24 +300,19 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
         phase=CreditPhase.PROFILING, source=source, issuer=issuer
     )
     await profiling.setup_phase()
-
-    assert profiling._recycle_queue is not None
-    assert profiling._recycle_queue.qsize() == 4, (
-        "recycle queue spans the FULL pool (concurrency == pool_size means "
-        "all trace_ids are queued, even though every one is currently active)"
-    )
-
     await profiling.execute_phase()
-    # All 4 trajectories are now active.
-    assert set(profiling._active_traces) == {
-        t.conversation_id for t in source.trajectories
-    }
     pre_recycle = list(log.entries)
 
-    # Pick one trajectory and finalize it. The strategy discards it from
-    # _active_traces before the pop loop, then enqueues it; the queue head
-    # is the just-finished id (since it was the head's own entry, now
-    # non-active), so the strategy dispatches it again at turn 0.
+    # Predict the recycled id: the sampler already yielded the four lane roots
+    # (trace_0..trace_3) at build time, so the next draw wraps to trace_0.
+    all_trace_ids = [c.conversation_id for c in dataset.conversations]
+    predictor = SequentialSampler(all_trace_ids)
+    for _ in range(len(source.trajectories)):
+        predictor.next_conversation_id()
+    expected_recycled = predictor.next_conversation_id()
+    assert expected_recycled == "trace_0"
+
+    # Finalize one trajectory. Recycle draws the next root from the sampler.
     finished = source.trajectories[0]
     await profiling.handle_credit_return(
         _make_credit(
@@ -356,9 +328,9 @@ async def test_concurrency_equals_pool_size_recycle_queue_starts_empty() -> None
     )
     phase, cid, idx = new_dispatches[0]
     assert phase == CreditPhase.PROFILING
-    assert cid == finished.conversation_id, (
-        "with every other queued trace still active, the only non-active "
-        "head is the just-finished trace_id itself"
+    assert cid == expected_recycled, (
+        "recycled id must follow the sampler rotation (wraps to trace_0 after "
+        f"the four build draws); got {cid!r}"
     )
     assert idx == 0, "recycled session must start at turn 0, not at k_i"
 
@@ -375,7 +347,7 @@ def test_concurrency_exceeds_pool_wrap_fills_to_concurrency() -> None:
     contract.
     """
     dataset = _make_dataset(num_traces=4, turns_per_trace=3)
-    sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
 
     source = TrajectorySource(
         dataset_metadata=dataset,
@@ -398,7 +370,7 @@ def test_concurrency_exceeds_pool_wrap_fills_to_concurrency() -> None:
 def test_concurrency_equals_pool_size_at_boundary(caplog) -> None:
     """At the boundary concurrency == pool_size, construction succeeds cleanly."""
     dataset = _make_dataset(num_traces=4, turns_per_trace=3)
-    sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
 
     with caplog.at_level(logging.WARNING, logger="aiperf.timing.trajectory_source"):
         source = TrajectorySource(
@@ -438,7 +410,7 @@ def test_mixed_validity_pool_skips_zero_turn_traces_with_warning(caplog) -> None
     )
     assert len(dataset.conversations) == 5
 
-    sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
 
     with caplog.at_level(logging.WARNING, logger="aiperf.timing.trajectory_source"):
         source = TrajectorySource(
@@ -478,7 +450,10 @@ def test_empty_pool_raises_at_trajectory_source_construction() -> None:
         conversations=[],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
-    sampler = _SequentialSampler([])
+    # The production SequentialSampler rejects an empty id list in __init__;
+    # use a stand-in so TrajectorySource raises EmptyTracePoolError on the
+    # conversations check (the contract) rather than the sampler pre-empting it.
+    sampler = MagicMock()
 
     with pytest.raises(EmptyTracePoolError, match="0 traces"):
         TrajectorySource(
