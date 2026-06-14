@@ -370,8 +370,48 @@ class TestExtractCacheMetrics:
 
         assert global_cache["sequential_cache_hit_rate"].tolist() == [0.0, 1.0]
         assert local_cache["sequential_cache_hit_rate"].tolist() == [0.0, 0.0]
-        assert global_cache["prefix_length"].tolist() == [128.0, 128.0]
+        # Prefix length is now causal: the FIRST request (session "a") has no
+        # prior blocks cached, so its prefix is 0 -- it cannot reuse blocks that
+        # only appear later. Session "b" reuses a's blocks -> full 128. This
+        # matches sequential_cache_hit_rate * input_length ([0, 1] * 128). The
+        # old symmetric repeated-position count reported [128, 128], crediting
+        # the first request for blocks that only reappear afterward.
+        assert global_cache["prefix_length"].tolist() == [0.0, 128.0]
         assert local_cache["prefix_length"].tolist() == [0.0, 0.0]
+
+    def test_first_turn_prefix_zero_even_when_blocks_recur_later(self) -> None:
+        """Regression: a session's FIRST turn has no causal prefix reuse, so its
+        prefix_length / prefix_ratio must be 0 even when its blocks reappear in
+        later turns. The old symmetric repeated-position count reported the first
+        turn as up to 100% prefix. prefix_ratio must also equal the (causal)
+        per-session cache hit rate.
+        """
+        sessions = {
+            "s": [
+                ParsedTurn(
+                    session_id="s",
+                    input_length=192,
+                    output_length=1,
+                    hash_ids=[1, 2, 3],
+                    delay_ms=0.0,
+                ),
+                ParsedTurn(
+                    session_id="s",
+                    input_length=256,
+                    output_length=1,
+                    hash_ids=[1, 2, 3, 4],
+                    delay_ms=0.0,
+                ),
+            ]
+        }
+        cache = extract_cache_metrics(sessions, block_size=64, hash_scope="local")
+        assert cache["prefix_length"].tolist() == [0.0, 192.0]
+        assert cache["prefix_ratio"].tolist() == [0.0, 0.75]
+        # prefix_ratio is consistent with the causal per-session hit rate.
+        assert (
+            cache["prefix_ratio"].tolist()
+            == cache["per_session_cache_hit_rate"].tolist()
+        )
 
 
 class TestRenderCacheExplorer:
