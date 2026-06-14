@@ -6,11 +6,15 @@ Renders one horizontal lane per concurrent session slot (greedy reuse once a
 session retires) plus a concurrency line chart driven by the same
 ``aiperf.analysis.sweepline`` primitives the metrics accumulator uses.
 Subagent sessions (``agent_depth > 0``) do not get their own slots: they nest
-as child tiers below their root session's lane, linked via
-``parent_correlation_id``. Subagents whose parent is absent from the export
-nest under a zero-row phantom root per source trace (conversation_id prefix)
-when the trace has several of them; a lone orphan falls back to a standalone
-lane.
+as child tiers below their root session's lane. Lanes are keyed on
+``root_correlation_id`` -- the depth-0 root id every node of a session TREE
+shares -- so each agentic session (root + all its subagents, at any depth)
+maps to exactly one lane; a subagent whose root made no profiled request (root
+all before t*, or a rootless lane) nests under a zero-row phantom root for that
+shared id. Because the runtime holds exactly one session slot per tree until
+the whole tree drains, the rendered slot count equals the configured
+concurrency. Exports predating ``root_correlation_id`` fall back to a
+``parent_correlation_id`` walk (one phantom lane per absent root).
 
 Inputs per run directory:
   - ``profile_export.jsonl``        (required)  per-record AIPerf export
@@ -164,15 +168,43 @@ def _is_sub_session(turns: list[dict]) -> bool:
 
 
 def _root_map(sessions: dict[str, list[dict]]) -> dict[str, str]:
-    """Resolve each session to its root ancestor via parent_correlation_id.
+    """Resolve each session to its lane key (its session-tree root).
 
-    Subagent sessions whose parent is absent from the export (cancelled, or a
-    pre-session background spawn with no parent) stay their own root here;
-    ``_phantom_roots`` later regroups same-trace orphans under a synthetic root.
+    Authoritative path: when the export carries ``root_correlation_id`` (every
+    node of a session tree -- root + every descendant subagent at any depth --
+    shares its depth-0 root's id, written by the runtime's per-tree
+    accounting), group directly on it. No parent-walk, no phantom-root guessing:
+    a root keys on its own id; a subagent keys on its root's id; a subagent
+    whose root made no profiled request (root all before t*, or rootless lane)
+    keys on the shared synthetic root id, so each concurrency lane is exactly
+    one swim lane. Because exactly N trees are live at once, the resulting slot
+    assignment is exactly the configured concurrency.
+
+    Legacy heuristic (exports predating ``root_correlation_id``): walk
+    ``parent_correlation_id`` to the top, or the session's own id when it has no
+    parent. A subagent whose parent is ABSENT roots at that absent
+    ``parent_correlation_id`` itself (one phantom lane per concurrency lane).
     """
+    if any(
+        t["metadata"].get("root_correlation_id")
+        for turns in sessions.values()
+        for t in turns
+    ):
+        return {
+            sid: next(
+                (
+                    t["metadata"]["root_correlation_id"]
+                    for t in turns
+                    if t["metadata"].get("root_correlation_id")
+                ),
+                sid,
+            )
+            for sid, turns in sessions.items()
+        }
+
     parent: dict[str, str | None] = {}
     for sid, turns in sessions.items():
-        pid = next(
+        parent[sid] = next(
             (
                 t["metadata"].get("parent_correlation_id")
                 for t in turns
@@ -180,18 +212,29 @@ def _root_map(sessions: dict[str, list[dict]]) -> dict[str, str]:
             ),
             None,
         )
-        parent[sid] = pid if pid in sessions and pid != sid else None
     roots: dict[str, str] = {}
     for sid in sessions:
         seen = {sid}
         cur = sid
-        while (nxt := parent[cur]) is not None and nxt not in seen:
+        # Walk up through parents that are themselves present in the export.
+        while (
+            (nxt := parent.get(cur)) is not None
+            and nxt != cur
+            and nxt in sessions
+            and nxt not in seen
+        ):
             cur = nxt
             seen.add(cur)
-        roots[sid] = cur
-    # parent cycles (malformed exports) resolve to a non-self-rooted "root";
-    # detach those sessions so every group has a genuine root
-    return {sid: root if roots[root] == root else sid for sid, root in roots.items()}
+        top = parent.get(cur)
+        if top is None:
+            roots[sid] = cur  # genuine root reached; key on it (its x_corr)
+        elif top in seen:
+            roots[sid] = sid  # parent cycle (malformed export) -> detach to self
+        else:
+            # cur's parent is absent from the export -> key on that parent_corr,
+            # the lane's phantom root shared by all its orphan subagents.
+            roots[sid] = top
+    return roots
 
 
 @dataclass(slots=True)
@@ -226,42 +269,18 @@ class _LaneGroup:
     """Root session first, then subagent sessions ordered by start time."""
 
 
-def _phantom_roots(
-    sessions: dict[str, list[dict]], root_of: dict[str, str]
-) -> dict[str, str]:
-    """Group orphaned subagent sessions from one trace under a synthetic root.
-
-    Orphan subs (self-rooted at agent_depth > 0) whose main session never made
-    it into the export still share a source trace, recoverable as the
-    conversation_id prefix before ``::``. When two or more orphans share that
-    prefix, map each to a phantom root sid (the prefix itself) so they pack
-    into one lane instead of each burning a slot. The phantom root has no
-    session records of its own.
-    """
-    by_prefix: dict[str, list[str]] = defaultdict(list)
-    for sid, root in root_of.items():
-        if root == sid and _is_sub_session(sessions[sid]):
-            prefix = sessions[sid][0]["metadata"]["conversation_id"].split("::")[0]
-            by_prefix[prefix].append(sid)
-    return {
-        sid: prefix
-        for prefix, sids in by_prefix.items()
-        if len(sids) > 1 and prefix not in sessions
-        for sid in sids
-    }
-
-
 def _layout_groups(sessions: dict[str, list[dict]]) -> list[_LaneGroup]:
     """Nest subagent sessions as child tiers below their root session's lane.
 
     The root session keeps the top rows of the lane (one per parallel turn);
     each subagent session is greedy-packed into child rows underneath, reusing
-    a row once the previous subagent on it retired. Orphaned subagents sharing
-    a trace nest under a zero-row phantom root. Lane groups are then
-    slot-packed exactly like plain sessions, ordered by group start time.
+    a row once the previous subagent on it retired. Subagents whose root is
+    absent from the export nest under a zero-row phantom root keyed by their
+    shared ``parent_correlation_id`` (one lane per concurrency lane). Lane
+    groups are then slot-packed exactly like plain sessions, ordered by group
+    start time.
     """
     root_of = _root_map(sessions)
-    root_of.update(_phantom_roots(sessions, root_of))
     children: dict[str, list[str]] = defaultdict(list)
     for sid, root in root_of.items():
         if sid != root:

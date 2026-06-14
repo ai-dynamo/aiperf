@@ -37,18 +37,28 @@ def _rec(
     end_s: float,
     parent: str | None = None,
     depth: int = 0,
+    root: str | None = None,
 ) -> dict:
-    """Build a minimal profile_export.jsonl record."""
+    """Build a minimal profile_export.jsonl record.
+
+    ``root`` sets ``root_correlation_id`` (the session-tree root id the runtime
+    persists). When omitted the field is absent, exercising the legacy
+    parent_correlation_id heuristic; when present, ``_root_map`` groups
+    authoritatively on it.
+    """
+    meta = {
+        "x_correlation_id": sid,
+        "conversation_id": f"conv-{sid}",
+        "turn_index": turn,
+        "request_start_ns": int(start_s * NS),
+        "request_end_ns": int(end_s * NS),
+        "agent_depth": depth,
+        "parent_correlation_id": parent,
+    }
+    if root is not None:
+        meta["root_correlation_id"] = root
     return {
-        "metadata": {
-            "x_correlation_id": sid,
-            "conversation_id": f"conv-{sid}",
-            "turn_index": turn,
-            "request_start_ns": int(start_s * NS),
-            "request_end_ns": int(end_s * NS),
-            "agent_depth": depth,
-            "parent_correlation_id": parent,
-        },
+        "metadata": meta,
         "metrics": {
             "time_to_first_token": {"value": 50.0, "unit": "ms"},
             "request_latency": {"value": (end_s - start_s) * 1e3, "unit": "ms"},
@@ -90,9 +100,28 @@ class TestRootMap:
         )
         assert _root_map(sessions) == {"root": "root", "mid": "root", "leaf": "root"}
 
-    def test_missing_parent_falls_back_to_own_root(self):
+    def test_root_correlation_id_is_authoritative(self):
+        # The persisted root_correlation_id groups every node of a tree directly
+        # -- no parent-walk. A subagent whose root made no profiled request
+        # (root all before t*, or rootless lane) still carries its tree root id.
+        sessions = _sessions(
+            [
+                _rec("root", 0, 0.0, 1.0, root="root"),
+                _rec("sub", 0, 0.2, 0.8, parent="root", depth=1, root="root"),
+                _rec("orphan", 0, 0.3, 0.9, parent="lane-x", depth=1, root="lane-x"),
+            ]
+        )
+        assert _root_map(sessions) == {
+            "root": "root",
+            "sub": "root",
+            "orphan": "lane-x",
+        }
+
+    def test_missing_parent_falls_back_to_own_root_legacy(self):
+        # Legacy export (no root_correlation_id): an orphan whose parent is
+        # absent keys on that absent parent id (one phantom lane per lane).
         sessions = _sessions([_rec("orphan", 0, 0.0, 1.0, parent="gone", depth=1)])
-        assert _root_map(sessions) == {"orphan": "orphan"}
+        assert _root_map(sessions) == {"orphan": "gone"}
 
     def test_parent_cycle_detaches_both_sessions(self):
         sessions = _sessions(
@@ -145,48 +174,54 @@ class TestLayoutGroups:
         assert g.rows == 2
         assert _member(g, "s1").row0 == _member(g, "s2").row0 == 1
 
-    def test_orphan_subagent_gets_standalone_lane(self):
+    def test_orphan_subagent_lanes_under_its_tree_root(self):
+        # A subagent whose root made no profiled request nests under its
+        # persisted tree root (a phantom lane: no records of its own), in a
+        # different slot than an unrelated root.
         sessions = _sessions(
             [
-                _rec("root", 0, 0.0, 2.0),
-                _rec("orphan", 0, 0.5, 1.5, parent="gone", depth=1),
+                _rec("root", 0, 0.0, 2.0, root="root"),
+                _rec("orphan", 0, 0.5, 1.5, parent="lane-x", depth=1, root="lane-x"),
             ]
         )
         groups = _layout_groups(sessions)
         assert len(groups) == 2
-        orphan = _group_for(groups, "orphan")
-        assert orphan.members[0].is_sub
-        assert orphan.slot != _group_for(groups, "root").slot
+        phantom = _group_for(groups, "lane-x")
+        assert phantom.members[0].is_sub
+        assert phantom.slot != _group_for(groups, "root").slot
 
-    def test_orphan_subs_from_same_trace_share_phantom_slot(self):
-        # conversation_id "conv-t1::sa:N" -> shared trace prefix "conv-t1"
+    def test_orphan_subs_sharing_a_root_share_one_lane(self):
+        # Two background subagents of the same rootless lane share their tree's
+        # root_correlation_id and so group into ONE phantom lane.
         sessions = _sessions(
             [
-                _rec("root", 0, 0.0, 2.0),
-                _rec("t1::sa:0", 0, 0.5, 1.5, parent="gone", depth=1),
-                _rec("t1::sa:1", 0, 1.0, 2.5, parent="gone", depth=1),
+                _rec("root", 0, 0.0, 2.0, root="root"),
+                _rec("sa0", 0, 0.5, 1.5, parent="lane-1", depth=1, root="lane-1"),
+                _rec("sa1", 0, 1.0, 2.5, parent="lane-1", depth=1, root="lane-1"),
             ]
         )
         groups = _layout_groups(sessions)
         assert len(groups) == 2
-        phantom = _group_for(groups, "conv-t1")
-        # zero-row synthetic root: only the orphan subs are members
-        assert [m.sid for m in phantom.members] == ["t1::sa:0", "t1::sa:1"]
+        phantom = _group_for(groups, "lane-1")
+        # zero-row synthetic root: only the subagents are members
+        assert [m.sid for m in phantom.members] == ["sa0", "sa1"]
         assert all(m.is_sub for m in phantom.members)
         assert {m.row0 for m in phantom.members} == {0, 1}
         assert phantom.rows == 2
         assert phantom.span_ns == (int(0.5 * NS), int(2.5 * NS))
         assert phantom.slot != _group_for(groups, "root").slot
 
-    def test_orphan_subs_from_different_traces_stay_separate(self):
+    def test_orphan_subs_from_different_roots_stay_separate(self):
+        # Subagents carrying different root_correlation_ids are different trees
+        # and never collapse into one lane.
         sessions = _sessions(
             [
-                _rec("t1::sa:0", 0, 0.0, 1.0, parent="gone", depth=1),
-                _rec("t2::sa:0", 0, 0.5, 1.5, parent="gone", depth=1),
+                _rec("sa_a", 0, 0.0, 1.0, parent="lane-a", depth=1, root="lane-a"),
+                _rec("sa_b", 0, 0.5, 1.5, parent="lane-b", depth=1, root="lane-b"),
             ]
         )
         groups = _layout_groups(sessions)
-        assert {g.root_sid for g in groups} == {"t1::sa:0", "t2::sa:0"}
+        assert {g.root_sid for g in groups} == {"lane-a", "lane-b"}
 
     def test_group_span_covers_subagent_overhang(self):
         sessions = _sessions(
