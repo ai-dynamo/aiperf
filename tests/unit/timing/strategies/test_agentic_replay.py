@@ -9,6 +9,7 @@ Tests the phase-aware trajectory dispatch (WARMUP) and resume-at-k+1 + recycle
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -2365,3 +2366,315 @@ async def test_spawn_from_recycle_or_id_pops_lane_and_marker_for_correlation() -
 
     assert correlation_id not in strategy._correlation_to_lane
     assert correlation_id not in strategy._session_marker
+
+
+# =============================================================================
+# PROFILING phase: rootless lanes (root finished before t*) hold a lane credit
+# =============================================================================
+
+
+def _children_dataset() -> DatasetMetadata:
+    """Dataset with one root trace and two background subagent conversations."""
+    return DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=1000.0),
+                ],
+                is_root=True,
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::fa:0",
+                turns=[TurnMetadata(timestamp_ms=2000.0)],
+                is_root=False,
+                agent_depth=1,
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::aux:0",
+                turns=[TurnMetadata(timestamp_ms=2000.0)],
+                is_root=False,
+                agent_depth=1,
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+
+
+def _rootless_trajectory() -> Trajectory:
+    """A snapshot whose root finished before t*: NO root state, only the
+    still-active background ::fa:/::aux: children remain (the rootless case
+    from ``_snapshot_for`` when ``root_next_idx is None``)."""
+    child_a = ConversationState(
+        conversation_id="trace_0::fa:0",
+        x_correlation_id="kid_a",
+        next_turn_index=0,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=1,
+        parent_correlation_id="root_corr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    child_b = ConversationState(
+        conversation_id="trace_0::aux:0",
+        x_correlation_id="kid_b",
+        next_turn_index=0,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=1,
+        parent_correlation_id="root_corr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    return Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=0,  # sentinel default; no root state in the snapshot
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(child_a, child_b)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_rootless_snapshot_acquires_exactly_one_lane_credit():
+    """A rootless lane holds one session credit though it dispatches no root.
+
+    The root's turns are all before t*, so PROFILING dispatches only the
+    background children. The lane must still acquire exactly one session slot
+    (so it counts toward --concurrency); the children acquire none of their
+    own (they are agent_depth > 0).
+    """
+    dispatched: list = []
+
+    async def capture(turn):
+        dispatched.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[_rootless_trajectory()],
+        issuer=issuer,
+        dataset=_children_dataset(),
+    )
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert issuer.acquire_lane_credit.await_count == 1
+    # Both background children were dispatched, none acquiring its own slot.
+    assert {t.conversation_id for t in dispatched} == {
+        "trace_0::fa:0",
+        "trace_0::aux:0",
+    }
+    assert all(t.agent_depth == 1 for t in dispatched)
+
+
+@pytest.mark.asyncio
+async def test_rooted_snapshot_acquires_no_lane_credit():
+    """A normal rooted lane gets its slot via the root credit, not a lane credit."""
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root_corr",
+        next_turn_index=1,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=0,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=1,
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(root_state,)),
+    )
+
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[trajectory],
+        issuer=issuer,
+        dataset=_children_dataset(),
+    )
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert issuer.acquire_lane_credit.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_rootless_lane_recycles_into_fresh_root_when_children_drain():
+    """When a rootless lane's last background child finishes, the lane releases
+    its credit and recycles into a fresh root (turn 0) on the same lane.
+
+    Until the last child drains, the lane credit is held (the lane is still
+    doing background work). On the final child's terminal return the credit is
+    released exactly once and one fresh depth-0 root is dispatched from the
+    recycle pool, so the lane keeps contributing load instead of going dark.
+    """
+    issued: list = []
+
+    async def capture(turn):
+        issued.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+    issuer.release_lane_credit = MagicMock()
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[_rootless_trajectory()],
+        issuer=issuer,
+        dataset=_children_dataset(),
+    )
+    strategy.stop_checker.can_start_new_session.return_value = True
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    n_after_dispatch = len(issued)
+    assert issuer.acquire_lane_credit.await_count == 1
+
+    # First of two background children finishes: lane credit still held.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0::fa:0",
+            x_correlation_id="kid_a",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="root_corr",
+        )
+    )
+    assert issuer.release_lane_credit.call_count == 0
+    assert len(issued) == n_after_dispatch  # no recycle dispatch yet
+
+    # Last child finishes: release the lane credit and spawn a fresh root.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0::aux:0",
+            x_correlation_id="kid_b",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="root_corr",
+        )
+    )
+    assert issuer.release_lane_credit.call_count == 1
+    new = issued[n_after_dispatch:]
+    assert len(new) == 1, f"expected one fresh root dispatch, got {new}"
+    assert new[0].turn_index == 0
+    assert new[0].agent_depth == 0
+    assert new[0].conversation_id == "trace_0"
+
+
+@pytest.mark.asyncio
+async def test_gated_parent_lane_acquires_a_lane_credit():
+    """A snapshot-resumed gated parent (waiting on a child join) holds a lane
+    credit, because it dispatches no root credit at PROFILING start.
+
+    The gated root is excluded from the dispatchable set, so without this it
+    holds NO session slot -- yet its join turn later completes and the depth-0
+    final-turn path releases a slot, over-releasing the session limiter and
+    admitting sessions above --concurrency. It must NOT be tracked as rootless:
+    the parent resumes and recycles through the normal depth-0 final-turn path,
+    so a child draining must not release/recycle the lane here.
+    """
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root_corr",
+        next_turn_index=2,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    child = ConversationState(
+        conversation_id="trace_0::sa:a",
+        x_correlation_id="kid",
+        next_turn_index=0,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=1,
+        parent_correlation_id="root_corr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=2,
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(root_state, child)),
+    )
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=1000.0),
+                    TurnMetadata(timestamp_ms=2000.0),
+                ],
+                is_root=True,
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::sa:a",
+                turns=[TurnMetadata(timestamp_ms=2000.0)],
+                is_root=False,
+                agent_depth=1,
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[trajectory],
+        issuer=issuer,
+        dataset=dataset,
+    )
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert issuer.acquire_lane_credit.await_count == 1
+    assert 0 not in strategy._rootless_lane_outstanding
+
+
+@pytest.mark.asyncio
+async def test_profiling_setup_logs_rootless_lane_count(caplog):
+    """PROFILING setup surfaces how many sampled lanes are rootless (root
+    finished before t*) so an under-target run is diagnosable from the log."""
+    rooted_state = ConversationState(
+        conversation_id="trace_1",
+        x_correlation_id="r1",
+        next_turn_index=1,
+        agent_depth=0,
+    )
+    rooted = Trajectory(
+        conversation_id="trace_1",
+        start_turn_index=1,
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(rooted_state,)),
+    )
+    dataset = DatasetMetadata(
+        conversations=[
+            *_children_dataset().conversations,
+            ConversationMetadata(
+                conversation_id="trace_1",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=1000.0),
+                ],
+                is_root=True,
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[_rootless_trajectory(), rooted],
+        dataset=dataset,
+    )
+
+    with caplog.at_level(logging.INFO, logger="AgenticReplayTiming"):
+        await strategy.setup_phase()
+
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("rootless" in m and "1" in m for m in msgs), msgs

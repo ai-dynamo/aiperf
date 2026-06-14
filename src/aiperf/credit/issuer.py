@@ -98,6 +98,32 @@ class CreditIssuer:
             and self._stop_checker.can_start_new_session()
         )
 
+    async def acquire_lane_credit(self) -> bool:
+        """Acquire a session slot held by a trajectory LANE, not by a credit.
+
+        Agentic replay dispatches one lane per ``--concurrency`` unit, but
+        some lanes issue no slot-acquiring depth-0 root credit at PROFILING
+        start: a rootless snapshot (the root's turns are all before t*, so
+        only its background subagents remain) and a parent gated on a child
+        join (deferred until its children complete). Such a lane holds one
+        session slot directly so it still counts toward the configured
+        concurrency, while its subagents/sidecars acquire none (``issue_credit``
+        skips slot acquisition for ``agent_depth > 0``). No prefill slot is
+        taken and nothing is sent on the wire — this is a bare session-slot
+        hold released later via :meth:`release_lane_credit`.
+
+        Returns:
+            True if the slot was acquired and ``can_start_new_session``
+            allowed it, False otherwise.
+        """
+        return await self._concurrency_manager.acquire_session_slot(
+            self._phase, self._stop_checker.can_start_new_session
+        )
+
+    def release_lane_credit(self) -> None:
+        """Release a session slot acquired via :meth:`acquire_lane_credit`."""
+        self._concurrency_manager.release_session_slot(self._phase)
+
     async def issue_credit(self, turn: TurnToSend) -> bool:
         """Issue credit with full precondition checking.
 
