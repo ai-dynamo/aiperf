@@ -235,7 +235,7 @@ async def test_pool_one_concurrency_four_wrap_fill_e2e() -> None:
 
     # After PROFILING execute_phase, each lane has one in-flight session.
     assert profiling_issuer.issue_credit.await_count == 4
-    assert profiling._active_traces["trace_0"] == 4
+    assert profiling._lanes_per_trace["trace_0"] == 4
 
     # Snapshot the 4 active correlation_ids (one per lane).
     initial_correlations = list(profiling._correlation_to_lane.keys())
@@ -269,7 +269,7 @@ async def test_pool_one_concurrency_four_wrap_fill_e2e() -> None:
     )
 
     # Steady-state: 4 lanes still active on trace_0 (the only trace in the pool).
-    assert profiling._active_traces["trace_0"] == 4
+    assert profiling._lanes_per_trace["trace_0"] == 4
     # 4 fresh correlation_ids replaced the originals (1-to-1 lane reuse).
     assert len(profiling._correlation_to_lane) == 4
     assert set(profiling._correlation_to_lane.keys()).isdisjoint(initial_correlations)

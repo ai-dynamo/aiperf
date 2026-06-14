@@ -24,6 +24,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -57,7 +58,13 @@ def _build_real_trajectory_source(
     ds = _make_dataset(num_traces, turns_per_trace)
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = ds
-    src._dataset_sampler = MagicMock()
+    _roots = [
+        c.conversation_id
+        for c in src._dataset_metadata.conversations
+        if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(_roots) if _roots else MagicMock()
+    src._pool_size = len(_roots)
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
@@ -278,7 +285,6 @@ async def test_profiling_without_preceding_warmup_does_not_self_enforce():
     # No prior WARMUP strategy ran, no record_warmup_failure invoked: PROFILING
     # setup + execute must succeed.
     await strategy.setup_phase()
-    assert strategy._recycle_queue is not None
     await strategy.execute_phase()
     # One resume credit at k_i + 1 = 1.
     assert issuer.issue_credit.await_count == 1
@@ -420,15 +426,16 @@ def test_strategy_constructed_multiple_times_within_one_phase_is_independent():
     s1.record_warmup_failure("trace_0")
     assert s1._failed_warmup_traces == ["trace_0"]
     assert s2._failed_warmup_traces == []
-    # Independent (None until setup) recycle queues.
-    assert s1._recycle_queue is None and s2._recycle_queue is None
+    # Independent double-recycle guard sets.
+    s1._in_flight_recycled.add("x")
+    assert "x" not in s2._in_flight_recycled
 
 
 @pytest.mark.asyncio
-async def test_strategy_setup_twice_within_one_phase_rebuilds_recycle_queue():
-    """Test 8 (continued): Calling ``setup_phase`` twice on the same strategy
-    instance MUST be safe (idempotent / fresh recycle queue). A bad
-    implementation might leak the prior queue or duplicate trace_ids.
+async def test_strategy_setup_twice_within_one_phase_is_idempotent():
+    """Calling ``setup_phase`` twice on the same instance MUST be safe (no
+    error, recycle still works). Recycle state now lives in the shared dataset
+    sampler, not a per-setup queue, so there is nothing to leak or duplicate.
     """
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     strategy, _, _, _ = _make_strategy(
@@ -438,17 +445,10 @@ async def test_strategy_setup_twice_within_one_phase_rebuilds_recycle_queue():
         turns_per_trace=4,
     )
     await strategy.setup_phase()
-    queue_a = strategy._recycle_queue
-    assert queue_a is not None
-    first_size = queue_a.qsize()
+    await strategy.setup_phase()  # must not raise
 
-    await strategy.setup_phase()
-    queue_b = strategy._recycle_queue
-    # Pinned: setup_phase rebuilds the queue (not the same object).
-    assert queue_b is not None
-    assert queue_b is not queue_a
-    # And contains the same trace_ids (no duplication, no leakage from queue_a).
-    assert queue_b.qsize() == first_size
+    # Recycle still resolves a root from the sampler.
+    assert strategy.conversation_source.next_recycle_conversation_id() is not None
 
 
 # =============================================================================

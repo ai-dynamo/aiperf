@@ -201,31 +201,39 @@ class TrajectorySource(ConversationSource):
         self._pool_size = pool_size
         self._children_by_parent: dict[str, set[str]] = self._build_child_index()
         self._warned_live_delta_snapshot = False
-        # Build distinct trajectories up to the user-requested concurrency.
-        # If the pool or its usable subset (after dropping traces too short
-        # to split into warmup+profile turns) is smaller than concurrency,
-        # ``_wrap_fill_lanes`` below cycles through the distinct trajectories
-        # with fresh per-lane ``start_turn_index`` salts so the run still
-        # honours ``--concurrency`` instead of silently capping effective load.
+        # One trajectory per concurrency lane, sampled straight from the dataset
+        # sampler (which wraps -- sequential round-robin / shuffle / random --
+        # and so alone decides trace selection AND repetition when concurrency
+        # exceeds the pool). Trace SELECTION and the snapshot/t* fast-forward are
+        # decoupled: each lane snapshots its sampled trace independently, seeded
+        # by the absolute lane index, so repeated traces resume at different t*.
         self._target_size = concurrency
-        distinct: list[Trajectory] = self._build_trajectories()
+        self.trajectories: list[Trajectory] = self._build_trajectories()
 
-        if not distinct:
+        if not self.trajectories:
             raise EmptyTracePoolError(
                 "Trajectories empty after skipping invalid traces; pool exhausted."
             )
 
-        self.trajectories: list[Trajectory] = list(distinct)
-        if len(self.trajectories) < concurrency:
-            extras = self._wrap_fill_lanes(distinct, concurrency - len(distinct))
-            self.trajectories.extend(extras)
+        distinct = len({t.conversation_id for t in self.trajectories})
+        if distinct < len(self.trajectories):
             _logger.info(
-                "Trajectory reuse: %d distinct trajectories fanned out to %d "
-                "lanes (avg %.1f lanes per trace). Cache-bust marker keeps "
-                "per-lane traffic distinct when cache_bust.target != NONE.",
-                len(distinct),
+                "Sampled %d trajectory lanes from %d distinct traces "
+                "(avg %.1f lanes per trace). Each lane snapshots at its own t*; "
+                "cache-bust marker keeps repeated-trace traffic distinct when "
+                "cache_bust.target != NONE.",
+                len(self.trajectories),
+                distinct,
+                len(self.trajectories) / distinct,
+            )
+        if len(self.trajectories) < concurrency:
+            _logger.warning(
+                "Built %d trajectories for concurrency=%d: the sampler could not "
+                "supply enough spawnable traces (pool too small / too many "
+                "unspawnable traces). Effective load is capped at %d lanes.",
+                len(self.trajectories),
                 concurrency,
-                concurrency / len(distinct),
+                len(self.trajectories),
             )
 
         self._log_trajectory_summary()
@@ -353,77 +361,94 @@ class TrajectorySource(ConversationSource):
         return total
 
     def _build_trajectories(self) -> list[Trajectory]:
-        trajectories: list[Trajectory] = []
-        seen: set[str] = set()
-        attempts = 0
-        max_attempts = len(self._metadata_lookup) * 2
+        """Sample one trajectory per concurrency lane straight from the sampler.
 
+        The dataset sampler alone decides trace selection and repetition (it
+        wraps: sequential round-robin, shuffle, or random-with-replacement), so
+        when concurrency exceeds the pool the same trace recurs across lanes --
+        no separate wrap-fill step. Each lane snapshots its trace independently
+        (per-lane t*), so repeated traces resume at different points.
+
+        Unspawnable samples (missing metadata / too few turns / no valid
+        warmup-profile split) are skipped and the sampler is asked again. The
+        attempt budget bounds the skip loop so an all-unspawnable pool can't
+        spin; it yields fewer than ``concurrency`` lanes only when the pool has
+        too few spawnable traces.
+        """
+        trajectories: list[Trajectory] = []
+        attempts = 0
+        max_attempts = self._target_size + 2 * max(self._pool_size, 1)
         while len(trajectories) < self._target_size and attempts < max_attempts:
             attempts += 1
             try:
                 cid = self._dataset_sampler.next_conversation_id()
             except StopIteration:
                 break
-            if cid in seen:
-                continue
-            seen.add(cid)
-            meta = self._metadata_lookup.get(cid)
-            if meta is None or not meta.turns:
-                _logger.warning(
-                    "Skipping trace %r at trajectory selection: %d turns.",
-                    cid,
-                    0 if meta is None else len(meta.turns),
-                )
-                continue
-            timestamped = self._build_timestamped_trajectory(cid)
-            if timestamped is not None:
-                trajectories.append(timestamped)
-                continue
-
-            n = len(meta.turns)
-            # Require at least one PROFILING turn after WARMUP. For n<=1
-            # there is no profile turn at all, so reject. For n==2 only
-            # k_i=0 leaves a profile turn (turn 1). For n>=3 sample uniformly
-            # from [int(start_min_ratio * n), int(start_max_ratio * n)] but
-            # cap at n-2 so k_i+1 < n always holds (avoids the immediate-
-            # recycle pathology where PROFILING resume index == num_turns
-            # and the trajectory dies on its first credit). The lower bound
-            # is also clamped to n-2 in case start_min_ratio * n exceeds it.
-            if n <= 1:
-                _logger.warning(
-                    "Skipping trace %r at trajectory selection: %d turns "
-                    "(need >= 2 for warmup+profile split).",
-                    cid,
-                    n,
-                )
-                continue
-            rng = np.random.default_rng(_seed_for_trace(self._random_seed, cid))
-            if n == 2:
-                candidates = [0]
-            else:
-                k_min = min(int(self._start_min_ratio * n), n - 2)
-                k_max = min(int(self._start_max_ratio * n), n - 2)
-                if k_min > k_max:
-                    k_min = k_max
-                candidates = list(range(k_min, k_max + 1))
-
-            candidates = [
-                k
-                for k in candidates
-                if self._trajectory_start_is_sendable(meta, k)
-                and self._trajectory_start_is_sendable(meta, k + 1)
-            ]
-            if not candidates:
-                _logger.warning(
-                    "Skipping trace %r at trajectory selection: no valid "
-                    "warmup/profile start pair in configured range.",
-                    cid,
-                )
-                continue
-            k_i = int(rng.choice(candidates))
-            trajectories.append(Trajectory(conversation_id=cid, start_turn_index=k_i))
-
+            trajectory = self._build_trajectory_for_lane(cid, len(trajectories))
+            if trajectory is not None:
+                trajectories.append(trajectory)
         return trajectories
+
+    def _build_trajectory_for_lane(self, cid: str, lane: int) -> Trajectory | None:
+        """Build one lane's trajectory for trace ``cid``, or None if unspawnable.
+
+        Timestamped traces snapshot at a wall-clock t* seeded by the absolute
+        lane index (so repeated traces differ); legacy timestamp-less traces
+        fall back to a per-lane ``start_turn_index`` warmup/profile split.
+        """
+        meta = self._metadata_lookup.get(cid)
+        if meta is None or not meta.turns:
+            _logger.warning(
+                "Skipping trace %r at trajectory selection: %d turns.",
+                cid,
+                0 if meta is None else len(meta.turns),
+            )
+            return None
+
+        timestamped = self._build_timestamped_trajectory(cid, lane_index=lane)
+        if timestamped is not None:
+            return timestamped
+
+        # Legacy timestamp-less split. Require at least one PROFILING turn after
+        # WARMUP. For n<=1 there is no profile turn at all, so reject. For n==2
+        # only k_i=0 leaves a profile turn (turn 1). For n>=3 sample uniformly
+        # from [int(start_min_ratio * n), int(start_max_ratio * n)] but cap at
+        # n-2 so k_i+1 < n always holds (avoids the immediate-recycle pathology
+        # where PROFILING resume index == num_turns and the trajectory dies on
+        # its first credit). The lower bound is also clamped to n-2.
+        n = len(meta.turns)
+        if n <= 1:
+            _logger.warning(
+                "Skipping trace %r at trajectory selection: %d turns "
+                "(need >= 2 for warmup+profile split).",
+                cid,
+                n,
+            )
+            return None
+        rng = np.random.default_rng(_seed_for_trace_lane(self._random_seed, cid, lane))
+        if n == 2:
+            candidates = [0]
+        else:
+            k_min = min(int(self._start_min_ratio * n), n - 2)
+            k_max = min(int(self._start_max_ratio * n), n - 2)
+            if k_min > k_max:
+                k_min = k_max
+            candidates = list(range(k_min, k_max + 1))
+        candidates = [
+            k
+            for k in candidates
+            if self._trajectory_start_is_sendable(meta, k)
+            and self._trajectory_start_is_sendable(meta, k + 1)
+        ]
+        if not candidates:
+            _logger.warning(
+                "Skipping trace %r at trajectory selection: no valid "
+                "warmup/profile start pair in configured range.",
+                cid,
+            )
+            return None
+        k_i = int(rng.choice(candidates))
+        return Trajectory(conversation_id=cid, start_turn_index=k_i)
 
     def _trajectory_snapshot_pct(self, trajectory: Trajectory) -> float:
         if trajectory.snapshot is None:
@@ -469,63 +494,6 @@ class TrajectorySource(ConversationSource):
         if raw_messages:
             return True
         return bool(meta.system_message or meta.user_context_message)
-
-    def _wrap_fill_lanes(
-        self, distinct: list[Trajectory], extra_count: int
-    ) -> list[Trajectory]:
-        """Return ``extra_count`` additional trajectories cycling through ``distinct``.
-
-        Each wrap-filled lane reuses a source ``conversation_id`` but gets a
-        fresh ``start_turn_index`` sampled with a per-(trace, absolute-lane-index)
-        RNG seed. ``absolute_lane_index`` is ``len(distinct) + i`` where ``i``
-        is the position within the extra block, so seeds are unique even when
-        two extras share the same source ``conversation_id``.
-        """
-        extras: list[Trajectory] = []
-        base_count = len(distinct)
-        for i in range(extra_count):
-            source = distinct[i % base_count]
-            lane_index = base_count + i
-            if source.snapshot is not None:
-                timestamped = self._build_timestamped_trajectory(
-                    source.conversation_id, lane_index=lane_index
-                )
-                if timestamped is not None:
-                    extras.append(timestamped)
-                continue
-            meta = self._metadata_lookup[source.conversation_id]
-            n = len(meta.turns)
-            rng = np.random.default_rng(
-                _seed_for_trace_lane(
-                    self._random_seed, source.conversation_id, lane_index
-                )
-            )
-            if n == 2:
-                candidates = [0]
-            else:
-                k_min = min(int(self._start_min_ratio * n), n - 2)
-                k_max = min(int(self._start_max_ratio * n), n - 2)
-                if k_min > k_max:
-                    k_min = k_max
-                candidates = list(range(k_min, k_max + 1))
-            candidates = [
-                k
-                for k in candidates
-                if self._trajectory_start_is_sendable(meta, k)
-                and self._trajectory_start_is_sendable(meta, k + 1)
-            ]
-            if not candidates:
-                _logger.warning(
-                    "Skipping wrap-fill lane for trace %r: no valid "
-                    "warmup/profile start pair in configured range.",
-                    source.conversation_id,
-                )
-                continue
-            k_i = int(rng.choice(candidates))
-            extras.append(
-                Trajectory(conversation_id=source.conversation_id, start_turn_index=k_i)
-            )
-        return extras
 
     def _build_child_index(self) -> dict[str, set[str]]:
         children_by_parent: dict[str, set[str]] = {}
@@ -783,6 +751,27 @@ class TrajectorySource(ConversationSource):
             branch_mode=state.branch_mode,
             start_turn_index=state.next_turn_index,
         )
+
+    def next_recycle_conversation_id(self) -> str | None:
+        """Return the next root conversation to recycle, drawn from the dataset
+        sampler.
+
+        Recycle reuses the SAME sampler that built the initial trajectories
+        (constructed roots-only at orchestrator level), so it honours the
+        dataset's ``sampling_strategy``: sequential -> round-robin over every
+        root then wrap, shuffle -> shuffled passes, random -> with replacement.
+        Every root is therefore reused about equally instead of favouring
+        whichever traces a strategy-side queue happened to accumulate. Skips
+        ids whose conversation has no spawnable session (missing metadata /
+        zero turns), bounded to one full pass over the root pool so an
+        all-unspawnable pool returns ``None`` rather than spinning.
+        """
+        for _ in range(max(1, self._pool_size)):
+            cid = self._dataset_sampler.next_conversation_id()
+            meta = self._metadata_lookup.get(cid)
+            if meta is not None and meta.turns:
+                return cid
+        return None
 
 
 def _as_timestamp_ms(value: object) -> float | None:

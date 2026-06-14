@@ -24,6 +24,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -66,10 +67,16 @@ def _build_real_trajectory_source(
 
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = ds
-    src._dataset_sampler = MagicMock()
+    # Recycle draws roots from this sampler; use a real SequentialSampler over
+    # the root pool so recycle exercises the production round-robin path.
+    root_ids = [
+        c.conversation_id for c in ds.conversations if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(root_ids) if root_ids else MagicMock()
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
+    src._pool_size = len(root_ids)
     src.trajectories = list(trajectories)
     return src
 
@@ -562,30 +569,36 @@ def test_report_warmup_failures_silent_when_no_failures():
 
 
 @pytest.mark.asyncio
-async def test_profiling_setup_seeds_recycle_queue_with_full_pool():
-    """PROFILING setup seeds the recycle queue with the FULL dataset pool
-    (including trajectory trace_ids). The pop loop in
-    ``_spawn_from_recycle_or_id`` skips trace_ids whose session is currently
-    active, so duplicate concurrent sessions are still avoided."""
+async def test_profiling_recycle_cycles_full_root_pool_in_sampler_order():
+    """PROFILING recycle draws roots from the dataset sampler, so it cycles
+    through the FULL root pool (sequential -> dataset order) then wraps -- every
+    root is reused equally instead of a strategy-side queue favoring some."""
     trajectories = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
         Trajectory(conversation_id="trace_2", start_turn_index=1),
     ]
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
         trajectories=trajectories,
         num_traces=5,  # trace_0..trace_4
+        issuer=issuer,
     )
+    strategy.stop_checker.can_start_new_session.return_value = True
     await strategy.setup_phase()
 
-    queue = strategy._recycle_queue
-    assert queue is not None
-    queued: list[str] = []
-    while not queue.empty():
-        queued.append(queue.get_nowait())
+    for _ in range(10):
+        await strategy._dispatch_recycled_on_lane(0)
 
-    # Full pool in iteration order from dataset_metadata.conversations.
-    assert queued == ["trace_0", "trace_1", "trace_2", "trace_3", "trace_4"]
+    # Two full round-robin passes over the 5 roots, in dataset order.
+    assert issued == ["trace_0", "trace_1", "trace_2", "trace_3", "trace_4"] * 2
 
 
 @pytest.mark.asyncio
@@ -1512,18 +1525,10 @@ async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
 
 
 @pytest.mark.asyncio
-async def test_startup_recycle_does_not_pop_live_trajectory_trace():
-    """A startup recycle must not spawn a trace whose own lane hasn't dispatched.
-
-    setup_phase pre-registers every live trajectory lane in _active_traces:
-    without that, an early lane that recycles immediately pops the queue head
-    before later lanes register themselves, spawning a duplicate concurrent
-    session of a trace that its own lane is about to resume.
-    """
-    # Lane 0: single-turn snapshot on trace_1 -> terminal root, recycles at
-    # startup. Lane 1: plain trajectory resuming trace_0 at k_i+1. Dataset
-    # order puts trace_0 at the queue head, so a full-pool queue would hand
-    # lane 0's recycle a fresh turn-0 session of the still-live trace_0.
+async def test_startup_dispatch_snapshot_root_and_resume():
+    """PROFILING execute dispatches each lane's initial credit: a snapshot
+    root at turn 0 and a plain trajectory resumed at k_i+1. No recycle fires
+    during execute_phase (recycle is driven by credit returns)."""
     conversations = [
         ConversationMetadata(
             conversation_id="trace_0",
@@ -1572,10 +1577,9 @@ async def test_startup_recycle_does_not_pop_live_trajectory_trace():
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    # Lane 0's recycle must spawn its own just-finished trace_1 (the only
-    # eligible trace), never a turn-0 duplicate of the live trace_0.
+    # Lane 0 dispatches its snapshot root trace_1 at turn 0; lane 1 resumes
+    # trace_0 at k_i+1. No recycle during execute_phase.
     assert sorted(captured) == [("trace_0", 1), ("trace_1", 0)]
-    assert strategy._active_traces["trace_0"] <= 1
 
 
 @pytest.mark.asyncio
@@ -1749,7 +1753,8 @@ async def test_handle_credit_return_honors_delay_ms_via_scheduler():
 
 @pytest.mark.asyncio
 async def test_handle_credit_return_recycles_on_final_turn():
-    """Last turn of a session -> trace_id put back; new session pulled FIFO."""
+    """Last turn of a session -> lane recycles into the next root from the
+    sampler (sequential over trace_0..trace_2 -> trace_0 first), at turn 0."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issued_sessions: list[tuple[str, int]] = []
 
@@ -1766,34 +1771,23 @@ async def test_handle_credit_return_recycles_on_final_turn():
         turns_per_trace=4,
         issuer=issuer,
     )
+    strategy.stop_checker.can_start_new_session.return_value = True
     await strategy.setup_phase()
 
-    # Recycle queue should currently be the full pool ["trace_0", "trace_1", "trace_2"].
-    initial_queue_size = strategy._recycle_queue.qsize()
-    assert initial_queue_size == 3
-
     # Register the in-flight session's lane bookkeeping (normally done by
-    # _execute_profiling); handle_credit_return's recycle path now requires
-    # finished_correlation_id to be in _correlation_to_lane. _active_traces
-    # was already pre-registered by setup_phase.
+    # _execute_profiling); the recycle path requires finished_correlation_id
+    # to be in _correlation_to_lane.
     strategy._correlation_to_lane["xcorr"] = 0
 
     issuer.issue_credit.reset_mock()
     issued_sessions.clear()
 
-    # trace_0 finishes its last turn (index 3 of 4).
+    # trace_0 finishes its last turn (index 3 of 4) -> recycle into the next
+    # sampler root at turn 0.
     final_credit = _make_credit(conversation_id="trace_0", turn_index=3, num_turns=4)
     await strategy.handle_credit_return(final_credit)
 
-    # Spawn flow: discard trace_0 from active (was alive); push trace_0 to
-    # tail of [trace_0, trace_1, trace_2] -> [trace_0, trace_1, trace_2, trace_0];
-    # pop head trace_0 (not active anymore, just discarded), dispatch at turn 0.
     assert issued_sessions == [("trace_0", 0)]
-    # Queue now contains [trace_1, trace_2, trace_0] (head trace_0 popped).
-    remaining: list[str] = []
-    while not strategy._recycle_queue.empty():
-        remaining.append(strategy._recycle_queue.get_nowait())
-    assert remaining == ["trace_1", "trace_2", "trace_0"]
 
 
 @pytest.mark.asyncio
@@ -1829,14 +1823,9 @@ async def test_handle_credit_return_does_not_recycle_final_child_turn():
 
 
 @pytest.mark.asyncio
-async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
-    """Single-trace dataset: just-finished trace_id is reused immediately.
-
-    With the full-pool recycle queue, a single-trace dataset means the queue
-    holds [trace_0] at setup; the trajectory's session is still alive there
-    (tracked in _active_traces), so the only available pop after re-enqueue
-    is the just-finished trace_0 itself.
-    """
+async def test_handle_credit_return_reuses_sole_root_when_pool_is_one():
+    """Single-root dataset: the sampler only ever yields trace_0, so recycle
+    reuses it (at turn 0)."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issued_sessions: list[tuple[str, int]] = []
 
@@ -1853,13 +1842,10 @@ async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
         turns_per_trace=3,
         issuer=issuer,
     )
+    strategy.stop_checker.can_start_new_session.return_value = True
     await strategy.setup_phase()
-    # Full pool: queue is [trace_0] at setup.
-    assert strategy._recycle_queue.qsize() == 1
 
     # Register the in-flight session's lane (normally done by _execute_profiling).
-    # _active_traces was already pre-registered by setup_phase — discard
-    # happens at the top of _spawn_from_recycle_or_id.
     strategy._correlation_to_lane["xcorr"] = 0
 
     issuer.issue_credit.reset_mock()
@@ -1868,8 +1854,6 @@ async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
     final_credit = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
     await strategy.handle_credit_return(final_credit)
 
-    # trace_0 discarded from active, pushed to tail, immediately popped and
-    # dispatched at turn 0.
     assert issued_sessions == [("trace_0", 0)]
 
 
@@ -1926,7 +1910,6 @@ async def test_handle_credit_return_warmup_phase_is_noop_for_final_turn():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    assert strategy._recycle_queue is None
 
     issuer.issue_credit.reset_mock()
     final_credit = _make_credit(
@@ -1937,19 +1920,6 @@ async def test_handle_credit_return_warmup_phase_is_noop_for_final_turn():
     )
     await strategy.handle_credit_return(final_credit)
     assert issuer.issue_credit.await_count == 0
-
-
-# =============================================================================
-# WARMUP setup_phase: no recycle queue built
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_warmup_setup_does_not_build_recycle_queue():
-    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
-    strategy, *_ = _make_strategy(phase=CreditPhase.WARMUP, trajectories=trajectories)
-    await strategy.setup_phase()
-    assert strategy._recycle_queue is None
 
 
 # =============================================================================

@@ -33,15 +33,22 @@ def _make_dataset_metadata(turn_counts_by_id: dict[str, int]):
 
 
 def _sampler_for(ids: list[str]) -> MagicMock:
+    """A wrapping sampler (like the production SequentialSampler): cycles over
+    ``ids`` indefinitely; raises StopIteration only when the pool is empty."""
+    import itertools
+
     sampler = MagicMock()
-    sampler.next_conversation_id.side_effect = ids
+    if not ids:
+        sampler.next_conversation_id.side_effect = StopIteration
+    else:
+        cycle = itertools.cycle(ids)
+        sampler.next_conversation_id.side_effect = lambda: next(cycle)
     return sampler
 
 
-def test_pool_one_concurrency_ten_wrap_fills_to_ten_lanes(caplog):
-    """concurrency > pool: wrap-fill produces ``concurrency`` lanes that
-    cycle through the single distinct trajectory. An INFO log records the
-    reuse fanout factor.
+def test_pool_one_concurrency_ten_repeats_single_trace_across_ten_lanes(caplog):
+    """concurrency > pool: the wrapping sampler hands the single trace to all
+    ten lanes; an INFO log records the repeat fanout factor.
     """
     md = _make_dataset_metadata({"only": 5})
     sampler = _sampler_for(["only"])
@@ -58,9 +65,9 @@ def test_pool_one_concurrency_ten_wrap_fills_to_ten_lanes(caplog):
     distinct_cids = {t.conversation_id for t in src.trajectories}
     assert distinct_cids == {"only"}
     reuse_logs = [
-        r.getMessage() for r in caplog.records if "Trajectory reuse" in r.getMessage()
+        r.getMessage() for r in caplog.records if "distinct traces" in r.getMessage()
     ]
-    assert reuse_logs, "expected an INFO log about trajectory reuse / wrap-fill"
+    assert reuse_logs, "expected an INFO log about traces repeating across lanes"
 
 
 def test_empty_pool_raises_at_construction():
@@ -122,8 +129,11 @@ def test_two_turn_trace_k_i_is_zero_for_all_seeds():
         )
 
 
-def test_trajectories_are_distinct_trace_ids():
-    # Sampler yields a duplicate; trajectories must dedupe to distinct trace_ids.
+def test_trajectories_follow_sampler_order_including_repeats():
+    """Trace selection is the sampler's job: trajectories mirror the sampler's
+    output verbatim, repeats included (no dedup). Repeated traces are distinct
+    lanes that snapshot at their own t*.
+    """
     md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5})
     sampler = _sampler_for(["a", "a", "b", "c"])
 
@@ -135,7 +145,7 @@ def test_trajectories_are_distinct_trace_ids():
     )
 
     cids = [t.conversation_id for t in src.trajectories]
-    assert len(cids) == len(set(cids))
+    assert cids == ["a", "a", "b"]
 
 
 def test_same_seed_two_independent_constructions_yield_identical_trajectories():
