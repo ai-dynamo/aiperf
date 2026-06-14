@@ -411,6 +411,55 @@ def test_idle_gap_warp_flat_chain_gap_structure_matches_unsplit_run():
     assert worker.turns[0].timestamp == pytest.approx(20_000.0)
 
 
+def test_idle_gap_warp_flat_branch_start_uses_mapped_time_not_raw():
+    """Regression: a multi-chain flat group whose workers begin AFTER a
+    compressed idle gap must anchor its SPAWN branch on the WARPED first-request
+    time, matching the workers' (also-warped) turn-0 timestamps.
+
+    Using the raw first-request time leaves the branch start on the
+    uncompressed timeline while the child turns live on the compressed one, so
+    branch_orchestrator._child_dispatch_offset_ms (max(0, child_ts -
+    branch_start)) goes negative and clamps to 0 -- silently collapsing the
+    recorded inter-worker dispatch stagger for every flat worker-group fan-out
+    whenever the (default-on for agentx) idle-gap cap is engaged.
+    """
+    # Main founder at t=0; a 1000s idle gap; two disjoint-namespace workers at
+    # t=1000 and t=1002 (2s apart); main t1 at t=1003. Sorted request starts
+    # [0, 1000, 1002, 1003]: the 0->1000 gap (1000s) caps to 60s (940s excess),
+    # shifting everything at/after the gap left by 940s:
+    #   worker A 1000 -> 60s, worker B 1002 -> 62s, main t1 1003 -> 63s.
+    requests = [
+        _normal(0.0, [1, 2, 3], api_time=0.5),  # main founder, outer 0
+        _normal(1000.0, [900, 901], api_time=0.5, model=_HAIKU),  # worker A
+        _normal(1002.0, [910, 911], api_time=0.5, model=_HAIKU),  # worker B
+        _normal(1003.0, [1, 2, 3, 4], api_time=0.5),  # main t1
+    ]
+    uc = _mk_user_config()
+    uc.loadgen.trace_idle_gap_cap_seconds = 60.0
+    loader = _build_loader(uc)
+    convs = _convert(loader, _trace("flt_warp_start", requests))
+    root = convs["flt_warp_start"]
+
+    flatspawn = [b for b in root.branches if "flatspawn" in b.branch_id]
+    assert len(flatspawn) == 1, "both workers share (preceding, join) -> one branch"
+    branch = flatspawn[0]
+    assert len(branch.child_conversation_ids) == 2
+
+    # Branch start is the WARPED min worker start (60s), NOT the raw 1000s.
+    assert branch.start_timestamp_ms == pytest.approx(60_000.0)
+
+    # Worker turn-0 timestamps are warped (60s, 62s); the per-worker dispatch
+    # offset from the branch start stays non-negative AND preserves the recorded
+    # 2s stagger instead of collapsing both to 0.
+    child_ts = sorted(
+        convs[sid].turns[0].timestamp for sid in branch.child_conversation_ids
+    )
+    assert child_ts == [pytest.approx(60_000.0), pytest.approx(62_000.0)]
+    offsets = sorted(ts - branch.start_timestamp_ms for ts in child_ts)
+    assert offsets[0] == pytest.approx(0.0)
+    assert offsets[1] == pytest.approx(2_000.0)
+
+
 # --------------------------------------------------------------------------
 # Timing: per-chain delays, think_time_only and ignore_delays on flat-chain
 # turns (spec §5.6). Delays never negative.
