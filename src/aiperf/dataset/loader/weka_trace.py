@@ -226,6 +226,23 @@ class _ParentPlan:
     block_size: int
 
 
+def _worker_marker(*, is_aux: bool, is_reduction: bool, is_worker_group: bool) -> str:
+    """Session-id marker for a detected worker chain.
+
+    Auxiliary classification wins over worker-group (a one-shot sidecar is never
+    a parallel agent). ``aux:red`` keeps reductions inside the aux family (the
+    ``:aux:`` substring still flags them) while distinguishing them from
+    fetch/size sidecars; ``wg`` marks a parallel fan-out member; ``fa`` is a
+    solo agent."""
+    if is_aux:
+        return "aux"
+    if is_reduction:
+        return "aux:red"
+    if is_worker_group:
+        return "wg"
+    return "fa"
+
+
 @dataclass
 class _ChildPlan:
     session_id: str
@@ -303,13 +320,17 @@ def _expand_subagent_to_child_plans(
     ]
 
     chains: list[list[WekaNormalRequest]]
+    chain_is_wg: list[bool]
     if not split_chains or not normalized:
         ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
         chains = [[req for _, req in ordered]]
+        chain_is_wg = [False]
     else:
         from aiperf.dataset.loader.weka_agent_chains import (
             detect_agent_chains,
             is_aux_chain,
+            is_reduction_chain,
+            worker_group_members,
         )
 
         # Same preamble rule as the top level: a leading prefix-disjoint
@@ -331,6 +352,10 @@ def _expand_subagent_to_child_plans(
             [req for _, req in detection.chains[ci].requests]
             for ci in detection.worker_indices
         )
+        wg_members = worker_group_members(
+            detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
+        )
+        chain_is_wg = [False] + [ci in wg_members for ci in detection.worker_indices]
 
     main_first_hash = next((r.hash_ids for r in chains[0] if r.hash_ids), [])
     # Peak input length on the subagent's own main chain -- the yardstick a
@@ -339,7 +364,7 @@ def _expand_subagent_to_child_plans(
     main_model = chains[0][0].model if chains[0] else None
     plans: list[_ChildPlan] = []
     for chain_idx, chain_requests in enumerate(chains):
-        is_aux = False
+        is_aux = is_reduction = is_wg = False
         if chain_idx == 0:
             child_sid = f"{trace_id}::sa:{entry.agent_id}"
             init_tool, init_system = entry.tool_tokens, entry.system_tokens
@@ -352,9 +377,11 @@ def _expand_subagent_to_child_plans(
                 base_first_hash=main_first_hash,
                 chain_first_hash=first_hash,
             )
-            # A short, small-fresh-context overflow chain is the subagent's own
-            # one-shot sidecar (web fetch/search summary, classifier), not a
-            # nested agent -- tag it :aux: instead of the :fa: agent marker.
+            # Classify the overflow chain: a short, small-fresh-context or
+            # cross-model one-shot is the subagent's own sidecar (:aux:); a
+            # same-model large-in/short-out call is a reduction (:aux:red:); a
+            # member of a shared-spawn parallel group is a worker-group agent
+            # (:wg:); otherwise a nested agent (:fa:).
             is_aux = is_aux_chain(
                 chain_requests,
                 main_peak_isl,
@@ -364,7 +391,16 @@ def _expand_subagent_to_child_plans(
                 main_model=main_model,
                 cross_model=Environment.DATASET.WEKA_AUX_CROSS_MODEL,
             )
-            marker = "aux" if is_aux else "fa"
+            is_reduction = not is_aux and is_reduction_chain(
+                chain_requests,
+                osl_max=Environment.DATASET.WEKA_AUX_REDUCTION_OSL_MAX,
+                ratio=Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
+                isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+            )
+            is_wg = not is_aux and not is_reduction and chain_is_wg[chain_idx]
+            marker = _worker_marker(
+                is_aux=is_aux, is_reduction=is_reduction, is_worker_group=is_wg
+            )
             child_sid = f"{trace_id}::sa:{entry.agent_id}:{marker}:{chain_idx - 1:03d}"
         plans.append(
             _ChildPlan(
@@ -377,7 +413,7 @@ def _expand_subagent_to_child_plans(
                 block_size=block_size,
                 init_tool_tokens=init_tool,
                 init_system_tokens=init_system,
-                is_aux=is_aux,
+                is_aux=is_aux or is_reduction,
             )
         )
     return plans
@@ -418,6 +454,10 @@ class _SplitStats:
     traces_split: int = 0
     total_chains: int = 0
     total_aux: int = 0
+    total_reduction: int = 0
+    """Aux chains classified by the reduction arm (a subset of total_aux)."""
+    total_worker_group: int = 0
+    """Worker chains tagged as parallel fan-out group members (::wg:)."""
     total_seams: int = 0
     total_empty_hash: int = 0
 
@@ -1054,6 +1094,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         from aiperf.dataset.loader.weka_agent_chains import (
             detect_agent_chains,
             is_aux_chain,
+            is_reduction_chain,
+            worker_group_members,
         )
 
         # Set aside leading title-generation / one-shot preamble requests so
@@ -1082,9 +1124,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             (req.input_length for _, req in main_chain.requests), default=0
         )
         main_model = main_chain.requests[0][1].model if main_chain.requests else None
-        n_aux = 0
+        wg_members = worker_group_members(
+            detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
+        )
+        n_aux = n_red = n_wg = 0
         for n, ci in enumerate(detection.worker_indices):
             chain = detection.chains[ci]
+            chain_reqs = [req for _, req in chain.requests]
             init_tool, init_system = _chain_init_tokens(
                 tool_tokens=trace.tool_tokens,
                 system_tokens=trace.system_tokens,
@@ -1092,8 +1138,13 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 base_first_hash=main_first_hash,
                 chain_first_hash=chain.requests[0][1].hash_ids,
             )
+            # Classify each worker chain: cross-model / small-fresh-context
+            # one-shot -> sidecar (::aux:); same-model large-in/short-out
+            # one-shot -> reduction (::aux:red:); shared-spawn parallel group
+            # member -> worker-group agent (::wg:); otherwise solo agent
+            # (::fa:). Aux/reduction win over worker-group.
             aux = is_aux_chain(
-                [req for _, req in chain.requests],
+                chain_reqs,
                 main_peak_isl,
                 max_requests=Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
                 isl_ratio=Environment.DATASET.WEKA_AUX_ISL_RATIO,
@@ -1101,10 +1152,22 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 main_model=main_model,
                 cross_model=Environment.DATASET.WEKA_AUX_CROSS_MODEL,
             )
+            reduction = not aux and is_reduction_chain(
+                chain_reqs,
+                osl_max=Environment.DATASET.WEKA_AUX_REDUCTION_OSL_MAX,
+                ratio=Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
+                isl_floor=Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+            )
+            is_wg = not aux and not reduction and ci in wg_members
+            marker = _worker_marker(
+                is_aux=aux, is_reduction=reduction, is_worker_group=is_wg
+            )
             n_aux += aux
+            n_red += reduction
+            n_wg += is_wg
             flat_plans.append(
                 _FlatChainPlan(
-                    session_id=f"{trace_id}::{'aux' if aux else 'fa'}:{n:03d}",
+                    session_id=f"{trace_id}::{marker}:{n:03d}",
                     parent_trace_id=trace_id,
                     chain_index=n,
                     requests=list(chain.requests),
@@ -1113,19 +1176,21 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     fork_parent_chain=chain.fork.parent_chain if chain.fork else None,
                     fork_depth=chain.fork.depth if chain.fork else 0,
                     block_size=trace_bs,
-                    is_aux=aux,
+                    is_aux=aux or reduction,
                 )
             )
         split_stats.traces_split += 1
         split_stats.total_chains += len(detection.worker_indices)
         split_stats.total_aux += n_aux
+        split_stats.total_reduction += n_red
+        split_stats.total_worker_group += n_wg
         split_stats.total_seams += detection.seams_merged
         split_stats.total_empty_hash += detection.unclassified_empty_hash
         _logger.info(
             f"Trace {trace_id}: detected {1 + len(detection.worker_indices)} "
             f"agents ({detection.seams_merged} seams merged, "
             f"{len(detection.worker_indices)} spawned chains "
-            f"[{n_aux} aux sidecars], "
+            f"[{n_aux} aux sidecars ({n_red} reductions), {n_wg} worker-group], "
             f"{detection.unclassified_empty_hash} empty-hash kept on main)"
         )
         # True-DAG fork edges live only in this log in v1 (the orchestrator
@@ -1432,7 +1497,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 f"WekaTraceLoader: flattened-agent detection split "
                 f"{split_stats.traces_split} trace(s) into "
                 f"{split_stats.total_chains} extra agent chain(s) "
-                f"({split_stats.total_seams} seams merged, "
+                f"({split_stats.total_aux} aux sidecars "
+                f"[{split_stats.total_reduction} reductions], "
+                f"{split_stats.total_worker_group} worker-group members, "
+                f"{split_stats.total_seams} seams merged, "
                 f"{split_stats.total_empty_hash} empty-hash requests kept on "
                 f"main)"
             )

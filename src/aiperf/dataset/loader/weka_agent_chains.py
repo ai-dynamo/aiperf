@@ -172,6 +172,74 @@ def is_aux_chain(
     return first.input_length < threshold
 
 
+def is_reduction_chain(
+    requests: list[_NormalRequestT],
+    *,
+    osl_max: int,
+    ratio: float,
+    isl_floor: int,
+) -> bool:
+    """Classify a single-request worker chain as an auxiliary *reduction* call.
+
+    A reduction is a large-input / short-output one-shot -- a context
+    compaction, a subagent-result summary, or a tool-output digest -- that
+    consumes a large body and emits a short summary. It runs on the SAME model
+    as the enclosing agent (so :func:`is_aux_chain`'s cross-model arm misses it)
+    and starts from a large context (so the small-fresh-context size arm misses
+    it too), yet it is auxiliary, not generative: a real agent emits long
+    completions, while a reduction's output stays bounded and its input/output
+    ratio is high. The signature is stable across every weka capture (the one
+    flat-chain class present from the earliest snapshot onward).
+
+    Returns ``True`` iff ``requests`` is exactly one request whose output length
+    is in ``(0, osl_max)``, whose input length is at least ``isl_floor``, and
+    whose input/output ratio exceeds ``ratio``. Set ``osl_max=0`` to disable.
+    Intended to be checked only AFTER :func:`is_aux_chain` returns False, so a
+    cross-model or small-fresh-context one-shot is never relabeled a reduction.
+    """
+    if osl_max <= 0 or len(requests) != 1:
+        return False
+    first = requests[0]
+    osl = first.output_length or 0
+    if osl <= 0 or osl >= osl_max:
+        return False
+    if first.input_length < isl_floor:
+        return False
+    return first.input_length > ratio * osl
+
+
+def worker_group_members(result: ChainDetectionResult, *, group_min: int) -> set[int]:
+    """Worker chain indices belonging to a parallel fan-out group.
+
+    A genuine parallel sub-agent fan-out shows up as several worker chains that
+    fork from a shared context (``fork.depth > 0``) and start from the same
+    first block (a common spawn point). A chain is a group member iff its
+    first-block hash is shared by at least ``group_min`` worker chains (itself
+    included) AND it forked from shared context. Returns the qualifying indices
+    into ``result.chains`` (a subset of ``result.worker_indices``); empty when
+    ``group_min <= 0``. Solo agents and one-shot sidecars never qualify -- a
+    solo agent shares its spawn block with no one, and a sidecar carries no deep
+    fork."""
+    if group_min <= 0:
+        return set()
+    by_block: dict[int, list[int]] = {}
+    for ci in result.worker_indices:
+        reqs = result.chains[ci].requests
+        if not reqs or not reqs[0][1].hash_ids:
+            continue
+        block = int(np.asarray(reqs[0][1].hash_ids, dtype=np.int64)[0])
+        by_block.setdefault(block, []).append(ci)
+    members: set[int] = set()
+    for group in by_block.values():
+        if len(group) < group_min:
+            continue
+        for ci in group:
+            fork = result.chains[ci].fork
+            if fork is not None and fork.depth > 0:
+                members.add(ci)
+    return members
+
+
 @dataclass(slots=True)
 class _Phase1State:
     """Working state for the greedy forward pass."""

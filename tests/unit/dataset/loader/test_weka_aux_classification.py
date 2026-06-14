@@ -1,14 +1,31 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for auxiliary one-shot (sidecar) classification of detected chains.
+"""Tests for worker-chain classification of detected chains.
 
-``is_aux_chain`` decides whether a detected worker chain is a genuine agent or
-a tool-issued sidecar: short and starting from a small, fresh context relative
-to the enclosing main chain's peak. Applies to top-level flat chains
-(``::fa:`` -> ``::aux:``) and subagent overflow (``:cNNN`` -> ``:auxNNN``).
+Three predicates partition detected worker chains into agent vs auxiliary vs
+parallel fan-out:
+
+- ``is_aux_chain``: a short chain from a small fresh context, or a cross-model
+  one-shot, is a tool-issued sidecar (``::fa:`` -> ``::aux:``).
+- ``is_reduction_chain``: a same-model single large-input/short-output one-shot
+  is a reduction sidecar (``::fa:`` -> ``::aux:red:``).
+- ``worker_group_members``: workers sharing a spawn block with enough forked
+  siblings are a parallel fan-out group (``::fa:`` -> ``::wg:``).
+
+All apply at both layers (top-level flat chains and subagent overflow). The
+``_worker_marker`` helper resolves the precedence (aux > reduction > worker-
+group > solo agent).
 """
 
-from aiperf.dataset.loader.weka_agent_chains import is_aux_chain
+from aiperf.dataset.loader.weka_agent_chains import (
+    AgentChain,
+    ChainDetectionResult,
+    ChainFork,
+    is_aux_chain,
+    is_reduction_chain,
+    worker_group_members,
+)
+from aiperf.dataset.loader.weka_trace import _worker_marker
 from aiperf.dataset.loader.weka_trace_models import WekaNormalRequest
 
 # Defaults mirroring Environment.DATASET.WEKA_AUX_* so the tests read as the
@@ -114,3 +131,176 @@ def test_cross_model_only_reclassifies_short_chains():
 def test_no_main_model_skips_cross_model_arm():
     # without a main_model reference the cross-model arm is inert (size only)
     assert is_aux_chain(_chain(200_000), MAIN_PEAK, **PARAMS) is False
+
+
+# --- reduction arm (is_reduction_chain) ---
+
+RED = {"osl_max": 4000, "ratio": 20.0, "isl_floor": 16384}
+
+
+def _one(isl: int, osl: int, model: str = "m") -> list[WekaNormalRequest]:
+    """A single-request worker chain with explicit input/output lengths."""
+    return [
+        WekaNormalRequest(
+            type="n",
+            t=0.0,
+            model=model,
+            input_length=isl,
+            output_length=osl,
+            hash_ids=[1],
+        )
+    ]
+
+
+def test_reduction_large_in_short_out_is_aux():
+    # 41k in, 330 out (ratio ~125) -> a reduction sidecar
+    assert is_reduction_chain(_one(41_280, 330), **RED) is True
+
+
+def test_reduction_generative_output_is_not_reduction():
+    # a long completion is generative agent work, not a reduction
+    assert is_reduction_chain(_one(41_280, 8_000), **RED) is False
+
+
+def test_reduction_requires_large_input():
+    # below the floor is the size arm's territory, not a reduction
+    assert is_reduction_chain(_one(5_000, 100), **RED) is False
+
+
+def test_reduction_requires_high_ratio():
+    # 30k / 2000 = ratio 15 < 20 -> a balanced call, not a reduction
+    assert is_reduction_chain(_one(30_000, 2_000), **RED) is False
+    # 30k / 100 = ratio 300 -> a reduction
+    assert is_reduction_chain(_one(30_000, 100), **RED) is True
+
+
+def test_reduction_only_single_request():
+    two = _one(41_280, 330) + _one(41_280, 330)
+    assert is_reduction_chain(two, **RED) is False
+
+
+def test_reduction_zero_output_is_not_reduction():
+    assert is_reduction_chain(_one(41_280, 0), **RED) is False
+
+
+def test_reduction_osl_max_zero_disables():
+    assert (
+        is_reduction_chain(_one(41_280, 330), osl_max=0, ratio=20.0, isl_floor=16384)
+        is False
+    )
+
+
+def test_reduction_osl_bound_is_strict():
+    # output exactly at osl_max is not below it -> not a reduction
+    assert is_reduction_chain(_one(200_000, 4_000), **RED) is False
+    assert is_reduction_chain(_one(200_000, 3_999), **RED) is True
+
+
+def test_reduction_empty_chain_is_not_reduction():
+    assert is_reduction_chain([], **RED) is False
+
+
+# --- worker-group membership (worker_group_members) ---
+
+
+def _worker(first_block: int, fork_depth: int) -> AgentChain:
+    """A worker chain whose first request opens at ``first_block`` and which
+    forked from shared context at ``fork_depth`` blocks."""
+    return AgentChain(
+        requests=[
+            (
+                0,
+                WekaNormalRequest(
+                    type="n",
+                    t=0.0,
+                    model="m",
+                    input_length=50_000,
+                    output_length=200,
+                    hash_ids=[first_block, 2, 3],
+                ),
+            )
+        ],
+        fork=ChainFork(
+            parent_chain=0, fork_outer_idx=0, depth=fork_depth, fork_time=0.0
+        ),
+    )
+
+
+def _result(*workers: AgentChain) -> ChainDetectionResult:
+    """A detection result: chain 0 is main, the rest are workers."""
+    main = AgentChain(
+        requests=[
+            (
+                0,
+                WekaNormalRequest(
+                    type="n",
+                    t=0.0,
+                    model="m",
+                    input_length=80_000,
+                    output_length=200,
+                    hash_ids=[99],
+                ),
+            )
+        ]
+    )
+    chains = [main, *workers]
+    return ChainDetectionResult(
+        chains=chains,
+        main_index=0,
+        worker_indices=list(range(1, len(chains))),
+        seams_merged=0,
+        unclassified_empty_hash=0,
+    )
+
+
+def test_worker_group_shared_spawn_block_with_forks():
+    # 3 workers share spawn block 7 and forked from shared context -> all members
+    r = _result(_worker(7, 100), _worker(7, 100), _worker(7, 100))
+    assert worker_group_members(r, group_min=3) == {1, 2, 3}
+
+
+def test_worker_group_below_min_not_members():
+    # only 2 share the block -> below group_min=3 -> none
+    r = _result(_worker(7, 100), _worker(7, 100))
+    assert worker_group_members(r, group_min=3) == set()
+
+
+def test_worker_group_requires_fork_depth():
+    # 3 share the block but none forked from shared context (depth 0) -> none
+    r = _result(_worker(7, 0), _worker(7, 0), _worker(7, 0))
+    assert worker_group_members(r, group_min=3) == set()
+
+
+def test_worker_group_distinct_blocks_not_grouped():
+    # no shared spawn point -> no group
+    r = _result(_worker(1, 100), _worker(2, 100), _worker(3, 100))
+    assert worker_group_members(r, group_min=3) == set()
+
+
+def test_worker_group_only_forked_members_qualify():
+    # 3 share the block (group passes) but one has depth 0 -> only forked qualify
+    r = _result(_worker(7, 100), _worker(7, 0), _worker(7, 100))
+    assert worker_group_members(r, group_min=3) == {1, 3}
+
+
+def test_worker_group_min_zero_disables():
+    r = _result(_worker(7, 100), _worker(7, 100), _worker(7, 100))
+    assert worker_group_members(r, group_min=0) == set()
+
+
+# --- marker precedence (_worker_marker) ---
+
+
+def test_worker_marker_precedence():
+    # aux wins over everything; reduction over worker-group; wg over solo agent
+    assert _worker_marker(is_aux=True, is_reduction=True, is_worker_group=True) == "aux"
+    assert (
+        _worker_marker(is_aux=False, is_reduction=True, is_worker_group=True)
+        == "aux:red"
+    )
+    assert (
+        _worker_marker(is_aux=False, is_reduction=False, is_worker_group=True) == "wg"
+    )
+    assert (
+        _worker_marker(is_aux=False, is_reduction=False, is_worker_group=False) == "fa"
+    )
