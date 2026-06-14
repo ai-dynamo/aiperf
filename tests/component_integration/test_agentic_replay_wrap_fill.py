@@ -32,6 +32,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import TrajectorySource
@@ -54,21 +55,6 @@ class _DispatchLog:
 
     entries: list[tuple[CreditPhase, str, int]] = field(default_factory=list)
     """List of (phase, conversation_id, turn_index) per dispatched credit."""
-
-
-class _SequentialSampler:
-    """Deterministic sampler over a fixed conversation_id list."""
-
-    def __init__(self, conversation_ids: list[str]) -> None:
-        self._ids = list(conversation_ids)
-        self._idx = 0
-
-    def next_conversation_id(self) -> str:
-        if self._idx >= len(self._ids):
-            raise StopIteration
-        cid = self._ids[self._idx]
-        self._idx += 1
-        return cid
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -172,7 +158,7 @@ async def test_pool_one_concurrency_four_wrap_fill_e2e() -> None:
     loop completes without tripping the double-recycle guard.
     """
     dataset = _make_dataset(num_traces=1, turns_per_trace=6)
-    sampler = _SequentialSampler([c.conversation_id for c in dataset.conversations])
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
 
     source = TrajectorySource(
         dataset_metadata=dataset,
