@@ -358,7 +358,7 @@ class _DatasetSettings(BaseSettings):
         "fetch/search summary, title generation, a classifier) rather than a "
         "sustained agent -- when it also passes the WEKA_AUX_ISL_* size test. "
         "Applies to both top-level flat chains (::fa: -> ::aux:) and a "
-        "subagent's nested-LCP overflow (:cNNN -> :auxNNN). Corpus sidecars are "
+        "subagent's nested-LCP overflow (:fa: -> :aux:). Corpus sidecars are "
         "overwhelmingly single-request, so the default is 1. Set to 0 to "
         "disable aux classification (every worker chain keeps its agent tag). "
         "Only applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
