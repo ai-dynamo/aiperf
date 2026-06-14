@@ -176,6 +176,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._recycle_pass: dict[str, int] = ledger.recycle_pass
         self._session_marker: dict[str, str | None] = ledger.session_marker
         self._correlation_to_lane: dict[str, int] = {}
+        # Rootless lanes (root's turns all before t*; only background subagents
+        # remain at PROFILING start) hold a lane credit in place of a root
+        # credit. Track outstanding background children per lane so the credit
+        # is released and the lane recycled into a fresh root once they drain,
+        # instead of the lane going dark for the rest of the phase.
+        self._rootless_lane_outstanding: dict[int, int] = {}
+        self._rootless_lane_trace: dict[int, str] = {}
         self._cache_bust_target: CacheBustTarget = (
             user_config.input.prompt.cache_bust.target
             if user_config is not None
@@ -267,6 +274,15 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 f"PROFILING setup: trajectories={len(trajectory_ids)} traces, "
                 f"recycle_queue={self._recycle_queue.qsize()} traces (full pool)"
             )
+            rootless, gated = self._lane_credit_lane_counts()
+            if rootless or gated:
+                self.info(
+                    f"PROFILING: {rootless} rootless + {gated} gated-parent lanes "
+                    f"of {len(self.conversation_source.trajectories)} dispatch no "
+                    f"root credit at start and hold a lane credit instead (so they "
+                    f"still count toward concurrency); rootless lanes recycle into a "
+                    f"fresh root once their background subagents drain"
+                )
 
     async def execute_phase(self) -> None:
         """Dispatch initial credits for the phase."""
@@ -580,7 +596,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             if terminal_overflow and self.branch_orchestrator is not None:
                 await self.branch_orchestrator.on_child_stopped(credit.x_correlation_id)
             self._session_marker.pop(credit.x_correlation_id, None)
-            self._correlation_to_lane.pop(credit.x_correlation_id, None)
+            lane = self._correlation_to_lane.pop(credit.x_correlation_id, None)
+            if lane is not None and lane in self._rootless_lane_outstanding:
+                await self._on_rootless_child_done(lane)
             return
 
         if not credit.is_final_turn and not terminal_overflow:
@@ -665,7 +683,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # Re-enqueue BEFORE the cooldown check so an in-flight credit returning
         # during cooldown can't drop the trace_id from the recycle pool.
         self._recycle_queue.put_nowait(finished_trace_id)
+        await self._dispatch_recycled_on_lane(lane)
 
+    async def _dispatch_recycled_on_lane(self, lane: int) -> None:
+        """Pop the next eligible recycle trace and dispatch its turn-0 session
+        onto ``lane``.
+
+        Shared tail of ``_spawn_from_recycle_or_id`` (a finished root recycling)
+        and ``_on_rootless_child_done`` (a drained rootless lane recycling into
+        its first real root). No-op during cooldown -- in-flight returns must
+        not start new sessions -- or when no queued trace is currently eligible.
+        Callers must have already re-enqueued the finished trace_id so the pool
+        is conserved if this returns early.
+        """
         if not self.stop_checker.can_start_new_session():
             return
 
@@ -678,7 +708,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             # Unspawnable right now (missing metadata / zero turns): re-enqueue
             # so the recycle pool's eligible set is conserved. Dropping it here
             # silently erodes pool diversity for the rest of the phase (the
-            # finished trace was already re-enqueued above).
+            # finished trace was already re-enqueued by the caller).
             self._recycle_queue.put_nowait(next_trace_id)
             return
 
@@ -688,6 +718,34 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
         turn = self._build_turn_for_session(session, 0)
         await self.credit_issuer.issue_credit(turn)
+
+    async def _on_rootless_child_done(self, lane: int) -> None:
+        """Account a rootless lane's background child completing.
+
+        Until the last background child drains, the lane keeps its lane credit
+        (it is still doing background work). When the final one finishes,
+        release the credit and recycle the lane into a fresh turn-0 root so it
+        keeps contributing load for the rest of the phase instead of going dark
+        (the leak this whole path fixes). The fresh root acquires its own
+        session slot via ``issue_credit``; releasing the lane credit first keeps
+        the slot budget balanced.
+        """
+        remaining = self._rootless_lane_outstanding.get(lane, 0) - 1
+        if remaining > 0:
+            self._rootless_lane_outstanding[lane] = remaining
+            return
+
+        self._rootless_lane_outstanding.pop(lane, None)
+        finished_trace_id = self._rootless_lane_trace.pop(lane, None)
+        self.credit_issuer.release_lane_credit()
+
+        if self._recycle_queue is None or finished_trace_id is None:
+            return
+        self._active_traces[finished_trace_id] -= 1
+        if self._active_traces[finished_trace_id] <= 0:
+            del self._active_traces[finished_trace_id]
+        self._recycle_queue.put_nowait(finished_trace_id)
+        await self._dispatch_recycled_on_lane(lane)
 
     async def _dispatch_snapshot_for_profiling(
         self, trajectory: Trajectory, lane: int
@@ -726,6 +784,34 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
         dispatchable = [s for s in snapshot.states if not s.waiting_on_children]
+        # A lane needs its own session credit when it dispatches no
+        # slot-acquiring depth-0 root credit at PROFILING start. Two cases:
+        #   - rootless: the root's turns are all before t*, so the snapshot has
+        #     no root state at all -- only its background ::fa:/::aux: subagents.
+        #   - gated parent: a root state exists but waits on a child join, so it
+        #     is excluded from ``dispatchable`` and resumes only when its
+        #     children complete.
+        # Without a lane credit such a lane holds no session slot: rootless
+        # silently drops below --concurrency, and a gated parent over-releases
+        # the limiter when its join's final turn later fires. Acquire one slot
+        # for the LANE itself; its subagents/sidecars still acquire none.
+        has_dispatchable_root = any(
+            s.conversation_id == trajectory.conversation_id
+            and not s.waiting_on_children
+            for s in snapshot.states
+        )
+        has_root_state = any(
+            s.conversation_id == trajectory.conversation_id for s in snapshot.states
+        )
+        if not has_dispatchable_root and dispatchable:
+            await self.credit_issuer.acquire_lane_credit()
+            # Only a TRULY rootless lane (no root state) recycles on child drain
+            # -- no root will ever run on it. A gated parent keeps the credit
+            # until it resumes its join turn and recycles through the normal
+            # depth-0 final-turn path, whose release balances this acquire.
+            if not has_root_state:
+                self._rootless_lane_outstanding[lane] = len(dispatchable)
+                self._rootless_lane_trace[lane] = trajectory.conversation_id
         # Cap the leading idle (t* -> the trajectory's earliest post-t* request)
         # by shifting EVERY stream left by the same excess, so an idle-at-t*
         # trajectory ramps in within the cap instead of going dead for the whole
@@ -813,6 +899,37 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 continue
             return candidate
         return None
+
+    def _lane_credit_lane_counts(self) -> tuple[int, int]:
+        """Count PROFILING lanes that dispatch no root credit at start and so
+        hold a lane credit: ``(rootless, gated_parent)``.
+
+        Rootless = the snapshot has no root state (the root's turns are all
+        before t*); gated = a root state exists but waits on a child join. Only
+        lanes with at least one dispatchable stream are counted (an empty lane
+        dispatches nothing and takes no credit). Mirrors the dispatch-time
+        condition in ``_dispatch_snapshot_for_profiling``; used for the setup
+        log so an under-target run is diagnosable.
+        """
+        rootless = gated = 0
+        for trajectory in self.conversation_source.trajectories:
+            snapshot = trajectory.snapshot
+            if snapshot is None:
+                continue
+            states = snapshot.states
+            if not any(not s.waiting_on_children for s in states):
+                continue
+            if any(
+                s.conversation_id == trajectory.conversation_id
+                and not s.waiting_on_children
+                for s in states
+            ):
+                continue
+            if any(s.conversation_id == trajectory.conversation_id for s in states):
+                gated += 1
+            else:
+                rootless += 1
+        return rootless, gated
 
     def _build_session_for_trace(self, trace_id: str) -> SampledSession | None:
         """Build a fresh SampledSession for a recycled trace_id starting at turn 0."""

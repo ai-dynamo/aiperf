@@ -937,3 +937,61 @@ class TestDispatchFirstTurn:
         assert result is False
         # No credit was actually sent (slot acquisition failed).
         mock_router.send_credit.assert_not_called()
+
+
+# =============================================================================
+# Test: Lane credit (session slot held by a trajectory lane, not a credit)
+# =============================================================================
+
+
+class TestLaneCredit:
+    """A trajectory lane can hold a session slot directly, with no root credit.
+
+    Agentic replay dispatches one lane per ``--concurrency`` unit, but some
+    lanes issue no slot-acquiring depth-0 root credit at PROFILING start: a
+    rootless snapshot (root finished before t*, only background subagents
+    remain) and a gated parent deferred on a child join. Such a lane must
+    still hold exactly one session slot so it counts toward the configured
+    concurrency, WITHOUT a subagent/sidecar acquiring one. ``acquire_lane_credit``
+    / ``release_lane_credit`` are that path: a bare session-slot hold, no
+    prefill slot and no credit on the wire.
+    """
+
+    async def test_acquire_lane_credit_acquires_only_a_session_slot(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        """Acquires a session slot; no prefill slot, no credit sent on the wire."""
+        acquired = await credit_issuer.acquire_lane_credit()
+
+        assert acquired is True
+        mock_concurrency.acquire_session_slot.assert_called_once()
+        mock_concurrency.acquire_prefill_slot.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_acquire_lane_credit_uses_can_start_new_session_gate(
+        self, credit_issuer, mock_concurrency, mock_stop_checker
+    ):
+        """The slot acquisition is gated on can_start_new_session (a new lane)."""
+        await credit_issuer.acquire_lane_credit()
+
+        _, kwargs = mock_concurrency.acquire_session_slot.call_args
+        args = mock_concurrency.acquire_session_slot.call_args.args
+        passed = list(args) + list(kwargs.values())
+        assert CreditPhase.PROFILING in passed
+        assert mock_stop_checker.can_start_new_session in passed
+
+    async def test_acquire_lane_credit_returns_false_when_no_slot(
+        self, credit_issuer, mock_concurrency
+    ):
+        """When the session limiter is saturated, acquisition fails (False)."""
+        mock_concurrency.acquire_session_slot = AsyncMock(return_value=False)
+
+        assert await credit_issuer.acquire_lane_credit() is False
+
+    def test_release_lane_credit_releases_one_session_slot(
+        self, credit_issuer, mock_concurrency
+    ):
+        """Releasing a lane credit releases exactly one session slot."""
+        credit_issuer.release_lane_credit()
+
+        mock_concurrency.release_session_slot.assert_called_once()
