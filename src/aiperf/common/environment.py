@@ -128,6 +128,20 @@ class _AgentXSettings(BaseSettings):
         "rate exactly equal to the limit is accepted. Has no effect on "
         "non-scenario runs (no --scenario flag) or runs with zero responses.",
     )
+    RECYCLE_GUARD_MAX_WINDOW: int = Field(
+        ge=1,
+        default=1_000_000,
+        description="Maximum number of recently-recycled root correlation_ids "
+        "retained by AgenticReplayStrategy's double-recycle guard (which raises "
+        "if a final-turn credit return is delivered twice and would re-spawn a "
+        "session). Without a bound the guard retains one entry per recycled "
+        "session for the entire PROFILING phase -- hundreds of MB of "
+        "unreclaimable memory on long, high-throughput durability ramps. Oldest "
+        "entries are evicted FIFO once the window is full; a duplicate delivered "
+        "after this many intervening recycles is no longer caught. Duplicate "
+        "deliveries are near-immediate in practice, so the default window is far "
+        "larger than any real gap; raise it for very high concurrency.",
+    )
 
 
 class _CompressionSettings(BaseSettings):
