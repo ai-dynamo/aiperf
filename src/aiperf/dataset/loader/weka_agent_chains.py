@@ -212,71 +212,63 @@ def worker_group_assignment(
     result: ChainDetectionResult,
     *,
     group_min: int,
-    burst_gap_seconds: float,
-) -> dict[int, tuple[int, int, int]]:
-    """Assign each worker-group member a ``(lineage, burst, member)`` coordinate.
+) -> dict[int, tuple[int, int]]:
+    """Assign each worker-group member a ``(group, member)`` coordinate.
 
-    A genuine parallel sub-agent fan-out shows up as several worker chains that
-    fork from a shared context (``fork.depth > 0``) and start from the same
-    first block (a common spawn point). The coordinate decomposes that:
+    A genuine parallel sub-agent fan-out is a set of worker chains that forked
+    from the **same parent request** -- the same point in the spawn tree. The
+    detection records that fork point per chain as
+    ``fork.parent_chain`` + ``fork.fork_outer_idx`` (the outer index of the
+    parent's tail request the chain branched off, at ``fork.depth > 0`` shared
+    blocks). Chains sharing a fork point were spawned together off the same
+    context; that is the fan-out.
 
-    - **lineage**: the shared-spawn-block group. A first-block hash carried by at
-      least ``group_min`` worker chains roots one lineage; only the forked
-      members of that block (``fork.depth > 0``) are assigned to it. Lineages are
-      numbered by their earliest member's ``(t, outer_idx)``.
-    - **burst**: a dispatch wave within a lineage. Members are ordered by first-
-      request time; a new burst opens whenever the gap to the previous member's
-      first request exceeds ``burst_gap_seconds``. This separates a lineage's
-      cumulative spawns (which can span a long session) into the waves that were
-      actually launched together. Use ``burst_gap_seconds=inf`` for one burst per
-      lineage (lineage-only grouping).
-    - **member**: index within the burst, in ``(t, outer_idx)`` order.
+    - **group**: the fork-point bucket. A ``(parent_chain, fork_outer_idx)`` pair
+      carried by at least ``group_min`` chains is one coordinated fan-out.
+      Groups are numbered by their earliest member's ``(t, outer_idx)``.
+    - **member**: index within the group, in ``(t, outer_idx)`` order.
 
-    Returns ``{chain_index: (lineage, burst, member)}`` for members only (a
-    subset of ``result.worker_indices``); empty when ``group_min <= 0``. Solo
-    agents and one-shot sidecars never appear -- a solo agent shares its spawn
-    block with no one, and a sidecar carries no deep fork."""
+    Returns ``{chain_index: (group, member)}`` for members only (a subset of
+    ``result.worker_indices``); empty when ``group_min <= 0``. Solo agents and
+    one-shot sidecars never appear -- a solo agent shares its fork point with no
+    one, and a sidecar carries no deep fork.
+
+    Keying on the fork point (not ``hash_ids[0]``) is deliberate: the first block
+    is the shallow common root (~system prompt) shared by nearly every worker in
+    a session, so it lumps unrelated fan-outs into one coarse blob. The fork
+    point is the deep divergence the children actually share."""
     if group_min <= 0:
         return {}
-    by_block: dict[int, list[int]] = {}
-    for ci in result.worker_indices:
-        reqs = result.chains[ci].requests
-        if not reqs or not reqs[0][1].hash_ids:
-            continue
-        block = int(np.asarray(reqs[0][1].hash_ids, dtype=np.int64)[0])
-        by_block.setdefault(block, []).append(ci)
 
     def _start(ci: int) -> tuple[float, int]:
         outer, req = result.chains[ci].requests[0]
         return (req.t, outer)
 
-    lineages: list[list[int]] = []
-    for cis in by_block.values():
-        if len(cis) < group_min:
+    by_fork: dict[tuple[int, int], list[int]] = {}
+    for ci in result.worker_indices:
+        fork = result.chains[ci].fork
+        if (
+            fork is None
+            or fork.parent_chain is None
+            or fork.fork_outer_idx is None
+            or fork.depth <= 0
+            or not result.chains[ci].requests
+        ):
             continue
-        members = [
-            ci
-            for ci in cis
-            if result.chains[ci].fork is not None and result.chains[ci].fork.depth > 0
-        ]
-        if members:
-            members.sort(key=_start)
-            lineages.append(members)
-    lineages.sort(key=lambda m: _start(m[0]))
+        by_fork.setdefault((fork.parent_chain, fork.fork_outer_idx), []).append(ci)
 
-    out: dict[int, tuple[int, int, int]] = {}
-    for lineage, members in enumerate(lineages):
-        burst = -1
-        member = 0
-        prev_t: float | None = None
-        for ci in members:
-            t = result.chains[ci].requests[0][1].t
-            if prev_t is None or (t - prev_t) > burst_gap_seconds:
-                burst += 1
-                member = 0
-            out[ci] = (lineage, burst, member)
-            member += 1
-            prev_t = t
+    groups: list[list[int]] = []
+    for members in by_fork.values():
+        if len(members) < group_min:
+            continue
+        members.sort(key=_start)
+        groups.append(members)
+    groups.sort(key=lambda m: _start(m[0]))
+
+    out: dict[int, tuple[int, int]] = {}
+    for group, members in enumerate(groups):
+        for member, ci in enumerate(members):
+            out[ci] = (group, member)
     return out
 
 
@@ -284,13 +276,8 @@ def worker_group_members(result: ChainDetectionResult, *, group_min: int) -> set
     """Worker chain indices belonging to a parallel fan-out group.
 
     Thin wrapper over :func:`worker_group_assignment` returning just the member
-    set (membership is independent of burst splitting, so the gap is irrelevant
-    here). See that function for the lineage/burst/member decomposition."""
-    return set(
-        worker_group_assignment(
-            result, group_min=group_min, burst_gap_seconds=float("inf")
-        )
-    )
+    set. See that function for the fork-point ``(group, member)`` decomposition."""
+    return set(worker_group_assignment(result, group_min=group_min))
 
 
 @dataclass(slots=True)

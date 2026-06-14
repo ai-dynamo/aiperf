@@ -75,6 +75,14 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v18: worker-group grouping re-keyed from hash_ids[0] (block-0) to the
+    # fork point (fork.parent_chain + fork.fork_outer_idx) -- the deep spawn
+    # relationship that actually identifies a coordinated fan-out. block-0 is the
+    # shallow common root (~system prompt) shared by ~all of a session's workers,
+    # so it lumped unrelated fan-outs into one coarse blob. The coordinate drops
+    # to ::wg:{group}_{member} (the temporal burst is gone -- fork-point groups
+    # are inherently time-tight), so ::wg: child session ids changed again.
+    # WEKA_WORKER_GROUP_BURST_GAP_SECONDS removed from the cache key.
     # v17: worker-group session ids now encode the parallel-fan-out coordinate
     # as ::wg:{lineage}_{burst}_{member} (was ::wg:{NNN}). lineage = shared-
     # spawn-block group; burst = temporal dispatch wave split at
@@ -114,7 +122,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    17
+    18
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -575,9 +583,6 @@ def _settings_payload_from_user_config(
         "weka_aux_reduction_osl_max": (Environment.DATASET.WEKA_AUX_REDUCTION_OSL_MAX),
         "weka_aux_reduction_ratio": Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
         "weka_worker_group_min": Environment.DATASET.WEKA_WORKER_GROUP_MIN,
-        "weka_worker_group_burst_gap_seconds": (
-            Environment.DATASET.WEKA_WORKER_GROUP_BURST_GAP_SECONDS
-        ),
         "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,

@@ -9,9 +9,9 @@ parallel fan-out:
   one-shot, is a tool-issued sidecar (``::fa:`` -> ``::aux:``).
 - ``is_reduction_chain``: a same-model single large-input/short-output one-shot
   is a reduction sidecar (``::fa:`` -> ``::aux:red:``).
-- ``worker_group_assignment`` / ``worker_group_members``: workers sharing a
-  spawn block with enough forked siblings are a parallel fan-out group, tagged
-  ``::fa:`` -> ``::wg:{lineage}_{burst}_{member}``.
+- ``worker_group_assignment`` / ``worker_group_members``: workers that forked
+  from the same parent request (the same fork point) with enough siblings are a
+  coordinated parallel fan-out, tagged ``::fa:`` -> ``::wg:{group}_{member}``.
 
 All apply at both layers (top-level flat chains and subagent overflow). The
 ``_worker_suffix`` helper resolves the precedence (aux > reduction > worker-
@@ -202,12 +202,17 @@ def test_reduction_empty_chain_is_not_reduction():
     assert is_reduction_chain([], **RED) is False
 
 
-# --- worker-group membership (worker_group_members) ---
+# --- worker-group membership + fork-point assignment ---
 
 
-def _worker(first_block: int, fork_depth: int, t: float = 0.0) -> AgentChain:
-    """A worker chain whose first request opens at ``first_block`` at time ``t``
-    and which forked from shared context at ``fork_depth`` blocks."""
+def _worker(
+    fork_parent: int = 0, fork_outer: int = 0, fork_depth: int = 100, t: float = 0.0
+) -> AgentChain:
+    """A worker chain that forked from parent request ``fork_outer`` of chain
+    ``fork_parent`` at ``fork_depth`` shared blocks, first request at time ``t``.
+
+    The fork point ``(fork_parent, fork_outer)`` is the grouping key; ``hash_ids``
+    are generic since block-0 is no longer used for grouping."""
     return AgentChain(
         requests=[
             (
@@ -218,11 +223,16 @@ def _worker(first_block: int, fork_depth: int, t: float = 0.0) -> AgentChain:
                     model="m",
                     input_length=50_000,
                     output_length=200,
-                    hash_ids=[first_block, 2, 3],
+                    hash_ids=[1, 2, 3],
                 ),
             )
         ],
-        fork=ChainFork(parent_chain=0, fork_outer_idx=0, depth=fork_depth, fork_time=t),
+        fork=ChainFork(
+            parent_chain=fork_parent,
+            fork_outer_idx=fork_outer,
+            depth=fork_depth,
+            fork_time=t,
+        ),
     )
 
 
@@ -253,97 +263,92 @@ def _result(*workers: AgentChain) -> ChainDetectionResult:
     )
 
 
-def test_worker_group_shared_spawn_block_with_forks():
-    # 3 workers share spawn block 7 and forked from shared context -> all members
-    r = _result(_worker(7, 100), _worker(7, 100), _worker(7, 100))
+def test_worker_group_same_fork_point_are_members():
+    # 3 workers forked from the SAME parent request (parent 0, outer 5) -> group
+    r = _result(_worker(0, 5), _worker(0, 5), _worker(0, 5))
     assert worker_group_members(r, group_min=3) == {1, 2, 3}
 
 
 def test_worker_group_below_min_not_members():
-    # only 2 share the block -> below group_min=3 -> none
-    r = _result(_worker(7, 100), _worker(7, 100))
+    # only 2 share the fork point -> below group_min=3 -> none
+    r = _result(_worker(0, 5), _worker(0, 5))
     assert worker_group_members(r, group_min=3) == set()
 
 
 def test_worker_group_requires_fork_depth():
-    # 3 share the block but none forked from shared context (depth 0) -> none
-    r = _result(_worker(7, 0), _worker(7, 0), _worker(7, 0))
+    # 3 share the fork point but depth 0 (didn't fork from shared context) -> none
+    r = _result(_worker(0, 5, 0), _worker(0, 5, 0), _worker(0, 5, 0))
     assert worker_group_members(r, group_min=3) == set()
 
 
-def test_worker_group_distinct_blocks_not_grouped():
-    # no shared spawn point -> no group
-    r = _result(_worker(1, 100), _worker(2, 100), _worker(3, 100))
+def test_worker_group_distinct_fork_points_not_grouped():
+    # each forked from a different parent request -> no fork point reaches min
+    r = _result(_worker(0, 5), _worker(0, 6), _worker(0, 7))
     assert worker_group_members(r, group_min=3) == set()
 
 
-def test_worker_group_only_forked_members_qualify():
-    # 3 share the block (group passes) but one has depth 0 -> only forked qualify
-    r = _result(_worker(7, 100), _worker(7, 0), _worker(7, 100))
-    assert worker_group_members(r, group_min=3) == {1, 3}
+def test_worker_group_fork_none_never_groups():
+    # a chain with no fork (fork=None) is never a member
+    solo = _worker(0, 5)
+    solo.fork = None
+    r = _result(solo, _worker(0, 5), _worker(0, 5))  # only 2 real fork-point members
+    assert worker_group_members(r, group_min=3) == set()
 
 
 def test_worker_group_min_zero_disables():
-    r = _result(_worker(7, 100), _worker(7, 100), _worker(7, 100))
+    r = _result(_worker(0, 5), _worker(0, 5), _worker(0, 5))
     assert worker_group_members(r, group_min=0) == set()
 
 
-# --- worker-group coordinate assignment (lineage / burst / member) ---
+# --- fork-point coordinate assignment (group / member) ---
 
 
-def test_worker_group_assignment_lineage_and_member():
-    # one lineage (block 7, all within burst gap) -> lineage 0, burst 0, members 0..2
-    r = _result(_worker(7, 100, t=0.0), _worker(7, 100, t=1.0), _worker(7, 100, t=2.0))
-    assert worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0) == {
-        1: (0, 0, 0),
-        2: (0, 0, 1),
-        3: (0, 0, 2),
+def test_worker_group_assignment_group_and_member():
+    # one fork point (0,5) -> group 0, members 0..2 in (t, outer) order
+    r = _result(_worker(0, 5, t=0.0), _worker(0, 5, t=1.0), _worker(0, 5, t=2.0))
+    assert worker_group_assignment(r, group_min=3) == {
+        1: (0, 0),
+        2: (0, 1),
+        3: (0, 2),
     }
 
 
-def test_worker_group_assignment_temporal_bursts():
-    # same lineage, but a >gap jump opens a new burst; member index resets per burst
+def test_worker_group_assignment_two_fork_points_two_groups():
+    # fork point (0,5) and (0,9) each have 3 members -> two distinct groups
     r = _result(
-        _worker(7, 100, t=0.0),  # burst 0, member 0
-        _worker(7, 100, t=5.0),  # within 30s -> burst 0, member 1
-        _worker(7, 100, t=100.0),  # +95s > 30s -> burst 1, member 0
-        _worker(7, 100, t=103.0),  # within 30s -> burst 1, member 1
+        _worker(0, 5, t=0.0),
+        _worker(0, 5, t=1.0),
+        _worker(0, 5, t=2.0),
+        _worker(0, 9, t=10.0),
+        _worker(0, 9, t=11.0),
+        _worker(0, 9, t=12.0),
     )
-    assert worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0) == {
-        1: (0, 0, 0),
-        2: (0, 0, 1),
-        3: (0, 1, 0),
-        4: (0, 1, 1),
-    }
+    a = worker_group_assignment(r, group_min=3)
+    assert {a[c][0] for c in (1, 2, 3)} == {0}
+    assert {a[c][0] for c in (4, 5, 6)} == {1}
+    assert a[4] == (1, 0) and a[6] == (1, 2)
 
 
-def test_worker_group_assignment_infinite_gap_is_single_burst():
-    # burst_gap = inf collapses a lineage to one burst (lineage-only grouping)
-    r = _result(_worker(7, 100, t=0.0), _worker(7, 100, t=1e6), _worker(7, 100, t=2e6))
-    coords = worker_group_assignment(r, group_min=3, burst_gap_seconds=float("inf"))
-    assert {ci: c[:2] for ci, c in coords.items()} == {1: (0, 0), 2: (0, 0), 3: (0, 0)}
-
-
-def test_worker_group_assignment_lineages_ordered_by_first_start():
-    # two lineages (blocks 7 and 8); lineage ordinal follows earliest member start
+def test_worker_group_assignment_groups_ordered_by_first_start():
+    # group ordinal follows the earliest member's start, not declaration order
     r = _result(
-        _worker(8, 100, t=10.0),
-        _worker(8, 100, t=11.0),
-        _worker(8, 100, t=12.0),
-        _worker(7, 100, t=0.0),
-        _worker(7, 100, t=1.0),
-        _worker(7, 100, t=2.0),
+        _worker(0, 9, t=10.0),
+        _worker(0, 9, t=11.0),
+        _worker(0, 9, t=12.0),
+        _worker(0, 5, t=0.0),
+        _worker(0, 5, t=1.0),
+        _worker(0, 5, t=2.0),
     )
-    coords = worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0)
-    # block-7 group starts earliest -> lineage 0; block-8 -> lineage 1
-    assert {coords[c][0] for c in (4, 5, 6)} == {0}
-    assert {coords[c][0] for c in (1, 2, 3)} == {1}
+    a = worker_group_assignment(r, group_min=3)
+    # fork point (0,5) starts earliest -> group 0
+    assert {a[c][0] for c in (4, 5, 6)} == {0}
+    assert {a[c][0] for c in (1, 2, 3)} == {1}
 
 
 def test_worker_group_members_matches_assignment_keys():
-    r = _result(_worker(7, 100), _worker(7, 0), _worker(7, 100))
+    r = _result(_worker(0, 5), _worker(0, 5, 0), _worker(0, 5))
     assert worker_group_members(r, group_min=3) == set(
-        worker_group_assignment(r, group_min=3, burst_gap_seconds=30.0)
+        worker_group_assignment(r, group_min=3)
     )
 
 
@@ -353,17 +358,17 @@ def test_worker_group_members_matches_assignment_keys():
 def test_worker_suffix_precedence_and_shape():
     # aux wins over everything; reduction next; then worker-group coordinate.
     assert (
-        _worker_suffix(n=2, is_aux=True, is_reduction=True, wg_coord=(1, 0, 0))
+        _worker_suffix(n=2, is_aux=True, is_reduction=True, wg_coord=(1, 0))
         == "aux:002"
     )
     assert (
-        _worker_suffix(n=3, is_aux=False, is_reduction=True, wg_coord=(1, 0, 0))
+        _worker_suffix(n=3, is_aux=False, is_reduction=True, wg_coord=(1, 0))
         == "aux:red:003"
     )
-    # worker-group: underscore-joined coordinate value, colon stays structural
+    # worker-group: underscore-joined (group, member) value, colon stays structural
     assert (
-        _worker_suffix(n=5, is_aux=False, is_reduction=False, wg_coord=(1, 2, 3))
-        == "wg:001_002_003"
+        _worker_suffix(n=5, is_aux=False, is_reduction=False, wg_coord=(1, 2))
+        == "wg:001_002"
     )
     assert (
         _worker_suffix(n=7, is_aux=False, is_reduction=False, wg_coord=None) == "fa:007"
