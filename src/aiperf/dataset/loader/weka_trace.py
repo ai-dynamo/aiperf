@@ -231,7 +231,7 @@ def _worker_suffix(
     n: int,
     is_aux: bool,
     is_reduction: bool,
-    wg_coord: tuple[int, int, int] | None,
+    wg_coord: tuple[int, int] | None,
 ) -> str:
     """Session-id suffix (marker + index) for a detected worker chain.
 
@@ -239,18 +239,19 @@ def _worker_suffix(
     sidecar is never a parallel agent). ``aux:red`` keeps reductions inside the
     aux family (the ``:aux:`` substring still flags them) while distinguishing
     them from fetch/size sidecars. A worker-group member carries its parallel-
-    fan-out coordinate as an underscore-joined value ``wg:{lineage}_{burst}_
-    {member}`` (colon stays purely structural -- the coordinate is one value,
-    like the underscore-joined ``agent_id`` after an ``sa:`` key); ``fa`` is a
-    solo agent. ``n`` is the dense per-trace worker index used for the single-
-    valued markers."""
+    fan-out coordinate as an underscore-joined value ``wg:{group}_{member}``
+    (``group`` = the fork-point fan-out it belongs to, ``member`` = index within
+    it; colon stays purely structural -- the coordinate is one value, like the
+    underscore-joined ``agent_id`` after an ``sa:`` key); ``fa`` is a solo agent.
+    ``n`` is the dense per-trace worker index used for the single-valued
+    markers."""
     if is_aux:
         return f"aux:{n:03d}"
     if is_reduction:
         return f"aux:red:{n:03d}"
     if wg_coord is not None:
-        lineage, burst, member = wg_coord
-        return f"wg:{lineage:03d}_{burst:03d}_{member:03d}"
+        group, member = wg_coord
+        return f"wg:{group:03d}_{member:03d}"
     return f"fa:{n:03d}"
 
 
@@ -332,7 +333,7 @@ def _expand_subagent_to_child_plans(
     ]
 
     chains: list[list[WekaNormalRequest]]
-    chain_wg_coord: list[tuple[int, int, int] | None]
+    chain_wg_coord: list[tuple[int, int] | None]
     if not split_chains or not normalized:
         ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
         chains = [[req for _, req in ordered]]
@@ -365,9 +366,7 @@ def _expand_subagent_to_child_plans(
             for ci in detection.worker_indices
         )
         wg_coords = worker_group_assignment(
-            detection,
-            group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN,
-            burst_gap_seconds=Environment.DATASET.WEKA_WORKER_GROUP_BURST_GAP_SECONDS,
+            detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
         )
         chain_wg_coord = [None] + [wg_coords.get(ci) for ci in detection.worker_indices]
 
@@ -379,7 +378,7 @@ def _expand_subagent_to_child_plans(
     plans: list[_ChildPlan] = []
     for chain_idx, chain_requests in enumerate(chains):
         is_aux = is_reduction = False
-        wg_coord: tuple[int, int, int] | None = None
+        wg_coord: tuple[int, int] | None = None
         if chain_idx == 0:
             child_sid = f"{trace_id}::sa:{entry.agent_id}"
             init_tool, init_system = entry.tool_tokens, entry.system_tokens
@@ -1144,9 +1143,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
         main_model = main_chain.requests[0][1].model if main_chain.requests else None
         wg_coords = worker_group_assignment(
-            detection,
-            group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN,
-            burst_gap_seconds=Environment.DATASET.WEKA_WORKER_GROUP_BURST_GAP_SECONDS,
+            detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
         )
         n_aux = n_red = n_wg = 0
         for n, ci in enumerate(detection.worker_indices):
