@@ -208,20 +208,36 @@ def is_reduction_chain(
     return first.input_length > ratio * osl
 
 
-def worker_group_members(result: ChainDetectionResult, *, group_min: int) -> set[int]:
-    """Worker chain indices belonging to a parallel fan-out group.
+def worker_group_assignment(
+    result: ChainDetectionResult,
+    *,
+    group_min: int,
+    burst_gap_seconds: float,
+) -> dict[int, tuple[int, int, int]]:
+    """Assign each worker-group member a ``(lineage, burst, member)`` coordinate.
 
     A genuine parallel sub-agent fan-out shows up as several worker chains that
     fork from a shared context (``fork.depth > 0``) and start from the same
-    first block (a common spawn point). A chain is a group member iff its
-    first-block hash is shared by at least ``group_min`` worker chains (itself
-    included) AND it forked from shared context. Returns the qualifying indices
-    into ``result.chains`` (a subset of ``result.worker_indices``); empty when
-    ``group_min <= 0``. Solo agents and one-shot sidecars never qualify -- a
-    solo agent shares its spawn block with no one, and a sidecar carries no deep
-    fork."""
+    first block (a common spawn point). The coordinate decomposes that:
+
+    - **lineage**: the shared-spawn-block group. A first-block hash carried by at
+      least ``group_min`` worker chains roots one lineage; only the forked
+      members of that block (``fork.depth > 0``) are assigned to it. Lineages are
+      numbered by their earliest member's ``(t, outer_idx)``.
+    - **burst**: a dispatch wave within a lineage. Members are ordered by first-
+      request time; a new burst opens whenever the gap to the previous member's
+      first request exceeds ``burst_gap_seconds``. This separates a lineage's
+      cumulative spawns (which can span a long session) into the waves that were
+      actually launched together. Use ``burst_gap_seconds=inf`` for one burst per
+      lineage (lineage-only grouping).
+    - **member**: index within the burst, in ``(t, outer_idx)`` order.
+
+    Returns ``{chain_index: (lineage, burst, member)}`` for members only (a
+    subset of ``result.worker_indices``); empty when ``group_min <= 0``. Solo
+    agents and one-shot sidecars never appear -- a solo agent shares its spawn
+    block with no one, and a sidecar carries no deep fork."""
     if group_min <= 0:
-        return set()
+        return {}
     by_block: dict[int, list[int]] = {}
     for ci in result.worker_indices:
         reqs = result.chains[ci].requests
@@ -229,15 +245,52 @@ def worker_group_members(result: ChainDetectionResult, *, group_min: int) -> set
             continue
         block = int(np.asarray(reqs[0][1].hash_ids, dtype=np.int64)[0])
         by_block.setdefault(block, []).append(ci)
-    members: set[int] = set()
-    for group in by_block.values():
-        if len(group) < group_min:
+
+    def _start(ci: int) -> tuple[float, int]:
+        outer, req = result.chains[ci].requests[0]
+        return (req.t, outer)
+
+    lineages: list[list[int]] = []
+    for cis in by_block.values():
+        if len(cis) < group_min:
             continue
-        for ci in group:
-            fork = result.chains[ci].fork
-            if fork is not None and fork.depth > 0:
-                members.add(ci)
-    return members
+        members = [
+            ci
+            for ci in cis
+            if result.chains[ci].fork is not None and result.chains[ci].fork.depth > 0
+        ]
+        if members:
+            members.sort(key=_start)
+            lineages.append(members)
+    lineages.sort(key=lambda m: _start(m[0]))
+
+    out: dict[int, tuple[int, int, int]] = {}
+    for lineage, members in enumerate(lineages):
+        burst = -1
+        member = 0
+        prev_t: float | None = None
+        for ci in members:
+            t = result.chains[ci].requests[0][1].t
+            if prev_t is None or (t - prev_t) > burst_gap_seconds:
+                burst += 1
+                member = 0
+            out[ci] = (lineage, burst, member)
+            member += 1
+            prev_t = t
+    return out
+
+
+def worker_group_members(result: ChainDetectionResult, *, group_min: int) -> set[int]:
+    """Worker chain indices belonging to a parallel fan-out group.
+
+    Thin wrapper over :func:`worker_group_assignment` returning just the member
+    set (membership is independent of burst splitting, so the gap is irrelevant
+    here). See that function for the lineage/burst/member decomposition."""
+    return set(
+        worker_group_assignment(
+            result, group_min=group_min, burst_gap_seconds=float("inf")
+        )
+    )
 
 
 @dataclass(slots=True)

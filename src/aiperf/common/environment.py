@@ -432,14 +432,30 @@ class _DatasetSettings(BaseSettings):
         description="Parallel worker-group tagging: a detected worker chain that "
         "shares its first-request block (a common spawn point) with at least "
         "this many sibling worker chains AND forked from shared context (fork "
-        "depth > 0) is a member of a parallel fan-out group and is emitted with "
-        "the ::wg: marker instead of the generic ::fa: agent marker. This "
-        "distinguishes genuine parallel sub-agent fan-out (the dominant agent "
-        "population in the corpus, up to hundreds wide) from solo agents. "
+        "depth > 0) is a member of a parallel fan-out group and is emitted as "
+        "::wg:{lineage}_{burst}_{member} instead of the generic ::fa: agent "
+        "marker (see WEKA_WORKER_GROUP_BURST_GAP_SECONDS for the burst split). "
+        "This distinguishes genuine parallel sub-agent fan-out (the dominant "
+        "agent population in the corpus, up to hundreds wide) from solo agents. "
         "Auxiliary chains are classified first, so a one-shot sidecar never "
         "becomes a worker-group member. Set to 0 to disable worker-group "
         "tagging (parallel workers keep the generic ::fa: tag). Only applies "
         "when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_WORKER_GROUP_BURST_GAP_SECONDS: float = Field(
+        ge=0.0,
+        default=30.0,
+        description="Parallel worker-group tagging: within one shared-spawn "
+        "lineage (see WEKA_WORKER_GROUP_MIN), members are split into temporal "
+        "dispatch bursts -- a new burst opens whenever a member's first request "
+        "starts more than this many seconds after the previous member's. The "
+        "session id encodes both as ::wg:{lineage}_{burst}_{member}, so the same "
+        "lineage's cumulative spawns (which can span a long session) are "
+        "separated into the waves actually launched together. A coordinated "
+        "fan-out dispatches within seconds (one burst); distinct re-spawns from "
+        "the same context minutes later become later bursts. Raise toward "
+        "infinity to collapse each lineage into a single burst (lineage-only "
+        "grouping); membership itself is unaffected by this value.",
     )
 
 
