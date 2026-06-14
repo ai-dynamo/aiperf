@@ -103,6 +103,46 @@ def test_init_turn_0_with_tool_and_system_prefix_split():
     assert sum(len(s.tokens) for s in r._segments) == 500
 
 
+def test_init_turn_0_prefix_block_rounding_overshoot_clamps_to_budget():
+    """Regression: a declared prefix whose BLOCK count exceeds the prompt's own
+    covered-block count must clamp the system segment, not emit a negative
+    block_count / over-budget tokens.
+
+    in=170 (m_full=2), tool=130 -> prefix_blocks=ceil(130/64)=3 > m_full=2, with
+    3 recorded hash blocks so the hash-availability guard does not fire. Without
+    the clamp user_blocks = covered(2) - cursor(3) = -1 and the system segment
+    holds 3*64=192 tokens (> in_tokens), breaking sum == in_tokens.
+    """
+    r = _make_recon()
+    r.init_turn_0(
+        hash_ids=[1, 2, 3], in_tokens=170, tool_tokens=130, system_tokens=0, seed="t:0"
+    )
+    segs = r._segments
+    assert all(s.block_count >= 0 for s in segs), [s.block_count for s in segs]
+    sys_seg = next(s for s in segs if s.role == "system")
+    assert sys_seg.block_count == 2  # clamped from 3 to floor(170/64)
+    assert sum(len(s.tokens) for s in segs) == 170
+
+
+def test_init_turn_0_prefix_exceeding_input_tokens_clamps_to_budget():
+    """Regression: a prefix that outright exceeds the whole turn-0 input must
+    clamp rather than produce a negative-block_count segment.
+
+    in=100 (m_full=1), tool=130 -> prefix_blocks=ceil(130/64)=3, hash_ids has 3
+    blocks (guard passes). covered_blocks=min(1,3)=1, so the system segment
+    clamps to 1 block and the user tail carries the partial remainder.
+    """
+    r = _make_recon()
+    r.init_turn_0(
+        hash_ids=[1, 2, 3], in_tokens=100, tool_tokens=130, system_tokens=0, seed="t:0"
+    )
+    segs = r._segments
+    assert all(s.block_count >= 0 for s in segs), [s.block_count for s in segs]
+    sys_seg = next(s for s in segs if s.role == "system")
+    assert sys_seg.block_count == 1
+    assert sum(len(s.tokens) for s in segs) == 100
+
+
 def test_init_turn_0_partial_tail_appended_to_user_content():
     r = _make_recon()
     r.init_turn_0(
