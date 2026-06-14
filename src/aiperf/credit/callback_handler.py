@@ -355,9 +355,19 @@ class CreditCallbackHandler:
         # if any trajectory burned its only warmup credit on a terminal error
         # or cancellation. Duck-typed: only fires when the active strategy
         # implements the hook, so non-replay strategies are unaffected.
+        #
+        # Do NOT gate on ``credit.is_final_turn``: a WARMUP credit primes the
+        # single turn k_i (the last request before t*), and PROFILING resumes
+        # the same trajectory at k_i+1, so for a session active at t* the warmed
+        # turn is never the trajectory's final turn (k_i < num_turns-1) and
+        # ``is_final_turn`` is False. WARMUP dispatches exactly one credit per
+        # session and its return is a strategy-level no-op, so every WARMUP root
+        # return IS the terminal warmup event for that trajectory — gating on
+        # ``is_final_turn`` made this accumulation dead for the entire normal
+        # warmup population, silently letting a degraded pool proceed to
+        # PROFILING.
         if (
             phase == CreditPhase.WARMUP
-            and credit.is_final_turn
             and credit.agent_depth == 0
             and (credit_return.error is not None or credit_return.cancelled)
         ):
