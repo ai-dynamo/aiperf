@@ -263,8 +263,9 @@ class _ChildPlan:
     """Turn-0 system-prefix attribution for this chain (same gate)."""
     is_aux: bool = False
     """True when an overflow chain is an auxiliary one-shot sidecar (emitted as
-    ``:auxNNN`` rather than ``:cNNN``). See
-    :func:`weka_agent_chains.is_aux_chain`. Always False for the main chain."""
+    ``:aux:NNN`` or ``:aux:red:NNN`` rather than the ``:fa:NNN`` agent marker).
+    See :func:`weka_agent_chains.is_aux_chain` /
+    :func:`weka_agent_chains.is_reduction_chain`. Always False for the main chain."""
 
 
 def _expand_subagent_to_child_plans(
