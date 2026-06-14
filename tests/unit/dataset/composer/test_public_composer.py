@@ -487,3 +487,49 @@ class TestHFWekaRepoOverride:
         )
 
         assert kwargs["hf_dataset_name"] == "semianalysisai/cc-traces-weka-061326"
+
+    @pytest.mark.parametrize(
+        ("alias", "expected_repo"),
+        [
+            # New pinned 061326 aliases.
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061326,
+                "semianalysisai/cc-traces-weka-061326",
+            ),
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061326_256K,
+                "semianalysisai/cc-traces-weka-061326-256k",
+            ),
+            # Generic undated aliases now roll forward to 061326.
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS,
+                "semianalysisai/cc-traces-weka-061326",
+            ),
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS_256K,
+                "semianalysisai/cc-traces-weka-061326-256k",
+            ),
+        ],
+    )  # fmt: skip
+    def test_pinned_weka_alias_resolves_to_expected_repo(
+        self,
+        aimo_config: UserConfig,
+        mock_tokenizer_cls,
+        alias: PublicDatasetType,
+        expected_repo: str,
+    ) -> None:
+        """New 061326 pins and the repointed generic aliases map to the right HF repo.
+
+        Guards the plugins.yaml alias -> hf_dataset_name contract so an
+        accidental repoint (or a typo in a new pinned alias) is caught.
+        """
+        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
+        aimo_config.input.public_dataset = alias
+        aimo_config.input.hf_weka_dataset = None
+        composer = PublicDatasetComposer(aimo_config, tokenizer)
+
+        kwargs = composer._build_loader_kwargs(alias)
+
+        assert kwargs["hf_dataset_name"] == expected_repo
+        assert kwargs["hf_split"] == "train"
+        assert kwargs["default_block_size"] == 64

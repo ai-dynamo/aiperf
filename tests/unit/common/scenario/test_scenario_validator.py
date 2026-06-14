@@ -173,6 +173,24 @@ def test_agentx_rejects_generic_weka_hf_loader_for_arbitrary_repo() -> None:
     assert "semianalysisai/cc-traces-weka-061326" in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    "loader",
+    [
+        "semianalysis_cc_traces_weka_061326",
+        "semianalysis_cc_traces_weka_061326_256k",
+        "semianalysis_cc_traces_weka_with_subagents",
+        "semianalysis_cc_traces_weka_with_subagents_256k",
+        "semianalysis_cc_traces_weka_with_subagents_060826",
+        "weka_trace",
+    ],
+)  # fmt: skip
+def test_agentx_accepts_allowed_weka_loaders(loader: str) -> None:
+    """Every loader in the scenario allow-list validates without violations."""
+    cfg = _user_config(loader=loader, extra_inputs={"ignore_eos": True})
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+
+
 def test_duration_below_floor_raises() -> None:
     cfg = _user_config(benchmark_duration=899.999, extra_inputs={"ignore_eos": True})
     with pytest.raises(ScenarioLockError):
