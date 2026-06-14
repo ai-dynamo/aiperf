@@ -187,6 +187,19 @@ class ConversationReconstructor:
                         f"reconstruct the prefix; aborting to avoid faking "
                         f"the cache structure."
                     )
+                # Clamp to the prompt's own covered-block count. When the
+                # declared prefix block count exceeds it -- tool+system tokens
+                # exceed in_tokens, or ceil() rounding overshoots
+                # floor(in_tokens/bs) with over-recorded hash blocks -- the
+                # un-clamped system segment would claim more blocks than the
+                # prompt contains: user_blocks (covered_blocks - cursor) goes
+                # negative, the recorded user/tail slice silently empties, and
+                # sum(seg.tokens) overshoots in_tokens, breaking the byte-exact
+                # ISL invariant and poisoning the cumulative cursor in
+                # truncate_synth_buf_at_block on every later turn. The
+                # over-budget prefix tokens fold into the synth tail below.
+                prefix_blocks = min(prefix_blocks, covered_blocks)
+            if prefix_blocks > 0:
                 seg_tokens = self.decode_block_tokens(
                     hash_ids[cursor : cursor + prefix_blocks]
                 )
