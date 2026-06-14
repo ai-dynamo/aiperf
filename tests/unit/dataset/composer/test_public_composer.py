@@ -486,7 +486,4 @@ class TestHFWekaRepoOverride:
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
         )
 
-        assert (
-            kwargs["hf_dataset_name"]
-            == "semianalysisai/cc-traces-weka-with-subagents-052726"
-        )
+        assert kwargs["hf_dataset_name"] == "semianalysisai/cc-traces-weka-061326"
