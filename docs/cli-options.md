@@ -331,7 +331,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
 
-#### `--hf-weka-repo` `<str>`
+#### `--hf-weka-dataset` `<str>`
 
 HuggingFace dataset repo override for `--public-dataset weka_hf` (e.g. `semianalysisai/cc-traces-weka-061326`). Only valid with `--public-dataset weka_hf`; pinned Weka public dataset aliases keep their registry-defined repo names.
 

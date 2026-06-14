@@ -158,7 +158,7 @@ flag.
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved, with long idle gaps capped by the trace idle-gap rule below | The whole point of replay is to preserve the agent's pacing without letting coffee-break gaps dominate steady-state. |
 | `--trace-idle-gap-cap-seconds = 60` | Gaps between recorded request starts over 60s are compressed to 60s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
 | `--cache-bust first_turn_prefix` | Inject a unique per-conversation marker at the start of the first user turn for every play | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker forces every recycled play of a trace to have a fresh prompt prefix. Auto-injected when you don't pass `--cache-bust` yourself. |
-| Loader is `semianalysis_cc_traces_weka_061326`, `weka_trace`, or constrained `weka_hf` | The dataset is the public `semianalysisai/cc-traces-weka-061326` HF dataset (via `--public-dataset semianalysis_cc_traces_weka_061326`), a local compatible Weka-format corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; under the scenario, pass the explicit type so the scenario validator sees `detected_loader=weka_trace` before dataset auto-detection runs), or generic `--public-dataset weka_hf` only when paired with `--hf-weka-repo semianalysisai/cc-traces-weka-061326`. These paths produce byte-identical conversations when given the same source rows — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against exact, hash-verifiable corpora so submissions are reproducible. |
+| Loader is `semianalysis_cc_traces_weka_061326`, `weka_trace`, or constrained `weka_hf` | The dataset is the public `semianalysisai/cc-traces-weka-061326` HF dataset (via `--public-dataset semianalysis_cc_traces_weka_061326`), a local compatible Weka-format corpus replayed via `--custom-dataset-type weka_trace --input-file <dir>` (the file-based `weka_trace` loader; under the scenario, pass the explicit type so the scenario validator sees `detected_loader=weka_trace` before dataset auto-detection runs), or generic `--public-dataset weka_hf` only when paired with `--hf-weka-dataset semianalysisai/cc-traces-weka-061326`. These paths produce byte-identical conversations when given the same source rows — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use). | The benchmark is defined against exact, hash-verifiable corpora so submissions are reproducible. |
 | `--benchmark-duration ≥ 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; omitted, it runs for 30 | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` is rejected (it drops traces whose input length exceeds the cap, falsifying the workload) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
@@ -416,7 +416,7 @@ your local plugin registry is out of date.
 The HF dataset download or row validation produced no usable traces. Check
 your network connectivity to `huggingface.co` and confirm the dataset name
 is `semianalysis_cc_traces_weka_061326` or `weka_hf` with
-`--hf-weka-repo semianalysisai/cc-traces-weka-061326`.
+`--hf-weka-dataset semianalysisai/cc-traces-weka-061326`.
 
 **`TrajectoryWarmupFailedError: Trajectory warmup failed for N trace(s): …`**
 Your inference server rejected one or more warmup requests after AIPerf's
@@ -446,7 +446,7 @@ Pass one of:
 - `--public-dataset semianalysis_cc_traces_weka_061326` (zero-setup; HF download),
 - `--custom-dataset-type weka_trace --input-file <local-trace-dir>` (offline;
   the dir must contain compatible Weka trace JSON files), or
-- `--public-dataset weka_hf --hf-weka-repo semianalysisai/cc-traces-weka-061326`.
+- `--public-dataset weka_hf --hf-weka-dataset semianalysisai/cc-traces-weka-061326`.
 
 `--input-file` alone can auto-detect Weka trace directories in ordinary custom-dataset runs, but it does not populate the scenario validator's `detected_loader` field before AgentX MVP locks are checked. Under `--scenario inferencex-agentx-mvp`, pass the explicit `--custom-dataset-type weka_trace`. If you're trying to replay a *different* corpus under this scenario, that's not a supported submission — but you can pass `--unsafe-override` to run anyway; the result will be marked `submission_valid=false`.
 
