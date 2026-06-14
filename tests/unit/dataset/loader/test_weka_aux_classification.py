@@ -9,9 +9,9 @@ parallel fan-out:
   one-shot, is a tool-issued sidecar (``::fa:`` -> ``::aux:``).
 - ``is_reduction_chain``: a same-model single large-input/short-output one-shot
   is a reduction sidecar (``::fa:`` -> ``::aux:red:``).
-- ``worker_group_assignment`` / ``worker_group_members``: workers that forked
-  from the same parent request (the same fork point) with enough siblings are a
-  coordinated parallel fan-out, tagged ``::fa:`` -> ``::wg:{group}_{member}``.
+- ``worker_group_assignment`` / ``worker_group_members``: among workers that
+  forked from shared context, those whose active intervals OVERLAP form a
+  concurrent parallel fan-out, tagged ``::fa:`` -> ``::wg:{group}_{member}``.
 
 All apply at both layers (top-level flat chains and subagent overflow). The
 ``_worker_suffix`` helper resolves the precedence (aux > reduction > worker-
@@ -202,17 +202,18 @@ def test_reduction_empty_chain_is_not_reduction():
     assert is_reduction_chain([], **RED) is False
 
 
-# --- worker-group membership + fork-point assignment ---
+# --- worker-group membership + overlap assignment ---
 
 
 def _worker(
-    fork_parent: int = 0, fork_outer: int = 0, fork_depth: int = 100, t: float = 0.0
+    t: float = 0.0, dur: float = 10.0, fork_depth: int = 100, fork_outer: int = 0
 ) -> AgentChain:
-    """A worker chain that forked from parent request ``fork_outer`` of chain
-    ``fork_parent`` at ``fork_depth`` shared blocks, first request at time ``t``.
+    """A worker chain forked from shared context (``fork_depth`` blocks) at fork
+    point ``(parent 0, fork_outer)`` whose single request spans the active
+    interval ``[t, t + dur)`` (``api_time=dur``).
 
-    The fork point ``(fork_parent, fork_outer)`` is the grouping key; ``hash_ids``
-    are generic since block-0 is no longer used for grouping."""
+    Grouping requires BOTH the same fork point AND temporal overlap; ``hash_ids``
+    are generic since block-0 is not used for grouping."""
     return AgentChain(
         requests=[
             (
@@ -220,6 +221,7 @@ def _worker(
                 WekaNormalRequest(
                     type="n",
                     t=t,
+                    api_time=dur,
                     model="m",
                     input_length=50_000,
                     output_length=200,
@@ -228,10 +230,7 @@ def _worker(
             )
         ],
         fork=ChainFork(
-            parent_chain=fork_parent,
-            fork_outer_idx=fork_outer,
-            depth=fork_depth,
-            fork_time=t,
+            parent_chain=0, fork_outer_idx=fork_outer, depth=fork_depth, fork_time=t
         ),
     )
 
@@ -263,49 +262,80 @@ def _result(*workers: AgentChain) -> ChainDetectionResult:
     )
 
 
-def test_worker_group_same_fork_point_are_members():
-    # 3 workers forked from the SAME parent request (parent 0, outer 5) -> group
-    r = _result(_worker(0, 5), _worker(0, 5), _worker(0, 5))
+def test_worker_group_overlapping_intervals_are_members():
+    # 3 workers whose [t, t+dur) intervals all overlap -> one concurrent group
+    r = _result(_worker(0, 100), _worker(10, 100), _worker(20, 100))
     assert worker_group_members(r, group_min=3) == {1, 2, 3}
 
 
+def test_worker_group_non_overlapping_not_grouped():
+    # staggered starts AND no overlap (each ends before the next begins) -> none
+    r = _result(_worker(0, 50), _worker(100, 50), _worker(200, 50))
+    assert worker_group_members(r, group_min=3) == set()
+
+
+def test_worker_group_staggered_but_overlapping_still_one_group():
+    # the "started 230s later but still alive together" case: starts spread 200s
+    # yet every interval overlaps the next -> one concurrent swarm (the wg:017
+    # scenario that motivated overlap-based grouping)
+    r = _result(_worker(0, 300), _worker(100, 300), _worker(200, 300))
+    assert worker_group_members(r, group_min=3) == {1, 2, 3}
+
+
+def test_worker_group_transitive_overlap_chains_into_one_group():
+    # A[0,100]-B[90,190] overlap, B-C[180,280] overlap, A-C do NOT -> one component
+    r = _result(_worker(0, 100), _worker(90, 100), _worker(180, 100))
+    assert worker_group_members(r, group_min=3) == {1, 2, 3}
+
+
+def test_worker_group_overlap_does_not_bridge_distinct_fork_points():
+    # two trios that fully overlap in time but forked from DIFFERENT parent
+    # requests stay separate -- the fork-point scope stops overlap from bridging
+    # unrelated fan-outs (the failure mode of pure interval overlap).
+    r = _result(
+        _worker(0, 100, fork_outer=5),
+        _worker(1, 100, fork_outer=5),
+        _worker(2, 100, fork_outer=5),
+        _worker(0, 100, fork_outer=9),
+        _worker(1, 100, fork_outer=9),
+        _worker(2, 100, fork_outer=9),
+    )
+    a = worker_group_assignment(r, group_min=3)
+    assert len({a[c][0] for c in range(1, 7)}) == 2  # two groups despite full overlap
+    assert {a[c][0] for c in (1, 2, 3)} != {a[c][0] for c in (4, 5, 6)}
+
+
 def test_worker_group_below_min_not_members():
-    # only 2 share the fork point -> below group_min=3 -> none
-    r = _result(_worker(0, 5), _worker(0, 5))
+    # only 2 overlap -> below group_min=3 -> none
+    r = _result(_worker(0, 100), _worker(10, 100))
     assert worker_group_members(r, group_min=3) == set()
 
 
 def test_worker_group_requires_fork_depth():
-    # 3 share the fork point but depth 0 (didn't fork from shared context) -> none
-    r = _result(_worker(0, 5, 0), _worker(0, 5, 0), _worker(0, 5, 0))
-    assert worker_group_members(r, group_min=3) == set()
-
-
-def test_worker_group_distinct_fork_points_not_grouped():
-    # each forked from a different parent request -> no fork point reaches min
-    r = _result(_worker(0, 5), _worker(0, 6), _worker(0, 7))
+    # 3 overlap but depth 0 (didn't fork from shared context) -> none
+    r = _result(_worker(0, 100, 0), _worker(10, 100, 0), _worker(20, 100, 0))
     assert worker_group_members(r, group_min=3) == set()
 
 
 def test_worker_group_fork_none_never_groups():
-    # a chain with no fork (fork=None) is never a member
-    solo = _worker(0, 5)
+    # a chain with no fork is never a member
+    solo = _worker(0, 100)
     solo.fork = None
-    r = _result(solo, _worker(0, 5), _worker(0, 5))  # only 2 real fork-point members
+    r = _result(solo, _worker(10, 100), _worker(20, 100))  # only 2 real members
     assert worker_group_members(r, group_min=3) == set()
 
 
 def test_worker_group_min_zero_disables():
-    r = _result(_worker(0, 5), _worker(0, 5), _worker(0, 5))
+    r = _result(_worker(0, 100), _worker(10, 100), _worker(20, 100))
     assert worker_group_members(r, group_min=0) == set()
 
 
-# --- fork-point coordinate assignment (group / member) ---
+# --- overlap coordinate assignment (group / member) ---
 
 
 def test_worker_group_assignment_group_and_member():
-    # one fork point (0,5) -> group 0, members 0..2 in (t, outer) order
-    r = _result(_worker(0, 5, t=0.0), _worker(0, 5, t=1.0), _worker(0, 5, t=2.0))
+    # one overlapping component -> group 0, members 0..2 in (t0, outer) order
+    r = _result(_worker(0, 100), _worker(1, 100), _worker(2, 100))
     assert worker_group_assignment(r, group_min=3) == {
         1: (0, 0),
         2: (0, 1),
@@ -313,15 +343,15 @@ def test_worker_group_assignment_group_and_member():
     }
 
 
-def test_worker_group_assignment_two_fork_points_two_groups():
-    # fork point (0,5) and (0,9) each have 3 members -> two distinct groups
+def test_worker_group_assignment_two_disjoint_components_two_groups():
+    # two overlap clusters separated by a quiet gap -> two distinct groups
     r = _result(
-        _worker(0, 5, t=0.0),
-        _worker(0, 5, t=1.0),
-        _worker(0, 5, t=2.0),
-        _worker(0, 9, t=10.0),
-        _worker(0, 9, t=11.0),
-        _worker(0, 9, t=12.0),
+        _worker(0, 100),
+        _worker(1, 100),
+        _worker(2, 100),
+        _worker(1000, 100),
+        _worker(1001, 100),
+        _worker(1002, 100),
     )
     a = worker_group_assignment(r, group_min=3)
     assert {a[c][0] for c in (1, 2, 3)} == {0}
@@ -332,21 +362,25 @@ def test_worker_group_assignment_two_fork_points_two_groups():
 def test_worker_group_assignment_groups_ordered_by_first_start():
     # group ordinal follows the earliest member's start, not declaration order
     r = _result(
-        _worker(0, 9, t=10.0),
-        _worker(0, 9, t=11.0),
-        _worker(0, 9, t=12.0),
-        _worker(0, 5, t=0.0),
-        _worker(0, 5, t=1.0),
-        _worker(0, 5, t=2.0),
+        _worker(1000, 100),
+        _worker(1001, 100),
+        _worker(1002, 100),
+        _worker(0, 100),
+        _worker(1, 100),
+        _worker(2, 100),
     )
     a = worker_group_assignment(r, group_min=3)
-    # fork point (0,5) starts earliest -> group 0
+    # the early cluster starts first -> group 0
     assert {a[c][0] for c in (4, 5, 6)} == {0}
     assert {a[c][0] for c in (1, 2, 3)} == {1}
 
 
 def test_worker_group_members_matches_assignment_keys():
-    r = _result(_worker(0, 5), _worker(0, 5, 0), _worker(0, 5))
+    # 3 overlapping depth>0 workers form a group; the depth-0 one is excluded
+    r = _result(
+        _worker(0, 100), _worker(10, 100), _worker(20, 100), _worker(30, 100, 0)
+    )
+    assert worker_group_members(r, group_min=3) == {1, 2, 3}
     assert worker_group_members(r, group_min=3) == set(
         worker_group_assignment(r, group_min=3)
     )

@@ -75,6 +75,15 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v19: worker-group grouping now requires BOTH a shared fork point AND
+    # temporal overlap (the corpus research + graph adapter prescription:
+    # overlapping intervals AND a shared prefix). Workers are scoped by fork
+    # point, then split into connected components of overlapping [t0,t1)
+    # intervals within each scope. Pure overlap alone bridged a busy trace into
+    # one blob (a chain of overlaps spans the session); the fork-point scope
+    # prevents that, and the overlap split drops fork-point members that never
+    # run concurrently (e.g. a seam-re-keyed phantom fork). ::wg:{group}_{member}
+    # membership changed.
     # v18: worker-group grouping re-keyed from hash_ids[0] (block-0) to the
     # fork point (fork.parent_chain + fork.fork_outer_idx) -- the deep spawn
     # relationship that actually identifies a coordinated fan-out. block-0 is the
@@ -122,7 +131,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    18
+    19
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

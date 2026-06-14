@@ -429,21 +429,23 @@ class _DatasetSettings(BaseSettings):
     WEKA_WORKER_GROUP_MIN: int = Field(
         ge=0,
         default=3,
-        description="Parallel worker-group tagging: a detected worker chain that "
-        "forked from the SAME parent request (the same fork point -- "
-        "fork.parent_chain + fork.fork_outer_idx, at fork depth > 0) as at least "
-        "this many sibling worker chains is a member of a coordinated parallel "
-        "fan-out and is emitted as ::wg:{group}_{member} (group = the fork-point "
-        "fan-out, member = index within it) instead of the generic ::fa: agent "
-        "marker. This distinguishes genuine parallel sub-agent fan-out (the "
-        "dominant agent population in the corpus) from solo agents. Keying on the "
-        "fork point -- not the first context block, which is the shallow common "
-        "root shared by nearly every worker in a session -- is what isolates a "
-        "real fan-out instead of lumping the whole session's workers together. "
-        "Auxiliary chains are classified first, so a one-shot sidecar never "
-        "becomes a worker-group member. Set to 0 to disable worker-group "
-        "tagging (parallel workers keep the generic ::fa: tag). Only applies "
-        "when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+        description="Parallel worker-group tagging: a coordinated parallel fan-"
+        "out must BOTH share a deep spawned context AND run concurrently. Workers "
+        "that forked from shared context (fork depth > 0) are first scoped by "
+        "their fork point (the parent request they branched off), then within "
+        "each scope split into connected components of overlapping active "
+        "[t0, t1) intervals; a component with at least this many members is "
+        "emitted as ::wg:{group}_{member} (group = the concurrent fan-out, member "
+        "= index by start time) instead of the generic ::fa: agent marker. The "
+        "fork-point scope keeps unrelated fan-outs apart (pure interval overlap "
+        "bridges a busy trace into one blob); the overlap split drops members "
+        "that share the fork point but never run concurrently. This isolates "
+        "genuine parallel sub-agent fan-out (the dominant agent population) from "
+        "solo agents, unlike keying on the first context block (shared by ~every "
+        "worker all session). Auxiliary chains are classified first, so a one-"
+        "shot sidecar never becomes a worker-group member. Set to 0 to disable "
+        "worker-group tagging (parallel workers keep the generic ::fa: tag). Only "
+        "applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
     )
 
 
