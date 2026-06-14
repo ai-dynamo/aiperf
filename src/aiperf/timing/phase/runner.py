@@ -709,11 +709,13 @@ class PhaseRunner(TaskManagerMixin):
         if self._session_tree_registry is None:
             return
         released = self._session_tree_registry.release_all(self._config.phase)
-        if released:
-            self.debug(
-                lambda: f"Released {released} open session-tree slot(s) at "
-                f"teardown for phase {self._config.phase}"
-            )
+        self.info(
+            lambda: f"Session-tree slots for phase {self._config.phase}: "
+            f"peak_open={self._session_tree_registry.peak_open} "
+            f"(target concurrency {self._config.concurrency}); "
+            f"released {released} still-open at teardown; "
+            f"late_events={self._session_tree_registry.late_events}"
+        )
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""

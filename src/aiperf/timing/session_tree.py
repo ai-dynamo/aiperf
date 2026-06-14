@@ -86,6 +86,22 @@ class SessionTreeRegistry:
         self._concurrency_manager = concurrency_manager
         self._trees: dict[str, _TreeState] = {}
         self._on_drain: Callable[[str, CreditPhase], None] | None = None
+        # Descendants registered before their tree is opened (the agentic-replay
+        # snapshot path seeds a lane's pre-t* subagents BEFORE acquiring the
+        # lane/root slot). Buffered here and folded into ``outstanding`` at
+        # ``open_tree`` so the tree opens already aware of its in-flight
+        # subagents -- otherwise it would open at outstanding=0 and drain on the
+        # FIRST child completion while siblings still run (premature drain).
+        self._pending_descendants: dict[str, int] = {}
+        # Peak simultaneously-open trees == peak session-slot occupancy. The
+        # whole point of per-tree accounting is that this never exceeds the
+        # configured concurrency; logged at teardown so any overshoot is visible.
+        self._peak_open: int = 0
+        # A non-zero count means a credit returned for a tree whose slot was
+        # already released -- i.e. the tree drained while that work was still in
+        # flight (premature drain). Surfaces the span-overhang that inflates the
+        # swim-lane lane count above the true (capped) slot occupancy.
+        self._late_events: int = 0
 
     def set_drain_callback(
         self, callback: Callable[[str, CreditPhase], None] | None
@@ -121,7 +137,23 @@ class SessionTreeRegistry:
                 "ignoring duplicate"
             )
             return
-        self._trees[root_corr] = _TreeState(phase=phase, root_pending=root_pending)
+        state = _TreeState(phase=phase, root_pending=root_pending)
+        # Fold in any descendants registered before this tree was opened (the
+        # snapshot path seeds subagents before the lane/root slot is acquired).
+        state.outstanding += self._pending_descendants.pop(root_corr, 0)
+        self._trees[root_corr] = state
+        if len(self._trees) > self._peak_open:
+            self._peak_open = len(self._trees)
+
+    @property
+    def peak_open(self) -> int:
+        """Maximum simultaneously-open trees seen (== peak session-slot occupancy)."""
+        return self._peak_open
+
+    @property
+    def late_events(self) -> int:
+        """Count of returns for already-released trees (premature-drain evidence)."""
+        return self._late_events
 
     def has_tree(self, root_corr: str) -> bool:
         """True when this registry is tracking ``root_corr`` (engagement gate)."""
@@ -136,15 +168,19 @@ class SessionTreeRegistry:
         Tolerant of unknown trees (e.g. dag_jsonl pre-session spawns whose tree
         is not yet open): a logged no-op.
         """
+        if n <= 0:
+            return
         state = self._trees.get(root_corr)
         if state is None:
-            _logger.debug(
-                lambda: f"register_descendants for untracked tree "
-                f"root_corr={root_corr!r} (n={n}); ignoring"
+            # Tree not opened yet (snapshot seeds descendants before the lane
+            # slot is acquired). Buffer so open_tree folds them in -- NOT a
+            # no-op, or the tree would open unaware of these subagents and drain
+            # the moment the first one completes.
+            self._pending_descendants[root_corr] = (
+                self._pending_descendants.get(root_corr, 0) + n
             )
             return
-        if n > 0:
-            state.outstanding += n
+        state.outstanding += n
 
     def on_descendant_done(self, root_corr: str) -> bool:
         """Account one descendant terminally completing (leaf / error / stopped /
@@ -154,6 +190,7 @@ class SessionTreeRegistry:
         """
         state = self._trees.get(root_corr)
         if state is None:
+            self._late_events += 1
             return False
         if state.outstanding > 0:
             state.outstanding -= 1

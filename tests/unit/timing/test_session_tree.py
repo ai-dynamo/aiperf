@@ -100,6 +100,37 @@ def test_rootless_tree_releases_when_last_descendant_drains(cm, registry):
     assert registry.open_count() == 0
 
 
+def test_descendants_registered_before_open_are_counted(cm, registry):
+    """Snapshot regression: a lane's subagents register BEFORE the lane slot is
+    acquired (seed_snapshot precedes acquire_lane_credit). They must be buffered
+    and folded into the tree at open_tree -- otherwise the tree opens at
+    outstanding=0 and drains on the FIRST child completion while siblings still
+    run (premature drain -> recycle overlap -> swim-lane lane overshoot)."""
+    registry.register_descendants("lane-root", 3)  # tree not open yet
+    assert registry.open_count() == 0
+    registry.open_tree("lane-root", PROFILING, root_pending=False)  # rootless lane
+
+    # The tree opened aware of all 3 subagents: draining the first two does NOT
+    # release; only the third (the true last) drains the tree.
+    registry.on_descendant_done("lane-root")
+    registry.on_descendant_done("lane-root")
+    assert cm.released == []
+    registry.on_descendant_done("lane-root")
+    assert cm.released == [PROFILING]
+
+
+def test_buffered_descendants_combine_with_post_open_registrations(cm, registry):
+    """Pre-open (buffered) and post-open (live-spawned) descendants both count."""
+    registry.register_descendants("root-a", 2)  # buffered (pre-open)
+    registry.open_tree("root-a", PROFILING, root_pending=True)
+    registry.register_descendants("root-a", 1)  # live spawn (post-open)
+    registry.on_root_terminal("root-a")
+    for _ in range(3):
+        assert cm.released == []  # 3 descendants outstanding
+        registry.on_descendant_done("root-a")
+    assert cm.released == [PROFILING]
+
+
 def test_release_is_exactly_once(cm, registry):
     """Double root-terminal / extra descendant-done never double-release."""
     registry.open_tree("root-a", PROFILING, root_pending=True)
