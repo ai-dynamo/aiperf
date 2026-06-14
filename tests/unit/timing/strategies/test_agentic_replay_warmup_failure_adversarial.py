@@ -26,6 +26,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -60,7 +61,13 @@ def _build_real_trajectory_source(
     """Construct a TrajectorySource bypassing __init__ (deterministic test fixture)."""
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = dataset
-    src._dataset_sampler = MagicMock()
+    _roots = [
+        c.conversation_id
+        for c in src._dataset_metadata.conversations
+        if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(_roots) if _roots else MagicMock()
+    src._pool_size = len(_roots)
     src._metadata_lookup = {c.conversation_id: c for c in dataset.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
@@ -218,12 +225,11 @@ async def test_warmup_handle_credit_return_is_noop() -> None:
 
 @pytest.mark.asyncio
 async def test_profiling_handle_credit_return_during_cooldown_no_spawn() -> None:
-    """Cooldown short-circuits the fresh-dispatch step but NOT the recycle push.
+    """Cooldown gates the fresh-dispatch step: an in-flight credit returning
+    after the stop condition has fired must not start a new session.
 
-    Per the production path in `_spawn_from_recycle_or_id`: the just-finished
-    trace_id is re-enqueued first so an in-flight credit returning during
-    cooldown does not permanently drop the trace_id from the recycle pool.
-    The `can_start_new_session` check then gates the fresh spawn only.
+    ``_dispatch_recycled_on_lane`` checks ``can_start_new_session`` before
+    drawing the next root from the sampler, so no fresh credit is issued.
     """
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=4, turns_per_trace=2)
@@ -238,14 +244,13 @@ async def test_profiling_handle_credit_return_during_cooldown_no_spawn() -> None
         stop_checker=stop_checker,
     )
     await strategy.setup_phase()
-    size_before = strategy._recycle_queue.qsize()
+    strategy._correlation_to_lane["xcorr"] = 0
 
     final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
     await strategy.handle_credit_return(final)
 
+    # Cooldown gates the fresh spawn: no new credit issued.
     assert issuer.issue_credit.await_count == 0
-    # Push-then-gate: queue grew by 1 (re-enqueued trace_id), spawn skipped.
-    assert strategy._recycle_queue.qsize() == size_before + 1
 
 
 # =============================================================================
@@ -362,23 +367,6 @@ async def test_dispatch_next_turn_with_none_delay_issues_immediately() -> None:
 
     assert issuer.issue_credit.await_count == 1
     scheduler.schedule_later.assert_not_called()
-
-
-# =============================================================================
-# Test 9: WARMUP setup does not create the recycle queue
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_warmup_setup_does_not_create_recycle_queue() -> None:
-    """The recycle queue is a PROFILING-only construct."""
-    trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
-    ds = _make_dataset(num_traces=3, turns_per_trace=2)
-    strategy, _, _, _ = _make_strategy(
-        phase=CreditPhase.WARMUP, trajectories=trajectory, dataset=ds
-    )
-    await strategy.setup_phase()
-    assert strategy._recycle_queue is None
 
 
 # =============================================================================
