@@ -160,9 +160,11 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         await self._check_initialized()
 
         try:
-            # Send using routing envelope pattern (identity string → bytes)
+            # Send using routing envelope pattern (identity string → bytes).
+            # copy=False avoids memcpy'ing the frames into libzmq on the event
+            # loop thread; both frames are freshly produced here and never reused.
             await self.socket.send_multipart(
-                [identity.encode(), _encoder.encode(struct)]
+                [identity.encode(), _encoder.encode(struct)], copy=False
             )
             if self.is_trace_enabled:
                 self.trace(f"Sent {type(struct).__name__} to {identity}: {struct}")

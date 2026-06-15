@@ -139,8 +139,11 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         await self._check_initialized()
 
         try:
-            # DEALER automatically handles framing - use single-frame send
-            await self.socket.send(_encoder.encode(struct))
+            # DEALER automatically handles framing - use single-frame send.
+            # copy=False avoids memcpy'ing the encoded frame into libzmq on the
+            # event loop thread; the encoded buffer is freshly produced here and
+            # never reused, so pyzmq can hold it until libzmq finishes the send.
+            await self.socket.send(_encoder.encode(struct), copy=False)
             if self.is_trace_enabled:
                 self.trace(f"Sent struct: {struct}")
         except Exception as e:
