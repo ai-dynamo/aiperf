@@ -65,12 +65,74 @@ _logger = AIPerfLogger(__name__)
 # Bump when the on-disk layout, side-data schema, OR the decoded content the
 # loaders produce for a given key changes -- the key has no source-code
 # component, so a content-semantics fix must bump this or warm caches keep
-# serving the old (wrong) dataset. Version 6 invalidates entries built before
+# serving the old (wrong) dataset. Version 7 invalidates entries built before
+# the weka context-loss rule (a turn whose truncation removes every user
+# segment now resumes at a USER turn instead of opening with a fabricated
+# assistant segment -- role boundaries moved for seam/reset re-emits).
+# Version 6 invalidates entries built before
 # the weka subagent hash_id-scope fix (subagents now share the parent trace's
 # scope, so shared blocks decode to different tokens than v5 produced).
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
-MANIFEST_VERSION = 6
+MANIFEST_VERSION = (
+    # v19: worker-group grouping now requires BOTH a shared fork point AND
+    # temporal overlap (the corpus research + graph adapter prescription:
+    # overlapping intervals AND a shared prefix). Workers are scoped by fork
+    # point, then split into connected components of overlapping [t0,t1)
+    # intervals within each scope. Pure overlap alone bridged a busy trace into
+    # one blob (a chain of overlaps spans the session); the fork-point scope
+    # prevents that, and the overlap split drops fork-point members that never
+    # run concurrently (e.g. a seam-re-keyed phantom fork). ::wg:{group}_{member}
+    # membership changed.
+    # v18: worker-group grouping re-keyed from hash_ids[0] (block-0) to the
+    # fork point (fork.parent_chain + fork.fork_outer_idx) -- the deep spawn
+    # relationship that actually identifies a coordinated fan-out. block-0 is the
+    # shallow common root (~system prompt) shared by ~all of a session's workers,
+    # so it lumped unrelated fan-outs into one coarse blob. The coordinate drops
+    # to ::wg:{group}_{member} (the temporal burst is gone -- fork-point groups
+    # are inherently time-tight), so ::wg: child session ids changed again.
+    # WEKA_WORKER_GROUP_BURST_GAP_SECONDS removed from the cache key.
+    # v17: worker-group session ids now encode the parallel-fan-out coordinate
+    # as ::wg:{lineage}_{burst}_{member} (was ::wg:{NNN}). lineage = shared-
+    # spawn-block group; burst = temporal dispatch wave split at
+    # WEKA_WORKER_GROUP_BURST_GAP_SECONDS; member = index within the burst. Those
+    # ::wg: child session ids changed; ::fa:/::aux:/::aux:red: are unchanged.
+    # v16: aux classification gained a reduction arm and worker-group tagging.
+    # A same-model single-request large-input/short-output one-shot (context
+    # compaction, subagent-result summary, tool-output digest) is now a sidecar
+    # at ::aux:red: (and :aux:red: under subagents) via WEKA_AUX_REDUCTION_*;
+    # and a worker chain sharing a spawn block with >= WEKA_WORKER_GROUP_MIN
+    # siblings and a deep fork is tagged ::wg: (parallel fan-out agent) instead
+    # of the generic ::fa:, so those child session ids changed.
+    # v15: aux classification gained a cross-model arm -- a one-shot worker
+    # chain on a different model than its enclosing main chain (e.g. a Haiku
+    # WebFetch summary under an Opus agent) is now a sidecar regardless of
+    # payload size, so large cross-model singletons move ::fa: -> ::aux: (and
+    # :fa: -> :aux: under subagents). Gated by WEKA_AUX_CROSS_MODEL.
+    # v14: subagent nested-LCP overflow session ids restructured to match the
+    # top-level vocabulary -- the agent marker is renamed and separated
+    # (:cNNN -> :fa:NNN) and short, small-fresh-context overflow splits off as
+    # sidecars (:aux:NNN), so those child session ids changed. Same WEKA_AUX_*
+    # knobs; yardstick is the subagent's own main-chain peak ISL.
+    # v13: flattened-agent worker chains that are short, small-fresh-context
+    # one-shot calls are reclassified ::fa: -> ::aux: (auxiliary sidecars), so
+    # those child session ids changed (::fa:{NNN} -> ::aux:{NNN}). Governed by
+    # WEKA_AUX_MAX_REQUESTS / WEKA_AUX_ISL_RATIO / WEKA_AUX_ISL_FLOOR (also in
+    # the cache key, so tuning them re-keys without a version bump).
+    # v12: weka subagent inner requests split by nested LCP chain detection
+    # instead of time-interval stream packing -- child session ids changed
+    # (::sa:{agent_id} main chain + :c{NNN} spawned chains replace the
+    # :s{i} streams), child counts and SPAWN branch memberships changed,
+    # child turn timestamps moved to root-trace coordinates, and
+    # spawned-chain turn-0 tool/system attribution is proof-gated.
+    # v11: the system role is never fabricated from the observed
+    # namespace-group prefix (0/0-declared chains bake all-user turn 0s) --
+    # role boundaries changed again relative to v10.
+    # v10: merge of the flattened-agent-splitting lineage and the
+    # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
+    # first emission so reset re-emits reproduce the first-sent shape).
+    19
+)
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
 
@@ -464,7 +526,7 @@ def _public_dataset_source_from_user_config(
 
     public_dataset = str(inp.public_dataset)
     metadata = plugins.get_public_dataset_loader_metadata(public_dataset)
-    hf_dataset_name = inp.hf_weka_repo or metadata.hf_dataset_name
+    hf_dataset_name = inp.hf_weka_dataset or metadata.hf_dataset_name
     if hf_dataset_name is None:
         return {"plugin": public_dataset}
 
@@ -506,9 +568,31 @@ def _settings_payload_from_user_config(
         "model_name": user_config.endpoint.model_names[0],
         "fixed_schedule_start_offset": inp.fixed_schedule_start_offset,
         "fixed_schedule_end_offset": inp.fixed_schedule_end_offset,
+        # Load-time timing knobs bake into the cached Turn timestamps/delays
+        # (applied during reconstruction, not at request time), so they must
+        # key the cache or a warm entry silently serves the other mode.
+        "ignore_trace_delays": inp.ignore_trace_delays,
+        "use_think_time_only": inp.use_think_time_only,
+        "inter_turn_delay_cap_seconds": (
+            user_config.loadgen.inter_turn_delay_cap_seconds
+        ),
+        "trace_idle_gap_cap_seconds": getattr(
+            user_config.loadgen, "trace_idle_gap_cap_seconds", None
+        ),
         "weka_live_assistant_responses": (
             Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
         ),
+        "weka_split_flattened_agents": (
+            Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
+        ),
+        "weka_aux_max_requests": Environment.DATASET.WEKA_AUX_MAX_REQUESTS,
+        "weka_aux_isl_ratio": Environment.DATASET.WEKA_AUX_ISL_RATIO,
+        "weka_aux_isl_floor": Environment.DATASET.WEKA_AUX_ISL_FLOOR,
+        "weka_aux_cross_model": Environment.DATASET.WEKA_AUX_CROSS_MODEL,
+        "weka_aux_reduction_osl_max": (Environment.DATASET.WEKA_AUX_REDUCTION_OSL_MAX),
+        "weka_aux_reduction_ratio": Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
+        "weka_worker_group_min": Environment.DATASET.WEKA_WORKER_GROUP_MIN,
+        "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
         "max_isl": inp.synthesis.max_isl,
         "max_osl": inp.synthesis.max_osl,
         "max_context_length": inp.max_context_length,

@@ -114,9 +114,14 @@ def _drive_parallel_inproc(
 
         from collections import defaultdict
 
+        metric_values_by_trace = loader._build_shared_metric_values(
+            parent_plans, child_plans
+        )
+
         children_by_trace = defaultdict(list)
         sids_by_subagent: dict[tuple[str, int], list[str]] = defaultdict(list)
         for cp in child_plans:
+            child_metric_values = metric_values_by_trace[cp.parent_trace_id]
             requests_dicts = [
                 {
                     "hash_ids": list(creq.hash_ids),
@@ -125,8 +130,16 @@ def _drive_parallel_inproc(
                     "model": creq.model,
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
+                    # Dropped children have no pre-pass entry; they are
+                    # skipped by _process_task so the fallback is unused.
+                    "theoretical_hit_blocks": child_metric_values.get(
+                        (cp.session_id, k), (0, 0)
+                    )[0],
+                    "theoretical_total_blocks": child_metric_values.get(
+                        (cp.session_id, k), (0, len(creq.hash_ids))
+                    )[1],
                 }
-                for creq in cp.stream_requests
+                for k, creq in enumerate(cp.requests)
             ]
             children_by_trace[cp.parent_trace_id].append(
                 {
@@ -134,8 +147,8 @@ def _drive_parallel_inproc(
                     "parent_trace_id": cp.parent_trace_id,
                     "subagent_index": cp.subagent_index,
                     "agent_id": cp.entry.agent_id,
-                    "tool_tokens": cp.entry.tool_tokens,
-                    "system_tokens": cp.entry.system_tokens,
+                    "tool_tokens": cp.init_tool_tokens,
+                    "system_tokens": cp.init_system_tokens,
                     "requests": requests_dicts,
                 }
             )
@@ -157,9 +170,15 @@ def _drive_parallel_inproc(
                         "t": req.t,
                         "think_time": getattr(req, "think_time", None),
                         "capped_output_length": loader._cap_output(req),
+                        "theoretical_hit_blocks": metric_values_by_trace[plan.trace_id][
+                            (plan.trace_id, k)
+                        ][0],
+                        "theoretical_total_blocks": metric_values_by_trace[
+                            plan.trace_id
+                        ][(plan.trace_id, k)][1],
                     },
                 )
-                for outer_idx, req in plan.normals
+                for k, (outer_idx, req) in enumerate(plan.normals)
             ]
             subagents_dicts = []
             for sa_index, (outer_idx, sa) in enumerate(plan.subagents):
@@ -226,6 +245,7 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
     consume them as inputs."""
     from dataclasses import dataclass
 
+    from aiperf.dataset.loader.weka_trace import _expand_subagent_to_child_plans
     from aiperf.dataset.loader.weka_trace_models import (
         WekaNormalRequest,
         WekaStreamingRequest,
@@ -236,16 +256,6 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
         trace_id: str
         normals: list
         subagents: list
-        block_size: int
-
-    @dataclass
-    class _ChildPlan:
-        session_id: str
-        parent_trace_id: str
-        subagent_index: int
-        entry: object
-        stream_index: int
-        stream_requests: list
         block_size: int
 
     parent_plans: list = []
@@ -264,27 +274,9 @@ def _build_plans(loader: WekaTraceLoader, data: dict) -> tuple:
             else:
                 sa_index = len(subagents)
                 subagents.append((idx, req))
-                from aiperf.dataset.loader.weka_trace import _pack_into_streams
-
-                streams = _pack_into_streams(list(req.requests))
-                if not streams:
-                    streams = [[]]
-                for stream_idx, stream_reqs in enumerate(streams):
-                    if len(streams) == 1:
-                        child_sid = f"{trace_id}::sa:{req.agent_id}"
-                    else:
-                        child_sid = f"{trace_id}::sa:{req.agent_id}:s{stream_idx}"
-                    child_plans.append(
-                        _ChildPlan(
-                            session_id=child_sid,
-                            parent_trace_id=trace_id,
-                            subagent_index=sa_index,
-                            entry=req,
-                            stream_index=stream_idx,
-                            stream_requests=stream_reqs,
-                            block_size=trace_bs,
-                        )
-                    )
+                child_plans.extend(
+                    _expand_subagent_to_child_plans(trace_id, sa_index, req, trace_bs)
+                )
         parent_plans.append(_ParentPlan(trace_id, normals, subagents, trace_bs))
 
     return parent_plans, child_plans, {}
@@ -343,6 +335,9 @@ def test_parallel_byte_equivalence_simple_fixture(tmp_path):
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=serial_loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
 
     # Parallel path: drive _process_task in-process to get reconstruction
@@ -449,6 +444,9 @@ def test_parallel_byte_equivalence_with_subagent(tmp_path):
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=serial_loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
     parallel_results = _drive_parallel_inproc(
         serial_loader, parent_plans, child_plans, data
@@ -612,6 +610,9 @@ def test_directory_with_multiple_traces_parallel_path_byte_exact(tmp_path):
             tid: serial_loader._build_model_map(wekas[0]) for tid, wekas in data.items()
         },
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=serial_loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
 
     parallel_results = _drive_parallel_inproc(
@@ -654,3 +655,101 @@ def test_parallel_path_handles_small_trace_counts(tmp_path, n_traces):
     assert len(parallel_results) == n_traces
     for r in parallel_results:
         assert r["parent_turns"], f"{r['trace_id']}: empty parent_turns"
+
+
+def test_fanout_split_parallel_byte_identical_to_serial(monkeypatch):
+    """Flat-chain splitting must be byte-identical across both paths.
+
+    Runs the FULL convert_to_conversations twice — serial (workers=1) and
+    parallel (threshold=1, the pool replaced by an in-process map over
+    _process_task) — so the real task builder and assembly are exercised.
+    """
+    from multiprocessing import shared_memory
+
+    import aiperf.common.environment as env_mod
+
+    fanout = FIXTURES.parent / "weka_traces_fanout" / "fanout.json"
+
+    def _serial_convs():
+        monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
+        loader = WekaTraceLoader(filename=str(fanout), user_config=_mk_user_config())
+        _stub_loader_real_rng(loader)
+        return loader.convert_to_conversations(loader.load_dataset())
+
+    def _parallel_convs():
+        monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 2)
+        monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_THRESHOLD", 1)
+        loader = WekaTraceLoader(filename=str(fanout), user_config=_mk_user_config())
+        _stub_loader_real_rng(loader)
+        pg = loader.prompt_generator
+
+        corpus_arr = np.array(pg._tokenized_corpus, dtype=np.int32)
+        shm = shared_memory.SharedMemory(
+            create=True, size=len(corpus_arr) * np.dtype(np.int32).itemsize
+        )
+        np.ndarray((len(corpus_arr),), dtype=np.int32, buffer=shm.buf)[:] = corpus_arr
+        saved_state = wpc._worker_state
+        try:
+            with patch(
+                "aiperf.dataset.loader.weka_parallel_convert.Tokenizer.from_pretrained",
+                return_value=pg.tokenizer,
+            ):
+                wpc._init_worker(
+                    wpc._WekaWorkerInitArgs(
+                        shm_name=shm.name,
+                        corpus_len=len(corpus_arr),
+                        tokenizer_name="test-tok",
+                        base_seed=pg._hash_id_corpus_rng.seed,
+                        block_size=loader._block_size,
+                        bpe_stable_terminator_tokens=[],
+                    )
+                )
+
+            def _inproc_pool(tasks, **_kwargs):
+                return [wpc._process_task(t) for t in tasks]
+
+            monkeypatch.setattr(wpc, "run_parallel_weka_reconstruction", _inproc_pool)
+            return loader.convert_to_conversations(loader.load_dataset())
+        finally:
+            wpc._worker_state = saved_state
+            shm.close()
+            shm.unlink()
+
+    serial_convs = _serial_convs()
+    parallel_convs = _parallel_convs()
+
+    assert [c.session_id for c in serial_convs] == [
+        c.session_id for c in parallel_convs
+    ]
+    for sc, pc in zip(serial_convs, parallel_convs, strict=True):
+        assert sc.is_root == pc.is_root, sc.session_id
+        assert sc.agent_depth == pc.agent_depth, sc.session_id
+        assert sc.parent_conversation_id == pc.parent_conversation_id, sc.session_id
+        s_branches = [
+            (b.branch_id, b.child_conversation_ids, b.is_background)
+            for b in sc.branches
+        ]
+        p_branches = [
+            (b.branch_id, b.child_conversation_ids, b.is_background)
+            for b in pc.branches
+        ]
+        assert s_branches == p_branches, sc.session_id
+        for k, (st, pt) in enumerate(zip(sc.turns, pc.turns, strict=True)):
+            assert st.timestamp == pt.timestamp, f"{sc.session_id} turn {k}"
+            assert st.delay == pt.delay, f"{sc.session_id} turn {k}"
+            assert st.max_tokens == pt.max_tokens, f"{sc.session_id} turn {k}"
+            assert st.model == pt.model, f"{sc.session_id} turn {k}"
+            assert st.branch_ids == pt.branch_ids, f"{sc.session_id} turn {k}"
+            assert [p.branch_id for p in st.prerequisites] == [
+                p.branch_id for p in pt.prerequisites
+            ], f"{sc.session_id} turn {k}"
+            assert st.reset_context == pt.reset_context, f"{sc.session_id} turn {k}"
+            assert (
+                st.theoretical_prefix_cache_hit_blocks
+                == pt.theoretical_prefix_cache_hit_blocks
+            ), f"{sc.session_id} turn {k}"
+            assert st.raw_messages == pt.raw_messages, (
+                f"{sc.session_id} turn {k}: raw_messages drift\n"
+                f"  serial:   {st.raw_messages!r}\n"
+                f"  parallel: {pt.raw_messages!r}"
+            )

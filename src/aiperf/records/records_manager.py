@@ -106,7 +106,16 @@ _SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
     ("isl", "input_sequence_length"),
     ("osl", "output_sequence_length"),
 )
-_LATENCY_PREFIX_WIDTH = 27  # "[realtime MM:SS profiling] "
+# Each block line is its own log record (carries its own log prefix), so the
+# continuation rows sit at a small fixed indent under the header line rather
+# than aligning under the old inline "[realtime MM:SS profiling] " text.
+_REALTIME_ROW_INDENT = 2
+# Percentile names per row group. Latency/interactivity rows report p95 in the
+# third column; sequence-length rows report p90 there (the agentic long-tail is
+# more interesting at p90 for token counts). Each row keeps its own ``pNN=``
+# labels, so the column can hold p95 on one row and p90 on the next.
+_LATENCY_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p95", "p99")
+_TOKEN_PERCENTILES: tuple[str, ...] = ("p50", "p75", "p90", "p99")
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -123,7 +132,7 @@ def _format_ms(value: float | None) -> str:
         return "-"
     if value < 1.0:
         return "<1ms"
-    return f"{int(round(value))}ms"
+    return f"{int(round(value)):,}ms"
 
 
 def _format_int(value: float | None) -> str:
@@ -139,17 +148,38 @@ def _render_realtime_block(
     prev_snapshot: tuple[int, float] | None,
     server_snapshot: dict[str, float] | None = None,
 ) -> str:
-    """Render a compact 4-line realtime stats block for the aiperf logger.
+    """Render a compact realtime stats block for the aiperf logger.
+
+    Format (``[realtime MM:SS profiling]`` header, a summary counter row, then
+    one labeled percentile row per metric)::
+
+        [realtime 00:49 profiling]
+          rps=14.2 (avg 13.1)  tput_in=1,097,271/s  tput_out=10,441/s  done=641 ok=641 err=0
+          ttft    p50=   30ms  p75=   48ms  p95=   106ms  p99=   155ms
+          itl     p50=    5ms  p75=    5ms  p95=     5ms  p99=     5ms
+          e2e     p50=2,241ms  p75=4,853ms  p95=13,526ms  p99=22,003ms
+          intvty  p50=    200  p75=    201  p95=     211  p99=     254  (1/tpot tok/s)
+          isl     p50= 67,234  p75= 97,141  p90= 179,564  p99= 384,325  (tokens)
+          osl     p50=    443  p75=    967  p90=   2,034  p99=   4,396  (tokens)
+          tot     in=53,555,186  out=509,605
+          trace   theoretical_prefix_cache_hit=97.5%
+
+    The header sits on its own line and the summary counters drop to the
+    first indented row so the line no longer wraps in narrow terminals; each
+    line is emitted as a separate log record (see ``_report_realtime_metrics``).
+    Every row keeps its own ``pNN=`` labels (so it stays readable even when log
+    lines from other services interleave), while the values are right-aligned in
+    per-column widths so the digits and ``ms`` suffixes line up into a grid.
 
     Latency MetricResult percentile values are already in display units
     (milliseconds for time-based metrics, see ``to_display_unit`` and the
     accumulator's ``summarize`` path), so ``_format_ms`` consumes them as-is.
     Returns an empty string when no requests have completed yet so callers
-    can suppress the log line entirely on the first tick.
+    can suppress the block entirely on the first tick.
 
     Records-side stats only — ``in_flight_requests`` is a credit-side concept
     that this function doesn't have access to and is therefore omitted from
-    the output line.
+    the output.
     """
     if phase_stats.total_records == 0:
         return ""
@@ -171,62 +201,71 @@ def _render_realtime_block(
 
     tput_out_mr = by_tag.get("output_token_throughput")
     tput_out_avg = getattr(tput_out_mr, "avg", None)
-    tput_out_str = str(int(round(tput_out_avg))) if tput_out_avg is not None else "-"
+    tput_out_str = f"{int(round(tput_out_avg)):,}" if tput_out_avg is not None else "-"
 
     tput_in_mr = by_tag.get("input_token_throughput")
     tput_in_avg = getattr(tput_in_mr, "avg", None)
-    tput_in_str = str(int(round(tput_in_avg))) if tput_in_avg is not None else "-"
+    tput_in_str = f"{int(round(tput_in_avg)):,}" if tput_in_avg is not None else "-"
 
-    line1 = (
-        f"[realtime {_format_elapsed(elapsed)} profiling] "
-        f"rps={rps_delta_str} (avg {rps_avg_str}) "
-        f"tput_in={tput_in_str}/s "
-        f"tput_out={tput_out_str}/s "
-        f"done={phase_stats.total_records} "
-        f"ok={phase_stats.success_records} "
-        f"err={phase_stats.error_records}"
-    )
+    header = f"[realtime {_format_elapsed(elapsed)} profiling]"
 
-    indent = " " * _LATENCY_PREFIX_WIDTH
-    rows: list[str] = []
-    for label, tag in _LATENCY_LINE_LABELS:
-        mr = by_tag.get(tag)
-        p50 = _format_ms(getattr(mr, "p50", None))
-        p75 = _format_ms(getattr(mr, "p75", None))
-        p95 = _format_ms(getattr(mr, "p95", None))
-        p99 = _format_ms(getattr(mr, "p99", None))
-        rows.append(
-            f"{indent}{label:<4} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99}"
-        )
+    indent = " " * _REALTIME_ROW_INDENT
 
+    # Build the percentile rows as (label, percentile_names, value_strings,
+    # suffix) tuples first, so column widths can be derived from the actual
+    # rendered values before any line is formatted. Latency/interactivity rows
+    # use ms-formatted values; sequence-length rows use comma-grouped ints.
+    #
     # Interactivity = 1 / inter-token-latency per request, percentiled across
     # requests. Characterizes the user-perceived decode speed; tail (low
     # percentile) is the slowest-decoding user, head (high percentile) is the
     # snappiest. Aggregate tput_in/tput_out on line 1 are bandwidth.
+    StatRow = tuple[str, tuple[str, ...], list[str], str]
+    stat_rows: list[StatRow] = []
+    for label, tag in _LATENCY_LINE_LABELS:
+        mr = by_tag.get(tag)
+        values = [_format_ms(getattr(mr, p, None)) for p in _LATENCY_PERCENTILES]
+        stat_rows.append((label, _LATENCY_PERCENTILES, values, ""))
     intvty_label, intvty_tag = _INTERACTIVITY_LABEL
     mr = by_tag.get(intvty_tag)
-    p50 = _format_int(getattr(mr, "p50", None))
-    p75 = _format_int(getattr(mr, "p75", None))
-    p95 = _format_int(getattr(mr, "p95", None))
-    p99 = _format_int(getattr(mr, "p99", None))
-    rows.append(
-        f"{indent}{intvty_label:<6} p50={p50:<6} p75={p75:<6} p95={p95:<6} p99={p99} (1/tpot tok/s)"
+    stat_rows.append(
+        (
+            intvty_label,
+            _LATENCY_PERCENTILES,
+            [_format_int(getattr(mr, p, None)) for p in _LATENCY_PERCENTILES],
+            "(1/tpot tok/s)",
+        )
     )
 
     # Sequence-length distribution rows — useful for spotting long-tail
-    # agentic prompts mid-run.  Reads the same MetricResults aggregator
-    # already publishes; no extra plumbing.
+    # agentic prompts mid-run. Reads the same MetricResults the aggregator
+    # already publishes; no extra plumbing. A row is omitted entirely when its
+    # metric has no data, rather than rendering a row of dashes.
     for label, tag in _SEQ_LENGTH_LABELS:
         mr = by_tag.get(tag)
-        p50 = _format_int(getattr(mr, "p50", None))
-        p75 = _format_int(getattr(mr, "p75", None))
-        p90 = _format_int(getattr(mr, "p90", None))
-        p99 = _format_int(getattr(mr, "p99", None))
-        if p50 == "-" and p75 == "-" and p90 == "-" and p99 == "-":
+        values = [_format_int(getattr(mr, p, None)) for p in _TOKEN_PERCENTILES]
+        if all(v == "-" for v in values):
             continue
-        rows.append(
-            f"{indent}{label:<4} p50={p50:<9} p75={p75:<9} p90={p90:<9} p99={p99} (tokens)"
+        stat_rows.append((label, _TOKEN_PERCENTILES, values, "(tokens)"))
+
+    label_w = max(len(label) for label, *_ in stat_rows)
+    col_w = [max(len(values[i]) for _, _, values, _ in stat_rows) for i in range(4)]
+
+    rows: list[str] = [
+        f"{indent}rps={rps_delta_str} (avg {rps_avg_str})  "
+        f"tput_in={tput_in_str}/s  "
+        f"tput_out={tput_out_str}/s  "
+        f"done={phase_stats.total_records:,} "
+        f"ok={phase_stats.success_records:,} "
+        f"err={phase_stats.error_records:,}"
+    ]
+    for label, percentiles, values, suffix in stat_rows:
+        cells = "  ".join(
+            f"{name}={value.rjust(col_w[i])}"
+            for i, (name, value) in enumerate(zip(percentiles, values, strict=True))
         )
+        line = f"{indent}{label:<{label_w}}  {cells}"
+        rows.append(f"{line}  {suffix}" if suffix else line)
 
     # Cumulative token totals — running counters, useful for spotting
     # whether the ratio of output:input tokens is matching the workload's
@@ -238,7 +277,7 @@ def _render_realtime_block(
     if total_isl is not None or total_osl is not None:
         in_str = f"{int(round(total_isl)):,}" if total_isl is not None else "-"
         out_str = f"{int(round(total_osl)):,}" if total_osl is not None else "-"
-        rows.append(f"{indent}tot  in={in_str:<14} out={out_str}")
+        rows.append(f"{indent}{'tot':<{label_w}}  in={in_str}  out={out_str}")
 
     theoretical_prefix_mr = by_tag.get("theoretical_prefix_cache_hit")
     theoretical_prefix_hit = getattr(theoretical_prefix_mr, "current", None)
@@ -246,7 +285,7 @@ def _render_realtime_block(
         theoretical_prefix_hit = getattr(theoretical_prefix_mr, "avg", None)
     if theoretical_prefix_hit is not None:
         rows.append(
-            f"{indent}trace theoretical_prefix_cache_hit={theoretical_prefix_hit:.1f}%"
+            f"{indent}{'trace':<{label_w}} theoretical_prefix_cache_hit={theoretical_prefix_hit:.1f}%"
         )
 
     # Server-side row — cumulative cache hit rate, KV usage, and scheduler
@@ -289,9 +328,9 @@ def _render_realtime_block(
                 f"tput_out_srv={int(round(server_snapshot['output_token_throughput_srv'])):,}/s"
             )
         if srv_parts:
-            rows.append(f"{indent}srv  {' '.join(srv_parts)}")
+            rows.append(f"{indent}{'srv':<{label_w}} {' '.join(srv_parts)}")
 
-    return "\n".join([line1, *rows])
+    return "\n".join([header, *rows])
 
 
 @dataclass
@@ -975,7 +1014,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_stats.records_elapsed_time,
             )
             if self.service_config.ui_type != UIType.DASHBOARD:
-                self.info(rendered)
+                # One record per line: multi-line records interleave with
+                # other services' writes on the shared console stream.
+                for line in rendered.splitlines():
+                    self.info(line)
         return True
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:

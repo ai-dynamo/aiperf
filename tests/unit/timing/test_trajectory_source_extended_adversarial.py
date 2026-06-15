@@ -53,16 +53,18 @@ def _uniform_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
 
 
 class _Sampler:
-    """Stub sampler that cycles through the provided ids and raises StopIteration when exhausted."""
+    """Wrapping stub sampler (like the production SequentialSampler): cycles
+    through the provided ids indefinitely; raises StopIteration only when the
+    pool is empty."""
 
     def __init__(self, ids: list[str]) -> None:
         self._ids = list(ids)
         self._i = 0
 
     def next_conversation_id(self) -> str:
-        if self._i >= len(self._ids):
+        if not self._ids:
             raise StopIteration
-        cid = self._ids[self._i]
+        cid = self._ids[self._i % len(self._ids)]
         self._i += 1
         return cid
 

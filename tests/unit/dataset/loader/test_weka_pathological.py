@@ -25,12 +25,16 @@ Confirmed bugs (xfail, strict):
 Passing characterizations (surprising-but-intended):
   * idle-gap cap uses a strict ``>`` so a gap exactly equal to the cap is left
     uncompressed.
-  * ``_pack_into_streams`` treats a NaN ``api_time`` interval as non-reusable,
-    forcing every later request into a fresh stream.
-  * equal-``t`` inner requests pack deterministically in recorded order.
+  * nested LCP chain detection clamps NaN / infinite / negative inner
+    ``api_time`` to zero duration (a non-finite chain-tail end would block
+    same-context extensions forever and explode a subagent into one-turn
+    children).
+  * equal-``t`` context-disjoint inner requests split deterministically.
+  * nested chain detection runs on the normalized root-trace timeline.
   * duplicate hash-ids within a single request inflate the theoretical
     prefix-cache hit count to a (still <= total) 100%.
   * an empty-``requests`` trace reconstructs to an empty conversation.
+  * duplicate subagent ``agent_id`` values within one trace are rejected.
 """
 
 from __future__ import annotations
@@ -41,10 +45,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.weka_trace import (
     WekaTraceLoader,
+    _expand_subagent_to_child_plans,
     _IdleGapTimeWarp,
-    _pack_into_streams,
     _sa_end_seconds,
 )
 from aiperf.dataset.loader.weka_trace_models import (
@@ -270,8 +275,12 @@ def test_parallel_subagent_payload_carries_mapped_spawn_time(tmp_path):
     loader = _make_loader(path, uc)
 
     data = loader.load_dataset()
-    parent_plans, child_plans = loader._build_reconstruction_plans(data)
+    plans = loader._build_reconstruction_plans(data)
+    parent_plans, child_plans = plans.parent_plans, plans.child_plans
     timing = loader._build_trace_idle_timing_by_trace(parent_plans, child_plans)
+    metric_values = loader._build_shared_metric_values(
+        parent_plans, child_plans, plans.flat_plans
+    )
     tasks = loader._build_parallel_reconstruction_tasks(
         parent_plans=parent_plans,
         child_plans=child_plans,
@@ -281,6 +290,7 @@ def test_parallel_subagent_payload_carries_mapped_spawn_time(tmp_path):
         cap_seconds=None,
         model_map_per_trace={"idle_parallel": {}},
         trace_idle_timing_by_trace=timing,
+        metric_values_by_trace=metric_values,
     )
     _, marker = tasks[0].parent["subagents"][0]
     # The mapped end time is plumbed through; the mapped spawn time must be too.
@@ -375,36 +385,246 @@ def test_idle_gap_collapsed_tail_event_maps_to_cap_boundary():
     assert warp.map(300.0) == pytest.approx(160.0)  # after: shifted left by excess
 
 
-def test_pack_into_streams_nan_api_time_forces_extra_stream():
-    """A NaN ``api_time`` interval is never reusable, so it forces a new stream.
+def test_nested_chain_nan_api_time_treated_as_zero_duration():
+    """A NaN inner ``api_time`` is clamped to zero duration in chain detection.
 
-    ``r_end = r.t + (r.api_time or 0.0)`` becomes NaN, and ``end <= r.t`` is
-    False for every later request against a NaN end, so the second request
-    cannot reuse the first stream and a redundant parallel stream is opened.
+    ``weka_agent_chains._req_end`` treats non-finite durations as zero, so a
+    same-context continuation can still extend the chain (a NaN tail end
+    would otherwise make the temporal-feasibility comparison unreliable).
     """
-    reqs = [
-        _inner_request(t=0.0, api_time=float("nan"), hash_ids=[1]),
-        _inner_request(t=100.0, api_time=1.0, hash_ids=[2]),
-    ]
-    streams = _pack_into_streams(reqs)
-    assert len(streams) == 2
+    entry = _make_subagent_entry(
+        t=0.0,
+        requests=[
+            _inner_request(t=0.0, api_time=float("nan"), hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=100.0, api_time=1.0, hash_ids=[1, 2]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
+    assert [p.session_id for p in plans] == ["tr::sa:a"]
+    assert [r.hash_ids for r in plans[0].requests] == [[1], [1, 2]]
 
 
-def test_pack_into_streams_equal_t_zero_duration_is_deterministic_order():
-    """Equal-``t`` zero-duration inner requests pack in recorded order.
+def test_nested_chain_infinite_api_time_does_not_block_extension():
+    """A +inf inner ``api_time`` must not permanently occupy a chain tail.
 
-    ``api_time=None`` is treated as a zero-width interval that never overlaps,
-    so requests sharing an instant collapse into one stream; Python's stable
-    sort preserves their recorded order, keeping reconstruction reproducible.
+    Without the finite clamp in ``weka_agent_chains._req_end`` an infinite
+    tail end blocks every same-context extension forever, exploding an
+    N-request subagent into N sibling one-turn children.
     """
-    reqs = [
-        _inner_request(t=5.0, api_time=None, hash_ids=[3]),
-        _inner_request(t=5.0, api_time=None, hash_ids=[1]),
-        _inner_request(t=5.0, api_time=None, hash_ids=[2]),
-    ]
-    streams = _pack_into_streams(reqs)
-    assert len(streams) == 1
-    assert [r.hash_ids[0] for r in streams[0]] == [3, 1, 2]
+    entry = _make_subagent_entry(
+        t=0.0,
+        requests=[
+            _inner_request(t=0.0, api_time=float("inf"), hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=10.0, api_time=1.0, hash_ids=[1, 2]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=20.0, api_time=1.0, hash_ids=[1, 2, 3]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
+    assert [p.session_id for p in plans] == ["tr::sa:a"]
+    assert len(plans[0].requests) == 3
+
+
+def test_nested_chain_equal_t_disjoint_requests_split_deterministically():
+    """Equal-``t`` context-disjoint inner requests split deterministically.
+
+    Three zero-duration requests share an instant and no hash prefix. The
+    stable ``(t, index)`` order makes the first recorded request the
+    preamble-eligible leader (fully block-disjoint, so it re-attaches to the
+    main chain), the second founds the main chain's identity, and the third
+    becomes the one spawned chain. Pinned for reproducibility, not as deep
+    semantics: disjoint one-shots are independent sessions either way.
+    """
+    entry = _make_subagent_entry(
+        t=5.0,
+        requests=[
+            _inner_request(t=5.0, api_time=None, hash_ids=[3]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=5.0, api_time=None, hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=5.0, api_time=None, hash_ids=[2]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
+    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:fa:000"]
+    assert [r.hash_ids[0] for r in plans[0].requests] == [3, 1]
+    assert [r.hash_ids[0] for r in plans[1].requests] == [2]
+
+
+def test_nested_chain_detection_uses_root_trace_timeline():
+    """Mixed relative/absolute inner timestamps chain on the normalized
+    root-trace timeline, not raw ``t``.
+
+    The relative first request ([110, 160) after normalization) is still in
+    flight when the absolute second request starts at t=150, so the prefix
+    continuation cannot extend the chain and forks into a spawned sibling.
+    On the raw timeline ([10, 60) vs [150, 151)) it would have extended into
+    one chain — detection must agree with turn timing and metric ordering.
+    """
+    entry = _make_subagent_entry(
+        t=100.0,
+        requests=[
+            _inner_request(t=10.0, api_time=50.0, hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=150.0, api_time=1.0, hash_ids=[1, 2]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64)
+    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:fa:000"]
+    # Normalized coordinates carried on the plan requests themselves.
+    assert plans[0].requests[0].t == pytest.approx(110.0)
+    assert plans[1].requests[0].t == pytest.approx(150.0)
+
+
+def test_spawned_chain_inherits_declared_prefix_only_when_proven():
+    """Spawned-chain turn-0 tool/system attribution requires hash proof.
+
+    The subagent's declared prefix is attributed to a spawned chain's first
+    turn only when that chain's first hash-bearing request starts with the
+    same declared-prefix blocks as the main chain (mirroring the flat-chain
+    rule: the system role is never fabricated). The main chain always keeps
+    the entry's declared counts.
+    """
+
+    def entry_with(worker_hash: list[int]) -> WekaSubagentEntry:
+        # Main thread = r0 + r2 (r2 extends r0's prefix, anchoring the main
+        # chain so the preamble rule cannot peel r0); the worker chain forks
+        # off at t=1 with ``worker_hash``.
+        return _make_subagent_entry(
+            t=0.0,
+            tool_tokens=128,
+            system_tokens=64,
+            requests=[
+                _inner_request(
+                    t=0.0, api_time=0.5, hash_ids=[1, 2, 3, 4], **{"in": 256}
+                ).model_dump(by_alias=True),
+                _inner_request(
+                    t=1.0, api_time=100.0, hash_ids=worker_hash, **{"in": 256}
+                ).model_dump(by_alias=True),
+                _inner_request(
+                    t=2.0, api_time=0.5, hash_ids=[1, 2, 3, 4, 5], **{"in": 320}
+                ).model_dump(by_alias=True),
+            ],
+        )
+
+    # declared_blocks = ceil((128 + 64) / 64) = 3; [1, 2, 3] matches the main
+    # chain's first request, so the fork provably carries the declared prefix.
+    proven = _expand_subagent_to_child_plans("tr", 0, entry_with([1, 2, 3, 9]), 64)
+    assert [p.session_id for p in proven] == ["tr::sa:a", "tr::sa:a:fa:000"]
+    assert (proven[0].init_tool_tokens, proven[0].init_system_tokens) == (128, 64)
+    assert (proven[1].init_tool_tokens, proven[1].init_system_tokens) == (128, 64)
+
+    unproven = _expand_subagent_to_child_plans("tr", 0, entry_with([7, 8, 9, 10]), 64)
+    assert [p.session_id for p in unproven] == ["tr::sa:a", "tr::sa:a:fa:000"]
+    assert (unproven[0].init_tool_tokens, unproven[0].init_system_tokens) == (128, 64)
+    assert (unproven[1].init_tool_tokens, unproven[1].init_system_tokens) == (0, 0)
+
+
+def test_split_chains_disabled_emits_one_sequential_child():
+    """``split_chains=False`` (WEKA_SPLIT_FLATTENED_AGENTS escape hatch) skips
+    nested detection: one child with every inner request in time order."""
+    entry = _make_subagent_entry(
+        t=0.0,
+        requests=[
+            _inner_request(t=0.0, api_time=100.0, hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=1.0, api_time=100.0, hash_ids=[50]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+    plans = _expand_subagent_to_child_plans("tr", 0, entry, 64, split_chains=False)
+    assert [p.session_id for p in plans] == ["tr::sa:a"]
+    assert [r.hash_ids for r in plans[0].requests] == [[1], [50]]
+
+
+def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
+    """Child Turn timestamps live in root-trace coordinates even when the
+    capture recorded inner ``t`` relative to the spawn marker.
+
+    The trajectory snapshot logic compares child turn timestamps against the
+    root timeline, so a relative-shape capture (inner ``t`` before the spawn
+    marker) must shift by ``entry.t`` at emission, exactly like the warp
+    path, metric ordering, and stream packing already do. Delays are
+    shift-invariant and stay the recorded inter-request gaps.
+    """
+    sa = {
+        "t": 10.0,
+        "type": "subagent",
+        "agent_id": "a",
+        "subagent_type": "Explore",
+        "duration_ms": 7000,
+        "total_tokens": 10,
+        "tool_use_count": 1,
+        "status": "completed",
+        # Relative inner timestamps: 0.0 and 5.0 seconds after the spawn
+        # marker at t=10 -> root-trace 10.0 and 15.0.
+        "requests": [
+            _inner_request(t=0.0, api_time=1.0, hash_ids=[8]).model_dump(by_alias=True),
+            _inner_request(t=5.0, api_time=1.0, hash_ids=[8, 9]).model_dump(
+                by_alias=True
+            ),
+        ],
+        "models": ["claude-haiku-4-5-20251001"],
+        "tool_tokens": 0,
+        "system_tokens": 0,
+    }
+    trace = _base_trace(
+        [_normal(0.0, [1]), sa, _normal(40.0, [1, 2])],
+        trace_id="rel_inner",
+    )
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config())
+    convs = loader.convert_to_conversations(loader.load_dataset())
+
+    child = next(c for c in convs if c.session_id == "rel_inner::sa:a")
+    assert child.turns[0].timestamp == pytest.approx(10_000.0)
+    assert child.turns[1].timestamp == pytest.approx(15_000.0)
+    assert child.turns[1].delay == pytest.approx(5_000.0)
+
+
+def test_duplicate_subagent_agent_id_in_one_trace_raises(tmp_path):
+    """Two RETAINED subagent entries sharing an ``agent_id`` are rejected.
+
+    Child session ids (``{trace}::sa:{agent_id}``) and SPAWN branch ids
+    (``{trace}:spawn:{agent_id}``) are derived from ``agent_id``; a duplicate
+    would silently cross-wire two subagents' conversations and joins. A
+    duplicate involving only orphaned (dropped) subagents stays legal -- see
+    ``test_duplicate_agent_id_orphan_does_not_drop_later_valid_subagent``.
+    """
+    trace = _base_trace(
+        [
+            _normal(0.0, [1]),
+            _subagent(1.0, "a"),
+            _normal(5.0, [1, 2]),
+            _subagent(6.0, "a"),
+            _normal(10.0, [1, 2, 3]),
+        ],
+        trace_id="dup_agent",
+    )
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config())
+    with pytest.raises(DatasetLoaderError, match="duplicate subagent agent_id"):
+        loader.convert_to_conversations(loader.load_dataset())
 
 
 def test_duplicate_hash_ids_in_request_inflate_theoretical_hit_to_full(tmp_path):

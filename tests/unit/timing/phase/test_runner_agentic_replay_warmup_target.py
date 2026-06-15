@@ -108,11 +108,12 @@ class TestAgenticReplayWarmupTarget:
         load below the requested concurrency was the bug; wrap-fill keeps the
         run honouring ``--concurrency`` while reusing trajectories.
         """
+        import itertools
+
         md = _make_dataset_metadata({f"t{i}": 5 for i in range(6)})
         sampler = MagicMock()
-        sampler.next_conversation_id.side_effect = [
-            c.conversation_id for c in md.conversations
-        ]
+        cycle = itertools.cycle([c.conversation_id for c in md.conversations])
+        sampler.next_conversation_id.side_effect = lambda: next(cycle)
         src = TrajectorySource(
             dataset_metadata=md,
             dataset_sampler=sampler,
@@ -121,7 +122,7 @@ class TestAgenticReplayWarmupTarget:
         )
         assert len(src.trajectories) == 8
         distinct = {t.conversation_id for t in src.trajectories}
-        assert len(distinct) == 6  # 6 distinct sources, fanned out to 8 lanes
+        assert len(distinct) == 6  # 6 distinct sources, repeated across 8 lanes
 
     async def test_concurrency_below_pool_size_uses_concurrency(self) -> None:
         """Pool of 10, concurrency=4 -> 4 trajectories -> target = 4 (unchanged)."""
@@ -147,11 +148,12 @@ class TestAgenticReplayWarmupTarget:
         ``TrajectorySource`` wrap-fills the missing lanes by cycling through
         the 5 usable trajectories with fresh ``start_turn_index`` salts.
         """
+        import itertools
+
         md = _make_dataset_metadata({"a": 5, "b": 5, "c": 5, "d": 5, "e": 5, "tiny": 1})
         sampler = MagicMock()
-        sampler.next_conversation_id.side_effect = [
-            c.conversation_id for c in md.conversations
-        ]
+        cycle = itertools.cycle([c.conversation_id for c in md.conversations])
+        sampler.next_conversation_id.side_effect = lambda: next(cycle)
         src = TrajectorySource(
             dataset_metadata=md,
             dataset_sampler=sampler,
@@ -160,7 +162,7 @@ class TestAgenticReplayWarmupTarget:
         )
         assert len(src.trajectories) == 8
         distinct = {t.conversation_id for t in src.trajectories}
-        # 5 usable (tiny is skipped), fanned out to 8 lanes.
+        # 5 usable (tiny is skipped), repeated across 8 lanes.
         assert distinct == {"a", "b", "c", "d", "e"}
 
     async def test_profiling_phase_target_unchanged(self) -> None:

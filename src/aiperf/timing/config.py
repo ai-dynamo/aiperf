@@ -55,7 +55,7 @@ class TimingConfig(AIPerfBaseModel):
         "deterministic per-trace start-turn indices for trajectories.",
     )
     trajectory_start_min_ratio: float = Field(
-        default=0.0,
+        default=0.25,
         ge=0.0,
         le=1.0,
         description="AGENTIC_REPLAY: lower bound (inclusive) on the random "
@@ -63,7 +63,7 @@ class TimingConfig(AIPerfBaseModel):
         "turn count.",
     )
     trajectory_start_max_ratio: float = Field(
-        default=0.7,
+        default=0.75,
         ge=0.0,
         le=1.0,
         description="AGENTIC_REPLAY: upper bound (inclusive) on the random "

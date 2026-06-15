@@ -207,6 +207,64 @@ class TestDagEndToEndSmoke:
         assert sticky.releases == [], "Releases only happen on child leaf completion"
 
     @pytest.mark.asyncio
+    async def test_spawned_children_share_root_tree_marker(self) -> None:
+        """The whole trajectory TREE shares ONE cache-bust marker.
+
+        Spawned descendants (subagents / flat agents) must carry their
+        tree-root's marker (resolved by ``root_correlation_id`` from the shared
+        ledger), not a per-child marker that would fragment the tree's
+        prefix-cache domain. Pre-fix each child minted its own digest of its
+        child conversation id; here every dispatched child carries the seeded
+        root marker verbatim.
+        """
+        from aiperf.common.enums import CacheBustTarget
+        from aiperf.timing.trajectory_source import CacheBustLedger
+
+        loader = DagJsonlLoader(FIXTURE)
+        dataset_metadata = _build_metadata(loader)
+        sampler = _IdentitySampler(
+            [c.conversation_id for c in dataset_metadata.conversations if c.is_root]
+        )
+        conv_source = ConversationSource(dataset_metadata, sampler)
+
+        issuer = _FakeIssuer()
+        sticky = _FakeStickyRouter()
+        root_corr = "root-corr-tree"
+        root_marker = "[rid:deadbeefcafe]\n\n"
+        ledger = CacheBustLedger()
+        ledger.session_marker[root_corr] = root_marker
+
+        orch = BranchOrchestrator(
+            conversation_source=conv_source,
+            credit_issuer=issuer,
+            sticky_router=sticky,
+            cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
+            cache_bust_ledger=ledger,
+        )
+
+        root_credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="root",
+            x_correlation_id=root_corr,
+            turn_index=0,
+            num_turns=1,
+            issued_at_ns=time.time_ns(),
+            agent_depth=0,
+            parent_correlation_id=None,
+        )
+
+        await orch.intercept(root_credit)
+
+        assert orch.stats.children_spawned == 2
+        assert {s.conversation_id for s in issuer.dispatched} == {"branchA", "branchB"}
+        for session in issuer.dispatched:
+            assert session.cache_bust_marker == root_marker, (
+                f"child {session.conversation_id} must carry the tree-root "
+                f"marker {root_marker!r}, got {session.cache_bust_marker!r}"
+            )
+
+    @pytest.mark.asyncio
     async def test_orchestrator_completes_after_both_children_reach_leaf(self) -> None:
         """Drive both children to their leaf terminations and verify the
         sticky-routing refcount drains and children_completed advances."""

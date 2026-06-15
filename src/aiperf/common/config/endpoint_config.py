@@ -316,6 +316,40 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
+    use_dynamo_conv_aware_routing: Annotated[
+        bool,
+        Field(
+            description=(
+                "Emit Dynamo nvext.session_control in OpenAI-compatible request "
+                "bodies so Dynamo can bind all turns from the same replayed "
+                "conversation lineage to the same backend worker. This is only "
+                "intended for Dynamo frontends that implement session_control."
+            ),
+        ),
+        CLIParameter(
+            name=(
+                "--use-dynamo-conv-aware-routing",
+                "--use-dynamo-session-control",
+            ),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING
+
+    dynamo_session_timeout_seconds: Annotated[
+        int,
+        Field(
+            description=(
+                "Dynamo nvext.session_control timeout in seconds when "
+                "--use-dynamo-conv-aware-routing is enabled."
+            ),
+            ge=1,
+        ),
+        CLIParameter(
+            name=("--dynamo-session-timeout-seconds",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS
+
     connection_reuse_strategy: Annotated[
         ConnectionReuseStrategy,
         Field(

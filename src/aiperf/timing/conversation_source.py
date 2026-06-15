@@ -50,6 +50,7 @@ class SampledSession:
     x_correlation_id: str
     agent_depth: int = 0
     parent_correlation_id: str | None = None
+    root_correlation_id: str | None = None
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     start_turn_index: int = 0
     cache_bust_marker: str | None = None
@@ -60,6 +61,15 @@ class SampledSession:
         """Sticky-routing key: parent's correlation_id if set (so siblings share a worker),
         otherwise this session's own x_correlation_id."""
         return self.parent_correlation_id or self.x_correlation_id
+
+    @property
+    def effective_root_correlation_id(self) -> str:
+        """Tree root id, defaulting to this session's own x_correlation_id.
+
+        A root session is its own tree root; a child/subchild inherits the
+        depth-0 root's id, set by the spawning code (``start_branch_child``) /
+        snapshot seeding so per-tree session-slot accounting can key on it."""
+        return self.root_correlation_id or self.x_correlation_id
 
     def build_first_turn(self, max_turns: int | None = None) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.
@@ -76,6 +86,7 @@ class SampledSession:
             num_turns=max_turns or len(self.metadata.turns),
             agent_depth=self.agent_depth,
             parent_correlation_id=self.parent_correlation_id,
+            root_correlation_id=self.root_correlation_id,
             is_session_start=True,
             has_forks=first_meta.has_forks if first_meta is not None else False,
             branch_mode=self.branch_mode,
@@ -107,6 +118,7 @@ class SampledSession:
             num_turns=len(self.metadata.turns),
             agent_depth=self.agent_depth,
             parent_correlation_id=self.parent_correlation_id,
+            root_correlation_id=self.root_correlation_id,
             # build_turn_at_index is only used to START a session (warmup at
             # k_i, profiling resume at k_i+1, recycled at 0); continuations go
             # through TurnToSend.from_previous_credit. Mark it a session start so
@@ -158,6 +170,7 @@ class ConversationSource:
         child_conversation_id: str,
         agent_depth: int,
         *,
+        root_correlation_id: str | None = None,
         branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
         cache_bust_marker: str | None = None,
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
@@ -175,6 +188,11 @@ class ConversationSource:
         (BranchOrchestrator) so each SPAWN child gets its own unique marker
         — preventing two subagents in different traces from sharing a server
         KV-cache prefix and inflating hit-rates artificially.
+
+        ``root_correlation_id`` is the depth-0 root of the spawning parent's
+        tree; the child inherits it so all descendants of one root share a
+        single per-tree session-slot key. Defaults to ``parent_correlation_id``
+        when not supplied (the live spawn path's parent is always the root).
         """
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(
@@ -183,6 +201,7 @@ class ConversationSource:
             x_correlation_id=str(uuid.uuid4()),
             agent_depth=agent_depth,
             parent_correlation_id=parent_correlation_id,
+            root_correlation_id=root_correlation_id or parent_correlation_id,
             branch_mode=branch_mode,
             cache_bust_marker=cache_bust_marker,
             cache_bust_target=cache_bust_target,

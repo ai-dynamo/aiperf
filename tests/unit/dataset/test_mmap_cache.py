@@ -94,6 +94,59 @@ class TestComputeCacheKey:
         assert live_key is not None
         assert pre_canned_key != live_key
 
+    def test_key_changes_when_weka_split_flattened_agents_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        cfg = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
+            ),
+        )
+
+        monkeypatch.setattr(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", True)
+        split_key = mmap_cache.compute_cache_key_from_user_config(cfg)
+        monkeypatch.setattr(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", False)
+        legacy_key = mmap_cache.compute_cache_key_from_user_config(cfg)
+
+        assert split_key is not None
+        assert legacy_key is not None
+        # The flag changes loader output (split vs legacy single-stream), so
+        # a warm cache from one mode must never serve the other.
+        assert split_key != legacy_key
+
+    def test_key_changes_with_load_time_timing_knobs(self) -> None:
+        cfg = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(
+                public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
+            ),
+        )
+        base = mmap_cache.compute_cache_key_from_user_config(cfg)
+
+        cfg_ignore = cfg.model_copy(deep=True)
+        cfg_ignore.input.ignore_trace_delays = True
+        cfg_think = cfg.model_copy(deep=True)
+        cfg_think.input.use_think_time_only = True
+        cfg_cap = cfg.model_copy(deep=True)
+        cfg_cap.loadgen.inter_turn_delay_cap_seconds = 60.0
+        cfg_warp = cfg.model_copy(deep=True)
+        cfg_warp.loadgen.trace_idle_gap_cap_seconds = 60.0
+
+        keys = [
+            base,
+            mmap_cache.compute_cache_key_from_user_config(cfg_ignore),
+            mmap_cache.compute_cache_key_from_user_config(cfg_think),
+            mmap_cache.compute_cache_key_from_user_config(cfg_cap),
+            mmap_cache.compute_cache_key_from_user_config(cfg_warp),
+        ]
+        assert all(k is not None for k in keys)
+        # These knobs are applied at LOAD time (baked into cached Turn
+        # timestamps/delays), so each must produce a distinct cache key.
+        assert len(set(keys)) == len(keys), keys
+
     def test_key_is_deterministic_for_identical_inputs(self, tmp_path: Path) -> None:
         f = _write_input_file(tmp_path, b"hello world")
         k1 = mmap_cache.compute_cache_key(

@@ -25,6 +25,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -57,7 +58,13 @@ def _build_real_trajectory_source(
 ) -> TrajectorySource:
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = dataset
-    src._dataset_sampler = MagicMock()
+    _roots = [
+        c.conversation_id
+        for c in src._dataset_metadata.conversations
+        if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(_roots) if _roots else MagicMock()
+    src._pool_size = len(_roots)
     src._metadata_lookup = {c.conversation_id: c for c in dataset.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
@@ -137,11 +144,10 @@ async def test_mid_trajectory_context_overflow_recycles_trace():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    # Seed lane and _active_traces (the new full-pool pop loop skips alive
-    # trace_ids). The finishing trace is discarded from _active_traces at
+    # Seed the lane mapping; _active_traces was pre-registered by
+    # setup_phase. The finishing trace is discarded from _active_traces at
     # the top of _spawn_from_recycle_or_id before the pop loop runs.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     # Mid-trajectory turn (index 2 of 5) errors with context-overflow.
     mid = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=5)
@@ -230,11 +236,10 @@ async def test_final_turn_overflow_recycles_normally():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    # Seed lane and _active_traces (the new full-pool pop loop skips alive
-    # trace_ids; the finishing trace is discarded at the top of
+    # Seed the lane mapping; _active_traces was pre-registered by
+    # setup_phase (the finishing trace is discarded at the top of
     # _spawn_from_recycle_or_id before the pop loop runs).
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     final = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
     await strategy.handle_credit_return(

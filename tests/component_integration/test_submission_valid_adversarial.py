@@ -15,6 +15,7 @@ Wiring contract:
     * `_validator_submission_invalid_reasons`
     * `_total_responses`
     * `_context_overflow_count`
+    * `_was_cancelled`
 - The exporter pops those keys (so they do not pollute the output) and
   feeds them through `compute_submission_outcome()` +
   `_build_run_metadata_dict()` to emit the final
@@ -38,6 +39,7 @@ from aiperf.exporters.aggregate import (
 from aiperf.exporters.aggregate.aggregate_base_exporter import (
     CONTEXT_OVERFLOW_RATE_LIMIT,
     CONTEXT_OVERFLOW_REASON,
+    RUN_CANCELLED_REASON,
     compute_submission_outcome,
 )
 from aiperf.orchestrator.aggregation.base import AggregateResult
@@ -206,6 +208,30 @@ async def test_zero_responses_does_not_flip_on_overflow_rule(tmp_path):
     )
     assert valid is True
     assert reasons == []
+
+
+async def test_cancelled_run_flips_submission_valid_false(tmp_path):
+    """A cancelled run (Ctrl+C) is never a valid submission, even when the
+    validator was clean and no runtime threshold was crossed."""
+    aggregate = _make_aggregate(
+        {
+            "_scenario_name": "inferencex-agentx-mvp",
+            "_validator_submission_valid": True,
+            "_validator_submission_invalid_reasons": [],
+            "_total_responses": 500,
+            "_context_overflow_count": 0,
+            "_was_cancelled": True,
+        }
+    )
+
+    data = await _export_and_load(aggregate, tmp_path)
+
+    md = data["metadata"]
+    assert md["scenario"] == "inferencex-agentx-mvp"
+    assert md["submission_valid"] is False
+    assert RUN_CANCELLED_REASON in md["submission_invalid_reasons"]
+    # Carrier key is stripped from output.
+    assert "_was_cancelled" not in md
 
 
 async def test_bare_timing_mode_no_scenario_omits_submission_valid(tmp_path):

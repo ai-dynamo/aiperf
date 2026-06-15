@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
+    from aiperf.timing.session_tree import SessionTreeRegistry
 
 
 _logger = AIPerfLogger(__name__)
@@ -68,6 +69,7 @@ class CreditIssuer:
         cancellation_policy: RequestCancellationSimulator,
         lifecycle: PhaseLifecycle,
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
+        session_tree_registry: SessionTreeRegistry | None = None,
     ) -> None:
         """Initialize credit issuer.
 
@@ -81,6 +83,11 @@ class CreditIssuer:
             lifecycle: Phase lifecycle for timestamp data.
             url_selection_strategy: Optional URL selection strategy for multi-URL load
                 balancing. If None, url_index will be None in credits.
+            session_tree_registry: Optional per-tree session-slot ledger (agentic
+                replay only). When set and this is the PROFILING phase, a session
+                slot acquired for a root (or a lane credit) opens a tree so the
+                slot is held until the whole tree drains. None elsewhere (legacy
+                per-root-credit release).
         """
         self._phase = phase
         self._stop_checker = stop_checker
@@ -90,6 +97,12 @@ class CreditIssuer:
         self._cancellation_policy = cancellation_policy
         self._lifecycle = lifecycle
         self._url_selection_strategy = url_selection_strategy
+        # Tree accounting is scoped to PROFILING: WARMUP keeps the legacy
+        # in-flight teardown release (warmup credits prime turn k_i and never
+        # reach a final turn, so they spawn no descendants and need no tree).
+        self._session_tree_registry = (
+            session_tree_registry if phase == CreditPhase.PROFILING else None
+        )
 
     def can_acquire_and_start_new_session(self) -> bool:
         """Check if a session slot can be acquired and a new session can be started."""
@@ -97,6 +110,73 @@ class CreditIssuer:
             self._concurrency_manager.session_slot_available(self._phase)
             and self._stop_checker.can_start_new_session()
         )
+
+    async def acquire_lane_credit(
+        self, root_correlation_id: str | None, *, root_pending: bool
+    ) -> bool:
+        """Acquire a session slot held by a trajectory LANE, not by a credit.
+
+        Agentic replay dispatches one lane per ``--concurrency`` unit, but
+        some lanes issue no slot-acquiring depth-0 root credit at PROFILING
+        start: a rootless snapshot (the root's turns are all before t*, so
+        only its background subagents remain) and a parent gated on a child
+        join (deferred until its children complete). Such a lane holds one
+        session slot directly so it still counts toward the configured
+        concurrency, while its subagents/sidecars acquire none (``issue_credit``
+        skips slot acquisition for ``agent_depth > 0``). No prefill slot is
+        taken and nothing is sent on the wire.
+
+        The acquired slot becomes the session TREE's slot: it opens a tree in
+        the ``SessionTreeRegistry`` keyed by ``root_correlation_id`` and is
+        released by the registry when the whole tree drains (not via a separate
+        ``release_lane_credit`` call).
+
+        Args:
+            root_correlation_id: the lane's session-tree root id (the snapshot's
+                shared parent_corr).
+            root_pending: True for a gated parent (a root credit will still run
+                its join turn and reach a terminal turn); False for a truly
+                rootless lane (no root credit ever -- drains on its background
+                subagents alone).
+
+        Returns:
+            True if the slot was acquired and ``can_start_new_session``
+            allowed it, False otherwise.
+        """
+        acquired = await self._concurrency_manager.acquire_session_slot(
+            self._phase, self._stop_checker.can_start_new_session
+        )
+        if (
+            acquired
+            and self._session_tree_registry is not None
+            and root_correlation_id is not None
+        ):
+            self._session_tree_registry.open_tree(
+                root_correlation_id, self._phase, root_pending=root_pending
+            )
+        return acquired
+
+    def _open_session_tree(self, turn: TurnToSend) -> None:
+        """Open a session tree for a root session-start credit just admitted.
+
+        The slot is then held until the whole tree (root + every descendant)
+        drains. No-op when tree accounting is not engaged (non-PROFILING /
+        non-agentic). A root session start is always depth 0, so the tree root
+        id is the root's own ``x_correlation_id``.
+        """
+        if self._session_tree_registry is not None:
+            self._session_tree_registry.open_tree(
+                turn.effective_root_correlation_id, self._phase, root_pending=True
+            )
+
+    def release_lane_credit(self) -> None:
+        """Release a session slot directly (legacy / non-registry path).
+
+        Retained for callers outside the ``SessionTreeRegistry`` flow; under the
+        registry the lane credit's slot is released by the registry when the
+        tree drains, so this is not called on that path.
+        """
+        self._concurrency_manager.release_session_slot(self._phase)
 
     async def issue_credit(self, turn: TurnToSend) -> bool:
         """Issue credit with full precondition checking.
@@ -157,6 +237,7 @@ class CreditIssuer:
             )
             if not acquired:
                 return False
+            self._open_session_tree(turn)
 
         # Prefill concurrency: one slot per request, released when TTFT arrives.
         # Limits concurrent prompt processing which is the GPU-intensive phase.
@@ -210,6 +291,7 @@ class CreditIssuer:
             )
             if not acquired:
                 return None  # No slot - credit not issued
+            self._open_session_tree(turn)
 
         acquired = self._concurrency_manager.try_acquire_prefill_slot(
             self._phase, can_proceed_fn
@@ -260,6 +342,7 @@ class CreditIssuer:
             url_index=url_index,
             agent_depth=turn.agent_depth,
             parent_correlation_id=turn.parent_correlation_id,
+            root_correlation_id=turn.root_correlation_id,
             counts_toward_phase_target=turn.counts_toward_phase_target,
             has_forks=turn.has_forks,
             branch_mode=turn.branch_mode,

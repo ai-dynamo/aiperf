@@ -27,26 +27,6 @@ from tests.unit.timing.strategies.test_agentic_replay_recycle_adversarial import
 
 
 @pytest.mark.asyncio
-async def test_active_traces_uses_counter_for_shared_lanes():
-    trajectories = [
-        Trajectory(conversation_id="trace_0", start_turn_index=0),
-        Trajectory(conversation_id="trace_0", start_turn_index=1),
-    ]
-    ds = _make_dataset(num_traces=1, turns_per_trace=4)
-    issuer = AsyncMock()
-    issuer.issue_credit.return_value = True
-    strategy, _, _ = _make_strategy(
-        phase=CreditPhase.WARMUP,
-        trajectories=trajectories,
-        dataset=ds,
-        issuer=issuer,
-    )
-    await strategy.execute_phase()
-    assert isinstance(strategy._active_traces, Counter)
-    assert strategy._active_traces["trace_0"] == 2
-
-
-@pytest.mark.asyncio
 async def test_lanes_per_trace_reflects_wrap_fill_distribution():
     trajectories = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
@@ -61,51 +41,6 @@ async def test_lanes_per_trace_reflects_wrap_fill_distribution():
         issuer=AsyncMock(),
     )
     assert strategy._lanes_per_trace == Counter({"trace_0": 2, "trace_1": 1})
-
-
-@pytest.mark.asyncio
-async def test_pop_eligible_skips_only_when_all_lanes_busy():
-    trajectories = [
-        Trajectory(conversation_id="trace_0", start_turn_index=0),
-        Trajectory(conversation_id="trace_0", start_turn_index=1),
-    ]
-    ds = _make_dataset(num_traces=1, turns_per_trace=4)
-    issuer = AsyncMock()
-    issuer.issue_credit.return_value = True
-    strategy, _, _ = _make_strategy(
-        phase=CreditPhase.PROFILING,
-        trajectories=trajectories,
-        dataset=ds,
-        issuer=issuer,
-    )
-    await strategy.setup_phase()
-    strategy._active_traces["trace_0"] = 2
-    # All 2 lanes busy: pop returns None.
-    assert strategy._pop_next_eligible_trace() is None
-    # Lane 0 finishes — decrement.
-    strategy._active_traces["trace_0"] -= 1
-    # Now one lane free; same trace eligible.
-    assert strategy._pop_next_eligible_trace() == "trace_0"
-
-
-@pytest.mark.asyncio
-async def test_pop_eligible_old_behavior_preserved_when_no_duplicates():
-    trajectories = [
-        Trajectory(conversation_id="trace_0", start_turn_index=0),
-        Trajectory(conversation_id="trace_1", start_turn_index=0),
-    ]
-    ds = _make_dataset(num_traces=3, turns_per_trace=4)
-    strategy, _, _ = _make_strategy(
-        phase=CreditPhase.PROFILING,
-        trajectories=trajectories,
-        dataset=ds,
-        issuer=AsyncMock(),
-    )
-    await strategy.setup_phase()
-    strategy._active_traces["trace_0"] = 1
-    popped = strategy._pop_next_eligible_trace()
-    # trace_0 capped (1/1) — skip and pop another.
-    assert popped in {"trace_1", "trace_2"}
 
 
 @pytest.mark.asyncio
@@ -130,12 +65,6 @@ async def test_double_recycle_guard_keys_on_correlation_id():
     await strategy.setup_phase()
     strategy._correlation_to_lane["xcorr_a"] = 0
     strategy._correlation_to_lane["xcorr_b"] = 1
-    strategy._active_traces["trace_0"] = 2
-    # Force the recycle pop to pick a DIFFERENT trace_id after lane A finishes,
-    # so trace_0 stays in _in_flight_recycled. Without this, lane_cap=2 and the
-    # post-decrement active=1 makes trace_0 eligible immediately, and the
-    # discard line clears the recycled-set entry — masking the bug.
-    strategy._lanes_per_trace["trace_0"] = 1
 
     final_a = MagicMock()
     final_a.conversation_id = "trace_0"
@@ -171,7 +100,6 @@ async def test_double_recycle_guard_still_fires_on_repeated_correlation_id():
     )
     await strategy.setup_phase()
     strategy._correlation_to_lane["xcorr_a"] = 0
-    strategy._active_traces["trace_0"] = 1
 
     final = MagicMock()
     final.conversation_id = "trace_0"
@@ -184,6 +112,50 @@ async def test_double_recycle_guard_still_fires_on_repeated_correlation_id():
     await strategy.handle_credit_return(final)
     with pytest.raises(RuntimeError, match="Double recycle"):
         await strategy.handle_credit_return(final)
+
+
+@pytest.mark.asyncio
+async def test_recycle_guard_window_is_bounded_fifo():
+    """The double-recycle guard set is FIFO-bounded by RECYCLE_GUARD_MAX_WINDOW.
+
+    Without a bound it retains one entry per recycled session for the entire
+    PROFILING phase (a memory leak on long, high-throughput runs). Once the
+    window is full the oldest recycled correlation_id is evicted; a duplicate
+    still within the window must still raise.
+    """
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    ds = _make_dataset(num_traces=8, turns_per_trace=2)
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    strategy._recycle_guard_max_window = 2
+
+    for i in range(4):
+        corr = f"xcorr_{i}"
+        strategy._correlation_to_lane[corr] = 0
+        await strategy._spawn_from_recycle_or_id(
+            "trace_0", finished_correlation_id=corr
+        )
+
+    # Bounded to the window: oldest two evicted, newest two retained.
+    assert len(strategy._in_flight_recycled) == 2
+    assert "xcorr_0" not in strategy._in_flight_recycled
+    assert "xcorr_1" not in strategy._in_flight_recycled
+    assert "xcorr_2" in strategy._in_flight_recycled
+    assert "xcorr_3" in strategy._in_flight_recycled
+
+    # A duplicate still within the window still raises (guard preserved).
+    strategy._correlation_to_lane["xcorr_3"] = 0
+    with pytest.raises(RuntimeError, match="Double recycle"):
+        await strategy._spawn_from_recycle_or_id(
+            "trace_0", finished_correlation_id="xcorr_3"
+        )
 
 
 @pytest.mark.asyncio

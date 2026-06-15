@@ -254,7 +254,7 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
 
 
 def extract_commands(app: Any) -> list[tuple[str, str]]:
-    """Extract command names and descriptions."""
+    """Extract command names and descriptions, recursing into command groups."""
     skip = {"--help", "-h", "--version"}
     commands = []
     for name, cmd in app._commands.items():
@@ -265,8 +265,26 @@ def extract_commands(app: Any) -> list[tuple[str, str]]:
             help_text = help_text()
         if help_text:
             help_text = _extract_text(help_text).split("\n")[0].strip()
+        # command groups (no default command) are documented via their subcommands
+        if getattr(cmd, "default_command", True) is None:
+            _resolve_lazy_commands(cmd)
+            commands.extend(
+                (f"{name} {sub_name}", sub_help)
+                for sub_name, sub_help in extract_commands(cmd)
+            )
+            continue
         commands.append((name, help_text or ""))
     return commands
+
+
+def _lookup_command(app: Any, cmd_name: str) -> Any:
+    """Resolve a possibly-nested command name like ``analyze swim-lane``."""
+    cmd = app
+    for part in cmd_name.split(" "):
+        cmd = cmd._commands.get(part) if hasattr(cmd, "_commands") else None
+        if cmd is None:
+            return None
+    return cmd
 
 
 def extract_params(app: Any, subcommand: str) -> dict[str, list[Param]]:
@@ -412,7 +430,7 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
         lines.extend(["<hr/>", "", f"## `aiperf {cmd_name}`", ""])
 
         # Command help text
-        cmd = app._commands.get(cmd_name)
+        cmd = _lookup_command(app, cmd_name)
         if cmd and hasattr(cmd, "help"):
             help_text = cmd.help() if callable(cmd.help) else cmd.help
             if help_text:

@@ -75,6 +75,7 @@ from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
@@ -507,6 +508,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.inference_client: InferenceClient = InferenceClient(
             model_endpoint=self.model_endpoint,
             service_id=self.service_id,
+            strip_record_payload_bytes=resolve_strip_record_payload_bytes(
+                self.user_config, self.model_endpoint
+            ),
         )
         self.attach_child_lifecycle(self.inference_client)
         self.debug(
@@ -1092,6 +1096,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             payload_bytes=payload_bytes,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
+            root_correlation_id=credit.effective_root_correlation_id,
             cache_bust_marker=credit.cache_bust_marker,
             cache_bust_target=credit.cache_bust_target
             if credit.cache_bust_marker is not None

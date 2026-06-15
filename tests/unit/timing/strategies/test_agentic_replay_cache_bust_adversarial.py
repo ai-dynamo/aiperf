@@ -30,6 +30,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import Trajectory, TrajectorySource
@@ -60,7 +61,13 @@ def _build_real_trajectory_source(
     ds = _make_dataset(num_traces, turns_per_trace)
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = ds
-    src._dataset_sampler = MagicMock()
+    _roots = [
+        c.conversation_id
+        for c in src._dataset_metadata.conversations
+        if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(_roots) if _roots else MagicMock()
+    src._pool_size = len(_roots)
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
@@ -190,13 +197,8 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
     )
     await strategy.setup_phase()
     await strategy.execute_phase()
-    assert strategy._recycle_queue is not None
-    # Full pool: queue holds all 3 traces at setup (trajectories are running
-    # live; the pop loop in _spawn_from_recycle_or_id skips them via
-    # _active_traces).
-    assert strategy._recycle_queue.qsize() == n
 
-    # Each trace ends -> recycled FIFO. Drive two full passes through the pool.
+    # Each trace ends -> recycled via the sampler. Drive two full passes.
     # Only finalize turns we have not yet finalized: every recycle spawns a
     # NEW credit with a fresh correlation_id, and the double-recycle guard
     # (Task 5: keyed on correlation_id) raises if we replay an already-final
@@ -226,23 +228,19 @@ async def test_recycle_pass_dict_grows_only_to_pool_size():
 
 
 @pytest.mark.asyncio
-async def test_session_marker_dict_pruned_on_queue_empty_recycle():
-    """When ``_recycle_queue`` is None (WARMUP phase), ``_spawn_from_recycle_or_id``
-    early-returns AFTER pruning the finished session's bookkeeping. Locks
-    pruning on this branch as a complement to the stop-checker-reject regression
-    in the existing test file.
+async def test_session_marker_dict_pruned_on_recycle():
+    """``_spawn_from_recycle_or_id`` prunes the finished session's bookkeeping
+    up front, before any later branch (cooldown, empty pool) can short-circuit.
     """
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     user_config = _make_user_config(target=CacheBustTarget.SYSTEM_PREFIX)
     strategy, _, _, _ = _make_strategy(
-        phase=CreditPhase.WARMUP,
+        phase=CreditPhase.PROFILING,
         trajectories=trajectories,
         turns_per_trace=2,
         user_config=user_config,
     )
     await strategy.setup_phase()
-    # WARMUP does not build a recycle queue.
-    assert strategy._recycle_queue is None
 
     # Seed in-flight bookkeeping for a finished session.
     finished_corr = "xcorr-finished"
@@ -275,13 +273,8 @@ async def test_session_marker_dict_pruned_on_metadata_miss_recycle():
         user_config=user_config,
     )
     await strategy.setup_phase()
-    # Full pool: queue holds [trace_0, trace_1] after setup (trajectory is
-    # alive in _execute_profiling at PROFILING start; the pop loop skips it
-    # via _active_traces).
-    assert strategy._recycle_queue is not None
-    assert strategy._recycle_queue.qsize() == 2
 
-    # Force a metadata-lookup miss for the recycled trace_id.
+    # Force a metadata-lookup miss for every recycled trace_id.
     src._metadata_lookup = {}
 
     finished_corr = "xcorr-finished"

@@ -172,9 +172,10 @@ aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl parquet
 When server metrics are enabled and the inference server actually serves Prometheus, the realtime stats block (printed every `--stats-interval` seconds outside `--ui dashboard`) gets an extra `srv` line summarising what the `/metrics` scrape sees right now. Each part is rendered only when its backing metric is present, so the row tells you *which* features the server is exposing at a glance:
 
 ```text
-[realtime 02:30 profiling] rps=12.4 (avg 11.8) tput_in=15234/s tput_out=812/s done=...
-                            ...
-                            srv  prefix_cache_hit=68.3% unique_in_srv=123,456 ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
+[realtime 02:30 profiling]
+  rps=12.4 (avg 11.8)  tput_in=15,234/s  tput_out=812/s  done=...
+  ...
+  srv    prefix_cache_hit=68.3% unique_in_srv=123,456 ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
 ```
 
 | Token | Source metric(s) | Notes |

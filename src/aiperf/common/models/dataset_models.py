@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     ConversationContextMode,
     MediaType,
     MemoryMapFormat,
+    TurnInputKind,
 )
 from aiperf.common.enums.enums import SubagentType
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -158,6 +159,14 @@ class TurnMetadata(AIPerfBaseModel):
             "hit accounting. Pairs with theoretical_prefix_cache_hit_blocks."
         ),
     )
+    input_kind: TurnInputKind | None = Field(
+        default=None,
+        description=(
+            "Classification of what produced this turn's new input: genuine "
+            "user/agent text input vs tool-result continuation. None when the "
+            "dataset loader did not provide the signal."
+        ),
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -263,6 +272,15 @@ class Turn(AIPerfBaseModel):
             "hit accounting for this turn."
         ),
     )
+    input_kind: TurnInputKind | None = Field(
+        default=None,
+        description=(
+            "Classification of what produced this turn's new input: genuine "
+            "user/agent text input vs tool-result continuation. Set by trace "
+            "loaders whose source records the signal (weka input_types/stop); "
+            "None otherwise."
+        ),
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -280,62 +298,7 @@ class Turn(AIPerfBaseModel):
             theoretical_prefix_cache_total_blocks=(
                 self.theoretical_prefix_cache_total_blocks
             ),
-        )
-
-    def copy_with_stripped_media(self) -> "Turn":
-        """Create a copy of this turn with multimodal data replaced by placeholders.
-
-        This preserves text data (needed for tokenization) and raw messages/tools
-        (needed for API payload reconstruction) but replaces potentially large
-        image/audio/video contents with small placeholder strings. This is
-        more efficient than a full deep copy followed by stripping.
-
-        Returns:
-            A new Turn with stripped multimodal contents and messages.
-        """
-        return Turn(
-            model=self.model,
-            role=self.role,
-            timestamp=self.timestamp,
-            delay=self.delay,
-            max_tokens=self.max_tokens,
-            raw_messages=list(self.raw_messages)
-            if self.raw_messages is not None
-            else None,
-            raw_tools=list(self.raw_tools) if self.raw_tools is not None else None,
-            texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
-            images=[
-                Image(
-                    name=img.name,
-                    contents=[f"image_{i}" for i in range(len(img.contents))],
-                )
-                for img in self.images
-            ],
-            audios=[
-                Audio(
-                    name=aud.name,
-                    contents=[f"audio_{i}" for i in range(len(aud.contents))],
-                )
-                for aud in self.audios
-            ],
-            videos=[
-                Video(
-                    name=vid.name,
-                    contents=[f"video_{i}" for i in range(len(vid.contents))],
-                )
-                for vid in self.videos
-            ],
-            raw_payload=self.raw_payload,
-            extra_body=self.extra_body,
-            branch_ids=list(self.branch_ids),
-            prerequisites=list(self.prerequisites),
-            audio_duration_seconds=self.audio_duration_seconds,
-            theoretical_prefix_cache_hit_blocks=(
-                self.theoretical_prefix_cache_hit_blocks
-            ),
-            theoretical_prefix_cache_total_blocks=(
-                self.theoretical_prefix_cache_total_blocks
-            ),
+            input_kind=self.input_kind,
         )
 
 

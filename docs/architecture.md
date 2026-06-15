@@ -151,7 +151,7 @@ The over-the-wire credit is the `Credit` msgspec struct in `src/aiperf/credit/st
 
 - **Identity**: a sequential `id`, the `phase` it belongs to (`CreditPhase.WARMUP` or `CreditPhase.PROFILING`), and the `issued_at_ns` wall-clock timestamp.
 - **What to send**: a `conversation_id` (template ID in the dataset) plus `turn_index` / `num_turns` so the worker knows *which turn of which conversation* this credit pays for. The worker reads the actual prompt text from the memory-mapped dataset using these keys — payloads are never on the credit itself.
-- **Where to route**: an `x_correlation_id` (conversation instance ID) used by the `StickyCreditRouter` to pin all turns of one conversation to the same worker for KV-cache locality. DAG sub-agents additionally carry `parent_correlation_id`, `agent_depth`, `has_forks`, and `branch_mode`.
+- **Where to route**: an `x_correlation_id` (conversation instance ID) used by the `StickyCreditRouter` to pin all turns of one conversation to the same worker for KV-cache locality. DAG sub-agents additionally carry `parent_correlation_id`, `agent_depth`, `has_forks`, `branch_mode`, and `root_correlation_id` (the depth-0 root's id, shared by every node of a session **tree** — see [Session-tree concurrency](#session-tree-concurrency-agentic-replay)).
 - **Optional shaping**: `cancel_after_ns` (for simulated client disconnects), `url_index` (multi-URL load balancing), `cache_bust_marker` / `cache_bust_target` (prefix-cache busting).
 
 A credit is therefore *one request worth of intent*, not a whole multi-turn conversation. A 5-turn conversation is 5 credits; a parent turn that forks 3 children produces 1 + 3 credits.
@@ -196,7 +196,7 @@ The `CreditIssuer` is timing-mode agnostic; the strategy in `src/aiperf/timing/s
 
 - `--num-conversations N` caps the **number of distinct conversation instances** that ever start (via the session slot, acquired only on first-turn credits). Each conversation still issues one credit per turn.
 - `--request-count N` caps **total credits issued in the profile phase**, recycling the dataset to refill idle session slots while long traces sit in `delay_ms` waits — see the gotcha in `docs/benchmark-modes/`.
-- `--concurrency N` caps **in-flight credits** by sizing the prefill slot pool; the issuer simply blocks on `acquire_prefill_slot` when full, providing natural backpressure when the server slows.
+- `--concurrency N` sizes the **session slot pool** — the maximum number of sessions live at once; the issuer blocks on `acquire_session_slot` when full, providing natural backpressure. For agentic replay each session slot is a whole session **tree** (root + all its subagents), held until the entire tree drains (see [Session-tree concurrency](#session-tree-concurrency-agentic-replay)). (`--prefill-concurrency` separately bounds requests in the prefill stage.)
 
 #### Why This Design
 
@@ -227,11 +227,17 @@ This section describes the end-to-end message flow during a benchmark run, showi
 
 AIPerf supports **conversation forking** as a first-class primitive: a parent turn may declare one or more `forks` (FORK mode, sticky-routed for prefix-cache locality) or `spawns` (SPAWN mode, routed freely). When the parent turn completes, child sessions are created and dispatched concurrently. FORK children are seeded with a clone of the parent's accumulated message history so the server sees prefix reuse; SPAWN children start with empty history. This enables benchmarks where one turn's response feeds multiple parallel continuations that share a prefix on the server — the shape required by prefix-cache and KV-aware-routing studies.
 
-The `BranchOrchestrator` lives in `src/aiperf/timing/branch_orchestrator.py`, alongside `ConversationSource` (in `conversation_source.py`) and the timing strategies, and is wired into `src/aiperf/credit/callback_handler.py`, invoked before the strategy's `handle_credit_return` call. When `orchestrator.intercept(credit)` returns `True`, the credit is consumed for a branch burst rather than the strategy's default next-turn dispatch. Children never acquire a session slot (`CreditIssuer` sets `needs_session_slot = is_first_turn and not is_child`); the parent's slot is released only once the DAG has fully drained.
+The `BranchOrchestrator` lives in `src/aiperf/timing/branch_orchestrator.py`, alongside `ConversationSource` (in `conversation_source.py`) and the timing strategies, and is wired into `src/aiperf/credit/callback_handler.py`, invoked before the strategy's `handle_credit_return` call. When `orchestrator.intercept(credit)` returns `True`, the credit is consumed for a branch burst rather than the strategy's default next-turn dispatch. Children never acquire a session slot of their own (`CreditIssuer` sets `needs_session_slot = is_session_start and not is_child`); they inherit the root's slot and are tracked by the orchestrator's per-parent join/descendant bookkeeping.
 
 FORK-mode sticky routing keys on `parent_correlation_id` so every descendant of a given root is sticky-routed to the **same worker** as the root, exposing Phase-1 prefix reuse and KV-aware routing on the server. SPAWN-mode children route freely.
 
 Stats flow out of the Timing Manager via `CreditPhaseCompleteMessage` (carrying `BranchStats` counters: `children_spawned`, `children_completed`, `children_errored`, `parents_suspended`, `parents_resumed`). Existing per-request metrics are tagged with `agent_depth` so post-hoc analysis can distinguish root vs child load.
+
+#### Session-tree concurrency (agentic replay)
+
+In agentic replay a "session" is not a single root conversation — it is a whole **tree**: a depth-0 root plus every subagent it spawns, recursively (children, subchildren, background `::fa:` flat-async streams, `::aux:` sidecars). `--concurrency N` means N such trees live at any instant.
+
+`SessionTreeRegistry` (`src/aiperf/timing/session_tree.py`) owns this. It holds **exactly one session slot per tree**, keyed by `root_correlation_id` — the depth-0 root's `x_correlation_id`, which every node of the tree inherits and which is persisted in `profile_export.jsonl`. The slot is released **once, when the whole tree drains**: the root has sent its terminal turn **and** every descendant has terminally completed. The physical slot is still acquired by `CreditIssuer`/`ConcurrencyManager` (so the session semaphore hard-caps occupancy at `--concurrency`); the registry only owns the *release* decision, and on release fires a drain callback so the freed lane recycles into a fresh root. This makes a background subagent that outlives its root keep the lane's slot — preventing a new root from starting early and pushing live trees above N. Lanes that begin with no dispatchable root (a *rootless* snapshot whose root is all before the sampled `t*`, or a *gated* parent waiting on a child join) hold the same per-tree slot via a lane credit. The registry is engaged for agentic-replay PROFILING only; other timing modes keep the per-root-credit release.
 
 See:
 - [DAG Benchmarking (Sub-Agents)](benchmark-modes/dag.md) — user-facing guide and example.

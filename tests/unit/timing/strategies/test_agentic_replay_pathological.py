@@ -31,14 +31,13 @@ probes exactly one thing:
       (characterization).
     * wrap-fill + cache_bust=NONE emits the byte-identical-traffic warning;
       non-NONE suppresses it (characterization).
-    * snapshot terminal-root immediate-recycle rotates the cache-bust marker
-      pass for the FRESH session while the warmed terminal root keeps pass=0
+    * snapshot single-turn root sampled at t* == turn-0 ts (n == 0) profiles
+      its own turn 0 with a minted marker instead of recycling at startup
       (characterization).
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -56,6 +55,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -92,7 +92,13 @@ def _build_real_trajectory_source(
 ) -> TrajectorySource:
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = dataset
-    src._dataset_sampler = MagicMock()
+    _roots = [
+        c.conversation_id
+        for c in src._dataset_metadata.conversations
+        if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(_roots) if _roots else MagicMock()
+    src._pool_size = len(_roots)
     src._metadata_lookup = {c.conversation_id: c for c in dataset.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
@@ -174,150 +180,6 @@ def _rid(marker: str | None) -> str | None:
     return m.group(0) if m else None
 
 
-def _drain(queue: asyncio.Queue[str]) -> list[str]:
-    items: list[str] = []
-    while not queue.empty():
-        items.append(queue.get_nowait())
-    return items
-
-
-# =============================================================================
-# CONFIRMED BUG: recycle-pool trace LEAK on unspawnable popped trace
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_recycle_pop_missing_metadata_trace_not_dropped_from_pool() -> None:
-    """A popped trace whose session cannot be built must NOT vanish from the pool.
-
-    Invariant: the recycle queue's set of eligible trace_ids is conserved across
-    a recycle attempt (a trace temporarily unspawnable should remain available),
-    just as the finished trace is re-enqueued. Otherwise a single degenerate
-    trace silently erodes pool diversity for the rest of the phase.
-    """
-    ds = _make_dataset(num_traces=2, turns_per_trace=2)
-    strategy, issuer, _, _ = _make_strategy(
-        phase=CreditPhase.PROFILING,
-        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
-        dataset=ds,
-    )
-    await strategy.setup_phase()
-
-    # Replace the recycle queue so only the broken trace_1 is eligible to pop,
-    # and keep trace_0 perpetually active (cap 2) so the pop loop skips it.
-    _drain(strategy._recycle_queue)
-    del strategy.conversation_source._metadata_lookup["trace_1"]
-    strategy._recycle_queue.put_nowait("trace_1")
-    strategy._active_traces["trace_0"] = 2
-    strategy._lanes_per_trace["trace_0"] = 2
-    strategy._correlation_to_lane["finished"] = 0
-
-    await strategy._spawn_from_recycle_or_id(
-        "trace_0", finished_correlation_id="finished"
-    )
-
-    remaining = _drain(strategy._recycle_queue)
-    # trace_1 was popped, could not spawn, and must still be in the pool.
-    assert "trace_1" in remaining, (
-        f"unspawnable popped trace was permanently dropped; remaining={remaining}"
-    )
-    # No new credit issued (nothing spawnable this round).
-    assert issuer.issue_credit.await_count == 0
-
-
-@pytest.mark.asyncio
-async def test_recycle_pop_empty_turns_trace_not_dropped_from_pool() -> None:
-    """A popped trace with zero turns must not be silently dropped from the pool."""
-    ds = DatasetMetadata(
-        conversations=[
-            ConversationMetadata(
-                conversation_id="trace_0", turns=[TurnMetadata(), TurnMetadata()]
-            ),
-            # Zero-turn trace: build_turn would be unspawnable.
-            ConversationMetadata(conversation_id="trace_empty", turns=[]),
-        ],
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
-    strategy, _, _, _ = _make_strategy(
-        phase=CreditPhase.PROFILING,
-        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
-        dataset=ds,
-    )
-    await strategy.setup_phase()
-    _drain(strategy._recycle_queue)
-    strategy._recycle_queue.put_nowait("trace_empty")
-    strategy._active_traces["trace_0"] = 2
-    strategy._lanes_per_trace["trace_0"] = 2
-    strategy._correlation_to_lane["finished"] = 0
-
-    await strategy._spawn_from_recycle_or_id(
-        "trace_0", finished_correlation_id="finished"
-    )
-
-    remaining = _drain(strategy._recycle_queue)
-    assert "trace_empty" in remaining, (
-        f"zero-turn popped trace permanently dropped; remaining={remaining}"
-    )
-
-
-# =============================================================================
-# Characterization: _pop_next_eligible_trace bound + FIFO order
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_pop_next_eligible_all_active_returns_none_and_preserves_queue() -> None:
-    """When every queued trace is at lane capacity, the pop loop terminates.
-
-    Bounded by the initial qsize (no busy-loop). All skipped traces are
-    re-enqueued in FIFO order, so the queue is returned intact.
-    """
-    ds = _make_dataset(num_traces=3, turns_per_trace=2)
-    strategy, _, _, _ = _make_strategy(
-        phase=CreditPhase.PROFILING,
-        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
-        dataset=ds,
-    )
-    await strategy.setup_phase()
-    for tid in ("trace_0", "trace_1", "trace_2"):
-        strategy._active_traces[tid] = 1  # default lane cap is 1
-
-    result = strategy._pop_next_eligible_trace()
-
-    assert result is None
-    # Order and size preserved (FIFO rotation of skipped traces).
-    assert _drain(strategy._recycle_queue) == ["trace_0", "trace_1", "trace_2"]
-
-
-# =============================================================================
-# Characterization: _active_traces self-heal on unknown / zero-count trace
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_spawn_unknown_trace_does_not_leak_negative_active_count() -> None:
-    """Decrementing _active_traces for a trace that was never tracked self-heals.
-
-    Counter[missing] reads 0, -=1 yields -1, then the <=0 guard deletes the key,
-    so no spurious negative count survives. The missing lane entry falls back to
-    lane 0, letting recycle progress against the head of the real pool.
-    """
-    ds = _make_dataset(num_traces=2, turns_per_trace=2)
-    strategy, _, _, _ = _make_strategy(
-        phase=CreditPhase.PROFILING,
-        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
-        dataset=ds,
-    )
-    await strategy.setup_phase()
-
-    await strategy._spawn_from_recycle_or_id(
-        "never_tracked", finished_correlation_id="never_seen"
-    )
-
-    assert "never_tracked" not in strategy._active_traces
-    assert all(count >= 0 for count in strategy._active_traces.values())
-
-
 # =============================================================================
 # Characterization: double-recycle guard + lane-0 fallback interaction
 # =============================================================================
@@ -339,7 +201,6 @@ async def test_duplicate_final_turn_for_same_correlation_raises_runtime_error() 
     )
     await strategy.setup_phase()
     strategy._correlation_to_lane["xc1"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     final = _make_credit(
         conversation_id="trace_0", turn_index=1, num_turns=2, x_correlation_id="xc1"
@@ -463,11 +324,11 @@ async def test_child_overflow_with_no_orchestrator_still_prunes_bookkeeping() ->
 
 
 @pytest.mark.asyncio
-async def test_setup_recycle_pool_excludes_non_root_children() -> None:
-    """The PROFILING recycle pool draws only is_root conversations.
+async def test_recycle_excludes_non_root_children() -> None:
+    """Recycle draws only is_root conversations from the sampler.
 
-    DAG child conversations (is_root=False) must never enter the recycle queue;
-    they are reachable only via their parent's branches, and spawning a fresh
+    DAG child conversations (is_root=False) must never be spawned as fresh
+    roots; they are reachable only via their parent's branches, and a fresh
     root session from a child trace_id would replay a partial context.
     """
     ds = DatasetMetadata(
@@ -495,9 +356,11 @@ async def test_setup_recycle_pool_excludes_non_root_children() -> None:
     )
     await strategy.setup_phase()
 
-    queued = _drain(strategy._recycle_queue)
-    assert queued == ["root_0", "root_1"]
-    assert "root_0::sa" not in queued
+    seen = {
+        strategy.conversation_source.next_recycle_conversation_id() for _ in range(6)
+    }
+    assert seen == {"root_0", "root_1"}
+    assert "root_0::sa" not in seen
 
 
 # =============================================================================
@@ -564,12 +427,12 @@ def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
 
 
 @pytest.mark.asyncio
-async def test_snapshot_terminal_root_recycle_rotates_marker_for_fresh_session() -> (
-    None
-):
-    """A snapshot whose warmed root is already at its last turn recycles
-    immediately in PROFILING; the FRESH recycled session gets a rotated marker
-    (recycle_pass advances), while the terminal root retained its warmup pass=0.
+async def test_snapshot_single_turn_root_profiles_own_turn_zero_with_marker() -> None:
+    """A single-turn root sampled at t* == its turn-0 timestamp (n == 0) has
+    nothing to warm, so PROFILING measures its own turn 0 rather than
+    recycling at startup. The dispatched credit keeps the snapshot's own
+    correlation id and carries a minted cache-bust marker; recycle (and its
+    marker rotation) happens only later on the turn's completion.
     """
     ds = DatasetMetadata(
         conversations=[
@@ -581,7 +444,7 @@ async def test_snapshot_terminal_root_recycle_rotates_marker_for_fresh_session()
     )
     root_state = ConversationState(
         conversation_id="trace_0",
-        x_correlation_id="warmed-root",
+        x_correlation_id="snap-root",
         next_turn_index=0,
     )
     trajectory = Trajectory(
@@ -609,9 +472,10 @@ async def test_snapshot_terminal_root_recycle_rotates_marker_for_fresh_session()
     await strategy.execute_phase()
 
     assert len(issued) == 1
-    fresh = issued[0]
-    # The dispatched session is the recycled one (fresh uuid, not the warmed id).
-    assert fresh.x_correlation_id != "warmed-root"
-    # recycle_pass advanced past the warmed root's pass=0.
-    assert strategy._recycle_pass["trace_0"] == 1
-    assert _rid(fresh.cache_bust_marker) is not None
+    profiled = issued[0]
+    # The snapshot's own session profiles turn 0 (no startup recycle).
+    assert profiled.x_correlation_id == "snap-root"
+    assert profiled.turn_index == 0
+    # No recycle yet -> pass counter has not advanced for a fresh session.
+    assert strategy._recycle_pass.get("trace_0", 0) == 0
+    assert _rid(profiled.cache_bust_marker) is not None

@@ -9,6 +9,7 @@ Tests the phase-aware trajectory dispatch (WARMUP) and resume-at-k+1 + recycle
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -23,6 +24,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -54,20 +56,27 @@ def _build_real_trajectory_source(
     num_traces: int,
     turns_per_trace: int,
     trajectories: list[Trajectory],
+    dataset: DatasetMetadata | None = None,
 ) -> TrajectorySource:
     """Build a real TrajectorySource with deterministic trajectories.
 
     We construct the source via __new__ + manual init so we control the
     trajectories exactly (avoid randomization in tests).
     """
-    ds = _make_dataset(num_traces, turns_per_trace)
+    ds = dataset if dataset is not None else _make_dataset(num_traces, turns_per_trace)
 
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = ds
-    src._dataset_sampler = MagicMock()
+    # Recycle draws roots from this sampler; use a real SequentialSampler over
+    # the root pool so recycle exercises the production round-robin path.
+    root_ids = [
+        c.conversation_id for c in ds.conversations if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(root_ids) if root_ids else MagicMock()
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
+    src._pool_size = len(root_ids)
     src.trajectories = list(trajectories)
     return src
 
@@ -81,8 +90,11 @@ def _make_strategy(
     issuer: AsyncMock | None = None,
     scheduler: MagicMock | None = None,
     user_config: object | None = None,
+    dataset: DatasetMetadata | None = None,
 ) -> tuple[AgenticReplayStrategy, AsyncMock, MagicMock, TrajectorySource]:
-    src = _build_real_trajectory_source(num_traces, turns_per_trace, trajectories)
+    src = _build_real_trajectory_source(
+        num_traces, turns_per_trace, trajectories, dataset=dataset
+    )
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = len(trajectories)
@@ -216,19 +228,22 @@ async def test_warmup_dispatch_uses_start_turn_index():
 
 
 @pytest.mark.asyncio
-async def test_warmup_snapshot_subagent_counts_toward_phase_target():
+async def test_warmup_warms_every_active_session_including_gated_parent():
+    """Every session mid-flight at t* is warmed at its turn n-1: the
+    mid-flight subagent (turn 0) AND the gated parent (turn 1, priming its
+    join turn). Both count toward the warmup barrier."""
     parent_state = ConversationState(
         conversation_id="trace_0",
         x_correlation_id="parent",
-        next_turn_index=1,
+        next_turn_index=2,
         agent_depth=0,
         waiting_on_children=True,
-        join_target_turn_index=1,
+        join_target_turn_index=2,
     )
     child_state = ConversationState(
         conversation_id="trace_1",
         x_correlation_id="child",
-        next_turn_index=0,
+        next_turn_index=1,  # mid-flight: turn 0 < t*, turn 1 >= t*
         agent_depth=1,
         parent_correlation_id="parent",
         branch_mode=ConversationBranchMode.SPAWN,
@@ -236,7 +251,7 @@ async def test_warmup_snapshot_subagent_counts_toward_phase_target():
     trajectories = [
         Trajectory(
             conversation_id="trace_0",
-            start_turn_index=1,
+            start_turn_index=2,
             snapshot=TrajectorySnapshot(
                 t_star_ms=0.0,
                 states=(parent_state, child_state),
@@ -251,7 +266,7 @@ async def test_warmup_snapshot_subagent_counts_toward_phase_target():
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
-    strategy, _, _, _ = _make_strategy(
+    strategy, _, _, src = _make_strategy(
         phase=CreditPhase.WARMUP,
         trajectories=trajectories,
         issuer=issuer,
@@ -260,10 +275,255 @@ async def test_warmup_snapshot_subagent_counts_toward_phase_target():
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    assert len(issued) == 1
-    assert issued[0].conversation_id == "trace_1"
-    assert issued[0].agent_depth == 1
-    assert issued[0].counts_toward_phase_target is True
+    # Gated parent warmed at turn 1 (n-1); mid-flight child at turn 0 (n-1).
+    by_cid = {t.conversation_id: t for t in issued}
+    assert set(by_cid) == {"trace_0", "trace_1"}
+    assert by_cid["trace_0"].turn_index == 1  # gated parent's last-before-t*
+    assert by_cid["trace_1"].turn_index == 0  # mid-flight child's last-before-t*
+    assert by_cid["trace_1"].agent_depth == 1
+    assert all(t.counts_toward_phase_target for t in issued)
+    assert src.warmup_credit_count == 2
+
+
+@pytest.mark.asyncio
+async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
+    """By default (spread), warmup aligns GLOBALLY across trajectories so every
+    trajectory's t* lands at the same instant.
+
+    Three trajectories, each one mid-flight root whose warmup request fired a
+    different lead before its own t*: 5s, 15s, 10s. The furthest-before-t*
+    (15s) fires immediately at warmup-time 0, the 10s one 5s later, the 5s one
+    10s later -- dispatch offset = max_lead(15s) - lead. Total spread = 10s
+    (15s - 5s). This is the exact example from the design discussion.
+    """
+
+    # (conversation_id, x_corr, t*, warm_ts) -> lead = t* - warm_ts.
+    lanes = [
+        ("t_a", "r_a", 5_000.0, 0.0),  # lead 5s
+        ("t_b", "r_b", 15_000.0, 0.0),  # lead 15s (furthest before t*)
+        ("t_c", "r_c", 10_000.0, 0.0),  # lead 10s
+    ]
+    convs = [
+        ConversationMetadata(
+            conversation_id=cid,
+            turns=[
+                TurnMetadata(timestamp_ms=warm_ts),  # turn 0: warmup (before t*)
+                TurnMetadata(timestamp_ms=t_star + 1_000.0),  # turn 1: profiled
+            ],
+        )
+        for cid, _, t_star, warm_ts in lanes
+    ]
+    ds = DatasetMetadata(
+        conversations=convs,
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id=cid,
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=t_star,
+                states=(
+                    ConversationState(
+                        conversation_id=cid,
+                        x_correlation_id=xc,
+                        next_turn_index=1,  # mid-flight: warmup turn = 0
+                    ),
+                ),
+            ),
+        )
+        for cid, xc, t_star, _ in lanes
+    ]
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = trajectories
+
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.x_correlation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[tuple[float, object]] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
+        (delay, coro)
+    )
+    lifecycle = MagicMock()
+    lifecycle.is_sending_complete = False
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.WARMUP
+    cfg.concurrency = 3
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=lifecycle,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # The furthest-before-t* request (r_b, lead 15s) fires immediately at t=0.
+    assert issued == ["r_b"]
+    # r_c (lead 10s) at 5s; r_a (lead 5s) at 10s. Total spread = 10s.
+    delay_by_corr = {}
+    for delay, coro in scheduled:
+        await coro  # drains -> appends to issued
+        delay_by_corr[issued[-1]] = delay
+    assert delay_by_corr["r_c"] == pytest.approx(5.0)
+    assert delay_by_corr["r_a"] == pytest.approx(10.0)
+    assert set(issued) == {"r_a", "r_b", "r_c"}
+
+    # Spread path must NOT mark sending complete early (would refuse the
+    # scheduled dispatches); the count path drives completion.
+    lifecycle.mark_sending_complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warmup_lead_clamped_to_idle_gap_cap():
+    """A per-conversation idle far exceeding the idle-gap cap is clamped so the
+    warmup spread stays bounded by the cap, not the raw multi-hour idle.
+
+    Two lanes: one warmed ~10s before its t*, one idle ~3h before its t*. With
+    a 60s cap, the 3h lead clamps to 60s -> spread = 60 - 10 = 50s, not ~3h.
+    """
+    lanes = [
+        ("t_near", "near", 10_000.0, 0.0),  # lead 10s
+        ("t_idle", "idle", 10_800_000.0, 0.0),  # lead 3h -> clamps to cap
+    ]
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=cid,
+                turns=[
+                    TurnMetadata(timestamp_ms=warm_ts),
+                    TurnMetadata(timestamp_ms=t_star + 1_000.0),
+                ],
+            )
+            for cid, _, t_star, warm_ts in lanes
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id=cid,
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=t_star,
+                states=(
+                    ConversationState(
+                        conversation_id=cid, x_correlation_id=xc, next_turn_index=1
+                    ),
+                ),
+            ),
+        )
+        for cid, xc, t_star, _ in lanes
+    ]
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = trajectories
+
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.x_correlation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[float] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda d, c: scheduled.append(d)
+    lifecycle = MagicMock()
+    lifecycle.is_sending_complete = False
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.WARMUP
+    cfg.concurrency = 2
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=lifecycle,
+    )
+    # Idle-gap cap of 60s (what the agentx scenario sets).
+    strategy._phase_offset_cap_ms = 60_000.0
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # idle lane's lead clamped 10800s -> 60s, so it is furthest-before-t* and
+    # fires at 0; near lane (lead 10s) fires (60 - 10) = 50s later.
+    assert issued == ["idle"]
+    assert scheduled == [pytest.approx(50.0)]
+
+
+@pytest.mark.asyncio
+async def test_warmup_skips_pending_start_child():
+    """A child whose recorded first request is after t* is not warmed.
+
+    The server had not seen the stream at the snapshot instant, so warming
+    its turn 0 would both fire it early and let the profiling continuation
+    advance past a single-turn child entirely. ``warmup_credit_count`` must
+    agree with the dispatch loop (the warmup barrier re-anchors to it).
+    """
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root",
+        next_turn_index=1,
+        agent_depth=0,
+    )
+    pending_child = ConversationState(
+        conversation_id="trace_0::sa:a",
+        x_correlation_id="kid",
+        next_turn_index=0,
+        next_dispatch_offset_ms=76_000.0,
+        agent_depth=1,
+        parent_correlation_id="root",
+        branch_id="b0",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=10_000.0,
+                states=(root_state, pending_child),
+            ),
+        )
+    ]
+    issued = []
+
+    async def capture(turn):
+        issued.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _, src = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        issuer=issuer,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert [t.conversation_id for t in issued] == ["trace_0"]
+    assert src.warmup_credit_count == 1
 
 
 @pytest.mark.asyncio
@@ -309,30 +569,36 @@ def test_report_warmup_failures_silent_when_no_failures():
 
 
 @pytest.mark.asyncio
-async def test_profiling_setup_seeds_recycle_queue_with_full_pool():
-    """PROFILING setup seeds the recycle queue with the FULL dataset pool
-    (including trajectory trace_ids). The pop loop in
-    ``_spawn_from_recycle_or_id`` skips trace_ids whose session is currently
-    active, so duplicate concurrent sessions are still avoided."""
+async def test_profiling_recycle_cycles_full_root_pool_in_sampler_order():
+    """PROFILING recycle draws roots from the dataset sampler, so it cycles
+    through the FULL root pool (sequential -> dataset order) then wraps -- every
+    root is reused equally instead of a strategy-side queue favoring some."""
     trajectories = [
         Trajectory(conversation_id="trace_0", start_turn_index=0),
         Trajectory(conversation_id="trace_2", start_turn_index=1),
     ]
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
         trajectories=trajectories,
         num_traces=5,  # trace_0..trace_4
+        issuer=issuer,
     )
+    strategy.stop_checker.can_start_new_session.return_value = True
     await strategy.setup_phase()
 
-    queue = strategy._recycle_queue
-    assert queue is not None
-    queued: list[str] = []
-    while not queue.empty():
-        queued.append(queue.get_nowait())
+    for _ in range(10):
+        await strategy._dispatch_recycled_on_lane(0)
 
-    # Full pool in iteration order from dataset_metadata.conversations.
-    assert queued == ["trace_0", "trace_1", "trace_2", "trace_3", "trace_4"]
+    # Two full round-robin passes over the 5 roots, in dataset order.
+    assert issued == ["trace_0", "trace_1", "trace_2", "trace_3", "trace_4"] * 2
 
 
 @pytest.mark.asyncio
@@ -454,16 +720,20 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
         lifecycle=MagicMock(),
         branch_orchestrator=branch_orchestrator,
     )
+    strategy._burst_phase_starts = True  # exercise the burst (T0-normalize) path
 
     await strategy.setup_phase()
     await strategy.execute_phase()
 
     branch_orchestrator.seed_snapshot.assert_called_once()
+    # Child is the only dispatchable stream -> it anchors T0 and fires
+    # immediately (no schedule), profiling its own next_turn_index = 1
+    # (turn 0 was warmed during WARMUP).
     scheduler.schedule_later.assert_not_called()
     assert issued == [
         (
             "trace_0::sa:0",
-            2,
+            1,
             1,
             "child",
             branch_orchestrator.seed_snapshot.call_args.args[0][
@@ -478,23 +748,37 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     assert seeded_states[1].parent_correlation_id == seeded_states[0].x_correlation_id
 
 
-def test_snapshot_continuation_unblocks_parent_after_terminal_child_warmup():
+@pytest.mark.asyncio
+async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
+    """With --burst-phase-starts, profiling anchors the trajectory's earliest
+    post-t* request at time 0 and preserves every other request's recorded
+    relative offset.
+
+    Two pending-start subagent chains spawn after t* under a gated parent.
+    The earlier one (offset 20s from t*) fires immediately; the later one
+    (offset 95s) fires 75s into profiling -- the recorded gap between them.
+    The gated parent is not dispatched (its join fires when children drain).
+    """
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
                 conversation_id="trace_0",
                 turns=[
                     TurnMetadata(timestamp_ms=0.0),
-                    TurnMetadata(timestamp_ms=12000.0),
-                    TurnMetadata(timestamp_ms=20000.0),
+                    TurnMetadata(timestamp_ms=12_000.0),
+                    TurnMetadata(timestamp_ms=200_000.0),
                 ],
             ),
             ConversationMetadata(
-                conversation_id="trace_0::sa:0",
-                turns=[
-                    TurnMetadata(timestamp_ms=13000.0),
-                    TurnMetadata(timestamp_ms=14000.0),
-                ],
+                conversation_id="trace_0::sa:a:fa:000",
+                turns=[TurnMetadata(timestamp_ms=33_000.0)],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::sa:a:fa:001",
+                turns=[TurnMetadata(timestamp_ms=108_000.0)],
                 is_root=False,
                 agent_depth=1,
                 parent_conversation_id="trace_0",
@@ -502,30 +786,43 @@ def test_snapshot_continuation_unblocks_parent_after_terminal_child_warmup():
         ],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=2,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    # t* = 13_000: child A first request 20s out, child B 95s out.
+    child_a = ConversationState(
+        conversation_id="trace_0::sa:a:fa:000",
+        x_correlation_id="kid-a",
+        next_turn_index=0,
+        next_dispatch_offset_ms=20_000.0,
+        agent_depth=1,
+        parent_correlation_id="parent",
+        join_target_turn_index=2,
+        branch_id="b0",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    child_b = ConversationState(
+        conversation_id="trace_0::sa:a:fa:001",
+        x_correlation_id="kid-b",
+        next_turn_index=0,
+        next_dispatch_offset_ms=95_000.0,
+        agent_depth=1,
+        parent_correlation_id="parent",
+        join_target_turn_index=2,
+        branch_id="b0",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
     trajectory = Trajectory(
         conversation_id="trace_0",
         start_turn_index=2,
         snapshot=TrajectorySnapshot(
-            t_star_ms=13500.0,
-            states=(
-                ConversationState(
-                    conversation_id="trace_0",
-                    x_correlation_id="parent",
-                    next_turn_index=2,
-                    waiting_on_children=True,
-                    join_target_turn_index=2,
-                ),
-                ConversationState(
-                    conversation_id="trace_0::sa:0",
-                    x_correlation_id="child",
-                    next_turn_index=1,
-                    agent_depth=1,
-                    parent_correlation_id="parent",
-                    join_target_turn_index=2,
-                    branch_id="b0",
-                    branch_mode=ConversationBranchMode.SPAWN,
-                ),
-            ),
+            t_star_ms=13_000.0,
+            states=(parent_state, child_a, child_b),
         ),
     )
     src = TrajectorySource.__new__(TrajectorySource)
@@ -534,30 +831,415 @@ def test_snapshot_continuation_unblocks_parent_after_terminal_child_warmup():
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src.trajectories = [trajectory]
 
+    issued: list[tuple[str, int]] = []
+
+    async def capture(turn):
+        issued.append((turn.conversation_id, turn.turn_index))
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[tuple[float, object]] = []
+
+    def fake_schedule_later(delay, coro):
+        scheduled.append((delay, coro))
+
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = fake_schedule_later
+    branch_orchestrator = MagicMock()
+
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+        branch_orchestrator=branch_orchestrator,
+    )
+    strategy._burst_phase_starts = True  # exercise the burst (T0-normalize) path
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # Earliest child (T0 anchor) fires immediately; parent gated (not sent).
+    assert issued == [("trace_0::sa:a:fa:000", 0)]
+    # Later child scheduled 75s in (95s - 20s recorded gap).
+    assert [delay for delay, _ in scheduled] == [pytest.approx(75.0)]
+    for _, coro in scheduled:
+        await coro
+    assert issued == [("trace_0::sa:a:fa:000", 0), ("trace_0::sa:a:fa:001", 0)]
+
+    # All three states seeded; parent stays gated until both children drain.
+    seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
+    assert [s.x_correlation_id for s in seeded_states] == ["parent", "kid-a", "kid-b"]
+    assert seeded_states[0].waiting_on_children is True
+
+
+@pytest.mark.asyncio
+async def test_profiling_idle_trajectory_caps_leading_idle_preserving_subagent_spacing():
+    """A trajectory idle at t* (every stream's first request far past t*) caps
+    only the LEADING idle (t* -> earliest stream) and shifts every stream left
+    by the same amount, preserving recorded subagent spacing.
+
+    Regression for the per-stream ``min(offset, cap)`` clamp, which collapsed
+    every idle subagent onto t=cap. Three children at offsets 100s/130s/220s
+    with a 60s cap: leading idle 100s -> 60s (shift 40s), so they fire at
+    60s/90s/180s -- the recorded 30s and 90s gaps survive, not 60s/60s/60s.
+    """
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=12_000.0),
+                    TurnMetadata(timestamp_ms=300_000.0),
+                ],
+            ),
+            *(
+                ConversationMetadata(
+                    conversation_id=cid,
+                    turns=[TurnMetadata(timestamp_ms=offset + 13_000.0)],
+                    is_root=False,
+                    agent_depth=1,
+                    parent_conversation_id="trace_0",
+                )
+                for cid, offset in (
+                    ("trace_0::sa:a:fa:000", 100_000.0),
+                    ("trace_0::sa:a:fa:001", 130_000.0),
+                    ("trace_0::sa:a:fa:002", 220_000.0),
+                )
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=2,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    children = [
+        ConversationState(
+            conversation_id=cid,
+            x_correlation_id=xc,
+            next_turn_index=0,
+            next_dispatch_offset_ms=offset,
+            agent_depth=1,
+            parent_correlation_id="parent",
+            join_target_turn_index=2,
+            branch_id="b0",
+            branch_mode=ConversationBranchMode.SPAWN,
+        )
+        for xc, cid, offset in (
+            ("kid-a", "trace_0::sa:a:fa:000", 100_000.0),
+            ("kid-b", "trace_0::sa:a:fa:001", 130_000.0),
+            ("kid-c", "trace_0::sa:a:fa:002", 220_000.0),
+        )
+    ]
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=2,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=13_000.0,
+            states=(parent_state, *children),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+
+    issued: list[str] = []
+
+    async def capture(turn):
+        issued.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[tuple[float, object]] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
+        (delay, coro)
+    )
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+        branch_orchestrator=MagicMock(),
+    )
+    strategy._phase_offset_cap_ms = 60_000.0  # agentx idle-gap cap of 60s
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # Leading idle (t* -> earliest child, 100s) capped to 60s via a 40s uniform
+    # shift; subagents keep their recorded 30s and 90s spacing -- NOT collapsed
+    # to a single 60s/60s/60s instant.
+    assert issued == []
+    assert [delay for delay, _ in scheduled] == [
+        pytest.approx(60.0),
+        pytest.approx(90.0),
+        pytest.approx(180.0),
+    ]
+    for _, coro in scheduled:
+        await coro
+    assert issued == [
+        "trace_0::sa:a:fa:000",
+        "trace_0::sa:a:fa:001",
+        "trace_0::sa:a:fa:002",
+    ]
+
+
+def test_profiling_spread_reports_first_request_per_trajectory_not_all_streams():
+    """The logged PROFILING spread is the ramp-in window of each trajectory's
+    FIRST request, not the full span of every stream. A late subagent within a
+    trajectory must not inflate it.
+
+    Two trajectories, each a root firing early plus a subagent ~83 min out. The
+    first-request spread is 10s (root offsets 0 and 10s); the late subagents are
+    excluded -- summing them would report ~8000s instead.
+    """
+
+    def _traj(cid: str, offsets: list[float]) -> Trajectory:
+        states = tuple(
+            ConversationState(
+                conversation_id=f"{cid}:s{i}",
+                x_correlation_id=f"{cid}-{i}",
+                next_turn_index=0,
+                next_dispatch_offset_ms=off,
+                waiting_on_children=False,
+            )
+            for i, off in enumerate(offsets)
+        )
+        return Trajectory(
+            conversation_id=cid,
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(t_star_ms=0.0, states=states),
+        )
+
+    src = TrajectorySource.__new__(TrajectorySource)
+    src.trajectories = [
+        _traj("t0", [0.0, 5_000_000.0]),
+        _traj("t1", [10_000.0, 8_000_000.0]),
+    ]
+    strategy = AgenticReplayStrategy.__new__(AgenticReplayStrategy)
+    strategy.conversation_source = src
+    strategy._burst_phase_starts = False
+    strategy._phase_offset_cap_ms = 60_000.0
+
+    assert strategy._profiling_spread_seconds() == pytest.approx(10.0)
+
+    # An idle-at-t* trajectory's first request is capped to the idle-gap cap,
+    # so the spread stays bounded by the cap rather than the raw leading idle.
+    src.trajectories.append(_traj("t2", [200_000.0, 9_000_000.0]))
+    assert strategy._profiling_spread_seconds() == pytest.approx(60.0)
+
+
+@pytest.mark.asyncio
+async def test_profiling_preserve_start_gap_delays_first_request_by_default():
+    """By default (spread), a trajectory's first post-t* request waits out its
+    recorded offset from t* instead of firing at 0.
+
+    A lone root resuming 8s after t* is scheduled 8s out -- the leading idle
+    gap is preserved. (--burst-phase-starts would collapse it to fire at 0.)
+    """
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=18_000.0),
+                ],
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    # t* = 10_000: turn 0 < t* (warmed), turn 1 (18s) is 8s out from t*.
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root",
+        next_turn_index=1,
+        next_dispatch_offset_ms=8_000.0,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=1,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=10_000.0,
+            states=(root_state,),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+
+    issued: list[tuple[str, int]] = []
+
+    async def capture(turn):
+        issued.append((turn.conversation_id, turn.turn_index))
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    scheduled: list[tuple[float, object]] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = lambda delay, coro: scheduled.append(
+        (delay, coro)
+    )
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=src,
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # Leading gap preserved: nothing fires inline; turn 1 scheduled 8s out.
+    assert issued == []
+    assert [delay for delay, _ in scheduled] == [pytest.approx(8.0)]
+    for _, coro in scheduled:
+        await coro
+    assert issued == [("trace_0", 1)]
+
+
+@pytest.mark.asyncio
+async def test_profiling_gated_parent_not_dispatched_child_profiles():
+    """A parent gated on a child join at t* is not dispatched in PROFILING;
+    its join is seeded and the blocking child profiles its remaining turns.
+
+    The parent's gated turn fires later via the orchestrator when the child
+    drains (no child completes during WARMUP under the new model, so the
+    parent stays gated through the warmup barrier). Covers both a mid-flight
+    child (warmed at n-1, profiles from n) and the gate staying registered.
+    """
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=12_000.0),
+                    TurnMetadata(timestamp_ms=20_000.0),
+                ],
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::sa:0",
+                turns=[
+                    TurnMetadata(timestamp_ms=13_000.0),
+                    TurnMetadata(timestamp_ms=14_000.0),
+                ],
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="trace_0",
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=2,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    child_state = ConversationState(
+        conversation_id="trace_0::sa:0",
+        x_correlation_id="child",
+        next_turn_index=1,  # turn 0 < t*, turn 1 >= t*
+        next_dispatch_offset_ms=500.0,
+        agent_depth=1,
+        parent_correlation_id="parent",
+        join_target_turn_index=2,
+        branch_id="b0",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=2,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=13_500.0,
+            states=(parent_state, child_state),
+        ),
+    )
+    src = TrajectorySource.__new__(TrajectorySource)
+    src._dataset_metadata = ds
+    src._dataset_sampler = MagicMock()
+    src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
+    src.trajectories = [trajectory]
+
+    issued: list[tuple[str, int]] = []
+
+    async def capture(turn):
+        issued.append((turn.conversation_id, turn.turn_index))
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    branch_orchestrator = MagicMock()
+
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
         scheduler=MagicMock(),
         stop_checker=MagicMock(),
-        credit_issuer=AsyncMock(),
+        credit_issuer=issuer,
         lifecycle=MagicMock(),
+        branch_orchestrator=branch_orchestrator,
     )
+    strategy._burst_phase_starts = True  # exercise the burst (T0-normalize) path
 
-    continuation = strategy._snapshot_continuation_after_warmup(trajectory)
+    await strategy.setup_phase()
+    await strategy.execute_phase()
 
-    assert len(continuation.states) == 1
-    parent = continuation.states[0]
-    assert parent.x_correlation_id == "parent"
-    assert parent.next_turn_index == 2
-    assert parent.waiting_on_children is False
-    assert parent.join_target_turn_index is None
-    assert parent.next_dispatch_offset_ms == 0.0
+    # Only the child dispatches (its own next_turn_index = 1); parent gated.
+    assert issued == [("trace_0::sa:0", 1)]
+    seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
+    by_corr = {s.x_correlation_id: s for s in seeded_states}
+    assert by_corr["parent"].waiting_on_children is True
+    assert by_corr["parent"].join_target_turn_index == 2
+    assert by_corr["child"].next_turn_index == 1
 
 
 @pytest.mark.asyncio
-async def test_profiling_snapshot_recycles_root_after_terminal_warmup():
+async def test_profiling_single_turn_root_profiles_its_own_turn_zero():
+    """A single-turn root sampled at t* == its turn-0 timestamp (n == 0) has
+    nothing to warm, so PROFILING measures its own turn 0 rather than
+    warming-and-discarding it and recycling.
+
+    The dispatched credit carries the snapshot's own x_correlation_id (the
+    session continues from the snapshot, not a fresh recycle); recycling
+    happens later on the turn's completion via handle_credit_return.
+    """
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -575,7 +1257,7 @@ async def test_profiling_snapshot_recycles_root_after_terminal_warmup():
             states=(
                 ConversationState(
                     conversation_id="trace_0",
-                    x_correlation_id="warmed-root",
+                    x_correlation_id="snap-root",
                     next_turn_index=0,
                 ),
             ),
@@ -594,15 +1276,13 @@ async def test_profiling_snapshot_recycles_root_after_terminal_warmup():
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
-    stop_checker = MagicMock()
-    stop_checker.can_start_new_session.return_value = True
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
         scheduler=MagicMock(),
-        stop_checker=stop_checker,
+        stop_checker=MagicMock(),
         credit_issuer=issuer,
         lifecycle=MagicMock(),
     )
@@ -613,7 +1293,343 @@ async def test_profiling_snapshot_recycles_root_after_terminal_warmup():
     assert len(issued) == 1
     assert issued[0].conversation_id == "trace_0"
     assert issued[0].turn_index == 0
-    assert issued[0].x_correlation_id != "warmed-root"
+    assert issued[0].x_correlation_id == "snap-root"
+
+
+@pytest.mark.asyncio
+async def test_single_turn_root_snapshot_dispatches_are_concurrent_not_serial():
+    """Regression: profiling startup must burst at t=0, not serialize.
+
+    Commit f47bd5537e once introduced an awaited per-trajectory step in the
+    startup dispatch loop; with N trajectories that blocked the Kth dispatch
+    until the (K-1)th completed, trickling 256 sessions in over ~54 s instead
+    of bursting at t=0 on a real cluster. The per-lane gather must keep all N
+    first dispatches concurrent.
+    """
+    N = 3
+    # N single-turn traces sampled at t* == turn-0 ts (n == 0): each profiles
+    # its own turn 0 immediately (nothing to warm), so all N first dispatches
+    # should reach the issuer concurrently via the per-lane gather.
+    trajectories = [
+        Trajectory(
+            conversation_id=f"trace_{i}",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id=f"trace_{i}",
+                        x_correlation_id=f"warmed-{i}",
+                        next_turn_index=0,
+                    ),
+                ),
+            ),
+        )
+        for i in range(N)
+    ]
+
+    # Gate that blocks each recycled credit until we release it. in_flight
+    # counts issue_credit calls simultaneously blocked at the gate - if
+    # serial only 1 is ever in-flight, if concurrent all N are.
+    gate = asyncio.Event()
+    in_flight = 0
+    captured: list = []
+
+    async def gated_issue_credit(turn):
+        nonlocal in_flight
+        in_flight += 1
+        captured.append(turn)
+        await gate.wait()
+        in_flight -= 1
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = gated_issue_credit
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=N,
+        turns_per_trace=1,
+        issuer=issuer,
+    )
+
+    await strategy.setup_phase()
+    task = asyncio.create_task(strategy.execute_phase())
+
+    # Pump the event loop enough times for all concurrent dispatches to reach
+    # the gate. With the serial bug only 1 will be in-flight; with the fix
+    # all N will be blocked at gate.wait() simultaneously.
+    for _ in range(N + 4):
+        await asyncio.sleep(0)
+
+    concurrent_at_gate = in_flight
+    gate.set()
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert concurrent_at_gate == N, (
+        f"Expected {N} recycled credits in-flight simultaneously at profiling "
+        f"startup, but only {concurrent_at_gate} were. Terminal-root recycles "
+        "appear to be dispatched serially, blocking the startup loop."
+    )
+    # Exactly one recycled turn-0 session per lane, each a distinct session -
+    # N-at-the-gate must not be satisfiable by the wrong N credits.
+    assert issuer.issue_credit.await_count == N
+    assert all(turn.turn_index == 0 for turn in captured)
+    assert len({turn.x_correlation_id for turn in captured}) == N
+
+
+@pytest.mark.asyncio
+async def test_plain_trajectory_resumes_are_concurrent_not_serial():
+    """The k_i+1 resume path (timestamp-less trajectories) must burst at t=0.
+
+    Companion to the terminal-root regression test: a refactor that
+    re-serializes only the snapshot-less resume dispatch would otherwise
+    ship green.
+    """
+    N = 3
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(N)
+    ]
+    gate = asyncio.Event()
+    in_flight = 0
+
+    async def gated_issue_credit(turn):
+        nonlocal in_flight
+        in_flight += 1
+        await gate.wait()
+        in_flight -= 1
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = gated_issue_credit
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=N,
+        turns_per_trace=4,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    task = asyncio.create_task(strategy.execute_phase())
+    for _ in range(N + 4):
+        await asyncio.sleep(0)
+
+    concurrent_at_gate = in_flight
+    gate.set()
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert concurrent_at_gate == N, (
+        f"Expected {N} resume credits in-flight simultaneously at profiling "
+        f"startup, but only {concurrent_at_gate} were."
+    )
+
+
+@pytest.mark.asyncio
+async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
+    """A continued session's cache-bust marker must not rotate at the boundary.
+
+    Under wrap-fill, two lanes share trace_X and both are mid-flight at t*:
+    lane 0's root is gated on a child join, lane 1's root is ready. Both are
+    warmed now (gated parents included), each minting its own marker keyed by
+    x_correlation_id. Positional re-minting (by dispatch order/count rather
+    than identity) would hand the continuing session the wrong digest and make
+    its warmed KV prefix unreachable for the measured turns. The marker minted
+    in WARMUP must be reused verbatim for the same x_correlation_id in
+    PROFILING, and distinct sessions must get distinct markers.
+    """
+    ds = _make_dataset(num_traces=1, turns_per_trace=3)
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="A-root",
+                        next_turn_index=2,
+                        waiting_on_children=True,
+                        join_target_turn_index=2,
+                    ),
+                ),
+            ),
+        ),
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=1,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id="trace_0",
+                        x_correlation_id="B-root",
+                        # Mid-flight at t*: warmed at turn 0, profiles turn 1
+                        # with the same marker (continuity across the boundary).
+                        next_turn_index=1,
+                    ),
+                ),
+            ),
+        ),
+    ]
+    src = _build_real_trajectory_source(1, 3, trajectories, dataset=ds)
+    user_config = MagicMock()
+    user_config.input.prompt.cache_bust.target = CacheBustTarget.FIRST_TURN_PREFIX
+    user_config.benchmark_id = "bench"
+
+    def _strategy_for(phase: CreditPhase, issuer: AsyncMock) -> AgenticReplayStrategy:
+        cfg = MagicMock()
+        cfg.phase = phase
+        return AgenticReplayStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=MagicMock(),
+            user_config=user_config,
+        )
+
+    warmup_issuer = AsyncMock()
+    warmup = _strategy_for(CreditPhase.WARMUP, warmup_issuer)
+    await warmup.setup_phase()
+    await warmup.execute_phase()
+    warmup_turns = [c.args[0] for c in warmup_issuer.issue_credit.await_args_list]
+    warmup_marker = warmup._session_marker["B-root"]
+    assert warmup_marker is not None
+    # Both lanes warmed (gated A-root at its turn n-1, ready B-root at turn 0),
+    # each carrying its own marker keyed by x_correlation_id.
+    by_corr = {t.x_correlation_id: t for t in warmup_turns}
+    assert set(by_corr) == {"A-root", "B-root"}
+    assert by_corr["B-root"].cache_bust_marker == warmup_marker
+    assert by_corr["A-root"].cache_bust_marker != warmup_marker
+
+    profiling_issuer = AsyncMock()
+    profiling = _strategy_for(CreditPhase.PROFILING, profiling_issuer)
+    await profiling.setup_phase()
+    await profiling.execute_phase()
+    profiling_turns = {
+        t.conversation_id: t
+        for c in profiling_issuer.issue_credit.await_args_list
+        for t in [c.args[0]]
+        if t.turn_index == 1
+    }
+    continuing = profiling_turns["trace_0"]
+    assert continuing.cache_bust_marker == warmup_marker, (
+        "Continuing session's marker rotated at the WARMUP->PROFILING "
+        "boundary - the warmed KV prefix is unreachable for measured turns"
+    )
+    # The unblocked lane-0 parent is a distinct session and must NOT share
+    # the continuing session's digest.
+    assert profiling._session_marker["A-root"] != warmup_marker
+
+
+@pytest.mark.asyncio
+async def test_startup_dispatch_snapshot_root_and_resume():
+    """PROFILING execute dispatches each lane's initial credit: a snapshot
+    root at turn 0 and a plain trajectory resumed at k_i+1. No recycle fires
+    during execute_phase (recycle is driven by credit returns)."""
+    conversations = [
+        ConversationMetadata(
+            conversation_id="trace_0",
+            turns=[TurnMetadata(), TurnMetadata()],
+        ),
+        ConversationMetadata(
+            conversation_id="trace_1",
+            turns=[TurnMetadata()],
+        ),
+    ]
+    ds = DatasetMetadata(
+        conversations=conversations,
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_1",
+            start_turn_index=0,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(
+                    ConversationState(
+                        conversation_id="trace_1",
+                        x_correlation_id="warmed-1",
+                        next_turn_index=0,
+                    ),
+                ),
+            ),
+        ),
+        Trajectory(conversation_id="trace_0", start_turn_index=0),
+    ]
+    captured: list[tuple[str, int]] = []
+
+    async def capture(turn):
+        captured.append((turn.conversation_id, turn.turn_index))
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        issuer=issuer,
+        dataset=ds,
+    )
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    # Lane 0 dispatches its snapshot root trace_1 at turn 0; lane 1 resumes
+    # trace_0 at k_i+1. No recycle during execute_phase.
+    assert sorted(captured) == [("trace_0", 1), ("trace_1", 0)]
+
+
+@pytest.mark.asyncio
+async def test_profiling_dispatch_error_waits_for_siblings_and_reraises():
+    """One lane's dispatch failure must not detach the sibling dispatches.
+
+    execute_phase must keep ownership of every sibling lane until it settles,
+    then re-raise the failure. A bare gather would return the exception while
+    the remaining lanes keep issuing credits into a failing phase unsupervised.
+    """
+    N = 3
+    trajectories = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(N)
+    ]
+    gate = asyncio.Event()
+    completed: list[str] = []
+
+    async def gated_issue_credit(turn):
+        if turn.conversation_id == "trace_1":
+            raise RuntimeError("lane boom")
+        await gate.wait()
+        completed.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = gated_issue_credit
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=N,
+        turns_per_trace=4,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+    task = asyncio.create_task(strategy.execute_phase())
+    for _ in range(N + 4):
+        await asyncio.sleep(0)
+
+    # Lane 1 has already raised, but lanes 0 and 2 are still blocked at the
+    # gate: phase execution must still be in flight rather than finished
+    # with an exception while its siblings run detached.
+    assert not task.done(), (
+        "execute_phase finished while sibling dispatches were still in "
+        "flight - one lane's failure detached the remaining lanes"
+    )
+
+    gate.set()
+    with pytest.raises(RuntimeError, match="lane boom"):
+        await asyncio.wait_for(task, timeout=5.0)
+    assert sorted(completed) == ["trace_0", "trace_2"]
 
 
 @pytest.mark.asyncio
@@ -737,7 +1753,8 @@ async def test_handle_credit_return_honors_delay_ms_via_scheduler():
 
 @pytest.mark.asyncio
 async def test_handle_credit_return_recycles_on_final_turn():
-    """Last turn of a session -> trace_id put back; new session pulled FIFO."""
+    """Last turn of a session -> lane recycles into the next root from the
+    sampler (sequential over trace_0..trace_2 -> trace_0 first), at turn 0."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issued_sessions: list[tuple[str, int]] = []
 
@@ -754,36 +1771,23 @@ async def test_handle_credit_return_recycles_on_final_turn():
         turns_per_trace=4,
         issuer=issuer,
     )
+    strategy.stop_checker.can_start_new_session.return_value = True
     await strategy.setup_phase()
 
-    # Recycle queue should currently be the full pool ["trace_0", "trace_1", "trace_2"].
-    initial_queue_size = strategy._recycle_queue.qsize()
-    assert initial_queue_size == 3
-
     # Register the in-flight session's lane bookkeeping (normally done by
-    # _execute_profiling); handle_credit_return's recycle path now requires
-    # finished_correlation_id to be in _correlation_to_lane. Also seed
-    # _active_traces so the new full-pool pop loop's skip-active-on-pop
-    # logic mirrors a real run.
+    # _execute_profiling); the recycle path requires finished_correlation_id
+    # to be in _correlation_to_lane.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     issuer.issue_credit.reset_mock()
     issued_sessions.clear()
 
-    # trace_0 finishes its last turn (index 3 of 4).
+    # trace_0 finishes its last turn (index 3 of 4) -> recycle into the next
+    # sampler root at turn 0.
     final_credit = _make_credit(conversation_id="trace_0", turn_index=3, num_turns=4)
     await strategy.handle_credit_return(final_credit)
 
-    # Spawn flow: discard trace_0 from active (was alive); push trace_0 to
-    # tail of [trace_0, trace_1, trace_2] -> [trace_0, trace_1, trace_2, trace_0];
-    # pop head trace_0 (not active anymore, just discarded), dispatch at turn 0.
     assert issued_sessions == [("trace_0", 0)]
-    # Queue now contains [trace_1, trace_2, trace_0] (head trace_0 popped).
-    remaining: list[str] = []
-    while not strategy._recycle_queue.empty():
-        remaining.append(strategy._recycle_queue.get_nowait())
-    assert remaining == ["trace_1", "trace_2", "trace_0"]
 
 
 @pytest.mark.asyncio
@@ -819,14 +1823,9 @@ async def test_handle_credit_return_does_not_recycle_final_child_turn():
 
 
 @pytest.mark.asyncio
-async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
-    """Single-trace dataset: just-finished trace_id is reused immediately.
-
-    With the full-pool recycle queue, a single-trace dataset means the queue
-    holds [trace_0] at setup; the trajectory's session is still alive there
-    (tracked in _active_traces), so the only available pop after re-enqueue
-    is the just-finished trace_0 itself.
-    """
+async def test_handle_credit_return_reuses_sole_root_when_pool_is_one():
+    """Single-root dataset: the sampler only ever yields trace_0, so recycle
+    reuses it (at turn 0)."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     issued_sessions: list[tuple[str, int]] = []
 
@@ -843,15 +1842,11 @@ async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
         turns_per_trace=3,
         issuer=issuer,
     )
+    strategy.stop_checker.can_start_new_session.return_value = True
     await strategy.setup_phase()
-    # Full pool: queue is [trace_0] at setup.
-    assert strategy._recycle_queue.qsize() == 1
 
     # Register the in-flight session's lane (normally done by _execute_profiling).
-    # Also seed _active_traces so the new pop loop skips trace_0 while it is
-    # nominally alive — discard happens at the top of _spawn_from_recycle_or_id.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     issuer.issue_credit.reset_mock()
     issued_sessions.clear()
@@ -859,8 +1854,6 @@ async def test_handle_credit_return_reuses_finished_trace_when_queue_empty():
     final_credit = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
     await strategy.handle_credit_return(final_credit)
 
-    # trace_0 discarded from active, pushed to tail, immediately popped and
-    # dispatched at turn 0.
     assert issued_sessions == [("trace_0", 0)]
 
 
@@ -917,7 +1910,6 @@ async def test_handle_credit_return_warmup_phase_is_noop_for_final_turn():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    assert strategy._recycle_queue is None
 
     issuer.issue_credit.reset_mock()
     final_credit = _make_credit(
@@ -928,19 +1920,6 @@ async def test_handle_credit_return_warmup_phase_is_noop_for_final_turn():
     )
     await strategy.handle_credit_return(final_credit)
     assert issuer.issue_credit.await_count == 0
-
-
-# =============================================================================
-# WARMUP setup_phase: no recycle queue built
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_warmup_setup_does_not_build_recycle_queue():
-    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
-    strategy, *_ = _make_strategy(phase=CreditPhase.WARMUP, trajectories=trajectories)
-    await strategy.setup_phase()
-    assert strategy._recycle_queue is None
 
 
 # =============================================================================
@@ -971,6 +1950,9 @@ async def test_warmup_marks_sending_complete():
     strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories
     )
+    # The strategy's belt-and-suspenders mark only fires in burst mode; in the
+    # default spread mode the count path / runner finalize sending instead.
+    strategy._burst_phase_starts = True
     strategy.lifecycle.is_sending_complete = False
     await strategy.setup_phase()
     await strategy.execute_phase()
@@ -1000,6 +1982,8 @@ async def test_warmup_marks_sending_complete_after_dispatch():
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories, issuer=issuer
     )
+    # Belt-and-suspenders mark only fires in burst mode (see sibling test).
+    strategy._burst_phase_starts = True
     strategy.lifecycle.is_sending_complete = False
 
     def record_mark() -> None:
@@ -1036,6 +2020,9 @@ async def test_warmup_skips_mark_sending_complete_when_already_complete():
     strategy, _, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP, trajectories=trajectories
     )
+    # Burst mode is where the strategy would otherwise call mark; the guard
+    # must still suppress it when the count path already completed sending.
+    strategy._burst_phase_starts = True
     # Simulate the count-based path having already won the race.
     strategy.lifecycle.is_sending_complete = True
 
@@ -1289,10 +2276,10 @@ async def test_two_traces_at_same_pass_and_lane_get_distinct_markers():
     # Mint markers for two distinct trace_ids both at lane 0, both at
     # recycle_pass=0 (their first incarnation).
     marker_a = strategy._mint_marker_for_session(
-        x_correlation_id="xcorr_a", trace_id="trace_A", trajectory_index=0
+        root_correlation_id="xcorr_a", conversation_id="trace_A", trajectory_index=0
     )
     marker_b = strategy._mint_marker_for_session(
-        x_correlation_id="xcorr_b", trace_id="trace_B", trajectory_index=0
+        root_correlation_id="xcorr_b", conversation_id="trace_B", trajectory_index=0
     )
     rid_a = _extract_rid(marker_a)
     rid_b = _extract_rid(marker_b)
@@ -1349,3 +2336,315 @@ async def test_spawn_from_recycle_or_id_pops_lane_and_marker_for_correlation() -
 
     assert correlation_id not in strategy._correlation_to_lane
     assert correlation_id not in strategy._session_marker
+
+
+# =============================================================================
+# PROFILING phase: rootless lanes (root finished before t*) hold a lane credit
+# =============================================================================
+
+
+def _children_dataset() -> DatasetMetadata:
+    """Dataset with one root trace and two background subagent conversations."""
+    return DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=1000.0),
+                ],
+                is_root=True,
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::fa:0",
+                turns=[TurnMetadata(timestamp_ms=2000.0)],
+                is_root=False,
+                agent_depth=1,
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::aux:0",
+                turns=[TurnMetadata(timestamp_ms=2000.0)],
+                is_root=False,
+                agent_depth=1,
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+
+
+def _rootless_trajectory() -> Trajectory:
+    """A snapshot whose root finished before t*: NO root state, only the
+    still-active background ::fa:/::aux: children remain (the rootless case
+    from ``_snapshot_for`` when ``root_next_idx is None``)."""
+    child_a = ConversationState(
+        conversation_id="trace_0::fa:0",
+        x_correlation_id="kid_a",
+        next_turn_index=0,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=1,
+        parent_correlation_id="root_corr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    child_b = ConversationState(
+        conversation_id="trace_0::aux:0",
+        x_correlation_id="kid_b",
+        next_turn_index=0,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=1,
+        parent_correlation_id="root_corr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    return Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=0,  # sentinel default; no root state in the snapshot
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(child_a, child_b)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_rootless_snapshot_acquires_exactly_one_lane_credit():
+    """A rootless lane holds one session credit though it dispatches no root.
+
+    The root's turns are all before t*, so PROFILING dispatches only the
+    background children. The lane must still acquire exactly one session slot
+    (so it counts toward --concurrency); the children acquire none of their
+    own (they are agent_depth > 0).
+    """
+    dispatched: list = []
+
+    async def capture(turn):
+        dispatched.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[_rootless_trajectory()],
+        issuer=issuer,
+        dataset=_children_dataset(),
+    )
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert issuer.acquire_lane_credit.await_count == 1
+    # Both background children were dispatched, none acquiring its own slot.
+    assert {t.conversation_id for t in dispatched} == {
+        "trace_0::fa:0",
+        "trace_0::aux:0",
+    }
+    assert all(t.agent_depth == 1 for t in dispatched)
+
+
+@pytest.mark.asyncio
+async def test_rooted_snapshot_acquires_no_lane_credit():
+    """A normal rooted lane gets its slot via the root credit, not a lane credit."""
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root_corr",
+        next_turn_index=1,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=0,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=1,
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(root_state,)),
+    )
+
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[trajectory],
+        issuer=issuer,
+        dataset=_children_dataset(),
+    )
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert issuer.acquire_lane_credit.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_rootless_lane_recycles_into_fresh_root_when_children_drain():
+    """When a rootless lane's last background child finishes, the lane releases
+    its credit and recycles into a fresh root (turn 0) on the same lane.
+
+    Until the last child drains, the lane credit is held (the lane is still
+    doing background work). On the final child's terminal return the credit is
+    released exactly once and one fresh depth-0 root is dispatched from the
+    recycle pool, so the lane keeps contributing load instead of going dark.
+    """
+    issued: list = []
+
+    async def capture(turn):
+        issued.append(turn)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+    issuer.release_lane_credit = MagicMock()
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[_rootless_trajectory()],
+        issuer=issuer,
+        dataset=_children_dataset(),
+    )
+    strategy.stop_checker.can_start_new_session.return_value = True
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    n_after_dispatch = len(issued)
+    assert issuer.acquire_lane_credit.await_count == 1
+
+    # First of two background children finishes: lane credit still held.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0::fa:0",
+            x_correlation_id="kid_a",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="root_corr",
+        )
+    )
+    assert issuer.release_lane_credit.call_count == 0
+    assert len(issued) == n_after_dispatch  # no recycle dispatch yet
+
+    # Last child finishes: release the lane credit and spawn a fresh root.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0::aux:0",
+            x_correlation_id="kid_b",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="root_corr",
+        )
+    )
+    assert issuer.release_lane_credit.call_count == 1
+    new = issued[n_after_dispatch:]
+    assert len(new) == 1, f"expected one fresh root dispatch, got {new}"
+    assert new[0].turn_index == 0
+    assert new[0].agent_depth == 0
+    assert new[0].conversation_id == "trace_0"
+
+
+@pytest.mark.asyncio
+async def test_gated_parent_lane_acquires_a_lane_credit():
+    """A snapshot-resumed gated parent (waiting on a child join) holds a lane
+    credit, because it dispatches no root credit at PROFILING start.
+
+    The gated root is excluded from the dispatchable set, so without this it
+    holds NO session slot -- yet its join turn later completes and the depth-0
+    final-turn path releases a slot, over-releasing the session limiter and
+    admitting sessions above --concurrency. It must NOT be tracked as rootless:
+    the parent resumes and recycles through the normal depth-0 final-turn path,
+    so a child draining must not release/recycle the lane here.
+    """
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root_corr",
+        next_turn_index=2,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    child = ConversationState(
+        conversation_id="trace_0::sa:a",
+        x_correlation_id="kid",
+        next_turn_index=0,
+        next_dispatch_offset_ms=0.0,
+        agent_depth=1,
+        parent_correlation_id="root_corr",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectory = Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=2,
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(root_state, child)),
+    )
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="trace_0",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=1000.0),
+                    TurnMetadata(timestamp_ms=2000.0),
+                ],
+                is_root=True,
+            ),
+            ConversationMetadata(
+                conversation_id="trace_0::sa:a",
+                turns=[TurnMetadata(timestamp_ms=2000.0)],
+                is_root=False,
+                agent_depth=1,
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = True
+    issuer.acquire_lane_credit = AsyncMock(return_value=True)
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[trajectory],
+        issuer=issuer,
+        dataset=dataset,
+    )
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    assert issuer.acquire_lane_credit.await_count == 1
+    assert 0 not in strategy._rootless_lane_outstanding
+
+
+@pytest.mark.asyncio
+async def test_profiling_setup_logs_rootless_lane_count(caplog):
+    """PROFILING setup surfaces how many sampled lanes are rootless (root
+    finished before t*) so an under-target run is diagnosable from the log."""
+    rooted_state = ConversationState(
+        conversation_id="trace_1",
+        x_correlation_id="r1",
+        next_turn_index=1,
+        agent_depth=0,
+    )
+    rooted = Trajectory(
+        conversation_id="trace_1",
+        start_turn_index=1,
+        snapshot=TrajectorySnapshot(t_star_ms=5000.0, states=(rooted_state,)),
+    )
+    dataset = DatasetMetadata(
+        conversations=[
+            *_children_dataset().conversations,
+            ConversationMetadata(
+                conversation_id="trace_1",
+                turns=[
+                    TurnMetadata(timestamp_ms=0.0),
+                    TurnMetadata(timestamp_ms=1000.0),
+                ],
+                is_root=True,
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[_rootless_trajectory(), rooted],
+        dataset=dataset,
+    )
+
+    with caplog.at_level(logging.INFO, logger="AgenticReplayTiming"):
+        await strategy.setup_phase()
+
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("rootless" in m and "1" in m for m in msgs), msgs

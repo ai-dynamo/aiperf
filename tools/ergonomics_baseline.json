@@ -8,6 +8,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/analysis/swim_lane.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -129,6 +134,11 @@
     [
       "file-size",
       "src/aiperf/dataset/generator/video.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/loader/weka_agent_chains.py",
       ""
     ],
     [
@@ -323,6 +333,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
+    ],
+    [
+      "function-size",
       "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
@@ -493,6 +513,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/dataset/loader/weka_agent_chains.py",
+      "_resolve_seams"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/loader/weka_parallel_convert.py",
       "_process_task"
     ],
@@ -514,6 +539,11 @@
     [
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._detect_and_split_flat_chains"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._reconstruct_parallel"
     ],
     [
@@ -525,6 +555,11 @@
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader.convert_to_conversations"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "_expand_subagent_to_child_plans"
     ],
     [
       "function-size",
@@ -1134,12 +1169,17 @@
     [
       "function-size",
       "src/aiperf/timing/strategies/agentic_replay.py",
-      "AgenticReplayStrategy.handle_credit_return"
+      "AgenticReplayStrategy._execute_warmup"
     ],
     [
       "function-size",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._log_trajectory_summary"
     ],
     [
       "function-size",
@@ -1213,6 +1253,11 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/cli_commands/swim_lane.py",
+      "swim_lane"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
       "TaskManagerMixin._background_task_loop"
     ],
@@ -1240,11 +1285,6 @@
       "keyword-only-args",
       "src/aiperf/dataset/loader/weka_synth_buf.py",
       "ConversationReconstructor.init_turn_0"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/weka_synth_buf.py",
-      "truncate_synth_buf_at_block"
     ],
     [
       "keyword-only-args",

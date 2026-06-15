@@ -152,7 +152,6 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     assert "assistant" not in turn_0_roles
     assert conv.turns[0].reset_context is False
     turn_1_roles = [m["role"] for m in conv.turns[1].raw_messages]
-    assert "assistant" in turn_1_roles
     assert "user" in turn_1_roles
     # If turn 1 was a strict append, system stays in turn 0 only; if it
     # was a reset, turn 1 carries the full state including system. Either
@@ -162,8 +161,11 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
     else:
         assert "system" not in turn_1_roles
     # Accumulated state across both turns (mimicking what
-    # BaseEndpoint.build_messages produces at request time) must contain
-    # the full message-array prefix.
+    # BaseEndpoint.build_messages produces at request time): the first
+    # non-system message is ALWAYS user. simple.json's tool+system prefix
+    # covers every full block of turn 0, so the turn-1 LCP boundary strip
+    # deletes turn 0's user tail — a context loss; the context-loss rule
+    # resumes the conversation at a user turn (no fabricated assistant).
     accumulated: list[dict] = []
     for t in conv.turns:
         if t.reset_context:
@@ -172,13 +174,20 @@ def test_convert_to_conversations_builds_one_conversation_per_normal_request(
             accumulated.extend(t.raw_messages)
     accumulated_roles = [m["role"] for m in accumulated]
     assert "system" in accumulated_roles
-    assert "assistant" in accumulated_roles
     assert "user" in accumulated_roles
+    non_system = [r for r in accumulated_roles if r != "system"]
+    assert non_system and non_system[0] == "user", accumulated_roles
 
 
 def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
-    """Turn 1+ should have an assistant segment between the prefix-user content
-    and the new user_k content (symmetric attribution rule, spec section 4.4.1)."""
+    """Turn 1+ keeps the assistant segment between the surviving user
+    content and the new user_k content (symmetric attribution, spec section
+    4.4.1) — when a user turn survives. simple.json's prefix covers all of
+    turn 0's full blocks, so its turn 1 exercises the CONTEXT-LOSS rule
+    instead (resume at a user turn); the alternation case uses an inline
+    trace whose turn-0 user segment owns real blocks."""
+    import orjson
+
     uc = _mk_user_config()
     loader = WekaTraceLoader(filename=str(FIXTURES / "simple.json"), user_config=uc)
     _stub_prompt_generator_for_reconstructor(loader)
@@ -194,8 +203,52 @@ def test_convert_to_conversations_emits_alternating_roles(monkeypatch):
     turn_0_roles = [m["role"] for m in conv.turns[0].raw_messages]
     assert "assistant" not in turn_0_roles
 
-    # Turn 1: asst should appear before the new user_k segment.
+    # simple.json turn 1: context loss (the boundary strip deletes turn 0's
+    # tail-only user segment) -> resume at a user turn, no assistant.
     turn_1_roles = [m["role"] for m in conv.turns[1].raw_messages]
+    assert conv.turns[1].reset_context is True
+    assert turn_1_roles == ["system", "user"]
+
+    # Alternation case: turn 0's user segment owns a full block (in=448 =
+    # 7 blocks > 3 prefix blocks), so it survives the turn-1 truncation and
+    # the assistant segment is attributed before the new user_k content.
+    trace = {
+        "id": "trace_alt",
+        "models": ["claude-opus-4-5-20251101"],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "tool_tokens": 100,
+        "system_tokens": 50,
+        "requests": [
+            {
+                "t": 0.0,
+                "type": "n",
+                "model": "claude-opus-4-5-20251101",
+                "in": 448,
+                "out": 30,
+                "hash_ids": [1, 2, 3, 4, 5, 6, 7],
+                "api_time": 1.0,
+            },
+            {
+                "t": 5.0,
+                "type": "n",
+                "model": "claude-opus-4-5-20251101",
+                "in": 576,
+                "out": 40,
+                "hash_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "api_time": 1.2,
+            },
+        ],
+    }
+    from aiperf.dataset.loader.weka_trace_models import WekaTrace
+
+    loader2 = WekaTraceLoader(filename=None, user_config=_mk_user_config())
+    _stub_prompt_generator_for_reconstructor(loader2)
+    convs2 = loader2.convert_to_conversations(
+        {"trace_alt": [WekaTrace.model_validate(orjson.loads(orjson.dumps(trace)))]}
+    )
+    alt = convs2[0]
+    turn_1_roles = [m["role"] for m in alt.turns[1].raw_messages]
     assert "assistant" in turn_1_roles
     asst_idx = turn_1_roles.index("assistant")
     user_indices = [i for i, r in enumerate(turn_1_roles) if r == "user"]
@@ -424,7 +477,8 @@ def test_weka_parallel_child_conversation_metadata_is_non_root(monkeypatch):
     )
     _stub_prompt_generator_for_reconstructor(loader)
     data = loader.load_dataset()
-    parent_plans, child_plans = loader._build_reconstruction_plans(data)
+    plans = loader._build_reconstruction_plans(data)
+    parent_plans, child_plans = plans.parent_plans, plans.child_plans
 
     def fake_run_parallel_weka_reconstruction(*args, **kwargs):
         return [
@@ -463,6 +517,9 @@ def test_weka_parallel_child_conversation_metadata_is_non_root(monkeypatch):
         t_start=0.0,
         model_map_per_trace={"trace_sa": {}},
         trace_idle_timing_by_trace={},
+        metric_values_by_trace=loader._build_shared_metric_values(
+            parent_plans, child_plans
+        ),
     )
 
     child = next(c for c in conversations if c.session_id == "trace_sa::sa:agent_001")
@@ -870,7 +927,8 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
                 "model": "claude-opus-4-5-20251101",
                 "in": 200,
                 "out": 20,
-                "hash_ids": [3, 4],
+                # Chains onto [1, 2] so detection keeps one conversation.
+                "hash_ids": [1, 2, 3],
                 "input_types": ["text"],
                 "output_types": ["text"],
                 "stop": "end_turn",
@@ -883,7 +941,8 @@ def test_use_think_time_only_emits_recorded_think_time_as_delay(monkeypatch, tmp
                 "model": "claude-opus-4-5-20251101",
                 "in": 300,
                 "out": 30,
-                "hash_ids": [5, 6],
+                # Chains onto [1, 2, 3] so detection keeps one conversation.
+                "hash_ids": [1, 2, 3, 4],
                 "input_types": ["text"],
                 "output_types": ["text"],
                 "stop": "end_turn",
@@ -1180,3 +1239,246 @@ def test_convert_to_conversations_sibling_subagents_share_hash_id_scope(tmp_path
     assert len(children) == 2
     sib_a, sib_b = children
     assert sib_a.turns[0].raw_messages == sib_b.turns[0].raw_messages
+
+
+def test_subagent_child_shares_trace_decode_scope():
+    """Same hash_id must decode to identical tokens in parent and child
+    (hash_id_scope: 'local' = one namespace per trace FILE)."""
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(
+        filename=str(FIXTURES / "one_subagent.json"), user_config=uc
+    )
+    _stub_prompt_generator_for_reconstructor(loader)
+    scopes_used: list[str] = []
+    orig = loader.prompt_generator._hash_id_corpus_rng.set_trace_id
+
+    def _spy(scope: str):
+        scopes_used.append(scope)
+        return orig(scope)
+
+    loader.prompt_generator._hash_id_corpus_rng.set_trace_id = _spy
+    loader.convert_to_conversations(loader.load_dataset())
+    assert scopes_used and all(s == "trace_sa" for s in scopes_used), scopes_used
+
+
+def test_theoretical_metric_values_unchanged_for_disjoint_namespaces():
+    """one_subagent.json has no parent/child hash overlap: the shared
+    seen-set must reproduce the legacy per-conversation values exactly."""
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(
+        filename=str(FIXTURES / "one_subagent.json"), user_config=uc
+    )
+    _stub_prompt_generator_for_reconstructor(loader)
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    root = convs["trace_sa"]
+    child = convs["trace_sa::sa:agent_001"]
+    assert root.turns[0].theoretical_prefix_cache_hit_blocks == 0
+    assert root.turns[0].theoretical_prefix_cache_total_blocks == 3
+    assert root.turns[1].theoretical_prefix_cache_hit_blocks == 3
+    assert root.turns[1].theoretical_prefix_cache_total_blocks == 5
+    assert child.turns[0].theoretical_prefix_cache_hit_blocks == 0
+    assert child.turns[0].theoretical_prefix_cache_total_blocks == 2
+
+
+def test_theoretical_metric_shares_seen_set_with_subagent_children():
+    """A hash block first sent by the parent counts as a hit when the
+    subagent child later sends it (shared per-trace seen-set)."""
+    from aiperf.dataset.loader.weka_trace_models import WekaTrace
+
+    trace = WekaTrace.model_validate(
+        {
+            "id": "trace_shared",
+            "models": ["m"],
+            "block_size": 64,
+            "hash_id_scope": "local",
+            "requests": [
+                {
+                    "t": 0.0,
+                    "type": "n",
+                    "model": "m",
+                    "in": 192,
+                    "out": 30,
+                    "hash_ids": [1, 2, 3],
+                    "api_time": 1.0,
+                },
+                {
+                    "t": 2.0,
+                    "type": "subagent",
+                    "agent_id": "agent_001",
+                    "subagent_type": "Explore",
+                    "duration_ms": 3000,
+                    "total_tokens": 500,
+                    "tool_use_count": 1,
+                    "status": "completed",
+                    "requests": [
+                        {
+                            "t": 2.5,
+                            "type": "n",
+                            "model": "m",
+                            "in": 192,
+                            "out": 50,
+                            # Child re-sends the parent's [1, 2] prefix.
+                            "hash_ids": [1, 2, 99],
+                            "api_time": 0.5,
+                        }
+                    ],
+                    "models": ["m"],
+                    "tool_tokens": 64,
+                    "system_tokens": 0,
+                },
+                {
+                    "t": 6.0,
+                    "type": "n",
+                    "model": "m",
+                    "in": 320,
+                    "out": 40,
+                    "hash_ids": [1, 2, 3, 4, 99],
+                    "api_time": 1.5,
+                },
+            ],
+        }
+    )
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(filename=None, user_config=uc)
+    _stub_prompt_generator_for_reconstructor(loader)
+    convs = {
+        c.session_id: c
+        for c in loader.convert_to_conversations({"trace_shared": [trace]})
+    }
+    child = convs["trace_shared::sa:agent_001"]
+    # Child turn 0 at t=2.5 re-sends [1, 2] already seen from the parent.
+    assert child.turns[0].theoretical_prefix_cache_hit_blocks == 2
+    assert child.turns[0].theoretical_prefix_cache_total_blocks == 3
+    root = convs["trace_shared"]
+    # Root turn 1: [1,2,3,4,99] -> 1,2,3 seen from itself; 4 novel stops the
+    # leading run even though 99 was seen from the child.
+    assert root.turns[1].theoretical_prefix_cache_hit_blocks == 3
+
+
+FANOUT_FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces_fanout"
+
+
+def _fanout_loader():
+    uc = _mk_user_config()
+    loader = WekaTraceLoader(
+        filename=str(FANOUT_FIXTURES / "fanout.json"), user_config=uc
+    )
+    _stub_prompt_generator_for_reconstructor(loader)
+    return loader
+
+
+def test_flattened_fanout_splits_into_three_conversations():
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    assert set(convs) == {
+        "trace_fanout",
+        "trace_fanout::fa:000",
+        "trace_fanout::fa:001",
+    }
+    root = convs["trace_fanout"]
+    assert len(root.turns) == 3
+    w0 = convs["trace_fanout::fa:000"]
+    assert len(w0.turns) == 2
+    assert w0.agent_depth == 1
+    assert w0.is_root is False
+    assert w0.parent_conversation_id == "trace_fanout"
+    assert len(convs["trace_fanout::fa:001"].turns) == 1
+
+
+def test_flattened_fanout_branch_anchoring_and_joins():
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    root = convs["trace_fanout"]
+    # Both workers spawn off turn 0 (last main turn before their first req).
+    spawn_branch_ids = root.turns[0].branch_ids
+    assert len(spawn_branch_ids) == 2
+    branches = {b.branch_id: b for b in root.branches}
+    # Worker 1 (ends t=6.5) gates main turn 1 (t=9); worker 0 (ends t=9.5)
+    # gates main turn 2 (t=12) -> different join turns -> separate branches.
+    join_prereqs_t1 = [p.branch_id for p in root.turns[1].prerequisites]
+    join_prereqs_t2 = [p.branch_id for p in root.turns[2].prerequisites]
+    assert len(join_prereqs_t1) == 1 and len(join_prereqs_t2) == 1
+    assert branches[join_prereqs_t1[0]].child_conversation_ids == [
+        "trace_fanout::fa:001"
+    ]
+    assert branches[join_prereqs_t2[0]].child_conversation_ids == [
+        "trace_fanout::fa:000"
+    ]
+
+
+def test_flattened_fanout_per_chain_delays():
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    w0 = convs["trace_fanout::fa:000"]
+    assert w0.turns[0].delay is None
+    assert w0.turns[1].delay == pytest.approx((8.5 - 2.0) * 1000.0)
+    root = convs["trace_fanout"]
+    # Main delays computed within the main chain only: 9.0-0.0, 12.0-9.0.
+    assert root.turns[1].delay == pytest.approx(9000.0)
+    assert root.turns[2].delay == pytest.approx(3000.0)
+
+
+def test_flattened_fanout_shares_decode_scope_with_root():
+    """Worker chains decode under the trace scope, never their own."""
+    loader = _fanout_loader()
+    scopes_used: list[str] = []
+    orig = loader.prompt_generator._hash_id_corpus_rng.set_trace_id
+
+    def _spy(scope: str):
+        scopes_used.append(scope)
+        return orig(scope)
+
+    loader.prompt_generator._hash_id_corpus_rng.set_trace_id = _spy
+    loader.convert_to_conversations(loader.load_dataset())
+    assert scopes_used and all(s == "trace_fanout" for s in scopes_used)
+
+
+def test_split_disabled_restores_legacy_single_stream(monkeypatch):
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DATASET, "WEKA_SPLIT_FLATTENED_AGENTS", False)
+    loader = _fanout_loader()
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    assert [c.session_id for c in convs] == ["trace_fanout"]
+    assert len(convs[0].turns) == 6
+
+
+def test_flattened_fanout_logs_detection_summary(caplog):
+    import logging
+
+    loader = _fanout_loader()
+    with caplog.at_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace"):
+        loader.convert_to_conversations(loader.load_dataset())
+    text = caplog.text
+    assert "detected 3 agents" in text
+    assert "split 1 trace(s) into 2 extra agent chain(s)" in text
+
+
+def test_flattened_fanout_zero_declared_emits_no_fabricated_system_role():
+    """The system role comes ONLY from declared header counts. The fanout
+    fixture declares tool_tokens=0/system_tokens=0, so no message may carry
+    a fabricated system role; the shared observed prefix lives inside the
+    user content (byte-sharing is content-based, not role-based)."""
+    loader = _fanout_loader()
+    convs = {
+        c.session_id: c for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    for sid, conv in convs.items():
+        for k, turn in enumerate(conv.turns):
+            roles = [m["role"] for m in turn.raw_messages]
+            assert "system" not in roles, (sid, k, roles)
+    # Turn 0 of every conversation is one user message with the full input.
+    assert [m["role"] for m in convs["trace_fanout"].turns[0].raw_messages] == ["user"]
+    assert convs["trace_fanout"].turns[0].raw_messages[0]["content"] == "<dec:192>"
+    for wid, total in (("trace_fanout::fa:000", 256), ("trace_fanout::fa:001", 256)):
+        msgs = convs[wid].turns[0].raw_messages
+        assert [m["role"] for m in msgs] == ["user"], wid
+        assert msgs[0]["content"] == f"<dec:{total}>", wid

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.publisher import PhasePublisher
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
+    from aiperf.timing.session_tree import SessionTreeRegistry
     from aiperf.timing.strategies.core import TimingStrategyProtocol
 
 
@@ -84,6 +85,7 @@ class PhaseRunner(TaskManagerMixin):
         callback_handler: CreditCallbackHandler,
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
         user_config: UserConfig | None = None,
+        session_tree_registry: SessionTreeRegistry | None = None,
         **kwargs,
     ) -> None:
         """Initialize phase runner.
@@ -101,11 +103,17 @@ class PhaseRunner(TaskManagerMixin):
             user_config: Optional UserConfig forwarded to timing strategies that
                 need it (e.g. AgenticReplayStrategy). Strategies that don't
                 accept ``user_config`` ignore it via ``**kwargs``.
+            session_tree_registry: Optional per-session-tree slot ledger (agentic
+                replay only). Forwarded to the credit issuer, branch orchestrator,
+                and timing strategy so the session slot is held until the whole
+                tree drains; the runner releases any still-open trees at phase
+                teardown via ``release_all``.
         """
         super().__init__(**kwargs)
         self._config = config
         self._conversation_source = conversation_source
         self._user_config = user_config
+        self._session_tree_registry = session_tree_registry
 
         # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
         # Config values may reflect pre-filtered file size, but dataset_metadata
@@ -168,6 +176,7 @@ class PhaseRunner(TaskManagerMixin):
             cancellation_policy=self._cancellation_policy,
             lifecycle=self._lifecycle,
             url_selection_strategy=url_selection_strategy,
+            session_tree_registry=self._session_tree_registry,
         )
         self._branch_orchestrator = BranchOrchestrator(
             conversation_source=self._conversation_source,
@@ -182,6 +191,10 @@ class PhaseRunner(TaskManagerMixin):
                 self._user_config.input.prompt.cache_bust.target
                 if self._user_config is not None
                 else CacheBustTarget.NONE
+            ),
+            session_tree_registry=self._session_tree_registry,
+            cache_bust_ledger=getattr(
+                self._conversation_source, "cache_bust_ledger", None
             ),
         )
         self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
@@ -277,6 +290,7 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             user_config=self._user_config,
             branch_orchestrator=self._branch_orchestrator,
+            session_tree_registry=self._session_tree_registry,
         )
 
         try:
@@ -338,6 +352,7 @@ class PhaseRunner(TaskManagerMixin):
                     ramper.stop()
                 self._scheduler.cancel_all()
                 self._branch_orchestrator.cleanup()
+                self._release_tree_slots()
                 stats = self._progress.create_stats(self._lifecycle)
                 self.notice(self._format_phase_complete(stats))
                 await self._phase_publisher.publish_progress(stats)
@@ -362,6 +377,7 @@ class PhaseRunner(TaskManagerMixin):
                 ramper.stop()
             self._scheduler.cancel_all()
             self._branch_orchestrator.cleanup()
+            self._release_tree_slots()
 
             # Strategy-specific phase teardown. Currently only AgenticReplayStrategy
             # uses this hook (to surface accumulated WARMUP terminal failures
@@ -411,6 +427,7 @@ class PhaseRunner(TaskManagerMixin):
                 )
 
             self._branch_orchestrator.cleanup()
+            self._release_tree_slots()
             raise e
 
     def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
@@ -685,8 +702,30 @@ class PhaseRunner(TaskManagerMixin):
                 stats, branch_stats=branch_stats
             )
 
+    def _release_tree_slots(self) -> None:
+        """Release any still-open session-tree slots at phase teardown.
+
+        Under per-tree accounting the registry owns every session slot, so
+        trees that never drained (stuck root, lost descendant) are swept here so
+        their slots don't leak into the next phase. Idempotent (a second call
+        finds no open trees) and a no-op when tree accounting is not engaged."""
+        if self._session_tree_registry is None:
+            return
+        released = self._session_tree_registry.release_all(self._config.phase)
+        self.info(
+            lambda: f"Session-tree slots for phase {self._config.phase}: "
+            f"peak_open={self._session_tree_registry.peak_open} "
+            f"(target concurrency {self._config.concurrency}); "
+            f"released {released} still-open at teardown; "
+            f"late_events={self._session_tree_registry.late_events}"
+        )
+
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
+        # Session slots are owned by the registry when engaged: release its open
+        # trees first so the manager's get_held_slots sees them already freed and
+        # release_stuck_slots only reclaims stuck PREFILL slots (no double free).
+        self._release_tree_slots()
         session_released, prefill_released = (
             self._concurrency_manager.release_stuck_slots(self._config.phase)
         )

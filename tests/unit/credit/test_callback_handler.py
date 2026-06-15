@@ -341,6 +341,108 @@ class TestUnregisteredAndCompletePhaseHandling:
 
 
 # =============================================================================
+# Test: WARMUP terminal-failure accumulation
+# =============================================================================
+
+
+class TestWarmupFailureAccumulation:
+    """Regression tests for the WARMUP terminal-failure gate in on_credit_return.
+
+    A WARMUP credit primes turn k_i (the last request before t*); PROFILING
+    resumes the same trajectory at k_i+1, so a warmed turn for a session active
+    at t* is NEVER the trajectory's final turn (is_final_turn is False). The
+    gate must therefore fire on a NON-final WARMUP root credit that returns with
+    a terminal error/cancellation; gating it on is_final_turn made the whole
+    safety mechanism dead.
+    """
+
+    @pytest.fixture
+    def warmup_strategy(self):
+        """Mock strategy exposing the record_warmup_failure hook."""
+        mock = MagicMock()
+        mock.handle_credit_return = AsyncMock()
+        mock.record_warmup_failure = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def warmup_handler(
+        self,
+        callback_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        warmup_strategy,
+    ):
+        callback_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        return callback_handler
+
+    async def test_non_final_warmup_credit_error_records_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """A NON-final WARMUP root credit returning with an error MUST record a
+        warmup failure (the gate must not require is_final_turn)."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        assert not credit.is_final_turn  # the case the old gate silently dropped
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once_with(
+            credit.conversation_id
+        )
+
+    async def test_non_final_warmup_credit_cancelled_records_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """Cancellation (not just error) on a non-final WARMUP credit also counts."""
+        credit = make_credit(turn_index=1, num_turns=4, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(
+            credit, cancelled=True, first_token_sent=False
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once_with(
+            credit.conversation_id
+        )
+
+    async def test_successful_warmup_credit_does_not_record_failure(
+        self, warmup_handler, warmup_strategy
+    ):
+        """A clean WARMUP return (no error, not cancelled) records nothing."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(credit)
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+    async def test_warmup_child_failure_does_not_record(
+        self, warmup_handler, warmup_strategy
+    ):
+        """The gate is root-only (agent_depth == 0): a failed WARMUP child does
+        not count toward trajectory warmup failure."""
+        credit = make_dag_credit(
+            turn_index=0, num_turns=2, agent_depth=1, phase=CreditPhase.WARMUP
+        )
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
+
+        await warmup_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+
+# =============================================================================
 # Test: First Token (TTFT) Handling
 # =============================================================================
 
