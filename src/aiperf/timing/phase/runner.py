@@ -193,6 +193,9 @@ class PhaseRunner(TaskManagerMixin):
                 else CacheBustTarget.NONE
             ),
             session_tree_registry=self._session_tree_registry,
+            cache_bust_ledger=getattr(
+                self._conversation_source, "cache_bust_ledger", None
+            ),
         )
         self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
 

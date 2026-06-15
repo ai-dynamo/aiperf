@@ -910,3 +910,38 @@ async def test_on_child_leaf_reached_short_circuits_when_cleaning_up():
     await orch.on_child_leaf_reached("c")
     # children_completed should NOT increment during teardown.
     assert orch.stats.children_completed == 0
+
+
+def test_marker_for_root_resolves_tree_marker_from_ledger():
+    """A spawned descendant reuses its tree root's cache-bust marker (keyed by
+    root_correlation_id) rather than minting its own per-child marker."""
+    from aiperf.common.enums import CacheBustTarget
+    from aiperf.timing.trajectory_source import CacheBustLedger
+
+    ledger = CacheBustLedger()
+    ledger.session_marker["ROOT"] = "[rid:deadbeefcafe]\n\n"
+    orch = BranchOrchestrator(
+        conversation_source=MagicMock(),
+        credit_issuer=MagicMock(),
+        benchmark_id="b",
+        cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
+        cache_bust_ledger=ledger,
+    )
+    assert orch._marker_for_root("ROOT") == "[rid:deadbeefcafe]\n\n"
+    assert orch._marker_for_root("UNKNOWN-ROOT") is None
+    assert orch._marker_for_root(None) is None
+
+
+def test_marker_for_root_none_when_cache_bust_disabled():
+    from aiperf.common.enums import CacheBustTarget
+    from aiperf.timing.trajectory_source import CacheBustLedger
+
+    ledger = CacheBustLedger()
+    ledger.session_marker["ROOT"] = "[rid:abc]"
+    orch = BranchOrchestrator(
+        conversation_source=MagicMock(),
+        credit_issuer=MagicMock(),
+        cache_bust_target=CacheBustTarget.NONE,
+        cache_bust_ledger=ledger,
+    )
+    assert orch._marker_for_root("ROOT") is None

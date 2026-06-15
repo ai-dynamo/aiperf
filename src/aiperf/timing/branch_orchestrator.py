@@ -236,12 +236,18 @@ class BranchOrchestrator:
         benchmark_id: str = "unknown",
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
         session_tree_registry=None,
+        cache_bust_ledger=None,
     ) -> None:
         self._cs = conversation_source
         self._issuer = credit_issuer
         self._sticky_router = sticky_router
         self._benchmark_id = benchmark_id
         self._cache_bust_target = cache_bust_target
+        # Shared CacheBustLedger (root_correlation_id -> marker). Descendants
+        # resolve their tree-root's marker through it so the whole tree shares one
+        # prefix-cache domain; None when no ledger is wired (e.g. unit tests with
+        # cache-bust disabled).
+        self._marker_ledger = cache_bust_ledger
         # Per-tree session-slot ledger (agentic replay only; None otherwise).
         # Every descendant this orchestrator spawns or snapshot-seeds is
         # registered against its tree's root_correlation_id so the tree's
@@ -359,13 +365,31 @@ class BranchOrchestrator:
             return []
         return list(meta.turns[credit.turn_index].branch_ids)
 
-    def _mint_child_marker(self, child_conversation_id: str) -> str | None:
-        """Mint a unique cache-bust marker for a SPAWN child session.
+    def _marker_for_root(self, root_correlation_id: str | None) -> str | None:
+        """Resolve the tree-root cache-bust marker for a spawned descendant.
 
-        Children get their own marker (distinct from the parent's) so two
-        subagents in different traces never share a server-side KV-cache
-        prefix. Digest input ``trace_id=child_conversation_id`` already
-        encodes ``parent_trace::sa:agent_id`` so collision-free per child.
+        The marker is a property of the trajectory TREE (``root_correlation_id``):
+        every descendant — subagents and flat agents at any depth — reuses the
+        root's marker instead of minting its own, so the whole tree is one
+        prefix-cache domain (a per-child marker would force the server to
+        re-prefill any prefix the agents share). The root's marker was minted at
+        trajectory setup (``AgenticReplayTiming._mint_marker_for_session``) and
+        lives in the shared ledger keyed by ``root_correlation_id``. Returns None
+        when cache-bust is disabled, the root has no marker, or no ledger is wired.
+        """
+        if self._cache_bust_target == CacheBustTarget.NONE or not root_correlation_id:
+            return None
+        if self._marker_ledger is None:
+            return None
+        return self._marker_ledger.session_marker.get(root_correlation_id)
+
+    def _mint_child_marker(self, child_conversation_id: str) -> str | None:
+        """Mint a marker for a DAG-authored pre-session (turn-0 background) child.
+
+        Used only by ``dispatch_pre_session_branches``, where the spawning root
+        session does not exist yet (``parent_correlation_id=None``), so the
+        root's marker cannot be resolved from the ledger. Per-turn spawned
+        descendants instead use ``_marker_for_root`` to share the tree marker.
         Returns None when cache-bust is disabled (target=NONE).
         """
         from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
@@ -519,7 +543,8 @@ class BranchOrchestrator:
                         parent_meta=parent_meta,
                         gated_idx=child_state.join_target_turn_index,
                         cache_bust_marker=(cache_bust_markers or {}).get(
-                            parent_state.x_correlation_id
+                            parent_state.root_correlation_id
+                            or parent_state.x_correlation_id
                         ),
                     )
                     prereq_state = pending.outstanding.setdefault(
@@ -726,7 +751,9 @@ class BranchOrchestrator:
                         agent_depth=parent_depth + 1,
                         root_correlation_id=credit.effective_root_correlation_id,
                         branch_mode=branch.mode,
-                        cache_bust_marker=self._mint_child_marker(child_conv_id),
+                        cache_bust_marker=self._marker_for_root(
+                            credit.effective_root_correlation_id
+                        ),
                         cache_bust_target=self._cache_bust_target,
                     )
                 except Exception:

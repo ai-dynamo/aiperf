@@ -2276,10 +2276,10 @@ async def test_two_traces_at_same_pass_and_lane_get_distinct_markers():
     # Mint markers for two distinct trace_ids both at lane 0, both at
     # recycle_pass=0 (their first incarnation).
     marker_a = strategy._mint_marker_for_session(
-        x_correlation_id="xcorr_a", trace_id="trace_A", trajectory_index=0
+        root_correlation_id="xcorr_a", conversation_id="trace_A", trajectory_index=0
     )
     marker_b = strategy._mint_marker_for_session(
-        x_correlation_id="xcorr_b", trace_id="trace_B", trajectory_index=0
+        root_correlation_id="xcorr_b", conversation_id="trace_B", trajectory_index=0
     )
     rid_a = _extract_rid(marker_a)
     rid_b = _extract_rid(marker_b)

@@ -64,7 +64,6 @@ from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
-from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 from aiperf.timing.trajectory_source import (
     Trajectory,
     TrajectorySnapshot,
@@ -169,6 +168,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # ``recycle_pass`` counter, which never restarts, so a recycled
         # session's digest can never collide with a warmed one.
         ledger = conversation_source.cache_bust_ledger
+        self._cache_bust_ledger = ledger
         self._recycle_pass: dict[str, int] = ledger.recycle_pass
         self._session_marker: dict[str, str | None] = ledger.session_marker
         self._correlation_to_lane: dict[str, int] = {}
@@ -400,7 +400,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 session = self.conversation_source.session_for(trajectory)
                 self._correlation_to_lane[session.x_correlation_id] = lane
                 self._mint_marker_for_session(
-                    session.x_correlation_id, trajectory.conversation_id, lane
+                    session.effective_root_correlation_id,
+                    trajectory.conversation_id,
+                    lane,
                 )
                 turn = self._build_turn_for_session(
                     session, trajectory.start_turn_index
@@ -416,7 +418,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 session = self.conversation_source.session_for_state(state)
                 self._correlation_to_lane[session.x_correlation_id] = lane
                 self._mint_marker_for_session(
-                    session.x_correlation_id, state.conversation_id, lane
+                    session.effective_root_correlation_id, state.conversation_id, lane
                 )
                 turn = self._build_turn_for_session(session, warm_index)
                 lead_ms: float | None = None
@@ -548,7 +550,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         session = self.conversation_source.session_for(trajectory)
         self._correlation_to_lane[session.x_correlation_id] = lane
         self._mint_marker_for_session(
-            session.x_correlation_id, trajectory.conversation_id, lane
+            session.effective_root_correlation_id, trajectory.conversation_id, lane
         )
         resume_index = trajectory.start_turn_index + 1
         num_turns = len(session.metadata.turns)
@@ -730,7 +732,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
 
         self._correlation_to_lane[session.x_correlation_id] = lane
-        self._mint_marker_for_session(session.x_correlation_id, next_trace_id, lane)
+        self._mint_marker_for_session(
+            session.effective_root_correlation_id, next_trace_id, lane
+        )
 
         turn = self._build_turn_for_session(session, 0)
         await self.credit_issuer.issue_credit(turn)
@@ -782,7 +786,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for state in snapshot.states:
             self._correlation_to_lane[state.x_correlation_id] = lane
             self._mint_marker_for_session(
-                state.x_correlation_id, state.conversation_id, lane
+                state.root_correlation_id or state.x_correlation_id,
+                state.conversation_id,
+                lane,
             )
 
         if self.branch_orchestrator is not None:
@@ -945,7 +951,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     ) -> TurnToSend:
         """Build a TurnToSend for the given session at the given turn index."""
         base = session.build_turn_at_index(turn_index)
-        marker = self._session_marker.get(session.x_correlation_id)
+        marker = self._session_marker.get(session.effective_root_correlation_id)
         if marker is None and self._cache_bust_target == CacheBustTarget.NONE:
             return base
         return _struct_replace(
@@ -955,42 +961,35 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         )
 
     def _mint_marker_for_session(
-        self, x_correlation_id: str, trace_id: str, trajectory_index: int
+        self, root_correlation_id: str, conversation_id: str, trajectory_index: int
     ) -> str | None:
-        """Mint (or reuse) and store a per-session cache-bust marker.
+        """Mint (or reuse) the cache-bust marker for a session's trajectory TREE.
 
-        Returns None when the feature is disabled (target=NONE), in which
-        case the session map records None so callers can unconditionally
-        look it up. Increments _recycle_pass[trace_id] each time a new
-        session is minted for the same trace_id, so digest rotates across
-        recycles.
+        Keyed by ``root_correlation_id`` (not the session's own id), so the
+        depth-0 root and every descendant (subagents, flat agents) of one tree
+        resolve a single shared marker — the tree is one prefix-cache domain.
+        The digest is taken on the base trace id (``conversation_id`` stripped of
+        any ``::sa:``/``::fa:`` suffix) and the tree lane, so whichever member
+        resolves first mints the same value; the rest reuse it.
 
-        Both ``_session_marker`` and ``_recycle_pass`` live on the shared
-        ``TrajectorySource`` ledger, surviving the WARMUP -> PROFILING
-        boundary (strategies are constructed fresh per phase). A session
-        whose x_correlation_id was already minted - a continuing lane
-        resuming at k_i+1 - keeps its WARMUP marker verbatim instead of
-        re-minting, so a continued session's digest can never rotate at the
-        phase boundary regardless of mint order. The pass counter never
-        restarts, so fresh sessions (recycles, parents unblocked after t*)
-        can never collide with a warmed digest.
+        Returns None when the feature is disabled (target=NONE), recording the
+        None so callers can look it up unconditionally. ``_recycle_pass`` bumps
+        once per fresh tree, so the digest rotates across recycles.
+
+        The ledger survives the WARMUP -> PROFILING boundary (strategies are
+        constructed fresh per phase), so a tree continuing across the boundary
+        keeps its marker (idempotent reuse) while fresh trees draw a new pass.
         """
-        if x_correlation_id in self._session_marker:
-            return self._session_marker[x_correlation_id]
-        if self._cache_bust_target == CacheBustTarget.NONE:
-            self._session_marker[x_correlation_id] = None
-            return None
-        new_pass = self._recycle_pass.get(trace_id, -1) + 1
-        self._recycle_pass[trace_id] = new_pass
-        marker = build_cache_bust_marker(
-            self._benchmark_id,
-            new_pass,
-            trajectory_index,
-            trace_id,
+        from aiperf.timing.strategies.cache_bust import resolve_tree_marker
+
+        return resolve_tree_marker(
+            self._cache_bust_ledger,
+            root_correlation_id,
+            benchmark_id=self._benchmark_id,
+            trajectory_index=trajectory_index,
+            conversation_id=conversation_id,
             target=self._cache_bust_target,
         )
-        self._session_marker[x_correlation_id] = marker
-        return marker
 
     def record_warmup_failure(self, trace_id: str) -> None:
         """Accumulate a terminal warmup credit failure for later reporting.
