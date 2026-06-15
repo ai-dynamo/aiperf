@@ -153,7 +153,7 @@ flag.
 
 | Locked setting | What it means | Why it matters |
 |---|---|---|
-| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state, FIFO trace recycle, trace idle-gap compression). |
+| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state, sampler-driven trace recycle, per-session-tree concurrency, trace idle-gap compression). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved, with long idle gaps capped by the trace idle-gap rule below | The whole point of replay is to preserve the agent's pacing without letting coffee-break gaps dominate steady-state. |
 | `--trace-idle-gap-cap-seconds = 60` | Gaps between recorded request starts over 60s are compressed to 60s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
@@ -261,13 +261,23 @@ same trace exceeds 60 seconds, the later request and everything after it are
 shifted earlier so that idle gap becomes 60 seconds while local subagent overlap
 is preserved.
 
-When a trajectory finishes its conversation (last turn dispatched and
-acknowledged), its trace ID goes back into a **FIFO recycle queue**, and the
-slot picks up the next trace ID from the head of the queue. The recycle queue
-starts pre-populated with the full corpus; active traces are skipped and
-requeued until they're eligible for replay. So as long as the corpus is larger
-than the trajectory count, every trace gets played at least once before any
-trace is replayed twice.
+Concurrency here is **per session tree**: each lane holds one slot for a whole
+tree — the root conversation plus every subagent it spawns (children,
+subchildren, background `::fa:` flat-async streams, `::aux:` sidecars). A lane
+recycles only once its **entire tree drains** — the root has sent its last turn
+*and* every subagent has finished — not merely when the root's final turn is
+acknowledged. So a background subagent that outlives its root keeps the lane's
+slot, and exactly `--concurrency` trees stay live at all times (never more — a
+new root can't start until a tree fully drains; never less — rootless/gated
+lanes hold the slot too). The shared tree id (`root_correlation_id`) is written
+to every record in `profile_export.jsonl`, so `aiperf analyze swim-lane` groups
+each tree under one lane and renders exactly `--concurrency` slots.
+
+When a tree drains, the lane recycles by drawing the next root from the **dataset
+sampler** (the same sampler that built the initial trajectories, honoring the
+dataset's `sampling_strategy`). As long as the corpus is larger than the
+trajectory count, a sequential/shuffle sampler plays every trace at least once
+before replaying any trace.
 
 A few wrinkles worth knowing:
 
@@ -312,11 +322,14 @@ A few wrinkles worth knowing:
 
 The AgentX MVP corpus is the current **with-subagents** variant. Parent turns
 can spawn one or more helper conversations, and the parent's next anchored turn
-waits on the corresponding `SPAWN_JOIN` prerequisite before resuming. During an
-AgentX MVP run, those helper conversations can run alongside their parent and
-increase instantaneous in-flight request count above `--concurrency`; the
-concurrency setting controls the number of active parent trajectories, not a
-hard cap on every parent-plus-subagent request.
+waits on the corresponding `SPAWN_JOIN` prerequisite before resuming. `--concurrency`
+controls the number of live session **trees** — one slot per root *plus all the
+subagents it spawns*, held until the whole tree drains. Those helper conversations
+run alongside their parent, so the instantaneous in-flight *request* count can rise
+above `--concurrency` at a fan-out point; the concurrency setting is a cap on
+concurrent trees, not on every parent-plus-subagent request. Because the slot is
+held for the entire tree, a background subagent that outlives its parent does not
+free the lane early — exactly `--concurrency` trees stay live throughout.
 
 AIPerf constructs this topology from `WekaSubagentEntry` blocks in the trace:
 subagents with preceding and following parent anchors become SPAWN/JOIN
