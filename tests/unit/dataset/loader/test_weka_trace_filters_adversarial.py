@@ -181,6 +181,39 @@ def test_max_context_length_includes_requested_output(tmp_path, monkeypatch):
     assert [conv.session_id for conv in convs] == ["good"]
 
 
+def test_max_context_keep_drop_uses_uncapped_subagent_output(tmp_path, monkeypatch):
+    """--max-osl caps parent/flat output (via _cap_output) but NOT subagent-child
+    output, which is emitted at the recorded output_length. The max-context
+    keep/drop peak must therefore use the subagent child's UNCAPPED output, or a
+    trace that fits only under the cap is kept and then 4xx mid-run on the
+    uncapped subagent request.
+    """
+    # max_context=5000, max_osl=2000.
+    #  - parent in=100,out=10 -> capped peak 110 (well under).
+    #  - subagent inner in=1000,out=10000:
+    #      buggy (capped)   = 1000 + min(10000, 2000) = 3000 <= 5000 -> KEPT
+    #      fixed (uncapped) = 1000 + 10000            = 11000 > 5000 -> DROPPED
+    good = _base_trace([_normal(0.0, 100, 10, [1, 2])], trace_id="good")
+    bad = _base_trace(
+        [
+            _normal(0.0, 100, 10, [1, 2]),
+            _subagent(1.0, "agent_big_out", [_normal(1.0, 1000, 10000, [3, 4])]),
+        ],
+        trace_id="bad",
+    )
+    traces_dir = tmp_path / "traces"
+    traces_dir.mkdir()
+    _write_trace(traces_dir, good, name="good.json")
+    _write_trace(traces_dir, bad, name="bad.json")
+
+    uc = _mk_user_config(max_osl=2000)
+    uc.input.max_context_length = 5000
+    loader = _make_loader(traces_dir, uc, monkeypatch)
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    assert [conv.session_id for conv in convs] == ["good"]
+
+
 def test_max_osl_zero_caps_all_outputs_to_zero(monkeypatch):
     """`max_osl=0` caps every turn's max_tokens to zero (not falsy-skipped)."""
     uc = _mk_user_config(max_osl=0)
@@ -292,9 +325,11 @@ def test_filter_kills_middle_parent_subagent_reanchors(tmp_path, monkeypatch):
     data = _base_trace(
         [
             _normal(0.0, 50, 10, [1]),
-            _normal(1.0, 500, 10, [2]),
+            _normal(1.0, 500, 10, [1, 2]),
             _subagent(2.0, "a1", [_normal(0.0, 30, 5, [100])]),
-            _normal(4.0, 50, 10, [3]),
+            # Chains onto the surviving [1] prefix so detection keeps the
+            # post-filter parent as one conversation.
+            _normal(4.0, 50, 10, [1, 3]),
         ],
         trace_id="tmid",
     )

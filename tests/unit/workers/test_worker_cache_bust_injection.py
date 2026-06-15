@@ -92,6 +92,18 @@ def test_inject_marker_into_raw_messages_prefix():
     assert raw[0]["content"] == _PREFIX_MARKER + "you are helpful"
 
 
+def test_inject_marker_into_raw_messages_prefix_is_idempotent():
+    raw = [
+        {"role": "system", "content": "you are helpful"},
+        {"role": "user", "content": "hi"},
+    ]
+
+    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_raw_messages(raw, _PREFIX_MARKER, is_prefix=True)
+
+    assert raw[0]["content"] == _PREFIX_MARKER + "you are helpful"
+
+
 def test_inject_marker_into_raw_messages_suffix():
     raw = [
         {"role": "system", "content": "you are helpful"},
@@ -168,6 +180,15 @@ def test_inject_marker_empty_raw_is_noop():
 def test_inject_first_user_turn_prefix_with_system_present():
     raw = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
     _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
+    assert raw[1]["content"] == _PREFIX_MARKER + "hi"
+
+
+def test_inject_first_user_turn_prefix_is_idempotent():
+    raw = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+
+    _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
+    _inject_marker_into_first_user_turn(raw, _PREFIX_MARKER, is_prefix=True)
+
     assert raw[1]["content"] == _PREFIX_MARKER + "hi"
 
 
@@ -663,6 +684,35 @@ def test_apply_first_turn_prefix_under_deltas_injects_into_turn_0_user_role():
     _apply_cache_bust(session, credit, system_message=None)
 
     # First user message in turn 0 mutated; turn 1's user is untouched.
+    assert session.turn_list[0].raw_messages[1]["content"] == _PREFIX_MARKER + "hi"
+    assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
+
+
+def test_apply_first_turn_prefix_under_deltas_mid_turn_marks_seeded_turn_0_once():
+    """Agentic replay can start at turn_index>0 after seeding turns 0..k-1.
+
+    FIRST_TURN_PREFIX must still attach to the seeded first user turn. Repeated
+    calls on the same mutable session should not duplicate the marker.
+    """
+    turn_0 = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "hi"},
+    ]
+    turn_1_delta = [
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "follow up"},
+    ]
+    session = _make_delta_session([turn_0, turn_1_delta])
+    credit = _make_credit(
+        target=CacheBustTarget.FIRST_TURN_PREFIX,
+        marker=_PREFIX_MARKER,
+        turn_index=1,
+        num_turns=2,
+    )
+
+    _apply_cache_bust(session, credit, system_message=None)
+    _apply_cache_bust(session, credit, system_message=None)
+
     assert session.turn_list[0].raw_messages[1]["content"] == _PREFIX_MARKER + "hi"
     assert session.turn_list[1].raw_messages[1]["content"] == "follow up"
 

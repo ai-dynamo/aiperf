@@ -51,6 +51,12 @@ class BranchStats(AIPerfBaseModel):
         "tracking before reaching their leaf turn. Counts each child once, regardless "
         "of how many of its remaining turns were skipped.",
     )
+    children_delayed: int = Field(
+        default=0,
+        description="Number of SPAWN child sessions whose turn-0 dispatch was scheduled "
+        "at its recorded offset from the branch spawn (child turn-0 timestamp past the "
+        "branch start) instead of dispatching immediately.",
+    )
 
     def stats_dict(self) -> dict[str, int]:
         """Snapshot the counters as a plain dict (stable shape for exporters)."""

@@ -14,45 +14,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
-
-def compose_weka_prompt_tokens(
-    *,
-    hash_ids: list[int],
-    input_length: int,
-    decode_block_tokens: Callable[[list[int]], list[int]],
-    sample_partial_tail_tokens: Callable[[int, str], list[int]],
-    seed: str,
-) -> list[int]:
-    """Build the prompt token sequence for a weka turn.
-
-    Replaces the ``synthesize_prompts_from_hash_ids`` parent-side phase: the
-    same hash-id-seeded RNG used by :class:`ConversationReconstructor` for
-    LCP segments is reused here for the prompt itself, so workers can
-    produce both byte-deterministically without a separate ``parallel_decode``
-    pool.
-
-    Three layouts:
-
-    - ``hash_ids`` empty: prompt is entirely a sha256-keyed sample of length
-      ``input_length``.
-    - ``input_length <= len(hash_ids) * block_size``: exact-tile or
-      last-block-partial; truncate the hashed prefix to ``input_length``.
-      Byte-identical to ``_build_token_sequence``'s last-block-partial path
-      because ``sample_tokens_from_corpus`` calls ``randrange`` exactly once
-      regardless of block size, so prefix truncation matches.
-    - ``input_length > len(hash_ids) * block_size``: prefix-only — append a
-      sha256-keyed partial tail. Byte content of the tail differs from
-      ``_build_token_sequence``'s order-dependent ``_corpus_rng`` path; the
-      sha256-keyed seed makes the tail position-deterministic and
-      reproducible across processes.
-    """
-    if not hash_ids:
-        return sample_partial_tail_tokens(input_length, seed)
-    block_tokens = decode_block_tokens(hash_ids)
-    if input_length <= len(block_tokens):
-        return block_tokens[:input_length]
-    tail = input_length - len(block_tokens)
-    return block_tokens + sample_partial_tail_tokens(tail, seed)
+# Re-exported for backwards compatibility; the composer lives in its own
+# module since it is independent of the synthesis-buffer state machine.
+from aiperf.dataset.loader.weka_prompt_compose import (  # noqa: E402
+    compose_weka_prompt_tokens as compose_weka_prompt_tokens,
+)
+from aiperf.dataset.loader.weka_tool_shape import (
+    demote_unpaired_tool_marks,
+    tool_shape_segment_messages,
+)
 
 
 @dataclass
@@ -90,6 +60,11 @@ class RoleSegment:
     block_count: int
     tokens: list[int]
     content: str
+    tool_result_turn: int | None = None
+    """Set on a user segment whose content is the tool output answering the
+    immediately-preceding assistant segment's tool call. Holds the turn index
+    the segment was created on, keying the deterministic synthetic call id so
+    re-emissions reproduce the id the turn was first sent with."""
 
     @property
     def content_token_count(self) -> int:
@@ -133,9 +108,14 @@ class ConversationReconstructor:
     cache-hit reuse across turns at the cost of hash-id fidelity past
     turn 0).
     """
+    tool_shaped_messages: bool = False
+    """When True, ``turn_delta`` emits marked tool-result user segments in
+    the OpenAI tool-call wire shape (see weka_tool_shape). Requires emitted
+    assistant segments for pairing, so live-assistant deltas stay plain."""
     _segments: list[RoleSegment] = field(default_factory=list)
     _emitted_segment_count: int = 0
     _last_disturbance_at: int | None = None
+    _turn_index: int = 0
 
     def init_turn_0(
         self,
@@ -144,6 +124,7 @@ class ConversationReconstructor:
         tool_tokens: int,
         system_tokens: int,
         seed: str,
+        is_tool_result: bool = False,
     ) -> None:
         """Initialize segments for turn 0 from a tool+system / user prefix split.
 
@@ -206,6 +187,19 @@ class ConversationReconstructor:
                         f"reconstruct the prefix; aborting to avoid faking "
                         f"the cache structure."
                     )
+                # Clamp to the prompt's own covered-block count. When the
+                # declared prefix block count exceeds it -- tool+system tokens
+                # exceed in_tokens, or ceil() rounding overshoots
+                # floor(in_tokens/bs) with over-recorded hash blocks -- the
+                # un-clamped system segment would claim more blocks than the
+                # prompt contains: user_blocks (covered_blocks - cursor) goes
+                # negative, the recorded user/tail slice silently empties, and
+                # sum(seg.tokens) overshoots in_tokens, breaking the byte-exact
+                # ISL invariant and poisoning the cumulative cursor in
+                # truncate_synth_buf_at_block on every later turn. The
+                # over-budget prefix tokens fold into the synth tail below.
+                prefix_blocks = min(prefix_blocks, covered_blocks)
+            if prefix_blocks > 0:
                 seg_tokens = self.decode_block_tokens(
                     hash_ids[cursor : cursor + prefix_blocks]
                 )
@@ -222,22 +216,28 @@ class ConversationReconstructor:
 
         # User segment: consume whatever hash_ids remain, then synthesize the
         # missing-blocks region + the recorded partial tail as one synth-tail
-        # call.
+        # call. When the system prefix covers the entire prompt, appending a
+        # zero-token user segment would be deleted by the next turn's
+        # boundary cut and flag a spurious disturbance (reset_context) on a
+        # pure-growth turn — skip it unless it is the only segment.
         user_blocks = covered_blocks - cursor
         user_tokens = self.decode_block_tokens(hash_ids[cursor : cursor + user_blocks])
         synth_tail_n = missing_block_tokens + partial_tail_tokens_n
         if synth_tail_n > 0:
             user_tokens.extend(self.sample_partial_tail_tokens(synth_tail_n, seed))
-        segs.append(
-            RoleSegment(
-                role="user",
-                block_start=cursor,
-                block_count=user_blocks,
-                tokens=user_tokens,
-                content=self.decode_tokens_to_text(user_tokens),
+        if user_tokens or not segs:
+            segs.append(
+                RoleSegment(
+                    role="user",
+                    block_start=cursor,
+                    block_count=user_blocks,
+                    tokens=user_tokens,
+                    content=self.decode_tokens_to_text(user_tokens),
+                )
             )
-        )
 
+        self._turn_index = 0
+        del is_tool_result  # turn 0 has no preceding assistant to pair with
         self._segments = segs
         self._emitted_segment_count = 0
         self._last_disturbance_at = None
@@ -250,6 +250,7 @@ class ConversationReconstructor:
         curr_hash_ids: list[int],
         curr_in_tokens: int,
         seed: str,
+        is_tool_result: bool = False,
     ) -> None:
         """Advance synth_buf to turn k via LCP-driven symmetric attribution.
 
@@ -274,20 +275,24 @@ class ConversationReconstructor:
         ``prev_out_tokens`` (by up to ``bs - 1`` tokens) but preserves the
         hash-content invariant — every cached block emits its full content,
         unmodified by any terminator stamp.
+
+        ``prev_in_tokens`` is retained for the recorded-request contract
+        (mirroring ``prev_hash_ids`` / ``prev_out_tokens``) but no longer
+        feeds the truncation: the buffer self-describes its trailing
+        overhang, which is also correct when the boundary segment is not the
+        trailing one.
         """
         bs = self.block_size
         m_curr = len(curr_hash_ids)
         m_curr_full = curr_in_tokens // bs
         missing_block_tokens = max(0, (m_curr_full - m_curr) * bs)
         lcp = longest_common_prefix(prev_hash_ids, curr_hash_ids)
-        prev_partial_tail = prev_in_tokens % bs
 
         truncate_disturbance = truncate_synth_buf_at_block(
             self._segments,
             lcp,
             bs,
             decode_tokens_to_text=self.decode_tokens_to_text,
-            prev_partial_tail=prev_partial_tail,
         )
         self._last_disturbance_at = truncate_disturbance
 
@@ -301,9 +306,16 @@ class ConversationReconstructor:
             )
         new_blocks_count = m_curr - lcp
 
+        self._turn_index += 1
         asst_blocks_target = (
             math.ceil(prev_out_tokens / bs) if prev_out_tokens > 0 else 0
         )
+        if not any(seg.role == "user" for seg in self._segments):
+            # Context-loss rule: the truncation removed every user segment
+            # (or turn 0 was system-only), so the conversation resumes at a
+            # USER turn — the wire cannot present assistant output before
+            # any user input. The whole new region becomes user content.
+            asst_blocks_target = 0
         asst_blocks = min(asst_blocks_target, new_blocks_count)
         asst_emit_size = asst_blocks * bs
 
@@ -331,6 +343,13 @@ class ConversationReconstructor:
                     block_count=user_blocks,
                     tokens=user_tokens,
                     content=self.decode_tokens_to_text(user_tokens),
+                    # The mark is unconditional here; turn_delta demotes it at
+                    # first emission if no assistant directly precedes it in
+                    # the emitted window (post-context-loss heads, missing
+                    # assistant, assistant emitted in an earlier delta), so
+                    # the shape a turn is first sent with is the shape every
+                    # reset re-emission reproduces.
+                    tool_result_turn=self._turn_index if is_tool_result else None,
                 )
             )
 
@@ -362,14 +381,15 @@ class ConversationReconstructor:
             source = self._segments[self._emitted_segment_count :]
             reset = False
 
-        if self.emit_assistant_segments:
-            messages = [{"role": s.role, "content": s.content} for s in source]
-        else:
-            messages = [
-                {"role": s.role, "content": s.content}
-                for s in source
-                if s.role != "assistant"
-            ]
+        messages = [{"role": s.role, "content": s.content} for s in source]
+        if self.tool_shaped_messages and self.emit_assistant_segments:
+            # A mark that cannot pair in THIS window ships plain and must
+            # stay plain on every later re-emission — demote it now so reset
+            # full re-emits cannot retroactively shape already-sent context.
+            demote_unpaired_tool_marks(source)
+            messages = tool_shape_segment_messages(messages, source)
+        if not self.emit_assistant_segments:
+            messages = [m for m in messages if m["role"] != "assistant"]
 
         self._emitted_segment_count = len(self._segments)
         self._last_disturbance_at = None
@@ -412,36 +432,38 @@ def truncate_synth_buf_at_block(
     target_blocks: int,
     block_size: int,
     decode_tokens_to_text: Callable[[list[int]], str] | None = None,
-    prev_partial_tail: int = 0,
 ) -> int | None:
     """Truncate ``segments`` in place so cumulative block_count == target_blocks.
 
-    Block-aligned shape: every segment except the trailing user holds exactly
-    ``block_count * block_size`` tokens, and the trailing user holds
-    ``block_count * block_size + prev_partial_tail`` tokens. So:
+    Block-aligned shape: every segment except the trailing one holds exactly
+    ``block_count * block_size`` tokens; only the trailing segment may hold
+    an overhang past its block range (the synthesized missing-block region
+    plus the partial tail). So:
 
-    Boundary case (``cursor + seg.block_count == target_blocks``):
-    Trailing tokens past ``block_count * block_size`` are exactly the
-    ``prev_partial_tail`` tokens (no asst-block-rounding overhead to
-    disambiguate from). Strip them; the next turn's tiling will
-    re-introduce the right partial tail for ``curr_in_tokens % bs``.
+    Boundary case (``cursor + seg.block_count == target_blocks``): strip the
+    segment's own overhang past ``block_count * block_size`` — zero for any
+    non-trailing segment, the full missing-blocks + partial-tail synth region
+    for the trailing one; the next turn's tiling re-introduces the right tail
+    for ``curr_in_tokens``. Sizing the strip from the segment itself (not the
+    previous turn's ``in_tokens % bs``) matters when the boundary segment is
+    NOT the trailing one (e.g. a tail-only tool-result segment sits past it):
+    stripping recorded hash-block tokens there would corrupt the hash-content
+    invariant and destabilize every reset re-emission.
 
     Mid-segment case (truncation lands inside a segment): token-level slice
-    to ``kept_blocks * block_size``. Now this slice is guaranteed to end on
-    a hash-block boundary because every segment is block-aligned.
+    to ``kept_blocks * block_size`` — guaranteed to end on a hash-block
+    boundary because every segment is block-aligned.
 
     When ``decode_tokens_to_text`` is provided, ``content`` is re-derived
     from the surviving tokens to keep the (tokens, content) invariant.
 
-    Returns the earliest segment index whose content was disturbed by the
-    truncation — either modified in place (boundary partial-tail strip,
-    mid-segment slice) or removed entirely (cleared buffer, cut at a segment
-    start, boundary cut with segments past the boundary). Returns ``None``
-    only when no segment was touched: target lies beyond every segment, or
-    the buffer was already empty. Used by
-    :meth:`ConversationReconstructor.turn_delta` to detect disturbances of
-    previously-emitted segments — any returned index that lies below the
-    emitted count forces a context reset on the next emission.
+    Returns the earliest segment index whose content was disturbed — modified
+    in place (overhang strip, mid-segment slice) or removed entirely (cleared
+    buffer, cut at a segment start, deletion past a boundary cut) — or
+    ``None`` when no segment was touched (target beyond every segment, or
+    empty buffer). :meth:`ConversationReconstructor.turn_delta` compares the
+    index against the emitted count: disturbing a previously-emitted segment
+    forces a context reset on the next emission.
     """
     if target_blocks <= 0:
         had_segments = len(segments) > 0
@@ -454,13 +476,14 @@ def truncate_synth_buf_at_block(
             cursor += seg.block_count
             continue
         if cursor + seg.block_count == target_blocks:
-            # Boundary cut: strip the trailing partial_tail tokens (the only
-            # tokens past block_count*bs are the partial tail), then drop any
-            # segments past the boundary.
+            # Boundary cut: strip this segment's overhang past its block
+            # range (only the trailing segment has one — missing-block synth
+            # tokens plus the partial tail), then drop any segments past the
+            # boundary.
             disturbed: int | None = None
-            if prev_partial_tail > 0 and len(seg.tokens) > 0:
-                stripped_n = min(prev_partial_tail, len(seg.tokens))
-                seg.tokens = seg.tokens[:-stripped_n]
+            overhang = len(seg.tokens) - seg.block_count * block_size
+            if overhang > 0:
+                seg.tokens = seg.tokens[:-overhang]
                 if decode_tokens_to_text is not None:
                     seg.content = decode_tokens_to_text(seg.tokens)
                 disturbed = i

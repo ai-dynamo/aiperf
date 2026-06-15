@@ -26,6 +26,7 @@ from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
+from aiperf.timing.session_tree import SessionTreeRegistry
 from aiperf.timing.trajectory_source import TrajectorySource
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
@@ -126,9 +127,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # Long-lived components (shared across phases)
         # AGENTIC_REPLAY needs trajectories built once at orchestrator-construction
         # time so trajectory state survives the WARMUP -> PROFILING boundary.
-        if any(
+        is_agentic_replay = any(
             pc.timing_mode == TimingMode.AGENTIC_REPLAY for pc in config.phase_configs
-        ):
+        )
+        if is_agentic_replay:
             if config.concurrency is None:
                 raise ValueError(
                     "AGENTIC_REPLAY timing mode requires concurrency to be set on "
@@ -147,6 +149,15 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 self._dataset_metadata, self._dataset_sampler
             )
         self._concurrency_manager = ConcurrencyManager()
+        # Per-session-TREE slot ledger: agentic replay only, where a session is a
+        # root + all the subagents it spawns and the slot must be held until the
+        # whole tree drains (exactly-N concurrency). None for other timing modes,
+        # which keep the legacy per-root-credit slot release.
+        self._session_tree_registry = (
+            SessionTreeRegistry(self._concurrency_manager)
+            if is_agentic_replay
+            else None
+        )
         self._cancellation_policy = RequestCancellationSimulator(
             config.request_cancellation
         )
@@ -162,7 +173,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # Callback handler registered directly with router (no orchestrator in middle)
         # Subagent orchestrator (DAG) is attached via ``set_branch_orchestrator``
         # by Task 14 wiring once the orchestrator is constructed with its issuer.
-        self._callback_handler = CreditCallbackHandler(self._concurrency_manager)
+        self._callback_handler = CreditCallbackHandler(
+            self._concurrency_manager,
+            session_tree_registry=self._session_tree_registry,
+        )
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(
             self._callback_handler.on_first_token
@@ -229,6 +243,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 callback_handler=self._callback_handler,
                 url_selection_strategy=self._url_sampler,
                 user_config=self._user_config,
+                session_tree_registry=self._session_tree_registry,
             )
 
             # For seamless non-final phases, set callback to remove from active runners

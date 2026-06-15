@@ -8,9 +8,11 @@ data model):
 - ``dispatch_join_turn`` propagates ``parent_branch_mode`` and
   ``parent_has_forks_on_gated_turn`` from :class:`PendingBranchJoin` instead
   of hardcoding FORK.
-- ``BranchOrchestrator.intercept`` dispatches the gated join turn immediately
-  when every ``start_branch_child`` call fails (no children landed), instead
-  of registering a dead pending join that hangs the parent.
+- ``BranchOrchestrator.intercept`` pops the drained gate silently and returns
+  False when every ``start_branch_child`` call fails (no children landed),
+  so the strategy's normal continuation dispatches the gated turn exactly
+  once - neither hanging the parent on a dead pending join nor
+  double-dispatching it from the orchestrator.
 """
 
 from __future__ import annotations
@@ -122,11 +124,14 @@ async def test_dispatch_join_turn_preserves_has_forks_on_gated_turn():
 
 
 @pytest.mark.asyncio
-async def test_intercept_all_children_failed_with_gate_does_not_hang():
+async def test_intercept_all_children_failed_defers_gated_turn_to_strategy():
     """When every ``start_branch_child`` raises on a parent turn whose next
-    turn is gated, the future join has zero outstanding children and
-    would never fire via the child-leaf decrement path. The orchestrator
-    must dispatch the gated turn immediately."""
+    turn is gated, the future join has zero outstanding children and would
+    never fire via the child-leaf decrement path. The drained gate must be
+    popped silently and intercept must return False: the strategy's normal
+    continuation then dispatches turn k+1 exactly once. Dispatching the join
+    here AND returning False sent the same turn twice (the callback handler
+    falls through to handle_credit_return -> _dispatch_next_turn)."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=["a", "b"],
@@ -163,25 +168,19 @@ async def test_intercept_all_children_failed_with_gate_does_not_hang():
         branch_mode=ConversationBranchMode.FORK,
     )
 
-    # No children landed; the gate was drained at spawn time and the join
-    # fired immediately (not deferred). Parent's next turn is turn 1 but
-    # intercept returns False because the join already dispatched (the
-    # future/active join entries are gone).
+    # All children errored before any landed: the gate is "satisfied" with
+    # zero outstanding, popped silently, and the parent is not suspended.
     result = await orch.intercept(credit)
-    # Since all children errored before any landed, the gate was "satisfied"
-    # with zero outstanding and dispatched immediately. No suspension.
     assert result is False
 
-    # Gated turn dispatched exactly once.
-    assert issuer.dispatch_join_turn.await_count == 1
-    dispatched_pending = issuer.dispatch_join_turn.await_args.args[0]
-    assert dispatched_pending.gated_turn_index == 1
-    assert dispatched_pending.total_outstanding == 0
+    # The single dispatch of turn 1 belongs to the strategy's continuation
+    # path; the orchestrator must not issue the join turn itself.
+    issuer.dispatch_join_turn.assert_not_awaited()
 
-    # No leaked per-parent state.
+    # No leaked per-parent state to wedge phase-end draining.
     assert "root-corr" not in orch._active_joins
     assert "root-corr" not in orch._future_joins
     assert "root-corr" not in orch._descendant_counts
-    assert orch.stats.parents_resumed == 1
+    assert orch.stats.parents_resumed == 0
     assert orch.stats.children_errored == 2
     assert orch.stats.children_spawned == 0

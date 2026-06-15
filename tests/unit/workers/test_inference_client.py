@@ -4,6 +4,7 @@
 import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 from pytest import param
 
@@ -442,3 +443,167 @@ class TestInferenceClient:
             assert not hasattr(ctx, attr), (
                 f"RecordContext must not carry pre-send field {attr!r}"
             )
+
+    def _enrich_with_payload(self, inference_client, model_endpoint):
+        turn = Turn(texts=[Text(contents=["x"])], role="user", model="test-model")
+        request_info = RequestInfo(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            turn_index=0,
+            credit_num=7,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="rid",
+            x_correlation_id="cid",
+            conversation_id="conv",
+            payload_bytes=b'{"model":"x","messages":[{"role":"user","content":"x"}]}',
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+        enriched = inference_client._enrich_request_record(
+            record=record, request_info=request_info
+        )
+        return enriched, request_info
+
+    def test_enrich_strips_payload_bytes_when_flag_set(
+        self, inference_client, model_endpoint
+    ):
+        """strip_record_payload_bytes=True omits huge request payloads from the
+        record while leaving the source RequestInfo untouched."""
+        inference_client.strip_record_payload_bytes = True
+        enriched, request_info = self._enrich_with_payload(
+            inference_client, model_endpoint
+        )
+        assert enriched.request_info is not None
+        assert enriched.request_info.payload_bytes is None
+        # Source RequestInfo is not mutated (transport already consumed it).
+        assert request_info.payload_bytes is not None
+
+    def test_enrich_keeps_payload_bytes_by_default(
+        self, inference_client, model_endpoint
+    ):
+        """Default (flag False) preserves the canonical wire body on the record."""
+        assert inference_client.strip_record_payload_bytes is False
+        enriched, request_info = self._enrich_with_payload(
+            inference_client, model_endpoint
+        )
+        assert enriched.request_info is not None
+        assert enriched.request_info.payload_bytes == request_info.payload_bytes
+
+
+class TestInferenceClientDynamoSessionControl:
+    """Chokepoint injection of nvext.session_control for Dynamo routing.
+
+    The verbatim PAYLOAD_BYTES path is refused against this feature at dataset
+    load, so injection only ever runs on the structured (format_payload) body.
+    """
+
+    @pytest.fixture
+    def model_endpoint(self):
+        return ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+                use_dynamo_conv_aware_routing=True,
+                dynamo_session_timeout_seconds=123,
+            ),
+        )
+
+    @pytest.fixture
+    def inference_client(self, model_endpoint, mock_http_transport_entry):
+        mock_transport = MagicMock()
+        mock_endpoint = MagicMock()
+        mock_endpoint.get_endpoint_headers.return_value = {}
+        mock_endpoint.get_endpoint_params.return_value = {}
+        mock_endpoint.format_payload.return_value = {
+            "messages": [{"role": "user", "content": "hi"}],
+            "model": "test-model",
+        }
+
+        def mock_get_class(protocol, name):
+            if protocol == "endpoint":
+                return lambda **kwargs: mock_endpoint
+            if protocol == "transport":
+                return lambda **kwargs: mock_transport
+            raise ValueError(f"Unknown protocol: {protocol}")
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_http_transport_entry],
+            ),
+        ):
+            return InferenceClient(
+                model_endpoint=model_endpoint, service_id="test-service-id"
+            )
+
+    def _request_info(
+        self, inference_client, *, is_final_turn, x_correlation_id="corr-1"
+    ):
+        return RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[Turn(role="user", texts=[Text(contents=["hi"])])],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="rid",
+            x_correlation_id=x_correlation_id,
+            conversation_id="conv",
+            is_final_turn=is_final_turn,
+        )
+
+    async def _sent_payload(self, inference_client, request_info):
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord(request_info=request_info)
+        )
+        await inference_client.send_request(request_info)
+        return orjson.loads(
+            inference_client.transport.send_request.call_args.kwargs["payload"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_final_turn_binds_with_x_correlation_id_and_timeout(
+        self, inference_client
+    ):
+        payload = await self._sent_payload(
+            inference_client,
+            self._request_info(inference_client, is_final_turn=False),
+        )
+        assert payload["nvext"]["session_control"] == {
+            "session_id": "corr-1",
+            "action": "bind",
+            "timeout": 123,
+        }
+        # Endpoint-built fields are preserved.
+        assert payload["messages"] == [{"role": "user", "content": "hi"}]
+
+    @pytest.mark.asyncio
+    async def test_final_turn_closes_session(self, inference_client):
+        payload = await self._sent_payload(
+            inference_client,
+            self._request_info(inference_client, is_final_turn=True),
+        )
+        assert payload["nvext"]["session_control"] == {
+            "session_id": "corr-1",
+            "action": "close",
+        }
+
+    @pytest.mark.asyncio
+    async def test_disabled_leaves_payload_untouched(self, inference_client):
+        inference_client.model_endpoint.endpoint.use_dynamo_conv_aware_routing = False
+        payload = await self._sent_payload(
+            inference_client,
+            self._request_info(inference_client, is_final_turn=False),
+        )
+        assert "nvext" not in payload

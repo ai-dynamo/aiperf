@@ -29,6 +29,7 @@ from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.records.payload_retention import resolve_disable_tokenization
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -56,10 +57,11 @@ class InferenceResultParser(CommunicationMixin):
         self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
         endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
         # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
-        # if the user config is set to use server token counts.
-        self.disable_tokenization: bool = (
-            user_config.endpoint.use_server_token_count
-            or (not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input)
+        # if the user config is set to use server token counts. Shared with the
+        # worker's payload-strip auto-detection so both agree on whether
+        # client-side tokenization reads payload_bytes.
+        self.disable_tokenization: bool = resolve_disable_tokenization(
+            user_config, endpoint_meta
         )
         self.debug(
             lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "

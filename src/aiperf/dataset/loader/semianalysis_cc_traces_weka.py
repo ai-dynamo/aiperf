@@ -90,15 +90,12 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
     async def load_dataset(self) -> dict[str, list[WekaTrace]]:
         """Download the HF dataset and validate every row as a WekaTrace.
 
-        Caps the number of rows to ``--num-dataset-entries`` (defaults to
-        100) to avoid reconstructing the full corpus when the benchmark
-        only needs a subset. Pass a value at or above the registered
-        variant's corpus size to load every trace (739 for the 042026
-        full-subagent variant, 98 for the 051826 no-subagents variant).
-        For variants with subagents, each row produces 1 parent
-        conversation plus 1 child conversation per subagent, so N rows
-        typically yields 2-10x N conversations downstream; for the
-        no-subagents variant the row-to-conversation ratio is ~1:1.
+        When ``--num-dataset-entries`` is not explicitly set, loads the
+        full corpus. When it is set, caps at that value. For variants with
+        subagents, each row produces 1 parent conversation plus 1 child
+        conversation per subagent, so N rows typically yields 2-10x N
+        conversations downstream; for the no-subagents variant the
+        row-to-conversation ratio is ~1:1.
         """
         raw = await super().load_dataset()
         ds = raw["dataset"]
@@ -107,8 +104,12 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
 
     def _validate_rows(self, ds: Any) -> dict[str, list[WekaTrace]]:
         total_rows = len(ds)
+        explicit_cap = (
+            "num_dataset_entries"
+            in self.user_config.input.conversation.model_fields_set
+        )
         cap = self.user_config.input.conversation.num_dataset_entries
-        n_rows = min(cap, total_rows)
+        n_rows = min(cap, total_rows) if explicit_cap else total_rows
         if n_rows < total_rows:
             ds = ds.select(range(n_rows))
             self.info(

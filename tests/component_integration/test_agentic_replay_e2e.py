@@ -42,6 +42,7 @@ Wiring scope:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -87,7 +88,14 @@ class _DispatchLog:
 
 
 class _SequentialSampler:
-    """Deterministic sampler over a fixed conversation_id list (rooted only)."""
+    """Deterministic sampler over a fixed conversation_id list (rooted only).
+
+    Wraps around to the start indefinitely, matching the production
+    ``SequentialSampler`` (``dataset_samplers.py``). Recycle now draws roots from
+    this same sampler via ``TrajectorySource.next_recycle_conversation_id``, so
+    it must keep handing ids back past the first pass rather than raising
+    StopIteration.
+    """
 
     def __init__(self, conversation_ids: list[str]) -> None:
         self._ids = list(conversation_ids)
@@ -95,7 +103,7 @@ class _SequentialSampler:
 
     def next_conversation_id(self) -> str:
         if self._idx >= len(self._ids):
-            raise StopIteration
+            self._idx = 0
         cid = self._ids[self._idx]
         self._idx += 1
         return cid
@@ -304,6 +312,52 @@ def _make_credit(
     )
 
 
+def _make_running_scheduler() -> MagicMock:
+    """Build a scheduler mock whose ``schedule_later`` actually runs coroutines.
+
+    Both phase strategies defer dispatches through
+    ``scheduler.schedule_later(delay, coro)`` rather than awaiting them inline:
+    under spread mode (the default) WARMUP fires only the single max-lead credit
+    inline and schedules every earlier-lead credit, and PROFILING fires only a
+    lane whose first post-t* offset is 0 inline and schedules the rest. A bare
+    ``MagicMock`` scheduler swallows those coroutines (they never run and leak as
+    un-awaited warnings), so the recording issuer never sees them.
+
+    This stub schedules each coroutine as a real task on the running loop
+    (delay is irrelevant -- the test fixtures collapse asyncio.sleep) and tracks
+    the tasks so ``_flush_scheduled`` can drain them after ``execute_phase``.
+    """
+    scheduler = MagicMock()
+    scheduled: list[asyncio.Task] = []
+
+    def _schedule_later(_delay, coro):
+        scheduled.append(asyncio.ensure_future(coro))
+
+    scheduler.schedule_later.side_effect = _schedule_later
+    scheduler._scheduled_tasks = scheduled
+    return scheduler
+
+
+async def _flush_scheduled(strategy: AgenticReplayStrategy) -> None:
+    """Await every task the strategy's scheduler queued via ``schedule_later``.
+
+    Drains iteratively so a scheduled coroutine that itself schedules more
+    (e.g. a recycle dispatch) is also awaited. Yields the loop a couple times
+    first so freshly ``ensure_future``-d tasks register before draining.
+    """
+    scheduled: list[asyncio.Task] = strategy.scheduler._scheduled_tasks
+    for _ in range(50):
+        await asyncio.sleep(0)
+        pending = [t for t in scheduled if not t.done()]
+        if not pending:
+            break
+        await asyncio.gather(*pending)
+    # Surface any exception captured in a completed task.
+    for task in scheduled:
+        if task.done() and not task.cancelled():
+            task.result()
+
+
 def _build_phase_strategy(
     *,
     phase: CreditPhase,
@@ -317,7 +371,7 @@ def _build_phase_strategy(
     return AgenticReplayStrategy(
         config=cfg,
         conversation_source=source,
-        scheduler=MagicMock(),
+        scheduler=_make_running_scheduler(),
         stop_checker=stop_checker if stop_checker is not None else _make_stop_checker(),
         credit_issuer=issuer,
         lifecycle=MagicMock(),
@@ -420,18 +474,27 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
     )
     await warmup.setup_phase()
     await warmup.execute_phase()
+    await _flush_scheduled(warmup)  # run the spread-deferred warmup credits
     warmup.report_warmup_failures()  # must not raise -- no terminal failures injected
 
-    # Every trajectory dispatched exactly once at its k_i.
+    # Snapshot-path WARMUP dispatches one priming credit per stream active at
+    # t* -- each stream's last request before t* (its ``warmup_turn_index``),
+    # NOT every trajectory at its root start. A trajectory whose only turn is at
+    # t=0 (``trace_01_n1``) has warmup_turn_index None and contributes nothing,
+    # so the count is ``source.warmup_credit_count`` (here 3), below the 4 lanes.
     warmup_dispatched = log.by_phase(CreditPhase.WARMUP)
     expected_warmup = {
-        (trajectory.conversation_id, trajectory.start_turn_index)
+        (state.conversation_id, state.warmup_turn_index)
         for trajectory in source.trajectories
+        if trajectory.snapshot is not None
+        for state in trajectory.snapshot.states
+        if state.warmup_turn_index is not None
     }
     assert set(warmup_dispatched) == expected_warmup, (
-        f"WARMUP must dispatch each trajectory once at k_i; got {warmup_dispatched}"
+        f"WARMUP must dispatch each warmable stream once at its warmup_turn_index; "
+        f"got {warmup_dispatched}, expected {sorted(expected_warmup)}"
     )
-    assert len(warmup_dispatched) == len(source.trajectories)
+    assert len(warmup_dispatched) == source.warmup_credit_count
 
     # WARMUP BARRIER: no PROFILING dispatch happened during WARMUP.
     assert log.by_phase(CreditPhase.PROFILING) == [], (
@@ -444,14 +507,15 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
         phase=CreditPhase.PROFILING, source=source, issuer=issuer
     )
     await profiling.setup_phase()
-    # Recycle queue spans the FULL dataset pool (including trajectory ids);
-    # the pop loop in _spawn_from_recycle_or_id skips trace_ids whose
-    # session is currently active.
-    expected_recycle = len(source.dataset_metadata.conversations)
-    assert profiling._recycle_queue is not None
-    assert profiling._recycle_queue.qsize() == expected_recycle
+    # Recycle now draws roots straight from the shared dataset sampler
+    # (TrajectorySource.next_recycle_conversation_id) rather than a strategy-side
+    # queue, so there is no _recycle_queue to introspect. PROFILING setup must
+    # leave the trajectory lanes intact for recycle to draw against.
+    assert profiling.config.phase == CreditPhase.PROFILING
+    assert len(profiling.conversation_source.trajectories) == len(source.trajectories)
 
     await profiling.execute_phase()
+    await _flush_scheduled(profiling)  # run the spread-deferred resume credits
 
     # Each trajectory resumed at k_i + 1, except trace_01_n1 (N=1) which
     # has k_i=0 with no further turns and is recycled immediately. Verify
@@ -480,12 +544,15 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
             )
 
     # ---- RECYCLE: drive final-turn completions for every trajectory to
-    # exercise the recycle queue. Each final-turn credit-return pushes the
-    # finished trace_id to the queue tail and dispatches a fresh trace_id
-    # from the queue head at turn 0. The non-trajectory recycle traces are then
-    # also driven to a final-turn return so their trace_ids feed back into
-    # the queue. After enough rounds, at least one trace_id must appear more
-    # than once in the dispatch log (the canonical recycle observation).
+    # exercise recycle. On the snapshot path each lane's root resumes at its
+    # ``next_turn_index`` (its first turn at/after t*), which for these short
+    # fixtures is already the trace's final turn, so its initial PROFILING
+    # dispatch IS the final turn. Returning it final recycles the lane: a fresh
+    # root is drawn from the dataset sampler and dispatched at turn 0. The
+    # recycled roots are then themselves driven to final-turn returns so they
+    # feed back through the sampler. After enough rounds at least one trace_id
+    # must appear more than once in the dispatch log (the canonical recycle
+    # observation).
     pre_recycle_count = len(profiling_dispatched)
 
     def _finalize(cid: str) -> Credit:
@@ -497,17 +564,12 @@ async def test_agentic_replay_e2e_clean_run_under_scenario(
             x_correlation_id=issuer.cid_to_xcorr[cid],
         )
 
-    # Round 1: complete every trajectory (excluding any already-recycled
-    # N=1 immediate-recycle members) at its final turn. Each finish recycles
-    # a non-trajectory trace_id from the queue head at turn 0.
-    trajectories_to_finalize = [
-        trajectory
-        for trajectory in source.trajectories
-        if trajectory.start_turn_index + 1
-        < len(metadata_lookup[trajectory.conversation_id].turns)
-    ]
+    # Round 1: complete every trajectory at its final turn. Each finish draws a
+    # fresh root from the dataset sampler and dispatches it at turn 0.
+    trajectories_to_finalize = list(source.trajectories)
     for trajectory in trajectories_to_finalize:
         await profiling.handle_credit_return(_finalize(trajectory.conversation_id))
+    await _flush_scheduled(profiling)
 
     after_round1 = log.by_phase(CreditPhase.PROFILING)
     assert len(after_round1) > pre_recycle_count, (
@@ -687,8 +749,25 @@ async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     )
     await warmup.setup_phase()
     await warmup.execute_phase()
+    await _flush_scheduled(warmup)  # run the spread-deferred warmup credits
     warmup.report_warmup_failures()
-    assert len(log.by_phase(CreditPhase.WARMUP)) == 3
+    # Snapshot-path WARMUP dispatches one priming credit per stream active at t*
+    # (its ``warmup_turn_index``), not one per lane: ``trace_01_n1``'s only turn
+    # is at t=0 so warmup_turn_index is None and it contributes nothing. The
+    # count is ``source.warmup_credit_count`` (here 2), below the 3 lanes.
+    warmup_dispatched = log.by_phase(CreditPhase.WARMUP)
+    expected_warmup = {
+        (state.conversation_id, state.warmup_turn_index)
+        for trajectory in source.trajectories
+        if trajectory.snapshot is not None
+        for state in trajectory.snapshot.states
+        if state.warmup_turn_index is not None
+    }
+    assert set(warmup_dispatched) == expected_warmup, (
+        f"WARMUP must dispatch each warmable stream once at its warmup_turn_index; "
+        f"got {warmup_dispatched}, expected {sorted(expected_warmup)}"
+    )
+    assert len(warmup_dispatched) == source.warmup_credit_count
 
     current_phase[0] = CreditPhase.PROFILING
     profiling = _build_phase_strategy(
@@ -696,6 +775,7 @@ async def test_agentic_replay_e2e_no_scenario_omits_submission_valid(
     )
     await profiling.setup_phase()
     await profiling.execute_phase()
+    await _flush_scheduled(profiling)  # run the spread-deferred resume credits
 
     # Aggregate the way cli_runner does for a non-scenario run: no carrier keys.
     aggregate = _make_aggregate_with_carriers(

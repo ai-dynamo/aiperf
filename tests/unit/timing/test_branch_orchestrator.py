@@ -124,6 +124,164 @@ async def test_seed_snapshot_registers_active_join_and_releases_parent():
     assert released.gated_turn_index == 2
 
 
+def _two_branch_join_meta() -> tuple[
+    ConversationMetadata, dict[str, ConversationMetadata]
+]:
+    """Parent with branches A (spawned turn 1) and B (spawned turn 2), both
+    gating turn 3. Children are one-turn SPAWN conversations."""
+    parent_meta = ConversationMetadata(
+        conversation_id="parent",
+        turns=[
+            TurnMetadata(timestamp_ms=0.0),
+            TurnMetadata(timestamp_ms=10_000.0, branch_ids=["A"]),
+            TurnMetadata(timestamp_ms=20_000.0, branch_ids=["B"]),
+            TurnMetadata(
+                timestamp_ms=30_000.0,
+                prerequisites=[
+                    TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="A"),
+                    TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="B"),
+                ],
+            ),
+        ],
+        branches=[
+            ConversationBranchInfo(
+                branch_id="A",
+                child_conversation_ids=["a_child"],
+                mode=ConversationBranchMode.SPAWN,
+                start_timestamp_ms=11_000.0,
+            ),
+            ConversationBranchInfo(
+                branch_id="B",
+                child_conversation_ids=["b_child"],
+                mode=ConversationBranchMode.SPAWN,
+                start_timestamp_ms=21_000.0,
+            ),
+        ],
+    )
+    children = {
+        cid: ConversationMetadata(
+            conversation_id=cid,
+            turns=[TurnMetadata(timestamp_ms=ts)],
+            is_root=False,
+            agent_depth=1,
+            parent_conversation_id="parent",
+        )
+        for cid, ts in [("a_child", 11_000.0), ("b_child", 21_000.0)]
+    }
+    return parent_meta, children
+
+
+def _source_for(parent_meta, children):
+    class _Source:
+        dataset_metadata = DatasetMetadata(
+            conversations=[parent_meta, *children.values()],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+
+        def get_metadata(self, conversation_id):
+            return {"parent": parent_meta, **children}[conversation_id]
+
+    return _Source()
+
+
+@pytest.mark.asyncio
+async def test_seed_snapshot_prereq_completed_before_t_star_does_not_wedge_gate():
+    """A prereq group that fully completed before t* must not wedge the join.
+
+    Two branches share the turn-3 gate. t* falls between their completions:
+    branch A's child finished pre-t* (absent from the snapshot) while branch
+    B's child is live. A's spawning turn fired before the parent's resume
+    position and can never re-fire during replay, so its prereq key must be
+    seeded as satisfied - otherwise the gate is permanently unsatisfiable and
+    the parent lane silently wedges for the entire phase.
+    """
+    parent_meta, children = _two_branch_join_meta()
+    issuer = MagicMock()
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(
+        conversation_source=_source_for(parent_meta, children), credit_issuer=issuer
+    )
+    states = (
+        ConversationState(
+            conversation_id="parent",
+            x_correlation_id="parent-corr",
+            next_turn_index=3,
+            waiting_on_children=True,
+            join_target_turn_index=3,
+        ),
+        ConversationState(
+            conversation_id="b_child",
+            x_correlation_id="b-corr",
+            next_turn_index=0,
+            agent_depth=1,
+            parent_correlation_id="parent-corr",
+            join_target_turn_index=3,
+            branch_id="B",
+            branch_mode=ConversationBranchMode.SPAWN,
+        ),
+    )
+    orch.seed_snapshot(states)
+
+    pending = orch._active_joins["parent-corr"]
+    assert pending.outstanding["SPAWN_JOIN:A"].is_done, (
+        "Branch A completed before t* but its prereq was seeded unsatisfiable"
+    )
+    assert not pending.is_satisfied  # B's live child is still outstanding.
+
+    await orch.on_child_leaf_reached("b-corr")
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    released = issuer.dispatch_join_turn.await_args.args[0]
+    assert released.parent_x_correlation_id == "parent-corr"
+    assert released.gated_turn_index == 3
+    assert "parent-corr" not in orch._active_joins
+
+
+@pytest.mark.asyncio
+async def test_seed_snapshot_keeps_unfired_future_prereq_unregistered():
+    """A prereq whose spawning turn replays after t* must stay unregistered.
+
+    The parent resumes at turn 2 (B's spawning turn), so branch B will fire
+    during replay: seeding it as satisfied would release the gate before B's
+    children even spawn. Only branches whose spawning turn fired before the
+    parent's resume position may be auto-satisfied.
+    """
+    parent_meta, children = _two_branch_join_meta()
+    issuer = MagicMock()
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(
+        conversation_source=_source_for(parent_meta, children), credit_issuer=issuer
+    )
+    states = (
+        ConversationState(
+            conversation_id="parent",
+            x_correlation_id="parent-corr",
+            next_turn_index=2,
+        ),
+        ConversationState(
+            conversation_id="a_child",
+            x_correlation_id="a-corr",
+            next_turn_index=0,
+            agent_depth=1,
+            parent_correlation_id="parent-corr",
+            join_target_turn_index=3,
+            branch_id="A",
+            branch_mode=ConversationBranchMode.SPAWN,
+        ),
+    )
+    orch.seed_snapshot(states)
+
+    pending = orch._future_joins["parent-corr"][3]
+    assert pending.outstanding["SPAWN_JOIN:A"].expected == 1
+    assert not pending.outstanding["SPAWN_JOIN:B"].registered
+
+    await orch.on_child_leaf_reached("a-corr")
+
+    # A is done but B has not even spawned yet: the gate must hold.
+    issuer.dispatch_join_turn.assert_not_awaited()
+    assert orch._future_joins["parent-corr"][3] is pending
+
+
 @pytest.mark.asyncio
 async def test_intercept_with_spawn_dispatches_children_and_registers_sticky():
     """Phase 1 semantics: intercept returns False after a pure-spawn with no
@@ -752,3 +910,38 @@ async def test_on_child_leaf_reached_short_circuits_when_cleaning_up():
     await orch.on_child_leaf_reached("c")
     # children_completed should NOT increment during teardown.
     assert orch.stats.children_completed == 0
+
+
+def test_marker_for_root_resolves_tree_marker_from_ledger():
+    """A spawned descendant reuses its tree root's cache-bust marker (keyed by
+    root_correlation_id) rather than minting its own per-child marker."""
+    from aiperf.common.enums import CacheBustTarget
+    from aiperf.timing.trajectory_source import CacheBustLedger
+
+    ledger = CacheBustLedger()
+    ledger.session_marker["ROOT"] = "[rid:deadbeefcafe]\n\n"
+    orch = BranchOrchestrator(
+        conversation_source=MagicMock(),
+        credit_issuer=MagicMock(),
+        benchmark_id="b",
+        cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
+        cache_bust_ledger=ledger,
+    )
+    assert orch._marker_for_root("ROOT") == "[rid:deadbeefcafe]\n\n"
+    assert orch._marker_for_root("UNKNOWN-ROOT") is None
+    assert orch._marker_for_root(None) is None
+
+
+def test_marker_for_root_none_when_cache_bust_disabled():
+    from aiperf.common.enums import CacheBustTarget
+    from aiperf.timing.trajectory_source import CacheBustLedger
+
+    ledger = CacheBustLedger()
+    ledger.session_marker["ROOT"] = "[rid:abc]"
+    orch = BranchOrchestrator(
+        conversation_source=MagicMock(),
+        credit_issuer=MagicMock(),
+        cache_bust_target=CacheBustTarget.NONE,
+        cache_bust_ledger=ledger,
+    )
+    assert orch._marker_for_root("ROOT") is None

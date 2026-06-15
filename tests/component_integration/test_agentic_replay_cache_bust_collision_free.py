@@ -21,6 +21,7 @@ from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
 from tests.component_integration.test_agentic_replay_cache_bust import (
+    _BLOCK_SIZE,
     _payload_dict,
     _system_content,
     _write_weka_fixture,
@@ -52,6 +53,11 @@ def _build_cmd(weka_dir: Path, *, duration: int) -> str:
     with machine speed); the assertion floor below is set well under what even
     a loaded machine produces so the zero-collision contract -- not throughput
     -- is what the test gates on.
+
+    ``--prompt-input-tokens-block-size 16`` overrides the weka_trace plugin's
+    ``default_block_size: 64`` so the loader honors the shared fixture's
+    hand-computed 16-token block math and reconstructs the ``role="system"``
+    segment the SYSTEM_PREFIX carrier requires.
     """
     return f"""
         aiperf profile
@@ -61,6 +67,7 @@ def _build_cmd(weka_dir: Path, *, duration: int) -> str:
             --streaming
             --custom-dataset-type weka_trace
             --input-file {weka_dir}
+            --prompt-input-tokens-block-size {_BLOCK_SIZE}
             --no-fixed-schedule
             --benchmark-duration {duration}
             --concurrency 3

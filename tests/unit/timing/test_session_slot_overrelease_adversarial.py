@@ -141,3 +141,42 @@ def test_mid_trace_root_acquires_and_releases_session_slot_balanced() -> None:
     held, after_release = asyncio.run(body())
     assert held == 1, "a mid-trace resume must acquire a session slot"
     assert after_release == _LIMIT, "release is balanced; no over-subscription"
+
+
+def test_lane_credit_acquires_and_releases_one_session_slot_balanced() -> None:
+    """A rootless/gated lane holds its session slot via the lane-credit path --
+    the SAME session semaphore as root credits -- and releasing is balanced.
+
+    A rootless snapshot (root finished before t*) and a gated parent dispatch
+    no slot-acquiring root credit at PROFILING start; ``acquire_lane_credit``
+    lets the lane hold one slot so it still counts toward --concurrency, while
+    its subagents/sidecars acquire none.
+    """
+
+    async def body() -> tuple[int, int, int]:
+        issuer, cm = _build_issuer_with_real_concurrency()
+        before = _session_effective_slots(cm)  # == _LIMIT
+        acquired = await issuer.acquire_lane_credit("lane-root", root_pending=False)
+        held = before - _session_effective_slots(cm)
+        issuer.release_lane_credit()
+        return int(bool(acquired)), held, _session_effective_slots(cm)
+
+    acquired, held, after_release = asyncio.run(body())
+    assert acquired == 1, "lane credit acquisition must succeed when a slot is free"
+    assert held == 1, "a lane credit must hold exactly one session slot"
+    assert after_release == _LIMIT, "release is balanced; no over-subscription"
+
+
+def test_lane_credit_counts_against_the_session_concurrency_limit() -> None:
+    """Lane credits draw from the same budget as root credits: with LIMIT=2,
+    two lane credits exhaust it (so rootless/gated lanes cannot oversubscribe)."""
+
+    async def body() -> tuple[bool, bool, int]:
+        issuer, cm = _build_issuer_with_real_concurrency()
+        first = await issuer.acquire_lane_credit("lane-root-a", root_pending=False)
+        second = await issuer.acquire_lane_credit("lane-root-b", root_pending=False)
+        return bool(first), bool(second), _session_effective_slots(cm)
+
+    first, second, slots = asyncio.run(body())
+    assert first and second, "both lane credits acquire within the limit"
+    assert slots == 0, "two lane credits exhaust a LIMIT=2 session budget"

@@ -23,7 +23,7 @@ def _user_config(
     synthesis_max_isl: int | None = None,
     loader: str | None = "semianalysis_cc_traces_weka_with_subagents",
     public_dataset: str | None = None,
-    hf_weka_repo: str | None = None,
+    hf_weka_dataset: str | None = None,
     benchmark_duration: float | None = 900.0,
     inter_turn_delay_cap_seconds: float | None = None,
     trace_idle_gap_cap_seconds: float | None = 60.0,
@@ -42,7 +42,7 @@ def _user_config(
     cfg.input.synthesis.max_isl = synthesis_max_isl
     cfg.input.detected_loader = loader
     cfg.input.public_dataset = public_dataset
-    cfg.input.hf_weka_repo = hf_weka_repo
+    cfg.input.hf_weka_dataset = hf_weka_dataset
     cfg.loadgen.benchmark_duration = benchmark_duration
     cfg.loadgen.inter_turn_delay_cap_seconds = inter_turn_delay_cap_seconds
     cfg.loadgen.trace_idle_gap_cap_seconds = trace_idle_gap_cap_seconds
@@ -135,7 +135,7 @@ def test_agentx_allows_generic_weka_hf_loader_for_explicit_weka_repo() -> None:
     cfg = _user_config(
         loader="weka_hf",
         public_dataset="weka_hf",
-        hf_weka_repo="semianalysisai/cc-traces-weka-with-subagents-052726",
+        hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
         extra_inputs={"ignore_eos": True},
     )
 
@@ -149,28 +149,46 @@ def test_agentx_rejects_generic_weka_hf_loader_without_repo() -> None:
     cfg = _user_config(
         loader="weka_hf",
         public_dataset="weka_hf",
-        hf_weka_repo=None,
+        hf_weka_dataset=None,
         extra_inputs={"ignore_eos": True},
     )
 
     with pytest.raises(ScenarioLockError) as exc_info:
         validate_scenario(cfg)
 
-    assert "hf_weka_repo" in str(exc_info.value)
+    assert "hf_weka_dataset" in str(exc_info.value)
 
 
 def test_agentx_rejects_generic_weka_hf_loader_for_arbitrary_repo() -> None:
     cfg = _user_config(
         loader="weka_hf",
         public_dataset="weka_hf",
-        hf_weka_repo="example/not-agentx-corpus",
+        hf_weka_dataset="example/not-agentx-corpus",
         extra_inputs={"ignore_eos": True},
     )
 
     with pytest.raises(ScenarioLockError) as exc_info:
         validate_scenario(cfg)
 
-    assert "semianalysisai/cc-traces-weka-with-subagents-052726" in str(exc_info.value)
+    assert "semianalysisai/cc-traces-weka-061326" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "loader",
+    [
+        "semianalysis_cc_traces_weka_061326",
+        "semianalysis_cc_traces_weka_061326_256k",
+        "semianalysis_cc_traces_weka_with_subagents",
+        "semianalysis_cc_traces_weka_with_subagents_256k",
+        "semianalysis_cc_traces_weka_with_subagents_060826",
+        "weka_trace",
+    ],
+)  # fmt: skip
+def test_agentx_accepts_allowed_weka_loaders(loader: str) -> None:
+    """Every loader in the scenario allow-list validates without violations."""
+    cfg = _user_config(loader=loader, extra_inputs={"ignore_eos": True})
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
 
 
 def test_duration_below_floor_raises() -> None:
@@ -480,3 +498,107 @@ def test_forbid_input_truncation_against_real_user_config() -> None:
         "— the attribute path likely drifted; check validator.py and "
         "SynthesisConfig.max_isl"
     )
+
+
+# =============================================================================
+# Scenario defaults: --benchmark-duration and trajectory start ratios
+# =============================================================================
+#
+# The agentx MVP scenario auto-fills --benchmark-duration=1800 when unset and
+# pins the trajectory start ratios to [0.25, 0.75] unless the user explicitly
+# overrides them. Explicit user values are honored without violations.
+
+
+def test_benchmark_duration_unset_auto_fills_scenario_default(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = _user_config(benchmark_duration=None, extra_inputs={"ignore_eos": True})
+    with caplog.at_level("INFO"):
+        outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert cfg.loadgen.benchmark_duration == 1800.0
+    assert any("--benchmark-duration" in r.message for r in caplog.records)
+
+
+def test_benchmark_duration_explicit_value_not_overridden() -> None:
+    cfg = _user_config(benchmark_duration=900.0, extra_inputs={"ignore_eos": True})
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert cfg.loadgen.benchmark_duration == 900.0
+
+
+def test_trajectory_start_ratios_auto_filled_when_unset(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = _user_config(extra_inputs={"ignore_eos": True})
+    cfg.loadgen.trajectory_start_min_ratio = 0.0
+    cfg.loadgen.trajectory_start_max_ratio = 0.7
+    cfg.loadgen._trajectory_start_min_ratio_explicitly_set = False
+    cfg.loadgen._trajectory_start_max_ratio_explicitly_set = False
+    with caplog.at_level("INFO"):
+        outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert cfg.loadgen.trajectory_start_min_ratio == 0.25
+    assert cfg.loadgen.trajectory_start_max_ratio == 0.75
+    assert any("--trajectory-start-min-ratio" in r.message for r in caplog.records)
+    assert any("--trajectory-start-max-ratio" in r.message for r in caplog.records)
+
+
+def test_trajectory_start_ratios_explicit_values_honored() -> None:
+    cfg = _user_config(extra_inputs={"ignore_eos": True})
+    cfg.loadgen.trajectory_start_min_ratio = 0.1
+    cfg.loadgen.trajectory_start_max_ratio = 0.9
+    cfg.loadgen._trajectory_start_min_ratio_explicitly_set = True
+    cfg.loadgen._trajectory_start_max_ratio_explicitly_set = True
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert cfg.loadgen.trajectory_start_min_ratio == 0.1
+    assert cfg.loadgen.trajectory_start_max_ratio == 0.9
+
+
+def test_scenario_defaults_apply_to_real_loadgen_config() -> None:
+    """Run validate_scenario against a real ``LoadGeneratorConfig`` (not a
+    MagicMock) so a drifted attribute path in the validator cannot silently
+    no-op. Duration auto-fill, ratio defaults, and the idle-gap cap must all
+    land on the real Pydantic model."""
+    from aiperf.common.config import LoadGeneratorConfig
+
+    cfg = _user_config(extra_inputs={"ignore_eos": True})
+    cfg.loadgen = LoadGeneratorConfig()
+
+    outcome = validate_scenario(cfg)
+
+    assert outcome.violations == []
+    assert cfg.loadgen.benchmark_duration == 1800.0
+    assert cfg.loadgen.trajectory_start_min_ratio == 0.25
+    assert cfg.loadgen.trajectory_start_max_ratio == 0.75
+    assert cfg.loadgen.trace_idle_gap_cap_seconds == 60.0
+
+
+def test_real_loadgen_config_records_explicit_ratio_flags() -> None:
+    from aiperf.common.config import LoadGeneratorConfig
+
+    default = LoadGeneratorConfig()
+    assert default._trajectory_start_min_ratio_explicitly_set is False
+    assert default._trajectory_start_max_ratio_explicitly_set is False
+
+    explicit = LoadGeneratorConfig(
+        trajectory_start_min_ratio=0.1, trajectory_start_max_ratio=0.9
+    )
+    assert explicit._trajectory_start_min_ratio_explicitly_set is True
+    assert explicit._trajectory_start_max_ratio_explicitly_set is True
+
+
+def test_explicit_ratio_override_on_real_config_is_honored() -> None:
+    from aiperf.common.config import LoadGeneratorConfig
+
+    cfg = _user_config(extra_inputs={"ignore_eos": True})
+    cfg.loadgen = LoadGeneratorConfig(
+        trajectory_start_min_ratio=0.1, trajectory_start_max_ratio=0.9
+    )
+
+    outcome = validate_scenario(cfg)
+
+    assert outcome.violations == []
+    assert cfg.loadgen.trajectory_start_min_ratio == 0.1
+    assert cfg.loadgen.trajectory_start_max_ratio == 0.9

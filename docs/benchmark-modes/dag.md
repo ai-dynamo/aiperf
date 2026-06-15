@@ -151,6 +151,7 @@ Each listed `session_id` must be declared as its own top-level conversation in t
 
 - Starts with an **empty** accumulator — only its own `messages` go on the wire.
 - Routes freely (no sticky pin to the parent's worker).
+- Dispatches its first turn at its **recorded offset** from the spawn when the dataset carries timing: a child whose turn-0 `timestamp` is later than the branch's `start_timestamp_ms` (fallback: the earliest turn-0 timestamp across the branch's children) sleeps out the difference in a background task before its first request is issued. Join gates register before the sleep, so a SPAWN_JOIN-gated parent still waits for sleeping children, and run teardown cancels pending sleepers. Children without timestamps (e.g. `--ignore-trace-delays`, or hand-authored `dag_jsonl` without `timestamp` fields) dispatch immediately, exactly as before. The `branch_stats.children_delayed` counter reports how many children took the delayed path.
 
 SPAWN targets may be referenced from multiple parents — the child conversation is effectively a fresh-context template. Use SPAWN when you're benchmarking agent-tree shapes where each sub-agent is semantically independent, not a continuation of the parent.
 
@@ -230,7 +231,9 @@ Children do **not** acquire fresh session slots — they inherit the root sessio
 
 > At a fork point, in-flight request count can temporarily exceed the configured session concurrency by the fanout factor. A root with `forks: [A, B, C]` and concurrency=10 will briefly show up to **30** in-flight requests while the three children are concurrently running.
 
-If you are using `--concurrency` as a hard cap to protect a fragile server, size it with the fanout factor in mind, or keep your DAG tree shallow. Metrics are still tagged per-session (`agent_depth`, `parent_correlation_id`), so post-hoc analysis can distinguish root vs child load.
+If you are using `--concurrency` as a hard cap to protect a fragile server, size it with the fanout factor in mind, or keep your DAG tree shallow. Metrics are still tagged per-session (`agent_depth`, `parent_correlation_id`, and `root_correlation_id` — the shared session-tree root id), so post-hoc analysis can distinguish root vs child load.
+
+> **Session-slot timing.** This `dag_jsonl` mode releases the root's session slot when the root's own final turn returns (children inherit it while they run; the phase still waits for the whole DAG to drain before completing). **Agentic replay** instead holds one slot per whole session *tree* until every descendant has drained, then recycles the lane — see [Session-tree concurrency](../architecture.md#session-tree-concurrency-agentic-replay). Both tag records with `root_correlation_id` so `aiperf analyze swim-lane` can group a tree under one lane.
 
 ## Reference: runtime walkthrough
 

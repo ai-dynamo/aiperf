@@ -656,7 +656,9 @@ async def test_orchestrator_zero_child_branch_with_gate_does_not_hang() -> None:
     SPAWN_JOIN against it. The orchestrator's expected_gates path must
     create a future-join with an unregistered PrereqState seed (from
     _gated_turn_prereq_keys) AND mark it registered with expected=0 — so
-    is_done is True and the gate does NOT block the parent."""
+    is_done is True and the gate does NOT block the parent. The drained
+    gate is popped silently: intercept returns False and the strategy's
+    normal continuation owns the single dispatch of the gated turn."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=[],  # zero children
@@ -681,12 +683,14 @@ async def test_orchestrator_zero_child_branch_with_gate_does_not_hang() -> None:
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     s = await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
-    # No children -> the expected_gates path fires the join immediately, so
-    # by the time intercept returns the gate has been drained and the parent
-    # is NOT suspended.
+    # No children -> the gate drains at spawn time and is popped silently, so
+    # by the time intercept returns the parent is NOT suspended and the
+    # strategy's continuation path dispatches turn 1 exactly once.
     assert s is False, "zero-child branch must not deadlock parent at next turn"
-    issuer.dispatch_join_turn.assert_awaited_once()
-    assert orch.stats.parents_resumed == 1
+    issuer.dispatch_join_turn.assert_not_awaited()
+    assert "p" not in orch._active_joins
+    assert not orch._future_joins.get("p")
+    assert orch.stats.parents_resumed == 0
     assert orch.stats.parents_suspended == 0
 
 

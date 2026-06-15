@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import orjson
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.environment import Environment
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
@@ -198,11 +199,16 @@ def test_subagent_duration_ms_none_falls_back_to_inner_api_time(tmp_path, monkey
     assert branch.is_background is True
 
 
-def test_subagent_with_overlapping_inner_requests_emits_separate_child_conversations(
+def test_overlapping_inner_requests_without_hash_evidence_stay_one_child(
     tmp_path, monkeypatch
 ):
-    """Two inner requests with overlapping [t, t+api_time] become two child
-    Conversations under one multi-child SPAWN branch.
+    """Inner requests without hash evidence ride the main chain even when
+    their [t, t+api_time] intervals overlap.
+
+    Nested LCP chain detection only splits on hash-prefix evidence; requests
+    with empty ``hash_ids`` carry none, so they stay one sequential child
+    conversation in time order (the legacy interval packing that split these
+    by overlap alone is gone).
     """
     data = _build_trace(
         "t_par",
@@ -224,20 +230,175 @@ def test_subagent_with_overlapping_inner_requests_emits_separate_child_conversat
 
     parent = next(c for c in convs if c.session_id == "t_par")
     branch = parent.branches[0]
-    # Two streams -> two child conversations as siblings in the branch.
-    assert len(branch.child_conversation_ids) == 2, (
-        f"Expected 2 sibling child conversations, got {branch.child_conversation_ids}"
-    )
-    expected_sids = {"t_par::sa:a1:s0", "t_par::sa:a1:s1"}
-    assert set(branch.child_conversation_ids) == expected_sids
+    assert branch.child_conversation_ids == ["t_par::sa:a1"]
+    child = next(c for c in convs if c.session_id == "t_par::sa:a1")
+    assert len(child.turns) == 2
 
-    children = {c.session_id: c for c in convs if c.session_id.startswith("t_par::sa")}
-    assert set(children.keys()) == expected_sids
-    for sid in expected_sids:
-        assert len(children[sid].turns) == 1, (
-            f"each parallel stream is one inner request -> one turn; "
-            f"{sid} has {len(children[sid].turns)} turns"
-        )
+
+def test_interleaved_inner_threads_split_into_lineage_chains(tmp_path, monkeypatch):
+    """Interleaved inner context threads split by hash-prefix lineage.
+
+    Two interleaved threads (A: blocks [1, ...], B: blocks [50, ...]) become
+    the main chain (A, founded by the subagent's first request) and one
+    spawned chain (B), each holding its own context lineage — the old
+    time-interval packing would have stitched [A1, A2, B2] into one stream
+    whenever they didn't overlap pairwise.
+    """
+
+    def inner(t, api_time, hash_ids):
+        return {
+            "t": t,
+            "type": "n",
+            "model": "m",
+            "in": 10,
+            "out": 1,
+            "api_time": api_time,
+            "hash_ids": hash_ids,
+        }
+
+    sa = {
+        "t": 1.0,
+        "type": "subagent",
+        "agent_id": "a1",
+        "subagent_type": "X",
+        "duration_ms": 20_000,
+        "total_tokens": 0,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            inner(1.0, 10.0, [1]),  # thread A founds the main chain
+            inner(6.0, 3.0, [50]),  # thread B: disjoint context -> spawned chain
+            inner(12.0, 0.5, [1, 2]),  # extends A's tail
+            inner(13.0, 1.0, [50, 51]),  # extends B's tail
+        ],
+        "models": ["m"],
+    }
+    data = _build_trace("t_affinity", [_normal(t=0.0), sa, _normal(t=30.0)])
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    convs = loader.convert_to_conversations(loader.load_dataset())
+
+    main = next(c for c in convs if c.session_id == "t_affinity::sa:a1")
+    worker = next(c for c in convs if c.session_id == "t_affinity::sa:a1:fa:000")
+    assert len(main.turns) == 2
+    assert len(worker.turns) == 2
+
+
+def test_subagent_one_shot_overflow_is_tagged_aux_sidecar(tmp_path, monkeypatch):
+    """A single disjoint inner call is the subagent's own sidecar.
+
+    Thread B here is one fresh-context request (not the 2-request chain above),
+    so with aux classification on it is the subagent's one-shot sidecar:
+    ::sa:a1:aux:000, not the :fa:000 agent tag.
+    """
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
+
+    def inner(t, api_time, hash_ids):
+        return {
+            "t": t,
+            "type": "n",
+            "model": "m",
+            "in": 10,
+            "out": 1,
+            "api_time": api_time,
+            "hash_ids": hash_ids,
+        }
+
+    sa = {
+        "t": 1.0,
+        "type": "subagent",
+        "agent_id": "a1",
+        "subagent_type": "X",
+        "duration_ms": 20_000,
+        "total_tokens": 0,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            inner(1.0, 10.0, [1]),  # founds the main chain
+            inner(6.0, 1.0, [50]),  # single disjoint one-shot -> sidecar
+            inner(12.0, 0.5, [1, 2]),  # extends the main chain
+        ],
+        "models": ["m"],
+    }
+    data = _build_trace("t_aux", [_normal(t=0.0), sa, _normal(t=30.0)])
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, _mk_user_config(), monkeypatch)
+    convs = {
+        c.session_id for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    assert "t_aux::sa:a1" in convs
+    assert "t_aux::sa:a1:aux:000" in convs, sorted(convs)
+    assert "t_aux::sa:a1:fa:000" not in convs, sorted(convs)
+
+
+def test_nested_subagent_preamble_does_not_contaminate_main_model(
+    tmp_path, monkeypatch
+):
+    """Regression: a leading prefix-disjoint preamble on a DIFFERENT model must
+    not redefine the subagent's classification yardstick.
+
+    Inner stream: a Haiku title-gen preamble (peeled by _split_off_preamble and
+    re-attached to the main chain only for replay), an Opus main chain, and an
+    Opus single-request spawned chain that is large (>= aux ISL floor) with a
+    generative output (>= reduction OSL max). That spawned chain is same-model
+    as the DETECTED main chain and neither small-fresh nor a reduction, so it is
+    a genuine agent (:fa:). Deriving main_model from chains[0] -- which has the
+    re-attached Haiku preamble sorted first -- would make it cross-model vs Haiku
+    and mis-tag it as an :aux: sidecar (the cross-model arm fires regardless of
+    size/output).
+    """
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_MAX_REQUESTS", 1)
+    monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_CROSS_MODEL", True)
+
+    def inner(t, model, in_, out, hash_ids, api_time=1.0):
+        return {
+            "t": t,
+            "type": "n",
+            "model": model,
+            "in": in_,
+            "out": out,
+            "api_time": api_time,
+            "hash_ids": hash_ids,
+        }
+
+    sa = {
+        "t": 1.0,
+        "type": "subagent",
+        "agent_id": "a1",
+        "subagent_type": "X",
+        "duration_ms": 20_000,
+        "total_tokens": 0,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            # Haiku title-gen preamble: earliest, prefix-disjoint, small output
+            # -> peeled and re-attached to the main chain only for replay.
+            inner(1.0, "haiku", in_=200, out=10, hash_ids=[900]),
+            # Opus main chain (two requests sharing a prefix) -> founds the chain.
+            inner(2.0, "opus", in_=64, out=10, hash_ids=[1]),
+            inner(4.0, "opus", in_=128, out=10, hash_ids=[1, 2]),
+            # Opus single-request spawned chain: large fresh context (>= aux ISL
+            # floor 16384) with generative output (>= reduction OSL max 4000), so
+            # only the cross-model arm could flip it -- a genuine nested agent.
+            inner(3.0, "opus", in_=20000, out=5000, hash_ids=[50]),
+        ],
+        "models": ["opus", "haiku"],
+    }
+    uc = _mk_user_config()
+    uc.endpoint.model_names = ["opus", "haiku"]
+    data = _build_trace(
+        "t_preamble",
+        [_normal(t=0.0, model="opus"), sa, _normal(t=30.0, model="opus")],
+        models=("opus", "haiku"),
+    )
+    path = _write_trace(tmp_path, data)
+    loader = _make_loader(path, uc, monkeypatch)
+    sids = {
+        c.session_id for c in loader.convert_to_conversations(loader.load_dataset())
+    }
+    # Same-model large spawned chain is a genuine agent, not a cross-model sidecar.
+    assert "t_preamble::sa:a1:fa:000" in sids, sorted(sids)
+    assert "t_preamble::sa:a1:aux:000" not in sids, sorted(sids)
 
 
 def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
@@ -267,7 +428,7 @@ def test_subagent_with_sequential_inner_requests_emits_one_child_conversation(
     parent = next(c for c in convs if c.session_id == "t_seq")
     branch = parent.branches[0]
     assert branch.child_conversation_ids == ["t_seq::sa:a1"], (
-        "single sequential stream keeps the legacy session-id shape (no :s0 suffix)"
+        "a single sequential chain keeps the legacy session-id shape (no :cNNN suffix)"
     )
     child = next(c for c in convs if c.session_id == "t_seq::sa:a1")
     assert len(child.turns) == 2
@@ -356,39 +517,56 @@ def test_async_branch_detected_under_parallel_reconstruction(tmp_path, monkeypat
             ), "background branch should not have a SPAWN_JOIN prerequisite"
 
 
-def test_parallel_inner_split_under_parallel_reconstruction(tmp_path, monkeypatch):
-    """Two overlapping inner requests become two sibling child Conversations
-    under the parallel reconstruction path."""
-    data = _build_trace(
-        "t_par_split",
-        [
-            _normal(t=0.0),
-            _subagent(
-                "a1",
-                t=1.0,
-                duration_ms=100_000,
-                inner=[(0.0, 100.0), (0.1, 100.0)],
-            ),
-            _normal(t=200.0),
+def test_parallel_inner_chains_under_parallel_reconstruction(tmp_path, monkeypatch):
+    """Nested chain detection produces identical children under the
+    multiprocessing reconstruction path.
+
+    Two overlapping inner requests forking the same context (shared [1]
+    prefix, second still in flight when the first's continuation cannot
+    extend) become the main chain plus one spawned chain sibling.
+    """
+
+    def inner(t, api_time, hash_ids):
+        return {
+            "t": t,
+            "type": "n",
+            "model": "m",
+            "in": 10,
+            "out": 1,
+            "api_time": api_time,
+            "hash_ids": hash_ids,
+        }
+
+    sa = {
+        "t": 1.0,
+        "type": "subagent",
+        "agent_id": "a1",
+        "subagent_type": "X",
+        "duration_ms": 100_000,
+        "total_tokens": 0,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            inner(1.0, 100.0, [1, 2]),  # main chain, in flight until t=101
+            inner(1.1, 100.0, [1, 3]),  # parallel fork of the shared [1] prefix
         ],
-    )
+        "models": ["m"],
+    }
+    data = _build_trace("t_par_split", [_normal(t=0.0), sa, _normal(t=200.0)])
     path = _write_trace(tmp_path, data)
     loader = _make_loader(path, _mk_user_config(), monkeypatch)
     _force_parallel(monkeypatch, loader)
     convs = loader.convert_to_conversations(loader.load_dataset())
     parent = next(c for c in convs if c.session_id == "t_par_split")
     branch = parent.branches[0]
-    assert set(branch.child_conversation_ids) == {
-        "t_par_split::sa:a1:s0",
-        "t_par_split::sa:a1:s1",
-    }
+    assert branch.child_conversation_ids == [
+        "t_par_split::sa:a1",
+        "t_par_split::sa:a1:fa:000",
+    ]
     children = {
         c.session_id: c for c in convs if c.session_id.startswith("t_par_split::sa")
     }
-    assert set(children.keys()) == {
-        "t_par_split::sa:a1:s0",
-        "t_par_split::sa:a1:s1",
-    }
+    assert set(children.keys()) == set(branch.child_conversation_ids)
     for sid in children:
         assert len(children[sid].turns) == 1
 
@@ -404,8 +582,10 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
     Expected loader output:
       - 1 SPAWN branch with is_background=False because the subagent end
         joins the later parent turn at t=280.18
-      - 2 sibling child conversations with session ids
-        '<trace>::sa:codex_subagent_001:s0' and ':s1'
+      - 2 sibling child conversations: the main chain
+        '<trace>::sa:codex_subagent_001' plus one spawned chain ':fa:000'
+        (the second inner request forks the shared 548-block prefix while
+        the first is still in flight)
       - No SPAWN_JOIN prerequisite on the immediate t=36.54 parent turn
     """
     src = FIXTURES / "async_subagent_with_parallel_inner.json"
@@ -427,8 +607,8 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
     assert branch.mode == ConversationBranchMode.SPAWN
     assert branch.is_background is False
     assert set(branch.child_conversation_ids) == {
-        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s0",
-        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s1",
+        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001",
+        "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:fa:000",
     }
 
     join_turns = [
@@ -441,10 +621,10 @@ def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
     assert join_turns == [6]
 
     # Both children exist and each has exactly one turn.
-    sid_s0 = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s0"
-    sid_s1 = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:s1"
+    sid_main = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001"
+    sid_fork = "91a41301c26657b2500e2dc71141217dd11b::sa:codex_subagent_001:fa:000"
     children_by_sid = {c.session_id: c for c in convs}
-    assert sid_s0 in children_by_sid
-    assert sid_s1 in children_by_sid
-    assert len(children_by_sid[sid_s0].turns) == 1
-    assert len(children_by_sid[sid_s1].turns) == 1
+    assert sid_main in children_by_sid
+    assert sid_fork in children_by_sid
+    assert len(children_by_sid[sid_main].turns) == 1
+    assert len(children_by_sid[sid_fork].turns) == 1

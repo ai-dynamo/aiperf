@@ -19,7 +19,7 @@ from aiperf.dataset.composer.custom import CustomDatasetComposer
 
 
 @pytest.fixture(autouse=True)
-def _disable_weka_parallel_reconstruction():
+def _disable_weka_parallel_reconstruction(monkeypatch):
     """Force WekaTraceLoader serial reconstruction in unit tests.
 
     The parallel path spawns worker processes that load a real tokenizer via
@@ -27,15 +27,44 @@ def _disable_weka_parallel_reconstruction():
     that doesn't survive process boundaries. Tests that specifically exercise
     the parallel path drive ``_process_task`` in-process or override this
     setting via ``monkeypatch``.
+
+    Uses ``monkeypatch`` rather than manual save/restore so a per-test override
+    of the same setting unwinds LIFO through the one function-scoped monkeypatch.
+    A manual ``finally`` restore racing a per-test monkeypatch of the same global
+    attribute leaked stale values across tests under xdist sharding.
     """
     from aiperf.common import environment as env_mod
 
-    saved = env_mod.Environment.DATASET.WEKA_PARALLEL_WORKERS
-    env_mod.Environment.DATASET.WEKA_PARALLEL_WORKERS = 1
-    try:
-        yield
-    finally:
-        env_mod.Environment.DATASET.WEKA_PARALLEL_WORKERS = saved
+    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
+
+
+@pytest.fixture(autouse=True)
+def _disable_weka_aux_classification(monkeypatch):
+    """Keep flattened-agent worker chains tagged ``::fa:`` in the loader suite.
+
+    Worker-chain sub-classification (``is_aux_chain`` size/cross-model arms,
+    ``is_reduction_chain``, and ``worker_group_members``) relabels short
+    one-shots as ``::aux:``/``::aux:red:`` sidecars and shared-spawn fan-out as
+    ``::wg:``. The flat-split mechanics tests assert ``::fa:`` session ids and
+    byte-identical reconstruction and are agnostic to those tags, so default all
+    three off here. Classification itself is covered directly by
+    ``test_weka_aux_classification`` and end-to-end by the aux/reduction/
+    worker-group cases in ``test_weka_flat_split_v1_contract_adv`` and
+    ``test_weka_async_subagent`` (which re-enable them via monkeypatch).
+
+    Uses ``monkeypatch`` rather than manual save/restore: a per-test override of
+    these same globals (e.g. a test that re-enables aux) and this fixture then go
+    through the SAME function-scoped monkeypatch and unwind LIFO, so neither can
+    leak a stale value into another test. The previous manual ``finally`` restore
+    raced per-test monkeypatches and leaked aux-enabled state into sibling loader
+    tests under xdist sharding, flipping ``::fa:`` assertions to ``::aux:``.
+    """
+    from aiperf.common import environment as env_mod
+
+    ds = env_mod.Environment.DATASET
+    monkeypatch.setattr(ds, "WEKA_AUX_MAX_REQUESTS", 0)
+    monkeypatch.setattr(ds, "WEKA_AUX_REDUCTION_OSL_MAX", 0)
+    monkeypatch.setattr(ds, "WEKA_WORKER_GROUP_MIN", 0)
 
 
 def stub_hash_id_corpus_rng(prompt_generator) -> None:

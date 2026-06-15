@@ -217,7 +217,6 @@ async def test_warmup_failure_blocks_profiling_setup() -> None:
     )
     # Must not raise: trajectories list still populated.
     await profiling_strategy.setup_phase()
-    assert profiling_strategy._recycle_queue is not None
 
 
 @pytest.mark.asyncio

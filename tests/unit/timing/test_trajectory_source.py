@@ -104,7 +104,8 @@ def test_k_i_within_bounds_for_each_trajectory():
         random_seed=7,
     )
     for trajectory in src.trajectories:
-        assert 0 <= trajectory.start_turn_index <= 7  # floor(0.7 * 10) = 7
+        # defaults: floor(0.25 * 10) = 2, floor(0.75 * 10) = 7
+        assert 2 <= trajectory.start_turn_index <= 7
 
 
 def test_seed_determinism():
@@ -196,7 +197,10 @@ def test_timestamped_snapshot_includes_inflight_subagent_and_gated_parent():
     assert child.branch_id == branch_id
     assert child.branch_mode == ConversationBranchMode.SPAWN
     assert child.next_dispatch_offset_ms == pytest.approx(500.0)
-    assert src.warmup_credit_count == 1
+    # Both active-at-t* sessions are warmed: the mid-flight child (turn 0) and
+    # the gated parent (turn 1, priming its join turn). Gated parents are no
+    # longer excluded from warmup.
+    assert src.warmup_credit_count == 2
 
 
 def test_timestamped_summary_logs_sample_time_not_root_turn_pct(caplog):
@@ -285,3 +289,74 @@ def test_timestamped_snapshot_after_spawning_turn_schedules_future_child_start()
     assert parent.next_turn_index == 2
     assert child.next_turn_index == 0
     assert child.next_dispatch_offset_ms == pytest.approx(500.0)
+
+
+def test_next_recycle_conversation_id_uses_sampler_round_robin():
+    """Recycle draws the next root from the dataset sampler.
+
+    A SequentialSampler yields every root in order and wraps indefinitely, so
+    over a whole number of cycles each root is reused exactly equally -- no
+    trace is favored. This replaces the old strategy-side recycle queue, whose
+    copy accumulation favored short, rootless-heavy traces.
+    """
+    from collections import Counter
+
+    from aiperf.dataset.dataset_samplers import SequentialSampler
+
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=f"trace_{i}",
+                turns=[
+                    TurnMetadata(timestamp_ms=None, delay_ms=None),
+                    TurnMetadata(timestamp_ms=None, delay_ms=None),
+                ],
+                is_root=True,
+            )
+            for i in range(4)
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
+    src = TrajectorySource(
+        dataset_metadata=dataset,
+        dataset_sampler=sampler,
+        concurrency=2,
+        random_seed=0,
+    )
+
+    seen = [src.next_recycle_conversation_id() for _ in range(8)]
+    counts = Counter(seen)
+    assert set(counts) == {f"trace_{i}" for i in range(4)}
+    assert all(v == 2 for v in counts.values()), counts
+
+
+def test_next_recycle_conversation_id_skips_unspawnable_roots():
+    """Roots with no spawnable session (zero turns) are skipped so recycle never
+    hands back a dead trace; bounded so an all-empty pool returns None."""
+    from aiperf.dataset.dataset_samplers import SequentialSampler
+
+    dataset = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="ok",
+                turns=[
+                    TurnMetadata(timestamp_ms=None, delay_ms=None),
+                    TurnMetadata(timestamp_ms=None, delay_ms=None),
+                ],
+                is_root=True,
+            ),
+            ConversationMetadata(conversation_id="empty", turns=[], is_root=True),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    sampler = SequentialSampler([c.conversation_id for c in dataset.conversations])
+    src = TrajectorySource(
+        dataset_metadata=dataset,
+        dataset_sampler=sampler,
+        concurrency=1,
+        random_seed=0,
+    )
+
+    for _ in range(5):
+        assert src.next_recycle_conversation_id() == "ok"

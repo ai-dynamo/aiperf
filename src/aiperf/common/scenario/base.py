@@ -27,6 +27,16 @@ class ScenarioSpec(AIPerfBaseModel):
         default=False,
         description="Force --use-think-time-only=true to exclude response time from inter-turn delays.",
     )
+    forbid_ignore_trace_delays: bool = Field(
+        default=False,
+        description=(
+            "Reject --ignore-trace-delays. The scenario replays recorded trace "
+            "timing; --ignore-trace-delays nulls every per-turn timestamp/delay "
+            "in the loader, dispatching all turns back-to-back and falsifying the "
+            "workload while the run would otherwise still report "
+            "submission_valid=true."
+        ),
+    )
     forbid_input_truncation: bool = Field(
         description=(
             "Reject client-side input-length truncation. Currently checks "
@@ -44,6 +54,34 @@ class ScenarioSpec(AIPerfBaseModel):
     )
     min_benchmark_duration_seconds: int = Field(
         description="Floor on --benchmark-duration in seconds."
+    )
+    default_benchmark_duration_seconds: int | None = Field(
+        default=None,
+        description=(
+            "Value auto-filled into --benchmark-duration when the user leaves "
+            "it unset. Explicit user values are honored (subject to the "
+            "min_benchmark_duration_seconds floor). None disables auto-fill."
+        ),
+    )
+    default_trajectory_start_min_ratio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Value auto-filled into --trajectory-start-min-ratio when the user "
+            "leaves it unset. Explicit user values are honored. None disables "
+            "auto-fill."
+        ),
+    )
+    default_trajectory_start_max_ratio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Value auto-filled into --trajectory-start-max-ratio when the user "
+            "leaves it unset. Explicit user values are honored. None disables "
+            "auto-fill."
+        ),
     )
     inter_turn_delay_cap_seconds: float | None = Field(
         default=None,

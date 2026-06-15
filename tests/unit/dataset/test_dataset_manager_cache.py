@@ -176,7 +176,7 @@ class TestDatasetManagerCacheRoundtrip:
         assert key_a != key_b
 
     @pytest.mark.asyncio
-    async def test_hf_weka_repo_change_invalidates_cache(
+    async def test_hf_weka_dataset_change_invalidates_cache(
         self, tmp_path: Path, mock_tokenizer
     ) -> None:
         trace = _write_trace(tmp_path)
@@ -184,12 +184,12 @@ class TestDatasetManagerCacheRoundtrip:
         cfg_a.input.file = None
         cfg_a.input.custom_dataset_type = None
         cfg_a.input.public_dataset = PublicDatasetType.WEKA_HF
-        cfg_a.input.hf_weka_repo = "semianalysisai/cc-traces-weka-051826"
+        cfg_a.input.hf_weka_dataset = "semianalysisai/cc-traces-weka-051826"
         cfg_b = _make_config(file_path=trace, benchmark_id="weka-b")
         cfg_b.input.file = None
         cfg_b.input.custom_dataset_type = None
         cfg_b.input.public_dataset = PublicDatasetType.WEKA_HF
-        cfg_b.input.hf_weka_repo = "semianalysisai/cc-traces-weka-with-subagents-051826"
+        cfg_b.input.hf_weka_dataset = "semianalysisai/cc-traces-weka-with-subagents-051826"
 
         key_a = mmap_cache.compute_cache_key_from_user_config(cfg_a)
         key_b = mmap_cache.compute_cache_key_from_user_config(cfg_b)

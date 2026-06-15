@@ -297,7 +297,7 @@ AIPerf outputs detailed per-request data in `profile_export.jsonl`. Each line is
 
 **Key fields**: Every request has `time_to_first_token`, `request_latency`, ISL, OSL, and more.
 
-**Note**: The metadata section may contain additional optional fields including `was_cancelled`, `cancellation_time_ns`, `conversation_id`, `x_correlation_id`, and timing fields like `credit_issued_ns` and `request_ack_ns`. The `benchmark_phase` field is either `"warmup"` or `"profiling"`.
+**Note**: The metadata section may contain additional optional fields including `was_cancelled`, `cancellation_time_ns`, `conversation_id`, `x_correlation_id`, and timing fields like `credit_issued_ns` and `request_ack_ns`. The `benchmark_phase` field is either `"warmup"` or `"profiling"`. Agentic / DAG sub-agent runs additionally tag each record with `agent_depth`, `parent_correlation_id`, and `root_correlation_id` (the shared session-tree root id — see [Working with Profile Exports](tutorials/working-with-profile-exports.md)).
 
 ### Calculating P75 TTFT
 

@@ -79,11 +79,12 @@ def test_scenario_lock_error_raises_without_unsafe_override(tmp_path):
             scenario="inferencex-agentx-mvp",
         )
     assert "Scenario invariants violated" in str(exc_info.value)
-    # Default UserConfig has benchmark_duration=0, which violates the
-    # inferencex-agentx-mvp invariants. timing_mode and cache_bust.target
-    # would also conflict, but the validator auto-injects agentic_replay /
-    # FIRST_TURN_PREFIX before the lock check, so neither surfaces as a violation.
-    assert "--benchmark-duration" in str(exc_info.value)
+    # Default UserConfig has no input file, which violates the required-loader
+    # invariant. timing_mode, cache_bust.target, and benchmark_duration would
+    # also conflict, but the validator auto-injects agentic_replay /
+    # FIRST_TURN_PREFIX / the 1800s default duration before the lock check,
+    # so none of those surface as violations.
+    assert "--input-file (loader)" in str(exc_info.value)
 
 
 def test_unsafe_override_downgrades_to_warning(caplog):

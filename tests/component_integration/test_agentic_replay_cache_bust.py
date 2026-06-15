@@ -154,6 +154,13 @@ def _build_cmd(weka_dir: Path, *, cache_bust: str) -> str:
     a warning rather than a fail-fast for the SUFFIX / FIRST_TURN_* values.
 
     ``--export-level raw`` is required so the raw record JSONL exists.
+
+    ``--prompt-input-tokens-block-size 16`` overrides the weka_trace plugin's
+    ``default_block_size: 64`` so the loader honors the fixture's hand-computed
+    16-token block math (``_BLOCK_SIZE``). At bs=64 the tool+system prefix
+    (16 tokens) covers zero full blocks, so ``init_turn_0`` reconstructs no
+    ``role="system"`` segment and the SYSTEM_* targets have no carrier; at
+    bs=16 the prefix is exactly one block and a system segment survives.
     """
     return f"""
         aiperf profile
@@ -163,6 +170,7 @@ def _build_cmd(weka_dir: Path, *, cache_bust: str) -> str:
             --streaming
             --custom-dataset-type weka_trace
             --input-file {weka_dir}
+            --prompt-input-tokens-block-size {_BLOCK_SIZE}
             --no-fixed-schedule
             --benchmark-duration 8
             --concurrency 3

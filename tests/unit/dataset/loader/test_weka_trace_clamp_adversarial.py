@@ -148,7 +148,9 @@ def _make_two_turn_parent_trace(
                 "model": "claude-opus-4-5-20251101",
                 "in": 200,
                 "out": 20,
-                "hash_ids": [3, 4],
+                # Extends turn 0's [1, 2] prefix: consecutive same-agent turns
+                # must chain or flattened-agent detection will split them.
+                "hash_ids": [1, 2, 3],
                 "input_types": ["text"],
                 "output_types": ["text"],
                 "stop": "end_turn",
@@ -166,6 +168,10 @@ def _make_subagent_trace_with_two_child_turns(
 ) -> dict:
     """Parent has one normal request + one subagent block; the subagent has two
     child requests so the child path computes a delay for child turn 1.
+
+    The subagent marker sits at t=0.0 so both inner requests are absolute on
+    the root timeline (an inner ``t`` before the marker would be treated as
+    spawn-relative by ``_subagent_request_absolute_t`` and shift the delay).
     """
     return {
         "id": "trace_clamp_child",
@@ -187,7 +193,7 @@ def _make_subagent_trace_with_two_child_turns(
                 "think_time": 0.0,
             },
             {
-                "t": 1.0,
+                "t": 0.0,
                 "type": "subagent",
                 "agent_id": "agent_clamp",
                 "subagent_type": "Explore",
@@ -218,7 +224,11 @@ def _make_subagent_trace_with_two_child_turns(
                         "model": "claude-haiku-4-5-20251001",
                         "in": 150,
                         "out": 40,
-                        "hash_ids": [12, 13],
+                        # Extends the first request's [10, 11] prefix so LCP
+                        # chain detection keeps both requests in ONE chain
+                        # (a disjoint hash list would split them into two
+                        # one-turn children and there would be no delay).
+                        "hash_ids": [10, 11, 12, 13],
                         "input_types": ["text"],
                         "output_types": ["text"],
                         "stop": "end_turn",

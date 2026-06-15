@@ -253,8 +253,10 @@ def test_agentic_replay_cli_scenario_unsafe_override_runs_to_completion(
         "validator must log timing_mode auto-set under --scenario "
         "(covers the read-only-property setter path against real UserConfig)"
     )
-    assert "auto-set --inter-turn-delay-cap-seconds=60.0" in log_text, (
-        "validator must auto-set inter-turn-delay-cap when unset"
+    assert "auto-set --trace-idle-gap-cap-seconds=60.0" in log_text, (
+        "validator must auto-set the per-trace idle-gap cap when unset "
+        "(the AgentX scenario locks trace_idle_gap_cap_seconds, not the "
+        "inter-turn delay cap, since 932b4bc)"
     )
 
     assert result.json is not None, "JSON export must exist"

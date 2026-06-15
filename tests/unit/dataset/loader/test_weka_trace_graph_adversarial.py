@@ -375,8 +375,10 @@ def test_subagent_duration_tokens_tool_count_all_none_non_async_accepted(
 def test_subagent_requests_ordering_preserved_in_child_conversation(
     tmp_path, monkeypatch
 ):
-    """Inner request ordering is preserved: child turns carry timestamps
-    0.0, 1.0, 2.0 in that order matching the inner list.
+    """Inner request ordering is preserved, with timestamps on the root
+    timeline: the spawn-relative inner ``t`` values 0.0, 1.0, 2.0 shift by
+    the marker's t=5.0 (see ``_subagent_request_absolute_t``) but keep the
+    inner-list order.
     """
     requests = [
         _normal(t=0.0),
@@ -391,7 +393,7 @@ def test_subagent_requests_ordering_preserved_in_child_conversation(
     loader = _make_loader(path, _mk_user_config(), monkeypatch)
     convs = loader.convert_to_conversations(loader.load_dataset())
     child = next(c for c in convs if c.session_id == "t1::sa:a1")
-    assert [t.timestamp for t in child.turns] == [0.0, 1000.0, 2000.0]
+    assert [t.timestamp for t in child.turns] == [5000.0, 6000.0, 7000.0]
 
 
 def test_terminal_subagent_after_filter_killed_final_turn_reanchors_to_earlier(

@@ -20,7 +20,7 @@ from aiperf.common.exceptions import MetricTypeError
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
 
 
 def test_input_config_defaults():
@@ -359,3 +359,43 @@ def test_synthesis_max_osl_requires_trace_dataset(dataset_type):
             )
 
         assert "require a trace dataset type" in str(exc.value)
+
+
+def test_hf_weka_dataset_auto_selects_weka_hf_public_dataset():
+    """Passing --hf-weka-dataset alone auto-selects --public-dataset weka_hf."""
+    config = InputConfig(hf_weka_dataset="semianalysisai/cc-traces-weka-061326")
+    assert config.public_dataset == PublicDatasetType.WEKA_HF
+    assert config.detected_loader == "weka_hf"
+    assert config.hf_weka_dataset == "semianalysisai/cc-traces-weka-061326"
+
+
+def test_hf_weka_dataset_with_explicit_weka_hf_is_allowed():
+    """--hf-weka-dataset alongside an explicit --public-dataset weka_hf is fine."""
+    config = InputConfig(
+        public_dataset=PublicDatasetType.WEKA_HF,
+        hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
+    )
+    assert config.public_dataset == PublicDatasetType.WEKA_HF
+    assert config.detected_loader == "weka_hf"
+
+
+def test_hf_weka_dataset_does_not_override_other_public_dataset():
+    """Auto-select only fires when no dataset is named; a set value is left alone."""
+    config = InputConfig(
+        public_dataset=PublicDatasetType.SHAREGPT,
+        hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
+    )
+    assert config.public_dataset == PublicDatasetType.SHAREGPT
+
+
+def test_hf_weka_dataset_with_custom_dataset_type_raises_error():
+    """--hf-weka-dataset implies weka_hf, which conflicts with --custom-dataset-type."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        with pytest.raises(ValidationError) as exc:
+            InputConfig(
+                custom_dataset_type=CustomDatasetType.WEKA_TRACE,
+                file=temp_file.name,
+                hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
+            )
+
+        assert "cannot be combined with --custom-dataset-type" in str(exc.value)

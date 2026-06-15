@@ -128,6 +128,20 @@ class _AgentXSettings(BaseSettings):
         "rate exactly equal to the limit is accepted. Has no effect on "
         "non-scenario runs (no --scenario flag) or runs with zero responses.",
     )
+    RECYCLE_GUARD_MAX_WINDOW: int = Field(
+        ge=1,
+        default=1_000_000,
+        description="Maximum number of recently-recycled root correlation_ids "
+        "retained by AgenticReplayStrategy's double-recycle guard (which raises "
+        "if a final-turn credit return is delivered twice and would re-spawn a "
+        "session). Without a bound the guard retains one entry per recycled "
+        "session for the entire PROFILING phase -- hundreds of MB of "
+        "unreclaimable memory on long, high-throughput durability ramps. Oldest "
+        "entries are evicted FIFO once the window is full; a duplicate delivered "
+        "after this many intervening recycles is no longer caught. Duplicate "
+        "deliveries are near-immediate in practice, so the default window is far "
+        "larger than any real gap; raise it for very high concurrency.",
+    )
 
 
 class _CompressionSettings(BaseSettings):
@@ -290,6 +304,162 @@ class _DatasetSettings(BaseSettings):
         "output_length, so subsequent user-turn block alignment drifts from "
         "the trace's hash_ids). Default False preserves the pre-canned-"
         "assistant behavior that matches recorded hash_ids byte-for-byte.",
+    )
+    WEKA_SPLIT_FLATTENED_AGENTS: bool = Field(
+        default=True,
+        description="When True (default), WekaTraceLoader runs hash_id LCP "
+        "chain detection at both layers: untagged agent fan-outs recorded as "
+        "flat top-level requests split into per-agent child conversations "
+        "(::fa:NNN), and each subagent entry's inner requests split into "
+        "per-context-chain children (::sa:<agent_id> plus :fa:NNN siblings), "
+        "all with SPAWN/SPAWN_JOIN linkage so replay reproduces the recorded "
+        "concurrency. Set to False to disable detection at both layers: all "
+        "top-level requests serialize into one root conversation and each "
+        "subagent emits exactly one child with its inner requests in time "
+        "order. Detected chains at both layers are further split into genuine "
+        "agents and auxiliary one-shot sidecars (top-level ::fa: vs ::aux:; "
+        "subagent overflow :fa: vs :aux:) per WEKA_AUX_MAX_REQUESTS / "
+        "WEKA_AUX_ISL_RATIO / WEKA_AUX_ISL_FLOOR.",
+    )
+    WEKA_TOOL_SHAPED_MESSAGES: bool = Field(
+        default=False,
+        description="When True, WekaTraceLoader emits the OpenAI tool-call "
+        "wire shape for turns classified as tool-result continuations: the "
+        "same-delta assistant message gains a synthetic tool_calls entry and "
+        "the turn's new input is sent as a role='tool' message instead of "
+        "plain user text (content unchanged). Exercises the server's "
+        "tool-message chat-template path at the cost of exact ISL fidelity "
+        "(tool messages tokenize differently than plain user text). Only "
+        "turns with a recorded tool signal (input_types / prior stop) shape; "
+        "legacy traces are unaffected. Default False keeps the byte-exact "
+        "plain-user replay shape.",
+    )
+    WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
+        ge=0.0,
+        default=3600.0,
+        description="LCP chain-detection seam guard: the maximum wall-clock gap "
+        "(seconds) between a chain's last request and a candidate continuation "
+        "before that continuation is only accepted when it also keeps enough of "
+        "the prior context (see WEKA_SEAM_MIN_OVERLAP_RATIO). A genuine context "
+        "compaction continues promptly (seconds to minutes), so a low-overlap "
+        "join hours later is treated as a distinct session that merely shares a "
+        "base prefix and is spawned as its own conversation instead of being "
+        "stitched onto the chain (which would fabricate a multi-hour intra-"
+        "conversation idle gap). The guard fires only when BOTH this gap is "
+        "exceeded AND overlap is below the ratio, so prompt compactions at any "
+        "overlap and verbatim long-gap resumes at high overlap are preserved. "
+        "Raise toward infinity to disable the temporal half of the guard.",
+    )
+    WEKA_SEAM_MIN_OVERLAP_RATIO: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.5,
+        description="LCP chain-detection seam guard: the minimum shared-prefix "
+        "ratio (continuation's fork depth / the chain tail's block count) for a "
+        "far-future continuation to still be accepted as the same agent. Below "
+        "this, a continuation past WEKA_SEAM_MAX_GAP_SECONDS is spawned as a new "
+        "conversation rather than spliced on. Corpus data is bimodal -- real "
+        "compactions and verbatim resumes keep >=94% of the prefix, while "
+        "coincidental base-prefix mis-merges keep <50% -- so 0.5 sits in a wide "
+        "safe valley. Set to 0.0 to disable the overlap half of the guard.",
+    )
+    WEKA_AUX_MAX_REQUESTS: int = Field(
+        ge=0,
+        default=1,
+        description="Auxiliary (sidecar) classification: a detected worker "
+        "chain with at most this many requests is eligible to be reclassified "
+        "as an auxiliary one-shot call -- a tool-issued sidecar (web "
+        "fetch/search summary, title generation, a classifier) rather than a "
+        "sustained agent -- when it also passes the WEKA_AUX_ISL_* size test. "
+        "Applies to both top-level flat chains (::fa: -> ::aux:) and a "
+        "subagent's nested-LCP overflow (:fa: -> :aux:). Corpus sidecars are "
+        "overwhelmingly single-request, so the default is 1. Set to 0 to "
+        "disable aux classification (every worker chain keeps its agent tag). "
+        "Only applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_AUX_ISL_RATIO: float = Field(
+        ge=0.0,
+        default=0.10,
+        description="Auxiliary (sidecar) classification: an aux-eligible chain "
+        "(see WEKA_AUX_MAX_REQUESTS) is reclassified to a sidecar only when its "
+        "first request's input length is below max(WEKA_AUX_ISL_FLOOR, this "
+        "ratio * the enclosing main chain's peak input length -- the trace's for "
+        "flat chains, the subagent's for overflow). The ratio catches calls "
+        "small relative to a large conversation's accumulated context; the floor "
+        "catches them in absolute terms. Sidecars start from a fresh "
+        "few-thousand-token context vs the agent's tens-to-hundreds of "
+        "thousands.",
+    )
+    WEKA_AUX_ISL_FLOOR: int = Field(
+        ge=0,
+        default=16384,
+        description="Auxiliary (sidecar) classification: absolute input-length "
+        "floor (tokens) for the aux size test (see WEKA_AUX_ISL_RATIO). A chain "
+        "whose first-request input length is below max(this, ratio * main peak "
+        "ISL) is treated as an auxiliary one-shot sidecar. Keeps small "
+        "fresh-context calls classified as sidecars even when the enclosing "
+        "conversation is itself small.",
+    )
+    WEKA_AUX_CROSS_MODEL: bool = Field(
+        default=True,
+        description="Auxiliary (sidecar) classification: when True (default), an "
+        "aux-eligible chain (<= WEKA_AUX_MAX_REQUESTS requests) whose first "
+        "request runs on a different model than its enclosing main chain is "
+        "treated as a sidecar regardless of input length. An agent does not "
+        "switch models for its own reasoning, so a one-shot on a different model "
+        "is a tool-internal call -- e.g. a Haiku WebFetch summary fired by an "
+        "Opus agent, which can carry a large fetched-page payload and so escape "
+        "the WEKA_AUX_ISL_* size test. Set to False to classify purely by size.",
+    )
+    WEKA_AUX_REDUCTION_OSL_MAX: int = Field(
+        ge=0,
+        default=4000,
+        description="Auxiliary (sidecar) classification, reduction arm: a "
+        "single-request worker chain on the SAME model as its enclosing main "
+        "chain is reclassified to an auxiliary one-shot when its output length "
+        "is in (0, this) tokens AND its input length is at least "
+        "WEKA_AUX_ISL_FLOOR AND its input/output ratio exceeds "
+        "WEKA_AUX_REDUCTION_RATIO. This catches large-input/short-output "
+        "reductions (context compaction, subagent-result summaries, tool-output "
+        "digests) that the size and cross-model arms miss because they are "
+        "same-model and large. The bound separates a bounded summary from "
+        "generative agent output (a real agent emits long completions); corpus "
+        "reductions cap well below 4k output across every capture. Reductions "
+        "are emitted as ::aux:red: (still aux, distinguishable from fetch/size "
+        "sidecars). Set to 0 to disable the reduction arm. Only applies when "
+        "WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_AUX_REDUCTION_RATIO: float = Field(
+        ge=0.0,
+        default=20.0,
+        description="Auxiliary (sidecar) classification, reduction arm: the "
+        "minimum input-to-output token ratio for a same-model single-request "
+        "large-input chain to be treated as a reduction sidecar (see "
+        "WEKA_AUX_REDUCTION_OSL_MAX). A reduction consumes a large body and "
+        "emits a short summary, so input/output is high (corpus median ~120); "
+        "20 is a conservative floor that still excludes balanced request/"
+        "response calls. Only applies when WEKA_AUX_REDUCTION_OSL_MAX > 0.",
+    )
+    WEKA_WORKER_GROUP_MIN: int = Field(
+        ge=0,
+        default=3,
+        description="Parallel worker-group tagging: a coordinated parallel fan-"
+        "out must BOTH share a deep spawned context AND run concurrently. Workers "
+        "that forked from shared context (fork depth > 0) are first scoped by "
+        "their fork point (the parent request they branched off), then within "
+        "each scope split into connected components of overlapping active "
+        "[t0, t1) intervals; a component with at least this many members is "
+        "emitted as ::wg:{group}_{member} (group = the concurrent fan-out, member "
+        "= index by start time) instead of the generic ::fa: agent marker. The "
+        "fork-point scope keeps unrelated fan-outs apart (pure interval overlap "
+        "bridges a busy trace into one blob); the overlap split drops members "
+        "that share the fork point but never run concurrently. This isolates "
+        "genuine parallel sub-agent fan-out (the dominant agent population) from "
+        "solo agents, unlike keying on the first context block (shared by ~every "
+        "worker all session). Auxiliary chains are classified first, so a one-"
+        "shot sidecar never becomes a worker-group member. Set to 0 to disable "
+        "worker-group tagging (parallel workers keep the generic ::fa: tag). Only "
+        "applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
     )
 
 
@@ -629,6 +799,20 @@ class _RecordSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for processing record results",
+    )
+    STRIP_PAYLOAD_BYTES: bool | None = Field(
+        default=None,
+        description="Tri-state control for omitting canonical request payload "
+        "bytes from RecordContext after a request is sent, which substantially "
+        "reduces record-pipeline memory for very large prompts. None (default) "
+        "auto-detects: bytes are stripped only when no downstream record consumer "
+        "needs them (client-side input tokenization disabled, no synthetic image/"
+        "audio/video inputs, and raw payload export off). True forces stripping "
+        "even when a consumer wants the bytes, disabling client-side input "
+        "tokenization, media counting from request bodies, and raw request "
+        "payload export. False always retains them. Auto-detection does not see "
+        "media embedded in custom dataset payloads under server-token-count mode; "
+        "set False explicitly for that case.",
     )
 
 

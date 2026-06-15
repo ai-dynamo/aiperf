@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _AGENTX_SCENARIO = "inferencex-agentx-mvp"
-_AGENTX_WEKA_HF_REPO = "semianalysisai/cc-traces-weka-with-subagents-052726"
+_AGENTX_WEKA_HF_REPO = "semianalysisai/cc-traces-weka-061326"
 
 
 @dataclass
@@ -217,15 +217,17 @@ def validate_scenario(
                     spec.name,
                 )
 
-    if user_config.input.ignore_trace_delays and spec.require_use_think_time_only:
+    if user_config.input.ignore_trace_delays and spec.forbid_ignore_trace_delays:
         violations.append(
             ScenarioViolation(
                 flag="--ignore-trace-delays",
                 current_value=True,
                 required_value=False,
                 message=(
-                    f"scenario {spec.name!r} requires think-time delays; "
-                    "--ignore-trace-delays would zero them out"
+                    f"scenario {spec.name!r} replays recorded trace timing; "
+                    "--ignore-trace-delays would null every per-turn "
+                    "timestamp/delay and dispatch all turns back-to-back, "
+                    "falsifying the workload"
                 ),
             )
         )
@@ -265,16 +267,16 @@ def validate_scenario(
                 )
             )
         if spec.name == _AGENTX_SCENARIO and detected == "weka_hf":
-            hf_weka_repo = getattr(user_config.input, "hf_weka_repo", None)
-            if hf_weka_repo != _AGENTX_WEKA_HF_REPO:
+            hf_weka_dataset = getattr(user_config.input, "hf_weka_dataset", None)
+            if hf_weka_dataset != _AGENTX_WEKA_HF_REPO:
                 violations.append(
                     ScenarioViolation(
-                        flag="--hf-weka-repo",
-                        current_value=hf_weka_repo,
+                        flag="--hf-weka-dataset",
+                        current_value=hf_weka_dataset,
                         required_value=_AGENTX_WEKA_HF_REPO,
                         message=(
                             f"scenario {spec.name!r} only allows --public-dataset "
-                            f"weka_hf with hf_weka_repo={_AGENTX_WEKA_HF_REPO}"
+                            f"weka_hf with hf_weka_dataset={_AGENTX_WEKA_HF_REPO}"
                         ),
                     )
                 )
@@ -328,6 +330,19 @@ def validate_scenario(
             )
         )
 
+    if (
+        spec.default_benchmark_duration_seconds is not None
+        and user_config.loadgen.benchmark_duration is None
+    ):
+        user_config.loadgen.benchmark_duration = float(
+            spec.default_benchmark_duration_seconds
+        )
+        _logger.info(
+            "Scenario %r: auto-set --benchmark-duration=%s (was unset).",
+            spec.name,
+            spec.default_benchmark_duration_seconds,
+        )
+
     duration = user_config.loadgen.benchmark_duration or 0.0
     if duration < spec.min_benchmark_duration_seconds:
         violations.append(
@@ -342,6 +357,25 @@ def validate_scenario(
                 ),
             )
         )
+
+    for ratio_field, spec_default in (
+        ("trajectory_start_min_ratio", spec.default_trajectory_start_min_ratio),
+        ("trajectory_start_max_ratio", spec.default_trajectory_start_max_ratio),
+    ):
+        if spec_default is None:
+            continue
+        explicit = getattr(user_config.loadgen, f"_{ratio_field}_explicitly_set", False)
+        if not explicit:
+            current = getattr(user_config.loadgen, ratio_field, None)
+            if current != spec_default:
+                setattr(user_config.loadgen, ratio_field, spec_default)
+                _logger.info(
+                    "Scenario %r: auto-set --%s=%s (was at default %s).",
+                    spec.name,
+                    ratio_field.replace("_", "-"),
+                    spec_default,
+                    current,
+                )
 
     if user_config.input.random_seed is None:
         seed = secrets.randbits(63)

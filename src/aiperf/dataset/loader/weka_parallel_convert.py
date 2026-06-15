@@ -4,8 +4,10 @@
 """Per-trace parallel reconstruction for WekaTraceLoader.
 
 Each Weka trace (one parent + zero or more subagent children) is a
-self-contained reconstruction unit: scope-keyed cache, scope-keyed
-HashIdRandomGenerator, scope-keyed partial-tail seed. The byte-exact
+self-contained reconstruction unit: one trace-scoped cache and
+HashIdRandomGenerator shared by the parent and all its children
+(``hash_id_scope: "local"`` = one namespace per trace file), plus
+scope-keyed partial-tail seeds. The byte-exact
 LCP-driven reconstruction in
 :class:`aiperf.dataset.loader.weka_synth_buf.ConversationReconstructor`
 carries cross-turn state, but never cross-trace state.
@@ -50,6 +52,7 @@ class _WekaParentTurnDict(TypedDict):
     reset_context: bool
     theoretical_prefix_cache_hit_blocks: int
     theoretical_prefix_cache_total_blocks: int
+    input_kind: str | None
 
 
 class _WekaBranchDict(TypedDict):
@@ -94,23 +97,31 @@ class _WekaNormalRequestPayload(TypedDict):
     model: str
     t: float
     think_time: float | None
+    # Turn classification computed in the orchestrator (one source of truth in
+    # weka_trace._classify_turn_input); workers copy it into the turn dict.
+    input_kind: NotRequired[str | None]
     # Only present in parent normals (not in child requests):
     capped_output_length: NotRequired[int]
     # Present when --trace-idle-gap-cap-seconds has rewritten the per-trace
     # timeline before workers compute turns.
     effective_t: NotRequired[float]
     effective_delay_ms: NotRequired[float | None]
+    # Theoretical prefix-cache values precomputed parent-side from the
+    # per-trace shared seen-set (one hash namespace per trace file).
+    theoretical_hit_blocks: int
+    theoretical_total_blocks: int
 
 
 class _WekaSubagentMarkerPayload(TypedDict):
     """Wire-format dict for one subagent marker (in parent.subagents).
 
-    Stream packing happens in the parent process (parity with the serial path):
-    ``child_session_ids`` enumerates the per-stream child SIDs the worker must
-    register on the SPAWN branch (legacy single-stream subagents emit one
-    SID; multi-stream subagents emit ``:s0`` / ``:s1`` / ...).
-    ``sa_end_seconds`` is the subagent's recorded end time, used by the worker
-    to select the first later parent turn that should join this child.
+    Chain detection happens in the parent process (parity with the serial
+    path): ``child_session_ids`` enumerates the per-chain child SIDs the
+    worker must register on the SPAWN branch (single-chain subagents emit
+    one ``::sa:{agent_id}`` SID; detected spawned chains add ``:fa:000`` /
+    ``:aux:000`` / ... siblings -- agents and one-shot sidecars). ``sa_end_seconds`` is the subagent's recorded
+    end time, used by the worker to select the first later parent turn that
+    should join this child.
     """
 
     agent_id: str
@@ -123,6 +134,18 @@ class _WekaSubagentMarkerPayload(TypedDict):
     effective_t: NotRequired[float]
 
 
+class _WekaFlatChainMarkerPayload(TypedDict):
+    """Branch-anchoring info for one detected flat chain (spec §5.3)."""
+
+    session_id: str
+    chain_index: int
+    first_outer_idx: int
+    end_seconds: float
+    effective_end_seconds: NotRequired[float]
+    t: float
+    effective_t: NotRequired[float]
+
+
 class _WekaParentPayload(TypedDict):
     """Per-trace parent payload shipped to a worker."""
 
@@ -130,10 +153,20 @@ class _WekaParentPayload(TypedDict):
     subagents: list[tuple[int, _WekaSubagentMarkerPayload]]
     tool_tokens: int
     system_tokens: int
+    flat_markers: NotRequired[list[_WekaFlatChainMarkerPayload]]
 
 
 class _WekaChildPayload(TypedDict):
-    """Per-subagent child payload shipped to a worker."""
+    """Per-subagent child payload shipped to a worker.
+
+    ``tool_tokens`` / ``system_tokens`` are the chain's gated turn-0
+    attribution values (the main chain keeps the entry's declared counts;
+    spawned chains carry them only when their first request provably starts
+    with the same declared-prefix blocks -- see
+    ``weka_trace._expand_subagent_to_child_plans``), not necessarily the raw
+    entry-declared counts. Child request ``t`` values are in root-trace
+    coordinates.
+    """
 
     session_id: str
     parent_trace_id: str
@@ -147,16 +180,6 @@ class _WekaChildPayload(TypedDict):
 _DecodeBlocksFn: TypeAlias = Callable[[list[int]], list[int]]
 _SamplePartialTailFn: TypeAlias = Callable[[int, str], list[int]]
 _DecodeTokensFn: TypeAlias = Callable[[list[int]], str]
-
-
-def _count_seen_prefix_blocks(hash_ids: list[int], seen: set[int]) -> int:
-    """Return leading blocks already present in ``seen`` for prefix-cache math."""
-    hits = 0
-    for hash_id in hash_ids:
-        if hash_id not in seen:
-            break
-        hits += 1
-    return hits
 
 
 @dataclass(slots=True)
@@ -202,6 +225,7 @@ class _WekaTraceTask:
     model_map: dict[str, str]
     block_size: int
     emit_assistant_segments: bool = True
+    tool_shaped_messages: bool = False
 
 
 @dataclass(slots=True)
@@ -339,14 +363,15 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         decode_tokens_to_text=parent_decode_text,
         bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
         emit_assistant_segments=task.emit_assistant_segments,
+        tool_shaped_messages=task.tool_shaped_messages,
     )
 
     parent_turns: list[_WekaParentTurnDict] = []
     outer_to_turn_pos: dict[int, int] = {}
     normals: list[tuple[int, _WekaNormalRequestPayload]] = parent["normals"]
-    parent_seen_hash_ids: set[int] = set()
     for k, (outer_idx, req) in enumerate(normals):
         seed = f"{task.trace_id}:turn_{k}:partial_tail"
+        is_tool_result = req.get("input_kind") == "tool_result"
         if k == 0:
             parent_recon.init_turn_0(
                 hash_ids=req["hash_ids"],
@@ -354,6 +379,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 tool_tokens=parent["tool_tokens"],
                 system_tokens=parent["system_tokens"],
                 seed=seed,
+                is_tool_result=is_tool_result,
             )
         else:
             prev_req = normals[k - 1][1]
@@ -364,6 +390,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 curr_hash_ids=req["hash_ids"],
                 curr_in_tokens=req["input_length"],
                 seed=seed,
+                is_tool_result=is_tool_result,
             )
 
         if "effective_t" in req:
@@ -379,13 +406,19 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 delay_ms = t_ms - normals[k - 1][1]["t"] * 1000.0
         if delay_ms is not None:
             delay_ms = delay_tracker.clamp(delay_ms)
+            # Floor at 0, mirroring the serial parent loop in
+            # weka_trace._reconstruct_serial: a negative inter-turn delay (corrupt
+            # think_time, or a non-monotonic main-chain timestamp gap) would tell
+            # the load generator to dispatch a request in the past. Omitting it
+            # here made the parallel parent path emit a negative Turn.delay where
+            # the serial path emits 0.0, breaking the module's byte-identical
+            # serial/parallel contract. (Child / flat-chain paths intentionally
+            # do not floor in either path, so they stay in parity untouched.)
+            delay_ms = max(delay_ms, 0.0)
 
         parent_delta = parent_recon.turn_delta()
-        theoretical_hit_blocks = _count_seen_prefix_blocks(
-            req["hash_ids"], parent_seen_hash_ids
-        )
-        theoretical_total_blocks = len(req["hash_ids"])
-        parent_seen_hash_ids.update(req["hash_ids"])
+        theoretical_hit_blocks = req["theoretical_hit_blocks"]
+        theoretical_total_blocks = req["theoretical_total_blocks"]
         parent_turns.append(
             {
                 "timestamp": None if task.ignore_delays else t_ms,
@@ -396,6 +429,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 "reset_context": parent_delta.reset_context,
                 "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                 "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,
+                "input_kind": req.get("input_kind"),
             }
         )
         outer_to_turn_pos[outer_idx] = len(parent_turns) - 1
@@ -499,6 +533,51 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             }
         )
 
+    # Detected flat chains: SPAWN off the last main turn preceding the
+    # chain's first request (turn 0 fallback — never drop real load),
+    # SPAWN_JOIN on the first later main turn at/after the chain's end.
+    # Mirrors the serial path's grouping exactly.
+    flat_groups: dict[tuple[int, int | None], list[_WekaFlatChainMarkerPayload]] = (
+        defaultdict(list)
+    )
+    flat_group_order: list[tuple[int, int | None]] = []
+    for marker in parent.get("flat_markers", []):
+        first_outer = marker["first_outer_idx"]
+        preceding = max(
+            (pos for oi, pos in outer_to_turn_pos.items() if oi < first_outer),
+            default=0,
+        )
+        fp_end = marker.get("effective_end_seconds", marker["end_seconds"])
+        join_turn = None
+        for oi, pos in sorted(outer_to_turn_pos.items()):
+            if oi <= first_outer:
+                continue
+            if outer_to_t[oi] + _JOIN_EPSILON_SECONDS >= fp_end:
+                join_turn = pos
+                break
+        key = (preceding, join_turn)
+        if key not in flat_groups:
+            flat_group_order.append(key)
+        flat_groups[key].append(marker)
+
+    for preceding, join_turn in flat_group_order:
+        markers = flat_groups[(preceding, join_turn)]
+        branches.append(
+            {
+                "branch_id": (f"{task.trace_id}:flatspawn:{markers[0]['chain_index']}"),
+                "child_session_ids": [m["session_id"] for m in markers],
+                "is_background": join_turn is None,
+                "preceding_turn": preceding,
+                "following_turn": join_turn,
+                # Mapped spawn time under an idle-gap warp (effective_t), raw t
+                # otherwise. Mirrors the subagent branch above and the serial
+                # flat branch; raw t under a warp collapses the child dispatch
+                # offset to 0.
+                "start_timestamp": min(m.get("effective_t", m["t"]) for m in markers)
+                * 1000.0,
+            }
+        )
+
     children_out: list[_WekaChildDict] = []
     for cp in task.children:
         if cp["subagent_index"] in dropped_subagent_indices:
@@ -517,13 +596,14 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             decode_tokens_to_text=child_decode_text,
             bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
             emit_assistant_segments=task.emit_assistant_segments,
+            tool_shaped_messages=task.tool_shaped_messages,
         )
 
         child_turns: list[_WekaParentTurnDict] = []
         creqs: list[_WekaNormalRequestPayload] = cp["requests"]
-        child_seen_hash_ids: set[int] = set()
         for k, creq in enumerate(creqs):
             seed = f"{cp['session_id']}:turn_{k}:partial_tail"
+            is_tool_result = creq.get("input_kind") == "tool_result"
             if k == 0:
                 child_recon.init_turn_0(
                     hash_ids=creq["hash_ids"],
@@ -531,6 +611,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     tool_tokens=cp["tool_tokens"],
                     system_tokens=cp["system_tokens"],
                     seed=seed,
+                    is_tool_result=is_tool_result,
                 )
             else:
                 prev_creq = creqs[k - 1]
@@ -541,6 +622,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     curr_hash_ids=creq["hash_ids"],
                     curr_in_tokens=creq["input_length"],
                     seed=seed,
+                    is_tool_result=is_tool_result,
                 )
             if "effective_t" in creq:
                 t_ms = creq["effective_t"] * 1000.0
@@ -557,21 +639,24 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
 
             child_delta = child_recon.turn_delta()
-            theoretical_hit_blocks = _count_seen_prefix_blocks(
-                creq["hash_ids"], child_seen_hash_ids
-            )
-            theoretical_total_blocks = len(creq["hash_ids"])
-            child_seen_hash_ids.update(creq["hash_ids"])
+            theoretical_hit_blocks = creq["theoretical_hit_blocks"]
+            theoretical_total_blocks = creq["theoretical_total_blocks"]
             child_turns.append(
                 {
                     "timestamp": None if task.ignore_delays else t_ms,
                     "delay": None if task.ignore_delays else child_delay_ms,
                     "model": task.model_map.get(creq["model"], creq["model"]),
-                    "max_tokens": creq["output_length"],
+                    # Flat-chain children carry capped_output_length (their
+                    # rows were top-level and honor --max-osl); subagent
+                    # children keep the recorded output_length.
+                    "max_tokens": creq.get(
+                        "capped_output_length", creq["output_length"]
+                    ),
                     "raw_messages": child_delta.delta_messages,
                     "reset_context": child_delta.reset_context,
                     "theoretical_prefix_cache_hit_blocks": theoretical_hit_blocks,
                     "theoretical_prefix_cache_total_blocks": theoretical_total_blocks,
+                    "input_kind": creq.get("input_kind"),
                 }
             )
         children_out.append(

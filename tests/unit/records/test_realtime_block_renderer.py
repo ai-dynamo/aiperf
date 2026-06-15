@@ -70,15 +70,21 @@ def test_render_full_block_first_tick() -> None:
     block = _render_realtime_block(
         _baseline_metrics(), _phase_stats(), prev_snapshot=None
     )
-    assert block.startswith(
-        "[realtime 00:45 profiling] rps=39.8 (avg 39.8) tput_in=-/s "
-        "tput_out=1820/s done=1903 ok=1903 err=0"
+    lines = block.splitlines()
+    assert lines[0] == "[realtime 00:45 profiling]"
+    assert lines[1] == (
+        "  rps=39.8 (avg 39.8)  tput_in=-/s  tput_out=1,820/s  "
+        "done=1,903 ok=1,903 err=0"
     )
-    assert "ttft p50=80ms" in block
-    assert "p95=180ms" in block
-    assert "p99=240ms" in block
-    assert "itl  p50=12ms" in block
-    assert "e2e  p50=320ms" in block
+    # One labeled percentile row per metric. Values are right-aligned (so the
+    # spacing between ``pNN=`` and the number varies); strip spaces to assert
+    # on the label/value pairs without depending on column padding.
+    packed = block.replace(" ", "")
+    assert "ttftp50=80ms" in packed
+    assert "p95=180ms" in packed
+    assert "p99=240ms" in packed
+    assert "itlp50=12ms" in packed
+    assert "e2ep50=320ms" in packed
 
 
 def test_render_uses_prev_snapshot_for_delta_rps() -> None:
@@ -87,9 +93,9 @@ def test_render_uses_prev_snapshot_for_delta_rps() -> None:
         _phase_stats(completed=1080, sent=1208, elapsed_s=35.0),
         prev_snapshot=(900, 30.0),
     )
-    assert block.startswith(
-        "[realtime 00:35 profiling] rps=36.0 (avg 39.8) tput_in=-/s tput_out=1820/s"
-    )
+    lines = block.splitlines()
+    assert lines[0] == "[realtime 00:35 profiling]"
+    assert lines[1].startswith("  rps=36.0 (avg 39.8)  tput_in=-/s  tput_out=1,820/s")
 
 
 def test_render_missing_itl_renders_dashes() -> None:
@@ -100,9 +106,8 @@ def test_render_missing_itl_renders_dashes() -> None:
         _mr("request_latency", p50=320, p95=680, p99=910),
     ]
     block = _render_realtime_block(metrics, _phase_stats(), prev_snapshot=None)
-    assert "itl  p50=-" in block
-    assert "p95=-" in block
-    assert "p99=-" in block
+    # Every percentile column on the itl row is a dash when the metric is absent.
+    assert "itlp50=-p75=-p95=-p99=-" in block.replace(" ", "")
 
 
 def test_render_sub_millisecond_value_renders_lt1ms() -> None:
@@ -114,7 +119,7 @@ def test_render_sub_millisecond_value_renders_lt1ms() -> None:
         _mr("request_latency", p50=320, p95=680, p99=910),
     ]
     block = _render_realtime_block(metrics, _phase_stats(), prev_snapshot=None)
-    assert "ttft p50=<1ms" in block
+    assert "ttftp50=<1ms" in block.replace(" ", "")
 
 
 def test_render_elapsed_under_one_hour_uses_mmss() -> None:
@@ -166,28 +171,31 @@ def test_render_seq_rows_show_isl_osl_percentiles() -> None:
         ),
     ]
     block = _render_realtime_block(metrics, _phase_stats(), prev_snapshot=None)
-    # Comma-separated, four percentiles each, on their own labeled rows.
-    assert "isl  p50=123,952" in block
-    assert "p75=245,124" in block
-    assert "p90=391,085" in block
-    assert "p99=720,485 (tokens)" in block
-    assert "osl  p50=261" in block
-    assert "p75=664" in block
-    assert "p90=1,614" in block
-    assert "p99=7,013 (tokens)" in block
+    packed = block.replace(" ", "")
+    # Comma-separated, four percentiles each, on their own labeled rows. ISL/OSL
+    # report p90 (not p95) in the third column; the (tokens) suffix marks units.
+    assert "islp50=123,952" in packed
+    assert "p75=245,124" in packed
+    assert "p90=391,085" in packed
+    assert "p99=720,485" in packed
+    assert "oslp50=261" in packed
+    assert "p90=1,614" in packed
+    assert "p99=7,013" in packed
+    assert "(tokens)" in packed
     # The old avg-only row should not appear.
     assert "isl_avg" not in block
     assert "osl_avg" not in block
 
 
 def test_render_seq_rows_omitted_when_metrics_absent() -> None:
-    # _baseline_metrics() doesn't include ISL/OSL; their rows should be
-    # skipped entirely rather than rendered as a row of dashes.
+    # _baseline_metrics() doesn't include ISL/OSL; their rows (and the (tokens)
+    # suffix) should be skipped rather than rendered as dashes.
     block = _render_realtime_block(
         _baseline_metrics(), _phase_stats(), prev_snapshot=None
     )
-    assert "isl " not in block
-    assert "osl " not in block
+    assert "isl" not in block
+    assert "osl" not in block
+    assert "(tokens)" not in block
 
 
 def test_render_server_snapshot_line_includes_unique_input_tokens() -> None:

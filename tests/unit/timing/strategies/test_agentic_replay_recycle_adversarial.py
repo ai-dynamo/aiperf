@@ -27,6 +27,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -61,7 +62,13 @@ def _build_real_trajectory_source(
     """Construct a TrajectorySource with a deterministic trajectory."""
     src = TrajectorySource.__new__(TrajectorySource)
     src._dataset_metadata = dataset
-    src._dataset_sampler = MagicMock()
+    _roots = [
+        c.conversation_id
+        for c in src._dataset_metadata.conversations
+        if getattr(c, "is_root", True)
+    ]
+    src._dataset_sampler = SequentialSampler(_roots) if _roots else MagicMock()
+    src._pool_size = len(_roots)
     src._metadata_lookup = {c.conversation_id: c for c in dataset.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
@@ -150,25 +157,16 @@ async def test_single_trace_concurrency_one_recycles_self():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    assert strategy._recycle_queue is not None
-    # Full pool: queue holds [trace_0] at setup.
-    assert strategy._recycle_queue.qsize() == 1
 
     # Register the in-flight session's lane (normally done by _execute_profiling).
-    # Seed _active_traces so the new pop loop skips trace_0 while it is alive.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     # Final turn (last index = 2 of num_turns=3)
     final = _make_credit(conversation_id="trace_0", turn_index=2, num_turns=3)
     await strategy.handle_credit_return(final)
 
-    # The just-finished trace must be re-served at turn 0.
+    # The sampler's lone root is re-served at turn 0.
     assert issued == [("trace_0", 0)]
-    # Queue holds the lone trace at completion: trace_0 was pushed (tail) and
-    # the new session that got popped (head) is trace_0 again — push & pop
-    # both happen on the lone slot.
-    assert strategy._recycle_queue.qsize() == 1
 
 
 # =============================================================================
@@ -207,18 +205,12 @@ async def test_pool_one_concurrency_two_no_deadlock():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    # Full pool: queue holds [trace_0, trace_1, trace_2] at setup.
-    assert strategy._recycle_queue.qsize() == 3
 
     # Register lane bookkeeping for both in-flight sessions (normally seeded by
     # _execute_profiling). handle_credit_return's recycle path requires
-    # finished_correlation_id to be in _correlation_to_lane. Seed
-    # _active_traces too: the new full-pool pop loop skips trace_ids whose
-    # session is currently alive, mirroring _execute_profiling behavior.
+    # finished_correlation_id to be in _correlation_to_lane.
     strategy._correlation_to_lane["xcorr_a"] = 0
     strategy._correlation_to_lane["xcorr_b"] = 1
-    strategy._active_traces["trace_0"] += 1
-    strategy._active_traces["trace_1"] += 1
 
     # Two parallel consumers complete. We use asyncio.gather to drive them
     # concurrently within the same event-loop tick. asyncio.Queue is non-blocking
@@ -243,19 +235,11 @@ async def test_pool_one_concurrency_two_no_deadlock():
         timeout=2.0,
     )
 
-    # Both consumers fired exactly one new credit.
+    # Both consumers fired exactly one new credit; no deadlock (wait_for above
+    # would have timed out). Each recycle draws the next root from the
+    # sequential sampler (index 0, 1) -> trace_0 then trace_1.
     assert len(issued) == 2
-    # Sequence (gather schedules tasks, each runs to first await):
-    #   call A: discard t0; push t0 -> [t0,t1,t2,t0]; pop t0 (not active),
-    #           serves trace_0; queue=[t1,t2,t0], active={t1, t0}
-    #   call B: discard t1; push t1 -> [t1,t2,t0,t1]; pop t1 (not active),
-    #           serves trace_1; queue=[t2,t0,t1], active={t0, t1}
-    # End state: served=[trace_0, trace_1], queue=[trace_2, trace_0, trace_1].
     assert issued == ["trace_0", "trace_1"]
-    remaining: list[str] = []
-    while not strategy._recycle_queue.empty():
-        remaining.append(strategy._recycle_queue.get_nowait())
-    assert remaining == ["trace_2", "trace_0", "trace_1"]
 
 
 # =============================================================================
@@ -264,91 +248,17 @@ async def test_pool_one_concurrency_two_no_deadlock():
 
 
 @pytest.mark.asyncio
-async def test_burst_of_ten_completions_preserves_completion_order():
+async def test_burst_of_ten_completions_recycle_in_sampler_order():
     """10 sessions complete sequentially within the same loop tick.
 
-    Each handle_credit_return call pushes-then-pops, so after all 10 fire the
-    queue tail order matches the completion order.
+    Each completion draws the next root from the sequential sampler, so the
+    10 recycled sessions are trace_0..trace_9 in sampler order (the sampler
+    starts at index 0 for this manually-built source).
     """
-    # 12 traces, 10 trajectories -> queue starts with 2 traces (trace_10, trace_11).
     trajectory = [
         Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(10)
     ]
     ds = _make_dataset(num_traces=12, turns_per_trace=2)
-    issuer = AsyncMock()
-    issuer.issue_credit.return_value = True
-    strategy, _, _ = _make_strategy(
-        phase=CreditPhase.PROFILING,
-        trajectories=trajectory,
-        dataset=ds,
-        issuer=issuer,
-    )
-    await strategy.setup_phase()
-    # Full pool: queue holds all 12 traces at setup.
-    assert strategy._recycle_queue.qsize() == 12
-
-    # Register lane bookkeeping for the 10 in-flight sessions. Seed
-    # _active_traces too so the new pop loop skips trace_ids whose session
-    # is alive (mirroring _execute_profiling).
-    for i in range(10):
-        strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces[f"trace_{i}"] += 1
-
-    # Fire 10 completions in completion order: trace_0..trace_9 finish in order.
-    for i in range(10):
-        await strategy.handle_credit_return(
-            _make_credit(
-                conversation_id=f"trace_{i}",
-                turn_index=1,
-                num_turns=2,
-                x_correlation_id=f"xcorr_{i}",
-            )
-        )
-
-    # Each call discards the finishing trace from _active_traces, pushes it
-    # to the queue tail, then pops the head. Because the head is the just-
-    # discarded trace_i (full-pool layout), each iteration serves trace_i.
-    # Sequence: queue=[t0..t11]
-    #  i=0: discard t0; push t0 -> [t0..t11,t0]; pop t0 -> [t1..t11,t0]; served t0
-    #  i=1: discard t1; push t1 -> [t1..t11,t0,t1]; pop t1 -> [t2..t11,t0,t1]; served t1
-    #  ...
-    #  i=9: queue ends as [t10, t11, t0, t1, ..., t8, t9]
-    remaining = []
-    while not strategy._recycle_queue.empty():
-        remaining.append(strategy._recycle_queue.get_nowait())
-    assert remaining == [
-        "trace_10",
-        "trace_11",
-        "trace_0",
-        "trace_1",
-        "trace_2",
-        "trace_3",
-        "trace_4",
-        "trace_5",
-        "trace_6",
-        "trace_7",
-        "trace_8",
-        "trace_9",
-    ]
-
-
-# =============================================================================
-# Test 4: Push-back races concurrent pop -> no lost or duplicated trace_ids
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
-    """Drive 50 completions concurrently via asyncio.gather; verify the conservation law.
-
-    Invariant: the multiset of all trace_ids ever observed (queue contents at
-    end + dispatched-as-new-session during the burst) equals the multiset of
-    all trace_ids that ever entered the system (initial queue + completed).
-    """
-    trajectory = [
-        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(50)
-    ]
-    ds = _make_dataset(num_traces=70, turns_per_trace=2)  # 20 in queue at start
     served: list[str] = []
 
     async def capture(turn):
@@ -364,15 +274,63 @@ async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    initial_queue = list(strategy._recycle_queue._queue)  # snapshot
-    # Full pool: queue holds all 70 traces at setup.
-    assert len(initial_queue) == 70
 
-    # Register lane bookkeeping for the 50 in-flight sessions. Seed
-    # _active_traces too so the new pop loop skips alive trace_ids.
+    # Register lane bookkeeping for the 10 in-flight sessions.
+    for i in range(10):
+        strategy._correlation_to_lane[f"xcorr_{i}"] = i
+
+    # Fire 10 completions in order: trace_0..trace_9 finish.
+    for i in range(10):
+        await strategy.handle_credit_return(
+            _make_credit(
+                conversation_id=f"trace_{i}",
+                turn_index=1,
+                num_turns=2,
+                x_correlation_id=f"xcorr_{i}",
+            )
+        )
+
+    # Round-robin over the 12-root pool, starting at index 0.
+    assert served == [f"trace_{i}" for i in range(10)]
+
+
+# =============================================================================
+# Test 4: Push-back races concurrent pop -> no lost or duplicated trace_ids
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_concurrent_recycle_serves_distinct_roots_from_pool():
+    """Drive 50 completions concurrently via asyncio.gather.
+
+    Each completion draws one fresh root from the sequential sampler. With a
+    70-root pool and 50 completions (< one full pass), the served roots are
+    distinct and all belong to the root pool -- nothing is lost or duplicated.
+    """
+    trajectory = [
+        Trajectory(conversation_id=f"trace_{i}", start_turn_index=0) for i in range(50)
+    ]
+    ds = _make_dataset(num_traces=70, turns_per_trace=2)
+    root_ids = {c.conversation_id for c in ds.conversations}
+    served: list[str] = []
+
+    async def capture(turn):
+        served.append(turn.conversation_id)
+        return True
+
+    issuer = AsyncMock()
+    issuer.issue_credit.side_effect = capture
+    strategy, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectory,
+        dataset=ds,
+        issuer=issuer,
+    )
+    await strategy.setup_phase()
+
+    # Register lane bookkeeping for the 50 in-flight sessions.
     for i in range(50):
         strategy._correlation_to_lane[f"xcorr_{i}"] = i
-        strategy._active_traces[f"trace_{i}"] += 1
 
     finals = [
         _make_credit(
@@ -385,16 +343,11 @@ async def test_concurrent_recycle_no_lost_or_duplicated_trace_ids():
     ]
     await asyncio.gather(*(strategy.handle_credit_return(c) for c in finals))
 
-    final_queue: list[str] = []
-    while not strategy._recycle_queue.empty():
-        final_queue.append(strategy._recycle_queue.get_nowait())
-
-    # Conservation: served + final_queue == initial_queue + completed_trace_ids.
-    completed = [c.conversation_id for c in finals]
-    assert sorted(served + final_queue) == sorted(initial_queue + completed)
-
-    # No duplicates anywhere in served (each completion drives one fresh dispatch).
+    # One fresh dispatch per completion, all from the root pool, all distinct
+    # (50 < 70 roots, so no wrap and no repeats).
     assert len(served) == 50
+    assert set(served) <= root_ids
+    assert len(set(served)) == 50
 
 
 # =============================================================================
@@ -453,9 +406,7 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
     spawn fresh sessions: cooldown is for finishing, not starting.
 
     Verifies the strategy honors stop_checker.can_start_new_session() in its
-    recycle-spawn path. The finished trace_id IS still re-enqueued (cooldown
-    gates *starting*, not preserving recycle FIFO state) but no fresh session
-    is dispatched.
+    recycle-spawn path -- no fresh session is dispatched during cooldown.
     """
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=5, turns_per_trace=2)
@@ -471,15 +422,9 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
         stop_checker=stop_checker,
     )
     await strategy.setup_phase()
-    initial_size = strategy._recycle_queue.qsize()
-    # Full pool: queue holds all 5 traces at setup.
-    assert initial_size == 5
 
-    # Register the in-flight session's lane bookkeeping. Seed _active_traces
-    # so the cooldown gate is reached after the discard at the top of
-    # _spawn_from_recycle_or_id.
+    # Register the in-flight session's lane bookkeeping.
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     # Final turn arrives during cooldown.
     final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)
@@ -487,12 +432,6 @@ async def test_recycle_during_cooldown_does_not_start_new_sessions():
 
     # No new credit issued (cooldown gates spawning a fresh session).
     assert issuer.issue_credit.await_count == 0
-    # Queue grew by 1: the finished trace_id was re-enqueued before the
-    # cooldown gate so the recycle pool isn't permanently lossy across
-    # cooldown boundaries.
-    assert strategy._recycle_queue.qsize() == initial_size + 1
-    tail = list(strategy._recycle_queue._queue)
-    assert tail[-1] == "trace_0"
 
 
 # =============================================================================
@@ -533,14 +472,6 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    # Full pool: queue holds all 750 traces (including trajectory ids) at setup.
-    assert strategy._recycle_queue.qsize() == num_traces  # 750
-
-    # Snapshot initial queue order: full dataset iteration order
-    # -> trace_0, trace_1, ..., trace_749.
-    initial_queue = list(strategy._recycle_queue._queue)
-    assert initial_queue[0] == "trace_0"
-    assert initial_queue[-1] == "trace_749"
 
     # Drive recycle generations realistically: each completed session must
     # have first been dispatched. The trajectory is initially "in flight" (its
@@ -550,16 +481,13 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
     # dispatched session's (trace_id, correlation_id) to the tail.
     from collections import deque
 
-    # Seed the trajectory's correlation_ids and _active_traces:
-    # handle_credit_return now requires finished_correlation_id to be present
-    # in _correlation_to_lane, and the new full-pool pop loop skips trace_ids
-    # in _active_traces. Mimic _execute_profiling's bookkeeping for the
-    # initial trajectory cohort.
+    # Seed the trajectory's correlation_ids: handle_credit_return requires
+    # finished_correlation_id to be present in _correlation_to_lane.
+    # _active_traces was already pre-registered by setup_phase.
     in_flight: deque[tuple[str, str]] = deque()
     for lane in range(trajectory_count):
         corr = f"xcorr_traj_{lane}"
         strategy._correlation_to_lane[corr] = lane
-        strategy._active_traces[f"trace_{lane}"] += 1
         in_flight.append((f"trace_{lane}", corr))
 
     total_completions = 1500
@@ -580,21 +508,19 @@ async def test_large_pool_every_trace_replayed_deterministic_order():
         assert len(served) == before + 1
         in_flight.append((served[-1], served_correlation_ids[-1]))
 
-    # Every non-trajectory trace must have been served at least once.
+    # Every trace must have been served at least once (1500 completions over a
+    # 750-root pool -> two full round-robin passes).
     served_set = set(served)
-    for i in range(trajectory_count, num_traces):
+    for i in range(num_traces):
         assert f"trace_{i}" in served_set, f"trace_{i} never replayed"
 
-    # Determinism: with the full-pool queue, the first 100 completions each
-    # discard their own trajectory trace_id, push it to the tail, and then
-    # find that same trace_id at the head (just-discarded -> not active) so
-    # they all "self-recycle" — served[:100] == trajectory ids in order.
-    assert served[:trajectory_count] == [f"trace_{i}" for i in range(trajectory_count)]
-    # After the trajectory cohort self-recycles, the next 650 completions
-    # serve the non-trajectory pool in iteration order (trace_100..trace_749).
-    assert served[
-        trajectory_count : trajectory_count + (num_traces - trajectory_count)
-    ] == [f"trace_{i}" for i in range(trajectory_count, num_traces)]
+    # Determinism: the sequential sampler (index 0 for this manually-built
+    # source) yields the roots in dataset order, so the first full pass is
+    # trace_0..trace_749 and it then wraps.
+    assert served[:num_traces] == [f"trace_{i}" for i in range(num_traces)]
+    assert served[num_traces : 2 * num_traces] == [
+        f"trace_{i}" for i in range(num_traces)
+    ]
 
 
 # =============================================================================
@@ -652,20 +578,11 @@ async def test_trajectory_with_one_turn_recycles_immediately_at_profiling_start(
     await strategy.setup_phase()
     await strategy.execute_phase()
 
-    # Strategy should have recycled trace_0 immediately, NOT issued at k_i+1=1.
-    # With the full-pool recycle queue, the head is trace_0 (iteration order
-    # from dataset_metadata.conversations). trace_0 is discarded from
-    # _active_traces inside _spawn_from_recycle_or_id before the pop loop, so
-    # trace_0 is popped and re-dispatched at turn 0 as the recycled session.
+    # Strategy should have recycled immediately, NOT issued at k_i+1=1. The
+    # recycle draws the next root from the sequential sampler (index 0 ->
+    # trace_0), re-dispatched at turn 0.
     assert len(issued) == 1
     assert issued[0] == ("trace_0", 0)
-
-    # Queue tail order: head trace_0 popped, then [trace_1, trace_2, trace_0]
-    # remains (trace_0 was pushed at the end before pop).
-    remaining = []
-    while not strategy._recycle_queue.empty():
-        remaining.append(strategy._recycle_queue.get_nowait())
-    assert remaining == ["trace_1", "trace_2", "trace_0"]
 
 
 # =============================================================================
@@ -757,10 +674,9 @@ def _make_child_credit(
 
 
 @pytest.mark.asyncio
-async def test_child_final_turn_does_not_enter_recycle_pool():
-    """A DAG-child final-turn return must NOT push the child's conversation_id
-    into the recycle queue, must NOT add it to ``_in_flight_recycled``, and
-    must NOT dispatch a fresh session.
+async def test_child_final_turn_does_not_recycle():
+    """A DAG-child final-turn return must NOT dispatch a fresh session and must
+    NOT add the child's conversation_id to ``_in_flight_recycled``.
     """
     trajectory = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     ds = _make_dataset(num_traces=3, turns_per_trace=2)
@@ -773,8 +689,6 @@ async def test_child_final_turn_does_not_enter_recycle_pool():
         issuer=issuer,
     )
     await strategy.setup_phase()
-    initial_size = strategy._recycle_queue.qsize()
-    initial_queue = list(strategy._recycle_queue._queue)
 
     child_cid = "trace_0::sa:codex_subagent_001_3b3e9875"
     final_child = _make_child_credit(
@@ -786,9 +700,6 @@ async def test_child_final_turn_does_not_enter_recycle_pool():
 
     # Issuer untouched: no fresh session dispatched on child terminal.
     assert issuer.issue_credit.await_count == 0
-    # Recycle queue untouched: child conversation_id is not a pool entry.
-    assert strategy._recycle_queue.qsize() == initial_size
-    assert list(strategy._recycle_queue._queue) == initial_queue
     # Double-recycle bookkeeping untouched.
     assert child_cid not in strategy._in_flight_recycled
 
@@ -907,7 +818,6 @@ async def test_root_final_turn_still_recycles_after_child_shortcircuit():
     )
     await strategy.setup_phase()
     strategy._correlation_to_lane["xcorr"] = 0
-    strategy._active_traces["trace_0"] += 1
 
     # Root credit: agent_depth defaults to 0 via _make_credit.
     root_final = _make_credit(conversation_id="trace_0", turn_index=1, num_turns=2)

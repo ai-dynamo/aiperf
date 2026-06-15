@@ -20,6 +20,10 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.workers.dynamo_session_control import (
+    build_session_control,
+    merge_session_control,
+)
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -56,10 +60,21 @@ def detect_transport_from_url(url: str) -> str:
 class InferenceClient(AIPerfLifecycleMixin):
     """Inference client for the worker."""
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, service_id: str, **kwargs):
+    def __init__(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        service_id: str,
+        *,
+        strip_record_payload_bytes: bool = False,
+        **kwargs,
+    ):
         super().__init__(model_endpoint=model_endpoint, service_id=service_id, **kwargs)
         self.model_endpoint = model_endpoint
         self.service_id = service_id
+        # When True, omit canonical request payload bytes from the slim
+        # RecordContext after dispatch (memory optimization for large prompts).
+        # Resolved by the worker via record payload-retention auto-detection.
+        self.strip_record_payload_bytes = strip_record_payload_bytes
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -107,7 +122,9 @@ class InferenceClient(AIPerfLifecycleMixin):
             # by the mmap loader / DatasetManager. Defensive guard against any
             # invalid bytes that bypass upstream validation — round-trip
             # through orjson.loads so a malformed payload turns into an error
-            # RequestRecord rather than reaching the wire.
+            # RequestRecord rather than reaching the wire. Body-mutating features
+            # (cache-bust, Dynamo session_control) are refused against this
+            # verbatim-bytes path at dataset load, so nothing is injected here.
             try:
                 orjson.loads(request_info.payload_bytes)
             except (orjson.JSONDecodeError, ValueError, TypeError) as e:
@@ -121,6 +138,21 @@ class InferenceClient(AIPerfLifecycleMixin):
                 formatted_payload = current_turn.raw_payload
             else:
                 formatted_payload = self.endpoint.format_payload(request_info)
+            # Dynamo conversation-aware routing (opt-in): overlay
+            # nvext.session_control onto the structured request body. Done here,
+            # after the endpoint built the dict, so it is endpoint-agnostic and
+            # never mutates a cached Turn. The verbatim PAYLOAD_BYTES path is
+            # excluded by the dataset-load guard, so it is not handled here.
+            endpoint = self.model_endpoint.endpoint
+            if endpoint.use_dynamo_conv_aware_routing:
+                formatted_payload = merge_session_control(
+                    formatted_payload,
+                    build_session_control(
+                        session_id=request_info.x_correlation_id,
+                        is_final_turn=request_info.is_final_turn,
+                        timeout_seconds=endpoint.dynamo_session_timeout_seconds,
+                    ),
+                )
         # Canonicalise to bytes and stash on request_info. Two wins: (1) the
         # transport skips its own orjson.dumps on the dict path, (2) the
         # record processor can drop request_info.turns before the ZMQ hop
@@ -221,7 +253,8 @@ class InferenceClient(AIPerfLifecycleMixin):
         hop to the record processor.
 
         The tokeniser and the raw-record exporter both read
-        ``request_info.payload_bytes``; ``osl_mismatch`` reads
+        ``request_info.payload_bytes`` unless ``strip_record_payload_bytes``
+        is set (see ``AIPERF_RECORD_STRIP_PAYLOAD_BYTES``); ``osl_mismatch`` reads
         ``max_tokens``; image/audio/video metrics derive their counts from
         the endpoint's single-pass ``extract_payload_inputs`` at
         parse-time. ``turns`` is never populated on the attached context
@@ -238,6 +271,10 @@ class InferenceClient(AIPerfLifecycleMixin):
             else None
         )
 
+        payload_bytes = (
+            None if self.strip_record_payload_bytes else request_info.payload_bytes
+        )
+
         record.request_info = RecordContext(
             credit_num=request_info.credit_num,
             credit_phase=request_info.credit_phase,
@@ -248,7 +285,8 @@ class InferenceClient(AIPerfLifecycleMixin):
             credit_issued_ns=request_info.credit_issued_ns,
             agent_depth=request_info.agent_depth,
             parent_correlation_id=request_info.parent_correlation_id,
-            payload_bytes=request_info.payload_bytes,
+            root_correlation_id=request_info.root_correlation_id,
+            payload_bytes=payload_bytes,
             max_tokens=max_tokens,
             audio_duration_seconds=audio_duration_seconds,
             cache_bust_marker=request_info.cache_bust_marker,

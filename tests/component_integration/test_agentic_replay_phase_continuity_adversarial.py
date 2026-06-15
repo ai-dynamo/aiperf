@@ -29,6 +29,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.credit.structs import Credit
+from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
@@ -38,26 +39,6 @@ from aiperf.timing.trajectory_source import (
 # =============================================================================
 # Helpers
 # =============================================================================
-
-
-class _SequentialSampler:
-    """Deterministic round-robin sampler over a fixed conversation_id list.
-
-    Mirrors what a real DatasetSamplingStrategyProtocol would do for a small
-    in-memory pool. Used so multi-machine determinism (test 5) can build two
-    independent sources with identical inputs.
-    """
-
-    def __init__(self, conversation_ids: list[str]) -> None:
-        self._ids = list(conversation_ids)
-        self._idx = 0
-
-    def next_conversation_id(self) -> str:
-        if self._idx >= len(self._ids):
-            raise StopIteration
-        cid = self._ids[self._idx]
-        self._idx += 1
-        return cid
 
 
 def _make_dataset(num_traces: int, turns_per_trace: int) -> DatasetMetadata:
@@ -87,7 +68,7 @@ def _make_real_source(
     without leaning on dataset_sampler RNG state.
     """
     ds = _make_dataset(num_traces, turns_per_trace)
-    sampler = _SequentialSampler([c.conversation_id for c in ds.conversations])
+    sampler = SequentialSampler([c.conversation_id for c in ds.conversations])
     return TrajectorySource(
         dataset_metadata=ds,
         dataset_sampler=sampler,
@@ -275,12 +256,6 @@ class TestWarmupGraceExceedsEstimate:
         await profiling_strategy.setup_phase()
         await profiling_strategy.execute_phase()
 
-        # Recycle queue holds the FULL pool (6 traces), including the 3
-        # trajectory ids; the pop loop skips trace_ids whose session is
-        # currently active.
-        assert profiling_strategy._recycle_queue is not None
-        assert profiling_strategy._recycle_queue.qsize() == 6
-
         # Each trajectory resumed at k_i + 1.
         resumed = {
             (cid, idx) for cid, idx, _ in _capture_dispatched_turns(profiling_issuer)
@@ -346,22 +321,28 @@ class TestWarmupAbortMidTrajectoriesCleansUp:
 @pytest.mark.component_integration
 class TestRecycledTrajectoryTracePlaysFromTurnZero:
     """Spec §8.4.7 test 4: when a trajectory trace finishes during PROFILING,
-    its trace_id is pushed to the recycle queue tail. The same trace_id can
-    later be picked up by a different slot, but the fresh play starts at
-    turn 0 — not at k_i."""
+    its lane recycles into the next root drawn from the dataset sampler. The
+    fresh play starts at turn 0 — not at k_i."""
 
     @pytest.mark.asyncio
     async def test_finished_trajectory_trace_recycled_to_tail_and_replayed_from_zero(
         self,
     ):
-        # Use a 2-trace pool with concurrency=1 so the trajectory is just one
-        # member and the recycle queue has exactly one trace ahead of any
-        # finished trajectory trace.
+        # 2-trace pool, concurrency=1: the build consumed trace_0 for the lone
+        # lane; recycle reuses the same sampler, so the next draw is trace_1.
         source = _make_real_source(
             num_traces=2, turns_per_trace=4, concurrency=1, seed=99
         )
         assert len(source.trajectories) == 1
         trajectory = source.trajectories[0]
+
+        # Predict the recycled id via a parallel sampler advanced past the ids
+        # consumed at build time (one per lane).
+        all_ids = [c.conversation_id for c in source.dataset_metadata.conversations]
+        predictor = SequentialSampler(all_ids)
+        for _ in range(len(source.trajectories)):
+            predictor.next_conversation_id()
+        expected_recycled = predictor.next_conversation_id()
 
         captured: list[tuple[str, int, str]] = []
 
@@ -378,16 +359,6 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
             phase=CreditPhase.PROFILING, source=source, issuer=issuer
         )
         await profiling_strategy.setup_phase()
-        # Initial recycle queue spans the FULL dataset pool (including the
-        # trajectory id); the pop loop skips trace_ids whose session is
-        # currently active.
-        all_ids = [c.conversation_id for c in source.dataset_metadata.conversations]
-        non_trajectory_ids = {
-            c.conversation_id
-            for c in source.dataset_metadata.conversations
-            if c.conversation_id != trajectory.conversation_id
-        }
-        assert profiling_strategy._recycle_queue.qsize() == len(all_ids)
 
         # _execute_profiling registers the trajectory's correlation_id; we need
         # to dispatch the WARMUP-then-PROFILING resume path so the lane map is
@@ -411,55 +382,41 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         )
         await profiling_strategy.handle_credit_return(final_credit)
 
-        # Exactly one new credit issued: the recycled head, started at turn 0.
+        # Exactly one new credit issued: the recycled root from the sampler
+        # rotation, started at turn 0.
         assert len(captured) == 1
         recycled_cid, recycled_turn, _ = captured[0]
-        # Under the full-pool initial queue, the queue head is the
-        # trajectory id itself; the strategy discards it from
-        # ``_active_traces`` before the pop loop, so the head is now
-        # non-active and the trajectory replays at turn 0.
-        assert recycled_cid == trajectory.conversation_id, (
-            "Initial queue head IS the trajectory id (full-pool ordering); "
-            "after discarding from active it pops itself"
+        assert recycled_cid == expected_recycled, (
+            "Recycle must follow the sampler rotation (next root after the "
+            f"build draw); expected {expected_recycled!r}, got {recycled_cid!r}"
         )
         assert recycled_turn == 0, (
             "Recycled session must start at turn 0, NOT at the original k_i"
         )
 
-        # The just-finished trajectory trace was pushed to the tail before
-        # the pop, then dispatched off the head; its tail copy remains in
-        # the queue.
-        remaining: list[str] = []
-        while not profiling_strategy._recycle_queue.empty():
-            remaining.append(profiling_strategy._recycle_queue.get_nowait())
-        assert trajectory.conversation_id in remaining
-        assert remaining[-1] == trajectory.conversation_id, (
-            "Just-finished trajectory trace must be at the recycle queue tail"
-        )
-        # Sanity: non_trajectory_ids set is still part of the residual queue.
-        for nt in non_trajectory_ids:
-            assert nt in remaining
-
     @pytest.mark.asyncio
     async def test_same_trace_id_replays_at_turn_zero_when_picked_by_other_slot(self):
-        """Drains and re-dispatches enough times that a trace_id resurfaces
-        from the recycle queue, then assert it dispatches at turn_index=0 —
-        byte-exact same trace, starting at turn 0 rather than at k_i.
+        """Drives two recycle cycles and asserts each fresh dispatch starts at
+        turn_index=0 — byte-exact same trace, starting at turn 0 rather than at
+        k_i — and that the recycled ids follow the dataset sampler's rotation.
 
-        Under the full-pool initial queue, finalizing the trajectory pops
-        the queue head — which is the trajectory id itself (just discarded
-        from ``_active_traces``). Finalizing a second time then surfaces the
-        OTHER trace id from the queue head. Both fresh dispatches must
-        start at turn 0."""
+        2-trace pool, concurrency=1: the build consumed trace_0 for the lone
+        lane, so recycle reuses the same sampler from there: cycle 1 draws
+        trace_1, cycle 2 wraps back to trace_0. Both fresh dispatches start at
+        turn 0."""
         source = _make_real_source(
             num_traces=2, turns_per_trace=3, concurrency=1, seed=2024
         )
         trajectory = source.trajectories[0]
-        other_id = next(
-            c.conversation_id
-            for c in source.dataset_metadata.conversations
-            if c.conversation_id != trajectory.conversation_id
-        )
+
+        # Predict the two recycle draws via a parallel sampler advanced past the
+        # build draw (one per lane).
+        all_ids = [c.conversation_id for c in source.dataset_metadata.conversations]
+        predictor = SequentialSampler(all_ids)
+        for _ in range(len(source.trajectories)):
+            predictor.next_conversation_id()
+        expected_cycle1 = predictor.next_conversation_id()
+        expected_cycle2 = predictor.next_conversation_id()
 
         captured: list[tuple[str, int]] = []
 
@@ -481,8 +438,7 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         }
         trajectory_xcorr = lane_to_correlation[0]
 
-        # Cycle 1: trajectory finishes. Queue head is the trajectory id
-        # itself (just discarded from active), so it replays at turn 0.
+        # Cycle 1: trajectory finishes -> recycle draws the next sampler root.
         final_credit_trajectory = _make_credit(
             conversation_id=trajectory.conversation_id,
             turn_index=2,
@@ -491,21 +447,21 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         )
         captured.clear()
         await strategy.handle_credit_return(final_credit_trajectory)
-        assert captured == [(trajectory.conversation_id, 0)], (
-            "Initial queue head IS the trajectory id (full-pool ordering); "
-            "the trajectory must replay at turn 0, not at the original k_i"
+        assert captured == [(expected_cycle1, 0)], (
+            "Cycle 1 recycle must follow the sampler rotation and start at "
+            "turn 0, not at the original k_i"
         )
 
-        # The recycled session for the trajectory was just registered at lane 0.
+        # The recycled session was just registered at lane 0.
         lane_to_correlation = {
             lane: cid for cid, lane in strategy._correlation_to_lane.items()
         }
         replay_xcorr = lane_to_correlation[0]
 
-        # Cycle 2: the recycled trajectory session finishes. Queue head is
-        # now ``other_id``, which must dispatch at turn 0.
+        # Cycle 2: the recycled session finishes -> recycle draws the next
+        # sampler root (the rotation wraps), again at turn 0.
         final_credit_replay = _make_credit(
-            conversation_id=trajectory.conversation_id,
+            conversation_id=expected_cycle1,
             turn_index=2,
             num_turns=3,
             x_correlation_id=replay_xcorr,
@@ -513,8 +469,8 @@ class TestRecycledTrajectoryTracePlaysFromTurnZero:
         captured.clear()
         await strategy.handle_credit_return(final_credit_replay)
 
-        assert captured == [(other_id, 0)], (
-            "When the other trace_id resurfaces from the recycle queue, the "
+        assert captured == [(expected_cycle2, 0)], (
+            "Cycle 2 recycle must follow the sampler rotation (wraps) and the "
             "fresh play must start at turn 0, not at the original k_i"
         )
 
@@ -552,28 +508,56 @@ class TestMultiMachineDeterminism:
         assert trajectories_a == trajectories_b
         assert len(trajectories_a) == 5
 
-        # Same recycle order: drain each PROFILING strategy's recycle queue
-        # and compare. The queue is seeded in dataset-metadata order minus
-        # the trajectory, so order must match exactly.
-        strat_a, _, _ = _make_strategy(phase=CreditPhase.PROFILING, source=source_a)
-        strat_b, _, _ = _make_strategy(phase=CreditPhase.PROFILING, source=source_b)
-        await strat_a.setup_phase()
-        await strat_b.setup_phase()
+        # Same recycle order: drive identical final-turn-return sequences
+        # through both PROFILING strategies and compare the recycled dispatch
+        # ids. Recycle draws from each source's own deterministic
+        # SequentialSampler (at the same position after the build), so the two
+        # sequences must be byte-identical and each fresh dispatch starts at 0.
+        async def _capture_recycle_order(source: TrajectorySource) -> list[str]:
+            recycled: list[tuple[str, int]] = []
 
-        order_a: list[str] = []
-        while not strat_a._recycle_queue.empty():
-            order_a.append(strat_a._recycle_queue.get_nowait())
-        order_b: list[str] = []
-        while not strat_b._recycle_queue.empty():
-            order_b.append(strat_b._recycle_queue.get_nowait())
+            async def capture(turn):
+                recycled.append((turn.conversation_id, turn.turn_index))
+                return True
+
+            issuer = AsyncMock()
+            issuer.issue_credit.side_effect = capture
+            strat, _, _ = _make_strategy(
+                phase=CreditPhase.PROFILING, source=source, issuer=issuer
+            )
+            await strat.setup_phase()
+            await strat.execute_phase()
+
+            # Finalize each lane in lane order; each final-turn return recycles
+            # the lane into the next sampler root.
+            lane_to_corr = {
+                lane: corr for corr, lane in strat._correlation_to_lane.items()
+            }
+            recycled.clear()
+            for lane in range(len(source.trajectories)):
+                corr = lane_to_corr[lane]
+                cid = source.trajectories[lane].conversation_id
+                n = len(source._metadata_lookup[cid].turns)
+                await strat.handle_credit_return(
+                    _make_credit(
+                        conversation_id=cid,
+                        turn_index=n - 1,
+                        num_turns=n,
+                        x_correlation_id=corr,
+                    )
+                )
+            return [c for c, _ in recycled], [idx for _, idx in recycled]
+
+        order_a, turns_a = await _capture_recycle_order(source_a)
+        order_b, turns_b = await _capture_recycle_order(source_b)
 
         assert order_a == order_b, (
             "Two independent runs with the same dataset + seed must produce "
-            "identical recycle queue order"
+            "identical recycle dispatch order"
         )
-        assert len(order_a) == 12, (
-            "recycle queue spans the FULL dataset pool (the pop loop skips "
-            "trace_ids whose session is currently active)"
+        assert len(order_a) == 5, "one recycle per finalized lane"
+        assert all(idx == 0 for idx in turns_a), (
+            "every recycled dispatch must start at turn 0"
         )
 
     @pytest.mark.asyncio
