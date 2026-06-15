@@ -1002,6 +1002,22 @@ Optional MLflow parent run ID.
 
 Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
 
+#### `--wandb-project` `<str>`
+
+Weights & Biases project name. Setting this enables wandb export.
+
+#### `--wandb-entity` `<str>`
+
+Weights & Biases entity (team or user). Defaults to the API key's default entity.
+
+#### `--wandb-run-name` `<str>`
+
+Weights & Biases run name.
+
+#### `--wandb-tag` `<list>`
+
+Additional Weights & Biases run tags to attach on upload. Can be specified multiple times or as a comma-separated list.
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -2330,6 +2346,22 @@ Optional MLflow parent run ID.
 #### `--mlflow-artifact-glob` `<list>`
 
 Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
+
+#### `--wandb-project` `<str>`
+
+Weights & Biases project name. Setting this enables wandb export.
+
+#### `--wandb-entity` `<str>`
+
+Weights & Biases entity (team or user). Defaults to the API key's default entity.
+
+#### `--wandb-run-name` `<str>`
+
+Weights & Biases run name.
+
+#### `--wandb-tag` `<list>`
+
+Additional Weights & Biases run tags to attach on upload. Can be specified multiple times or as a comma-separated list.
 
 ### HTTP Trace
 

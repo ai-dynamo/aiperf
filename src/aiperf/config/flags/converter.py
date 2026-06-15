@@ -39,6 +39,7 @@ from aiperf.config.flags._converter_telemetry import (
     build_mlflow,
     build_otel,
     build_server_metrics,
+    build_wandb,
 )
 from aiperf.config.flags._converter_warmup import build_warmup
 from aiperf.config.sweep import MAGIC_LIST_FIELDS
@@ -521,6 +522,7 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     server_metrics = build_server_metrics(cli)
     otel = build_otel(cli)
     mlflow = build_mlflow(cli)
+    wandb = build_wandb(cli)
     logging_dict, runtime_dict = build_logging_runtime(cli)
 
     nested: dict[str, Any] = {
@@ -538,6 +540,7 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
         "server_metrics": server_metrics,
         "otel": otel,
         "mlflow": mlflow,
+        "wandb": wandb,
     }
     if logging_dict:
         nested["logging"] = logging_dict

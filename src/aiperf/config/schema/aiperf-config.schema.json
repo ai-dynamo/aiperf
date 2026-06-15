@@ -2102,6 +2102,9 @@
         "mlflow": {
           "$ref": "#/$defs/MLflowConfig"
         },
+        "wandb": {
+          "$ref": "#/$defs/WandbConfig"
+        },
         "runtime": {
           "$ref": "#/$defs/RuntimeConfig",
           "description": "Runtime configuration for worker processes and inter-process communication."
@@ -12148,6 +12151,80 @@
       ],
       "title": "VideoSynthType",
       "type": "string"
+    },
+    "WandbConfig": {
+      "additionalProperties": false,
+      "dependentRequired": {
+        "entity": [
+          "project"
+        ],
+        "runName": [
+          "project"
+        ],
+        "tags": [
+          "project"
+        ]
+      },
+      "description": "Weights & Biases run-upload configuration.",
+      "properties": {
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weights & Biases project name. Setting this enables wandb export.",
+          "title": "Project"
+        },
+        "entity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weights & Biases entity (team or user). Defaults to the API key's default entity.",
+          "title": "Entity"
+        },
+        "runName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weights & Biases run name.",
+          "title": "Runname"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Additional Weights & Biases run tags to attach on upload.",
+          "title": "Tags"
+        }
+      },
+      "title": "WandbConfig",
+      "type": "object"
     },
     "ZipSweep": {
       "additionalProperties": false,

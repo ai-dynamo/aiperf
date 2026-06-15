@@ -92,6 +92,9 @@ from aiperf.config.sweep.multi_run import (
 from aiperf.config.tokenizer import (
     TokenizerConfig,
 )
+from aiperf.config.wandb import (
+    WandbConfig,
+)
 
 _logger = AIPerfLogger(__name__)
 
@@ -328,6 +331,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Field(
             default_factory=MLflowConfig,
             description="MLflow tracking and artifact-upload configuration.",
+        ),
+    ]
+
+    wandb: Annotated[
+        WandbConfig,
+        Field(
+            default_factory=WandbConfig,
+            description="Weights & Biases run-upload configuration.",
         ),
     ]
 

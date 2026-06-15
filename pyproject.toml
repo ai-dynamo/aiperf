@@ -80,6 +80,9 @@ aiperf = "aiperf.plugin:plugins.yaml"
 mlflow = [
   "mlflow>=3.10.0,<4.0.0",
 ]
+wandb = [
+  "wandb>=0.19.0,<1.0.0",
+]
 otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
@@ -97,7 +100,7 @@ test = [
   "trustme>=1.0.0",
 ]
 dev = [
-  "aiperf[mlflow,otel,test]",
+  "aiperf[mlflow,otel,test,wandb]",
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",

@@ -25,6 +25,7 @@ Structure:
     Environment.TIMING.*         - Timing manager settings
     Environment.TOKENIZER.*      - Tokenizer pre-warm and loading
     Environment.UI.*             - User interface settings
+    Environment.WANDB.*          - Weights & Biases export settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
 
@@ -1034,6 +1035,26 @@ class _TokenizerSettings(BaseSettings):
     )
 
 
+class _WandbSettings(BaseSettings):
+    """Weights & Biases export configuration.
+
+    Controls timeout behavior for the post-run W&B upload.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_WANDB_",
+    )
+
+    EXPORT_TIMEOUT_SECONDS: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Timeout in seconds for the post-run Weights & Biases export operation. "
+        "If the W&B backend is unreachable, the export will be abandoned "
+        "after this duration rather than blocking indefinitely.",
+    )
+
+
 class _UISettings(BaseSettings):
     """User interface and dashboard configuration.
 
@@ -1379,6 +1400,10 @@ class _Environment(BaseSettings):
     UI: _UISettings = Field(
         default_factory=_UISettings,
         description="User interface and dashboard settings",
+    )
+    WANDB: _WandbSettings = Field(
+        default_factory=_WandbSettings,
+        description="Weights & Biases export settings",
     )
     WORKER: _WorkerSettings = Field(
         default_factory=_WorkerSettings,

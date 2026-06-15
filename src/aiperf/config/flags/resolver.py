@@ -152,6 +152,7 @@ def build_cli_overrides(
         build_tokenizer,
     )
     from aiperf.config.flags._converter_runtime import build_logging_runtime
+    from aiperf.config.flags._converter_telemetry import build_wandb
 
     out: dict[str, Any] = {}
     _apply_endpoint_overrides(out, cli)
@@ -160,6 +161,10 @@ def build_cli_overrides(
     _apply_artifacts_overrides(out, cli)
     _apply_optional_section(out, "tokenizer", build_tokenizer(cli))
     _apply_optional_section(out, "accuracy", build_accuracy(cli))
+    wandb_base_enabled = benchmark_config is not None and benchmark_config.wandb.enabled
+    _apply_optional_section(
+        out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
+    )
 
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table

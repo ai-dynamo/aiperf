@@ -411,3 +411,46 @@ def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
     if artifact_globs is not None:
         out["artifact_globs"] = artifact_globs
     return out
+
+
+_WANDB_SECONDARY_FIELDS = (
+    "wandb_entity",
+    "wandb_run_name",
+    "wandb_tags",
+)
+
+
+def build_wandb(cli: CLIConfig, *, base_enabled: bool = False) -> dict[str, Any]:
+    """Translate Weights & Biases CLI flags into the wandb config dict.
+
+    Refuses secondary wandb flags without ``--wandb-project`` and rejects an
+    empty project name. ``base_enabled`` relaxes the project requirement for
+    the YAML+CLI overlay path: when the base config already enables wandb,
+    secondary flags alone emit a partial override dict (e.g.
+    ``-f base.yaml --wandb-run-name rerun``).
+    """
+    cli_set = cli.model_fields_set
+    out: dict[str, Any] = {}
+    if "wandb_project" in cli_set and cli.wandb_project is not None:
+        project = cli.wandb_project.strip()
+        if not project:
+            raise ValueError("--wandb-project cannot be empty.")
+        out["project"] = project
+    elif not base_enabled:
+        if any(key in cli_set for key in _WANDB_SECONDARY_FIELDS):
+            raise ValueError(
+                "--wandb-entity, --wandb-run-name, and --wandb-tag require "
+                "--wandb-project to be set."
+            )
+        return {}
+
+    if "wandb_entity" in cli_set and cli.wandb_entity is not None:
+        entity = cli.wandb_entity.strip()
+        if not entity:
+            raise ValueError("--wandb-entity cannot be empty when set.")
+        out["entity"] = entity
+    if "wandb_run_name" in cli_set and cli.wandb_run_name is not None:
+        out["run_name"] = cli.wandb_run_name.strip() or None
+    if "wandb_tags" in cli_set:
+        out["tags"] = cli.wandb_tags
+    return out

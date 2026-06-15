@@ -99,7 +99,7 @@ AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "Accu
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)
-"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.RAW_RECORD_AGGREGATOR, DataExporterType.TIMESLICE_JSON"""
+"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.SERVER_METRICS_CSV, DataExporterType.WANDB"""
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)
