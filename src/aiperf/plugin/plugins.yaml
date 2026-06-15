@@ -1754,6 +1754,74 @@ public_dataset_loader:
       SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
       Loads single-turn questions for evaluating speculative decoding methods.
 
+  # ---------------------------------------------------------------------------
+  # Speculative-decoding acceptance-length benchmarks (auto-downloaded from HF).
+  # These are the datasets the spec-decode literature reports acceptance length
+  # against (GSM8K, MT-Bench, MATH-500, HumanEval, MBPP). Run each with
+  # `--public-dataset spec_al_<name>` then `aiperf speed-bench-report ...
+  # --metric accept_length`. Prompts are emitted bare; set greedy decoding with
+  # `--extra-inputs temperature:0` to match the literature's headline numbers.
+  # ---------------------------------------------------------------------------
+  spec_al_gsm8k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      GSM8K grade-school math word problems from HuggingFace (openai/gsm8k, main
+      config, test split, 1319 prompts). Single-turn prompts for speculative
+      decoding acceptance-length measurement. License: MIT.
+    metadata:
+      hf_dataset_name: openai/gsm8k
+      hf_subset: main
+      hf_split: test
+      prompt_column: question
+
+  spec_al_math500:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MATH-500 competition math problems from HuggingFace (HuggingFaceH4/MATH-500,
+      test split, 500 prompts). Single-turn prompts for speculative decoding
+      acceptance-length measurement. License: MIT (inherited from Hendrycks MATH).
+    metadata:
+      hf_dataset_name: HuggingFaceH4/MATH-500
+      hf_split: test
+      prompt_column: problem
+
+  spec_al_humaneval:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      HumanEval Python code-completion prompts from HuggingFace
+      (openai/openai_humaneval, test split, 164 prompts). Single-turn prompts for
+      speculative decoding acceptance-length measurement. The literature runs
+      HumanEval as raw text completion; serving it through a chat template here
+      shifts acceptance length away from the papers' headline numbers (MBPP shares
+      this caveat to a lesser degree). License: MIT.
+    metadata:
+      hf_dataset_name: openai/openai_humaneval
+      hf_split: test
+      prompt_column: prompt
+
+  spec_al_mbpp:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MBPP basic Python programming tasks from HuggingFace
+      (google-research-datasets/mbpp, full config, test split, 500 prompts).
+      Single-turn prompts for speculative decoding acceptance-length measurement.
+      License: CC-BY-4.0.
+    metadata:
+      hf_dataset_name: google-research-datasets/mbpp
+      hf_subset: full
+      hf_split: test
+      prompt_column: text
+
+  spec_al_mtbench:
+    class: aiperf.dataset.loader.mt_bench:MTBenchDatasetLoader
+    description: |
+      MT-Bench two-turn chat prompts from HuggingFace (HuggingFaceH4/mt_bench_prompts,
+      train split, 80 prompts). Multi-turn conversations for speculative decoding
+      acceptance-length measurement. License: Apache-2.0.
+    metadata:
+      hf_dataset_name: HuggingFaceH4/mt_bench_prompts
+      hf_split: train
+
   instruct_coder:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
     description: |
