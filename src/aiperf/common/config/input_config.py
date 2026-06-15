@@ -409,7 +409,7 @@ class InputConfig(BaseConfig):
     hf_weka_dataset: Annotated[
         str | None,
         Field(
-            description="HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061326`). "
+            description="HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). "
             "Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other "
             "`--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.",
         ),

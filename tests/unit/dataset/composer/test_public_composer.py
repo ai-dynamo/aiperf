@@ -486,12 +486,12 @@ class TestHFWekaRepoOverride:
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
         )
 
-        assert kwargs["hf_dataset_name"] == "semianalysisai/cc-traces-weka-061326"
+        assert kwargs["hf_dataset_name"] == "semianalysisai/cc-traces-weka-061526"
 
     @pytest.mark.parametrize(
         ("alias", "expected_repo"),
         [
-            # New pinned 061326 aliases.
+            # Historical pinned 061326 aliases.
             (
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061326,
                 "semianalysisai/cc-traces-weka-061326",
@@ -500,14 +500,23 @@ class TestHFWekaRepoOverride:
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061326_256K,
                 "semianalysisai/cc-traces-weka-061326-256k",
             ),
-            # Generic undated aliases now roll forward to 061326.
+            # Current pinned 061526 aliases.
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061526,
+                "semianalysisai/cc-traces-weka-061526",
+            ),
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061526_256K,
+                "semianalysisai/cc-traces-weka-061526-256k",
+            ),
+            # Generic undated aliases now roll forward to 061526.
             (
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS,
-                "semianalysisai/cc-traces-weka-061326",
+                "semianalysisai/cc-traces-weka-061526",
             ),
             (
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS_256K,
-                "semianalysisai/cc-traces-weka-061326-256k",
+                "semianalysisai/cc-traces-weka-061526-256k",
             ),
         ],
     )  # fmt: skip
@@ -518,7 +527,7 @@ class TestHFWekaRepoOverride:
         alias: PublicDatasetType,
         expected_repo: str,
     ) -> None:
-        """New 061326 pins and the repointed generic aliases map to the right HF repo.
+        """Pinned releases and the rolling aliases map to the right HF repo.
 
         Guards the plugins.yaml alias -> hf_dataset_name contract so an
         accidental repoint (or a typo in a new pinned alias) is caught.
