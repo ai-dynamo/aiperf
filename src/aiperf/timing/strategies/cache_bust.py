@@ -22,6 +22,59 @@ _DIGEST_LEN = 12  # 12 hex chars = 48 bits, ample for in-run uniqueness
 
 _MARKER_TOKEN_SAMPLES = 8
 
+_SUFFIX_SEP = "::"
+_UNSET = object()
+
+
+def base_trace_id(conversation_id: str) -> str:
+    """Strip any descendant suffix (``::sa:``/``::fa:``/``:sN``) to the root trace id.
+
+    Every member of a trajectory tree — the depth-0 main session and its subagent
+    (``::sa:``) / flat-agent (``::fa:``) descendants — shares one base trace id, so
+    keying the marker digest on it lets any member compute the same value.
+    """
+    return conversation_id.split(_SUFFIX_SEP, 1)[0]
+
+
+def resolve_tree_marker(
+    ledger,
+    root_correlation_id: str,
+    *,
+    benchmark_id: str,
+    trajectory_index: int,
+    conversation_id: str,
+    target: CacheBustTarget,
+) -> str | None:
+    """Resolve the cache-bust marker for a trajectory TREE, idempotently.
+
+    The marker is a property of the tree (``root_correlation_id``): the first member
+    to resolve mints it (digesting the base trace id + tree lane, bumping
+    ``recycle_pass`` once); every other member — main turns, subagents, flat agents,
+    at any depth and in any dispatch order — reuses the stored value. Because the
+    ledger survives the WARMUP -> PROFILING boundary, a tree that continues across
+    phases keeps its marker, while fresh trees (recycles, new lanes) mint distinct
+    ones.
+
+    ``ledger`` is duck-typed: it needs ``session_marker`` (dict keyed by
+    ``root_correlation_id``) and ``recycle_pass`` (dict keyed by base trace id).
+    Returns ``None`` when cache-bust is disabled, recording the ``None`` so callers
+    can look it up unconditionally.
+    """
+    existing = ledger.session_marker.get(root_correlation_id, _UNSET)
+    if existing is not _UNSET:
+        return existing
+    if target == CacheBustTarget.NONE:
+        ledger.session_marker[root_correlation_id] = None
+        return None
+    base = base_trace_id(conversation_id)
+    new_pass = ledger.recycle_pass.get(base, -1) + 1
+    ledger.recycle_pass[base] = new_pass
+    marker = build_cache_bust_marker(
+        benchmark_id, new_pass, trajectory_index, base, target=target
+    )
+    ledger.session_marker[root_correlation_id] = marker
+    return marker
+
 
 class _EncodeOnly(Protocol):
     def encode(self, text: str, **kwargs) -> list[int]: ...

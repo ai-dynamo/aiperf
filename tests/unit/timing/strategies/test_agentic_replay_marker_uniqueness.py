@@ -140,8 +140,8 @@ def test_mint_produces_unique_markers_across_many_recycles():
     # (a) WARMUP-equivalent mint per lane.
     for lane in range(num_lanes):
         marker = strategy._mint_marker_for_session(
-            x_correlation_id=f"warmup_{lane}",
-            trace_id=f"trace_{lane}",
+            root_correlation_id=f"warmup_{lane}",
+            conversation_id=f"trace_{lane}",
             trajectory_index=lane,
         )
         rid = _extract_rid(marker)
@@ -152,8 +152,8 @@ def test_mint_produces_unique_markers_across_many_recycles():
     for lane in range(num_lanes):
         for recycle in range(num_recycles):
             marker = strategy._mint_marker_for_session(
-                x_correlation_id=f"recycle_{lane}_{recycle}",
-                trace_id=f"trace_{lane}",
+                root_correlation_id=f"recycle_{lane}_{recycle}",
+                conversation_id=f"trace_{lane}",
                 trajectory_index=lane,
             )
             rid = _extract_rid(marker)
@@ -188,8 +188,8 @@ def test_recycle_continuity_within_trace_after_trace_id_addition():
     rids: list[str] = []
     for i in range(100):
         marker = strategy._mint_marker_for_session(
-            x_correlation_id=f"x_{i}",
-            trace_id="trace_0",
+            root_correlation_id=f"x_{i}",
+            conversation_id="trace_0",
             trajectory_index=0,
         )
         rid = _extract_rid(marker)
@@ -222,8 +222,8 @@ def test_warmup_marker_matches_first_profile_marker_after_fix():
         user_config=user_config,
     )
     warmup_marker = warmup_strategy._mint_marker_for_session(
-        x_correlation_id="xcorr-warmup",
-        trace_id="trace_0",
+        root_correlation_id="xcorr-warmup",
+        conversation_id="trace_0",
         trajectory_index=0,
     )
 
@@ -235,8 +235,8 @@ def test_warmup_marker_matches_first_profile_marker_after_fix():
         user_config=user_config,
     )
     profile_marker = profile_strategy._mint_marker_for_session(
-        x_correlation_id="xcorr-profile",
-        trace_id="trace_0",
+        root_correlation_id="xcorr-profile",
+        conversation_id="trace_0",
         trajectory_index=0,
     )
 
@@ -266,8 +266,8 @@ def test_target_none_no_minting_at_scale():
 
     for i in range(1000):
         result = strategy._mint_marker_for_session(
-            x_correlation_id=f"x_{i}",
-            trace_id=f"trace_{i % 10}",
+            root_correlation_id=f"x_{i}",
+            conversation_id=f"trace_{i % 10}",
             trajectory_index=i % 5,
         )
         assert result is None
@@ -277,3 +277,37 @@ def test_target_none_no_minting_at_scale():
     assert all(v is None for v in strategy._session_marker.values())
     # _recycle_pass is bounded at 0 (no dict writes under NONE).
     assert strategy._recycle_pass == {}
+
+
+def test_descendant_turn_build_reads_marker_by_root():
+    """Regression (found on a live run): the turn-builder must read the cache-bust
+    marker by the session's TREE ROOT (root_correlation_id), not its own
+    x_correlation_id. A descendant session whose root marker is in the ledger
+    must carry that marker -- not None."""
+    from aiperf.timing.conversation_source import SampledSession
+
+    user_config = _make_user_config(target=CacheBustTarget.FIRST_TURN_PREFIX)
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    strategy = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=trajectories,
+        num_traces=1,
+        turns_per_trace=4,
+        user_config=user_config,
+    )
+    root_marker = "[rid:deadbeefcafe]\n\n"
+    strategy._session_marker["ROOT-CORR"] = root_marker
+    meta = strategy.conversation_source._metadata_lookup["trace_0"]
+    child = SampledSession(
+        conversation_id="trace_0",
+        metadata=meta,
+        x_correlation_id="child-xyz",
+        agent_depth=1,
+        root_correlation_id="ROOT-CORR",
+    )
+
+    turn = strategy._build_turn_for_session(child, 0)
+    assert turn.cache_bust_marker == root_marker, (
+        "descendant turn must carry the tree-root marker, "
+        f"got {turn.cache_bust_marker!r}"
+    )
