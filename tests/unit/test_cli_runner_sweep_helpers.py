@@ -12,6 +12,8 @@ import pytest
 
 from aiperf.cli_runner._sweep_aggregate import (
     _per_variation_aggregate_dir,
+    _variation_dir_name,
+    _variation_key,
     aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
 )
@@ -190,6 +192,73 @@ def test_per_variation_aggregate_dir_repeated_mode():
         SweepMode.REPEATED,
     )
     assert out == Path("/tmp/x/aggregate/phases.profiling.concurrency=10")
+
+
+# =============================================================================
+# AIP-956: per-variation dir name stays readable for nested-dict scenario sweeps
+# =============================================================================
+
+
+def test_variation_dir_name_scalar_values_uses_format_dir_name():
+    """Scalar sweep values keep the readable ``{leaf}_{value}`` dir form."""
+    values = {"phases.profiling.concurrency": 10}
+    key = _variation_key("concurrency=10", values)
+    group = [
+        RunResult(
+            label="c10",
+            success=True,
+            variation_label="concurrency=10",
+            variation_values=values,
+        )
+    ]
+    assert _variation_dir_name(key, "concurrency=10", group) == "concurrency_10"
+
+
+def test_variation_dir_name_nested_dict_values_uses_label():
+    """Scenario sweeps without explicit ``values:`` carry nested override dicts.
+
+    ``_format_dir_name`` would mangle the JSON-serialized override into an
+    unreadable path; the dir name must fall back to the human-authored label.
+    """
+    nested = {"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}
+    key = _variation_key("aa-1k", nested)
+    group = [
+        RunResult(
+            label="aa1k",
+            success=True,
+            variation_label="aa-1k",
+            variation_values=nested,
+        )
+    ]
+    assert _variation_dir_name(key, "aa-1k", group) == "aa-1k"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_per_variation_nested_values_dir_uses_label(tmp_path, logger):
+    """End-to-end: nested-dict scenario sweep writes ``<base>/<label>/aggregate/``.
+
+    The JSON-serialized override must NOT leak into the on-disk dir name.
+    """
+    plan = _make_plan_mode(SweepMode.INDEPENDENT)
+    nested = {"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}
+    results = []
+    for i, tput in enumerate([100.0, 105.0]):
+        r = _result(f"aa1k_t{i}", concurrency=10, throughput=tput, ttft_p99=50.0 + i)
+        r.variation_label = "aa-1k"
+        r.variation_values = nested
+        r.trial_index = i
+        results.append(r)
+
+    written = await aggregate_per_variation_and_export(results, plan, tmp_path, logger)
+
+    assert len(written) == 1
+    agg_json = tmp_path / "aa-1k" / "aggregate" / "profile_export_aiperf_aggregate.json"
+    assert agg_json.exists(), (
+        f"expected per-variation dir named after the label; wrote {written}"
+    )
+    assert not any(p.name.startswith("benchmark_{") for p in tmp_path.iterdir()), (
+        "JSON-serialized override leaked into the per-variation dir name"
+    )
 
 
 @pytest.mark.asyncio
