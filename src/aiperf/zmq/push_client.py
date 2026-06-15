@@ -78,7 +78,13 @@ class ZMQPushClient(BaseZMQClient):
 
         try:
             data_json_bytes = message.to_json_bytes()
-            await self.socket.send(data_json_bytes)
+            # copy=False sends without memcpy'ing the payload into a libzmq frame on
+            # the event loop thread. The PUSH path carries record/result payloads
+            # (e.g. multi-thousand-token inference results) where that copy shows up
+            # as event-loop block time under high concurrency. Safe here: the bytes
+            # are freshly serialized, never mutated, and re-serialized on retry, so
+            # pyzmq can hold the buffer until libzmq finishes the send.
+            await self.socket.send(data_json_bytes, copy=False)
             if self.is_trace_enabled:
                 self.trace(f"Pushed json data: {data_json_bytes}")
         except (asyncio.CancelledError, zmq.ContextTerminated):
