@@ -380,19 +380,21 @@ class CreditIssuer:
         We avoid the overloaded ``issue_credit`` / ``try_issue_credit``
         False (which conflates "gate refused, not issued" with "issued,
         was final credit") by inlining the child issuance path here:
-        gate check, non-blocking prefill-slot acquisition, then
+        gate check, blocking prefill-slot acquisition, then
         ``_issue_credit_internal``. Children skip session-slot
-        acquisition (they inherit the parent's slot). The dispatch is
-        non-blocking on prefill (``try_acquire_prefill_slot``) — the
-        orchestrator drains via ``on_child_stopped`` rather than
-        waiting on a slot, matching the prior semantics.
+        acquisition because they inherit the parent's slot.
+
+        Prefill saturation is backpressure, not a reason to discard a child.
+        This matters for fan-out: with a prefill limit of one, a non-blocking
+        attempt would send the first sibling and permanently truncate every
+        other sibling spawned in the same gather.
         """
         can_proceed_fn = self._stop_checker.can_send_child_turn
         if not can_proceed_fn():
             return False
-        # Children inherit the parent's session slot; only acquire
-        # prefill (non-blocking, matches the orchestrator's rollback model).
-        if not self._concurrency_manager.try_acquire_prefill_slot(
+        # Children inherit the parent's session slot; wait for prefill
+        # capacity so temporary saturation does not delete sibling branches.
+        if not await self._concurrency_manager.acquire_prefill_slot(
             self._phase, can_proceed_fn
         ):
             return False

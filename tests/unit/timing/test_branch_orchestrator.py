@@ -650,7 +650,7 @@ async def test_child_error_fail_fast_aborts_parent(monkeypatch, force_fail_fast)
 
 @pytest.mark.asyncio
 async def test_dispatch_failure_rolls_back_bookkeeping():
-    """When _dispatch_first_turn returns False (e.g. slots saturated), the
+    """When _dispatch_first_turn returns False due to a stop condition, the
     orchestrator must undo its children_spawned / sticky-refcount /
     descendant-count / _child_to_join bookkeeping for the failed child."""
     cs = MagicMock()
@@ -680,7 +680,7 @@ async def test_dispatch_failure_rolls_back_bookkeeping():
 
     issuer = MagicMock()
 
-    # First dispatch succeeds (True), second fails (False -- slots saturated).
+    # First dispatch succeeds; the second is refused by the issuer.
     async def _dispatch(session):
         return session.x_correlation_id == "child-a"
 
@@ -697,8 +697,8 @@ async def test_dispatch_failure_rolls_back_bookkeeping():
     # No gate -> intercept returns False. Only the successful child stays tracked.
     assert await orch.intercept(credit) is False
     assert orch.stats.children_spawned == 1
-    # ``dispatch_first_turn`` returning False is stop-condition refusal
-    # (slots saturated), not an error — tally as truncated.
+    # ``dispatch_first_turn`` returning False is stop-condition refusal,
+    # not an error — tally as truncated.
     assert orch.stats.children_truncated == 1
     assert orch.stats.children_errored == 0
     assert "child-a" in orch._child_to_join

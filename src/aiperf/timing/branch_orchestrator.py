@@ -454,10 +454,10 @@ class BranchOrchestrator:
                         self.stats.children_spawned += 1
                     else:
                         # ``dispatch_first_turn`` -> ``dispatch_child_turn``
-                        # only returns False under stop-condition refusal
-                        # (``can_send_child_turn`` False or no prefill slot
-                        # under ``--request-count`` cap). Exceptions are
-                        # caught above. Tally as truncated, not errored.
+                        # only returns False when a stop condition refuses
+                        # the child before or during prefill-slot acquisition.
+                        # Exceptions are caught above. Tally as truncated,
+                        # not errored.
                         self.stats.children_truncated += 1
                 self._pre_dispatched_branches.add(
                     (conv.conversation_id, branch.branch_id)
@@ -901,9 +901,8 @@ class BranchOrchestrator:
         #   * BaseException -> genuine error (mirror commit 05d02720b
         #     which fixed the analogous bug in
         #     ``dispatch_pre_session_branches``).
-        #   * False -> ``dispatch_child_turn`` stop-condition refusal
-        #     (``can_send_child_turn`` False or no prefill slot under
-        #     ``--request-count`` cap); not an error.
+        #   * False -> ``dispatch_child_turn`` stop-condition refusal;
+        #     not an error.
         #   * None -> issuer suppressed silently; observable no-op.
         if isinstance(result, BaseException):
             logger.error(
@@ -1228,8 +1227,8 @@ class BranchOrchestrator:
         """Dispatch a child's turn-0 via the credit issuer.
 
         Returns True on successful dispatch, False when the issuer declined
-        (e.g. slots saturated). Callers use this to roll back orchestrator
-        bookkeeping when dispatch doesn't actually land a credit.
+        because a stop condition fired. Callers use this to roll back
+        orchestrator bookkeeping when dispatch doesn't actually land a credit.
         """
         result = await self._issuer.dispatch_first_turn(child_sampled_session)
         return bool(result)
