@@ -144,6 +144,8 @@ navigation:
             path: ../pages-dev/tutorials/gpu-telemetry.md
           - page: OpenTelemetry MLflow Integration
             path: ../pages-dev/tutorials/otel-mlflow.md
+          - page: Weights & Biases Export
+            path: ../pages-dev/tutorials/wandb.md
       - section: Configuration
         collapsed: true
         contents:
