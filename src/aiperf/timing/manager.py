@@ -78,7 +78,10 @@ class TimingManager(BaseComponentService):
             service_id=self.service_id,
         )
         self.attach_child_lifecycle(self.sticky_router)
-        self.event_loop_monitor = EventLoopMonitor(self.service_id)
+        self.event_loop_monitor = EventLoopMonitor(
+            self.service_id,
+            artifact_dir=self.run.cfg.artifacts.artifact_directory,
+        )
 
         self._phase_orchestrator: PhaseOrchestrator | None = None
 

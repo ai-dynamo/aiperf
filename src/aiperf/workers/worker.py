@@ -149,7 +149,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.debug(lambda: f"Worker process __init__ (pid: {self._process.pid})")
 
-        self.event_loop_monitor = EventLoopMonitor(self.service_id)
+        self.event_loop_monitor = EventLoopMonitor(
+            self.service_id,
+            artifact_dir=self.run.cfg.artifacts.artifact_directory,
+        )
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
@@ -279,15 +282,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     async def _on_credit_message(self, message: RouterToWorkerMessage) -> None:
         """Handle incoming credit message from TimingManager via StickyCreditRouter."""
-        match message:
-            case Credit():
-                self._schedule_credit_drop_task(message)
-            case CancelCredits():
-                await self._on_cancel_credits_message(message)
-            case _:
-                self.warning(
-                    f"Unknown credit message type: {message.__class__.__name__}"
-                )
+        with self.event_loop_monitor.activity(
+            f"credit msg={message.__class__.__name__}"
+        ):
+            match message:
+                case Credit():
+                    self._schedule_credit_drop_task(message)
+                case CancelCredits():
+                    await self._on_cancel_credits_message(message)
+                case _:
+                    self.warning(
+                        f"Unknown credit message type: {message.__class__.__name__}"
+                    )
 
     def _schedule_credit_drop_task(self, credit: Credit) -> None:
         """Schedule a task to handle the credit drop message from TimingManager via StickyCreditRouter.
@@ -388,7 +394,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         try:
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
-            await self._process_credit(credit_context)
+            with self.event_loop_monitor.activity(
+                f"credit id={credit_context.credit.id} processing"
+            ):
+                await self._process_credit(credit_context)
         except Exception as e:
             self.exception(
                 f"Error occurred while processing credit {credit_context.credit.id}: {e!r}"
@@ -404,7 +413,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
             )
-            await self.credit_dealer_client.send(credit_return)
+            with self.event_loop_monitor.activity(
+                f"credit id={credit_context.credit.id} sending CreditReturn"
+            ):
+                await self.credit_dealer_client.send(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
