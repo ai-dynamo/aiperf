@@ -117,6 +117,10 @@ The JSONL output contains one record per line, for each request sent during the 
 - `x_correlation_id`: Unique identifier for the user session. This is the same for all requests in the same user session for multi-turn conversations. This is sent to the endpoint as the X-Correlation-ID header.
 - `conversation_id`: ID of the input dataset conversation. This can be used to correlate inputs with results.
 - `turn_index`: Position within a multi-turn conversation (0-indexed), or 0 for single-turn conversations.
+- *(agentic / DAG sub-agent runs only — omitted otherwise)* the following identity fields tag each record with its place in the session **tree**:
+  - `agent_depth`: DAG depth of the session that produced this record — `0` for a root, incremented by 1 per nested subagent fork.
+  - `parent_correlation_id`: `x_correlation_id` of the parent session that spawned this one (`null` for roots). Use to group sibling branches.
+  - `root_correlation_id`: `x_correlation_id` of the depth-0 **root** of this record's session tree — the same value for the root and every descendant subagent (at any depth); equals `x_correlation_id` for a root. Use to group an entire agentic session (root + all subagents) under one lane, e.g. in `aiperf analyze swim-lane`, and to reconstruct exactly-N session-tree concurrency.
 - `request_start_ns`: Epoch time in nanoseconds when request was initiated by AIPerf.
 - `request_ack_ns`: Epoch time in nanoseconds when server acknowledged the request. This is only applicable to streaming requests.
 - `request_end_ns`: Epoch time in nanoseconds when the last response was received from the endpoint.
