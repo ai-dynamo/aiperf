@@ -8,8 +8,11 @@ from pathlib import Path
 
 import orjson
 import pytest
+from aiperf_mock_server import utils as mock_server_utils
+from aiperf_mock_server.config import MockServerConfig
 
 from tests.component_integration.timing.conftest import defaults
+from tests.harness.fake_transport import FakeTransport
 from tests.harness.utils import AIPerfCLI
 
 
@@ -67,3 +70,77 @@ def test_adaptive_scale_profile_writes_controller_artifacts(cli: AIPerfCLI) -> N
 
     summary = orjson.loads(summary_path.read_bytes())
     assert summary["control_variable"] == "concurrency"
+
+
+@pytest.mark.component_integration
+def test_adaptive_scale_profile_discovers_sla_boundary(
+    cli: AIPerfCLI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the pass-then-fail path against concurrency-sensitive latency."""
+    active_requests = 0
+    original_send = FakeTransport._send_request_impl
+
+    async def tracked_send_request(self, endpoint_type, payload, first_token_callback):
+        nonlocal active_requests
+        active_requests += 1
+        try:
+            return await original_send(self, endpoint_type, payload, first_token_callback)
+        finally:
+            active_requests -= 1
+
+    monkeypatch.setattr(FakeTransport, "_send_request_impl", tracked_send_request)
+    monkeypatch.setattr(
+        mock_server_utils, "get_inflight_count", lambda: active_requests
+    )
+
+    original_config = FakeTransport._DEFAULT_CONFIG
+    FakeTransport._DEFAULT_CONFIG = MockServerConfig(
+        ttft=5.0,
+        itl=1.0,
+        ttft_concurrency_quad_ms=1.0,
+    )
+    try:
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --concurrency 4 \
+                --benchmark-duration 5.5 \
+                --adaptive-scale \
+                --adaptive-sustain-duration 1.0 \
+                --adaptive-assessment-period 1.0 \
+                --adaptive-scale-sla request_latency:p95:le:22 \
+                --osl 8 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui}
+            """,
+            timeout=30.0,
+        )
+    finally:
+        FakeTransport._DEFAULT_CONFIG = original_config
+
+    assert result.exit_code == 0
+    assert result.request_count > 0
+
+    events = _load_jsonl(result.artifacts_dir / "adaptive_scale_events.jsonl")
+    boundary_events = [
+        event for event in events if event["event"] == "boundary_discovered"
+    ]
+    assert boundary_events
+
+    boundary = boundary_events[-1]
+    assert boundary["boundary_concurrency"] == 1
+    assert boundary["last_passing_value"] == 1
+    assert boundary["first_failing_value"] == 4
+    assert boundary["sla_value"] > boundary["sla_bound"]
+
+    summary = orjson.loads(
+        (result.artifacts_dir / "adaptive_scale_summary.json").read_bytes()
+    )
+    assert summary["boundary_concurrency"] == 1
+    assert summary["last_passing_value"] == 1
+    assert summary["first_failing_value"] == 4
+    assert summary["completed_reason"] == "sustain_duration_completed"
+    assert summary["sustain_windows"] > 0
+
