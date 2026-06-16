@@ -208,6 +208,48 @@ class FakeStreamingDealerClient(FakeCommunicationClient):
                     await router_client.handler(self.identity, message)
 
 
+class FakeStreamingPullClient(FakeCommunicationClient):
+    """Fake typed PULL - fan-in receiver for streaming_push clients at the address."""
+
+    client_type = CommClientType.STREAMING_PULL
+
+    def __init__(
+        self,
+        address: str,
+        identity: str,
+        bus: FakeCommunicationBus,
+        additional_bind_address: str | None = None,
+    ) -> None:
+        super().__init__(
+            address, identity, bus, additional_bind_address=additional_bind_address
+        )
+        self.handler: Callable[[Any], Awaitable[None]] | None = None
+
+    def register_receiver(
+        self, handler: Callable[[Any], Coroutine[Any, Any, None]]
+    ) -> None:
+        if self.handler is not None:
+            raise ValueError("Receiver handler already registered")
+        self.handler = handler
+
+
+class FakeStreamingPushClient(FakeCommunicationClient):
+    """Fake typed PUSH - sends structs to streaming_pull clients at the address."""
+
+    client_type = CommClientType.STREAMING_PUSH
+
+    async def send(self, message: Any) -> None:
+        """Fan-in to the streaming_pull receivers bound at this address."""
+        self.capture_sent_payload(message)
+        for comm in self.bus.communications:
+            for pull_client in comm.streaming_pull_clients:
+                if pull_client.address == self.address and pull_client.handler:
+                    pull_client.capture_received_payload(
+                        message, sender_identity=self.identity
+                    )
+                    await pull_client.handler(message)
+
+
 class FakePubClient(FakeCommunicationClient):
     """Fake PUB - publishes to all subscribers at same address."""
 
@@ -455,6 +497,8 @@ class FakeCommunication(BaseCommunication):
         self.sub_clients: list[FakeSubClient] = []
         self.push_clients: dict[str, list[FakePushClient]] = defaultdict(list)
         self.pull_clients: list[FakePullClient] = []
+        self.streaming_pull_clients: list[FakeStreamingPullClient] = []
+        self.streaming_push_clients: list[FakeStreamingPushClient] = []
         self.request_clients: list[FakeRequestClient] = []
         self.reply_clients: dict[str, list[FakeReplyClient]] = defaultdict(list)
         # Client cache for deduplication on the same service like the real communication layer
@@ -543,6 +587,16 @@ class FakeCommunication(BaseCommunication):
             case CommClientType.STREAMING_DEALER:
                 client = FakeStreamingDealerClient(addr, identity, self.bus)
                 self.dealer_clients[identity] = client
+
+            case CommClientType.STREAMING_PUSH:
+                client = FakeStreamingPushClient(addr, identity, self.bus)
+                self.streaming_push_clients.append(client)
+
+            case CommClientType.STREAMING_PULL:
+                client = FakeStreamingPullClient(
+                    addr, identity, self.bus, additional_bind_address=additional_bind
+                )
+                self.streaming_pull_clients.append(client)
 
             case CommClientType.PUB:
                 client = FakePubClient(addr, identity, self.bus)

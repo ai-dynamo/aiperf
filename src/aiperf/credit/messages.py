@@ -109,12 +109,17 @@ class CreditReturn(
         first_token_sent: True if FirstToken was sent before this return.
             Used by orchestrator to release prefill slot if not already released.
         error: Error message if the request failed (None on success).
+        worker_id: Returning worker's id. Only stamped on the PUSH/PULL return
+            channel (CommAddress.CREDIT_RETURN), where there is no ZMQ envelope
+            identity; None on the ROUTER/DEALER path (identity comes from the
+            envelope). Lets the router attribute the return to the right worker.
     """
 
     credit: Credit
     cancelled: bool = False
     first_token_sent: bool = False
     error: str | None = None
+    worker_id: str | None = None
 
 
 class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):

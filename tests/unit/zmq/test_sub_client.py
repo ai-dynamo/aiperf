@@ -460,19 +460,14 @@ class TestZMQSubClientBackgroundTask:
 
     @pytest.mark.asyncio
     async def test_background_task_receives_and_handles_message(
-        self, mock_zmq_context, sample_message, wait_for_background_task
+        self, mock_zmq_socket, mock_zmq_context, sample_message, fd_enqueue
     ):
         """Test that background task receives and handles messages."""
         topic_bytes = f"{sample_message.message_type}{TOPIC_END}".encode()
         message_bytes = sample_message.model_dump_json().encode()
 
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.recv_multipart = AsyncMock(
-            side_effect=[[topic_bytes, message_bytes], zmq.Again()]
-        )
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+        # Queue the [topic, payload] multipart message for the FD drain.
+        fd_enqueue(mock_zmq_socket, frames=[topic_bytes, message_bytes])
 
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
 
@@ -484,7 +479,6 @@ class TestZMQSubClientBackgroundTask:
         await client.initialize()
         await client.subscribe(sample_message.message_type, callback)
         await client.start()
-        await wait_for_background_task()
 
         # Wait for callback to be called
         await asyncio.wait_for(callback_called.wait(), timeout=1.0)
@@ -554,19 +548,20 @@ class TestZMQSubClientBackgroundTask:
         await client.stop()
 
     @pytest.mark.asyncio
-    async def test_sub_receiver_stops_on_context_terminated(self, mock_zmq_context):
-        """Test that _sub_receiver breaks on ContextTerminated."""
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.recv_multipart = AsyncMock(side_effect=zmq.ContextTerminated())
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+    async def test_sub_receiver_stops_on_context_terminated(
+        self, mock_zmq_socket, mock_zmq_context, fd_enqueue
+    ):
+        """Test that the FD drain swallows ContextTerminated without crashing."""
+        # Queue a ContextTerminated for the very first recv; the FD-driver pump
+        # must catch it and leave the reader installed (no propagation).
+        fd_enqueue(mock_zmq_socket, messages=[zmq.ContextTerminated()])
 
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
         await client.initialize()
 
-        # Call _sub_receiver directly to exercise the except clause
+        # Installs the FdEdgeReader and runs the bootstrap drain, which hits the
+        # queued ContextTerminated and returns gracefully.
         await client._sub_receiver()
 
-        # Should have tried to recv and hit ContextTerminated
-        mock_socket.recv_multipart.assert_called()
+        assert client._fd_reader is not None
+        await client.stop()

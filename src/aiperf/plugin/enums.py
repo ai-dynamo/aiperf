@@ -127,7 +127,7 @@ CommunicationBackend = plugins.create_enum(PluginType.COMMUNICATION, "Communicat
 
 CommClientTypeStr: TypeAlias = str
 CommClientType = plugins.create_enum(PluginType.COMMUNICATION_CLIENT, "CommClientType", module=__name__)
-"""Dynamic enum for communication client. Example: CommClientType.PUB, CommClientType.REQUEST, CommClientType.SUB"""
+"""Dynamic enum for communication client. Example: CommClientType.PUB, CommClientType.STREAMING_DEALER, CommClientType.SUB"""
 
 ZMQProxyTypeStr: TypeAlias = str
 ZMQProxyType = plugins.create_enum(PluginType.ZMQ_PROXY, "ZMQProxyType", module=__name__)
