@@ -169,7 +169,7 @@ def _build_phasetype_members() -> dict[str, str]:
         if alias.upper() not in members:
             members[alias.upper()] = alias
     for entry in plugins.list_entries(PluginType.TIMING_STRATEGY):
-        if entry.name in {'request_rate'}:
+        if entry.name in {'request_rate', 'adaptive_scale'}:
             continue
         alias = {'user_centric_rate': 'user_centric'}.get(entry.name, entry.name)
         if alias.upper() not in members:

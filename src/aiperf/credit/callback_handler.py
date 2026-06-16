@@ -13,6 +13,7 @@ Key responsibilities:
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -207,6 +208,10 @@ class CreditCallbackHandler:
             return
 
         self._count_and_release(credit, credit_return, handler)
+
+        handle_credit_result = getattr(handler.strategy, "handle_credit_result", None)
+        if inspect.iscoroutinefunction(handle_credit_result):
+            await handle_credit_result(credit_return)
 
         # 4b. DAG child completion hook.
         # When a child session's final turn returns, notify the orchestrator

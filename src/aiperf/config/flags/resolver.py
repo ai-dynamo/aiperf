@@ -361,6 +361,17 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
+    ("adaptive_sustain_duration", "adaptive_sustain_duration"),
+    ("adaptive_assessment_period", "adaptive_assessment_period"),
+)
+
+_BASIC_ADAPTIVE_CLI_FIELDS = frozenset(
+    {
+        "adaptive_scale",
+        "adaptive_sustain_duration",
+        "adaptive_assessment_period",
+        "adaptive_scale_sla",
+    }
 )
 
 
@@ -393,6 +404,7 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         return
 
     _reject_loadgen_target_collisions(fields_set)
+    _apply_basic_adaptive_scale_overrides(target, cli)
 
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr not in fields_set:
@@ -401,6 +413,60 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         if value is None:
             continue
         target[key] = value
+
+
+def _apply_basic_adaptive_scale_overrides(
+    target: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Overlay the small adaptive-scale CLI surface onto a YAML phase.
+
+    The CLI intentionally exposes only the basic path. Advanced controller
+    fields live in YAML/library config, so this overlay updates only the
+    public CLI knobs and preserves any richer ``adaptive_scale: {...}`` block
+    the YAML already contains.
+    """
+    fields_set = cli.model_fields_set & _BASIC_ADAPTIVE_CLI_FIELDS
+    if not fields_set:
+        return
+    if (
+        "search_sla" in cli.model_fields_set
+        and "adaptive_scale_sla" not in cli.model_fields_set
+    ):
+        raise ValueError(
+            "--adaptive-scale uses --adaptive-scale-sla; --search-sla is reserved "
+            "for adaptive-search/grid runs"
+        )
+
+    existing = target.get("adaptive_scale")
+    adaptive_block = existing if isinstance(existing, dict) else None
+
+    if "adaptive_scale" in fields_set:
+        if adaptive_block is not None:
+            adaptive_block["enabled"] = bool(cli.adaptive_scale)
+        else:
+            target["adaptive_scale"] = bool(cli.adaptive_scale)
+
+    if (
+        "adaptive_sustain_duration" in fields_set
+        and cli.adaptive_sustain_duration is not None
+        and adaptive_block is not None
+    ):
+        adaptive_block["sustain_duration"] = cli.adaptive_sustain_duration
+
+    if (
+        "adaptive_assessment_period" in fields_set
+        and cli.adaptive_assessment_period is not None
+        and adaptive_block is not None
+    ):
+        adaptive_block["assessment_period"] = cli.adaptive_assessment_period
+
+    if "adaptive_scale_sla" in fields_set and cli.adaptive_scale_sla:
+        from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
+
+        target["sla"] = [
+            parse_sla_filter(value).model_dump(mode="json")
+            for value in cli.adaptive_scale_sla
+        ]
 
 
 def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
