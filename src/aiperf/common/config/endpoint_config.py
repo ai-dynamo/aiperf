@@ -38,9 +38,15 @@ class EndpointConfig(BaseConfig):
     A configuration class for defining endpoint related settings.
     """
 
+    _streaming_explicitly_set: bool = False
+
     @model_validator(mode="after")
     def validate_streaming(self) -> Self:
         """Validate that streaming is supported for the endpoint type."""
+        # Snapshot user intent before the normalization below can flip
+        # streaming off, so scenario validation can distinguish an explicit
+        # --no-streaming from an unset default. Runs first (before any mutation).
+        self._streaming_explicitly_set = "streaming" in self.model_fields_set
         if not self.streaming:
             return self
 

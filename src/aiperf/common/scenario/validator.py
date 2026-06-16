@@ -217,6 +217,29 @@ def validate_scenario(
                     spec.name,
                 )
 
+    if spec.require_streaming:
+        explicit = getattr(user_config.endpoint, "_streaming_explicitly_set", False)
+        if not user_config.endpoint.streaming:
+            if explicit:
+                violations.append(
+                    ScenarioViolation(
+                        flag="--streaming",
+                        current_value=False,
+                        required_value=True,
+                        message=(
+                            f"scenario {spec.name!r} requires --streaming; the "
+                            "per-token latency metrics (TTFT, ITL) are core to "
+                            "this benchmark and need streaming responses"
+                        ),
+                    )
+                )
+            else:
+                user_config.endpoint.streaming = True
+                _logger.info(
+                    "Scenario %r: forcing --streaming=true (was unset).",
+                    spec.name,
+                )
+
     if user_config.input.ignore_trace_delays and spec.forbid_ignore_trace_delays:
         violations.append(
             ScenarioViolation(

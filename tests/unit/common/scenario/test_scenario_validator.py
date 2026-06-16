@@ -30,11 +30,15 @@ def _user_config(
     random_seed: int | None = 42,
     unsafe_override: bool = False,
     cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
+    streaming: bool = True,
+    streaming_explicitly_set: bool = False,
 ) -> MagicMock:
     cfg = MagicMock()
     cfg.scenario = scenario
     cfg.unsafe_override = unsafe_override
     cfg.timing_mode = timing_mode
+    cfg.endpoint.streaming = streaming
+    cfg.endpoint._streaming_explicitly_set = streaming_explicitly_set
     cfg.input.extra_inputs_parsed = extra_inputs if extra_inputs is not None else {}
     cfg.input.use_think_time_only = use_think_time_only
     cfg.input.ignore_trace_delays = ignore_trace_delays
@@ -107,6 +111,63 @@ def test_absent_ignore_eos_injects_and_logs(caplog: pytest.LogCaptureFixture) ->
     assert outcome.violations == []
     assert cfg.input.extra_inputs_parsed["ignore_eos"] is True
     assert any("ignore_eos" in r.message for r in caplog.records)
+
+
+def test_explicit_no_streaming_raises() -> None:
+    cfg = _user_config(
+        streaming=False,
+        streaming_explicitly_set=True,
+        extra_inputs={"ignore_eos": True},
+    )
+    with pytest.raises(ScenarioLockError) as exc:
+        validate_scenario(cfg)
+    assert "--streaming" in str(exc.value)
+
+
+def test_absent_streaming_auto_enabled_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = _user_config(
+        streaming=False,
+        streaming_explicitly_set=False,
+        extra_inputs={"ignore_eos": True},
+    )
+    with caplog.at_level("INFO"):
+        outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert cfg.endpoint.streaming is True
+    assert any("--streaming" in r.message for r in caplog.records)
+
+
+def test_streaming_on_no_violation() -> None:
+    cfg = _user_config(streaming=True, extra_inputs={"ignore_eos": True})
+    outcome = validate_scenario(cfg)
+    assert outcome.violations == []
+    assert outcome.submission_valid is True
+
+
+def test_require_streaming_against_real_endpoint_config() -> None:
+    """Run validate_scenario with a real ``EndpointConfig`` (not a MagicMock) at
+    ``user_config.endpoint``. An explicit ``--no-streaming`` must surface as a
+    ``--streaming`` violation, confirming the validator reads a path that exists
+    on the production config — if ``EndpointConfig.streaming`` or its
+    explicit-set flag is renamed/relocated, this fails loudly."""
+    from aiperf.common.config.endpoint_config import EndpointConfig
+
+    cfg = _user_config(extra_inputs={"ignore_eos": True}, unsafe_override=True)
+    # streaming=False explicitly provided -> chat supports streaming, so it is
+    # left False and recorded as explicitly set.
+    cfg.endpoint = EndpointConfig(model_names=["m"], type="chat", streaming=False)
+    assert cfg.endpoint.streaming is False
+    assert cfg.endpoint._streaming_explicitly_set is True
+
+    outcome = validate_scenario(cfg)
+    flags = [v.flag for v in outcome.violations]
+    assert "--streaming" in flags, (
+        "validator did not flag --streaming on a real EndpointConfig "
+        "— the attribute path likely drifted; check validator.py and "
+        "EndpointConfig.streaming / _streaming_explicitly_set"
+    )
 
 
 def test_use_think_time_only_false_explicit_does_not_raise() -> None:
@@ -354,6 +415,9 @@ class _ReadOnlyTimingModeConfig:
         self.loadgen._inter_turn_delay_cap_explicitly_set = False
         self.loadgen.trace_idle_gap_cap_seconds = 60.0
         self.loadgen._trace_idle_gap_cap_explicitly_set = False
+        self.endpoint = MagicMock()
+        self.endpoint.streaming = True
+        self.endpoint._streaming_explicitly_set = False
         self.prompt = MagicMock()
         self.input.prompt.cache_bust.target = CacheBustTarget.FIRST_TURN_PREFIX
 
