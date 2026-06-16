@@ -279,8 +279,8 @@ class CreditPhaseConfig(AIPerfBaseModel):
         ge=1,
         description="Minimum completed requests needed before an adaptive SLA decision.",
     )
-    adaptive_sla_filters: list[SLAFilter] = Field(
-        default_factory=list,
+    adaptive_sla_filters: tuple[SLAFilter, ...] = Field(
+        default_factory=tuple,
         description="SLA filters used by adaptive scale.",
     )
 
@@ -402,5 +402,5 @@ def _build_profiling_config(
         adaptive_min_completed_requests=getattr(
             phase, "adaptive_min_completed_requests", 1
         ),
-        adaptive_sla_filters=list(getattr(phase, "sla", []) or []),
+        adaptive_sla_filters=tuple(getattr(phase, "sla", ()) or ()),
     )
