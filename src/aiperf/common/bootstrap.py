@@ -32,6 +32,7 @@ def bootstrap_and_run_service(
     user_config: UserConfig | None = None,
     service_id: str | None = None,
     log_queue: "multiprocessing.Queue | None" = None,
+    controller_pid: int | None = None,
     **kwargs,
 ):
     """Bootstrap the service and run it.
@@ -47,6 +48,8 @@ def bootstrap_and_run_service(
             will be loaded from the environment variables.
         log_queue: Optional multiprocessing queue for child process logging. If provided,
             the child process logging will be set up.
+        controller_pid: PID of the launching SystemController, used to arm the
+            child's parent-death guard (see ``_install_parent_death_signal``).
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
@@ -57,6 +60,11 @@ def bootstrap_and_run_service(
     # prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
     # code (uvloop, zmq, aiohttp, orjson) is executing.
     if multiprocessing.parent_process() is not None:
+        # Arm the parent-death guard FIRST, before anything else can leak time,
+        # so a SIGKILL'd controller cannot orphan this process. SIGKILL is the
+        # only viable death signal here precisely because SIGTERM is ignored
+        # just below.
+        _install_parent_death_signal(controller_pid)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
@@ -178,6 +186,55 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+
+def _install_parent_death_signal(controller_pid: int | None = None) -> None:
+    """Ask the kernel to SIGKILL this process when the controller dies (Linux only).
+
+    The SystemController launches each service as a ``daemon=True`` child, which
+    only reaps children when the parent exits cleanly via Python's ``atexit``
+    hook. A SIGKILL'd, OOM-killed, or crashed controller never runs that hook,
+    so the services orphan, reparent to init/systemd, and leak RAM
+    indefinitely. ``PR_SET_PDEATHSIG`` is a kernel-level backstop that fires
+    regardless of how the parent dies.
+
+    SIGKILL (not SIGTERM) is mandatory: child processes ignore SIGTERM to avoid
+    C-extension SIGSEGV (see caller), so a catchable death signal would simply
+    be ignored and the orphan would survive anyway. Since the parent is already
+    gone by the time this fires, there is nothing left to shut down gracefully.
+
+    ``controller_pid`` is the SystemController PID captured at launch time. It is
+    the ground truth for "who is our parent", which matters because
+    PR_SET_PDEATHSIG only delivers for deaths that occur *after* it is armed: if
+    the controller died in the launch/import window before this runs, the child
+    has already reparented to a subreaper (systemd ``--user``, not always PID 1)
+    and the signal would never fire. Comparing the live ``getppid()`` against the
+    captured controller PID detects that race under both fork and spawn start
+    methods. When ``None`` (e.g. tests), it falls back to a ``getppid()``
+    snapshot, which is still correct under fork when the controller is alive.
+
+    Best-effort: any failure to arm the guard is non-fatal (the process simply
+    falls back to the pre-existing ``daemon=True`` behavior).
+    """
+    if platform.system() != "Linux":
+        return
+
+    import ctypes
+
+    PR_SET_PDEATHSIG = 1
+    expected_ppid = controller_pid if controller_pid is not None else os.getppid()
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        if libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
+            return
+    except (OSError, AttributeError):
+        return
+
+    # If our parent is no longer the controller, it already died and we
+    # reparented during the race window — the death signal was missed forever,
+    # so exit now rather than orphan.
+    if os.getppid() != expected_ppid:
+        os._exit(1)
 
 
 def _redirect_stdio_to_devnull() -> None:

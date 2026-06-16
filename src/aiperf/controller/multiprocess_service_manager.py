@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import multiprocessing
+import os
 import uuid
 from multiprocessing import Process
 from multiprocessing.context import ForkProcess, SpawnProcess
@@ -72,6 +73,9 @@ class MultiProcessServiceManager(BaseServiceManager):
                     "service_config": self.service_config,
                     "user_config": self.user_config,
                     "log_queue": self.log_queue,
+                    # Controller PID for the child's PR_SET_PDEATHSIG guard, so a
+                    # hard-killed controller cannot orphan its service processes.
+                    "controller_pid": os.getpid(),
                 },
                 daemon=True,
             )
