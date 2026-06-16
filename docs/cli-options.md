@@ -20,6 +20,10 @@ Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
 Render a per-session swim-lane PNG with concurrency curve underneath.
 
+### [`analyze turn-messages`](#aiperf-analyze-turn-messages)
+
+Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -114,6 +118,35 @@ Ramp duration in seconds for the ramp-done marker; overrides the value read from
 #### `--html`, `--no-html`
 
 Also write an interactive HTML trace viewer (``swim_lane.html``, or the ``--out`` path with an ``.html`` suffix).
+
+<hr/>
+
+## `aiperf analyze turn-messages`
+
+Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
+
+#### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+
+One or more AIPerf run directories.
+
+#### `-o`, `--out` `<str>`
+
+Output HTML path. Only valid when a single run directory is given.
+
+#### `-n`, `--limit-conversations` `<int>`
+
+Max conversations to render (roots first, then by earliest request time).
+<br/>_Default: `40`_
+
+#### `--max-turns` `<int>`
+
+Max turns rendered per conversation; the rest are summarized as a hidden count.
+<br/>_Default: `60`_
+
+#### `--content-cap` `<int>`
+
+Max characters kept per unique message body; longer bodies are truncated with a remaining-chars note. Raise for full fidelity.
+<br/>_Default: `8000`_
 
 <hr/>
 

@@ -164,17 +164,18 @@ class TestBaseTransport:
 
         assert headers["X-Session-ID"] == "test-correlation-id"
 
-    def test_build_headers_can_alias_correlation_id_as_smg_routing_key(
+    def test_build_headers_can_use_root_correlation_id_as_smg_routing_key(
         self, transport, request_info, monkeypatch
     ):
-        """Test opt-in SGLang Model Gateway affinity header."""
+        """Test opt-in SGLang Model Gateway tree-affinity header."""
+        request_info.root_correlation_id = "test-root-correlation-id"
         monkeypatch.setattr(
-            Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", True
+            Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_ROOT_CORRELATION_ID", True
         )
 
         headers = transport.build_headers(request_info)
 
-        assert headers["X-SMG-Routing-Key"] == "test-correlation-id"
+        assert headers["X-SMG-Routing-Key"] == "test-root-correlation-id"
 
     def test_build_headers_transport_headers_override(self, request_info):
         """Test that transport headers can override endpoint headers."""
