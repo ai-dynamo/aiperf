@@ -3,7 +3,6 @@
 
 """Streaming DEALER client for bidirectional communication with ROUTER."""
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeAlias
 
@@ -13,8 +12,8 @@ from msgspec import Struct
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
-from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import RouterToWorkerMessage
+from aiperf.zmq.fd_reader import FdEdgeReader
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 # Pre-created encoder/decoder for performance (caches schema)
@@ -112,6 +111,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         self._receiver_handler: RouterToWorkerHandler | None = None
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.STREAMING_DEALER_YIELD_INTERVAL
+        self._fd_reader: FdEdgeReader | None = None
 
     def register_receiver(self, handler: RouterToWorkerHandler) -> None:
         """
@@ -132,20 +132,42 @@ class ZMQStreamingDealerClient(BaseZMQClient):
     @on_stop
     async def _clear_receiver(self) -> None:
         """Clear receiver handler on stop."""
+        if self._fd_reader is not None:
+            self._fd_reader.stop()
+            self._fd_reader = None
         self._receiver_handler = None
+
+    def _recv_one_dealer(self) -> RouterToWorkerMessage:
+        """Synchronous NOBLOCK recv + decode for the FD-reader drain."""
+        return _decoder.decode(zmq.Socket.recv(self.socket, flags=zmq.NOBLOCK))
+
+    def _dispatch_dealer(self, message: RouterToWorkerMessage) -> None:
+        if self._receiver_handler is not None:
+            self.execute_async(self._receiver_handler(message))
+        else:
+            self.warning(f"Received {type(message).__name__} but no handler registered")
+
+    def _send_one_dealer(self, data: bytes) -> None:
+        """Synchronous NOBLOCK single-frame send for the FD-driver."""
+        zmq.Socket.send(self.socket, data, flags=zmq.NOBLOCK, copy=False)
 
     async def send(self, struct: Struct) -> None:
         """Send struct to ROUTER."""
         await self._check_initialized()
 
-        try:
-            # DEALER automatically handles framing - use single-frame send
-            await self.socket.send(_encoder.encode(struct))
-            if self.is_trace_enabled:
-                self.trace(f"Sent struct: {struct}")
-        except Exception as e:
-            self.exception(f"Failed to send message: {e}")
-            raise
+        # copy=False avoids memcpy'ing the encoded frame into libzmq on the event
+        # loop thread; the encoded buffer is freshly produced here and never reused.
+        data = _encoder.encode(struct)
+        # FD-driver owns both directions of the socket; never touch zmq.asyncio
+        # send here or it corrupts the shared FD edge-trigger. Before the
+        # receiver task has created the driver (early WorkerReady), send
+        # directly — SNDHWM=0 means the NOBLOCK send will not block.
+        if self._fd_reader is not None:
+            self._fd_reader.send(data)
+        else:
+            self._send_one_dealer(data)
+        if self.is_trace_enabled:
+            self.trace(f"Sent struct: {struct}")
 
     @background_task(immediate=True, interval=None)
     async def _streaming_dealer_receiver(self) -> None:
@@ -159,40 +181,16 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             lambda: f"Streaming DEALER receiver task started for {self.identity}"
         )
 
-        while not self.stop_requested:
-            try:
-                message_bytes = await self.socket.recv()
-                if self.is_trace_enabled:
-                    self.trace(f"Received message: {message_bytes}")
-                message = _decoder.decode(message_bytes)
-
-                if self._receiver_handler:
-                    self.execute_async(self._receiver_handler(message))
-                    self._msg_count += 1
-                    # Yield periodically to allow scheduled handlers to run
-                    # and prevent event loop starvation during message bursts.
-                    if (
-                        self._yield_interval > 0
-                        and self._msg_count % self._yield_interval == 0
-                    ):
-                        await yield_to_event_loop()
-                else:
-                    self.warning(
-                        f"Received {type(message).__name__} but no handler registered"
-                    )
-
-            except zmq.Again:
-                self.debug("No data on dealer socket received, yielding to event loop")
-                await yield_to_event_loop()
-            except asyncio.CancelledError:
-                self.debug("Streaming DEALER receiver task cancelled")
-                raise  # re-raise the cancelled error
-            except Exception as e:
-                self.exception(
-                    f"Exception receiving messages for client {self.client_id}: {e!r}"
-                )
-                await yield_to_event_loop()
-
-        self.debug(
-            lambda: f"Streaming DEALER receiver task stopped for {self.identity}"
+        # Always drive the DEALER off its raw FD: edge-triggered NOBLOCK drain on
+        # recv, sync NOBLOCK on send (the driver owns both directions).
+        self._fd_reader = FdEdgeReader(
+            socket=self.socket,
+            recv_one=self._recv_one_dealer,
+            dispatch=self._dispatch_dealer,
+            batch_limit=self._yield_interval,
+            send_one=self._send_one_dealer,
+            on_error=lambda e: self.exception(
+                f"Exception draining dealer socket for {self.client_id}: {e!r}"
+            ),
         )
+        self._fd_reader.start()

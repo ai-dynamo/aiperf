@@ -1645,6 +1645,19 @@ communication_client:
       ZMQ ROUTER client for streaming messaging pattern. Receives high-throughput
       streams with identity-based routing and connection management.
 
+  streaming_push:
+    class: aiperf.zmq.streaming_push_client:ZMQStreamingPushClient
+    description: |
+      ZMQ PUSH client that sends typed msgpack structs (the credit-channel wire,
+      no Message-bus envelope). Send-only fan-out leg of the typed PUSH/PULL
+      credit-return channel.
+
+  streaming_pull:
+    class: aiperf.zmq.streaming_pull_client:ZMQStreamingPullClient
+    description: |
+      ZMQ PULL client that decodes typed WorkerToRouterMessage structs. Recv-only
+      fan-in leg of the typed PUSH/PULL credit-return channel.
+
   sub:
     class: aiperf.zmq.sub_client:ZMQSubClient
     description: |
