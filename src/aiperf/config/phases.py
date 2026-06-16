@@ -78,6 +78,61 @@ def _normalize_adaptive_sla(sla: dict[str, object]) -> list[SLAFilter]:
     return filters
 
 
+_ADAPTIVE_SCALE_FIELD_MAP = {
+    "control_variable": "adaptive_control_variable",
+    "controlVariable": "adaptive_control_variable",
+    "min_concurrency": "adaptive_scale_min_concurrency",
+    "minConcurrency": "adaptive_scale_min_concurrency",
+    "window": "adaptive_assessment_period",
+    "assessment_period": "adaptive_assessment_period",
+    "assessmentPeriod": "adaptive_assessment_period",
+    "min_completed_requests": "adaptive_min_completed_requests",
+    "minCompletedRequests": "adaptive_min_completed_requests",
+    "sustain_duration": "adaptive_sustain_duration",
+    "sustainDuration": "adaptive_sustain_duration",
+}
+
+
+_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP = {
+    "type": "adaptive_scale_strategy_type",
+    "step_policy": "adaptive_scale_step_policy",
+    "stepPolicy": "adaptive_scale_step_policy",
+    "base_step": "adaptive_scale_base_step",
+    "baseStep": "adaptive_scale_base_step",
+    "max_step_multiplier": "adaptive_scale_max_step_multiplier",
+    "maxStepMultiplier": "adaptive_scale_max_step_multiplier",
+    "step_percent": "adaptive_scale_step_percent",
+    "stepPercent": "adaptive_scale_step_percent",
+}
+
+
+def _copy_mapped_fields(
+    lowered: dict[str, object],
+    source_data: dict[str, object],
+    field_map: dict[str, str],
+) -> None:
+    for source, target in field_map.items():
+        if source in source_data:
+            lowered[target] = source_data[source]
+
+
+def _lower_adaptive_scale_details(
+    lowered: dict[str, object], block: dict[str, object]
+) -> None:
+    lowered["adaptive_scale"] = bool(block.get("enabled", True))
+    _copy_mapped_fields(lowered, block, _ADAPTIVE_SCALE_FIELD_MAP)
+
+    strategy = block.get("strategy", {})
+    if isinstance(strategy, dict):
+        _copy_mapped_fields(lowered, strategy, _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
+
+    sla = block.get("sla")
+    if isinstance(sla, list):
+        lowered["sla"] = sla
+    elif isinstance(sla, dict):
+        lowered["sla"] = _normalize_adaptive_sla(sla)
+
+
 # =============================================================================
 # PHASE HIERARCHY
 # =============================================================================
@@ -434,47 +489,7 @@ class ConcurrencyPhase(BasePhaseConfig):
         if not isinstance(block, dict):
             return lowered
 
-        lowered["adaptive_scale"] = bool(block.get("enabled", True))
-
-        field_map = {
-            "control_variable": "adaptive_control_variable",
-            "controlVariable": "adaptive_control_variable",
-            "min_concurrency": "adaptive_scale_min_concurrency",
-            "minConcurrency": "adaptive_scale_min_concurrency",
-            "window": "adaptive_assessment_period",
-            "assessment_period": "adaptive_assessment_period",
-            "assessmentPeriod": "adaptive_assessment_period",
-            "min_completed_requests": "adaptive_min_completed_requests",
-            "minCompletedRequests": "adaptive_min_completed_requests",
-            "sustain_duration": "adaptive_sustain_duration",
-            "sustainDuration": "adaptive_sustain_duration",
-        }
-        for source, target in field_map.items():
-            if source in block:
-                lowered[target] = block[source]
-
-        strategy = block.get("strategy", {})
-        if isinstance(strategy, dict):
-            strategy_map = {
-                "type": "adaptive_scale_strategy_type",
-                "step_policy": "adaptive_scale_step_policy",
-                "stepPolicy": "adaptive_scale_step_policy",
-                "base_step": "adaptive_scale_base_step",
-                "baseStep": "adaptive_scale_base_step",
-                "max_step_multiplier": "adaptive_scale_max_step_multiplier",
-                "maxStepMultiplier": "adaptive_scale_max_step_multiplier",
-                "step_percent": "adaptive_scale_step_percent",
-                "stepPercent": "adaptive_scale_step_percent",
-            }
-            for source, target in strategy_map.items():
-                if source in strategy:
-                    lowered[target] = strategy[source]
-
-        sla = block.get("sla")
-        if isinstance(sla, list):
-            lowered["sla"] = sla
-        elif isinstance(sla, dict):
-            lowered["sla"] = _normalize_adaptive_sla(sla)
+        _lower_adaptive_scale_details(lowered, block)
         return lowered
 
     @model_validator(mode="after")

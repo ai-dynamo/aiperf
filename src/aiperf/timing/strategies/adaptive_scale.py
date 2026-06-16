@@ -201,9 +201,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
                     raise ValueError(f"Unsupported throughput SLA stat: {sla.stat}")
             case "goodput_ratio" | "success_rate" | "request_success_rate":
                 if sla.stat not in {"avg", "min", "max"}:
-                    raise ValueError(
-                        f"Unsupported goodput_ratio SLA stat: {sla.stat}"
-                    )
+                    raise ValueError(f"Unsupported goodput_ratio SLA stat: {sla.stat}")
             case _:
                 raise ValueError(
                     "adaptive_scale supports request_latency, request throughput, "
@@ -272,7 +270,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
                 await self._assess_window()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             self.exception(f"Adaptive scale assessment failed: {exc}")
             self._complete_controller(
                 reason=f"assessment_failed: {exc}",

@@ -31,7 +31,7 @@ APIRouterType = plugins.create_enum(PluginType.API_ROUTER, "APIRouterType", modu
 
 TimingModeStr: TypeAlias = str
 TimingMode = plugins.create_enum(PluginType.TIMING_STRATEGY, "TimingMode", module=__name__)
-"""Dynamic enum for timing strategy. Example: TimingMode.FIXED_SCHEDULE, TimingMode.REQUEST_RATE, TimingMode.USER_CENTRIC_RATE"""
+"""Dynamic enum for timing strategy. Example: TimingMode.ADAPTIVE_SCALE, TimingMode.REQUEST_RATE, TimingMode.USER_CENTRIC_RATE"""
 
 ArrivalPatternStr: TypeAlias = str
 ArrivalPattern = plugins.create_enum(PluginType.ARRIVAL_PATTERN, "ArrivalPattern", module=__name__)
@@ -169,14 +169,14 @@ def _build_phasetype_members() -> dict[str, str]:
         if alias.upper() not in members:
             members[alias.upper()] = alias
     for entry in plugins.list_entries(PluginType.TIMING_STRATEGY):
-        if entry.name in {'request_rate', 'adaptive_scale'}:
+        if entry.name in {'request_rate'}:
             continue
         alias = {'user_centric_rate': 'user_centric'}.get(entry.name, entry.name)
         if alias.upper() not in members:
             members[alias.upper()] = alias
     return members
 PhaseType = create_enum("PhaseType", _build_phasetype_members(), module=__name__)
-"""Load generation type for benchmark phases. Example: PhaseType.CONCURRENCY, PhaseType.CONSTANT, PhaseType.FIXED_SCHEDULE"""
+"""Load generation type for benchmark phases. Example: PhaseType.ADAPTIVE_SCALE, PhaseType.CONCURRENCY, PhaseType.CONSTANT"""
 
 DatasetFormatStr: TypeAlias = str
 def _build_datasetformat_members() -> dict[str, str]:
