@@ -10,6 +10,7 @@ from rich.console import Console
 
 from aiperf.exporters.console_api_error_exporter import (
     ConsoleApiErrorExporter,
+    DynamoSessionControlDetector,
     MaxCompletionTokensDetector,
 )
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -117,3 +118,69 @@ class TestConsoleApiErrorExporter:
         await exporter.export(mock_console)
 
         assert mock_console.print.call_count == 0
+
+
+class TestDynamoSessionControlDetector:
+    """Unit tests for the Dynamo 'bind' session_control rejection detector."""
+
+    def test_detects_raw_serde_unknown_variant_error(self):
+        """serde rejects the unknown enum value in a raw (non-JSON) body."""
+        err = MockErrorDetails(
+            message="unknown variant `bind`, expected `open` or `close`"
+        )
+        insight = DynamoSessionControlDetector.detect(make_summary(err))
+
+        assert insight is not None
+        assert "bind" in insight.problem
+        assert any("--use-legacy-dynamo-session-control" in f for f in insight.fixes)
+
+    def test_detects_json_wrapped_unknown_variant_error(self):
+        """The serde message is often wrapped in a JSON error envelope."""
+        body = json.dumps(
+            {
+                "message": (
+                    "Failed to deserialize the JSON body: nvext.session_control."
+                    "action: unknown variant `bind`, expected `open` or `close`"
+                )
+            }
+        )
+        err = MockErrorDetails(message=body)
+        insight = DynamoSessionControlDetector.detect(make_summary(err))
+
+        assert insight is not None
+        assert any("v1.3.0-dev" in f for f in insight.fixes)
+
+    def test_returns_none_for_unrelated_error(self):
+        err = MockErrorDetails(message='{"message": "context_length_exceeded"}')
+        assert DynamoSessionControlDetector.detect(make_summary(err)) is None
+
+    def test_returns_none_for_unknown_variant_without_bind(self):
+        """A different unknown-variant error must not trip this detector."""
+        err = MockErrorDetails(
+            message="unknown variant `frobnicate`, expected `open` or `close`"
+        )
+        assert DynamoSessionControlDetector.detect(make_summary(err)) is None
+
+    def test_returns_none_when_no_errors(self):
+        assert DynamoSessionControlDetector.detect(None) is None
+        assert DynamoSessionControlDetector.detect([]) is None
+
+    @pytest.mark.asyncio
+    async def test_exporter_prints_panel_for_bind_rejection(self):
+        mock_console = MagicMock(spec=Console)
+        err = MockErrorDetails(
+            message="unknown variant `bind`, expected `open` or `close`"
+        )
+
+        exporter_config = MagicMock(spec=ExporterConfig)
+        exporter_config.results = MagicMock()
+        exporter_config.results.error_summary = make_summary(err)
+
+        exporter = ConsoleApiErrorExporter(exporter_config)
+        await exporter.export(mock_console)
+
+        assert mock_console.print.call_count >= 2
+        _, args, _ = mock_console.print.mock_calls[1]
+        panel = args[0]
+        assert "session_control action: bind" in str(panel.title)
+        assert "--use-legacy-dynamo-session-control" in str(panel.renderable)

@@ -118,6 +118,11 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING,
         description="Emit Dynamo nvext.session_control for conversation-aware routing.",
     )
+    use_legacy_dynamo_session_control: bool = Field(
+        default=EndpointDefaults.USE_LEGACY_DYNAMO_SESSION_CONTROL,
+        description="Emit the v1.2.x-compatible open/close session_control lifecycle "
+        "instead of the 'bind' action (which only exists in Dynamo >= v1.3.0-dev).",
+    )
     dynamo_session_timeout_seconds: int = Field(
         default=EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS,
         ge=1,
@@ -175,6 +180,9 @@ class EndpointInfo(AIPerfBaseModel):
             use_server_token_count=user_config.endpoint.use_server_token_count,
             use_dynamo_conv_aware_routing=(
                 user_config.endpoint.use_dynamo_conv_aware_routing
+            ),
+            use_legacy_dynamo_session_control=(
+                user_config.endpoint.use_legacy_dynamo_session_control
             ),
             dynamo_session_timeout_seconds=(
                 user_config.endpoint.dynamo_session_timeout_seconds

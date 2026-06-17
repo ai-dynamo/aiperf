@@ -29,12 +29,17 @@ def build_session_control(
     session_id: str,
     is_final_turn: bool,
     timeout_seconds: int,
+    legacy: bool = False,
+    already_opened: bool = False,
 ) -> dict[str, Any]:
     """Build the ``nvext.session_control`` block for a single request.
 
     Each conversation instance is its own sticky session keyed by its
     X-Correlation-ID (``session_id``). Dynamo's router co-locates turns purely
-    by ``session_id``, so the lifecycle is:
+    by ``session_id``. Two wire contracts are produced depending on ``legacy``.
+
+    Modern (``legacy=False``, the default) -- targets Dynamo builds that
+    implement the ``bind`` action (>= v1.3.0-dev / upstream commit d97c889ba):
 
     - non-final turn -> ``action: "bind"`` (router-only sticky affinity).
       Re-bind is idempotent on the router and refreshes the inactivity TTL, so
@@ -44,6 +49,24 @@ def build_session_control(
     - final turn -> ``action: "close"`` to release the router affinity (and any
       worker-side session) immediately instead of leaking it until the TTL
       reaper fires -- material on high-cardinality runs (millions of sessions).
+
+    Legacy (``legacy=True``) -- targets released Dynamo (v1.2.x), whose
+    ``SessionAction`` enum only accepts ``open`` and ``close`` (``bind`` does not
+    exist there and is rejected with an HTTP 400 ``unknown variant`` error):
+
+    - first request the worker sends for a session (``already_opened`` False)
+      -> ``action: "open"`` to create the worker session and bind router
+      affinity. ``open`` is NOT idempotent, so the caller tracks which sessions
+      it has opened and passes ``already_opened`` accordingly. The trigger is
+      "first request the worker sends", NOT ``turn_index == 0``: under agentic
+      replay the first request is the WARMUP turn (k_i), and profiling resumes
+      mid-trace at k_i+1, so no profiling request ever carries ``turn_index 0``.
+      ``open`` also requires the Dynamo deployment to expose a worker
+      ``session_control`` endpoint; without one Dynamo silently skips session
+      lifecycle (no 400, but no affinity).
+    - subsequent turns (``already_opened`` True) -> ``session_id`` only, which
+      keeps affinity on the sticky-router path.
+    - final turn -> ``action: "close"`` (same as modern).
 
     Fork/spawn children use their own ``session_id`` rather than a shared
     lineage key: ``close`` is keyed on ``session_id``, so a shared key would let
@@ -55,6 +78,10 @@ def build_session_control(
     session_control: dict[str, Any] = {"session_id": session_id}
     if is_final_turn:
         session_control["action"] = "close"
+    elif legacy:
+        if not already_opened:
+            session_control["action"] = "open"
+            session_control["timeout"] = timeout_seconds
     else:
         session_control["action"] = "bind"
         session_control["timeout"] = timeout_seconds
