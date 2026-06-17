@@ -348,6 +348,7 @@ class CreditIssuer:
             branch_mode=turn.branch_mode,
             cache_bust_marker=turn.cache_bust_marker,
             cache_bust_target=turn.cache_bust_target,
+            max_tokens_override=turn.max_tokens_override,
         )
 
         await self._credit_router.send_credit(credit=credit)

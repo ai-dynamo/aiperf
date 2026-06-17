@@ -25,6 +25,7 @@ def test_credit_default_cache_bust_fields():
     credit = _make_credit()
     assert credit.cache_bust_marker is None
     assert credit.cache_bust_target == CacheBustTarget.NONE
+    assert credit.max_tokens_override is None
 
 
 def test_credit_cache_bust_roundtrip():
@@ -49,6 +50,14 @@ def test_credit_omit_defaults_keeps_wire_flat_when_disabled():
     assert on_size > off_size
     encoded_off = msgspec.msgpack.encode(credit_off)
     assert b"cache_bust" not in encoded_off
+    assert b"max_tokens_override" not in encoded_off
+
+
+def test_credit_max_tokens_override_roundtrip():
+    credit = _make_credit(max_tokens_override=1)
+    encoded = msgspec.msgpack.encode(credit)
+    decoded = msgspec.msgpack.decode(encoded, type=Credit)
+    assert decoded.max_tokens_override == 1
 
 
 def test_turn_to_send_from_previous_credit_propagates_cache_bust():
@@ -60,3 +69,9 @@ def test_turn_to_send_from_previous_credit_propagates_cache_bust():
     assert next_turn.cache_bust_marker == "[rid:abc123]\n\n"
     assert next_turn.cache_bust_target == CacheBustTarget.SYSTEM_PREFIX
     assert next_turn.turn_index == parent.turn_index + 1
+
+
+def test_turn_to_send_does_not_propagate_max_tokens_override():
+    parent = _make_credit(max_tokens_override=1)
+    next_turn = TurnToSend.from_previous_credit(parent)
+    assert next_turn.max_tokens_override is None

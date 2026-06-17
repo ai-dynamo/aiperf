@@ -15,6 +15,7 @@ from aiperf.common.models import (
     RequestRecord,
     SSEMessage,
     TextResponseData,
+    Turn,
 )
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.workers.worker import Worker
@@ -45,6 +46,32 @@ async def mock_worker(
 
 @pytest.mark.asyncio
 class TestWorker:
+    async def test_create_request_info_overrides_only_outgoing_turn(self, mock_worker):
+        original = Turn(max_tokens=4096)
+        turns = [original]
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.WARMUP,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+                max_tokens_override=1,
+            ),
+            drop_perf_ns=0,
+        )
+
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=credit_context,
+            turns=turns,
+        )
+
+        assert request_info.turns[-1].max_tokens == 1
+        assert original.max_tokens == 4096
+
     async def test_process_response(
         self, monkeypatch, mock_worker, sample_request_record
     ):
