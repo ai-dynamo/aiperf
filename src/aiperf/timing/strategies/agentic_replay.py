@@ -71,6 +71,8 @@ from aiperf.timing.trajectory_source import (
     _as_timestamp_ms,
 )
 
+_WARMUP_MAX_TOKENS = 1
+
 if TYPE_CHECKING:
     from aiperf.common.config import UserConfig
     from aiperf.common.loop_scheduler import LoopScheduler
@@ -952,13 +954,15 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """Build a TurnToSend for the given session at the given turn index."""
         base = session.build_turn_at_index(turn_index)
         marker = self._session_marker.get(session.effective_root_correlation_id)
-        if marker is None and self._cache_bust_target == CacheBustTarget.NONE:
+        updates: dict[str, object] = {}
+        if self.config.phase == CreditPhase.WARMUP:
+            updates["max_tokens_override"] = _WARMUP_MAX_TOKENS
+        if marker is not None or self._cache_bust_target != CacheBustTarget.NONE:
+            updates["cache_bust_marker"] = marker
+            updates["cache_bust_target"] = self._cache_bust_target
+        if not updates:
             return base
-        return _struct_replace(
-            base,
-            cache_bust_marker=marker,
-            cache_bust_target=self._cache_bust_target,
-        )
+        return _struct_replace(base, **updates)
 
     def _mint_marker_for_session(
         self, root_correlation_id: str, conversation_id: str, trajectory_index: int

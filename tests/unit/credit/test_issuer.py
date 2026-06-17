@@ -171,6 +171,23 @@ class TestBasicCreditIssuance:
         assert sent_credit.num_turns == 5
         assert sent_credit.issued_at_ns > 0
 
+    async def test_issue_credit_propagates_max_tokens_override(
+        self, credit_issuer, mock_router
+    ):
+        turn = make_turn()
+        turn = TurnToSend(
+            conversation_id=turn.conversation_id,
+            x_correlation_id=turn.x_correlation_id,
+            turn_index=turn.turn_index,
+            num_turns=turn.num_turns,
+            max_tokens_override=1,
+        )
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.max_tokens_override == 1
+
     async def test_issue_credit_returns_true_when_more_credits_can_be_sent(
         self, credit_issuer, mock_progress
     ):
@@ -867,18 +884,16 @@ class TestDispatchFirstTurn:
         children (agent_depth > 0).
 
         Children inherit the root's session slot, so the issuer must never
-        attempt to acquire a new one. The prefill slot is still acquired
-        through the normal ``try_issue_credit`` flow — if the prefill limit
-        is saturated the dispatch returns False and the orchestrator is
-        responsible for rolling back its own bookkeeping (no double-release
-        of an unacquired slot).
+        attempt to acquire a new one. The prefill slot is acquired through
+        the blocking path so temporary saturation applies backpressure rather
+        than dropping the child.
         """
         from aiperf.common.models import ConversationMetadata, TurnMetadata
         from aiperf.timing.conversation_source import SampledSession
 
         # Session slot path would fail; prefill slot is available.
         mock_concurrency.try_acquire_session_slot = MagicMock(return_value=False)
-        mock_concurrency.try_acquire_prefill_slot = MagicMock(return_value=True)
+        mock_concurrency.acquire_prefill_slot = AsyncMock(return_value=True)
 
         metadata = ConversationMetadata(
             conversation_id="child-conv",
@@ -898,27 +913,22 @@ class TestDispatchFirstTurn:
         # Session-slot acquisition must NOT have been attempted: DAG children
         # inherit the parent's session slot rather than acquiring a new one.
         mock_concurrency.try_acquire_session_slot.assert_not_called()
-        # Prefill slot was acquired through the normal path.
-        mock_concurrency.try_acquire_prefill_slot.assert_called_once()
+        # Prefill slot was acquired through the blocking path.
+        mock_concurrency.acquire_prefill_slot.assert_awaited_once()
         # The credit was sent to the router.
         mock_router.send_credit.assert_called_once()
 
-    async def test_dispatch_first_turn_returns_true_on_saturation_no_rollback(
-        self, credit_issuer, mock_concurrency, mock_router, caplog
+    async def test_dispatch_first_turn_returns_false_when_prefill_wait_is_stopped(
+        self, credit_issuer, mock_concurrency, mock_router
     ):
-        """When the prefill slot is saturated, ``dispatch_child_turn``
-        (the path ``dispatch_first_turn`` now wraps) returns False and the
-        caller rolls back — saturation and gate-refusal share a single
-        rollback signal so the issuer's ``bool`` contract stays simple.
-        Children that lose the rollback are released via the
-        orchestrator's ``on_child_stopped`` path, not by suppressing
-        rollback at the issuer layer.
+        """If a blocked prefill acquisition is stopped by phase conditions,
+        the child is not issued and the caller receives the rollback signal.
         """
         from aiperf.common.models import ConversationMetadata, TurnMetadata
         from aiperf.timing.conversation_source import SampledSession
 
         mock_concurrency.try_acquire_session_slot = MagicMock(return_value=False)
-        mock_concurrency.try_acquire_prefill_slot = MagicMock(return_value=False)
+        mock_concurrency.acquire_prefill_slot = AsyncMock(return_value=False)
 
         metadata = ConversationMetadata(
             conversation_id="child-conv",
@@ -937,6 +947,62 @@ class TestDispatchFirstTurn:
         assert result is False
         # No credit was actually sent (slot acquisition failed).
         mock_router.send_credit.assert_not_called()
+
+    async def test_parallel_children_wait_for_prefill_capacity_instead_of_dropping(
+        self,
+        credit_issuer,
+        mock_router,
+    ):
+        """A one-slot prefill limit must queue the second sibling.
+
+        The old non-blocking child path issued the first sibling and returned
+        False for the second, causing the orchestrator to permanently remove
+        it from the branch.
+        """
+        from aiperf.common.models import ConversationMetadata, TurnMetadata
+        from aiperf.timing.concurrency import ConcurrencyManager
+        from aiperf.timing.conversation_source import SampledSession
+
+        concurrency = ConcurrencyManager()
+        concurrency.configure_for_phase(
+            CreditPhase.PROFILING,
+            concurrency=None,
+            prefill_concurrency=1,
+        )
+        credit_issuer._concurrency_manager = concurrency
+
+        metadata = ConversationMetadata(
+            conversation_id="child-template",
+            turns=[TurnMetadata(timestamp_ms=0.0)],
+        )
+        sessions = [
+            SampledSession(
+                conversation_id=f"child-{i}",
+                metadata=metadata,
+                x_correlation_id=f"child-xid-{i}",
+                agent_depth=1,
+                parent_correlation_id="parent-xid",
+            )
+            for i in range(2)
+        ]
+
+        tasks = [
+            asyncio.create_task(credit_issuer.dispatch_first_turn(session))
+            for session in sessions
+        ]
+        for _ in range(10):
+            await asyncio.sleep(0)
+            if mock_router.send_credit.await_count == 1:
+                break
+
+        assert mock_router.send_credit.await_count == 1
+        assert sum(task.done() for task in tasks) == 1
+
+        concurrency.release_prefill_slot(CreditPhase.PROFILING)
+        assert await asyncio.gather(*tasks) == [True, True]
+        assert mock_router.send_credit.await_count == 2
+
+        concurrency.release_prefill_slot(CreditPhase.PROFILING)
 
 
 # =============================================================================

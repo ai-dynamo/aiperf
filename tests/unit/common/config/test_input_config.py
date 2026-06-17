@@ -363,17 +363,17 @@ def test_synthesis_max_osl_requires_trace_dataset(dataset_type):
 
 def test_hf_weka_dataset_auto_selects_weka_hf_public_dataset():
     """Passing --hf-weka-dataset alone auto-selects --public-dataset weka_hf."""
-    config = InputConfig(hf_weka_dataset="semianalysisai/cc-traces-weka-061326")
+    config = InputConfig(hf_weka_dataset="semianalysisai/cc-traces-weka-061526")
     assert config.public_dataset == PublicDatasetType.WEKA_HF
     assert config.detected_loader == "weka_hf"
-    assert config.hf_weka_dataset == "semianalysisai/cc-traces-weka-061326"
+    assert config.hf_weka_dataset == "semianalysisai/cc-traces-weka-061526"
 
 
 def test_hf_weka_dataset_with_explicit_weka_hf_is_allowed():
     """--hf-weka-dataset alongside an explicit --public-dataset weka_hf is fine."""
     config = InputConfig(
         public_dataset=PublicDatasetType.WEKA_HF,
-        hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
+        hf_weka_dataset="semianalysisai/cc-traces-weka-061526",
     )
     assert config.public_dataset == PublicDatasetType.WEKA_HF
     assert config.detected_loader == "weka_hf"
@@ -383,7 +383,7 @@ def test_hf_weka_dataset_does_not_override_other_public_dataset():
     """Auto-select only fires when no dataset is named; a set value is left alone."""
     config = InputConfig(
         public_dataset=PublicDatasetType.SHAREGPT,
-        hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
+        hf_weka_dataset="semianalysisai/cc-traces-weka-061526",
     )
     assert config.public_dataset == PublicDatasetType.SHAREGPT
 
@@ -395,7 +395,7 @@ def test_hf_weka_dataset_with_custom_dataset_type_raises_error():
             InputConfig(
                 custom_dataset_type=CustomDatasetType.WEKA_TRACE,
                 file=temp_file.name,
-                hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
+                hf_weka_dataset="semianalysisai/cc-traces-weka-061526",
             )
 
         assert "cannot be combined with --custom-dataset-type" in str(exc.value)

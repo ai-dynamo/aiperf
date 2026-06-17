@@ -135,7 +135,7 @@ def test_agentx_allows_generic_weka_hf_loader_for_explicit_weka_repo() -> None:
     cfg = _user_config(
         loader="weka_hf",
         public_dataset="weka_hf",
-        hf_weka_dataset="semianalysisai/cc-traces-weka-061326",
+        hf_weka_dataset="semianalysisai/cc-traces-weka-061526",
         extra_inputs={"ignore_eos": True},
     )
 
@@ -170,7 +170,7 @@ def test_agentx_rejects_generic_weka_hf_loader_for_arbitrary_repo() -> None:
     with pytest.raises(ScenarioLockError) as exc_info:
         validate_scenario(cfg)
 
-    assert "semianalysisai/cc-traces-weka-061326" in str(exc_info.value)
+    assert "semianalysisai/cc-traces-weka-061526" in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -178,6 +178,8 @@ def test_agentx_rejects_generic_weka_hf_loader_for_arbitrary_repo() -> None:
     [
         "semianalysis_cc_traces_weka_061326",
         "semianalysis_cc_traces_weka_061326_256k",
+        "semianalysis_cc_traces_weka_061526",
+        "semianalysis_cc_traces_weka_061526_256k",
         "semianalysis_cc_traces_weka_with_subagents",
         "semianalysis_cc_traces_weka_with_subagents_256k",
         "semianalysis_cc_traces_weka_with_subagents_060826",

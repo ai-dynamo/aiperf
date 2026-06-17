@@ -106,8 +106,7 @@ _SEQ_LENGTH_LABELS: tuple[tuple[str, str], ...] = (
     ("isl", "input_sequence_length"),
     ("osl", "output_sequence_length"),
 )
-# Each block line is its own log record (carries its own log prefix), so the
-# continuation rows sit at a small fixed indent under the header line rather
+# Continuation rows sit at a small fixed indent under the header line rather
 # than aligning under the old inline "[realtime MM:SS profiling] " text.
 _REALTIME_ROW_INDENT = 2
 # Percentile names per row group. Latency/interactivity rows report p95 in the
@@ -166,10 +165,10 @@ def _render_realtime_block(
 
     The header sits on its own line and the summary counters drop to the
     first indented row so the line no longer wraps in narrow terminals; each
-    line is emitted as a separate log record (see ``_report_realtime_metrics``).
-    Every row keeps its own ``pNN=`` labels (so it stays readable even when log
-    lines from other services interleave), while the values are right-aligned in
-    per-column widths so the digits and ``ms`` suffixes line up into a grid.
+    block is emitted as one log record (see ``_report_realtime_metrics``), so
+    the timestamp, level, and source location appear once. Every row keeps its
+    own ``pNN=`` labels, while the values are right-aligned in per-column widths
+    so the digits and ``ms`` suffixes line up into a grid.
 
     Latency MetricResult percentile values are already in display units
     (milliseconds for time-based metrics, see ``to_display_unit`` and the
@@ -1014,10 +1013,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_stats.records_elapsed_time,
             )
             if self.service_config.ui_type != UIType.DASHBOARD:
-                # One record per line: multi-line records interleave with
-                # other services' writes on the shared console stream.
-                for line in rendered.splitlines():
-                    self.info(line)
+                # Keep the block atomic and avoid repeating the logger's
+                # timestamp, level, and source suffix on every metrics row.
+                self.info(rendered)
         return True
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:

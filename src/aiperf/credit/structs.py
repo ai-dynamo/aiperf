@@ -84,6 +84,15 @@ class Credit(
     cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
     """Where (and how) to inject `cache_bust_marker` at request-build time."""
 
+    max_tokens_override: int | None = None
+    """Per-request generation limit override.
+
+    Agentic replay uses this for warmup priming requests so they prefill the
+    recorded context but decode only one token. It is intentionally attached
+    to the credit rather than the dataset turn so profiling retains the
+    recorded output limit.
+    """
+
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
@@ -168,6 +177,9 @@ class TurnToSend(Struct, frozen=True):
 
     cache_bust_target: CacheBustTarget = CacheBustTarget.NONE
     """Where (and how) to inject `cache_bust_marker` at request-build time."""
+
+    max_tokens_override: int | None = None
+    """Per-request generation limit override; omitted for normal requests."""
 
     @property
     def is_final_turn(self) -> bool:

@@ -1073,6 +1073,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit = credit_context.credit
         if turns is None:
             turns = session.turn_list if session else []
+        if credit.max_tokens_override is not None and turns:
+            turns = [
+                *turns[:-1],
+                turns[-1].model_copy(update={"max_tokens": credit.max_tokens_override}),
+            ]
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,

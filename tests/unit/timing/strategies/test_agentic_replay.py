@@ -188,6 +188,25 @@ def test_constructor_accepts_warmup_and_profiling():
 # =============================================================================
 
 
+def test_warmup_only_overrides_max_tokens():
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    warmup, _, _, warmup_source = _make_strategy(
+        phase=CreditPhase.WARMUP, trajectories=[trajectory]
+    )
+    profiling, _, _, profiling_source = _make_strategy(
+        phase=CreditPhase.PROFILING, trajectories=[trajectory]
+    )
+
+    warmup_session = warmup_source.session_for(trajectory)
+    profiling_session = profiling_source.session_for(trajectory)
+
+    assert warmup._build_turn_for_session(warmup_session, 0).max_tokens_override == 1
+    assert (
+        profiling._build_turn_for_session(profiling_session, 1).max_tokens_override
+        is None
+    )
+
+
 @pytest.mark.asyncio
 async def test_warmup_dispatches_one_credit_per_trajectory():
     trajectories = [

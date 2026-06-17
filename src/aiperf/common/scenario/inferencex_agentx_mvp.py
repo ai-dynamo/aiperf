@@ -21,6 +21,8 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
         "semianalysis_cc_traces_weka_with_subagents_060826_256k",
         "semianalysis_cc_traces_weka_061326",
         "semianalysis_cc_traces_weka_061326_256k",
+        "semianalysis_cc_traces_weka_061526",
+        "semianalysis_cc_traces_weka_061526_256k",
         "weka_trace",
         "weka_hf",
     ),
