@@ -680,10 +680,11 @@ class _HTTPSettings(BaseSettings):
         description="Also send X-Session-ID with the stable X-Correlation-ID value. "
         "Use this when an external router requires a session-affinity header.",
     )
-    X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
+    X_SMG_ROUTING_KEY_FROM_ROOT_CORRELATION_ID: bool = Field(
         default=False,
-        description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
-        "Use this with the SGLang Model Gateway manual routing policy.",
+        description="Also send X-SMG-Routing-Key with the agent-tree root correlation ID, "
+        "falling back to X-Correlation-ID. Use this with the SGLang Model Gateway "
+        "manual routing policy to co-locate parent and subagent prefixes.",
     )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
