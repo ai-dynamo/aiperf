@@ -24,6 +24,7 @@ import os
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing import shared_memory
 from typing import TypeAlias, TypedDict
@@ -777,4 +778,5 @@ def run_parallel_weka_reconstruction(
         return results
     finally:
         shm.close()
-        shm.unlink()
+        with suppress(FileNotFoundError):
+            shm.unlink()
