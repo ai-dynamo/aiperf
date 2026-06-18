@@ -119,6 +119,8 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             headers["X-Correlation-ID"] = request_info.x_correlation_id
             if Environment.HTTP.X_SESSION_ID_FROM_CORRELATION_ID:
                 headers["X-Session-ID"] = request_info.x_correlation_id
+            if Environment.HTTP.X_SMG_ROUTING_KEY_FROM_CORRELATION_ID:
+                headers["X-SMG-Routing-Key"] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
         headers.update(self.get_transport_headers(request_info))

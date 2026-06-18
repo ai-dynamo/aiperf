@@ -680,6 +680,11 @@ class _HTTPSettings(BaseSettings):
         description="Also send X-Session-ID with the stable X-Correlation-ID value. "
         "Use this when an external router requires a session-affinity header.",
     )
+    X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
+        "Use this with the SGLang Model Gateway manual routing policy.",
+    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
