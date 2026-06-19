@@ -295,8 +295,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
         """
         backend = self._column_store.ragged(tag)
         if getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
+            # metric_result_from_array sorts its input in place; backend.values is
+            # a view into the ragged buffer that compute_sweep_curves reads later
+            # (against unsorted offsets/record_indices), so the full-dataset branch
+            # must copy. get_values_for_mask already returns a fresh masked copy.
             filtered = (
-                backend.values if full_dataset else backend.get_values_for_mask(mask)
+                backend.values.copy()
+                if full_dataset
+                else backend.get_values_for_mask(mask)
             )
             if len(filtered) == 0:
                 return
