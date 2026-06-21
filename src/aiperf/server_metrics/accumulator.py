@@ -430,6 +430,48 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         endpoints = list(self._server_metrics_hierarchy.endpoints.values())
         if not endpoints:
             return {}
+        return self._build_realtime_snapshot(endpoints, start_ns)
+
+    def realtime_snapshots(
+        self, start_ns: int | None = None
+    ) -> dict[str, dict[str, float]]:
+        """Return one live snapshot per server-metrics endpoint.
+
+        Dynamo workers are labeled from their Prometheus
+        ``dynamo_component`` label. ``prefill`` is shown directly and
+        ``backend`` is rendered as ``decode`` for disaggregated deployments.
+        Stable per-role indices follow sorted endpoint URL order. Endpoints
+        without Dynamo labels fall back to their normalized host and port.
+        """
+        endpoint_snapshots: list[tuple[str, Any, dict[str, float]]] = []
+        for endpoint_url, endpoint in sorted(
+            self._server_metrics_hierarchy.endpoints.items()
+        ):
+            snapshot = self._build_realtime_snapshot([endpoint], start_ns)
+            if snapshot:
+                endpoint_snapshots.append((endpoint_url, endpoint, snapshot))
+
+        snapshots: dict[str, dict[str, float]] = {}
+        role_counts: dict[str, int] = {}
+        for endpoint_url, endpoint, snapshot in endpoint_snapshots:
+            role = self._dynamo_worker_role(endpoint)
+            if role is None:
+                label = (
+                    ""
+                    if len(endpoint_snapshots) == 1
+                    else normalize_endpoint_display(endpoint_url)
+                )
+            else:
+                role_index = role_counts.get(role, 0)
+                role_counts[role] = role_index + 1
+                label = f"{role} {role_index}"
+            snapshots[label] = snapshot
+        return snapshots
+
+    def _build_realtime_snapshot(
+        self, endpoints: list, start_ns: int | None
+    ) -> dict[str, float]:
+        """Build the realtime metric fields for the supplied endpoints."""
         out: dict[str, float] = {}
 
         self._add_prefix_cache_hit_rate(out, endpoints, start_ns)
@@ -441,6 +483,18 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._add_token_throughputs(out, endpoints, start_ns)
 
         return out
+
+    @staticmethod
+    def _dynamo_worker_role(endpoint: Any) -> str | None:
+        """Extract a concise worker role from an endpoint's metric labels."""
+        for key in endpoint.metrics:
+            labels = dict(key.labels)
+            component = labels.get("dynamo_component")
+            if component == "prefill":
+                return "prefill"
+            if component in {"backend", "decode"}:
+                return "decode"
+        return None
 
     def _add_prefix_cache_hit_rate(
         self, out: dict[str, float], endpoints: list, start_ns: int | None

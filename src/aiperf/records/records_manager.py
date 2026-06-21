@@ -145,7 +145,7 @@ def _render_realtime_block(
     metric_results: list[MetricResult],
     phase_stats: PhaseRecordsStats,
     prev_snapshot: tuple[int, float] | None,
-    server_snapshot: dict[str, float] | None = None,
+    server_snapshot: dict[str, float] | dict[str, dict[str, float]] | None = None,
 ) -> str:
     """Render a compact realtime stats block for the aiperf logger.
 
@@ -295,39 +295,47 @@ def _render_realtime_block(
     # present, so e.g. cpu_kv / ext_cache_hit show up only on offload=cpu
     # runs.
     if server_snapshot:
+        if all(isinstance(value, dict) for value in server_snapshot.values()):
+            labeled_snapshots = server_snapshot.items()
+        else:
+            labeled_snapshots = [("", server_snapshot)]
+
+    else:
+        labeled_snapshots = []
+
+    for server_label, snapshot in labeled_snapshots:
         srv_parts: list[str] = []
-        if "prefix_cache_hit_rate" in server_snapshot:
+        if "prefix_cache_hit_rate" in snapshot:
             srv_parts.append(
-                f"prefix_cache_hit={server_snapshot['prefix_cache_hit_rate']:.1f}%"
+                f"prefix_cache_hit={snapshot['prefix_cache_hit_rate']:.1f}%"
             )
-        if "unique_input_tokens_srv" in server_snapshot:
+        if "unique_input_tokens_srv" in snapshot:
             srv_parts.append(
-                f"unique_in_srv={int(round(server_snapshot['unique_input_tokens_srv'])):,}"
+                f"unique_in_srv={int(round(snapshot['unique_input_tokens_srv'])):,}"
             )
-        if "external_prefix_cache_hit_rate" in server_snapshot:
+        if "external_prefix_cache_hit_rate" in snapshot:
             srv_parts.append(
-                f"ext_cache_hit={server_snapshot['external_prefix_cache_hit_rate']:.1f}%"
+                f"ext_cache_hit={snapshot['external_prefix_cache_hit_rate']:.1f}%"
             )
-        if "kv_cache_usage_pct" in server_snapshot:
-            srv_parts.append(f"kv_usage={server_snapshot['kv_cache_usage_pct']:.1f}%")
-        if "cpu_kv_cache_usage_pct" in server_snapshot:
-            srv_parts.append(
-                f"cpu_kv_usage={server_snapshot['cpu_kv_cache_usage_pct']:.1f}%"
-            )
-        if "num_running" in server_snapshot or "num_waiting" in server_snapshot:
-            running = int(server_snapshot.get("num_running", 0))
-            waiting = int(server_snapshot.get("num_waiting", 0))
+        if "kv_cache_usage_pct" in snapshot:
+            srv_parts.append(f"kv_usage={snapshot['kv_cache_usage_pct']:.1f}%")
+        if "cpu_kv_cache_usage_pct" in snapshot:
+            srv_parts.append(f"cpu_kv_usage={snapshot['cpu_kv_cache_usage_pct']:.1f}%")
+        if "num_running" in snapshot or "num_waiting" in snapshot:
+            running = int(snapshot.get("num_running", 0))
+            waiting = int(snapshot.get("num_waiting", 0))
             srv_parts.append(f"queue={running}r/{waiting}w")
-        if "input_token_throughput_srv" in server_snapshot:
+        if "input_token_throughput_srv" in snapshot:
             srv_parts.append(
-                f"tput_in_srv={int(round(server_snapshot['input_token_throughput_srv'])):,}/s"
+                f"tput_in_srv={int(round(snapshot['input_token_throughput_srv'])):,}/s"
             )
-        if "output_token_throughput_srv" in server_snapshot:
+        if "output_token_throughput_srv" in snapshot:
             srv_parts.append(
-                f"tput_out_srv={int(round(server_snapshot['output_token_throughput_srv'])):,}/s"
+                f"tput_out_srv={int(round(snapshot['output_token_throughput_srv'])):,}/s"
             )
         if srv_parts:
-            rows.append(f"{indent}{'srv':<{label_w}} {' '.join(srv_parts)}")
+            row_label = "srv" if not server_label else f"srv {server_label}"
+            rows.append(f"{indent}{row_label:<{label_w}} {' '.join(srv_parts)}")
 
     return "\n".join([header, *rows])
 
@@ -400,7 +408,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._error_tracker = ErrorTracker()
 
         self._previous_realtime_records: int | None = None
-        self._previous_realtime_server_snapshot: dict[str, float] | None = None
+        self._previous_realtime_server_snapshot: (
+            dict[str, float] | dict[str, dict[str, float]] | None
+        ) = None
         self._prev_realtime_snapshot: tuple[int, float] | None = None
 
         self._telemetry_state = ErrorTrackingState()
@@ -935,17 +945,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     def _collect_realtime_server_snapshot(
         self, start_ns: int | None = None
-    ) -> dict[str, float]:
+    ) -> dict[str, float] | dict[str, dict[str, float]]:
         """Return the current live server metrics snapshot, if available."""
-        server_snapshot: dict[str, float] = {}
+        server_snapshot: dict[str, float] | dict[str, dict[str, float]] = {}
         if self._server_metrics_accumulator is None:
             return server_snapshot
         try:
             snapshot_fn = getattr(
                 self._server_metrics_accumulator,
-                "realtime_snapshot",
+                "realtime_snapshots",
                 None,
             )
+            if not callable(snapshot_fn):
+                snapshot_fn = getattr(
+                    self._server_metrics_accumulator,
+                    "realtime_snapshot",
+                    None,
+                )
             if callable(snapshot_fn):
                 server_snapshot = snapshot_fn(start_ns=start_ns) or {}
         except Exception as exc:  # noqa: BLE001
@@ -955,7 +971,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     def _has_realtime_update(
         self,
         phase_stats: PhaseRecordsStats,
-        server_snapshot: dict[str, float],
+        server_snapshot: dict[str, float] | dict[str, dict[str, float]],
     ) -> bool:
         """Return whether realtime metrics need rebuilding for the current tick."""
         return (
@@ -965,7 +981,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _report_realtime_metrics(
         self,
-        server_snapshot: dict[str, float] | None = None,
+        server_snapshot: dict[str, float] | dict[str, dict[str, float]] | None = None,
     ) -> bool:
         """Report inference metrics (used by command handler).
 
