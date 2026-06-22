@@ -77,6 +77,7 @@ def test_adaptive_scale_profile_discovers_sla_boundary(
     cli: AIPerfCLI, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Exercise SLA-margin ramp-up and boundary sustain under load."""
+
     def deterministic_sla_values(
         self: AdaptiveScaleStrategy, stats: object
     ) -> dict[str, float]:
@@ -90,12 +91,8 @@ def test_adaptive_scale_profile_discovers_sla_boundary(
     ) -> bool:
         return observed[self._sla_key(self._primary_sla)] <= 80.0
 
-    monkeypatch.setattr(
-        AdaptiveScaleStrategy, "_sla_values", deterministic_sla_values
-    )
-    monkeypatch.setattr(
-        AdaptiveScaleStrategy, "_passes_sla", deterministic_passes_sla
-    )
+    monkeypatch.setattr(AdaptiveScaleStrategy, "_sla_values", deterministic_sla_values)
+    monkeypatch.setattr(AdaptiveScaleStrategy, "_passes_sla", deterministic_passes_sla)
 
     config_path = tmp_path / "adaptive_scale_boundary.yaml"
     config_path.write_text(
