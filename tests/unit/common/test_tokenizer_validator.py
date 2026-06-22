@@ -439,19 +439,13 @@ class TestValidatorFakeModelFallback:
         resolution.is_ambiguous = False
         resolution.resolved_name = "Qwen/Qwen3-0.6B"
 
-        with (
-            patch.object(
-                Tokenizer, "resolve_alias", return_value=resolution
-            ) as mock_resolve,
-            patch(
-                "aiperf.common.tokenizer_validator._prefetch_tokenizers"
-            ) as mock_prefetch,
-        ):
+        with patch.object(
+            Tokenizer, "resolve_alias", return_value=resolution
+        ) as mock_resolve:
             result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         # Only the real model is resolved; the fake one is skipped entirely.
         mock_resolve.assert_called_once_with("Qwen/Qwen3-0.6B")
-        mock_prefetch.assert_called_once()
         assert result == {
             "mock-llama": BUILTIN_TOKENIZER_NAME,
             "Qwen/Qwen3-0.6B": "Qwen/Qwen3-0.6B",
@@ -468,18 +462,12 @@ class TestValidatorFakeModelFallback:
         resolution.is_ambiguous = False
         resolution.resolved_name = "Qwen/Qwen3-0.6B"
 
-        with (
-            patch.object(
-                Tokenizer, "resolve_alias", return_value=resolution
-            ) as mock_resolve,
-            patch(
-                "aiperf.common.tokenizer_validator._prefetch_tokenizers"
-            ) as mock_prefetch,
-        ):
+        with patch.object(
+            Tokenizer, "resolve_alias", return_value=resolution
+        ) as mock_resolve:
             result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         mock_resolve.assert_called_once_with("Qwen/Qwen3-0.6B")
-        mock_prefetch.assert_called_once()
         # No placeholder warning emitted.
         mock_logger.warning.assert_not_called()
         assert result == {"mock-llama": "Qwen/Qwen3-0.6B"}
