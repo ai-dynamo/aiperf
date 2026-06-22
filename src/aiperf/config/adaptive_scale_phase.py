@@ -71,6 +71,7 @@ def _copy_mapped_fields(
 def lower_adaptive_scale_details(
     lowered: dict[str, object], block: dict[str, object]
 ) -> None:
+    """Lower nested adaptive-scale YAML settings into flat phase fields."""
     lowered["adaptive_scale"] = bool(block.get("enabled", True))
     _copy_mapped_fields(lowered, block, _ADAPTIVE_SCALE_FIELD_MAP)
 
