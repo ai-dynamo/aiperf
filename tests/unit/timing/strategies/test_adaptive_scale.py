@@ -107,7 +107,9 @@ async def test_handle_credit_result_counts_cancelled_as_error(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_inherited_handle_credit_return_does_not_record_success_sample(tmp_path) -> None:
+async def test_inherited_handle_credit_return_does_not_record_success_sample(
+    tmp_path,
+) -> None:
     strategy = _strategy(tmp_path)
     credit = Credit(
         id=1,
