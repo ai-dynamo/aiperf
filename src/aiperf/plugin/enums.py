@@ -169,14 +169,14 @@ def _build_phasetype_members() -> dict[str, str]:
         if alias.upper() not in members:
             members[alias.upper()] = alias
     for entry in plugins.list_entries(PluginType.TIMING_STRATEGY):
-        if entry.name in {'request_rate'}:
+        if entry.name in ('adaptive_scale', 'request_rate'):
             continue
         alias = {'user_centric_rate': 'user_centric'}.get(entry.name, entry.name)
         if alias.upper() not in members:
             members[alias.upper()] = alias
     return members
 PhaseType = create_enum("PhaseType", _build_phasetype_members(), module=__name__)
-"""Load generation type for benchmark phases. Example: PhaseType.ADAPTIVE_SCALE, PhaseType.CONCURRENCY, PhaseType.CONSTANT"""
+"""Load generation type for benchmark phases. Example: PhaseType.CONCURRENCY, PhaseType.CONSTANT, PhaseType.FIXED_SCHEDULE"""
 
 DatasetFormatStr: TypeAlias = str
 def _build_datasetformat_members() -> dict[str, str]:
