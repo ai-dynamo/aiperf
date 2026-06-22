@@ -1067,12 +1067,31 @@
                       "description": "Request cancellation testing configuration."
                     },
                     "sla": {
-                      "description": "SLA filters evaluated by adaptive load controllers.",
-                      "items": {
-                        "$ref": "#/$defs/SLAFilter"
-                      },
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                       "title": "Sla",
-                      "type": "array"
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "number"
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -1331,12 +1350,31 @@
                       "description": "Request cancellation testing configuration."
                     },
                     "sla": {
-                      "description": "SLA filters evaluated by adaptive load controllers.",
-                      "items": {
-                        "$ref": "#/$defs/SLAFilter"
-                      },
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                       "title": "Sla",
-                      "type": "array"
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "number"
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -1521,12 +1559,31 @@
                       "description": "Request cancellation testing configuration."
                     },
                     "sla": {
-                      "description": "SLA filters evaluated by adaptive load controllers.",
-                      "items": {
-                        "$ref": "#/$defs/SLAFilter"
-                      },
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                       "title": "Sla",
-                      "type": "array"
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "number"
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -1725,12 +1782,31 @@
                       "description": "Request cancellation testing configuration."
                     },
                     "sla": {
-                      "description": "SLA filters evaluated by adaptive load controllers.",
-                      "items": {
-                        "$ref": "#/$defs/SLAFilter"
-                      },
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                       "title": "Sla",
-                      "type": "array"
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "number"
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -1915,12 +1991,31 @@
                       "description": "Request cancellation testing configuration."
                     },
                     "sla": {
-                      "description": "SLA filters evaluated by adaptive load controllers.",
-                      "items": {
-                        "$ref": "#/$defs/SLAFilter"
-                      },
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                       "title": "Sla",
-                      "type": "array"
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "number"
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -2112,12 +2207,31 @@
                       "description": "Request cancellation testing configuration."
                     },
                     "sla": {
-                      "description": "SLA filters evaluated by adaptive load controllers.",
-                      "items": {
-                        "$ref": "#/$defs/SLAFilter"
-                      },
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                       "title": "Sla",
-                      "type": "array"
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "number"
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -2913,12 +3027,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3177,12 +3310,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3367,12 +3519,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3571,12 +3742,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3761,12 +3951,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3958,12 +4167,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -4172,12 +4400,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -4436,12 +4683,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -4626,12 +4892,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -4830,12 +5115,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -5020,12 +5324,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -5217,12 +5540,31 @@
                   "description": "Request cancellation testing configuration."
                 },
                 "sla": {
-                  "description": "SLA filters evaluated by adaptive load controllers.",
-                  "items": {
-                    "$ref": "#/$defs/SLAFilter"
-                  },
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
                   "title": "Sla",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -5635,12 +5977,31 @@
           "description": "Request cancellation testing configuration."
         },
         "sla": {
-          "description": "SLA filters evaluated by adaptive load controllers.",
-          "items": {
-            "$ref": "#/$defs/SLAFilter"
-          },
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
           "title": "Sla",
-          "type": "array"
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -6110,12 +6471,31 @@
           "description": "Request cancellation testing configuration."
         },
         "sla": {
-          "description": "SLA filters evaluated by adaptive load controllers.",
-          "items": {
-            "$ref": "#/$defs/SLAFilter"
-          },
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
           "title": "Sla",
-          "type": "array"
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -7383,12 +7763,31 @@
           "description": "Request cancellation testing configuration."
         },
         "sla": {
-          "description": "SLA filters evaluated by adaptive load controllers.",
-          "items": {
-            "$ref": "#/$defs/SLAFilter"
-          },
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
           "title": "Sla",
-          "type": "array"
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -7717,12 +8116,31 @@
           "description": "Request cancellation testing configuration."
         },
         "sla": {
-          "description": "SLA filters evaluated by adaptive load controllers.",
-          "items": {
-            "$ref": "#/$defs/SLAFilter"
-          },
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
           "title": "Sla",
-          "type": "array"
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -9706,12 +10124,31 @@
           "description": "Request cancellation testing configuration."
         },
         "sla": {
-          "description": "SLA filters evaluated by adaptive load controllers.",
-          "items": {
-            "$ref": "#/$defs/SLAFilter"
-          },
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
           "title": "Sla",
-          "type": "array"
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -12407,12 +12844,31 @@
           "description": "Request cancellation testing configuration."
         },
         "sla": {
-          "description": "SLA filters evaluated by adaptive load controllers.",
-          "items": {
-            "$ref": "#/$defs/SLAFilter"
-          },
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
           "title": "Sla",
-          "type": "array"
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,

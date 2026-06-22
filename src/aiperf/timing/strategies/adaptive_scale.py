@@ -641,9 +641,8 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             "reason": reason,
         }
         if self._event_path is not None:
-            with self._event_path.open("a", encoding="utf-8") as f:
-                encoded = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
-                f.write(encoded.decode() + "\n")
+            with self._event_path.open("ab") as f:
+                f.write(orjson.dumps(payload, option=orjson.OPT_SORT_KEYS) + b"\n")
 
     def _complete_controller(
         self,

@@ -307,6 +307,32 @@ class TestAdaptiveScaleRoutes:
         with pytest.raises(ValueError, match="--adaptive-scale-sla"):
             build_profiling(user)
 
+    def test_adaptive_scale_rejects_concurrency_ramp(self):
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(
+            ValueError, match="adaptive_scale cannot be combined with concurrency_ramp"
+        ):
+            ConcurrencyPhase.model_validate(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 600,
+                    "concurrency": 200,
+                    "concurrency_ramp": 30,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 120,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 30000,
+                        }
+                    ],
+                }
+            )
+
     def test_nested_adaptive_scale_yaml_lowers_to_flat_phase_fields(self):
         from aiperf.config.phases import ConcurrencyPhase
 

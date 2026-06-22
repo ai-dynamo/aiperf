@@ -502,9 +502,9 @@ class ConcurrencyPhase(BasePhaseConfig):
             raise ValueError("adaptive_scale requires adaptive_sustain_duration")
         if not self.sla:
             raise ValueError("adaptive_scale requires sla filters")
-        # v1 keeps the controller concrete: it drives ConcurrencyManager's
-        # session limit directly. Add a control-backend abstraction when a
-        # second variable, such as user count, is implemented end to end.
+        if self.concurrency_ramp is not None:
+            raise ValueError("adaptive_scale cannot be combined with concurrency_ramp")
+        # TODO: AIP-967 - Add adaptive scale control-backend abstraction.
         if self.adaptive_control_variable != "concurrency":
             raise ValueError(
                 "adaptive_scale control variable must be 'concurrency' in this release"

@@ -171,8 +171,8 @@ benchmark:
         if event["event"] == "adaptive_window" and event["phase"] == "discover"
     ]
     discover_values = [event["active_concurrency"] for event in discover_windows]
-    assert discover_values[0] == 1
     assert len(discover_values) >= 3
+    assert discover_values[0] == 1
 
     discover_decisions = [
         event
