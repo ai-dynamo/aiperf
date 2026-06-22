@@ -62,7 +62,11 @@ def apply_basic_adaptive_scale_overrides(
     if "adaptive_scale_sla" in fields_set and cli.adaptive_scale_sla:
         from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
 
-        target["sla"] = [
-            parse_sla_filter(value).model_dump(mode="json")
-            for value in cli.adaptive_scale_sla
-        ]
+        parsed_sla: list[dict[str, Any]] = []
+        for value in cli.adaptive_scale_sla:
+            try:
+                parsed_sla.append(parse_sla_filter(value).model_dump(mode="json"))
+            except TypeError as exc:
+                message = str(exc).replace("--search-sla", "--adaptive-scale-sla")
+                raise TypeError(message) from exc
+        target["sla"] = parsed_sla

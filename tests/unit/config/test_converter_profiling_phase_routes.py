@@ -368,3 +368,18 @@ class TestAdaptiveScaleRoutes:
         assert phase.adaptive_scale_step_policy == "sla_margin"
         assert phase.adaptive_scale_base_step == 10
         assert phase.adaptive_scale_max_step_multiplier == 4
+
+    def test_nested_adaptive_scale_string_false_disables_phase(self):
+        from aiperf.config.phases import ConcurrencyPhase
+
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": {"enabled": "false"},
+            }
+        )
+
+        assert phase.adaptive_scale is False

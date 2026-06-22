@@ -5,12 +5,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import orjson
+
+from aiperf.config.sweep.adaptive import SLAFilter
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AdaptiveScaleArtifactWriter:
@@ -48,6 +53,8 @@ class AdaptiveScaleArtifactWriter:
             write = await self._queue.get()
             try:
                 await asyncio.to_thread(write)
+            except Exception:
+                _LOGGER.exception("adaptive scale artifact write failed")
             finally:
                 self._queue.task_done()
 
@@ -76,7 +83,7 @@ class AdaptiveScaleArtifactWriter:
         boundary_concurrency: int | None,
         last_good_concurrency: int | None,
         first_failing_concurrency: int | None,
-        primary_sla,
+        primary_sla: SLAFilter,
         strategy_type: str,
         step_policy: str,
         reason: str,
@@ -133,7 +140,7 @@ class AdaptiveScaleArtifactWriter:
         completed_reason: str | None,
         sustain_windows: int,
         sustain_passed_windows: int,
-        primary_sla,
+        primary_sla: SLAFilter,
         strategy_type: str,
         step_policy: str,
         base_step: int,

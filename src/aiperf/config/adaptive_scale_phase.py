@@ -68,11 +68,26 @@ def _copy_mapped_fields(
             lowered[target] = source_data[source]
 
 
+def _parse_enabled(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+        if normalized in {"false", "no", "off", "0"}:
+            return False
+        raise ValueError("adaptive_scale.enabled must be a boolean")
+    return bool(value)
+
+
 def lower_adaptive_scale_details(
     lowered: dict[str, object], block: dict[str, object]
 ) -> None:
     """Lower nested adaptive-scale YAML settings into flat phase fields."""
-    lowered["adaptive_scale"] = bool(block.get("enabled", True))
+    lowered["adaptive_scale"] = _parse_enabled(block.get("enabled"))
     _copy_mapped_fields(lowered, block, _ADAPTIVE_SCALE_FIELD_MAP)
 
     strategy = block.get("strategy", {})

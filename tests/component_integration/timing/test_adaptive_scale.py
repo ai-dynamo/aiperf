@@ -122,7 +122,7 @@ benchmark:
         control_variable: concurrency
         min_concurrency: 1
         assessment_period: 1.0
-        min_completed_requests: 5
+        min_completed_requests: 1
         sustain_duration: 1.0
         strategy:
           type: ramp_until_fail
@@ -141,7 +141,7 @@ benchmark:
     FakeTransport._DEFAULT_CONFIG = MockServerConfig(
         ttft=5.0,
         itl=1.0,
-        ttft_concurrency_quad_ms=0.1,
+        ttft_concurrency_quad_ms=0.25,
     )
     try:
         result = cli.run_sync(

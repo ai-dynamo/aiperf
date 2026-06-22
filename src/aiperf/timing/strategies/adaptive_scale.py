@@ -8,6 +8,7 @@ import asyncio
 import math
 import time
 from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
@@ -142,7 +143,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
     def _passes_sla(self, observed: dict[str, float]) -> bool:
         return self._sla.passes(self._sla_filters, observed)
 
-    def _resolve_artifact_path(self, filename: str):
+    def _resolve_artifact_path(self, filename: str) -> Path | None:
         return self._artifacts.resolve_path(self._config.artifact_dir, filename)
 
     async def setup_phase(self) -> None:

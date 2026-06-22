@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import MagicMock
 
@@ -18,6 +19,9 @@ from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.strategies.adaptive_scale import (
     AdaptiveScaleStrategy,
     _percentile,
+)
+from aiperf.timing.strategies.adaptive_scale_artifacts import (
+    AdaptiveScaleArtifactWriter,
 )
 
 
@@ -698,3 +702,24 @@ def test_percentile_empty_single_and_exact_rank() -> None:
         _percentile([], 50)
     assert _percentile([42], 95) == 42.0
     assert _percentile([10, 20, 30], 50) == 20.0
+
+
+@pytest.mark.asyncio
+async def test_artifact_writer_continues_after_failed_write() -> None:
+    writer = AdaptiveScaleArtifactWriter()
+    await writer.start()
+    completed: list[str] = []
+
+    def fail() -> None:
+        raise OSError("disk write failed")
+
+    def succeed() -> None:
+        completed.append("ok")
+
+    writer._schedule_write(fail)
+    writer._schedule_write(succeed)
+
+    await asyncio.wait_for(writer.flush(), timeout=1.0)
+    await writer.close()
+
+    assert completed == ["ok"]
