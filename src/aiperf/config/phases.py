@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# ruff: noqa: I001
 
 """
 AIPerf Configuration v2.0 - Phase Configuration
@@ -23,6 +24,10 @@ from typing_extensions import Self
 
 from aiperf.config.base import BaseConfig
 from aiperf.config.cancellation import CancellationConfig
+from aiperf.config.adaptive_scale_phase import (
+    lower_adaptive_scale_details,
+    normalize_adaptive_sla,
+)
 from aiperf.config.loader.duration import (
     DurationSpec,
     _normalize_duration,
@@ -53,84 +58,6 @@ __all__ = [
     "_normalize_ramp",
     "_parse_duration",
 ]
-
-
-def _normalize_adaptive_sla(sla: dict[str, object]) -> list[SLAFilter]:
-    """Lower compact metric/stat/op SLA YAML into SLAFilter objects."""
-    filters: list[SLAFilter] = []
-    for metric_tag, stats in sla.items():
-        if not isinstance(stats, dict):
-            raise ValueError("adaptive_scale.sla entries must map metric tags to stats")
-        for stat, ops in stats.items():
-            if not isinstance(ops, dict):
-                raise ValueError(
-                    "adaptive_scale.sla stats must map operators to thresholds"
-                )
-            for op, threshold in ops.items():
-                filters.append(
-                    SLAFilter(
-                        metric_tag=metric_tag,
-                        stat=stat,
-                        op=op,
-                        threshold=threshold,
-                    )
-                )
-    return filters
-
-
-_ADAPTIVE_SCALE_FIELD_MAP = {
-    "control_variable": "adaptive_control_variable",
-    "controlVariable": "adaptive_control_variable",
-    "min_concurrency": "adaptive_scale_min_concurrency",
-    "minConcurrency": "adaptive_scale_min_concurrency",
-    "window": "adaptive_assessment_period",
-    "assessment_period": "adaptive_assessment_period",
-    "assessmentPeriod": "adaptive_assessment_period",
-    "min_completed_requests": "adaptive_min_completed_requests",
-    "minCompletedRequests": "adaptive_min_completed_requests",
-    "sustain_duration": "adaptive_sustain_duration",
-    "sustainDuration": "adaptive_sustain_duration",
-}
-
-
-_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP = {
-    "type": "adaptive_scale_strategy_type",
-    "step_policy": "adaptive_scale_step_policy",
-    "stepPolicy": "adaptive_scale_step_policy",
-    "base_step": "adaptive_scale_base_step",
-    "baseStep": "adaptive_scale_base_step",
-    "max_step_multiplier": "adaptive_scale_max_step_multiplier",
-    "maxStepMultiplier": "adaptive_scale_max_step_multiplier",
-    "step_percent": "adaptive_scale_step_percent",
-    "stepPercent": "adaptive_scale_step_percent",
-}
-
-
-def _copy_mapped_fields(
-    lowered: dict[str, object],
-    source_data: dict[str, object],
-    field_map: dict[str, str],
-) -> None:
-    for source, target in field_map.items():
-        if source in source_data:
-            lowered[target] = source_data[source]
-
-
-def _lower_adaptive_scale_details(
-    lowered: dict[str, object], block: dict[str, object]
-) -> None:
-    lowered["adaptive_scale"] = bool(block.get("enabled", True))
-    _copy_mapped_fields(lowered, block, _ADAPTIVE_SCALE_FIELD_MAP)
-
-    strategy = block.get("strategy", {})
-    if isinstance(strategy, dict):
-        _copy_mapped_fields(lowered, strategy, _ADAPTIVE_SCALE_STRATEGY_FIELD_MAP)
-
-    sla = block.get("sla")
-    if isinstance(sla, list):
-        lowered["sla"] = sla
-    elif isinstance(sla, dict):
-        lowered["sla"] = _normalize_adaptive_sla(sla)
 
 
 # =============================================================================
@@ -483,13 +410,13 @@ class ConcurrencyPhase(BasePhaseConfig):
             return data
         lowered = dict(data)
         if isinstance(lowered.get("sla"), dict):
-            lowered["sla"] = _normalize_adaptive_sla(lowered["sla"])
+            lowered["sla"] = normalize_adaptive_sla(lowered["sla"])
 
         block = data.get("adaptive_scale")
         if not isinstance(block, dict):
             return lowered
 
-        _lower_adaptive_scale_details(lowered, block)
+        lower_adaptive_scale_details(lowered, block)
         return lowered
 
     @model_validator(mode="after")
@@ -503,7 +430,12 @@ class ConcurrencyPhase(BasePhaseConfig):
         if not self.sla:
             raise ValueError("adaptive_scale requires sla filters")
         if self.concurrency_ramp is not None:
-            raise ValueError("adaptive_scale cannot be combined with concurrency_ramp")
+            raise ValueError(
+                "adaptive_scale cannot be combined with concurrency_ramp. "
+                "adaptive_scale already adjusts concurrency during the phase to "
+                "discover an SLA boundary. Use concurrency_ramp only when you know "
+                "the target concurrency and want to ease into it over a fixed duration."
+            )
         # TODO: AIP-967 - Add adaptive scale control-backend abstraction.
         if self.adaptive_control_variable != "concurrency":
             raise ValueError(
@@ -518,161 +450,14 @@ class ConcurrencyPhase(BasePhaseConfig):
 # RATE-CONTROLLED PHASES
 # =============================================================================
 
-
-class RatePhaseConfig(BasePhaseConfig):
-    """Base for rate-controlled phases. Not instantiated directly."""
-
-    rate: Annotated[
-        float,
-        Field(
-            gt=0,
-            description="Target request rate in requests per second (must be > 0).",
-        ),
-    ]
-
-    rate_ramp: Annotated[
-        RampSpec,
-        Field(
-            default=None,
-            description="Ramp rate from lower value. "
-            "Can be number (seconds) or {duration, strategy}.",
-        ),
-    ]
-
-
-class PoissonPhase(RatePhaseConfig):
-    """Poisson-distributed request arrivals at the target rate."""
-
-    type: Annotated[
-        Literal[PhaseType.POISSON],
-        Field(description="Poisson-distributed rate-controlled arrivals."),
-    ]
-
-
-class GammaPhase(RatePhaseConfig):
-    """Gamma-distributed request arrivals with configurable smoothness."""
-
-    type: Annotated[
-        Literal[PhaseType.GAMMA],
-        Field(description="Gamma-distributed rate-controlled arrivals."),
-    ]
-
-    smoothness: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            default=None,
-            description="Gamma distribution shape parameter (must be > 0). "
-            "1.0 = Poisson, <1 = bursty, >1 = regular.",
-        ),
-    ]
-
-
-class ConstantPhase(RatePhaseConfig):
-    """Constant-rate request arrivals (fixed inter-arrival time)."""
-
-    type: Annotated[
-        Literal[PhaseType.CONSTANT],
-        Field(description="Constant rate-controlled arrivals."),
-    ]
-
-
-class UserCentricPhase(RatePhaseConfig):
-    """N concurrent users sharing a global request rate.
-
-    Requires multi-turn conversations. Each user gets a proportional
-    share of the global ``rate``.
-    """
-
-    type: Annotated[
-        Literal[PhaseType.USER_CENTRIC],
-        Field(description="N users sharing a global request rate."),
-    ]
-
-    users: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="Number of simulated concurrent users (must be >= 1). "
-            "Requests distributed across users to achieve global rate.",
-        ),
-    ]
-
-    @model_validator(mode="after")
-    def validate_user_centric_constraints(self) -> UserCentricPhase:
-        """Validate user-centric mode constraints."""
-        if self.sessions is not None and self.sessions < self.users:
-            raise ValueError(
-                f"Phase '{self.name}': --num-sessions ({self.sessions}) must be "
-                f">= --num-users ({self.users}). Each user needs at least one session."
-            )
-
-        if self.requests is not None and self.requests < self.users:
-            raise ValueError(
-                f"Phase '{self.name}': --request-count ({self.requests}) must be "
-                f">= --num-users ({self.users}). Each user needs at least one request."
-            )
-
-        return self
-
-
-# =============================================================================
-# FIXED SCHEDULE PHASE
-# =============================================================================
-
-
-class FixedSchedulePhase(BasePhaseConfig):
-    """Replay requests at predetermined timestamps from a trace dataset.
-
-    Stop condition not required -- the trace dataset determines when the
-    phase ends.
-    """
-
-    _stop_condition_required: ClassVar[bool] = False
-
-    type: Annotated[
-        Literal[PhaseType.FIXED_SCHEDULE],
-        Field(description="Replay requests at trace timestamps."),
-    ]
-
-    auto_offset: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Normalize trace timestamps to start at 0. "
-            "Subtracts minimum timestamp from all entries.",
-        ),
-    ]
-
-    start_offset: Annotated[
-        int | None,
-        Field(
-            ge=0,
-            default=None,
-            description="Filter out trace requests before this timestamp in ms (must be >= 0).",
-        ),
-    ]
-
-    end_offset: Annotated[
-        int | None,
-        Field(
-            ge=0,
-            default=None,
-            description="Filter out trace requests after this timestamp in ms (must be >= 0).",
-        ),
-    ]
-
-    @model_validator(mode="after")
-    def _validate_fixed_schedule_constraints(self) -> Self:
-        if self.auto_offset and self.start_offset is not None:
-            raise ValueError("auto_offset cannot be True when start_offset is set")
-        if (
-            self.start_offset is not None
-            and self.end_offset is not None
-            and self.start_offset > self.end_offset
-        ):
-            raise ValueError("start_offset must be <= end_offset")
-        return self
+from aiperf.config.phase_kinds import (  # noqa: E402
+    ConstantPhase,
+    FixedSchedulePhase,
+    GammaPhase,
+    PoissonPhase,
+    RatePhaseConfig,
+    UserCentricPhase,
+)
 
 
 # =============================================================================

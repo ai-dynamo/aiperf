@@ -1085,7 +1085,10 @@
                             "additionalProperties": {
                               "type": "object",
                               "additionalProperties": {
-                                "type": "number"
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
                               }
                             }
                           },
@@ -1368,7 +1371,10 @@
                             "additionalProperties": {
                               "type": "object",
                               "additionalProperties": {
-                                "type": "number"
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
                               }
                             }
                           },
@@ -1577,7 +1583,10 @@
                             "additionalProperties": {
                               "type": "object",
                               "additionalProperties": {
-                                "type": "number"
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
                               }
                             }
                           },
@@ -1800,7 +1809,10 @@
                             "additionalProperties": {
                               "type": "object",
                               "additionalProperties": {
-                                "type": "number"
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
                               }
                             }
                           },
@@ -2009,7 +2021,10 @@
                             "additionalProperties": {
                               "type": "object",
                               "additionalProperties": {
-                                "type": "number"
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
                               }
                             }
                           },
@@ -2225,7 +2240,10 @@
                             "additionalProperties": {
                               "type": "object",
                               "additionalProperties": {
-                                "type": "number"
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
                               }
                             }
                           },
@@ -3045,7 +3063,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -3328,7 +3349,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -3537,7 +3561,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -3760,7 +3787,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -3969,7 +3999,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -4185,7 +4218,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -4418,7 +4454,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -4701,7 +4740,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -4910,7 +4952,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -5133,7 +5178,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -5342,7 +5390,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -5558,7 +5609,10 @@
                         "additionalProperties": {
                           "type": "object",
                           "additionalProperties": {
-                            "type": "number"
+                            "type": [
+                              "number",
+                              "string"
+                            ]
                           }
                         }
                       },
@@ -5995,7 +6049,10 @@
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": {
-                    "type": "number"
+                    "type": [
+                      "number",
+                      "string"
+                    ]
                   }
                 }
               },
@@ -6489,7 +6546,10 @@
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": {
-                    "type": "number"
+                    "type": [
+                      "number",
+                      "string"
+                    ]
                   }
                 }
               },
@@ -7781,7 +7841,10 @@
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": {
-                    "type": "number"
+                    "type": [
+                      "number",
+                      "string"
+                    ]
                   }
                 }
               },
@@ -8134,7 +8197,10 @@
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": {
-                    "type": "number"
+                    "type": [
+                      "number",
+                      "string"
+                    ]
                   }
                 }
               },
@@ -10142,7 +10208,10 @@
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": {
-                    "type": "number"
+                    "type": [
+                      "number",
+                      "string"
+                    ]
                   }
                 }
               },
@@ -12862,7 +12931,10 @@
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": {
-                    "type": "number"
+                    "type": [
+                      "number",
+                      "string"
+                    ]
                   }
                 }
               },

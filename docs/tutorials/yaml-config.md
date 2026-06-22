@@ -321,6 +321,8 @@ Adaptive scale is for single-run boundary discovery. Instead of launching a swee
 
 In v1 the control variable is session/request concurrency, so adaptive scale is configured on a `concurrency` phase. The CLI exposes only the basic path: `--adaptive-scale`, `--adaptive-sustain-duration`, `--adaptive-assessment-period`, plus the existing `--concurrency` and `--benchmark-duration` flags and the adaptive-specific `--adaptive-scale-sla` flag. Advanced controller tuning lives in YAML so it stays reviewable and version-controlled.
 
+Do not combine `adaptive_scale` with `concurrency_ramp`: adaptive scale already adjusts concurrency during the phase to discover an SLA boundary. Use `concurrency_ramp` only when you know the target concurrency and want to ease into it over a fixed duration.
+
 When you combine `--config` with adaptive CLI flags, those CLI flags overlay only the basic fields on the profiling phase. If the YAML contains an advanced `adaptive_scale:` block, AIPerf preserves its strategy and tuning fields while applying the explicit CLI overrides for enablement, sustain duration, assessment period, concurrency, duration, and adaptive scale SLA.
 
 ```yaml

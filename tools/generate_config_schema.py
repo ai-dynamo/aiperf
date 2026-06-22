@@ -731,7 +731,7 @@ class ConfigSchemaGenerator(Generator):
                 "type": "object",
                 "additionalProperties": {
                     "type": "object",
-                    "additionalProperties": {"type": "number"},
+                    "additionalProperties": {"type": ["number", "string"]},
                 },
             },
             "description": "Compact SLA mapping: metric -> stat -> operator -> threshold.",

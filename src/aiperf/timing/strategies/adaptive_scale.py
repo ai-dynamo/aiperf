@@ -8,43 +8,34 @@ import asyncio
 import math
 import time
 from contextlib import suppress
-from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Literal
-
-import orjson
+from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.messages import CreditReturn
+from aiperf.timing.strategies.adaptive_scale_artifacts import (
+    AdaptiveScaleArtifactWriter,
+)
+from aiperf.timing.strategies.adaptive_scale_controller import (
+    AdaptiveScaleController,
+)
+from aiperf.timing.strategies.adaptive_scale_sla import (
+    AdaptiveScaleSLAEvaluator,
+    _percentile,
+)
+from aiperf.timing.strategies.adaptive_scale_types import (
+    MIN_ASSESSMENT_PERIOD_SEC,
+    AdaptiveControllerPhase,
+    WindowStats,
+)
 from aiperf.timing.strategies.request_rate import RequestRateStrategy
+
+__all__ = ["AdaptiveScaleStrategy", "WindowStats", "_percentile"]
 
 if TYPE_CHECKING:
     from aiperf.config.sweep.adaptive import SLAFilter
     from aiperf.credit.structs import Credit
     from aiperf.timing.concurrency import ConcurrencyManager
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
-
-
-AdaptiveControllerPhase = Literal["discover", "sustain", "complete"]
-
-MIN_ASSESSMENT_PERIOD_SEC = 1.0
-
-
-@dataclass(slots=True)
-class WindowStats:
-    samples: list[int]
-    errors: int
-    elapsed_sec: float
-
-    @property
-    def total(self) -> int:
-        return len(self.samples) + self.errors
-
-    @property
-    def throughput(self) -> float:
-        if self.elapsed_sec <= 0:
-            return 0.0
-        return len(self.samples) / self.elapsed_sec
 
 
 class AdaptiveScaleStrategy(RequestRateStrategy):
@@ -94,6 +85,8 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             raise ValueError("adaptive_scale strategy type must be 'ramp_until_fail'")
         if not self._config.adaptive_sla_filters:
             raise ValueError("adaptive_sla_filters is required")
+        self._controller = AdaptiveScaleController()
+        self._sla = AdaptiveScaleSLAEvaluator()
         self._sla_filters = list(self._config.adaptive_sla_filters)
         self._primary_sla = self._sla_filters[0]
         self._validate_sla_filters()
@@ -108,6 +101,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         self._window_latency_ns: list[int] = []
         self._window_errors = 0
         self._window_started_at = time.perf_counter()
+        self._artifacts = AdaptiveScaleArtifactWriter()
         self._event_path = self._resolve_artifact_path(self.EVENT_FILE)
         self._summary_path = self._resolve_artifact_path(self.SUMMARY_FILE)
         self._sustain_started_at_ns: int | None = None
@@ -122,111 +116,38 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             raise ValueError(f"{name} must be >= 1 for adaptive scale")
         return value
 
-    @staticmethod
-    def _request_latency_value(samples: list[int], stat: str) -> float:
-        if not samples:
-            raise ValueError("request_latency SLA requires completed request samples")
-        values_ms = [sample / 1_000_000 for sample in samples]
-        match stat:
-            case "avg":
-                return sum(values_ms) / len(values_ms)
-            case "min":
-                return min(values_ms)
-            case "max":
-                return max(values_ms)
-            case "p1" | "p5" | "p10" | "p25" | "p50" | "p75" | "p90" | "p95" | "p99":
-                percentile = float(stat[1:])
-                return _percentile(samples, percentile) / 1_000_000
-        raise ValueError(f"Unsupported request_latency SLA stat: {stat}")
-
-    @staticmethod
-    def _throughput_value(stats: WindowStats, stat: str) -> float:
-        match stat:
-            case "avg" | "min" | "max":
-                return stats.throughput
-        raise ValueError(f"Unsupported throughput SLA stat: {stat}")
-
-    @staticmethod
-    def _goodput_ratio_value(stats: WindowStats, stat: str) -> float:
-        match stat:
-            case "avg" | "min" | "max":
-                if stats.total == 0:
-                    return 0.0
-                return len(stats.samples) / stats.total
-        raise ValueError(f"Unsupported goodput_ratio SLA stat: {stat}")
+    _request_latency_value = staticmethod(
+        AdaptiveScaleSLAEvaluator.request_latency_value
+    )
+    _throughput_value = staticmethod(AdaptiveScaleSLAEvaluator.throughput_value)
+    _goodput_ratio_value = staticmethod(AdaptiveScaleSLAEvaluator.goodput_ratio_value)
+    _validate_single_sla_filter = staticmethod(
+        AdaptiveScaleSLAEvaluator.validate_single_filter
+    )
+    _passes_single_sla = staticmethod(AdaptiveScaleSLAEvaluator.passes_single)
 
     def _sla_value(self, sla: SLAFilter, stats: WindowStats) -> float:
-        match sla.metric_tag:
-            case "request_latency":
-                return self._request_latency_value(stats.samples, sla.stat)
-            case "throughput" | "request_throughput" | "completed_request_throughput":
-                return self._throughput_value(stats, sla.stat)
-            case "goodput_ratio" | "success_rate" | "request_success_rate":
-                return self._goodput_ratio_value(stats, sla.stat)
-        raise ValueError(
-            "adaptive_scale supports request_latency, request throughput, "
-            "and goodput_ratio SLA metrics in this release, got "
-            f"{sla.metric_tag!r}"
-        )
+        return self._sla.value(sla, stats)
 
     def _validate_sla_filters(self) -> None:
-        for sla in self._sla_filters:
-            self._validate_single_sla_filter(sla)
-
-    @staticmethod
-    def _validate_single_sla_filter(sla: SLAFilter) -> None:
-        if sla.op not in {"lt", "le", "gt", "ge"}:
-            raise ValueError(f"Unsupported SLA operator: {sla.op}")
-        match sla.metric_tag:
-            case "request_latency":
-                if sla.stat not in {
-                    "avg",
-                    "min",
-                    "max",
-                    "p1",
-                    "p5",
-                    "p10",
-                    "p25",
-                    "p50",
-                    "p75",
-                    "p90",
-                    "p95",
-                    "p99",
-                }:
-                    raise ValueError(
-                        f"Unsupported request_latency SLA stat: {sla.stat}"
-                    )
-            case "throughput" | "request_throughput" | "completed_request_throughput":
-                if sla.stat not in {"avg", "min", "max"}:
-                    raise ValueError(f"Unsupported throughput SLA stat: {sla.stat}")
-            case "goodput_ratio" | "success_rate" | "request_success_rate":
-                if sla.stat not in {"avg", "min", "max"}:
-                    raise ValueError(f"Unsupported goodput_ratio SLA stat: {sla.stat}")
-            case _:
-                raise ValueError(
-                    "adaptive_scale supports request_latency, request throughput, "
-                    "and goodput_ratio SLA metrics in this release, got "
-                    f"{sla.metric_tag!r}"
-                )
+        self._sla.validate_filters(self._sla_filters)
 
     def _sla_values(self, stats: WindowStats) -> dict[str, float]:
-        return {
-            self._sla_key(sla): self._sla_value(sla, stats) for sla in self._sla_filters
-        }
+        return self._sla.values(self._sla_filters, stats)
 
     @staticmethod
     def _sla_key(sla: SLAFilter) -> str:
-        return f"{sla.metric_tag}:{sla.stat}:{sla.op}:{sla.threshold:g}"
+        return AdaptiveScaleSLAEvaluator.key(sla)
 
-    def _resolve_artifact_path(self, filename: str) -> Path | None:
-        if self._config.artifact_dir is None:
-            return None
-        path = self._config.artifact_dir / filename
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    def _passes_sla(self, observed: dict[str, float]) -> bool:
+        return self._sla.passes(self._sla_filters, observed)
+
+    def _resolve_artifact_path(self, filename: str):
+        return self._artifacts.resolve_path(self._config.artifact_dir, filename)
 
     async def setup_phase(self) -> None:
         await super().setup_phase()
+        await self._artifacts.start()
         self._set_concurrency(self._current_concurrency)
         self._emit_event(
             event="adaptive_phase_started",
@@ -236,6 +157,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             sample_count=0,
             error_count=0,
         )
+        await self._artifacts.flush()
 
     async def execute_phase(self) -> None:
         self._assessment_task = asyncio.create_task(self._assessment_loop())
@@ -248,6 +170,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
                 self._assessment_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await self._assessment_task
+            await self._artifacts.close()
 
     async def handle_credit_return(self, credit: Credit) -> None:
         await super().handle_credit_return(credit)
@@ -279,67 +202,10 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             self._lifecycle.cancel()
 
     async def _assess_window(self) -> None:
-        stats = await self._take_window()
-        if not stats.samples and stats.errors:
-            self._emit_event(
-                event="adaptive_window",
-                reason="all requests failed in assessment window",
-                sla_value=None,
-                throughput=stats.throughput,
-                sample_count=0,
-                error_count=stats.errors,
-                passed=False,
-            )
-            self._assess_failed_window(stats)
-            return
-        if len(stats.samples) < self._min_completed_requests:
-            self._emit_event(
-                event="adaptive_window",
-                reason="inconclusive: completed request count below minimum",
-                sla_value=None,
-                throughput=stats.throughput,
-                sample_count=len(stats.samples),
-                error_count=stats.errors,
-                passed=None,
-            )
-            return
-
-        sla_values = self._sla_values(stats)
-        primary_value = sla_values[self._sla_key(self._primary_sla)]
-        passing = self._passes_sla(sla_values)
-        self._emit_event(
-            event="adaptive_window",
-            reason="SLA window evaluated",
-            sla_value=primary_value,
-            throughput=stats.throughput,
-            sample_count=len(stats.samples),
-            error_count=stats.errors,
-            passed=passing,
-        )
-
-        if self._controller_phase == "discover":
-            self._assess_discover(primary_value, passing, stats, sla_values)
-        elif self._controller_phase == "sustain":
-            self._assess_sustain(primary_value, passing, stats, sla_values)
+        await self._controller.assess_window(self)
 
     def _assess_failed_window(self, stats: WindowStats) -> None:
-        reason = "all requests failed in assessment window"
-        if self._controller_phase == "discover":
-            if self._last_good_concurrency is None:
-                self._first_failing_concurrency = self._current_concurrency
-                self._complete_controller(
-                    reason="no_sustainable_concurrency_found",
-                    terminal_event="adaptive_failed",
-                    throughput=stats.throughput,
-                    sample_count=0,
-                    error_count=stats.errors,
-                )
-                self._lifecycle.cancel()
-                return
-            self._first_failing_concurrency = self._current_concurrency
-            self._enter_sustain(None, stats, reason)
-        elif self._controller_phase == "sustain":
-            self._assess_sustain(None, False, stats, reason=reason)
+        self._controller.assess_failed_window(self, stats)
 
     async def _take_window(self) -> WindowStats:
         async with self._lock:
@@ -361,52 +227,12 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         stats: WindowStats,
         sla_values: dict[str, float] | None = None,
     ) -> None:
-        if passing:
-            self._last_good_concurrency = self._current_concurrency
-            if self._current_concurrency >= self._max_concurrency:
-                self._complete_controller(
-                    reason="max_concurrency_reached_without_saturation",
-                    terminal_event="adaptive_incomplete",
-                    sla_value=sla_value,
-                    throughput=stats.throughput,
-                    sample_count=len(stats.samples),
-                    error_count=stats.errors,
-                )
-                self._lifecycle.cancel()
-                return
-            before = self._current_concurrency
-            next_value = self._next_up(sla_values)
-            step_size = next_value - before
-            self._set_concurrency(next_value)
-            self._emit_event(
-                event="adaptive_decision",
-                reason=f"SLA value {sla_value:.3f} passes configured filters",
-                sla_value=sla_value,
-                throughput=stats.throughput,
-                sample_count=len(stats.samples),
-                error_count=stats.errors,
-                before=before,
-                step_size=step_size,
-            )
-            return
-
-        if self._last_good_concurrency is None:
-            self._first_failing_concurrency = self._current_concurrency
-            self._complete_controller(
-                reason="no_sustainable_concurrency_found",
-                terminal_event="adaptive_failed",
-                sla_value=sla_value,
-                throughput=stats.throughput,
-                sample_count=len(stats.samples),
-                error_count=stats.errors,
-            )
-            self._lifecycle.cancel()
-            return
-        self._first_failing_concurrency = self._current_concurrency
-        self._enter_sustain(
-            sla_value,
-            stats,
-            f"SLA value {sla_value:.3f} breaches configured filters",
+        self._controller.assess_discover(
+            self,
+            sla_value=sla_value,
+            passing=passing,
+            stats=stats,
+            sla_values=sla_values,
         )
 
     def _assess_sustain(
@@ -418,122 +244,14 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         *,
         reason: str | None = None,
     ) -> None:
-        self._sustain_windows += 1
-        if passing:
-            self._sustain_passed_windows += 1
-            self._last_good_concurrency = self._current_concurrency
-            self._emit_event(
-                event="adaptive_decision",
-                reason=f"SLA value {sla_value:.3f} passes configured filters during sustain",
-                sla_value=sla_value,
-                throughput=stats.throughput,
-                sample_count=len(stats.samples),
-                error_count=stats.errors,
-            )
-        else:
-            before = self._current_concurrency
-            target = max(
-                self._config.adaptive_scale_min_concurrency,
-                self._last_good_concurrency
-                or self._config.adaptive_scale_min_concurrency,
-            )
-            if target >= before:
-                target = max(
-                    self._config.adaptive_scale_min_concurrency,
-                    before - self._step_size(before, sla_values),
-                )
-            if target == before == self._config.adaptive_scale_min_concurrency:
-                self._complete_controller(
-                    reason="sustain_failed_sla_unrecoverable",
-                    terminal_event="adaptive_failed",
-                    sla_value=sla_value,
-                    throughput=stats.throughput,
-                    sample_count=len(stats.samples),
-                    error_count=stats.errors,
-                )
-                self._lifecycle.cancel()
-                return
-            self._set_concurrency(target)
-            self._last_good_concurrency = target
-            self._emit_event(
-                event="adaptive_decision",
-                reason=reason
-                or f"SLA value {sla_value:.3f} breaches configured filters during sustain",
-                sla_value=sla_value,
-                throughput=stats.throughput,
-                sample_count=len(stats.samples),
-                error_count=stats.errors,
-                before=before,
-                step_size=abs(before - target),
-            )
-
-        if self._sustain_started_at is not None:
-            elapsed = time.perf_counter() - self._sustain_started_at
-            if elapsed >= self._sustain_duration:
-                self._complete_controller(
-                    reason="sustain_duration_completed",
-                    terminal_event="adaptive_complete",
-                    sla_value=sla_value,
-                    throughput=stats.throughput,
-                    sample_count=len(stats.samples),
-                    error_count=stats.errors,
-                )
-                self._lifecycle.cancel()
+        self._controller.assess_sustain(
+            self, sla_value, passing, stats, sla_values, reason=reason
+        )
 
     def _enter_sustain(
         self, sla_value: float | None, stats: WindowStats, reason: str
     ) -> None:
-        if self._last_good_concurrency is None:
-            raise RuntimeError("cannot enter sustain without a passing boundary")
-        boundary = max(
-            self._config.adaptive_scale_min_concurrency,
-            self._last_good_concurrency,
-        )
-        before = self._current_concurrency
-        self._boundary_concurrency = boundary
-        self._set_concurrency(boundary)
-        self._controller_phase = "sustain"
-        self._sustain_started_at = time.perf_counter()
-        self._sustain_started_at_ns = time.time_ns()
-        self._emit_event(
-            event="sustain_started",
-            phase="sustain",
-            reason=f"holding boundary_concurrency={boundary}",
-            sla_value=sla_value,
-            throughput=stats.throughput,
-            sample_count=len(stats.samples),
-            error_count=stats.errors,
-            before=before,
-        )
-        self._emit_event(
-            event="boundary_discovered",
-            phase="sustain",
-            reason=reason,
-            sla_value=sla_value,
-            throughput=stats.throughput,
-            sample_count=len(stats.samples),
-            error_count=stats.errors,
-            before=boundary,
-        )
-
-    def _passes_sla(self, observed: dict[str, float]) -> bool:
-        return all(
-            self._passes_single_sla(sla, observed[self._sla_key(sla)])
-            for sla in self._sla_filters
-        )
-
-    @staticmethod
-    def _passes_single_sla(sla: SLAFilter, observed: float) -> bool:
-        match sla.op:
-            case "lt":
-                return observed < sla.threshold
-            case "le":
-                return observed <= sla.threshold
-            case "gt":
-                return observed > sla.threshold
-            case "ge":
-                return observed >= sla.threshold
-        raise ValueError(f"Unsupported SLA operator: {sla.op}")
+        self._controller.enter_sustain(self, sla_value, stats, reason)
 
     def _next_up(self, observed_sla_values: dict[str, float] | None) -> int:
         return min(
@@ -607,42 +325,28 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         passed: bool | None = None,
         step_size: int | None = None,
     ) -> None:
-        payload = {
-            "timestamp": time.time_ns(),
-            "event": event,
-            "phase": phase or self._controller_phase,
-            "concurrency_before": (
-                self._current_concurrency if before is None else before
-            ),
-            "concurrency_after": self._current_concurrency,
-            "control_variable": self._config.adaptive_control_variable,
-            "control_value": self._current_concurrency,
-            "active_concurrency": self._current_concurrency,
-            "boundary_concurrency": self._boundary_concurrency,
-            "last_passing_value": self._last_good_concurrency,
-            "first_failing_value": self._first_failing_concurrency,
-            "sla_metric": self._primary_sla.metric_tag,
-            "sla_stat": self._primary_sla.stat,
-            "sla_op": self._primary_sla.op,
-            "sla_value": sla_value,
-            "sla_bound": self._primary_sla.threshold,
-            "throughput": throughput,
-            "sample_count": sample_count,
-            "completed": sample_count,
-            "sent": sample_count + error_count,
-            "in_flight": None,
-            "cancelled": None,
-            "errored": error_count,
-            "error_count": error_count,
-            "sla_passed": passed,
-            "strategy_type": self._config.adaptive_scale_strategy_type,
-            "step_policy": self._config.adaptive_scale_step_policy,
-            "step_size": step_size,
-            "reason": reason,
-        }
-        if self._event_path is not None:
-            with self._event_path.open("ab") as f:
-                f.write(orjson.dumps(payload, option=orjson.OPT_SORT_KEYS) + b"\n")
+        payload = self._artifacts.event_payload(
+            timestamp=time.time_ns(),
+            event=event,
+            phase=phase or self._controller_phase,
+            current_concurrency=self._current_concurrency,
+            control_variable=self._config.adaptive_control_variable,
+            boundary_concurrency=self._boundary_concurrency,
+            last_good_concurrency=self._last_good_concurrency,
+            first_failing_concurrency=self._first_failing_concurrency,
+            primary_sla=self._primary_sla,
+            strategy_type=self._config.adaptive_scale_strategy_type,
+            step_policy=self._config.adaptive_scale_step_policy,
+            reason=reason,
+            sla_value=sla_value,
+            throughput=throughput,
+            sample_count=sample_count,
+            error_count=error_count,
+            before=before,
+            passed=passed,
+            step_size=step_size,
+        )
+        self._artifacts.emit_event(self._event_path, payload)
 
     def _complete_controller(
         self,
@@ -673,51 +377,22 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         if self._summary_written:
             return
         self._summary_written = True
-        if self._summary_path is None:
-            return
-        summary = {
-            "control_variable": self._config.adaptive_control_variable,
-            "control_value": self._current_concurrency,
-            "active_concurrency": self._current_concurrency,
-            "boundary_concurrency": self._boundary_concurrency,
-            "last_passing_value": self._last_good_concurrency,
-            "first_failing_value": self._first_failing_concurrency,
-            "last_good_concurrency": self._last_good_concurrency,
-            "sustain_started_at": self._sustain_started_at_ns,
-            "sustain_duration_seconds": self._sustain_duration,
-            "completed_reason": self._completed_reason,
-            "sla_passed_during_sustain": (
-                self._sustain_windows > 0
-                and self._sustain_passed_windows == self._sustain_windows
-            ),
-            "sustain_windows": self._sustain_windows,
-            "sustain_passed_windows": self._sustain_passed_windows,
-            "sla_metric": self._primary_sla.metric_tag,
-            "sla_stat": self._primary_sla.stat,
-            "sla_op": self._primary_sla.op,
-            "sla_bound": self._primary_sla.threshold,
-            "strategy_type": self._config.adaptive_scale_strategy_type,
-            "step_policy": self._config.adaptive_scale_step_policy,
-            "base_step": self._config.adaptive_scale_base_step,
-            "max_step_multiplier": self._config.adaptive_scale_max_step_multiplier,
-            "step_percent": self._config.adaptive_scale_step_percent,
-        }
-        encoded = orjson.dumps(
-            summary, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+        summary = self._artifacts.summary_payload(
+            control_variable=self._config.adaptive_control_variable,
+            current_concurrency=self._current_concurrency,
+            boundary_concurrency=self._boundary_concurrency,
+            last_good_concurrency=self._last_good_concurrency,
+            first_failing_concurrency=self._first_failing_concurrency,
+            sustain_started_at_ns=self._sustain_started_at_ns,
+            sustain_duration=self._sustain_duration,
+            completed_reason=self._completed_reason,
+            sustain_windows=self._sustain_windows,
+            sustain_passed_windows=self._sustain_passed_windows,
+            primary_sla=self._primary_sla,
+            strategy_type=self._config.adaptive_scale_strategy_type,
+            step_policy=self._config.adaptive_scale_step_policy,
+            base_step=self._config.adaptive_scale_base_step,
+            max_step_multiplier=self._config.adaptive_scale_max_step_multiplier,
+            step_percent=self._config.adaptive_scale_step_percent,
         )
-        self._summary_path.write_bytes(encoded + b"\n")
-
-
-def _percentile(samples: list[int], percentile: float) -> float:
-    if not samples:
-        raise ValueError("percentile requires at least one sample")
-    ordered = sorted(samples)
-    if len(ordered) == 1:
-        return float(ordered[0])
-    rank = (percentile / 100) * (len(ordered) - 1)
-    low = math.floor(rank)
-    high = math.ceil(rank)
-    if low == high:
-        return float(ordered[int(rank)])
-    fraction = rank - low
-    return ordered[low] + (ordered[high] - ordered[low]) * fraction
+        self._artifacts.write_summary(self._summary_path, summary)

@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -17,6 +17,10 @@ from aiperf.plugin.enums import (
     PhaseType,
     TimingMode,
     URLSelectionStrategy,
+)
+from aiperf.timing.adaptive_config import (
+    ADAPTIVE_TIMING_FIELDS,
+    AdaptiveTimingConfig,
 )
 from aiperf.timing.request_cancellation import RequestCancellationConfig
 
@@ -231,58 +235,86 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default=None,
         description="Directory for phase-owned timing artifacts.",
     )
+    adaptive: AdaptiveTimingConfig = Field(
+        default_factory=AdaptiveTimingConfig,
+        description="Adaptive scale timing settings.",
+    )
 
-    adaptive_sustain_duration_sec: float | None = Field(
-        default=None,
-        gt=0,
-        description="Duration in seconds to sustain load after adaptive scale discovery.",
-    )
-    adaptive_assessment_period_sec: float = Field(
-        default=30.0,
-        ge=1.0,
-        description="Duration in seconds for each adaptive scale SLA assessment window.",
-    )
-    adaptive_control_variable: Literal["concurrency"] = Field(
-        default="concurrency",
-        description="Adaptive scale control variable.",
-    )
-    adaptive_scale_min_concurrency: int = Field(
-        default=1,
-        ge=1,
-        description="Minimum concurrency used by adaptive scale discovery.",
-    )
-    adaptive_scale_strategy_type: Literal["ramp_until_fail"] = Field(
-        default="ramp_until_fail",
-        description="Adaptive scale strategy type.",
-    )
-    adaptive_scale_step_policy: Literal["sla_margin", "fixed_percent_step"] = Field(
-        default="sla_margin",
-        description="Adaptive scale step policy.",
-    )
-    adaptive_scale_base_step: int = Field(
-        default=10,
-        ge=1,
-        description="Minimum adaptive scale step for SLA-margin policy.",
-    )
-    adaptive_scale_max_step_multiplier: int = Field(
-        default=4,
-        ge=1,
-        description="Maximum base-step multiplier for SLA-margin policy.",
-    )
-    adaptive_scale_step_percent: float = Field(
-        default=25.0,
-        gt=0,
-        description="Percent of current concurrency used by fixed-percent adaptive scaling.",
-    )
-    adaptive_min_completed_requests: int = Field(
-        default=1,
-        ge=1,
-        description="Minimum completed requests needed before an adaptive SLA decision.",
-    )
-    adaptive_sla_filters: tuple[SLAFilter, ...] = Field(
-        default_factory=tuple,
-        description="SLA filters used by adaptive scale.",
-    )
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_adaptive_timing_fields(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        folded = dict(data)
+        adaptive = dict(folded.get("adaptive") or {})
+        for field in ADAPTIVE_TIMING_FIELDS:
+            if field in folded:
+                adaptive[field] = folded.pop(field)
+        if adaptive:
+            folded["adaptive"] = adaptive
+        return folded
+
+    def model_copy(
+        self, *, update: dict[str, Any] | None = None, deep: bool = False
+    ) -> Self:
+        if update:
+            update = self._fold_adaptive_update(update)
+        return super().model_copy(update=update, deep=deep)
+
+    def _fold_adaptive_update(self, update: dict[str, Any]) -> dict[str, Any]:
+        folded = dict(update)
+        adaptive_update = {
+            field: folded.pop(field)
+            for field in list(folded)
+            if field in ADAPTIVE_TIMING_FIELDS
+        }
+        if adaptive_update:
+            folded["adaptive"] = self.adaptive.model_copy(update=adaptive_update)
+        return folded
+
+    @property
+    def adaptive_sustain_duration_sec(self) -> float | None:
+        return self.adaptive.adaptive_sustain_duration_sec
+
+    @property
+    def adaptive_assessment_period_sec(self) -> float:
+        return self.adaptive.adaptive_assessment_period_sec
+
+    @property
+    def adaptive_control_variable(self) -> Literal["concurrency"]:
+        return self.adaptive.adaptive_control_variable
+
+    @property
+    def adaptive_scale_min_concurrency(self) -> int:
+        return self.adaptive.adaptive_scale_min_concurrency
+
+    @property
+    def adaptive_scale_strategy_type(self) -> Literal["ramp_until_fail"]:
+        return self.adaptive.adaptive_scale_strategy_type
+
+    @property
+    def adaptive_scale_step_policy(self) -> Literal["sla_margin", "fixed_percent_step"]:
+        return self.adaptive.adaptive_scale_step_policy
+
+    @property
+    def adaptive_scale_base_step(self) -> int:
+        return self.adaptive.adaptive_scale_base_step
+
+    @property
+    def adaptive_scale_max_step_multiplier(self) -> int:
+        return self.adaptive.adaptive_scale_max_step_multiplier
+
+    @property
+    def adaptive_scale_step_percent(self) -> float:
+        return self.adaptive.adaptive_scale_step_percent
+
+    @property
+    def adaptive_min_completed_requests(self) -> int:
+        return self.adaptive.adaptive_min_completed_requests
+
+    @property
+    def adaptive_sla_filters(self) -> tuple[SLAFilter, ...]:
+        return self.adaptive.adaptive_sla_filters
 
 
 def _ramp_duration(ramp: object | None) -> float | None:
