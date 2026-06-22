@@ -45,15 +45,19 @@ def _strategy(tmp_path, *, threshold: float = 100.0) -> AdaptiveScaleStrategy:
         ],
         artifact_dir=tmp_path,
     )
+    lifecycle = MagicMock()
+    lifecycle.is_sending_complete = False
+    progress = MagicMock()
+    progress.all_credits_sent_event = asyncio.Event()
     return AdaptiveScaleStrategy(
         config=cfg,
         conversation_source=MagicMock(),
         scheduler=MagicMock(),
         stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
         credit_issuer=MagicMock(),
-        lifecycle=MagicMock(),
+        lifecycle=lifecycle,
         concurrency_manager=MagicMock(),
-        progress=MagicMock(),
+        progress=progress,
     )
 
 
@@ -103,7 +107,7 @@ async def test_handle_credit_result_counts_cancelled_as_error(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_credit_return_does_not_record_success_sample(tmp_path) -> None:
+async def test_inherited_handle_credit_return_does_not_record_success_sample(tmp_path) -> None:
     strategy = _strategy(tmp_path)
     credit = Credit(
         id=1,
@@ -333,6 +337,12 @@ def test_sustain_completion_writes_complete_event_and_summary(tmp_path) -> None:
     assert summary["sustain_started_at"] == 123
     assert summary["completed_reason"] == "sustain_duration_completed"
     assert summary["sla_passed_during_sustain"] is True
+    strategy._lifecycle.cancel.assert_not_called()
+    strategy._lifecycle.mark_sending_complete.assert_called_once_with(
+        timeout_triggered=False
+    )
+    strategy._progress.freeze_sent_counts.assert_called_once()
+    assert strategy._progress.all_credits_sent_event.is_set()
 
 
 def test_execute_finalizer_writes_summary_when_phase_stops_before_boundary(
@@ -588,7 +598,11 @@ async def test_assess_window_all_failed_without_boundary_fails(tmp_path) -> None
     await strategy._assess_window()
 
     assert strategy._completed_reason == "no_sustainable_concurrency_found"
-    strategy._lifecycle.cancel.assert_called_once()
+    strategy._lifecycle.cancel.assert_not_called()
+    strategy._lifecycle.mark_sending_complete.assert_called_once_with(
+        timeout_triggered=False
+    )
+    assert strategy._progress.all_credits_sent_event.is_set()
     events = [
         orjson.loads(line)
         for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
@@ -627,7 +641,26 @@ def test_sustain_breach_at_minimum_fails_unrecoverably(tmp_path) -> None:
     strategy._assess_sustain(150.0, False, stats)
 
     assert strategy._completed_reason == "sustain_failed_sla_unrecoverable"
-    strategy._lifecycle.cancel.assert_called_once()
+    strategy._lifecycle.cancel.assert_not_called()
+    strategy._lifecycle.mark_sending_complete.assert_called_once_with(
+        timeout_triggered=False
+    )
+    assert strategy._progress.all_credits_sent_event.is_set()
+
+
+def test_sustain_breach_downshift_does_not_promote_unconfirmed_target(
+    tmp_path,
+) -> None:
+    strategy = _strategy(tmp_path)
+    strategy._controller_phase = "sustain"
+    strategy._current_concurrency = 6
+    strategy._last_good_concurrency = 8
+    stats = MagicMock(samples=[150_000_000], errors=0, throughput=1.0)
+
+    strategy._assess_sustain(150.0, False, stats)
+
+    assert strategy._current_concurrency < 6
+    assert strategy._last_good_concurrency == 8
 
 
 def test_enter_sustain_requires_last_good_boundary(tmp_path) -> None:

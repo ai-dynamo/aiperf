@@ -74,7 +74,7 @@ class AdaptiveScaleController:
                     sample_count=0,
                     error_count=stats.errors,
                 )
-                strategy._lifecycle.cancel()
+                strategy._stop_sending()
                 return
             strategy._first_failing_concurrency = strategy._current_concurrency
             self.enter_sustain(strategy, None, stats, reason)
@@ -101,7 +101,7 @@ class AdaptiveScaleController:
                     sample_count=len(stats.samples),
                     error_count=stats.errors,
                 )
-                strategy._lifecycle.cancel()
+                strategy._stop_sending()
                 return
             before = strategy._current_concurrency
             next_value = strategy._next_up(sla_values)
@@ -129,7 +129,7 @@ class AdaptiveScaleController:
                 sample_count=len(stats.samples),
                 error_count=stats.errors,
             )
-            strategy._lifecycle.cancel()
+            strategy._stop_sending()
             return
         strategy._first_failing_concurrency = strategy._current_concurrency
         self.enter_sustain(
@@ -182,10 +182,9 @@ class AdaptiveScaleController:
                     sample_count=len(stats.samples),
                     error_count=stats.errors,
                 )
-                strategy._lifecycle.cancel()
+                strategy._stop_sending()
                 return
             strategy._set_concurrency(target)
-            strategy._last_good_concurrency = target
             strategy._emit_event(
                 event="adaptive_decision",
                 reason=reason
@@ -209,7 +208,7 @@ class AdaptiveScaleController:
                     sample_count=len(stats.samples),
                     error_count=stats.errors,
                 )
-                strategy._lifecycle.cancel()
+                strategy._stop_sending()
 
     def enter_sustain(
         self, strategy, sla_value: float | None, stats: WindowStats, reason: str

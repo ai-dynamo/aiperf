@@ -47,6 +47,7 @@ def test_adaptive_scale_profile_writes_controller_artifacts(cli: AIPerfCLI) -> N
 
     assert result.exit_code == 0
     assert result.request_count > 0
+    assert result.json.was_cancelled is False
 
     event_path = result.artifacts_dir / "adaptive_scale_events.jsonl"
     summary_path = result.artifacts_dir / "adaptive_scale_summary.json"
@@ -156,6 +157,7 @@ benchmark:
 
     assert result.exit_code == 0
     assert result.request_count > 0
+    assert result.json.was_cancelled is False
 
     events = _load_jsonl(result.artifacts_dir / "adaptive_scale_events.jsonl")
     boundary_events = [

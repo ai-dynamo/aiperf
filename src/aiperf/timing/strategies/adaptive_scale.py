@@ -34,7 +34,6 @@ __all__ = ["AdaptiveScaleStrategy", "WindowStats", "_percentile"]
 
 if TYPE_CHECKING:
     from aiperf.config.sweep.adaptive import SLAFilter
-    from aiperf.credit.structs import Credit
     from aiperf.timing.concurrency import ConcurrencyManager
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 
@@ -173,9 +172,6 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
                     await self._assessment_task
             await self._artifacts.close()
 
-    async def handle_credit_return(self, credit: Credit) -> None:
-        await super().handle_credit_return(credit)
-
     async def handle_credit_result(self, credit_return: CreditReturn) -> None:
         latency_ns = max(0, time.time_ns() - credit_return.credit.issued_at_ns)
         async with self._lock:
@@ -201,6 +197,12 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
                 terminal_event="adaptive_failed",
             )
             self._lifecycle.cancel()
+
+    def _stop_sending(self) -> None:
+        if not self._lifecycle.is_sending_complete:
+            self._lifecycle.mark_sending_complete(timeout_triggered=False)
+            self._progress.freeze_sent_counts()
+        self._progress.all_credits_sent_event.set()
 
     async def _assess_window(self) -> None:
         await self._controller.assess_window(self)
