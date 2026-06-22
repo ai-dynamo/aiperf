@@ -486,7 +486,7 @@ class TestHFWekaRepoOverride:
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
         )
 
-        assert kwargs["hf_dataset_name"] == "semianalysisai/cc-traces-weka-061526"
+        assert kwargs["hf_dataset_name"] == "semianalysisai/cc-traces-weka-062126"
 
     @pytest.mark.parametrize(
         ("alias", "expected_repo"),
@@ -500,7 +500,7 @@ class TestHFWekaRepoOverride:
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061326_256K,
                 "semianalysisai/cc-traces-weka-061326-256k",
             ),
-            # Current pinned 061526 aliases.
+            # Historical pinned 061526 aliases.
             (
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061526,
                 "semianalysisai/cc-traces-weka-061526",
@@ -509,14 +509,23 @@ class TestHFWekaRepoOverride:
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_061526_256K,
                 "semianalysisai/cc-traces-weka-061526-256k",
             ),
-            # Generic undated aliases now roll forward to 061526.
+            # Current pinned 062126 aliases.
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_062126,
+                "semianalysisai/cc-traces-weka-062126",
+            ),
+            (
+                PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_062126_256K,
+                "semianalysisai/cc-traces-weka-062126-256k",
+            ),
+            # Generic undated aliases now roll forward to 062126.
             (
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS,
-                "semianalysisai/cc-traces-weka-061526",
+                "semianalysisai/cc-traces-weka-062126",
             ),
             (
                 PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS_256K,
-                "semianalysisai/cc-traces-weka-061526-256k",
+                "semianalysisai/cc-traces-weka-062126-256k",
             ),
         ],
     )  # fmt: skip

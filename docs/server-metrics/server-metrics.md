@@ -178,14 +178,29 @@ When server metrics are enabled and the inference server actually serves Prometh
   srv    prefix_cache_hit=68.3% unique_in_srv=123,456 ext_cache_hit=11.2% kv_usage=94.5% cpu_kv_usage=37.0% queue=24r/0w preemptions=2
 ```
 
+With multiple `--server-metrics` endpoints, AIPerf emits one `srv` row per
+worker rather than combining workers with different roles and cache domains:
+
+```text
+  srv prefill 0  prefix_cache_hit=94.1% kv_usage=88.0% queue=4r/0w
+  srv prefill 1  prefix_cache_hit=91.7% kv_usage=93.2% queue=7r/2w
+  srv decode 0   kv_usage=35.4% queue=48r/0w tput_out_srv=8,421/s
+```
+
+Dynamo's `dynamo_component` metric label identifies prefill and decode workers;
+workers within each role receive a stable index based on sorted endpoint URL.
+Endpoints without Dynamo labels use their normalized host and port instead.
+Exported server-metrics files continue to preserve every endpoint and label
+series independently.
+
 | Token | Source metric(s) | Notes |
 |-------|------------------|-------|
 | `prefix_cache_hit=X%` | `vllm:prefix_cache_hits` / `vllm:prefix_cache_queries` | Cumulative hit rate over the profiling window. |
 | `unique_in_srv=N` | `vllm:prefix_cache_queries - vllm:prefix_cache_hits` | Prompt tokens not served from prefix cache over the profiling window. |
 | `ext_cache_hit=X%` | `vllm:external_prefix_cache_hits` / `vllm:external_prefix_cache_queries` | Only emitted when the external (CPU offload) tier has been queried, so the row stays clean on offload=none runs. |
-| `kv_usage=X%` | `vllm:kv_cache_usage_perc` (with `vllm:gpu_cache_usage_perc` v0 fallback) | Latest gauge value, max across endpoints. |
+| `kv_usage=X%` | `vllm:kv_cache_usage_perc` (with `vllm:gpu_cache_usage_perc` v0 fallback) | Latest gauge value for the displayed worker. |
 | `cpu_kv_usage=X%` | `vllm:cpu_cache_usage_perc` | Only emitted when `SimpleCPUOffloadConnector` is active; lets you see the CPU tier filling up before the GPU tier preempts. |
-| `queue=Nr/Mw` | `vllm:num_requests_running` / `vllm:num_requests_waiting` | Scheduler running/waiting depth — useful for spotting backpressure mid-run. |
+| `queue=Nr/Mw` | `vllm:num_requests_running` / `vllm:num_requests_waiting` | Scheduler running/waiting depth for the displayed worker. |
 | `preemptions=N` | `vllm:num_preemptions` (or `sglang:num_retracted_requests_total` on SGLang) | Cumulative over the profiling window; any nonzero value = backpressure. |
 
 The full set of scraped metrics is always written to `server_metrics_export.{json,csv,jsonl,parquet}` regardless of what surfaces in this row.

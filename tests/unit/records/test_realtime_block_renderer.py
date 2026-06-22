@@ -225,3 +225,30 @@ def test_render_server_snapshot_line_includes_unique_input_tokens() -> None:
     assert "queue=24r/0w" in block
     assert "tput_in_srv=98,765/s" in block
     assert "tput_out_srv=4,321/s" in block
+
+
+def test_render_server_snapshot_lines_keep_workers_separate() -> None:
+    block = _render_realtime_block(
+        _baseline_metrics(),
+        _phase_stats(),
+        prev_snapshot=None,
+        server_snapshot={
+            "prefill 0": {
+                "prefix_cache_hit_rate": 94.1,
+                "kv_cache_usage_pct": 88.0,
+                "num_running": 4.0,
+                "num_waiting": 0.0,
+            },
+            "decode 0": {
+                "kv_cache_usage_pct": 35.4,
+                "num_running": 48.0,
+                "num_waiting": 0.0,
+                "output_token_throughput_srv": 8421.0,
+            },
+        },
+    )
+
+    assert "srv prefill 0" in block
+    assert "prefix_cache_hit=94.1%" in block
+    assert "srv decode 0" in block
+    assert "tput_out_srv=8,421/s" in block

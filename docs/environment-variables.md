@@ -136,6 +136,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_IP_VERSION` | `'4'` | — | IP version for HTTP socket connections. Options: '4' (AF_INET, default), '6' (AF_INET6), or 'auto' (AF_UNSPEC, system chooses). |
 | `AIPERF_HTTP_TRUST_ENV` | `False` | — | Trust environment variables for HTTP client configuration. When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, and NO_PROXY environment variables. |
 | `AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID` | `False` | — | Also send X-Session-ID with the stable X-Correlation-ID value. Use this when an external router requires a session-affinity header. |
+| `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID` | `False` | — | Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. Use this with the SGLang Model Gateway manual routing policy. |
 | `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | `0.1` | ≥ 0.001, ≤ 10.0 | Interval in seconds between status polls for async video generation jobs. Lower values provide faster completion detection but increase server load. Applies to the aiohttp transport. |
 
 ## LOGGING
