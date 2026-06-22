@@ -40,10 +40,10 @@ async def test_adaptive_scale_subprocess_contract_with_deterministic_saturation(
     async with mock_server_factory(
         ttft=15.0,
         itl=0.0,
-        ttft_concurrency_quad_ms=2.0,
+        ttft_concurrency_quad_ms=3.0,
         ttft_jitter_cv=0.0,
         itl_jitter_cv=0.0,
-        workers=8,
+        workers=1,
     ) as server:
         assert isinstance(server, AIPerfMockServer)
         config_path = tmp_path / "adaptive_scale_subprocess.yaml"
@@ -83,7 +83,7 @@ benchmark:
       sla:
         request_latency:
           p95:
-            le: 30
+            le: 100
 """.lstrip(),
             encoding="utf-8",
         )
@@ -102,6 +102,8 @@ benchmark:
 
     assert result.exit_code == 0
     assert result.request_count > 0
+    assert result.json is not None
+    assert result.json.was_cancelled is False
 
     event_path = result.artifacts_dir / "adaptive_scale_events.jsonl"
     summary_path = result.artifacts_dir / "adaptive_scale_summary.json"
@@ -145,7 +147,7 @@ benchmark:
     assert boundary["sla_metric"] == "request_latency"
     assert boundary["sla_stat"] == "p95"
     assert boundary["sla_op"] == "le"
-    assert boundary["sla_bound"] == 30
+    assert boundary["sla_bound"] == 100
     assert boundary["sla_value"] > boundary["sla_bound"]
 
     sustain_windows = [

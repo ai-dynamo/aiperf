@@ -13,6 +13,7 @@ stale YAML value. The resolver previously built its
 
 from __future__ import annotations
 
+import asyncio
 import textwrap
 from pathlib import Path
 
@@ -171,9 +172,9 @@ def test_basic_adaptive_cli_overrides_preserve_advanced_yaml(tmp_path: Path) -> 
     assert phase.adaptive_scale_step_percent == 50
 
 
-def test_adaptive_cli_sla_parse_error_names_adaptive_flag(tmp_path: Path) -> None:
+async def test_adaptive_cli_sla_parse_error_names_adaptive_flag(tmp_path: Path) -> None:
     cfg_file = tmp_path / "adaptive.yaml"
-    cfg_file.write_text(_YAML_ADVANCED_ADAPTIVE)
+    await asyncio.to_thread(cfg_file.write_text, _YAML_ADVANCED_ADAPTIVE)
     user = CLIConfig(adaptive_scale_sla=["bad"])
 
     with pytest.raises(TypeError) as exc_info:

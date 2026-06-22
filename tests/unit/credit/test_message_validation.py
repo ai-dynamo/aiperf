@@ -135,7 +135,7 @@ class TestCreditReturnValidation:
         assert credit_return.error == error
         assert credit_return.request_latency_ns == 123_000_000
 
-    def test_credit_return_serialization_roundtrip(self, sample_credit):
+    def test_credit_return_serialization_roundtrip(self, sample_credit: Credit) -> None:
         """CreditReturn preserves all fields through msgpack serialization."""
         original = CreditReturn(
             credit=sample_credit,
