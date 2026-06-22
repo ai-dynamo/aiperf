@@ -8,9 +8,9 @@ from pathlib import Path
 
 import orjson
 import pytest
-from aiperf_mock_server import utils as mock_server_utils
 from aiperf_mock_server.config import MockServerConfig
 
+from aiperf.timing.strategies.adaptive_scale import AdaptiveScaleStrategy
 from tests.component_integration.timing.conftest import defaults
 from tests.harness.fake_transport import FakeTransport
 from tests.harness.utils import AIPerfCLI
@@ -77,22 +77,24 @@ def test_adaptive_scale_profile_discovers_sla_boundary(
     cli: AIPerfCLI, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Exercise SLA-margin ramp-up and boundary sustain under load."""
-    active_requests = 0
-    original_send = FakeTransport._send_request_impl
+    def deterministic_sla_values(
+        self: AdaptiveScaleStrategy, stats: object
+    ) -> dict[str, float]:
+        del stats
+        key = self._sla_key(self._primary_sla)
+        value = 20.0 if self._current_concurrency <= 11 else 120.0
+        return {key: value}
 
-    async def tracked_send_request(self, endpoint_type, payload, first_token_callback):
-        nonlocal active_requests
-        active_requests += 1
-        try:
-            return await original_send(
-                self, endpoint_type, payload, first_token_callback
-            )
-        finally:
-            active_requests -= 1
+    def deterministic_passes_sla(
+        self: AdaptiveScaleStrategy, observed: dict[str, float]
+    ) -> bool:
+        return observed[self._sla_key(self._primary_sla)] <= 80.0
 
-    monkeypatch.setattr(FakeTransport, "_send_request_impl", tracked_send_request)
     monkeypatch.setattr(
-        mock_server_utils, "get_inflight_count", lambda: active_requests
+        AdaptiveScaleStrategy, "_sla_values", deterministic_sla_values
+    )
+    monkeypatch.setattr(
+        AdaptiveScaleStrategy, "_passes_sla", deterministic_passes_sla
     )
 
     config_path = tmp_path / "adaptive_scale_boundary.yaml"
@@ -139,9 +141,8 @@ benchmark:
 
     original_config = FakeTransport._DEFAULT_CONFIG
     FakeTransport._DEFAULT_CONFIG = MockServerConfig(
-        ttft=5.0,
-        itl=1.0,
-        ttft_concurrency_quad_ms=0.25,
+        ttft=1.0,
+        itl=0.0,
     )
     try:
         result = cli.run_sync(

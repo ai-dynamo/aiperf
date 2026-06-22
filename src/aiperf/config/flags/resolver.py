@@ -370,7 +370,18 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
 
 
 def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
-    """Overlay explicit loadgen CLI flags onto the YAML profiling phase."""
+    """Overlay explicit ``--request-count`` / ``--request-rate`` / etc. onto
+    the YAML-supplied profiling phase.
+
+    YAML configs land ``phases`` as a list under ``benchmark.phases``;
+    ``deep_merge`` replaces lists wholesale, so the CLI flags otherwise
+    silently no-op when the YAML already sets ``phases[*].requests``. This
+    walks the merged envelope, finds the phase named ``profiling`` (or the
+    sole phase entry if there's only one), and writes each user-set
+    loadgen field onto it. Other phases (warmup) are left untouched so a
+    user passing ``--request-count 10`` with ``warmup_profiling.yaml``
+    doesn't clobber the warmup ramp.
+    """
     fields_set = cli.model_fields_set & LOADGEN_FIELDS
     if not fields_set:
         return
