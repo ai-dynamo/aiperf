@@ -384,7 +384,7 @@ sla:
       ge: 0.95
 ```
 
-Adaptive scale evaluates SLA filters from controller assessment windows, not from the final records pipeline. In v1, `request_latency` is the credit round-trip interval measured from credit issue to credit return, so it includes queueing, transport, and worker processing overhead. It is close to an end-to-end control signal, but it is not the same value as the post-processed `request_latency` metric reported from request records. `request_throughput` is completed successful requests per assessment-window second, and `goodput_ratio` is successful returned requests divided by all returned requests in the assessment window. Errors and cancellations count against the denominator. This is intentionally simpler than the post-processed `goodput` metric, which is SLO-qualified and computed later from full request records.
+Adaptive scale evaluates SLA filters from controller assessment windows. The `request_latency` filter uses the same per-request latency sample as the records-pipeline `request_latency` metric: the interval from request start to the last parsed response with actual content. `request_throughput` is completed successful requests per assessment-window second, and `goodput_ratio` is successful returned requests divided by all returned requests in the assessment window. Errors, cancellations, and requests without a valid latency sample count against the denominator. This is intentionally simpler than the post-processed `goodput` metric, which is SLO-qualified and computed later from full request records.
 
 The same `sla_margin` policy works for both directions. With multiple SLA filters, adaptive scale uses the most constrained margin so the closest boundary controls the next step.
 

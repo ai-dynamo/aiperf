@@ -173,12 +173,15 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             await self._artifacts.close()
 
     async def handle_credit_result(self, credit_return: CreditReturn) -> None:
-        latency_ns = max(0, time.time_ns() - credit_return.credit.issued_at_ns)
         async with self._lock:
-            if credit_return.error is not None or credit_return.cancelled:
+            if (
+                credit_return.error is not None
+                or credit_return.cancelled
+                or credit_return.request_latency_ns is None
+            ):
                 self._window_errors += 1
             else:
-                self._window_latency_ns.append(latency_ns)
+                self._window_latency_ns.append(credit_return.request_latency_ns)
 
     async def _assessment_loop(self) -> None:
         try:

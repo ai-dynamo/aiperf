@@ -66,7 +66,7 @@ def test_percentile_interpolates_p95() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_credit_result_buffers_latency(tmp_path) -> None:
+async def test_handle_credit_result_buffers_record_request_latency(tmp_path) -> None:
     strategy = _strategy(tmp_path)
     credit = Credit(
         id=1,
@@ -78,11 +78,12 @@ async def test_handle_credit_result_buffers_latency(tmp_path) -> None:
         issued_at_ns=time.time_ns() - 5_000_000,
     )
 
-    await strategy.handle_credit_result(CreditReturn(credit=credit))
+    await strategy.handle_credit_result(
+        CreditReturn(credit=credit, request_latency_ns=123_000_000)
+    )
     stats = await strategy._take_window()
 
-    assert len(stats.samples) == 1
-    assert stats.samples[0] >= 0
+    assert stats.samples == [123_000_000]
     assert stats.errors == 0
 
 
@@ -100,6 +101,28 @@ async def test_handle_credit_result_counts_cancelled_as_error(tmp_path) -> None:
     )
 
     await strategy.handle_credit_result(CreditReturn(credit=credit, cancelled=True))
+    stats = await strategy._take_window()
+
+    assert stats.samples == []
+    assert stats.errors == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_credit_result_counts_missing_request_latency_as_error(
+    tmp_path,
+) -> None:
+    strategy = _strategy(tmp_path)
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c",
+        x_correlation_id="x",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+
+    await strategy.handle_credit_result(CreditReturn(credit=credit))
     stats = await strategy._take_window()
 
     assert stats.samples == []
