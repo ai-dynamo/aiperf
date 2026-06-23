@@ -15,6 +15,8 @@ from typing import Any
 import orjson
 
 from aiperf.config.sweep.adaptive import SLAFilter
+from aiperf.timing.strategies.adaptive_scale_sla import percentile_value
+from aiperf.timing.strategies.adaptive_scale_types import WindowStats
 
 _LOGGER = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
@@ -79,6 +81,75 @@ class AdaptiveScaleArtifactWriter:
         path = artifact_dir / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
+
+    @staticmethod
+    def correlation_payload(
+        *,
+        run_id: str | None,
+        phase_id: str,
+        phase_name: str | None,
+        adaptive_iteration: int,
+        candidate_concurrency: int,
+        accepted_concurrency: int,
+        phase_start_ts: str | None = None,
+        phase_end_ts: str | None = None,
+        fault_window_id: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "run_id": run_id,
+            "phase_id": phase_id,
+            "phase_name": phase_name,
+            "phase_start_ts": phase_start_ts,
+            "phase_end_ts": phase_end_ts,
+            "adaptive_iteration": adaptive_iteration,
+            "candidate_concurrency": candidate_concurrency,
+            "accepted_concurrency": accepted_concurrency,
+            "fault_window_id": fault_window_id,
+        }
+
+    @staticmethod
+    def candidate_payload(
+        *,
+        adaptive_iteration: int,
+        candidate_concurrency: int,
+        stats: WindowStats,
+        accepted: bool,
+        rejection_reason: str,
+    ) -> dict[str, Any]:
+        samples_ms = [sample / 1_000_000 for sample in stats.samples]
+
+        def percentile_ms(pct: float) -> float:
+            if not stats.samples:
+                return 0.0
+            return percentile_value(stats.samples, pct) / 1_000_000
+
+        success_count = len(stats.samples)
+        request_count = stats.total
+        return {
+            "adaptive_iteration": adaptive_iteration,
+            "candidate_concurrency": candidate_concurrency,
+            "start_ts": _iso_utc_from_ns(stats.start_ns)
+            if stats.start_ns is not None
+            else None,
+            "end_ts": _iso_utc_from_ns(stats.end_ns)
+            if stats.end_ns is not None
+            else None,
+            "duration_s": stats.elapsed_sec,
+            "request_count": request_count,
+            "error_count": stats.errors,
+            "success_count": success_count,
+            "goodput_ratio": success_count / request_count if request_count else 0.0,
+            "throughput_rps": stats.throughput,
+            "latency_p50_ms": percentile_ms(50),
+            "latency_p95_ms": percentile_ms(95),
+            "latency_p99_ms": percentile_ms(99),
+            "ttft_p50_ms": 0.0,
+            "ttft_p95_ms": 0.0,
+            "ttft_p99_ms": 0.0,
+            "accepted": accepted,
+            "rejection_reason": None if accepted else rejection_reason,
+            "latency_avg_ms": sum(samples_ms) / len(samples_ms) if samples_ms else 0.0,
+        }
 
     @staticmethod
     def event_payload(
@@ -155,6 +226,7 @@ class AdaptiveScaleArtifactWriter:
         throughput: float,
         sample_count: int,
         error_count: int,
+        candidates: list[dict[str, Any]] | None = None,
         primary_sla: SLAFilter,
         strategy_type: str,
         step_policy: str,
@@ -203,6 +275,7 @@ class AdaptiveScaleArtifactWriter:
                 "cancelled": None,
             },
             "throughput": throughput,
+            "candidates": candidates or [],
             "strategy_type": strategy_type,
             "step_policy": step_policy,
             "base_step": base_step,

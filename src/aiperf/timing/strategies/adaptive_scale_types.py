@@ -17,6 +17,8 @@ class WindowStats:
     samples: list[int]
     errors: int
     elapsed_sec: float
+    start_ns: int | None = None
+    end_ns: int | None = None
 
     @property
     def total(self) -> int:

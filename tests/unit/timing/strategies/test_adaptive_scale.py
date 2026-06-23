@@ -498,8 +498,10 @@ async def test_sparse_window_is_inconclusive(tmp_path) -> None:
         for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_window"
+    assert events[-1]["adaptive_iteration"] == 0
     assert events[-1]["sla_passed"] is None
     assert "inconclusive" in events[-1]["reason"]
+    assert strategy._adaptive_iteration == 1
 
 
 def test_assessment_period_has_practical_lower_bound(tmp_path) -> None:
@@ -655,6 +657,12 @@ async def test_assess_window_evaluates_sustain_phase(tmp_path) -> None:
 
     await strategy._assess_window()
 
+    events = [
+        orjson.loads(line)
+        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+    ]
+    assert {event["adaptive_iteration"] for event in events} == {0}
+    assert strategy._adaptive_iteration == 1
     assert strategy._sustain_windows == 1
     assert strategy._sustain_passed_windows == 1
 

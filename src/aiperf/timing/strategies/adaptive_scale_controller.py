@@ -14,53 +14,72 @@ class AdaptiveScaleController:
 
     async def assess_window(self, strategy) -> None:
         stats = await strategy._take_window()
-        if not stats.samples and stats.errors:
+        try:
+            if not stats.samples and stats.errors:
+                strategy._emit_event(
+                    event="adaptive_window",
+                    reason="all requests failed in assessment window",
+                    sla_value=None,
+                    throughput=stats.throughput,
+                    sample_count=0,
+                    error_count=stats.errors,
+                    passed=False,
+                )
+                strategy._record_candidate(
+                    stats=stats,
+                    accepted=False,
+                    rejection_reason="error_threshold",
+                )
+                self.assess_failed_window(strategy, stats)
+                return
+
+            if len(stats.samples) < strategy._min_completed_requests:
+                strategy._emit_event(
+                    event="adaptive_window",
+                    reason="inconclusive: completed request count below minimum",
+                    sla_value=None,
+                    throughput=stats.throughput,
+                    sample_count=len(stats.samples),
+                    error_count=stats.errors,
+                    passed=None,
+                )
+                strategy._record_candidate(
+                    stats=stats,
+                    accepted=False,
+                    rejection_reason="insufficient_samples",
+                )
+                return
+
+            sla_values = strategy._sla_values(stats)
+            primary_value = sla_values[strategy._sla_key(strategy._primary_sla)]
+            passing = strategy._passes_sla(sla_values)
             strategy._emit_event(
                 event="adaptive_window",
-                reason="all requests failed in assessment window",
-                sla_value=None,
-                throughput=stats.throughput,
-                sample_count=0,
-                error_count=stats.errors,
-                passed=False,
-            )
-            self.assess_failed_window(strategy, stats)
-            return
-        if len(stats.samples) < strategy._min_completed_requests:
-            strategy._emit_event(
-                event="adaptive_window",
-                reason="inconclusive: completed request count below minimum",
-                sla_value=None,
+                reason="SLA window evaluated",
+                sla_value=primary_value,
                 throughput=stats.throughput,
                 sample_count=len(stats.samples),
                 error_count=stats.errors,
-                passed=None,
+                passed=passing,
             )
-            return
-
-        sla_values = strategy._sla_values(stats)
-        primary_value = sla_values[strategy._sla_key(strategy._primary_sla)]
-        passing = strategy._passes_sla(sla_values)
-        strategy._emit_event(
-            event="adaptive_window",
-            reason="SLA window evaluated",
-            sla_value=primary_value,
-            throughput=stats.throughput,
-            sample_count=len(stats.samples),
-            error_count=stats.errors,
-            passed=passing,
-        )
-
-        if strategy._controller_phase == "discover":
-            self.assess_discover(
-                strategy,
-                sla_value=primary_value,
-                passing=passing,
+            strategy._record_candidate(
                 stats=stats,
-                sla_values=sla_values,
+                accepted=passing,
+                rejection_reason="sla_miss",
             )
-        elif strategy._controller_phase == "sustain":
-            self.assess_sustain(strategy, primary_value, passing, stats, sla_values)
+
+            if strategy._controller_phase == "discover":
+                self.assess_discover(
+                    strategy,
+                    sla_value=primary_value,
+                    passing=passing,
+                    stats=stats,
+                    sla_values=sla_values,
+                )
+            elif strategy._controller_phase == "sustain":
+                self.assess_sustain(strategy, primary_value, passing, stats, sla_values)
+        finally:
+            strategy._advance_adaptive_iteration()
 
     def assess_failed_window(self, strategy, stats: WindowStats) -> None:
         reason = "all requests failed in assessment window"

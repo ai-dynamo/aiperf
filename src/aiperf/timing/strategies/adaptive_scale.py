@@ -101,9 +101,12 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         self._window_latency_ns: list[int] = []
         self._window_errors = 0
         self._window_started_at = time.perf_counter()
+        self._window_started_at_ns = time.time_ns()
         self._artifacts = AdaptiveScaleArtifactWriter()
         self._event_path = self._resolve_artifact_path(self.EVENT_FILE)
         self._summary_path = self._resolve_artifact_path(self.SUMMARY_FILE)
+        self._adaptive_iteration = 0
+        self._candidate_summaries: list[dict] = []
         self._sustain_started_at_ns: int | None = None
         self._sustain_windows = 0
         self._sustain_passed_windows = 0
@@ -216,14 +219,18 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
     async def _take_window(self) -> WindowStats:
         async with self._lock:
             now = time.perf_counter()
+            end_ns = time.time_ns()
             stats = WindowStats(
                 samples=self._window_latency_ns,
                 errors=self._window_errors,
                 elapsed_sec=now - self._window_started_at,
+                start_ns=self._window_started_at_ns,
+                end_ns=end_ns,
             )
             self._window_latency_ns = []
             self._window_errors = 0
             self._window_started_at = now
+            self._window_started_at_ns = end_ns
             return stats
 
     def _assess_discover(
@@ -331,6 +338,10 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         passed: bool | None = None,
         step_size: int | None = None,
     ) -> None:
+        phase_name = getattr(self._config, "name", None)
+        phase_id = phase_name or CreditPhase.PROFILING.value
+        run = getattr(self, "run", None)
+        run_id = getattr(run, "benchmark_id", None)
         payload = self._artifacts.event_payload(
             timestamp_ns=time.time_ns(),
             event=event,
@@ -352,7 +363,37 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             passed=passed,
             step_size=step_size,
         )
+        payload.update(
+            self._artifacts.correlation_payload(
+                run_id=run_id,
+                phase_id=phase_id,
+                phase_name=phase_name,
+                adaptive_iteration=self._adaptive_iteration,
+                candidate_concurrency=before or self._current_concurrency,
+                accepted_concurrency=self._current_concurrency,
+            )
+        )
         self._artifacts.emit_event(self._event_path, payload)
+
+    def _record_candidate(
+        self,
+        *,
+        stats: WindowStats,
+        accepted: bool,
+        rejection_reason: str,
+    ) -> None:
+        self._candidate_summaries.append(
+            self._artifacts.candidate_payload(
+                adaptive_iteration=self._adaptive_iteration,
+                candidate_concurrency=self._current_concurrency,
+                stats=stats,
+                accepted=accepted,
+                rejection_reason=rejection_reason,
+            )
+        )
+
+    def _advance_adaptive_iteration(self) -> None:
+        self._adaptive_iteration += 1
 
     def _complete_controller(
         self,
@@ -417,6 +458,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             throughput=throughput,
             sample_count=sample_count,
             error_count=error_count,
+            candidates=self._candidate_summaries,
             primary_sla=self._primary_sla,
             strategy_type=self._config.adaptive_scale_strategy_type,
             step_policy=self._config.adaptive_scale_step_policy,

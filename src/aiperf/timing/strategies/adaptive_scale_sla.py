@@ -30,7 +30,7 @@ class AdaptiveScaleSLAEvaluator:
                 return max(values_ms)
             case "p1" | "p5" | "p10" | "p25" | "p50" | "p75" | "p90" | "p95" | "p99":
                 percentile = float(stat[1:])
-                return _percentile(samples, percentile) / 1_000_000
+                return percentile_value(samples, percentile) / 1_000_000
         raise ValueError(f"Unsupported request_latency SLA stat: {stat}")
 
     @staticmethod
@@ -131,7 +131,8 @@ class AdaptiveScaleSLAEvaluator:
         raise ValueError(f"Unsupported SLA operator: {sla.op}")
 
 
-def _percentile(samples: list[int], percentile: float) -> float:
+def percentile_value(samples: list[int], percentile: float) -> float:
+    """Return the linearly interpolated percentile for nanosecond samples."""
     if not samples:
         raise ValueError("percentile requires at least one sample")
     ordered = sorted(samples)
@@ -144,3 +145,7 @@ def _percentile(samples: list[int], percentile: float) -> float:
         return float(ordered[int(rank)])
     fraction = rank - low
     return ordered[low] + (ordered[high] - ordered[low]) * fraction
+
+
+# Backward-compatible alias for existing unit tests and internal imports.
+_percentile = percentile_value
