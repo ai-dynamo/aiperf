@@ -894,6 +894,36 @@ class TestMultiTurnDatasetLoaderSystemPromptHoist:
         )
         assert getattr(conversation.turns[0], turn_attr) == value
 
+    def test_empty_text_system_turn_is_not_hoisted(self, default_cfg):
+        """A leading system turn with no text content is not hoisted.
+
+        An empty system prompt is meaningless at the conversation level, so the
+        turn falls through to normal handling instead of setting an empty
+        ``system_message``.
+        """
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", texts=[Text(name="", contents=[])]),
+                        SingleTurn(text="Hello"),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].role == "system"
+        assert conversation.turns[1].texts[0].contents == ["Hello"]
+
 
 def test_multi_turn_loader_propagates_per_inner_turn_extra(tmp_path, default_cfg):
     path = tmp_path / "multi.jsonl"
