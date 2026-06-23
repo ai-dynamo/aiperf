@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -127,6 +128,12 @@ benchmark:
     ]
     assert len(discover_windows) >= 2
     assert discover_windows[0]["active_concurrency"] == 1
+    assert discover_windows[0]["schema_version"] == 1
+    assert discover_windows[0]["timestamp_ns"] == discover_windows[0]["timestamp"]
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z",
+        discover_windows[0]["timestamp_utc"],
+    )
 
     discover_decisions = [
         event
@@ -162,11 +169,24 @@ benchmark:
     )
 
     summary = orjson.loads(summary_path.read_bytes())
+    assert summary["schema_version"] == 1
+    assert summary["status"] == "completed"
     assert summary["control_variable"] == "concurrency"
+    assert summary["sla"] == {
+        "metric": "request_latency",
+        "stat": "p95",
+        "op": "le",
+        "bound": 100,
+    }
     assert summary["boundary_concurrency"] == boundary["boundary_concurrency"]
     assert summary["first_failing_value"] == boundary["first_failing_value"]
     assert summary["control_value"] <= boundary["boundary_concurrency"]
     assert summary["completed_reason"] == "sustain_duration_completed"
+    assert summary["result"]["last_passing_value"] == summary["last_passing_value"]
+    assert summary["result"]["first_failing_value"] == boundary["first_failing_value"]
+    assert summary["result"]["boundary_value"] == boundary["boundary_concurrency"]
+    assert summary["totals"]["sent"] >= summary["totals"]["completed"]
+    assert summary["totals"]["cancelled"] is None
     assert summary["sustain_windows"] > 0
     assert summary["strategy_type"] == "ramp_until_fail"
     assert summary["step_policy"] == "sla_margin"

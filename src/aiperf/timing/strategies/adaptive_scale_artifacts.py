@@ -8,6 +8,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,13 @@ import orjson
 from aiperf.config.sweep.adaptive import SLAFilter
 
 _LOGGER = logging.getLogger(__name__)
+SCHEMA_VERSION = 1
+
+
+def _iso_utc_from_ns(timestamp_ns: int) -> str:
+    """Return an ISO-8601 UTC timestamp with nanosecond input precision."""
+    dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=UTC)
+    return dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 class AdaptiveScaleArtifactWriter:
@@ -75,7 +83,7 @@ class AdaptiveScaleArtifactWriter:
     @staticmethod
     def event_payload(
         *,
-        timestamp: int,
+        timestamp_ns: int,
         event: str,
         phase: str,
         current_concurrency: int,
@@ -96,7 +104,10 @@ class AdaptiveScaleArtifactWriter:
         step_size: int | None = None,
     ) -> dict[str, Any]:
         return {
-            "timestamp": timestamp,
+            "schema_version": SCHEMA_VERSION,
+            "timestamp": timestamp_ns,
+            "timestamp_ns": timestamp_ns,
+            "timestamp_utc": _iso_utc_from_ns(timestamp_ns),
             "event": event,
             "phase": phase,
             "concurrency_before": current_concurrency if before is None else before,
@@ -138,8 +149,12 @@ class AdaptiveScaleArtifactWriter:
         sustain_started_at_ns: int | None,
         sustain_duration: float,
         completed_reason: str | None,
+        status: str,
         sustain_windows: int,
         sustain_passed_windows: int,
+        throughput: float,
+        sample_count: int,
+        error_count: int,
         primary_sla: SLAFilter,
         strategy_type: str,
         step_policy: str,
@@ -147,7 +162,10 @@ class AdaptiveScaleArtifactWriter:
         max_step_multiplier: int,
         step_percent: float,
     ) -> dict[str, Any]:
+        boundary_value = boundary_concurrency
         return {
+            "schema_version": SCHEMA_VERSION,
+            "status": status,
             "control_variable": control_variable,
             "control_value": current_concurrency,
             "active_concurrency": current_concurrency,
@@ -155,6 +173,11 @@ class AdaptiveScaleArtifactWriter:
             "last_passing_value": last_good_concurrency,
             "first_failing_value": first_failing_concurrency,
             "last_good_concurrency": last_good_concurrency,
+            "result": {
+                "last_passing_value": last_good_concurrency,
+                "first_failing_value": first_failing_concurrency,
+                "boundary_value": boundary_value,
+            },
             "sustain_started_at": sustain_started_at_ns,
             "sustain_duration_seconds": sustain_duration,
             "completed_reason": completed_reason,
@@ -167,6 +190,19 @@ class AdaptiveScaleArtifactWriter:
             "sla_stat": primary_sla.stat,
             "sla_op": primary_sla.op,
             "sla_bound": primary_sla.threshold,
+            "sla": {
+                "metric": primary_sla.metric_tag,
+                "stat": primary_sla.stat,
+                "op": primary_sla.op,
+                "bound": primary_sla.threshold,
+            },
+            "totals": {
+                "sent": sample_count + error_count,
+                "completed": sample_count,
+                "errored": error_count,
+                "cancelled": None,
+            },
+            "throughput": throughput,
             "strategy_type": strategy_type,
             "step_policy": step_policy,
             "base_step": base_step,

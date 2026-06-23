@@ -332,7 +332,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
         step_size: int | None = None,
     ) -> None:
         payload = self._artifacts.event_payload(
-            timestamp=time.time_ns(),
+            timestamp_ns=time.time_ns(),
             event=event,
             phase=phase or self._controller_phase,
             current_concurrency=self._current_concurrency,
@@ -368,6 +368,7 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             return
         self._controller_phase = "complete"
         self._completed_reason = reason
+        status = self._status_for_terminal_reason(reason)
         self._emit_event(
             event=terminal_event,
             phase="complete",
@@ -377,9 +378,27 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             sample_count=sample_count,
             error_count=error_count,
         )
-        self._write_summary()
+        self._write_summary(
+            status=status,
+            throughput=throughput,
+            sample_count=sample_count,
+            error_count=error_count,
+        )
 
-    def _write_summary(self) -> None:
+    @staticmethod
+    def _status_for_terminal_reason(reason: str) -> str:
+        if reason.startswith("assessment_failed:"):
+            return "failed"
+        return "completed"
+
+    def _write_summary(
+        self,
+        *,
+        status: str = "completed",
+        throughput: float = 0.0,
+        sample_count: int = 0,
+        error_count: int = 0,
+    ) -> None:
         if self._summary_written:
             return
         self._summary_written = True
@@ -392,8 +411,12 @@ class AdaptiveScaleStrategy(RequestRateStrategy):
             sustain_started_at_ns=self._sustain_started_at_ns,
             sustain_duration=self._sustain_duration,
             completed_reason=self._completed_reason,
+            status=status,
             sustain_windows=self._sustain_windows,
             sustain_passed_windows=self._sustain_passed_windows,
+            throughput=throughput,
+            sample_count=sample_count,
+            error_count=error_count,
             primary_sla=self._primary_sla,
             strategy_type=self._config.adaptive_scale_strategy_type,
             step_policy=self._config.adaptive_scale_step_policy,

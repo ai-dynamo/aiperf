@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from unittest.mock import MagicMock
 
@@ -58,6 +59,16 @@ def _strategy(tmp_path, *, threshold: float = 100.0) -> AdaptiveScaleStrategy:
         lifecycle=lifecycle,
         concurrency_manager=MagicMock(),
         progress=progress,
+    )
+
+
+def _assert_event_clock_fields(event: dict) -> None:
+    assert event["schema_version"] == 1
+    assert isinstance(event["timestamp"], int)
+    assert event["timestamp_ns"] == event["timestamp"]
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z",
+        event["timestamp_utc"],
     )
 
 
@@ -203,7 +214,7 @@ def test_discover_scales_up_and_writes_event(tmp_path) -> None:
     assert events[-1]["concurrency_after"] == 10
     assert events[-1]["step_policy"] == "sla_margin"
     assert events[-1]["step_size"] == 8
-    assert "timestamp" in events[-1]
+    _assert_event_clock_fields(events[-1])
     assert events[-1]["sla_value"] == 10.0
     assert events[-1]["sla_bound"] == 100.0
 
@@ -357,10 +368,30 @@ def test_sustain_completion_writes_complete_event_and_summary(tmp_path) -> None:
     ]
     assert events[-1]["event"] == "adaptive_complete"
     summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    assert summary["schema_version"] == 1
+    assert summary["status"] == "completed"
     assert summary["boundary_concurrency"] == 4
     assert summary["last_good_concurrency"] == 4
     assert summary["sustain_started_at"] == 123
     assert summary["completed_reason"] == "sustain_duration_completed"
+    assert summary["sla"] == {
+        "metric": "request_latency",
+        "stat": "p95",
+        "op": "le",
+        "bound": 100.0,
+    }
+    assert summary["result"] == {
+        "last_passing_value": 4,
+        "first_failing_value": None,
+        "boundary_value": 4,
+    }
+    assert summary["totals"] == {
+        "sent": 1,
+        "completed": 1,
+        "errored": 0,
+        "cancelled": None,
+    }
+    assert summary["throughput"] == 2.0
     assert summary["sla_passed_during_sustain"] is True
     strategy._lifecycle.cancel.assert_not_called()
     strategy._lifecycle.mark_sending_complete.assert_called_once_with(
@@ -384,7 +415,9 @@ def test_execute_finalizer_writes_summary_when_phase_stops_before_boundary(
     assert events[-1]["event"] == "adaptive_complete"
     assert events[-1]["reason"] == "phase_stopped"
     summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    assert summary["status"] == "completed"
     assert summary["boundary_concurrency"] is None
+    assert summary["result"]["boundary_value"] is None
     assert summary["completed_reason"] == "phase_stopped"
 
 
@@ -426,6 +459,14 @@ def test_minimum_breach_fails_without_sustainable_concurrency(tmp_path) -> None:
     assert events[-1]["event"] == "adaptive_failed"
     assert events[-1]["reason"] == "no_sustainable_concurrency_found"
     assert events[-1]["first_failing_value"] == 2
+    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    assert summary["status"] == "completed"
+    assert summary["completed_reason"] == "no_sustainable_concurrency_found"
+    assert summary["result"] == {
+        "last_passing_value": None,
+        "first_failing_value": 2,
+        "boundary_value": None,
+    }
 
 
 def test_max_concurrency_passing_is_incomplete_not_boundary(tmp_path) -> None:
@@ -599,6 +640,9 @@ async def test_assessment_loop_failure_completes_and_cancels(
         for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_failed"
+    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    assert summary["status"] == "failed"
+    assert summary["completed_reason"] == "assessment_failed: bad window"
 
 
 @pytest.mark.asyncio
