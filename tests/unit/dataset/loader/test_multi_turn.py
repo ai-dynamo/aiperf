@@ -630,6 +630,223 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert conversations[1].turns[0].texts[0].contents == ["Second"]
 
 
+class TestMultiTurnDatasetLoaderSystemPromptHoist:
+    """Test that a leading system turn is hoisted to conversation.system_message."""
+
+    def test_leading_system_turn_hoisted_to_system_message(self, default_cfg):
+        """A leading text-only system turn becomes the conversation system_message."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", text="You are a helpful assistant."),
+                        SingleTurn(text="What is AI?"),
+                        SingleTurn(text="Explain simply.", delay=1000),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message == "You are a helpful assistant."
+        # The system turn must not be dispatched as its own turn.
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].texts[0].contents == ["What is AI?"]
+        assert conversation.turns[1].texts[0].contents == ["Explain simply."]
+        assert conversation.turns[1].delay == 1000
+
+    def test_no_system_turn_leaves_system_message_none(self, default_cfg):
+        """Conversations without a system turn keep system_message as None."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[SingleTurn(text="Hello"), SingleTurn(text="World")],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert conversations[0].system_message is None
+        assert len(conversations[0].turns) == 2
+
+    def test_only_leading_system_turn_is_hoisted(self, default_cfg):
+        """A non-leading system turn is kept as a normal turn."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", text="Primary system prompt."),
+                        SingleTurn(text="First question"),
+                        SingleTurn(role="system", text="Mid-conversation reminder."),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message == "Primary system prompt."
+        # Only the leading system turn is hoisted; the later one stays a turn.
+        assert len(conversation.turns) == 2
+        assert conversation.turns[1].role == "system"
+        assert conversation.turns[1].texts[0].contents == ["Mid-conversation reminder."]
+
+    def test_system_turn_with_media_is_not_hoisted(self, default_cfg):
+        """A system turn carrying non-text media falls through to a normal turn."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(
+                            role="system",
+                            text="Look at this",
+                            image="https://example.com/image.png",
+                        ),
+                        SingleTurn(text="What is it?"),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].role == "system"
+        assert conversation.turns[0].images[0].contents == [
+            "https://example.com/image.png"
+        ]
+
+    def test_system_turn_hoisted_end_to_end_from_jsonl(
+        self, create_jsonl_file, default_cfg
+    ):
+        """Loading from JSONL hoists the leading system turn after conversion."""
+        content = [
+            json.dumps(
+                {
+                    "session_id": "conv_sys",
+                    "turns": [
+                        {"role": "system", "text": "Answer only in JSON."},
+                        {"text": "Give me a number."},
+                    ],
+                }
+            )
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MultiTurnDatasetLoader(
+            filename=filename, run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        conversation = conversations[0]
+        assert conversation.session_id == "conv_sys"
+        assert conversation.system_message == "Answer only in JSON."
+        assert len(conversation.turns) == 1
+        assert conversation.turns[0].texts[0].contents == ["Give me a number."]
+
+    def test_system_only_session_is_not_hoisted(self, default_cfg):
+        """A session whose only turn is a system turn keeps it as a dispatchable turn.
+
+        Hoisting it would leave the conversation turn-less, which the scheduler
+        cannot dispatch (it raises "turn index out of range" and the run hangs).
+        The loader un-hoists so the system turn survives as a normal turn.
+        """
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[SingleTurn(role="system", text="You are an assistant.")],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 1
+        assert conversation.turns[0].role == "system"
+        assert conversation.turns[0].texts[0].contents == ["You are an assistant."]
+
+    def test_un_hoisted_system_only_turn_preserves_metadata(self, default_cfg):
+        """Un-hoisting a system-only session preserves the turn's own metadata."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(
+                            role="system",
+                            text="Be brief.",
+                            delay=500,
+                            extra={"foo": "bar"},
+                        )
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 1
+        assert conversation.turns[0].delay == 500
+        assert conversation.turns[0].extra_body == {"foo": "bar"}
+
+    def test_system_turn_followed_by_real_turn_still_hoists(self, default_cfg):
+        """The un-hoist guard does not interfere when real turns follow."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", text="You are an assistant."),
+                        SingleTurn(text="Hello"),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message == "You are an assistant."
+        assert len(conversation.turns) == 1
+        assert conversation.turns[0].texts[0].contents == ["Hello"]
+
+
 def test_multi_turn_loader_propagates_per_inner_turn_extra(tmp_path, default_cfg):
     path = tmp_path / "multi.jsonl"
     path.write_text(

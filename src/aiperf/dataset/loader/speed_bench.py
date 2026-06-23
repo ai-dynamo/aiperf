@@ -107,6 +107,11 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
             category: mixed
     """
 
+    # SPEED-Bench rows are a fixed benchmark: a leading ``system`` message is
+    # part of the prompt definition and must stay a dispatched turn, so the
+    # inherited system-prompt hoist is disabled here.
+    _hoist_leading_system_message: ClassVar[bool] = False
+
     def __init__(
         self,
         filename: str,

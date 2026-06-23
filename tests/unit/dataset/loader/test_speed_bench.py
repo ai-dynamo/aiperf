@@ -205,6 +205,38 @@ class TestSpeedBenchLoader:
             "Implement quicksort."
         ]
 
+    def test_leading_system_message_is_not_hoisted(self, create_jsonl_file):
+        """SpeedBench opts out of the multi-turn system-prompt hoist.
+
+        A leading ``system`` message is part of the SPEED-Bench prompt
+        definition and must remain a dispatched turn (preserving turn count and
+        per-turn metrics), unlike the ``multi_turn`` loader which hoists it into
+        ``conversation.system_message``. This locks the opt-out so a future base
+        change cannot silently re-regress SpeedBench.
+        """
+        assert SpeedBenchLoader._hoist_leading_system_message is False
+
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-chat-1"),
+                    category="qa",
+                    messages=[
+                        {"role": "system", "content": "Answer tersely."},
+                        {"role": "user", "content": "What is Python?"},
+                    ],
+                ),
+            ],
+        )
+
+        conversation = loader.convert_to_conversations(dataset)[0]
+
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].role == "system"
+        assert conversation.turns[0].texts[0].contents == ["Answer tersely."]
+
 
 class TestSpeedBenchLoaderCategoryFiltering:
     def test_no_category_returns_all_rows(self, create_jsonl_file):

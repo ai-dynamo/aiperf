@@ -3,7 +3,7 @@
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import ValidationError
 
@@ -11,7 +11,7 @@ from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
-from aiperf.dataset.loader.models import MultiTurn
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
@@ -91,6 +91,31 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         ]
     }
     ```
+
+    6. persistent system prompt version
+    ```json
+    {
+        "session_id": "session_123",
+        "turns": [
+            {"role": "system", "text": "You are a helpful assistant."},
+            {"text": "What is deep learning?"},
+            {"text": "Explain it for a five year old.", "delay": 1000}
+        ]
+    }
+    ```
+    A leading text-only ``role: "system"`` turn is hoisted into the
+    conversation-level ``system_message`` rather than dispatched as its own
+    (user-less) request. The endpoint then prepends it to every turn's
+    message array, so the system prompt persists across all turns and does
+    not consume a turn slot or skew per-turn metrics.
+    """
+
+    _hoist_leading_system_message: ClassVar[bool] = True
+    """Hoist a leading text-only system turn into ``conversation.system_message``.
+
+    Subclasses representing fixed benchmarks (e.g. SpeedBench) set this to
+    ``False`` so their authored message structure and per-turn metrics stay
+    intact rather than silently losing the leading system turn.
     """
 
     @classmethod
@@ -143,23 +168,80 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         conversations = []
         for session_id, multi_turns in data.items():
             conversation = Conversation(session_id=session_id)
+            hoisted: tuple[SingleTurn, dict[str, list[Any]]] | None = None
 
             # Process all MultiTurn objects for this session
             for multi_turn in multi_turns:
                 for single_turn in multi_turn.turns:
                     media = self.convert_to_media_objects(single_turn)
-                    conversation.turns.append(
-                        Turn(
-                            texts=media[MediaType.TEXT],
-                            images=media[MediaType.IMAGE],
-                            audios=media[MediaType.AUDIO],
-                            videos=media[MediaType.VIDEO],
-                            timestamp=single_turn.timestamp,
-                            delay=single_turn.delay,
-                            role=single_turn.role,
-                            max_tokens=single_turn.output_length,
-                            extra_body=single_turn.extra,
-                        )
-                    )
+                    if self._hoist_leading_system_message and (
+                        self._try_hoist_system_message(conversation, single_turn, media)
+                    ):
+                        hoisted = (single_turn, media)
+                        continue
+                    conversation.turns.append(self._build_turn(single_turn, media))
+
+            # A session whose only turn was the hoisted system turn would leave
+            # the conversation turn-less, which the scheduler cannot dispatch
+            # (it raises "turn index out of range" and the run hangs). Un-hoist:
+            # restore the system turn as a normal turn so the conversation stays
+            # dispatchable, matching pre-hoist behavior for this degenerate input.
+            if hoisted is not None and not conversation.turns:
+                conversation.system_message = None
+                conversation.turns.append(self._build_turn(*hoisted))
+
             conversations.append(conversation)
         return conversations
+
+    @staticmethod
+    def _build_turn(single_turn: SingleTurn, media: dict[str, list[Any]]) -> Turn:
+        """Build a ``Turn`` from a parsed ``SingleTurn`` and its converted media."""
+        return Turn(
+            texts=media[MediaType.TEXT],
+            images=media[MediaType.IMAGE],
+            audios=media[MediaType.AUDIO],
+            videos=media[MediaType.VIDEO],
+            timestamp=single_turn.timestamp,
+            delay=single_turn.delay,
+            role=single_turn.role,
+            max_tokens=single_turn.output_length,
+            extra_body=single_turn.extra,
+        )
+
+    @staticmethod
+    def _try_hoist_system_message(
+        conversation: Conversation,
+        single_turn: SingleTurn,
+        media: dict[str, list[Any]],
+    ) -> bool:
+        """Lift a leading text-only system turn into ``conversation.system_message``.
+
+        A ``role: "system"`` turn authored as the conversation's first turn
+        belongs at the conversation level: the endpoint prepends
+        ``system_message`` to every turn's message array, so the prompt
+        persists across all turns. Dispatching it as a turn instead would emit
+        a standalone, user-less request and inflate per-turn metrics by one.
+
+        Only the leading turn is hoisted, and only when it carries text alone -
+        a system turn with image/audio/video media is unusual, so it falls
+        through to normal turn handling rather than silently dropping that
+        media. Returns ``True`` when the turn was consumed as the system
+        message and must not be appended as a turn.
+        """
+        if (
+            single_turn.role != "system"
+            or conversation.turns
+            or conversation.system_message is not None
+        ):
+            return False
+        if media[MediaType.IMAGE] or media[MediaType.AUDIO] or media[MediaType.VIDEO]:
+            return False
+        text = "\n".join(
+            content
+            for text_obj in media[MediaType.TEXT]
+            for content in text_obj.contents
+        )
+        if not text:
+            return False
+        conversation.system_message = text
+        return True
