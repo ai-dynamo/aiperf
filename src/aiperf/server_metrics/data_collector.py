@@ -8,6 +8,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from prometheus_client.metrics_core import Metric
+from prometheus_client.openmetrics.parser import (
+    text_string_to_metric_families as openmetrics_text_string_to_metric_families,
+)
 from prometheus_client.parser import text_string_to_metric_families
 from pydantic import ValidationError
 
@@ -273,8 +276,17 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
 
         metrics_dict: dict[str, MetricFamily] = {}
 
+        # vLLM's Rust frontend serves OpenMetrics (terminated by `# EOF`); the
+        # classic Prometheus parser mistypes its `_total` counters, so route by
+        # the `# EOF` trailer, which only OpenMetrics emits.
+        parse_families = (
+            openmetrics_text_string_to_metric_families
+            if fetch_result.text.rstrip().endswith("# EOF")
+            else text_string_to_metric_families
+        )
+
         try:
-            for family in text_string_to_metric_families(fetch_result.text):
+            for family in parse_families(fetch_result.text):
                 # Skip _created metrics - these are timestamps indicating when the parent metric was created, not actual metric data
                 # or _uptime metrics - these are timestamps indicating how long the server has been running.
                 if (
