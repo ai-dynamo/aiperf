@@ -20,6 +20,8 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from aiperf.credit.messages import CreditReturn, FirstToken
     from aiperf.credit.structs import Credit
     from aiperf.timing.branch_orchestrator import BranchOrchestrator
@@ -81,6 +83,7 @@ class CreditCallbackHandler:
         concurrency_manager: ConcurrencyManager,
         branch_orchestrator: BranchOrchestrator | None = None,
         session_tree_registry: SessionTreeRegistry | None = None,
+        on_warmup_abort: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize callback handler.
 
@@ -99,11 +102,31 @@ class CreditCallbackHandler:
                 ``registry.on_root_terminal`` (after intercept, so final-turn
                 spawns are counted first); the per-phase teardown releases any
                 still-open trees via the runner's ``release_all``.
+            on_warmup_abort: Optional async callback fired ONCE on the first
+                terminal WARMUP failure. Used by agentic replay to abort the run
+                early (broadcast ProfileCancelCommand) instead of letting warmup
+                drain to teardown -- a degraded trajectory pool means PROFILING
+                must not start, so there is no value in waiting for the rest of
+                the warmup credits to return. ``None`` -> legacy teardown-time
+                abort via the strategy's ``report_warmup_failures`` only.
         """
         self._concurrency_manager = concurrency_manager
         self._branch_orchestrator = branch_orchestrator
         self._session_tree_registry = session_tree_registry
+        self._on_warmup_abort = on_warmup_abort
+        self._warmup_abort_triggered = False
         self._phase_handlers: dict[CreditPhase, PhaseCallbackContext] = {}
+
+    @property
+    def on_warmup_abort(self) -> Callable[[], Awaitable[None]] | None:
+        """The wired live warmup-abort callback, or None if not enabled.
+
+        When non-None, the live path (first terminal warmup failure ->
+        ProfileCancelCommand) is authoritative and PhaseRunner skips its
+        teardown ``report_warmup_failures`` raise (which is only a backstop for
+        the un-wired case).
+        """
+        return self._on_warmup_abort
 
     def _tree_registry_engaged(self, credit: Credit) -> bool:
         """True when per-tree session-slot accounting owns this credit's slot.
@@ -207,6 +230,64 @@ class CreditCallbackHandler:
         if phase in self._phase_handlers:
             del self._phase_handlers[phase]
             _logger.debug(lambda: f"Unregistered callback handler for phase {phase}")
+
+    async def _handle_warmup_failure(
+        self,
+        credit: Credit,
+        credit_return: CreditReturn,
+        context: PhaseCallbackContext,
+        phase: CreditPhase,
+    ) -> None:
+        """Accumulate, and live-abort on, a terminal WARMUP root failure.
+
+        AgenticReplayStrategy exposes ``record_warmup_failure(trace_id)``;
+        PhaseRunner calls ``report_warmup_failures()`` at WARMUP teardown to abort
+        PROFILING if any trajectory burned its only warmup credit on a terminal
+        error or cancellation. Duck-typed: only fires when the active strategy
+        implements the hook, so non-replay strategies are unaffected.
+
+        Do NOT gate on ``credit.is_final_turn``: a WARMUP credit primes the single
+        turn k_i (the last request before t*), and PROFILING resumes the same
+        trajectory at k_i+1, so for a session active at t* the warmed turn is never
+        the trajectory's final turn (k_i < num_turns-1) and ``is_final_turn`` is
+        False. WARMUP dispatches exactly one credit per session and its return is a
+        strategy-level no-op, so every WARMUP root return IS the terminal warmup
+        event for that trajectory -- gating on ``is_final_turn`` made this
+        accumulation dead for the entire normal warmup population, silently letting
+        a degraded pool proceed to PROFILING.
+
+        When ``on_warmup_abort`` is wired, the FIRST terminal failure also aborts
+        the run live (broadcast ProfileCancelCommand) instead of waiting the full
+        warmup drain for the teardown-time ``report_warmup_failures`` raise: a
+        single failure already breaks the contract, and the broadcast cancels
+        in-flight warmup and drives a clean records-manager + system-controller
+        shutdown. Fired at most once.
+        """
+        if not (
+            phase == CreditPhase.WARMUP
+            and credit.agent_depth == 0
+            and (credit_return.error is not None or credit_return.cancelled)
+        ):
+            return
+        record_warmup_failure = getattr(context.strategy, "record_warmup_failure", None)
+        if record_warmup_failure is None:
+            return
+        record_warmup_failure(credit.conversation_id)
+        if self._on_warmup_abort is None or self._warmup_abort_triggered:
+            return
+        self._warmup_abort_triggered = True
+        _logger.warning(
+            lambda: f"Terminal warmup failure for trace {credit.conversation_id}; "
+            f"aborting run early (broadcasting ProfileCancelCommand)."
+        )
+        try:
+            await self._on_warmup_abort()
+        except Exception as exc:  # noqa: BLE001
+            # Mirror the records-side threshold abort: if the broadcast fails,
+            # reset the flag so a later warmup return retries, and the runner's
+            # teardown backstop can still surface the failure.
+            self._warmup_abort_triggered = False
+            _logger.warning(lambda exc=exc: f"Failed to broadcast warmup abort: {exc!r}")
 
     async def on_credit_return(
         self, worker_id: str, credit_return: CreditReturn
@@ -387,33 +468,8 @@ class CreditCallbackHandler:
                     f"{credit.x_correlation_id}: {exc}"
                 )
 
-        # WARMUP terminal-failure accumulation. AgenticReplayStrategy exposes
-        # ``record_warmup_failure(trace_id)``; PhaseRunner calls
-        # ``report_warmup_failures()`` at WARMUP teardown to abort PROFILING
-        # if any trajectory burned its only warmup credit on a terminal error
-        # or cancellation. Duck-typed: only fires when the active strategy
-        # implements the hook, so non-replay strategies are unaffected.
-        #
-        # Do NOT gate on ``credit.is_final_turn``: a WARMUP credit primes the
-        # single turn k_i (the last request before t*), and PROFILING resumes
-        # the same trajectory at k_i+1, so for a session active at t* the warmed
-        # turn is never the trajectory's final turn (k_i < num_turns-1) and
-        # ``is_final_turn`` is False. WARMUP dispatches exactly one credit per
-        # session and its return is a strategy-level no-op, so every WARMUP root
-        # return IS the terminal warmup event for that trajectory — gating on
-        # ``is_final_turn`` made this accumulation dead for the entire normal
-        # warmup population, silently letting a degraded pool proceed to
-        # PROFILING.
-        if (
-            phase == CreditPhase.WARMUP
-            and credit.agent_depth == 0
-            and (credit_return.error is not None or credit_return.cancelled)
-        ):
-            record_warmup_failure = getattr(
-                handler.strategy, "record_warmup_failure", None
-            )
-            if record_warmup_failure is not None:
-                record_warmup_failure(credit.conversation_id)
+        # WARMUP terminal-failure accumulation + live early-abort (agentic replay).
+        await self._handle_warmup_failure(credit, credit_return, handler, phase)
 
         # Deferred all-credits-returned check. Runs on EVERY return — root
         # or child — because child returns don't bump the phase counters

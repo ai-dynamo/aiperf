@@ -7,9 +7,10 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.config.accuracy_config import AccuracyConfig
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, ProfileCancelReason
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.messages import ProfileCancelCommand
 from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
@@ -294,6 +295,65 @@ class TestSignalHandling:
         system_controller.send_command_and_wait_for_all_responses.assert_called_once()
         call_args = system_controller.send_command_and_wait_for_all_responses.call_args
         assert call_args[0][0].command == CommandType.PROFILE_CANCEL
+
+    @pytest.mark.parametrize(
+        ("reason", "expected_abort"),
+        [
+            (ProfileCancelReason.USER, False),
+            (ProfileCancelReason.WARMUP_FAILURE, True),
+            (ProfileCancelReason.FAILED_REQUEST_THRESHOLD, True),
+        ],
+    )
+    def test_profile_cancel_reason_is_abort(
+        self, reason: ProfileCancelReason, expected_abort: bool
+    ):
+        """is_abort discriminates a user-cancel (exit 0) from contract aborts."""
+        assert reason.is_abort is expected_abort
+
+    @pytest.mark.asyncio
+    async def test_abort_reason_cancel_records_exit_error(
+        self, system_controller: SystemController
+    ):
+        """An ABORT-reason ProfileCancelCommand makes the run exit non-zero."""
+        assert not system_controller._abort_recorded
+        assert len(system_controller._exit_errors) == 0
+
+        await system_controller._record_abort_on_profile_cancel(
+            ProfileCancelCommand(
+                service_id="timing", reason=ProfileCancelReason.WARMUP_FAILURE
+            )
+        )
+
+        assert system_controller._abort_recorded
+        assert len(system_controller._exit_errors) == 1
+        assert system_controller._exit_errors[0].error_details.type == "ProfileAborted"
+
+    @pytest.mark.asyncio
+    async def test_user_cancel_does_not_record_exit_error(
+        self, system_controller: SystemController
+    ):
+        """A USER (Ctrl+C) cancel stays exit 0 -- no exit error recorded."""
+        await system_controller._record_abort_on_profile_cancel(
+            ProfileCancelCommand(service_id="ctl", reason=ProfileCancelReason.USER)
+        )
+
+        assert not system_controller._abort_recorded
+        assert len(system_controller._exit_errors) == 0
+
+    @pytest.mark.asyncio
+    async def test_abort_exit_error_recorded_once(
+        self, system_controller: SystemController
+    ):
+        """Repeated abort cancels record exactly one exit error (idempotent)."""
+        for _ in range(3):
+            await system_controller._record_abort_on_profile_cancel(
+                ProfileCancelCommand(
+                    service_id="records",
+                    reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                )
+            )
+
+        assert len(system_controller._exit_errors) == 1
 
     def test_print_cancel_warning_uses_console(
         self, system_controller: SystemController

@@ -442,6 +442,132 @@ class TestWarmupFailureAccumulation:
         warmup_strategy.record_warmup_failure.assert_not_called()
 
 
+class TestWarmupEarlyAbort:
+    """Live early-abort: the first terminal WARMUP failure fires on_warmup_abort.
+
+    A single terminal warmup failure means PROFILING must not start, so the
+    handler broadcasts ProfileCancelCommand (via the injected callback) on the
+    FIRST failure rather than waiting for the full warmup drain + teardown
+    ``report_warmup_failures`` raise. The callback fires at most once per run.
+    """
+
+    @pytest.fixture
+    def abort_cb(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def warmup_strategy(self):
+        mock = MagicMock()
+        mock.handle_credit_return = AsyncMock()
+        mock.record_warmup_failure = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def early_abort_handler(
+        self,
+        mock_concurrency,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        warmup_strategy,
+        abort_cb,
+    ):
+        handler = CreditCallbackHandler(mock_concurrency, on_warmup_abort=abort_cb)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=warmup_strategy,
+        )
+        return handler
+
+    async def test_first_warmup_failure_fires_abort_once(
+        self, early_abort_handler, abort_cb
+    ):
+        """First terminal warmup failure both records and fires the abort once."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="server 500"
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_awaited_once()
+
+    async def test_subsequent_warmup_failures_do_not_refire_abort(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """Only the first failure fires the abort; later failures still record."""
+        for idx in range(3):
+            credit = make_credit(
+                credit_id=idx,
+                conversation_id=f"conv{idx}",
+                turn_index=0,
+                num_turns=3,
+                phase=CreditPhase.WARMUP,
+            )
+            credit_return = CreditReturn(
+                credit=credit,
+                cancelled=False,
+                first_token_sent=False,
+                error="server 500",
+            )
+            await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_awaited_once()
+        assert warmup_strategy.record_warmup_failure.call_count == 3
+
+    async def test_successful_warmup_return_does_not_fire_abort(
+        self, early_abort_handler, abort_cb
+    ):
+        """A clean warmup return never fires the abort."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = make_credit_return(credit)
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_not_awaited()
+
+    async def test_publish_failure_resets_trigger_flag(
+        self, mock_concurrency, mock_progress, mock_lifecycle, mock_stop_checker
+    ):
+        """If the abort broadcast raises, the flag resets so a later return retries
+        and the teardown backstop can still fire."""
+        failing_cb = AsyncMock(side_effect=RuntimeError("bus down"))
+        strategy = MagicMock()
+        strategy.handle_credit_return = AsyncMock()
+        strategy.record_warmup_failure = MagicMock()
+        handler = CreditCallbackHandler(mock_concurrency, on_warmup_abort=failing_cb)
+        handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=strategy,
+        )
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit, cancelled=False, first_token_sent=False, error="500"
+        )
+
+        await handler.on_credit_return("worker-1", credit_return)
+
+        failing_cb.assert_awaited_once()
+        strategy.record_warmup_failure.assert_called_once()
+        assert handler._warmup_abort_triggered is False
+
+    def test_on_warmup_abort_property(self, mock_concurrency, abort_cb):
+        """The public property exposes the wired callback (None when unwired)."""
+        assert CreditCallbackHandler(mock_concurrency).on_warmup_abort is None
+        assert (
+            CreditCallbackHandler(
+                mock_concurrency, on_warmup_abort=abort_cb
+            ).on_warmup_abort
+            is abort_cb
+        )
+
+
 # =============================================================================
 # Test: First Token (TTFT) Handling
 # =============================================================================

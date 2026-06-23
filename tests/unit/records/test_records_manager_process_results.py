@@ -28,10 +28,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.accumulator_protocols import SummaryContext
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, ProfileCancelReason
 from aiperf.common.messages import (
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
+    ProfileCancelCommand,
 )
 from aiperf.common.models import (
     ErrorDetailsCount,
@@ -528,6 +529,36 @@ class TestRunAnalyzers:
         outputs = await mgr._run_analyzers(result=result, cancelled=False)
 
         assert outputs == {AnalyzerType.ACCURACY_RESULTS: {"key": "value"}}
+
+
+class TestProfileCancelFinalizes:
+    """A ProfileCancelCommand must ALWAYS finalize (produce a
+    ProcessRecordsResultMessage), even when only WARMUP ran and PROFILING never
+    started. The absence of this finalization is exactly what hung the run on a
+    warmup-failure abort, so pin it directly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_profile_cancel_publishes_result_and_marks_cancelled(self) -> None:
+        mgr = _make_manager_mock()
+        mgr._on_profile_cancel_command = (
+            RecordsManager._on_profile_cancel_command.__get__(mgr)
+        )
+
+        result = await mgr._on_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id="timing", reason=ProfileCancelReason.WARMUP_FAILURE
+            )
+        )
+
+        # Finalization happened: a result is returned AND a result message is
+        # published (the signal the system controller waits on to shut down).
+        assert isinstance(result, ProcessRecordsResult)
+        published = [c.args[0] for c in mgr.publish.await_args_list]
+        assert any(isinstance(m, ProcessRecordsResultMessage) for m in published)
+        mgr._records_tracker.mark_phase_cancelled.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
 
 
 # Reference imports kept so static-analysis sees the protocol surface used

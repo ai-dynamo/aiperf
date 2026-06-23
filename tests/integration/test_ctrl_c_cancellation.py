@@ -41,6 +41,13 @@ class TestCtrlCCancellation:
             wait_for_profiling=True,  # Wait for "AIPerf is PROFILING" log first
         )
 
+        # A USER cancel (Ctrl+C) is a chosen stop, NOT a contract-violation
+        # abort -- it must exit 0 (unlike warmup-failure / --failed-request-threshold
+        # aborts, which exit non-zero).
+        assert result.exit_code == 0, (
+            f"Ctrl+C (USER cancel) must exit 0, got {result.exit_code}"
+        )
+
         # All output files should be written
         assert result.json is not None, "JSON export should exist"
         assert result.csv, "CSV export should exist"

@@ -908,3 +908,58 @@ class TestFixedScheduleConfigCorrection:
         # Config should reflect the filtered dataset, not the original
         assert r._config.total_expected_requests == 2
         assert r._config.expected_num_sessions == 2
+
+
+class TestWarmupBackstopGuard:
+    """PhaseRunner._should_fire_warmup_backstop: the teardown warmup-failure raise
+    is a BACKSTOP that fires only when the live early-abort is not wired."""
+
+    def _runner(
+        self, phase, on_warmup_abort, conv_src, pub, router, conc, cancel, cb
+    ) -> PhaseRunner:
+        cb.on_warmup_abort = on_warmup_abort
+        return make_runner(cfg(phase=phase), conv_src, pub, router, conc, cancel, cb)
+
+    async def test_fires_when_live_abort_not_wired(
+        self, conv_src, pub, router, conc, cancel, cb
+    ):
+        r = self._runner(
+            CreditPhase.WARMUP, None, conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = MagicMock()  # exposes report_warmup_failures
+        assert r._should_fire_warmup_backstop(strategy) is True
+
+    async def test_skipped_when_live_abort_wired(
+        self, conv_src, pub, router, conc, cancel, cb
+    ):
+        async def _abort() -> None: ...
+
+        r = self._runner(
+            CreditPhase.WARMUP, _abort, conv_src, pub, router, conc, cancel, cb
+        )
+        assert r._should_fire_warmup_backstop(MagicMock()) is False
+
+    async def test_skipped_when_cancelled(
+        self, conv_src, pub, router, conc, cancel, cb
+    ):
+        r = self._runner(
+            CreditPhase.WARMUP, None, conv_src, pub, router, conc, cancel, cb
+        )
+        r._was_cancelled = True
+        assert r._should_fire_warmup_backstop(MagicMock()) is False
+
+    async def test_skipped_for_strategy_without_hook(
+        self, conv_src, pub, router, conc, cancel, cb
+    ):
+        r = self._runner(
+            CreditPhase.WARMUP, None, conv_src, pub, router, conc, cancel, cb
+        )
+        assert r._should_fire_warmup_backstop(object()) is False
+
+    async def test_skipped_for_profiling_phase(
+        self, conv_src, pub, router, conc, cancel, cb
+    ):
+        r = self._runner(
+            CreditPhase.PROFILING, None, conv_src, pub, router, conc, cancel, cb
+        )
+        assert r._should_fire_warmup_backstop(MagicMock()) is False

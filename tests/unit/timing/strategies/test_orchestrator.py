@@ -71,6 +71,24 @@ class TestOrchestratorInit:
             orch._callback_handler.on_first_token
         )
 
+    async def test_wires_warmup_abort_to_publish_profile_cancel(self) -> None:
+        """The callback handler's live warmup-abort is wired to the publisher's
+        publish_profile_cancel. A regression here silently reverts the agentic
+        warmup-failure path to the original hang, while leaf unit tests (which
+        inject the callback by hand) keep passing -- so pin it explicitly."""
+        publisher = make_publisher()
+        orch = PhaseOrchestrator(
+            config=make_timing_config(
+                TimingMode.REQUEST_RATE, request_count=5, request_rate=10.0
+            ),
+            phase_publisher=publisher,
+            credit_router=make_router(),
+            dataset_metadata=make_dataset(3, 2),
+        )
+        assert (
+            orch._callback_handler.on_warmup_abort is publisher.publish_profile_cancel
+        )
+
     async def test_conversation_source_samples_from_dataset(self) -> None:
         """Conversation source is initialized and can sample conversations."""
         cfg = make_timing_config(

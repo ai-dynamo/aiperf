@@ -242,14 +242,17 @@ The `k_i` values are deterministic given the random seed: same dataset + same
 seed = same trajectories + same start points + same recycle order, on any
 machine. That's why the scenario insists on a seed.
 
-The warmup phase ends when **every** warmup request has resolved (success or
-failure). If any warmup request fails terminally (after retries), AIPerf
-aborts the run with a `TrajectoryWarmupFailedError` and lists the failed
-trace IDs — the philosophy is "don't quietly start metrics on a degraded
-warmup". Slow warmups are not aborted automatically: the warmup grace
-period defaults to no limit, so the run will wait until every warmup
-request resolves. If the warmup is taking longer than you expect, that's a
-signal worth investigating in the server logs.
+AIPerf aborts the run as soon as **any** warmup request fails terminally
+(after retries) — it does not wait for the rest of the warmup to drain. A
+single terminal failure means PROFILING would start on a degraded trajectory
+pool, so AIPerf cancels in-flight warmup immediately, logs the failing trace
+at `WARNING` ("aborting run early"), shuts down cleanly as a cancelled run,
+and exits **non-zero** so CI/automation sees a failure rather than an empty
+"success". The philosophy is "don't quietly start metrics on a degraded
+warmup". Slow-but-healthy warmups are *not* aborted: the warmup grace period
+defaults to no limit, so a warmup that is merely slow runs to completion. If
+the warmup is taking longer than you expect, that's a signal worth
+investigating in the server logs.
 
 ### Profiling Phase: Replay, Recycle, Idle-Gap Compression
 
@@ -431,13 +434,16 @@ your network connectivity to `huggingface.co` and confirm the dataset name
 is `semianalysis_cc_traces_weka_062126` or `weka_hf` with
 `--hf-weka-dataset semianalysisai/cc-traces-weka-062126`.
 
-**`TrajectoryWarmupFailedError: Trajectory warmup failed for N trace(s): …`**
-Your inference server rejected one or more warmup requests after AIPerf's
-normal retry budget. Check the server logs — common causes are an
-authentication or model-name mismatch (e.g. `--model` doesn't match what
-the server is serving), the server's `max-model-len` set lower than the
-trace's requested context, or the server simply not running. AgentX MVP
-deliberately aborts on warmup failure rather than producing a partial result.
+**Run aborts early: `aborting run early (broadcasting ProfileCancelCommand)` / warmup failure**
+Your inference server rejected a warmup request after AIPerf's normal retry
+budget. AgentX MVP aborts on the **first** terminal warmup failure rather than
+producing a partial result: the run cancels immediately and exits non-zero
+(the failing trace is named in the `WARNING` log; the legacy
+`TrajectoryWarmupFailedError` is still raised as a backstop if the live abort
+path is unavailable). Check the server logs — common causes are an
+authentication or model-name mismatch (e.g. `--model` doesn't match what the
+server is serving), the server's `max-model-len` set lower than the trace's
+requested context, or the server simply not running.
 
 **Run completes but `submission_valid: false` with `"context_overflow_rate_exceeded"`**
 Your server is rejecting prompts as too long for more than 1% of requests.
