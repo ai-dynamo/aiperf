@@ -4,6 +4,7 @@
 import json
 
 import pytest
+from pytest import param
 
 from aiperf.common.models import Image, Text
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
@@ -845,6 +846,53 @@ class TestMultiTurnDatasetLoaderSystemPromptHoist:
         assert conversation.system_message == "You are an assistant."
         assert len(conversation.turns) == 1
         assert conversation.turns[0].texts[0].contents == ["Hello"]
+
+    @pytest.mark.parametrize(
+        "field_kwargs",
+        [
+            param({"timestamp": 1000}, id="timestamp"),
+            param({"delay": 500}, id="delay"),
+            param({"output_length": 32}, id="output_length"),
+            param({"extra": {"foo": "bar"}}, id="extra"),
+        ],
+    )  # fmt: skip
+    def test_system_turn_with_dispatch_metadata_is_not_hoisted(
+        self, field_kwargs, default_cfg
+    ):
+        """A leading system turn carrying dispatch-time metadata is not hoisted.
+
+        ``timestamp``/``delay``/``output_length``/``extra`` are per-request
+        dispatch semantics with no place to live on a conversation-level system
+        message, so hoisting would silently drop them. The turn must stay a
+        normal turn with its metadata intact.
+        """
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", text="Be brief.", **field_kwargs),
+                        SingleTurn(text="Hello"),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].role == "system"
+        assert conversation.turns[0].texts[0].contents == ["Be brief."]
+        field, value = next(iter(field_kwargs.items()))
+        turn_attr = {"output_length": "max_tokens", "extra": "extra_body"}.get(
+            field, field
+        )
+        assert getattr(conversation.turns[0], turn_attr) == value
 
 
 def test_multi_turn_loader_propagates_per_inner_turn_extra(tmp_path, default_cfg):

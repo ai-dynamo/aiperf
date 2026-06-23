@@ -121,6 +121,16 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         multi_turn: bool = True,
         **kwargs: Any,
     ) -> None:
+        """Initialize the loader with an optional category filter.
+
+        Args:
+            filename: Path to the SPEED-Bench JSONL file.
+            run: The benchmark run this loader belongs to.
+            category: When set, only rows whose ``category`` matches are loaded.
+            multi_turn: When True, all messages in a row are used; when False,
+                only the first message is used.
+            kwargs: Forwarded to the base loader.
+        """
         self.category = category
         self.multi_turn = multi_turn
         super().__init__(filename=filename, run=run, **kwargs)
@@ -195,6 +205,11 @@ class SpeedBenchSplitLoader(SpeedBenchLoader):
     def can_load(
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
     ) -> bool:
+        """Return whether the file is this split's JSONL and matches the row shape.
+
+        The filename must equal ``cls.split_filename`` before the SPEED-Bench
+        row-shape check is applied, so each split only claims its own file.
+        """
         if filename is None or Path(filename).name != cls.split_filename:
             return False
 

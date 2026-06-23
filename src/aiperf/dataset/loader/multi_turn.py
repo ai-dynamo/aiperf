@@ -225,13 +225,21 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Only the leading turn is hoisted, and only when it carries text alone -
         a system turn with image/audio/video media is unusual, so it falls
         through to normal turn handling rather than silently dropping that
-        media. Returns ``True`` when the turn was consumed as the system
-        message and must not be appended as a turn.
+        media. The same applies to dispatch-time metadata (``timestamp``,
+        ``delay``, ``output_length``, ``extra``): a conversation-level system
+        message has no turn to carry them, so a system turn that sets any of
+        them falls through to normal handling rather than silently dropping it.
+        Returns ``True`` when the turn was consumed as the system message and
+        must not be appended as a turn.
         """
         if (
             single_turn.role != "system"
             or conversation.turns
             or conversation.system_message is not None
+            or single_turn.timestamp is not None
+            or single_turn.delay is not None
+            or single_turn.output_length is not None
+            or single_turn.extra is not None
         ):
             return False
         if media[MediaType.IMAGE] or media[MediaType.AUDIO] or media[MediaType.VIDEO]:
