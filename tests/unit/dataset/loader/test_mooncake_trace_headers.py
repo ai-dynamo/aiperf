@@ -102,6 +102,28 @@ class TestMooncakeSynthesisPreservesHeaders:
         assert rebuilt[0].headers == {"x-session-token": "tok-A"}
         assert rebuilt[1].headers == {"x-session-token": "tok-B"}
 
+    def test_reconstruct_traces_tail_reuses_last_original_headers(self):
+        # Synthesis may emit more traces than originals (e.g., speedup
+        # expansion); the tail traces reuse the last original's headers.
+        loader = MooncakeTraceDatasetLoader.__new__(MooncakeTraceDatasetLoader)
+        originals = [
+            MooncakeTrace(
+                text_input="hi", output_length=4, headers={"x-session-token": "tok-A"}
+            ),
+            MooncakeTrace(
+                text_input="bye", output_length=4, headers={"x-session-token": "tok-B"}
+            ),
+        ]
+        synth_dicts = [
+            {"text_input": "hi-syn", "output_length": 4},
+            {"text_input": "bye-syn", "output_length": 4},
+            {"text_input": "tail-syn", "output_length": 4},
+        ]
+        rebuilt = loader._reconstruct_traces(originals, synth_dicts)
+        assert rebuilt[0].headers == {"x-session-token": "tok-A"}
+        assert rebuilt[1].headers == {"x-session-token": "tok-B"}
+        assert rebuilt[2].headers == {"x-session-token": "tok-B"}
+
     def test_reconstruct_traces_without_originals_keeps_none(self):
         loader = MooncakeTraceDatasetLoader.__new__(MooncakeTraceDatasetLoader)
         synth_dicts = [{"text_input": "hi", "output_length": 4}]
