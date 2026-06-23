@@ -1,0 +1,143 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# PROOF-OF-CONCEPT (Stage 1): can a Windows AIPerf *client* benchmark a server
+# that runs on a *different* runner, reached over a cloudflared tunnel?
+#
+# server  (ubuntu-latest): mock server + cloudflared quick-tunnel -> publishes
+#                          the public trycloudflare URL as an artifact, then
+#                          stays alive until the client signals done.
+# client  (windows-latest): polls for the URL, installs aiperf, runs a small
+#                           `aiperf profile` against the tunnel, then signals done.
+#
+# No GPU, no velonix, no vLLM yet — this only proves the cross-runner-over-tunnel
+# plumbing + the Windows client path. Stage 2 swaps the server side for the
+# Linux GPU runner + vLLM.
+#
+# The two jobs run in PARALLEL (no `needs:`) so the server can serve while the
+# client runs; they hand off via same-run artifacts polled with `gh run download`.
+
+name: Windows Docs E2E (POC)
+
+on:
+  workflow_dispatch:
+  # POC: run on every push to this branch so we can iterate without a PR.
+  push:
+    branches:
+      - lkomali/windows-docs-e2e-poc
+  pull_request:
+    paths:
+      - '.github/workflows/windows-docs-e2e-poc.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  server:
+    name: Server (mock + cloudflared tunnel)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v7
+      - name: Install aiperf + mock server
+        run: |
+          uv venv .venv
+          uv pip install -e ".[dev]"
+          uv pip install -e "tests/aiperf_mock_server[dev]"
+      - name: Start mock server on :8000
+        run: |
+          nohup uv run aiperf-mock-server --port 8000 > mock.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/v1/models >/dev/null 2>&1 && break || true
+            curl -sf http://localhost:8000/ >/dev/null 2>&1 && break || true
+            sleep 1
+          done
+          echo "mock server up"
+      - name: Start cloudflared quick tunnel
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --url http://localhost:8000 --no-autoupdate > tunnel.log 2>&1 &
+          # The public URL appears in cloudflared's log a few seconds after start.
+          URL=""
+          for i in $(seq 1 30); do
+            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1 || true)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+          if [ -z "$URL" ]; then echo "::error::no tunnel URL"; cat tunnel.log; exit 1; fi
+          echo "tunnel: $URL"
+          echo "$URL" > server_url.txt
+      - name: Publish tunnel URL
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-url
+          path: server_url.txt
+          retention-days: 1
+      - name: Keep server alive until client is done
+        run: |
+          for i in $(seq 1 60); do
+            if gh run download ${{ github.run_id }} -n client-done -D /tmp/done 2>/dev/null; then
+              echo "client signaled done"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::client-done not seen within timeout; exiting anyway"
+
+  client:
+    name: Client (windows aiperf)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v7
+      - name: Install aiperf
+        run: |
+          uv venv .venv
+          uv pip install -e ".[dev]"
+      - name: Wait for the server's tunnel URL
+        run: |
+          for i in $(seq 1 60); do
+            if gh run download ${{ github.run_id }} -n server-url -D . 2>/dev/null; then break; fi
+            sleep 10
+          done
+          test -f server_url.txt || { echo "::error::never got server URL"; exit 1; }
+          echo "URL=$(cat server_url.txt)" >> "$GITHUB_ENV"
+          echo "got server URL: $(cat server_url.txt)"
+      - name: Run aiperf against the tunnel
+        run: |
+          uv run aiperf profile \
+            --model mock \
+            --tokenizer gpt2 \
+            --url "$URL" \
+            --endpoint-type chat \
+            --request-count 10 \
+            --concurrency 2 \
+            --isl 32 --osl 16
+      - name: Signal done
+        if: always()
+        run: |
+          echo "done" > client_done.txt
+      - name: Publish done sentinel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-done
+          path: client_done.txt
+          retention-days: 1
