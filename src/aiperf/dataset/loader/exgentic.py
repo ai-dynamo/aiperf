@@ -16,6 +16,7 @@ from aiperf.common.enums import CaseInsensitiveStrEnum, ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import AIPerfBaseModel, Conversation, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+from aiperf.plugin.enums import PhaseType
 
 
 class ExgenticHarness(CaseInsensitiveStrEnum):
@@ -212,6 +213,10 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                 f"Invalid Exgentic dataset filters: {error}; available filters: {available}"
             ) from error
         super().__init__(**kwargs)
+        self._fixed_schedule = any(
+            phase.type == PhaseType.FIXED_SCHEDULE
+            for phase in self.run.cfg.get_profiling_phases()
+        )
 
     @staticmethod
     def _available_filters() -> str:
@@ -269,6 +274,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                     attributes.get("gen_ai.input.messages")
                 ),
                 raw_tools=_normalize_tools(attributes.get("gen_ai.tool.definitions")),
+                extra_headers={"x-dynamo-session-id": session_id},
             )
         except (KeyError, TypeError, ValueError) as error:
             raise DatasetLoaderError(
@@ -291,6 +297,29 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             previous_end_ms = end_ms
         return turns
 
+    @staticmethod
+    def _build_fixed_schedule_conversations(
+        session_id: str,
+        spans: list[tuple[float, int, float, Turn]],
+        stats: Counter[str],
+    ) -> list[Conversation]:
+        session_start_ms = spans[0][0]
+        previous_end_ms: float | None = None
+        conversations = []
+        for start_ms, span_index, end_ms, turn in spans:
+            turn.timestamp = start_ms - session_start_ms
+            if previous_end_ms is not None and start_ms < previous_end_ms:
+                stats["overlap"] += 1
+            conversations.append(
+                Conversation(
+                    session_id=f"{session_id}:{span_index}",
+                    context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                    turns=[turn],
+                )
+            )
+            previous_end_ms = end_ms
+        return conversations
+
     def _convert_row(
         self,
         *,
@@ -299,7 +328,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         combinations: set[tuple[str, str]],
         seen_sessions: set[str],
         stats: Counter[str],
-    ) -> Conversation | None:
+    ) -> list[Conversation]:
         harness = row.get("harness")
         session_id = row.get("session_id")
         if not isinstance(harness, str) or not harness:
@@ -314,7 +343,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         }
         combinations.update((harness, model) for model in source_models)
         if not self._matches_filters(harness, source_models):
-            return None
+            return []
 
         spans = []
         for span_index, span in enumerate(row.get("spans") or []):
@@ -323,18 +352,23 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                 spans.append(parsed)
         spans.sort(key=lambda item: (item[0], item[1]))
         if not spans:
-            return None
+            return []
         if session_id in seen_sessions:
             raise DatasetLoaderError(f"Duplicate Exgentic session_id {session_id!r}")
         seen_sessions.add(session_id)
 
-        turns = self._build_turns(spans, stats)
-        stats["requests"] += len(turns)
-        return Conversation(
-            session_id=session_id,
-            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
-            turns=turns,
-        )
+        stats["sessions"] += 1
+        stats["requests"] += len(spans)
+        if self._fixed_schedule:
+            return self._build_fixed_schedule_conversations(session_id, spans, stats)
+
+        return [
+            Conversation(
+                session_id=session_id,
+                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+                turns=self._build_turns(spans, stats),
+            )
+        ]
 
     def _convert_rows(self, rows: Iterable[dict[str, Any]]) -> list[Conversation]:
         conversations: list[Conversation] = []
@@ -344,19 +378,15 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         max_conversations = self._max_conversations()
 
         for row_index, row in enumerate(rows, 1):
-            conversation = self._convert_row(
+            row_conversations = self._convert_row(
                 row_index=row_index,
                 row=row,
                 combinations=combinations,
                 seen_sessions=seen_sessions,
                 stats=stats,
             )
-            if conversation is not None:
-                conversations.append(conversation)
-            if (
-                max_conversations is not None
-                and len(conversations) >= max_conversations
-            ):
+            conversations.extend(row_conversations)
+            if max_conversations is not None and stats["sessions"] >= max_conversations:
                 break
 
         if not conversations:
@@ -371,9 +401,9 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             )
 
         self.info(
-            f"Loaded {len(conversations)} Exgentic sessions / {stats['requests']} "
+            f"Loaded {stats['sessions']} Exgentic sessions / {stats['requests']} "
             f"requests; skipped failed={stats['failed']}, "
             f"non_llm={stats['non_llm']}, zero_token={stats['zero_token']}; "
-            f"clamped_overlaps={stats['overlap']}"
+            f"overlapping_calls={stats['overlap']}"
         )
         return conversations

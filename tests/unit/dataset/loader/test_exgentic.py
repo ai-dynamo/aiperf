@@ -11,10 +11,13 @@ import pytest
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.exgentic import (
     ExgenticDatasetLoader,
     canonical_source_model,
 )
+from aiperf.plugin.enums import PublicDatasetType
+from tests.unit.conftest import make_run_from_cli
 
 
 def _message_json(messages: list[dict[str, Any]]) -> str:
@@ -193,8 +196,56 @@ async def test_convert_preserves_snapshots_tools_osl_order_and_delays() -> None:
         }
     ]
     assert all(
+        turn.extra_headers == {"x-dynamo-session-id": "session-1"}
+        for turn in conversation.turns
+    )
+    assert all(
         "recorded output" not in orjson.dumps(turn.raw_messages).decode()
         for turn in conversation.turns
+    )
+
+
+@pytest.mark.asyncio
+async def test_fixed_schedule_preserves_overlapping_start_times() -> None:
+    messages = [{"role": "user", "parts": [{"type": "text", "content": "hi"}]}]
+    spans = [
+        _span("2026-01-01T00:00:20Z", "2026-01-01T00:00:21Z", messages=messages),
+        _span("2026-01-01T00:00:00Z", "2026-01-01T00:00:10Z", messages=messages),
+        _span("2026-01-01T00:00:05Z", "2026-01-01T00:00:07Z", messages=messages),
+    ]
+    run = make_run_from_cli(
+        CLIConfig(
+            model_names=["target-model"],
+            public_dataset=PublicDatasetType.EXGENTIC,
+            conversation_num=1,
+            fixed_schedule=True,
+        )
+    )
+    loader = ExgenticDatasetLoader(
+        run=run,
+        hf_dataset_name="Exgentic/agent-llm-traces",
+        streaming=True,
+    )
+
+    conversations = await loader.convert_to_conversations(
+        {"dataset": [_row("session-1", spans)]}
+    )
+
+    assert [conversation.session_id for conversation in conversations] == [
+        "session-1:1",
+        "session-1:2",
+        "session-1:0",
+    ]
+    assert [conversation.turns[0].timestamp for conversation in conversations] == [
+        0,
+        5_000,
+        20_000,
+    ]
+    assert all(len(conversation.turns) == 1 for conversation in conversations)
+    assert all(conversation.turns[0].delay is None for conversation in conversations)
+    assert all(
+        conversation.turns[0].extra_headers == {"x-dynamo-session-id": "session-1"}
+        for conversation in conversations
     )
 
 

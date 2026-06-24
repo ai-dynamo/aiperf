@@ -62,7 +62,7 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
 
 ## Exgentic Agent Trace Replay
 
-The Exgentic loader streams recorded agent sessions directly from Hugging Face at revision `70036b93a04e61b0ea2706a68b962f4f26774587`. It replays each successful, positive-token `llm_call` as a self-contained request snapshot. Recorded messages, tool definitions, tool calls and results, output-token limits, and inter-turn delays are preserved. Tools are not executed, and live responses are not added to later turns.
+The Exgentic loader streams recorded agent sessions directly from Hugging Face at revision `70036b93a04e61b0ea2706a68b962f4f26774587`. It replays each successful, positive-token `llm_call` as a self-contained request snapshot. Recorded messages, tool definitions, tool calls and results, output-token limits, and call start times are preserved. Tools are not executed, and live responses are not added to later requests. Every request carries the source session as `x-dynamo-session-id` for Dynamo agentic tracing while AIPerf retains its own request correlation ID.
 
 Select a source harness and source model independently from the target model served by the endpoint:
 
@@ -75,10 +75,11 @@ aiperf profile \
   --dataset-filter harness=tool_calling_with_shortlisting \
   --dataset-filter source_model=Kimi-K2.5 \
   --num-conversations 1 \
-  --request-count 8 \
-  --concurrency 1
+  --fixed-schedule
 ```
 
 `source_model` selects the model that produced the trace; `--model` selects the target model receiving the replay. Invalid filters report the available harness/model combinations. The dataset currently contains 22 combinations across five harnesses and six canonical source models.
+
+Fixed-schedule mode emits each recorded call as an independently scheduled one-turn request using its start offset from the source session. Calls that overlapped in the trace therefore overlap during replay. Selected source sessions start together at offset zero. Without `--fixed-schedule`, each source session remains a closed-loop multi-turn conversation: AIPerf waits for one live response before applying the recorded residual delay and sending the next request.
 
 Size the target context window for the selected trace plus the target model's chat-template overhead. Recorded contexts reach about 178K tokens, and some Gemini tool-calling sessions exceed 64K before target formatting. `tool_calling_with_shortlisting` alternates a selector request containing the full tool catalog with executor requests containing a changing subset of schemas. Low executor prefix-cache reuse is expected for that harness and is not a loader error.
