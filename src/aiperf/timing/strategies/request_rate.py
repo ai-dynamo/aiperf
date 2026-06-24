@@ -8,6 +8,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
+from aiperf.common import random_generator as rng
 from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.config import CreditPhaseConfig
-    from aiperf.timing.conversation_source import ConversationSource
+    from aiperf.timing.conversation_source import ConversationSource, SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
@@ -104,6 +105,8 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
         self._branch_orchestrator = branch_orchestrator
+        # Per-session start-ratio sampling for mid-conversation seeding.
+        self._trajectory_rng = rng.derive("timing.trajectory_start")
 
         # Queue for subsequent turns (turn_index > 0) waiting to be issued.
         # Populated by handle_credit_return when workers complete turns.
@@ -124,6 +127,26 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         """Setup the phase."""
         pass  # Already setup in __init__
 
+    def _build_start_turn(self, session: SampledSession) -> TurnToSend:
+        """Build the start turn for a newly sampled session.
+
+        Applies mid-conversation seeding when ``trajectory_start_max_ratio`` is
+        set for this phase: a start ratio is sampled uniformly in
+        ``[trajectory_start_min_ratio, trajectory_start_max_ratio]`` and the
+        session begins at turn ``floor(ratio * num_turns)``, with the earlier
+        turns reconstructed as synthetic history worker-side. Falls back to a
+        normal turn-0 start when seeding is disabled or the ratio rounds down to
+        0 (short sessions).
+        """
+        max_ratio = self._config.trajectory_start_max_ratio
+        if max_ratio <= 0.0:
+            return session.build_first_turn()
+        ratio = self._trajectory_rng.uniform(
+            self._config.trajectory_start_min_ratio, max_ratio
+        )
+        start_turn_index = int(ratio * len(session.metadata.turns))
+        return session.build_seeded_turn(start_turn_index)
+
     async def execute_phase(self) -> None:
         """Execute request rate main loop until stop condition reached.
 
@@ -143,7 +166,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         next_target_perf = perf_start + self._rate_generator.next_interval()
 
         # The first turn of the next new session. Cached to avoid wasting samples from shuffle/sequential samplers.
-        next_new_session_turn = self._conversation_source.next().build_first_turn()
+        next_new_session_turn = self._build_start_turn(self._conversation_source.next())
 
         while True:
             now = time.perf_counter()
@@ -185,8 +208,8 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                 match result:
                     case True:  # Successfully issued credit
                         # Re-sample the next new turn for the next interval.
-                        next_new_session_turn = (
-                            self._conversation_source.next().build_first_turn()
+                        next_new_session_turn = self._build_start_turn(
+                            self._conversation_source.next()
                         )
                     case False:  # Stop condition reached
                         self.debug(

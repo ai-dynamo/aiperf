@@ -226,9 +226,14 @@ class CreditCounter:
         new_total_session_turns = self._total_session_turns
         new_root_sent = self._root_requests_sent + 1
 
-        if turn_to_send.turn_index == 0:
+        if turn_to_send.is_session_start:
             new_sent_sessions_count += 1
-            new_total_session_turns += turn_to_send.num_turns
+            # A seeded session (start_turn_index = k > 0) only sends turns
+            # [k, num_turns); turns [0, k) are reconstructed as synthetic
+            # history worker-side and never hit the wire.
+            new_total_session_turns += (
+                turn_to_send.num_turns - turn_to_send.start_turn_index
+            )
 
         # Use root-only wire count (not global ``new_sent_count``) for the
         # session-completion predicate: BG-fork parents continue running

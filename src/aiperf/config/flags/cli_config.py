@@ -1841,6 +1841,42 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    trajectory_start_min_ratio: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            lt=1.0,
+            description="Lower bound of the per-session start-ratio range for "
+            "mid-conversation warmup seeding. Per warmup session a start ratio is "
+            "sampled uniformly in [min, max] and the session begins at turn "
+            "floor(ratio * num_turns), with earlier turns reconstructed as "
+            "token-sized synthetic history. Defaults to 0.0 when only "
+            "--trajectory-start-max-ratio is set. Only valid for synthesized "
+            "multi-turn datasets.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-min-ratio",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    trajectory_start_max_ratio: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            lt=1.0,
+            description="Upper bound of the per-session start-ratio range for "
+            "mid-conversation warmup seeding (see --trajectory-start-min-ratio). "
+            "Setting this > 0 enables warmup-session seeding; requires a warmup "
+            "trigger (--warmup-request-count / --warmup-num-sessions / "
+            "--warmup-duration). Only valid for synthesized multi-turn datasets.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-max-ratio",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
     warmup_prefill_concurrency: Annotated[
         int | None,
         Field(

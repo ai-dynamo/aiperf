@@ -180,6 +180,33 @@ class BasePhaseConfig(BaseConfig):
     ]
 
     # -------------------------------------------------------------------------
+    # Mid-conversation seeding (warmup priming)
+    # -------------------------------------------------------------------------
+
+    trajectory_start_min_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            lt=1.0,
+            default=0.0,
+            description="Lower bound of the per-session start-ratio range for "
+            "mid-conversation seeding (ratio ~ Uniform[min, max]); the session "
+            "starts at turn floor(ratio * num_turns) with prior turns synthesized "
+            "as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+        ),
+    ]
+
+    trajectory_start_max_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            lt=1.0,
+            default=0.0,
+            description="Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+        ),
+    ]
+
+    # -------------------------------------------------------------------------
     # Transition Settings
     # -------------------------------------------------------------------------
 
@@ -259,6 +286,12 @@ class BasePhaseConfig(BaseConfig):
         if self.grace_period is not None and self.duration is None:
             raise ValueError(
                 f"Phase '{self.name}': grace_period requires duration to be set"
+            )
+        if self.trajectory_start_min_ratio > self.trajectory_start_max_ratio:
+            raise ValueError(
+                f"Phase '{self.name}': trajectory_start_min_ratio "
+                f"({self.trajectory_start_min_ratio}) must be <= "
+                f"trajectory_start_max_ratio ({self.trajectory_start_max_ratio})"
             )
         return self
 

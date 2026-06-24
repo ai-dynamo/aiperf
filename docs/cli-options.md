@@ -867,6 +867,16 @@ The number of sessions to use for the warmup phase. If not set, it will use the 
 The concurrency value to use for the warmup phase. If not set, it will use the `--concurrency` value.
 <br/>_Constraints: ≥ 1_
 
+#### `--trajectory-start-min-ratio` `<float>`
+
+Lower bound of the per-session start-ratio range for mid-conversation warmup seeding. Per warmup session a start ratio is sampled uniformly in [min, max] and the session begins at turn floor(ratio * num_turns), with earlier turns reconstructed as token-sized synthetic history. Defaults to 0.0 when only --trajectory-start-max-ratio is set. Only valid for synthesized multi-turn datasets.
+<br/>_Constraints: ≥ 0.0, &lt; 1.0_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+Upper bound of the per-session start-ratio range for mid-conversation warmup seeding (see --trajectory-start-min-ratio). Setting this > 0 enables warmup-session seeding; requires a warmup trigger (--warmup-request-count / --warmup-num-sessions / --warmup-duration). Only valid for synthesized multi-turn datasets.
+<br/>_Constraints: ≥ 0.0, &lt; 1.0_
+
 #### `--warmup-prefill-concurrency` `<int>`
 
 The prefill concurrency value to use for the warmup phase. If not set, it will use the `--prefill-concurrency` value.
@@ -2191,6 +2201,16 @@ The number of sessions to use for the warmup phase. If not set, it will use the 
 
 The concurrency value to use for the warmup phase. If not set, it will use the `--concurrency` value.
 <br/>_Constraints: ≥ 1_
+
+#### `--trajectory-start-min-ratio` `<float>`
+
+Lower bound of the per-session start-ratio range for mid-conversation warmup seeding. Per warmup session a start ratio is sampled uniformly in [min, max] and the session begins at turn floor(ratio * num_turns), with earlier turns reconstructed as token-sized synthetic history. Defaults to 0.0 when only --trajectory-start-max-ratio is set. Only valid for synthesized multi-turn datasets.
+<br/>_Constraints: ≥ 0.0, &lt; 1.0_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+Upper bound of the per-session start-ratio range for mid-conversation warmup seeding (see --trajectory-start-min-ratio). Setting this > 0 enables warmup-session seeding; requires a warmup trigger (--warmup-request-count / --warmup-num-sessions / --warmup-duration). Only valid for synthesized multi-turn datasets.
+<br/>_Constraints: ≥ 0.0, &lt; 1.0_
 
 #### `--warmup-prefill-concurrency` `<int>`
 

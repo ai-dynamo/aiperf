@@ -1030,6 +1030,22 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
+                    "trajectoryStartMinRatio": {
+                      "default": 0.0,
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
+                      "type": "number"
+                    },
                     "gracePeriod": {
                       "anyOf": [
                         {
@@ -1192,6 +1208,22 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "trajectoryStartMinRatio": {
+                      "default": 0.0,
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -1374,6 +1406,22 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "trajectoryStartMinRatio": {
+                      "default": 0.0,
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -1571,6 +1619,22 @@
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                     },
+                    "trajectoryStartMinRatio": {
+                      "default": 0.0,
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
+                      "type": "number"
+                    },
                     "gracePeriod": {
                       "anyOf": [
                         {
@@ -1752,6 +1816,22 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "trajectoryStartMinRatio": {
+                      "default": 0.0,
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -1941,6 +2021,22 @@
                       ],
                       "default": null,
                       "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                    },
+                    "trajectoryStartMinRatio": {
+                      "default": 0.0,
+                      "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartminratio",
+                      "type": "number"
+                    },
+                    "trajectoryStartMaxRatio": {
+                      "default": 0.0,
+                      "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                      "exclusiveMaximum": 1.0,
+                      "minimum": 0.0,
+                      "title": "Trajectorystartmaxratio",
+                      "type": "number"
                     },
                     "gracePeriod": {
                       "anyOf": [
@@ -2732,6 +2828,22 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -2894,6 +3006,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3076,6 +3204,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3273,6 +3417,22 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -3454,6 +3614,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3643,6 +3819,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -3850,6 +4042,22 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -4012,6 +4220,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -4194,6 +4418,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -4391,6 +4631,22 @@
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
                 },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
+                },
                 "gracePeriod": {
                   "anyOf": [
                     {
@@ -4572,6 +4828,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -4761,6 +5033,22 @@
                   ],
                   "default": null,
                   "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+                },
+                "trajectoryStartMinRatio": {
+                  "default": 0.0,
+                  "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartminratio",
+                  "type": "number"
+                },
+                "trajectoryStartMaxRatio": {
+                  "default": 0.0,
+                  "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+                  "exclusiveMaximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Trajectorystartmaxratio",
+                  "type": "number"
                 },
                 "gracePeriod": {
                   "anyOf": [
@@ -5161,6 +5449,58 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
         "gracePeriod": {
           "anyOf": [
             {
@@ -5421,6 +5761,58 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
@@ -6681,6 +7073,58 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
         "gracePeriod": {
           "anyOf": [
             {
@@ -7005,6 +7449,58 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
@@ -8986,6 +9482,58 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
@@ -11623,6 +12171,58 @@
           ],
           "default": null,
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the per-session start-ratio range for mid-conversation seeding (ratio ~ Uniform[min, max]); the session starts at turn floor(ratio * num_turns) with prior turns synthesized as token-sized history. Warmup priming; DELTAS_WITHOUT_RESPONSES only.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the start-ratio range (>= min); 0.0 disables seeding.",
+              "exclusiveMaximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "gracePeriod": {
