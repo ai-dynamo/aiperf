@@ -359,7 +359,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -1007,6 +1007,22 @@ Optional MLflow parent run ID.
 
 Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
 
+#### `--wandb-project` `<str>`
+
+Weights & Biases project name. Setting this enables wandb export.
+
+#### `--wandb-entity` `<str>`
+
+Weights & Biases entity (team or user). Defaults to the API key's default entity.
+
+#### `--wandb-run-name` `<str>`
+
+Weights & Biases run name.
+
+#### `--wandb-tag` `<list>`
+
+Additional Weights & Biases run tags to attach on upload. Can be specified multiple times or as a comma-separated list.
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -1204,6 +1220,10 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
 
+#### `--search-sla-tier` `<list>`
+
+Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or 'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). Requires 2-10 invocations. Example: --search-sla-tier 'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' --search-sla-tier 'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. When used, all --search-sla filters are still parsed and compose with tier definitions.
+
 #### `--search-recipe` `<str>`
 
 Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
@@ -1309,7 +1329,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -1328,7 +1348,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
 
 #### `--accuracy-system-prompt` `<str>`
 
@@ -1689,7 +1709,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -2337,6 +2357,22 @@ Optional MLflow parent run ID.
 
 Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
 
+#### `--wandb-project` `<str>`
+
+Weights & Biases project name. Setting this enables wandb export.
+
+#### `--wandb-entity` `<str>`
+
+Weights & Biases entity (team or user). Defaults to the API key's default entity.
+
+#### `--wandb-run-name` `<str>`
+
+Weights & Biases run name.
+
+#### `--wandb-tag` `<list>`
+
+Additional Weights & Biases run tags to attach on upload. Can be specified multiple times or as a comma-separated list.
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -2534,6 +2570,10 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
 
+#### `--search-sla-tier` `<list>`
+
+Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or 'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). Requires 2-10 invocations. Example: --search-sla-tier 'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' --search-sla-tier 'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. When used, all --search-sla filters are still parsed and compose with tier definitions.
+
 #### `--search-recipe` `<str>`
 
 Named search-recipe preset that expands to an adaptive-search or sweep block. Mutually exclusive with explicit --search-* flags. Recipes are registered under the search_recipe plugin category. Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200.
@@ -2639,7 +2679,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -2658,7 +2698,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

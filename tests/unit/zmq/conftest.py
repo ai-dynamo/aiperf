@@ -7,13 +7,16 @@ This module provides reusable fixtures, mocks, and helpers for testing ZMQ funct
 """
 
 import asyncio
+import contextlib
 import itertools
+import socket as stdlib_socket
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 import zmq.asyncio
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import CreditPhase, LifecycleState
 from aiperf.common.messages import HeartbeatMessage
 from aiperf.credit.messages import (
@@ -23,6 +26,22 @@ from aiperf.credit.messages import (
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit
+from aiperf.zmq.fd_reader import FdEdgeReader as _RealFdEdgeReader
+
+
+@pytest.fixture(scope="session")
+def event_loop_policy():
+    """Force the selector loop on Windows so the FD-driver can register.
+
+    The FD-driver calls ``loop.add_reader(getsockopt(zmq.FD), ...)``, which the
+    default Windows ``ProactorEventLoop`` does not implement (raises
+    ``NotImplementedError``). Production switches to the selector policy in
+    ``bootstrap._configure_event_loop_policy_for_platform``; the test loop never
+    runs bootstrap, so mirror that here. No-op on Linux/macOS.
+    """
+    if IS_WINDOWS:
+        return asyncio.WindowsSelectorEventLoopPolicy()
+    return asyncio.get_event_loop_policy()
 
 
 async def _block_forever():
@@ -56,6 +75,164 @@ def _create_recv_function_with_blocking(side_effect_items):
     return recv_with_blocking
 
 
+def _install_fd_support(socket):
+    """Make a mock socket drivable by the FdEdgeReader / sync-FD path.
+
+    The streaming/push/pub/sub/pull clients now drive the raw socket FD: they
+    register ``loop.add_reader(getsockopt(zmq.FD), ...)`` and drain with the
+    UNBOUND sync ops ``zmq.Socket.send/recv`` + ``recv_into`` (bypassing the
+    asyncio overrides). This wires a mock socket for that path using a frame
+    queue so ``getsockopt(zmq.EVENTS)`` reflects whether data is pending:
+
+    - ``getsockopt(zmq.FD)`` returns a real (idle) socket fd so
+      ``loop.add_reader`` installs cleanly (the socket is never written, so the
+      reader fires only via the bootstrap drain at start()). A socketpair is used
+      rather than ``os.pipe`` because pipe fds are not selectable on Windows; a
+      socket fd is selectable under the selector loop on every platform.
+    - ``getsockopt(zmq.EVENTS)`` reports ``POLLIN`` iff ``_recv_frames`` is
+      non-empty (always ``POLLOUT``). When the queue drains, EVENTS goes to
+      ``POLLOUT`` only, so the edge-triggered drain stops — no busy loop.
+    - ``_sync_recv`` / ``recv_into`` pop one frame; ``RCVMORE`` reflects the
+      last-popped frame's more-flag (multipart). A queued ``Exception`` is
+      raised instead of returned.
+    - ``_sync_send`` records sync sends. The async ``send``/``recv`` mocks are
+      left intact for the unchanged REQ/REP clients.
+
+    Use ``enqueue_recv_frames(socket, [b"a", b"b"])`` for a multipart message or
+    ``enqueue_recv_messages(socket, [m1, m2])`` for N single-frame messages.
+    """
+    import collections
+
+    r_sock, w_sock = stdlib_socket.socketpair()
+    r_sock.setblocking(False)
+    socket._test_socketpair = (r_sock, w_sock)
+    fd = r_sock.fileno()
+    # Each entry: (payload_or_exc, more: bool).
+    socket._recv_frames = collections.deque()
+    socket._last_more = False
+    socket._pollout = True
+
+    def _getsockopt(opt):
+        if opt == zmq.FD:
+            return fd
+        if opt == zmq.EVENTS:
+            events = zmq.POLLOUT if socket._pollout else 0
+            if socket._recv_frames:
+                events |= zmq.POLLIN
+            return events
+        if opt == zmq.RCVMORE:
+            return 1 if socket._last_more else 0
+        return 0
+
+    def _pop_frame():
+        if not socket._recv_frames:
+            raise zmq.Again()
+        payload, more = socket._recv_frames.popleft()
+        socket._last_more = more
+        if isinstance(payload, BaseException):
+            raise payload
+        return payload
+
+    def _recv_into(buf, *args, **kwargs):
+        data = _pop_frame()
+        n = len(data)
+        buf[:n] = data
+        return n
+
+    socket.getsockopt = Mock(side_effect=_getsockopt)
+    socket._sync_recv = MagicMock(side_effect=lambda *a, **k: _pop_frame())
+    socket.recv_into = MagicMock(side_effect=_recv_into)
+    socket._sync_send = MagicMock(name="zmq.Socket.send(sync)")
+    return socket
+
+
+def enqueue_recv_frames(socket, frames):
+    """Queue one multipart message (list of byte frames) for the FD drain."""
+    n = len(frames)
+    for i, frame in enumerate(frames):
+        socket._recv_frames.append((frame, i < n - 1))
+
+
+def enqueue_recv_messages(socket, messages):
+    """Queue N single-frame messages (bytes or Exceptions) for the FD drain."""
+    for msg in messages:
+        socket._recv_frames.append((msg, False))
+
+
+def _close_fd_support(socket):
+    for sock in getattr(socket, "_test_socketpair", ()):
+        with contextlib.suppress(OSError):
+            sock.close()
+
+
+class _TestSafeFdEdgeReader(_RealFdEdgeReader):
+    """FdEdgeReader that refuses to reschedule on a non-int EVENTS value.
+
+    An uninstrumented mock socket returns a truthy ``Mock`` from
+    ``getsockopt(zmq.EVENTS)``; the real ``_rearm`` would then ``call_soon`` the
+    pump forever (busy loop / OOM). Treat a non-int events value as "no work",
+    so such sockets leave the driver idle. Instrumented sockets (EVENTS = int
+    via ``_install_fd_support``) behave exactly as in production.
+    """
+
+    def _rearm(self, events=None):
+        if events is None:
+            try:
+                events = self._socket.getsockopt(zmq.EVENTS)
+            except Exception:  # noqa: BLE001 - mock teardown / closed socket
+                return
+        if not isinstance(events, int):
+            return
+        super()._rearm(events)
+
+
+@pytest.fixture(autouse=True)
+def _safe_fd_edge_reader(monkeypatch):
+    """Swap the FdEdgeReader the clients import for the busy-loop-safe variant."""
+    for module in (
+        "pull_client",
+        "sub_client",
+        "streaming_dealer_client",
+        "streaming_router_client",
+        "streaming_pull_client",
+    ):
+        with contextlib.suppress(AttributeError):
+            monkeypatch.setattr(
+                f"aiperf.zmq.{module}.FdEdgeReader", _TestSafeFdEdgeReader
+            )
+
+
+@pytest.fixture(autouse=True)
+def _patch_sync_zmq_ops(monkeypatch):
+    """Route the unbound sync ZMQ ops to per-socket recorders.
+
+    The FD-driver / sync-send path calls ``zmq.Socket.send/recv(self.socket, ...)``
+    (the base-class ops) which, on a mock socket, would hit the real C functions
+    ("Socket operation on non-socket"). Delegate them to ``socket._sync_send`` /
+    ``socket._sync_recv``. ``zmq.asyncio.Socket`` overrides ``send``/``recv`` with
+    its async versions, so the REQ/REP clients' awaited calls are unaffected.
+    """
+
+    def _send(self, *args, **kwargs):
+        try:
+            rec = self._sync_send
+        except AttributeError:
+            rec = MagicMock(name="zmq.Socket.send(sync)")
+            self._sync_send = rec
+        return rec(*args, **kwargs)
+
+    def _recv(self, *args, **kwargs):
+        try:
+            rec = self._sync_recv
+        except AttributeError:
+            rec = MagicMock(name="zmq.Socket.recv(sync)", side_effect=zmq.Again())
+            self._sync_recv = rec
+        return rec(*args, **kwargs)
+
+    monkeypatch.setattr(zmq.Socket, "send", _send)
+    monkeypatch.setattr(zmq.Socket, "recv", _recv)
+
+
 @pytest.fixture
 def mock_zmq_socket():
     """Create a mock ZMQ socket with common methods.
@@ -66,7 +243,8 @@ def mock_zmq_socket():
 
     By default, recv methods block forever (await on a never-completing Future)
     to avoid busy loops with mocked sleep. Tests should override these when
-    they need specific return values.
+    they need specific return values. FD-driver support (real idle pipe FD,
+    EVENTS=0, sync recorders) is installed via ``_install_fd_support``.
     """
     socket = AsyncMock(spec=zmq.asyncio.Socket)
     socket.bind = Mock()
@@ -79,7 +257,9 @@ def mock_zmq_socket():
     socket.recv = AsyncMock(side_effect=_block_forever)
     socket.recv_multipart = AsyncMock(side_effect=_block_forever)
     socket.closed = False
-    return socket
+    _install_fd_support(socket)
+    yield socket
+    _close_fd_support(socket)
 
 
 @pytest.fixture
@@ -89,6 +269,23 @@ def mock_zmq_context(mock_zmq_socket):
     context.socket = Mock(return_value=mock_zmq_socket)
     context.term = Mock()
     return context
+
+
+@pytest.fixture
+def fd_enqueue():
+    """Queue messages/frames for a mock socket's FD drain.
+
+    ``messages``: list of single-frame payloads (DEALER/PULL).
+    ``frames``: one multipart message as a list of frames (ROUTER/SUB).
+    """
+
+    def _enq(socket, messages=None, frames=None):
+        if messages is not None:
+            enqueue_recv_messages(socket, messages)
+        if frames is not None:
+            enqueue_recv_frames(socket, frames)
+
+    return _enq
 
 
 @pytest.fixture(autouse=True)
@@ -280,6 +477,39 @@ class BaseClientTestHelper:
             # Default to blocking forever to prevent busy loop
             mock_socket.recv_multipart = AsyncMock(side_effect=_block_forever)
 
+        _install_fd_support(mock_socket)
+
+        # Feed the FD-drain queue: the production path reads via the raw FD
+        # (sync recv/recv_into), not the async recv/recv_multipart. Translate the
+        # configured side-effects so existing receiver tests deliver through it.
+        # A bare zmq.Again means "no data" (idle), so it is skipped.
+        def _as_list(items):
+            if items is None:
+                return []
+            return items if isinstance(items, list) else [items]
+
+        _skip = (zmq.Again, asyncio.CancelledError)
+        for item in _as_list(recv_side_effect):
+            if isinstance(item, _skip):
+                continue
+            enqueue_recv_messages(mock_socket, [item])
+        for msg in _as_list(recv_multipart_side_effect):
+            if isinstance(msg, _skip):
+                continue
+            if isinstance(msg, BaseException):
+                enqueue_recv_messages(mock_socket, [msg])
+            else:
+                enqueue_recv_frames(mock_socket, list(msg))
+
+        # The sync FD/send path records on _sync_send, not the async send /
+        # send_multipart. Route any configured send error there so error-path
+        # tests still fire (ROUTER/streaming framing goes frame-by-frame through
+        # the sync send).
+        if send_side_effect is not None:
+            mock_socket._sync_send.side_effect = send_side_effect
+        if send_multipart_side_effect is not None:
+            mock_socket._sync_send.side_effect = send_multipart_side_effect
+
         self.mock_zmq_context.socket = Mock(return_value=mock_socket)
         return mock_socket
 
@@ -322,6 +552,9 @@ class BaseClientTestHelper:
             yield client
         finally:
             await client.stop()
+            socket = getattr(self.mock_zmq_context, "socket", None)
+            if socket is not None and hasattr(socket, "return_value"):
+                _close_fd_support(socket.return_value)
 
 
 @pytest.fixture

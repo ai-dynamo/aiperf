@@ -50,6 +50,7 @@ try:
     from lighteval.tasks.tasks.lcb.codegen_metrics import (
         codegen_metrics,
         extract_code,
+        translate_private_test_cases,
     )
 
     _HAS_LIGHTEVAL_LCB = True
@@ -57,6 +58,7 @@ except ImportError:  # pragma: no cover
     _HAS_LIGHTEVAL_LCB = False
     codegen_metrics = None  # type: ignore[assignment]
     extract_code = None  # type: ignore[assignment]
+    translate_private_test_cases = None  # type: ignore[assignment]
 
 
 _MISSING_LIGHTEVAL_HINT = (
@@ -234,7 +236,7 @@ def _payload_to_test_cases(
         raise TypeError(f"expected dict payload, got {type(payload).__name__}")
 
     public_cases = _parse_test_cases(payload.get("public_test_cases", ""))
-    private_cases = _parse_test_cases(payload.get("private_test_cases", ""))
+    private_cases = _decode_private_test_cases(payload.get("private_test_cases", ""))
     all_cases = public_cases + private_cases
     if not all_cases:
         # A payload with zero test cases is unambiguously malformed:
@@ -276,6 +278,45 @@ def _parse_test_cases(raw: Any) -> list[dict[str, Any]]:
     raise TypeError(
         f"test cases must be a JSON string or list, got {type(raw).__name__}"
     )
+
+
+def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
+    """Decode LCB's ``private_test_cases`` field.
+
+    The upstream LCB dataset stores ``private_test_cases`` as a
+    base64 → zlib → pickle → json blob to keep the on-disk size
+    reasonable (the private cases can be much larger than the public
+    ones). ``translate_private_test_cases`` in
+    ``lighteval.tasks.tasks.lcb.codegen_metrics`` is the canonical
+    decoder; the trt-llm/lighteval LCB task calls it the same way
+    (``private_test_cases =
+    translate_private_test_cases(line["private_test_cases"])``).
+
+    For string inputs we try the encoded decode first to match the
+    production data path. If decoding raises (the string is plain
+    JSON — the legacy shape used by older fixtures and in-process
+    callers), fall back to the same JSON-string handling
+    ``_parse_test_cases`` uses for the public side so existing
+    consumers don't break. Already-deserialized lists are passed
+    through verbatim.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if (
+        isinstance(raw, str | bytes | bytearray)
+        and translate_private_test_cases is not None
+    ):
+        try:
+            return translate_private_test_cases(raw)
+        except Exception:  # noqa: BLE001 - graceful fallback to legacy plain-JSON shape
+            _log.debug(
+                "translate_private_test_cases couldn't decode raw private_test_cases; "
+                "falling back to plain JSON parse",
+                exc_info=True,
+            )
+    return _parse_test_cases(raw)
 
 
 def _grading_failure(

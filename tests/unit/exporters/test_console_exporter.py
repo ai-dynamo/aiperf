@@ -105,6 +105,77 @@ class TestConsoleExporter:
         assert "Request Throughput" in output
         assert "requests/sec" in output
 
+    @pytest.mark.asyncio
+    async def test_export_prints_cache_hint_when_usage_without_cache(
+        self, mock_endpoint_config, capsys
+    ):
+        # Usage reported (total prompt tokens) but no cache-read total → hint.
+        config = make_exporter_config(
+            results=ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ns",
+                        avg=1.0,
+                    ),
+                    MetricResult(
+                        tag="total_usage_prompt_tokens",
+                        header="Total Usage Prompt Tokens",
+                        unit="tokens",
+                        sum=58250,
+                        avg=1165.0,
+                        count=50,
+                    ),
+                ],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            ),
+            cli_config=mock_endpoint_config,
+            telemetry_results=None,
+        )
+        await ConsoleMetricsExporter(config).export(Console(width=115))
+        assert "--enable-prompt-tokens-details" in capsys.readouterr().out
+
+    @pytest.mark.asyncio
+    async def test_export_omits_cache_hint_when_cache_reported(
+        self, mock_endpoint_config, capsys
+    ):
+        config = make_exporter_config(
+            results=ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ns",
+                        avg=1.0,
+                    ),
+                    MetricResult(
+                        tag="total_usage_prompt_tokens",
+                        header="h",
+                        unit="tokens",
+                        sum=58250,
+                        count=50,
+                    ),
+                    MetricResult(
+                        tag="total_usage_prompt_cache_read_tokens",
+                        header="h",
+                        unit="tokens",
+                        sum=50176,
+                        count=50,
+                    ),
+                ],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            ),
+            cli_config=mock_endpoint_config,
+            telemetry_results=None,
+        )
+        await ConsoleMetricsExporter(config).export(Console(width=115))
+        assert "--enable-prompt-tokens-details" not in capsys.readouterr().out
+
     @pytest.mark.parametrize(
         "metric_tag, should_show",
         [

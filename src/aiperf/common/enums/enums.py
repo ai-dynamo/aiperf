@@ -78,6 +78,11 @@ class CommAddress(CaseInsensitiveStrEnum):
     CREDIT_RETURN_ROUTER = "credit_return_router"
     """Address for credit-return ROUTER-DEALER traffic (separate from CREDIT_ROUTER for high-throughput modes)."""
 
+    CREDIT_RETURN = "credit_return"
+    """Address for the credit-return PUSH/PULL fan-in channel (worker PUSH -> timing-manager PULL).
+    CreditReturn/FirstToken ride this dedicated channel so the dispatch CREDIT_ROUTER stays
+    send-only; returns are unaddressed fan-in (worker_id travels in CreditReturn)."""
+
     CONTROL = "control"
     """Control-plane address for service-manager commands."""
 

@@ -38,6 +38,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - Do not over-comment code. Removing code is fine without adding comments to explain why.
 - No emojis in code or comments.
 - Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
+- Platform-conditional code MUST branch on `IS_WINDOWS` / `IS_MACOS` / `IS_LINUX` from `aiperf.common.constants`, never on `platform.system()` directly. The constants are evaluated once at import time, are uniformly greppable, and produce smaller diffs. See `src/aiperf/common/bootstrap.py` and `src/aiperf/config/comm/ipc.py` for canonical examples.
 
 ## NaN/Inf Discipline
 

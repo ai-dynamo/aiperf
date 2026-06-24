@@ -962,6 +962,74 @@ class TestSingleRunPNGExporter:
         assert "gpu_telemetry" in skip_warnings[0].message
         assert "gpu_utilization_and_throughput" in skip_warnings[0].message
 
+    def test_export_skips_missing_column_without_error(
+        self, single_run_exporter, sample_available_metrics, tmp_path, caplog
+    ):
+        """Non-streaming data: the requests table exists but lacks streaming-only
+        columns (e.g. time_to_first_token). The plot needing the missing column is
+        skipped with a WARNING (not ERROR), and plots whose columns are present
+        still render."""
+        ttft_spec = PlotSpec(
+            name="ttft_over_time",
+            plot_type=PlotType.SCATTER,
+            metrics=[
+                MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="time_to_first_token", source=DataSource.REQUESTS, axis="y"
+                ),
+            ],
+            title="TTFT",
+            filename="ttft_over_time.png",
+        )
+        latency_spec = PlotSpec(
+            name="latency_over_time",
+            plot_type=PlotType.SCATTER,
+            metrics=[
+                MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="request_latency", source=DataSource.REQUESTS, axis="y"
+                ),
+            ],
+            title="Latency",
+            filename="latency_over_time.png",
+        )
+        # Non-streaming requests: request_latency present, time_to_first_token absent.
+        run = RunData(
+            metadata=RunMetadata(
+                run_name="r", run_path=tmp_path / "r", model="m", concurrency=1
+            ),
+            requests=pd.DataFrame(
+                {
+                    "request_end_ns": pd.to_datetime(
+                        [1_000_000_000_000 + i * 500_000_000 for i in range(5)],
+                        unit="ns",
+                        utc=True,
+                    ),
+                    "request_latency": [900.0 + i * 10 for i in range(5)],
+                }
+            ),
+            aggregated={},
+            timeslices=None,
+        )
+
+        with caplog.at_level("DEBUG"):
+            generated = single_run_exporter.export(
+                run, sample_available_metrics, [ttft_spec, latency_spec]
+            )
+
+        filenames = {f.name for f in generated}
+        assert "latency_over_time.png" in filenames
+        assert "ttft_over_time.png" not in filenames
+        # The missing column is a skip (WARNING), never an ERROR.
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]
+        assert [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "Skipping" in r.message
+            and "ttft_over_time" in r.message
+        ]
+
     def test_per_request_to_dataframe(self, sample_single_run_data):
         """Test conversion of per-request data to DataFrame."""
         df = prepare_request_timeseries(sample_single_run_data)

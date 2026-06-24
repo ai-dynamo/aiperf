@@ -353,6 +353,87 @@ class TestSignalHandling:
         system_controller._kill.assert_called_once()
 
 
+class TestStopHookHardening:
+    """Regression: _stop_system_controller must always reach os._exit() even
+    if post-shutdown reporting raises.
+
+    The concrete failure mode was a UnicodeEncodeError from a Rich
+    `console.print()` of a non-cp1252 char on Windows under PIPE'd stdout
+    (mooncake integration tests, OSL warning panel containing U+2192). When
+    `_print_post_benchmark_info_and_metrics` raised, the stop hook abandoned
+    cleanup + os._exit, leaving the parent process alive with all services
+    already stopped — the integration runner's `process.communicate()` then
+    blocked on EOF until pytest's 450s timeout.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_hook_exits_when_post_print_raises(
+        self,
+        system_controller: SystemController,
+        mock_service_manager: AsyncMock,
+    ):
+        system_controller._exit_errors = []
+        system_controller.publish = AsyncMock()
+        system_controller.service_manager = mock_service_manager
+        system_controller.comms = AsyncMock()
+        system_controller.proxy_manager = AsyncMock()
+        system_controller.ui = AsyncMock()
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock(
+            side_effect=UnicodeEncodeError(
+                "charmap", "->", 1, 2, "character maps to <undefined>"
+            )
+        )
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.cleanup_global_log_queue",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+            patch("aiperf.controller.system_controller.os._exit") as mock_exit,
+        ):
+            await system_controller._stop_system_controller()
+
+            # Cleanup must run despite the print failure, else the
+            # multiprocessing log-queue semaphore leaks.
+            mock_cleanup.assert_awaited_once()
+            # os._exit must fire — this is the load-bearing assertion.
+            mock_exit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_hook_exits_when_exit_error_print_raises(
+        self,
+        system_controller: SystemController,
+        mock_service_manager: AsyncMock,
+    ):
+        # Force the _exit_errors branch (line 887): non-empty list triggers
+        # _print_exit_errors_and_log_file instead of the post-benchmark path.
+        system_controller._exit_errors = [MagicMock()]
+        system_controller.publish = AsyncMock()
+        system_controller.service_manager = mock_service_manager
+        system_controller.comms = AsyncMock()
+        system_controller.proxy_manager = AsyncMock()
+        system_controller.ui = AsyncMock()
+        system_controller._print_exit_errors_and_log_file = MagicMock(
+            side_effect=UnicodeEncodeError(
+                "charmap", "->", 1, 2, "character maps to <undefined>"
+            )
+        )
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.cleanup_global_log_queue",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+            patch("aiperf.controller.system_controller.os._exit") as mock_exit,
+        ):
+            await system_controller._stop_system_controller()
+
+            mock_cleanup.assert_awaited_once()
+            mock_exit.assert_called_once()
+            # exit code reflects the recorded error
+            assert mock_exit.call_args[0][0] == 1
+
+
 class TestAccuracyTemperatureWarning:
     """Tests for _should_warn_accuracy_temperature."""
 

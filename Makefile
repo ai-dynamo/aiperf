@@ -25,7 +25,7 @@
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
-		generate-all-docs test-stress stress-tests test-fern-docs fern-preview internal-help help \
+		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
@@ -114,6 +114,9 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 
 test: #? run the tests using pytest-xdist.
 	$(activate_venv) && pytest tests/unit -n auto -m 'not integration and not performance and not component_integration and not slow' $(args)
+
+test-zmq: #? run the real-socket zmq transport tests (real libzmq, no looptime).
+	$(activate_venv) && pytest tests/zmq --no-looptime $(args)
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
 	$(activate_venv) && pytest tests/unit -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance and not component_integration and not slow'
@@ -245,6 +248,9 @@ test-ci: #? run the tests using pytest-xdist for CI.
 	@# Run unit tests first with coverage
 	@printf "$(bold)$(blue)Running unit tests...$(reset)\n"
 	@$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report= -m 'not performance and not stress and not slow' --tb=short $(args) || exit_code=$$?; \
+	# Run real-socket zmq transport tests (real time + real sockets, no looptime) regardless of unit result \
+	printf "$(bold)$(blue)Running zmq real-transport tests...$(reset)\n"; \
+	$(activate_venv) && pytest tests/zmq --cov=src/aiperf --cov-branch --cov-append --cov-report= -m 'not performance and not stress and not slow' --no-looptime --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
 	# Run component integration tests with coverage append regardless of unit test result \
 	printf "$(bold)$(blue)Running component integration tests...$(reset)\n"; \
 	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration -n auto --cov=src/aiperf --cov-branch --cov-append --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' -v --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
@@ -323,6 +329,9 @@ fern-preview: #? local Fern docs preview (mirrors the CI md_to_mdx conversion in
 	@python3 fern/md_to_mdx.py --dir fern/.local-preview/docs
 	@printf "$(bold)$(green)Starting fern docs dev (Ctrl-C to stop)...$(reset)\n"
 	@cd fern/.local-preview && fern docs dev $(args)
+
+fern-release-dryrun: #? local dry-run of the Fern release-version job: build a versioned snapshot from a tag and run the strict guard (no publish). Usage: make fern-release-dryrun args="v0.9.0".
+	@./tools/fern_release_dryrun.sh $(args)
 
 generate-cli-docs: #? generate the CLI documentation.
 	$(activate_venv) && ./tools/generate_cli_docs.py

@@ -115,6 +115,20 @@ def _apply_verbosity_and_ui(
     elif not ui_set and not is_tty():
         runtime_dict["ui"] = UIType.NONE
 
+    # Dashboard requires a TTY: Textual issues console-setup syscalls that
+    # block forever on Windows when stdout is a pipe (e.g. subprocess.PIPE
+    # from a test harness, ``aiperf ... | tee``, CI capture). Downgrade to
+    # SIMPLE rather than hanging. Applies to every platform — Linux/macOS
+    # don't hang, but a non-TTY dashboard renders nothing useful there either.
+    if runtime_dict.get("ui") == UIType.DASHBOARD and not is_tty():
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "--ui dashboard requires an interactive terminal; "
+            "stdout is not a TTY, falling back to --ui simple"
+        )
+        runtime_dict["ui"] = UIType.SIMPLE
+
 
 def _build_communication(cli: CLIConfig) -> dict[str, Any] | None:
     from aiperf.common.enums import CommunicationType
