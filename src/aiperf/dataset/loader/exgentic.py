@@ -1,0 +1,370 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import asyncio
+from collections import Counter
+from collections.abc import Iterable
+from datetime import datetime, timezone
+from typing import Any
+
+import orjson
+from pydantic import ConfigDict, Field, ValidationError
+
+from aiperf.common.enums import CaseInsensitiveStrEnum, ConversationContextMode
+from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.common.models import AIPerfBaseModel, Conversation, Turn
+from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+
+
+class ExgenticHarness(CaseInsensitiveStrEnum):
+    CLAUDE_CODE = "claude_code"
+    OPENAI_SOLO = "openai_solo"
+    SMOLAGENTS_CODE = "smolagents_code"
+    TOOL_CALLING = "tool_calling"
+    TOOL_CALLING_WITH_SHORTLISTING = "tool_calling_with_shortlisting"
+
+
+class ExgenticSourceModel(CaseInsensitiveStrEnum):
+    DEEPSEEK_V3_2 = "DeepSeek-V3.2"
+    KIMI_K2_5 = "Kimi-K2.5"
+    CLAUDE_OPUS_4_5 = "claude-opus-4-5"
+    GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
+    GPT_4_1 = "gpt-4.1"
+    GPT_5_2 = "gpt-5.2-2025-12-11"
+
+
+class ExgenticDatasetFilters(AIPerfBaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    harness: ExgenticHarness | None = Field(
+        default=None,
+        description="Source agent harness to replay.",
+    )
+    source_model: ExgenticSourceModel | None = Field(
+        default=None,
+        description="Source model recorded by Exgentic, distinct from the target model.",
+    )
+
+
+def canonical_source_model(value: str) -> str:
+    """Strip Exgentic's provider prefixes from a recorded model name."""
+    lowered = value.casefold()
+    for prefix in ("openai/azure/", "azure/", "aws/", "gcp/"):
+        if lowered.startswith(prefix):
+            return value[len(prefix) :]
+    return value
+
+
+def _timestamp_ms(value: str) -> float:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp() * 1000.0
+
+
+def _json_string(value: Any) -> str:
+    return value if isinstance(value, str) else orjson.dumps(value).decode()
+
+
+def _parse_json_list(value: Any, *, field: str) -> list[dict[str, Any]]:
+    try:
+        parsed = orjson.loads(value) if isinstance(value, str | bytes) else value
+    except orjson.JSONDecodeError as error:
+        raise ValueError(f"{field} is not valid JSON: {error}") from error
+    if not isinstance(parsed, list) or not all(
+        isinstance(item, dict) for item in parsed
+    ):
+        raise ValueError(f"{field} must be a JSON array of objects")
+    return parsed
+
+
+def _normalize_part(
+    part: dict[str, Any],
+    *,
+    role: str,
+    content: list[str],
+    reasoning: list[str],
+    tool_calls: list[dict[str, Any]],
+    tool_responses: list[dict[str, Any]],
+) -> None:
+    part_type = part.get("type")
+    if part_type == "text":
+        content.append(str(part.get("content") or ""))
+    elif part_type == "thinking":
+        reasoning.append(str(part.get("thinking") or ""))
+    elif part_type == "tool_call":
+        tool_calls.append(
+            {
+                "id": part.get("id"),
+                "type": "function",
+                "function": {
+                    "name": part.get("name"),
+                    "arguments": _json_string(part.get("arguments")),
+                },
+            }
+        )
+    elif part_type == "tool_call_response":
+        tool_responses.append(
+            {
+                "role": "tool",
+                "tool_call_id": part.get("id"),
+                "content": _json_string(part.get("result")),
+            }
+        )
+    else:
+        raise ValueError(f"unsupported {role!r} message part {part_type!r}")
+
+
+def _normalize_message(message: dict[str, Any]) -> list[dict[str, Any]]:
+    role = message.get("role")
+    parts = message.get("parts")
+    if not isinstance(role, str) or not isinstance(parts, list):
+        raise ValueError("each input message requires a string role and parts array")
+    content: list[str] = []
+    reasoning: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    tool_responses: list[dict[str, Any]] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            raise ValueError("message parts must be objects")
+        _normalize_part(
+            part,
+            role=role,
+            content=content,
+            reasoning=reasoning,
+            tool_calls=tool_calls,
+            tool_responses=tool_responses,
+        )
+
+    normalized = []
+    if content or reasoning or tool_calls or not tool_responses:
+        output: dict[str, Any] = {
+            "role": "system" if role == "developer" else role,
+            "content": "".join(content),
+        }
+        if reasoning:
+            output["reasoning_content"] = "".join(reasoning)
+        if tool_calls:
+            output["tool_calls"] = tool_calls
+        normalized.append(output)
+    return normalized + tool_responses
+
+
+def _normalize_messages(value: Any) -> list[dict[str, Any]]:
+    messages = _parse_json_list(value, field="gen_ai.input.messages")
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        normalized.extend(_normalize_message(message))
+    if not normalized:
+        raise ValueError("gen_ai.input.messages must contain at least one message")
+    return normalized
+
+
+def _normalize_tools(value: Any) -> list[dict[str, Any]] | None:
+    if value is None:
+        return None
+    tools = _parse_json_list(value, field="gen_ai.tool.definitions")
+    normalized = []
+    for tool in tools:
+        if tool.get("type") != "function":
+            raise ValueError(f"unsupported tool type {tool.get('type')!r}")
+        normalized.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.get("name"),
+                    "description": tool.get("description"),
+                    "parameters": tool.get("parameters"),
+                },
+            }
+        )
+    return normalized or None
+
+
+class ExgenticDatasetLoader(BaseHFDatasetLoader):
+    """Replay complete Exgentic LLM request snapshots as AIPerf sessions."""
+
+    def __init__(
+        self,
+        *,
+        filters: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        normalized_filters = dict(filters or {})
+        if isinstance(source_model := normalized_filters.get("source_model"), str):
+            normalized_filters["source_model"] = canonical_source_model(source_model)
+        try:
+            self.filters = ExgenticDatasetFilters.model_validate(normalized_filters)
+        except ValidationError as error:
+            available = self._available_filters()
+            raise DatasetLoaderError(
+                f"Invalid Exgentic dataset filters: {error}; available filters: {available}"
+            ) from error
+        super().__init__(**kwargs)
+
+    @staticmethod
+    def _available_filters() -> str:
+        harnesses = ", ".join(item.value for item in ExgenticHarness)
+        models = ", ".join(item.value for item in ExgenticSourceModel)
+        return f"harness=[{harnesses}], source_model=[{models}]"
+
+    async def convert_to_conversations(
+        self, data: dict[str, Any]
+    ) -> list[Conversation]:
+        return await asyncio.to_thread(self._convert_rows, data["dataset"])
+
+    def _matches_filters(self, harness: str, source_models: set[str]) -> bool:
+        if self.filters.harness is not None and harness != self.filters.harness:
+            return False
+        return self.filters.source_model is None or any(
+            model.casefold() == str(self.filters.source_model).casefold()
+            for model in source_models
+        )
+
+    @staticmethod
+    def _parse_span(
+        session_id: str,
+        span_index: int,
+        span: dict[str, Any],
+        stats: Counter[str],
+    ) -> tuple[float, int, float, Turn] | None:
+        if span.get("type") != "llm_call":
+            stats["non_llm"] += 1
+            return None
+        if (span.get("status") or {}).get("code") == 2:
+            stats["failed"] += 1
+            return None
+
+        attributes = span.get("attributes") or {}
+        input_tokens = attributes.get("gen_ai.usage.input_tokens")
+        output_tokens = attributes.get("gen_ai.usage.output_tokens")
+        if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+            raise DatasetLoaderError(
+                f"Exgentic session {session_id!r} span {span_index} has "
+                "non-integer token counts"
+            )
+        if input_tokens <= 0 or output_tokens <= 0:
+            stats["zero_token"] += 1
+            return None
+
+        try:
+            start_ms = _timestamp_ms(span["start_time"])
+            end_ms = _timestamp_ms(span["end_time"])
+            if end_ms < start_ms:
+                raise ValueError("span ends before it starts")
+            turn = Turn(
+                max_tokens=output_tokens,
+                raw_messages=_normalize_messages(
+                    attributes.get("gen_ai.input.messages")
+                ),
+                raw_tools=_normalize_tools(attributes.get("gen_ai.tool.definitions")),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise DatasetLoaderError(
+                f"Exgentic session {session_id!r} span {span_index}: {error}"
+            ) from error
+        return start_ms, span_index, end_ms, turn
+
+    @staticmethod
+    def _build_turns(
+        spans: list[tuple[float, int, float, Turn]], stats: Counter[str]
+    ) -> list[Turn]:
+        previous_end_ms: float | None = None
+        turns = []
+        for start_ms, _, end_ms, turn in spans:
+            if previous_end_ms is not None:
+                turn.delay = max(0.0, start_ms - previous_end_ms)
+                if start_ms < previous_end_ms:
+                    stats["overlap"] += 1
+            turns.append(turn)
+            previous_end_ms = end_ms
+        return turns
+
+    def _convert_row(
+        self,
+        *,
+        row_index: int,
+        row: dict[str, Any],
+        combinations: set[tuple[str, str]],
+        seen_sessions: set[str],
+        stats: Counter[str],
+    ) -> Conversation | None:
+        harness = row.get("harness")
+        session_id = row.get("session_id")
+        if not isinstance(harness, str) or not harness:
+            raise DatasetLoaderError(f"Exgentic row {row_index} has no harness")
+        if not isinstance(session_id, str) or not session_id:
+            raise DatasetLoaderError(f"Exgentic row {row_index} has no session_id")
+
+        source_models = {
+            canonical_source_model(value)
+            for value in row.get("models") or []
+            if isinstance(value, str) and value
+        }
+        combinations.update((harness, model) for model in source_models)
+        if not self._matches_filters(harness, source_models):
+            return None
+
+        spans = []
+        for span_index, span in enumerate(row.get("spans") or []):
+            parsed = self._parse_span(session_id, span_index, span, stats)
+            if parsed is not None:
+                spans.append(parsed)
+        spans.sort(key=lambda item: (item[0], item[1]))
+        if not spans:
+            return None
+        if session_id in seen_sessions:
+            raise DatasetLoaderError(f"Duplicate Exgentic session_id {session_id!r}")
+        seen_sessions.add(session_id)
+
+        turns = self._build_turns(spans, stats)
+        stats["requests"] += len(turns)
+        return Conversation(
+            session_id=session_id,
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            turns=turns,
+        )
+
+    def _convert_rows(self, rows: Iterable[dict[str, Any]]) -> list[Conversation]:
+        conversations: list[Conversation] = []
+        combinations: set[tuple[str, str]] = set()
+        seen_sessions: set[str] = set()
+        stats: Counter[str] = Counter()
+        max_conversations = self._max_conversations()
+
+        for row_index, row in enumerate(rows, 1):
+            conversation = self._convert_row(
+                row_index=row_index,
+                row=row,
+                combinations=combinations,
+                seen_sessions=seen_sessions,
+                stats=stats,
+            )
+            if conversation is not None:
+                conversations.append(conversation)
+            if (
+                max_conversations is not None
+                and len(conversations) >= max_conversations
+            ):
+                break
+
+        if not conversations:
+            available = ", ".join(
+                f"{harness}/{model}" for harness, model in sorted(combinations)
+            )
+            raise DatasetLoaderError(
+                "No replayable Exgentic spans matched "
+                f"harness={self.filters.harness!s}, "
+                f"source_model={self.filters.source_model!s}; "
+                f"available combinations: {available or 'none'}"
+            )
+
+        self.info(
+            f"Loaded {len(conversations)} Exgentic sessions / {stats['requests']} "
+            f"requests; skipped failed={stats['failed']}, "
+            f"non_llm={stats['non_llm']}, zero_token={stats['zero_token']}; "
+            f"clamped_overlaps={stats['overlap']}"
+        )
+        return conversations

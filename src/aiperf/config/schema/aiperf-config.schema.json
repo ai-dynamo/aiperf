@@ -2613,6 +2613,14 @@
                   "default": null,
                   "description": "HuggingFace dataset subset/config name override (e.g. 'sharegpt4o'). Only applies for HuggingFace-backed public dataset loaders. Takes priority over the subset defined in the plugin registry.",
                   "title": "Hfsubset"
+                },
+                "filters": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Dataset-specific filters forwarded to public dataset loaders. Supported keys and values depend on the selected dataset.",
+                  "title": "Filters",
+                  "type": "object"
                 }
               },
               "required": [
@@ -9460,6 +9468,14 @@
           "default": null,
           "description": "HuggingFace dataset subset/config name override (e.g. 'sharegpt4o'). Only applies for HuggingFace-backed public dataset loaders. Takes priority over the subset defined in the plugin registry.",
           "title": "Hfsubset"
+        },
+        "filters": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Dataset-specific filters forwarded to public dataset loaders. Supported keys and values depend on the selected dataset.",
+          "title": "Filters",
+          "type": "object"
         }
       },
       "required": [
@@ -9472,6 +9488,7 @@
     },
     "PublicDatasetType": {
       "enum": [
+        "exgentic",
         "sharegpt",
         "aimo",
         "mmstar",

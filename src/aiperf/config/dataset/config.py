@@ -513,6 +513,15 @@ class PublicDataset(BaseConfig):
         ),
     ]
 
+    filters: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description="Dataset-specific filters forwarded to public dataset loaders. "
+            "Supported keys and values depend on the selected dataset.",
+        ),
+    ]
+
 
 # Union type for all dataset variants using discriminated union
 DatasetConfig = Annotated[
