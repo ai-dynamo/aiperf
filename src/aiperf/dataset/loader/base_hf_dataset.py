@@ -189,7 +189,11 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         ]
         if request_counts:
             return max(request_counts)
-        return None
+        raise DatasetLoaderError(
+            "Streaming Hugging Face datasets require a finite entry or request "
+            "count; set --num-conversations, --num-dataset-entries, or "
+            "--request-count"
+        )
 
     @abstractmethod
     async def convert_to_conversations(

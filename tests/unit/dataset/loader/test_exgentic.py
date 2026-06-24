@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
@@ -280,12 +281,12 @@ async def test_filters_normalize_provider_aliases_and_limit_sessions() -> None:
 @pytest.mark.parametrize(
     "source, expected",
     [
-        ("Azure/gpt-4.1", "gpt-4.1"),
-        ("openai/Azure/gpt-4.1", "gpt-4.1"),
-        ("aws/claude-opus-4-5", "claude-opus-4-5"),
-        ("gcp/gemini-3-pro-preview", "gemini-3-pro-preview"),
+        param("Azure/gpt-4.1", "gpt-4.1"),
+        param("openai/Azure/gpt-4.1", "gpt-4.1"),
+        param("aws/claude-opus-4-5", "claude-opus-4-5"),
+        param("gcp/gemini-3-pro-preview", "gemini-3-pro-preview"),
     ],
-)
+)  # fmt: skip
 def test_canonical_source_model_strips_provider_aliases(
     source: str, expected: str
 ) -> None:
@@ -295,6 +296,38 @@ def test_canonical_source_model_strips_provider_aliases(
 def test_invalid_filter_lists_typed_values() -> None:
     with pytest.raises(DatasetLoaderError, match=r"available filters:.*Kimi-K2.5"):
         _loader({"source_model": "unknown"})
+
+
+def test_unsupported_filter_pair_fails_before_loading() -> None:
+    with pytest.raises(DatasetLoaderError, match="Unsupported.*available source"):
+        _loader(
+            {
+                "harness": "tool_calling_with_shortlisting",
+                "source_model": "gpt-4.1",
+            }
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field, value, match",
+    [
+        param("models", "Kimi-K2.5", "models must be a list"),
+        param("spans", ["not-an-object"], "spans must be a list of objects"),
+    ],
+)  # fmt: skip
+async def test_invalid_row_shapes_raise_clear_error(
+    field: str, value: Any, match: str
+) -> None:
+    messages = [{"role": "user", "parts": [{"type": "text", "content": "hi"}]}]
+    row = _row(
+        "session-1",
+        [_span("2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", messages=messages)],
+    )
+    row[field] = value
+
+    with pytest.raises(DatasetLoaderError, match=match):
+        await _loader().convert_to_conversations({"dataset": [row]})
 
 
 @pytest.mark.asyncio

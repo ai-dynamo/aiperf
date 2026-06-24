@@ -368,7 +368,6 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
-<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 
@@ -1718,7 +1717,6 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
-<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 

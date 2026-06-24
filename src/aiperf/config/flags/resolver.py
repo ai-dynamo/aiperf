@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.enums import DatasetType
 from aiperf.config.flags._section_fields import (
     ENDPOINT_FIELDS,
     INPUT_FIELDS,
@@ -356,15 +357,17 @@ def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> N
 
     benchmark = merged.get("benchmark")
     if not isinstance(benchmark, dict):
-        return
+        raise ValueError("--dataset-filter requires a public dataset")
     dataset = benchmark.get("dataset")
     if not isinstance(dataset, dict):
         datasets = benchmark.get("datasets")
         if not isinstance(datasets, list) or not datasets:
-            return
+            raise ValueError("--dataset-filter requires a public dataset")
         dataset = datasets[0]
     if not isinstance(dataset, dict):
-        return
+        raise ValueError("--dataset-filter requires a public dataset")
+    if dataset.get("type") != DatasetType.PUBLIC:
+        raise ValueError("--dataset-filter requires a public dataset")
     filters = dataset.setdefault("filters", {})
     filters.update(_parse_dataset_filters(cli.dataset_filters))
 

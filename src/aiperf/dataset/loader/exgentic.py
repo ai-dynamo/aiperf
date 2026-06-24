@@ -36,6 +36,29 @@ class ExgenticSourceModel(CaseInsensitiveStrEnum):
     GPT_5_2 = "gpt-5.2-2025-12-11"
 
 
+_UNSUPPORTED_FILTER_PAIRS = frozenset(
+    {
+        (ExgenticHarness.OPENAI_SOLO, ExgenticSourceModel.GPT_5_2),
+        (ExgenticHarness.SMOLAGENTS_CODE, ExgenticSourceModel.CLAUDE_OPUS_4_5),
+        (ExgenticHarness.SMOLAGENTS_CODE, ExgenticSourceModel.GEMINI_3_PRO_PREVIEW),
+        (ExgenticHarness.SMOLAGENTS_CODE, ExgenticSourceModel.GPT_5_2),
+        (ExgenticHarness.TOOL_CALLING, ExgenticSourceModel.GPT_5_2),
+        (
+            ExgenticHarness.TOOL_CALLING_WITH_SHORTLISTING,
+            ExgenticSourceModel.CLAUDE_OPUS_4_5,
+        ),
+        (
+            ExgenticHarness.TOOL_CALLING_WITH_SHORTLISTING,
+            ExgenticSourceModel.GPT_4_1,
+        ),
+        (
+            ExgenticHarness.TOOL_CALLING_WITH_SHORTLISTING,
+            ExgenticSourceModel.GPT_5_2,
+        ),
+    }
+)
+
+
 class ExgenticDatasetFilters(AIPerfBaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -56,6 +79,24 @@ def canonical_source_model(value: str) -> str:
         if lowered.startswith(prefix):
             return value[len(prefix) :]
     return value
+
+
+def _validated_row_lists(
+    row_index: int, row: dict[str, Any]
+) -> tuple[list[str], list[dict[str, Any]]]:
+    models = row.get("models")
+    if not isinstance(models, list) or not all(
+        isinstance(value, str) and value for value in models
+    ):
+        raise DatasetLoaderError(
+            f"Exgentic row {row_index} models must be a list of non-empty strings"
+        )
+    spans = row.get("spans")
+    if not isinstance(spans, list) or not all(isinstance(span, dict) for span in spans):
+        raise DatasetLoaderError(
+            f"Exgentic row {row_index} spans must be a list of objects"
+        )
+    return models, spans
 
 
 def _timestamp_ms(value: str) -> float:
@@ -212,6 +253,23 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             raise DatasetLoaderError(
                 f"Invalid Exgentic dataset filters: {error}; available filters: {available}"
             ) from error
+        if (
+            self.filters.harness is not None
+            and self.filters.source_model is not None
+            and (self.filters.harness, self.filters.source_model)
+            in _UNSUPPORTED_FILTER_PAIRS
+        ):
+            available_models = ", ".join(
+                model.value
+                for model in ExgenticSourceModel
+                if (self.filters.harness, model) not in _UNSUPPORTED_FILTER_PAIRS
+            )
+            raise DatasetLoaderError(
+                "Unsupported Exgentic filter combination "
+                f"harness={self.filters.harness.value!r}, "
+                f"source_model={self.filters.source_model.value!r}; "
+                f"available source models for this harness: {available_models}"
+            )
         super().__init__(**kwargs)
         self._fixed_schedule = any(
             phase.type == PhaseType.FIXED_SCHEDULE
@@ -336,17 +394,14 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         if not isinstance(session_id, str) or not session_id:
             raise DatasetLoaderError(f"Exgentic row {row_index} has no session_id")
 
-        source_models = {
-            canonical_source_model(value)
-            for value in row.get("models") or []
-            if isinstance(value, str) and value
-        }
+        models, row_spans = _validated_row_lists(row_index, row)
+        source_models = {canonical_source_model(value) for value in models}
         combinations.update((harness, model) for model in source_models)
         if not self._matches_filters(harness, source_models):
             return []
 
         spans = []
-        for span_index, span in enumerate(row.get("spans") or []):
+        for span_index, span in enumerate(row_spans):
             parsed = self._parse_span(session_id, span_index, span, stats)
             if parsed is not None:
                 spans.append(parsed)

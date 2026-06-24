@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
@@ -52,11 +53,11 @@ def test_cli_dataset_filters_flow_to_exgentic_loader() -> None:
 @pytest.mark.parametrize(
     "filters, match",
     [
-        (["harness"], "expected non-empty key=value"),
-        (["harness="], "expected non-empty key=value"),
-        (["harness=a", "harness=b"], "Duplicate"),
+        param(["harness"], "expected non-empty key=value"),
+        param(["harness="], "expected non-empty key=value"),
+        param(["harness=a", "harness=b"], "Duplicate"),
     ],
-)
+)  # fmt: skip
 def test_cli_dataset_filter_rejects_invalid_syntax(
     filters: list[str], match: str
 ) -> None:
@@ -114,3 +115,28 @@ benchmark:
         "harness": "claude_code",
         "source_model": "claude-opus-4-5",
     }
+
+
+def test_cli_dataset_filter_rejects_non_public_yaml(tmp_path: Path) -> None:
+    config_file = tmp_path / "base.yaml"
+    config_file.write_text(
+        """
+schemaVersion: "2.0"
+benchmark:
+  model: target-model
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: synthetic
+  profiling:
+    type: concurrency
+    requests: 1
+    concurrency: 1
+"""
+    )
+
+    with pytest.raises(ValueError, match="requires a public dataset"):
+        resolve_config(
+            CLIConfig(config_file=config_file, dataset_filters=["harness=x"])
+        )
