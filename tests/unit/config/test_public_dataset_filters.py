@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.flags.resolver import resolve_config
 from aiperf.dataset.composer.public import PublicDatasetComposer
 from aiperf.dataset.loader.exgentic import ExgenticDatasetLoader
 from aiperf.dataset.loader.hf_instruction_response import (
@@ -76,3 +79,38 @@ def test_dataset_filter_requires_public_dataset() -> None:
         build_dataset(
             CLIConfig(model_names=["target-model"], dataset_filters=["harness=x"])
         )
+
+
+def test_cli_dataset_filter_overrides_yaml(tmp_path: Path) -> None:
+    config_file = tmp_path / "base.yaml"
+    config_file.write_text(
+        """
+schemaVersion: "2.0"
+benchmark:
+  model: target-model
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: public
+    dataset: exgentic
+    filters:
+      harness: claude_code
+      source_model: DeepSeek-V3.2
+  profiling:
+    type: concurrency
+    requests: 1
+    concurrency: 1
+"""
+    )
+    cli = CLIConfig(
+        config_file=config_file,
+        dataset_filters=["source_model=claude-opus-4-5"],
+    )
+
+    dataset = resolve_config(cli).benchmark.get_default_dataset()
+
+    assert dataset.filters == {
+        "harness": "claude_code",
+        "source_model": "claude-opus-4-5",
+    }

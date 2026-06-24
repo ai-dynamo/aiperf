@@ -309,6 +309,25 @@ class TestHFInstructionResponseDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 2
 
+    async def test_streaming_explicit_entries_win_over_request_count(self, cli_config):
+        config = CLIConfig(
+            model_names=["test-model"],
+            conversation_num=1,
+            request_count=6,
+        )
+        loader = HFInstructionResponseDatasetLoader(
+            run=make_run_from_cli(config),
+            hf_dataset_name="test/data",
+            hf_split="train",
+            prompt_column="problem",
+            streaming=True,
+        )
+        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
+
+        conversations = await loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+
     async def test_streaming_falls_back_to_num_dataset_entries(self, cli_config):
         config = CLIConfig(
             model_names=["test-model"],

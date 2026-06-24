@@ -87,7 +87,6 @@ def _normalize_part(
     content: list[str],
     reasoning: list[str],
     tool_calls: list[dict[str, Any]],
-    tool_responses: list[dict[str, Any]],
 ) -> None:
     part_type = part.get("type")
     if part_type == "text":
@@ -105,14 +104,6 @@ def _normalize_part(
                 },
             }
         )
-    elif part_type == "tool_call_response":
-        tool_responses.append(
-            {
-                "role": "tool",
-                "tool_call_id": part.get("id"),
-                "content": _json_string(part.get("result")),
-            }
-        )
     else:
         raise ValueError(f"unsupported {role!r} message part {part_type!r}")
 
@@ -125,21 +116,9 @@ def _normalize_message(message: dict[str, Any]) -> list[dict[str, Any]]:
     content: list[str] = []
     reasoning: list[str] = []
     tool_calls: list[dict[str, Any]] = []
-    tool_responses: list[dict[str, Any]] = []
-    for part in parts:
-        if not isinstance(part, dict):
-            raise ValueError("message parts must be objects")
-        _normalize_part(
-            part,
-            role=role,
-            content=content,
-            reasoning=reasoning,
-            tool_calls=tool_calls,
-            tool_responses=tool_responses,
-        )
+    normalized: list[dict[str, Any]] = []
 
-    normalized = []
-    if content or reasoning or tool_calls or not tool_responses:
+    def flush_message() -> None:
         output: dict[str, Any] = {
             "role": "system" if role == "developer" else role,
             "content": "".join(content),
@@ -147,9 +126,37 @@ def _normalize_message(message: dict[str, Any]) -> list[dict[str, Any]]:
         if reasoning:
             output["reasoning_content"] = "".join(reasoning)
         if tool_calls:
-            output["tool_calls"] = tool_calls
+            output["tool_calls"] = list(tool_calls)
         normalized.append(output)
-    return normalized + tool_responses
+        content.clear()
+        reasoning.clear()
+        tool_calls.clear()
+
+    for part in parts:
+        if not isinstance(part, dict):
+            raise ValueError("message parts must be objects")
+        if part.get("type") == "tool_call_response":
+            if content or reasoning or tool_calls:
+                flush_message()
+            normalized.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": part.get("id"),
+                    "content": _json_string(part.get("result")),
+                }
+            )
+            continue
+        _normalize_part(
+            part,
+            role=role,
+            content=content,
+            reasoning=reasoning,
+            tool_calls=tool_calls,
+        )
+
+    if content or reasoning or tool_calls or not normalized:
+        flush_message()
+    return normalized
 
 
 def _normalize_messages(value: Any) -> list[dict[str, Any]]:

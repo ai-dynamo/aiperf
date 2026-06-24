@@ -171,12 +171,12 @@ async def test_convert_preserves_snapshots_tools_osl_order_and_delays() -> None:
                 }
             ],
         },
-        {"role": "user", "content": "reminder"},
         {
             "role": "tool",
             "tool_call_id": "call-1",
             "content": '[{"type":"text","text":"ok"}]',
         },
+        {"role": "user", "content": "reminder"},
     ]
     assert first.raw_tools == [
         {
