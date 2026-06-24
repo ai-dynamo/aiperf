@@ -19,6 +19,7 @@ app = App(
 @app.default
 def turn_messages(
     run_dirs: list[Path],
+    *,
     out: Annotated[Path | None, Parameter(name=["-o", "--out"])] = None,
     limit_conversations: Annotated[
         int, Parameter(name=["-n", "--limit-conversations"])

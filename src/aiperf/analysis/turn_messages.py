@@ -169,7 +169,7 @@ def load_records(files: list[Path]) -> list[dict]:
 
 
 def build_payload(
-    recs: list[dict], n_files: int, cap: int, limit: int, max_turns: int
+    recs: list[dict], n_files: int, *, cap: int, limit: int, max_turns: int
 ) -> dict:
     """Compute the compact, interned render tree (data only -- no HTML)."""
     cap, limit, max_turns = max(cap, 0), max(limit, 0), max(max_turns, 0)
@@ -338,7 +338,11 @@ def write_turn_messages_html(
         raise TurnMessagesError(f"no valid raw records in {run_dir}")
 
     payload = build_payload(
-        recs, len(files), content_cap, limit_conversations, max_turns
+        recs,
+        len(files),
+        cap=content_cap,
+        limit=limit_conversations,
+        max_turns=max_turns,
     )
     raw = orjson.dumps(payload)
 

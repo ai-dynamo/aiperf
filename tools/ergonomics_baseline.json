@@ -13,6 +13,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/common/config/input_config.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/config/loadgen_config.py",
       ""
     ],
@@ -98,6 +103,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/credit/callback_handler.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/credit/sticky_router.py",
       ""
     ],
@@ -144,6 +154,11 @@
     [
       "file-size",
       "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
       ""
     ],
     [
@@ -343,6 +358,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "function-size",
       "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
@@ -460,6 +480,11 @@
       "function-size",
       "src/aiperf/dataset/dataset_manager.py",
       "DatasetManager._configure_dataset"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._preformat_payloads"
     ],
     [
       "function-size",
@@ -1139,7 +1164,22 @@
     [
       "function-size",
       "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/branch_orchestrator.py",
       "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.seed_snapshot"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase/credit_counter.py",
+      "CreditCounter.increment_sent"
     ],
     [
       "function-size",
@@ -1169,7 +1209,17 @@
     [
       "function-size",
       "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._dispatch_snapshot_for_profiling"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
       "AgenticReplayStrategy._execute_warmup"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy.handle_credit_return"
     ],
     [
       "function-size",
@@ -1228,8 +1278,18 @@
     ],
     [
       "function-size",
+      "src/aiperf/workers/inference_client.py",
+      "InferenceClient._send_request_to_transport"
+    ],
+    [
+      "function-size",
       "src/aiperf/workers/session_manager.py",
       "UserSessionManager.create_and_store"
+    ],
+    [
+      "function-size",
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager.evict"
     ],
     [
       "function-size",
