@@ -261,13 +261,16 @@ class TestDagChildCounterSplit:
       / ``total_session_turns`` exclude children — they reflect
       sampled-root session lifecycle only. Inflating them would make a
       single-session DAG run report as multi-session.
-    - Reactive DAG children set ``counts_toward_phase_target=False`` so they
-      cannot flip ``is_final_credit``. Snapshot warmup can still make a
-      subagent state count toward the planned warmup target.
+    - Reactive DAG children set ``counts_toward_phase_target=False``. Under the
+      exact-cutoff they CAN flip ``is_final_credit`` via the unconditional
+      ``--request-count`` arm (a literal wire cap), but NOT via the
+      ``--num-conversations`` arm (a root-sampler-plan target, still gated by
+      the flag). Snapshot warmup can also make a subagent state count toward the
+      planned warmup target.
     """
 
     def test_child_increment_sent_bumps_requests_only(self) -> None:
-        c = CreditCounter(cfg(reqs=3, sessions=2))
+        c = CreditCounter(cfg(reqs=10, sessions=2))
         # Root first-turn bumps everything.
         idx, final = c.increment_sent(turn(idx=0, num=2))
         assert idx == 0 and final is False
@@ -290,23 +293,24 @@ class TestDagChildCounterSplit:
         assert c.sent_sessions == 1
         assert c.total_session_turns == 2
 
-    def test_reactive_child_never_triggers_is_final_credit(self) -> None:
-        """Reactive children are not part of the sampled phase plan.
-
-        Even if they push ``requests_sent`` past the configured cap, the signal
-        must only flip when a target-counted credit exhausts the plan. Reactive
-        children go past the cap via the ``applies_to_dag_children=False``
-        bypass on ``RequestCountStopCondition``.
+    def test_reactive_child_crossing_cap_triggers_is_final_credit(self) -> None:
+        """Exact-cutoff: ``--request-count`` is a literal cap on total wire
+        requests, so a REACTIVE child (``counts_toward_phase_target=False``) that
+        crosses it MUST flip ``is_final_credit`` — otherwise, when the Nth wire
+        credit is a child, ``all_credits_sent_event`` never fires and
+        sending-complete hangs. (The request-count arm is unconditional; the
+        ``--num-conversations`` arm stays gated by the flag.)
         """
-        c = CreditCounter(cfg(reqs=1))
-        _, final_root = c.increment_sent(turn(idx=0))
-        assert final_root is True  # root exhausted the plan
+        c = CreditCounter(cfg(reqs=2))
+        _, final_root = c.increment_sent(turn(idx=0, num=2))
+        assert final_root is False  # 1 < 2, cap not yet reached
 
-        # Reactive children push requests_sent past the cap but must not
-        # re-trigger ``is_final_credit``.
+        # Reactive child (off the sampler plan) crosses the wire cap -> is_final.
         _, final_child = c.increment_sent(child_turn(conv="child-1", idx=0))
-        assert final_child is False
+        assert final_child is True
         assert c.requests_sent == 2
+        # Session counters stay root-only even though the child flipped is_final.
+        assert c.sent_sessions == 1
 
     def test_planned_child_can_trigger_is_final_credit(self) -> None:
         """Snapshot warmup may dispatch a ready subagent as planned work.
@@ -331,6 +335,34 @@ class TestDagChildCounterSplit:
         assert final_child is True
         assert c.requests_sent == 2
         assert c.sent_sessions == 1
+
+    def test_warmup_planned_subagent_crossing_request_target_is_final(self) -> None:
+        """R1 guard: in WARMUP every credit is a planned credit
+        (``counts_toward_phase_target=True``); a planned subagent crossing the
+        warmup request target flips ``is_final_credit`` (so warmup sending
+        completes) WITHOUT inflating session counters. Guards the Delta-2
+        'request arm unconditional' merge against a warmup regression.
+        """
+        c = CreditCounter(cfg(reqs=2))
+        _, final_root = c.increment_sent(turn(idx=0, num=1))
+        assert final_root is False
+        _, final_sub = c.increment_sent(
+            child_turn(conv="sub", idx=0, counts_toward_phase_target=True)
+        )
+        assert final_sub is True
+        assert c.sent_sessions == 1  # session counters stay root-only
+
+    def test_session_count_reactive_child_does_not_flip_early(self) -> None:
+        """R1 guard: the ``--num-conversations`` arm stays gated by
+        ``counts_toward_phase_target``. With no request cap, a reactive child
+        must NOT flip ``is_final_credit`` early — only the root plan exhausting
+        does. (Pairs with the request-count arm being unconditional.)
+        """
+        c = CreditCounter(cfg(sessions=1))  # no request cap
+        _, final_root = c.increment_sent(turn(idx=0, num=2))  # 2-turn root, not done
+        assert final_root is False
+        _, final_child = c.increment_sent(child_turn(conv="child-1", idx=0))
+        assert final_child is False  # reactive child can't satisfy the session plan
         assert c.total_session_turns == 2
 
     def test_child_increment_returned_bumps_requests_only(self) -> None:

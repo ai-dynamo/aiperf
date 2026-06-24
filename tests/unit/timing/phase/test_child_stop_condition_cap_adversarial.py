@@ -1,19 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial test: DAG children ignore the ``--request-count`` cap.
+"""Adversarial test: DAG children HONOR the ``--request-count`` cap (exact-cutoff).
 
-``RequestCountStopCondition`` sets ``applies_to_dag_children = False``
-(stop_conditions.py:143), so ``StopConditionChecker.can_send_child_turn`` never
-consults the request-count cap. That is the *intended* behaviour per the
-stop-condition docstrings -- but ``CreditCallbackHandler.on_credit_return``
-documents the opposite: "the global ``--request-count`` cap still applies"
-(callback_handler.py:325-328) and routes a cap-blocked child continuation to
-``on_child_stopped`` / ``children_truncated``. Because the cap can never block
-a child, that ``on_child_stopped`` path is unreachable for the cap and
-``children_truncated`` will never reflect it.
+``RequestCountStopCondition`` inherits the base ``applies_to_dag_children = True``,
+so ``StopConditionChecker.can_send_child_turn`` consults the request-count cap and
+a child at the cap is refused. ``CreditCallbackHandler.on_credit_return`` (and the
+agentic-replay child-issuance chokepoint) then route that refusal to
+``BranchOrchestrator.on_child_stopped`` / ``children_truncated`` so the parent's
+join drains instead of deadlocking on a child whose remaining turns never issue.
 
-This test pins the ACTUAL behaviour (children run past the cap) so the stale
-callback-handler comment is caught.
+This test pins the exact-cutoff behaviour: ``--request-count N`` is a literal cap
+on total wire requests ("N means N"), and children are truncated at the cap
+rather than running past it.
 """
 
 from __future__ import annotations
@@ -35,7 +33,7 @@ def _checker(counter: CreditCounter, config: CreditPhaseConfig) -> StopCondition
     )
 
 
-def test_child_turn_bypasses_request_count_cap() -> None:
+def test_child_turn_honors_request_count_cap() -> None:
     config = CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=TimingMode.AGENTIC_REPLAY,
@@ -59,8 +57,9 @@ def test_child_turn_bypasses_request_count_cap() -> None:
 
     # Root issuance IS gated by the cap...
     assert checker.can_send_any_turn() is False
-    # ...but a DAG child continuation is NOT -- the cap is bypassed.
-    assert checker.can_send_child_turn() is True
+    # ...and a DAG child continuation is NOW ALSO gated: --request-count is a
+    # literal wire cap honored by children ("N means N"). Exact-cutoff.
+    assert checker.can_send_child_turn() is False
 
 
 def test_child_turn_still_honors_cancellation() -> None:

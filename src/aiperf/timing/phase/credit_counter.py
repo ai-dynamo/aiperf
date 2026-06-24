@@ -191,11 +191,14 @@ class CreditCounter:
         session slot (``CreditIssuer.issue_credit`` skips session-slot
         acquisition for them).
 
-        ``counts_toward_phase_target`` decides whether a turn can flip
-        ``is_final_credit``. Reactive DAG children set it False because they
-        are spawned after the root plan has been sampled. Snapshot warmup can
-        dispatch subagent states as planned warmup credits, so target
-        membership cannot be inferred from ``agent_depth`` alone.
+        ``is_final_credit`` (the sending-complete trigger) splits by intent: the
+        ``--request-count`` arm is UNCONDITIONAL (a literal wire cap — a
+        cap-crossing child/join turn must flip it, see below), while the
+        ``--num-conversations`` arm stays gated by ``counts_toward_phase_target``
+        (a root-sampler-plan target). Reactive DAG children set the flag False;
+        snapshot warmup dispatches subagent states as planned credits with the
+        flag True, so target membership cannot be inferred from ``agent_depth``
+        alone.
 
         Lock-free: no async calls.
         """
@@ -229,16 +232,28 @@ class CreditCounter:
             new_sent_sessions_count += 1
             new_total_session_turns += turn_to_send.num_turns - turn_to_send.turn_index
 
-        is_final_credit = turn_to_send.counts_toward_phase_target and (
-            (
-                self._config.total_expected_requests is not None
-                and new_sent_count >= self._config.total_expected_requests
-            )
-            or (
-                self._config.expected_num_sessions is not None
-                and new_sent_sessions_count >= self._config.expected_num_sessions
-                and new_root_sent >= new_total_session_turns
-            )
+        crosses_request_cap = (
+            self._config.total_expected_requests is not None
+            and new_sent_count >= self._config.total_expected_requests
+        )
+        crosses_session_target = (
+            self._config.expected_num_sessions is not None
+            and new_sent_sessions_count >= self._config.expected_num_sessions
+            and new_root_sent >= new_total_session_turns
+        )
+        # Exact-cutoff INVARIANT: the request-count arm is UNCONDITIONAL.
+        # ``--request-count N`` is a literal cap on total wire requests, so a
+        # cap-crossing DAG child OR nested join turn (``counts_toward_phase_target
+        # == False``) MUST still flip ``is_final_credit`` — otherwise, when the
+        # Nth wire credit is a child, ``all_credits_sent_event`` never fires and
+        # sending-complete hangs. The session-count arm stays gated by
+        # ``counts_toward_phase_target`` (a root-sampler-plan target; reactive
+        # offspring must not satisfy it early). Paired with
+        # ``RequestCountStopCondition.applies_to_dag_children = True``. Do NOT
+        # re-couple the request arm to the flag — it re-breaks "N means N"
+        # (regressed 3x historically). See the agentx hard-cap spec.
+        is_final_credit = crosses_request_cap or (
+            turn_to_send.counts_toward_phase_target and crosses_session_target
         )
 
         self._requests_sent = new_sent_count

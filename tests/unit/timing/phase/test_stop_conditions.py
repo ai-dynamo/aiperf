@@ -113,6 +113,14 @@ class TestRequestCountStopCondition:
     def test_should_not_use_when_not_configured(self) -> None:
         assert RequestCountStopCondition.should_use(cfg(reqs=None)) is False
 
+    def test_applies_to_dag_children_invariant(self) -> None:
+        # INVARIANT (exact-cutoff "N means N"): --request-count is a literal wire
+        # cap honored by DAG children, so this MUST inherit the base True. Pinned
+        # by name on purpose — re-adding `applies_to_dag_children = False` here
+        # (the regression that has happened 3x) fails loudly. Paired with
+        # SessionCountStopCondition staying False (see TestSessionCountStopCondition).
+        assert RequestCountStopCondition.applies_to_dag_children is True
+
     # fmt: off
     @pytest.mark.parametrize("sent,limit,expected", [(0, 1, True), (0, 100, True), (99, 100, True), (100, 100, False), (150, 100, False)])
     def test_request_count_scenarios(self, sent: int, limit: int, expected: bool) -> None:
@@ -235,11 +243,11 @@ class TestStopConditionChecker:
 
 
 class TestStopConditionCheckerChildTurns:
-    """``can_send_child_turn`` is the narrow bypass used by
-    ``CreditIssuer`` for DAG children. It must honor every stop
-    condition except ``SendingCompleteStopCondition`` (root-sampler
-    done) — otherwise children would silently keep running past
-    cancellation, timeouts, and count limits.
+    """``can_send_child_turn`` is what ``CreditIssuer`` consults for DAG
+    children. Children HONOR cancellation, duration timeout, AND the
+    ``--request-count`` wire cap ("N means N"); they BYPASS only
+    ``SendingCompleteStopCondition`` (root-sampler-done) and
+    ``SessionCountStopCondition`` (``--num-conversations`` = run full trees).
     """
 
     def test_child_can_send_past_sending_complete(self) -> None:
@@ -266,16 +274,17 @@ class TestStopConditionCheckerChildTurns:
         assert checker.can_send_any_turn() is False
         assert checker.can_send_child_turn() is False
 
-    def test_child_bypasses_request_count_limit(self) -> None:
-        """``--request-count`` is a root-sampler planning target, not a
-        global HTTP-request cap. DAG children are reactive offspring
-        that run *in addition to* the planned roots. Honoring this
-        limit would block children the instant the root count hits
-        (including the root's own about-to-spawn descendants).
+    def test_child_honors_request_count_limit(self) -> None:
+        """``--request-count N`` is a literal cap on total wire requests
+        ("N means N"), honored by EVERY credit including DAG children. At the
+        cap a child is refused; the issuance chokepoint routes that refusal
+        through ``on_child_stopped`` so the parent's join drains.
         """
         checker = StopConditionChecker(cfg(reqs=1), lc(), ctr(sent=1))
         assert checker.can_send_any_turn() is False  # roots stopped
-        assert checker.can_send_child_turn() is True  # children continue
+        assert (
+            checker.can_send_child_turn() is False
+        )  # children ALSO stopped (hard cap)
 
     def test_child_bypasses_session_count_limit(self) -> None:
         """Same rationale as request count: ``--conversation-num`` caps

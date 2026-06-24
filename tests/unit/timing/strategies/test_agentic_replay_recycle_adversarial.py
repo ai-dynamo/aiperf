@@ -773,7 +773,10 @@ async def test_child_non_final_turn_still_dispatches_next_turn():
         return True
 
     issuer = AsyncMock()
-    issuer.issue_credit.side_effect = capture
+    # Child continuations now route through the chokepoint
+    # (dispatch_child_turn -> clean True-iff-on-wire) rather than the
+    # overloaded issue_credit, so a cap refusal can be drained.
+    issuer.dispatch_child_turn.side_effect = capture
     strategy, _, _ = _make_strategy(
         phase=CreditPhase.PROFILING,
         trajectories=trajectory,
@@ -790,7 +793,7 @@ async def test_child_non_final_turn_still_dispatches_next_turn():
     )
     await strategy.handle_credit_return(non_final_child)
 
-    # Next turn (turn_index=1) was issued via the normal continuation path.
+    # Next turn (turn_index=1) was issued via the child-continuation chokepoint.
     assert issued == [(child_cid, 1)]
 
 

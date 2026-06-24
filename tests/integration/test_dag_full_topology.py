@@ -110,7 +110,7 @@ class TestDagFullTopologyEndToEnd:
                 --endpoint-type chat \
                 --input-file {FIXTURE} \
                 --custom-dataset-type dag_jsonl \
-                --request-count 1 \
+                --num-conversations 1 \
                 --concurrency 1 \
                 --workers-max 2 \
                 --export-level raw \
@@ -288,3 +288,47 @@ class TestDagFullTopologyEndToEnd:
             f"All 5 DAG requests must route to the same worker via sticky "
             f"routing; saw workers {worker_ids}"
         )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_request_count_cap_is_exact_under_concurrent_fanout(
+    cli: AIPerfCLI,
+    aiperf_mock_server: AIPerfMockServer,
+):
+    """Exact-cutoff is EXACT (not near-exact) even under concurrent fan-out.
+
+    The root spawns branch-a and branch-b in one gather (a 2-wide concurrent
+    fan-out). With ``--request-count 3`` and ``--concurrency 2`` the cap is
+    crossed mid-fan-out: root + the two turn-0 children = exactly 3 wire
+    requests, and the branch continuations (turn 1) are refused. Asserts EXACTLY
+    3 (zero overshoot) -- proving the post-acquire cap re-check
+    (``concurrency.py:265,272``) + synchronous ``increment_sent`` make each
+    child's gate-and-increment atomic w.r.t. the loop, so concurrent siblings
+    cannot both slip past the cap.
+    """
+    assert FIXTURE.exists(), f"fixture missing: {FIXTURE}"
+
+    result = await cli.run(
+        f"""
+        aiperf profile \
+            --model Qwen3-0.6B \
+            --url {aiperf_mock_server.url} \
+            --endpoint-type chat \
+            --input-file {FIXTURE} \
+            --custom-dataset-type dag_jsonl \
+            --request-count 3 \
+            --concurrency 2 \
+            --workers-max 2 \
+            --export-level raw \
+            --ui simple
+        """,
+        timeout=300.0,
+    )
+
+    assert result.raw_records is not None
+    assert len(result.raw_records) == 3, (
+        "--request-count 3 must cap at EXACTLY 3 wire requests under concurrent "
+        f"fan-out (root + 2 turn-0 children); got {len(result.raw_records)}: "
+        f"{[r.payload.get('messages', [{}])[0] for r in result.raw_records]}"
+    )

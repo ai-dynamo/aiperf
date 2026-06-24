@@ -69,7 +69,7 @@ class TestDagSpawnEndToEnd:
                 --endpoint-type chat \
                 --input-file {FIXTURE} \
                 --custom-dataset-type dag_jsonl \
-                --request-count 1 \
+                --num-conversations 1 \
                 --concurrency 1 \
                 --workers-max 2 \
                 --export-level raw \
@@ -81,7 +81,10 @@ class TestDagSpawnEndToEnd:
         assert result.raw_records is not None, (
             "profile_export_raw.jsonl must exist when --export-level raw is set"
         )
-        # Exactly 2 wire requests: root + one spawn-mode child.
+        # --num-conversations 1 runs the full tree once: root + one spawn-mode
+        # child = 2 wire requests. (Under the exact-cutoff contract --request-count
+        # 1 would now be root-only, so this uses --num-conversations to run the
+        # whole tree — the right knob for a topology assertion.)
         assert len(result.raw_records) == 2, (
             f"Expected 2 raw records, got {len(result.raw_records)}: "
             f"{[r.payload.get('messages', [])[0] for r in result.raw_records]}"
@@ -132,3 +135,48 @@ class TestDagSpawnEndToEnd:
         assert result.json.branch_stats.children_spawned == 1
         assert result.json.branch_stats.children_completed == 1
         assert result.json.branch_stats.children_errored == 0
+
+    async def test_request_count_cap_truncates_spawn_child(
+        self,
+        cli: AIPerfCLI,
+        aiperf_mock_server: AIPerfMockServer,
+    ):
+        """Exact-cutoff "N means N" + hang-free, end to end. ``--request-count 1``
+        caps total wire requests at the root; the spawn-mode child is refused at
+        the cap and the run still COMPLETES (the suspended-parent join drains via
+        on_child_stopped rather than deadlocking). Proves the agentx hard-cap.
+        """
+        assert FIXTURE.exists(), f"fixture missing: {FIXTURE}"
+
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model test-model \
+                --url {aiperf_mock_server.url} \
+                --endpoint-type chat \
+                --input-file {FIXTURE} \
+                --custom-dataset-type dag_jsonl \
+                --request-count 1 \
+                --concurrency 1 \
+                --workers-max 2 \
+                --export-level raw \
+                --ui simple
+            """,
+            timeout=300.0,
+        )
+
+        # Completed (no hang) with EXACTLY one wire request: the root. The
+        # spawn-mode child is truncated at the cap ("N means N").
+        assert result.raw_records is not None
+        assert len(result.raw_records) == 1, (
+            "--request-count 1 must cap at exactly the root wire request; got "
+            f"{len(result.raw_records)} records"
+        )
+        only = result.raw_records[0]
+        assert _text_of(only.payload.get("messages", [{}])[0]) == ROOT_SYS
+
+        # The child never completed (truncated at the cap) yet the run finished:
+        # the suspended-parent join drained instead of deadlocking.
+        assert result.json is not None
+        assert result.json.branch_stats is not None
+        assert result.json.branch_stats.children_completed == 0
