@@ -7,9 +7,10 @@ import pytest
 from pytest import param
 
 from aiperf.common.models import Image, Text
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import CustomDatasetType, EndpointType
 from tests.unit.conftest import make_run_from_cli
 
 
@@ -923,6 +924,65 @@ class TestMultiTurnDatasetLoaderSystemPromptHoist:
         assert len(conversation.turns) == 2
         assert conversation.turns[0].role == "system"
         assert conversation.turns[1].texts[0].contents == ["Hello"]
+
+    def test_hoist_skipped_when_endpoint_does_not_consume_system_message(self):
+        """Endpoints that do not send ``system_message`` keep the system turn.
+
+        Only chat/responses emit ``conversation.system_message``; on completions
+        (and other endpoints) hoisting would silently drop it - and on
+        completions the leading system turn would also bypass the
+        "only supports one turn" error. So the system turn is left in place.
+        """
+        cfg = CLIConfig(
+            model_names=["test-model"], endpoint_type=EndpointType.COMPLETIONS
+        )
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", text="You are an assistant."),
+                        SingleTurn(text="What is AI?"),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 2
+        assert conversation.turns[0].role == "system"
+        assert conversation.turns[0].texts[0].contents == ["You are an assistant."]
+
+    def test_hoist_applied_for_system_message_aware_endpoint(self):
+        """Chat (a ``system_message``-aware endpoint) still hoists the system turn."""
+        cfg = CLIConfig(model_names=["test-model"], endpoint_type=EndpointType.CHAT)
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", text="You are an assistant."),
+                        SingleTurn(text="What is AI?"),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message == "You are an assistant."
+        assert len(conversation.turns) == 1
+        assert conversation.turns[0].texts[0].contents == ["What is AI?"]
 
 
 def test_multi_turn_loader_propagates_per_inner_turn_extra(tmp_path, default_cfg):

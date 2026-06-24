@@ -12,6 +12,7 @@ from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
@@ -107,7 +108,9 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     conversation-level ``system_message`` rather than dispatched as its own
     (user-less) request. The endpoint then prepends it to every turn's
     message array, so the system prompt persists across all turns and does
-    not consume a turn slot or skew per-turn metrics.
+    not consume a turn slot or skew per-turn metrics. Hoisting only applies to
+    endpoints that send ``system_message`` (chat, responses); on others the
+    system turn is left in place rather than silently dropped.
     """
 
     _hoist_leading_system_message: ClassVar[bool] = True
@@ -165,6 +168,11 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations.
         """
+        hoist_enabled = (
+            self._hoist_leading_system_message
+            and self._endpoint_consumes_system_message()
+        )
+
         conversations = []
         for session_id, multi_turns in data.items():
             conversation = Conversation(session_id=session_id)
@@ -174,8 +182,8 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
             for multi_turn in multi_turns:
                 for single_turn in multi_turn.turns:
                     media = self.convert_to_media_objects(single_turn)
-                    if self._hoist_leading_system_message and (
-                        self._try_hoist_system_message(conversation, single_turn, media)
+                    if hoist_enabled and self._try_hoist_system_message(
+                        conversation, single_turn, media
                     ):
                         hoisted = (single_turn, media)
                         continue
@@ -192,6 +200,19 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
             conversations.append(conversation)
         return conversations
+
+    def _endpoint_consumes_system_message(self) -> bool:
+        """Whether the configured endpoint sends ``system_message`` on the wire.
+
+        Hoisting is endpoint-blind, but only system-message-aware endpoints
+        (chat, responses) emit ``conversation.system_message``. On the others it
+        would be silently dropped - and on completions the leading system turn
+        would also bypass the "only supports one turn" error - so hoisting is
+        gated on this capability and the system turn is left in place otherwise.
+        """
+        return plugins.get_endpoint_metadata(
+            self.run.cfg.endpoint.type
+        ).consumes_system_message
 
     @staticmethod
     def _build_turn(single_turn: SingleTurn, media: dict[str, list[Any]]) -> Turn:

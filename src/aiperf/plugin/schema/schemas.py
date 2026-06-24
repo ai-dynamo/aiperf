@@ -290,6 +290,16 @@ class EndpointMetadata(BaseModel):
         default=False,
         description="Whether endpoint requires media URLs to be downloaded and inlined as base64 data URLs.",
     )
+    consumes_system_message: bool = Field(
+        default=False,
+        description=(
+            "Whether endpoint sends RequestInfo.system_message on the wire "
+            "(e.g. a leading system role for chat, top-level instructions for "
+            "responses). When False, the multi-turn loader does not hoist a "
+            "leading system turn into the conversation system_message, since it "
+            "would be silently dropped."
+        ),
+    )
 
 
 class TransportMetadata(BaseModel):
