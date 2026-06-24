@@ -309,6 +309,44 @@ def test_unsupported_filter_pair_fails_before_loading() -> None:
 
 
 @pytest.mark.asyncio
+async def test_explicit_entries_win_over_request_count() -> None:
+    run = make_run_from_cli(
+        CLIConfig(
+            model_names=["target-model"],
+            public_dataset=PublicDatasetType.EXGENTIC,
+            conversation_num=1,
+            request_count=6,
+        )
+    )
+    loader = ExgenticDatasetLoader(
+        run=run,
+        hf_dataset_name="Exgentic/agent-llm-traces",
+        streaming=True,
+    )
+
+    assert loader._max_conversations() == 1
+
+
+@pytest.mark.asyncio
+async def test_requires_finite_materialization_bound() -> None:
+    run = make_run_from_cli(
+        CLIConfig(
+            model_names=["target-model"],
+            public_dataset=PublicDatasetType.EXGENTIC,
+            benchmark_duration=60,
+        )
+    )
+    loader = ExgenticDatasetLoader(
+        run=run,
+        hf_dataset_name="Exgentic/agent-llm-traces",
+        streaming=True,
+    )
+
+    with pytest.raises(DatasetLoaderError, match="finite entry or request count"):
+        loader._max_conversations()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "field, value, match",
     [

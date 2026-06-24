@@ -60,11 +60,11 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
   </tbody>
 </table>
 
-Streaming Hugging Face datasets require an explicit materialization bound through `--num-conversations`, `--num-dataset-entries`, or `--request-count`. `--benchmark-duration` limits request issuance, not dataset setup.
-
 ## Exgentic Agent Trace Replay
 
 The Exgentic loader streams recorded agent sessions directly from Hugging Face at revision `70036b93a04e61b0ea2706a68b962f4f26774587`. It replays each successful, positive-token `llm_call` as a self-contained request snapshot. Recorded messages, tool definitions, tool calls and results, output-token limits, and call start times are preserved. Tools are not executed, and live responses are not added to later requests. Every request carries the source session as `x-dynamo-session-id` for Dynamo agentic tracing while AIPerf retains its own request correlation ID.
+
+Provide a finite materialization bound through `--num-conversations`, `--num-dataset-entries`, or `--request-count`. `--benchmark-duration` limits request issuance, not dataset setup.
 
 Select a source harness and source model independently from the target model served by the endpoint:
 

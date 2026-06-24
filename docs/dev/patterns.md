@@ -744,7 +744,7 @@ Custom dataset rows use `extra` for non-native request-body fields. Loaders map 
 
 **Rules new formatters and loaders must follow:**
 
-- **Dispatch-turn scoping.** Endpoint formatters read `turn.extra_body`, `turn.max_tokens`, and `turn.model` from `request_info.turns[-1]` only. The transport similarly merges `turn.extra_headers` from only the dispatching turn after endpoint headers. Parent turns earlier in the conversation history must never leak these request-control fields into a child payload, so DAG/FORK children stay clean of parent vendor knobs, limits, headers, or model overrides.
+- **Dispatch-turn scoping.** Endpoint formatters read `turn.extra_body`, `turn.max_tokens`, and `turn.model` from `request_info.turns[-1]` only. Parent turns earlier in the conversation history must never leak these request-control fields into a child payload, so DAG/FORK children stay clean of parent vendor knobs, limits, or model overrides.
 - **Tools-as-system-prompt.** Only `raw_tools` walks `request_info.turns` from the end via `BaseEndpoint._latest_turn_attr`. Tool definitions behave like a system prompt and persist across a multi-turn or FORK conversation when the dispatching turn does not redeclare them.
 - **Dataset user-facing field is `extra`.** Custom dataset row schemas (`SingleTurn`, inner `MultiTurn` turns, `MooncakeTrace`, `DagTurn`) declare a per-turn `extra: dict[str, Any] | None`. Loaders translate `row.extra` into `Turn.extra_body` at construction time. `DagTurn` uses Pydantic's `extra="forbid"` so a typo'd `extra_body` is rejected at load time; the other dataset schemas are `extra="allow"` so an unrecognized `extra_body` is silently ignored — author the supported field instead.
 

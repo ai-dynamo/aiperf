@@ -171,16 +171,12 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
 
         Returns None for non-streaming datasets.
 
-        For streaming datasets, caps at the active dataset's explicit `entries`,
-        otherwise the largest profiling-phase request count, to prevent fetching
+        For streaming datasets, caps at the largest profiling-phase request count
+        when set, otherwise the active dataset's `entries`, to prevent fetching
         the entire remote dataset in duration-based benchmarks.
         """
         if not self.streaming:
             return None
-
-        dataset = self.run.cfg.get_default_dataset()
-        if entries := getattr(dataset, "entries", None):
-            return entries
 
         request_counts = [
             phase.requests
@@ -189,11 +185,9 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         ]
         if request_counts:
             return max(request_counts)
-        raise DatasetLoaderError(
-            "Streaming Hugging Face datasets require a finite entry or request "
-            "count; set --num-conversations, --num-dataset-entries, or "
-            "--request-count"
-        )
+
+        dataset = self.run.cfg.get_default_dataset()
+        return getattr(dataset, "entries", None)
 
     @abstractmethod
     async def convert_to_conversations(

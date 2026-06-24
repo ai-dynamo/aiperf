@@ -16,7 +16,7 @@ from aiperf.dataset.composer.public import PublicDatasetComposer
 from aiperf.dataset.loader.hf_instruction_response import (
     HFInstructionResponseDatasetLoader,
 )
-from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 from tests.unit.conftest import make_run_from_cli
 
@@ -309,25 +309,6 @@ class TestHFInstructionResponseDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 2
 
-    async def test_streaming_explicit_entries_win_over_request_count(self, cli_config):
-        config = CLIConfig(
-            model_names=["test-model"],
-            conversation_num=1,
-            request_count=6,
-        )
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="problem",
-            streaming=True,
-        )
-        data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
-
-        conversations = await loader.convert_to_conversations(data)
-
-        assert len(conversations) == 1
-
     async def test_streaming_falls_back_to_num_dataset_entries(self, cli_config):
         config = CLIConfig(
             model_names=["test-model"],
@@ -344,25 +325,6 @@ class TestHFInstructionResponseDatasetLoader:
         data = {"dataset": [{"problem": f"Q{i}"} for i in range(10)]}
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations) == 3
-
-    async def test_streaming_without_finite_bound_raises(self, cli_config):
-        config = CLIConfig(
-            model_names=["test-model"],
-            public_dataset=PublicDatasetType.EXGENTIC,
-            **CLIConfig(benchmark_duration=60).model_dump(exclude_unset=True),
-        )
-        loader = HFInstructionResponseDatasetLoader(
-            run=make_run_from_cli(config),
-            hf_dataset_name="test/data",
-            hf_split="train",
-            prompt_column="problem",
-            streaming=True,
-        )
-
-        with pytest.raises(DatasetLoaderError, match="finite entry or request count"):
-            await loader.convert_to_conversations(
-                {"dataset": [{"problem": "unbounded"}]}
-            )
 
     async def test_pil_to_image_returns_jpeg_data_url(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
