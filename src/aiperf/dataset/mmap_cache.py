@@ -75,6 +75,12 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v20: DAG datasets (any FORK/SPAWN branch) are no longer preformatted into
+    # the PAYLOAD_BYTES mmap fast path -- they are delta-compressed and
+    # accumulate context across the tree (FORK children seed from the parent's
+    # live session), which payload_bytes cannot represent. A pre-v20 warm cache
+    # could hold a poisoned PAYLOAD_BYTES entry for a single-turn-root-with-branch
+    # dataset; bumping invalidates those so they rebuild as CONVERSATION.
     # v19: worker-group grouping now requires BOTH a shared fork point AND
     # temporal overlap (the corpus research + graph adapter prescription:
     # overlapping intervals AND a shared prefix). Workers are scoped by fork
@@ -131,7 +137,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    19
+    20
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

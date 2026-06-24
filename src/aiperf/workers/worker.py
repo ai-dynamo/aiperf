@@ -858,6 +858,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Skipped for DAG descendants (agent_depth > 0) so their turn_list
             # goes through session_manager — FORK children need parent-seeded
             # accumulation and all multi-turn children need session state.
+            # (FORK *parents* are kept off this fast path upstream: the dataset
+            # manager refuses to preformat any DAG dataset that declares
+            # branches, so a FORK parent's conversation is served structured —
+            # with branches — and its session is created and pinned here.)
             context_mode_requires_session = credit_context.credit.agent_depth > 0
             if (
                 self._is_payload_bytes

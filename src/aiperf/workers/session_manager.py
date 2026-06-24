@@ -149,10 +149,17 @@ class UserSessionManager:
       the current count: zero → drop immediately (nothing pending or
       in-flight), non-zero → mark ``_pending_eviction`` and keep cached.
 
-    A parent can only spawn more FORK children from a non-final turn, so
-    by the time its final turn completes, all FORK children have either
-    already been dispatched (and are tracked in the refcount) or will
-    never exist — the count reflects the true outstanding set.
+    The live refcount alone is NOT enough: children are counted at
+    ``create_and_store`` time, which runs on the worker when each child's
+    credit is processed — and those are serialized. A single-turn child
+    evicts the instant its only turn completes, so under serial dispatch
+    child 0 can be created AND evicted (driving the live count back to zero)
+    before child 1 is ever created. Popping the parent on that transient
+    zero strands every later sibling with a "parent session not found on
+    this worker" invariant violation. The cascade-evict is therefore gated
+    on the parent's FULL DECLARED child set having been created
+    (``_fork_created >= _fork_expected``), not merely on the live count
+    reaching zero.
     """
 
     def __init__(self) -> None:
@@ -162,9 +169,20 @@ class UserSessionManager:
         # FORK children currently cached on this worker that will seed
         # from the parent's turn_list.
         self._fork_child_count: dict[str, int] = {}
+        # FORK-pin: total FORK children DECLARED by a parent's branches
+        # (parent x_correlation_id -> declared count), set when the parent
+        # session is created. The cascade-evict only fires once this many
+        # children have been created, so a parent is never dropped on a
+        # transient refcount zero between serially-created single-turn
+        # children (the wide-fan-out invariant violation).
+        self._fork_expected: dict[str, int] = {}
+        # FORK-pin: cumulative FORK children CREATED for a parent on this
+        # worker (parent x_correlation_id -> count), compared against
+        # _fork_expected to know when the full declared child set exists.
+        self._fork_created: dict[str, int] = {}
         # Parents whose final turn has completed but still have one or
         # more live FORK children; evicted only when the refcount drops
-        # to zero via a child eviction.
+        # to zero via a child eviction AND the full declared set was created.
         self._pending_eviction: set[str] = set()
 
     @property
@@ -252,14 +270,28 @@ class UserSessionManager:
             branch_mode=branch_mode if parent_correlation_id is not None else None,
         )
         self.store(x_correlation_id, user_session)
-        # FORK children bump the parent's live-child refcount so the
-        # parent stays cached (pinned) until every child has evicted.
+        # A session that DECLARES FORK branches records how many FORK children
+        # it will ever seed, so eviction can wait for the full set rather than
+        # racing a transient refcount zero between serially-created children.
+        fork_declared = sum(
+            len(b.child_conversation_ids)
+            for b in conversation.branches
+            if b.mode == ConversationBranchMode.FORK
+        )
+        if fork_declared > 0:
+            self._fork_expected[x_correlation_id] = fork_declared
+        # FORK children bump the parent's live-child refcount AND the
+        # cumulative created count so the parent stays cached (pinned) until
+        # the whole declared child set has been created and has evicted.
         if (
             parent_correlation_id is not None
             and branch_mode == ConversationBranchMode.FORK
         ):
             self._fork_child_count[parent_correlation_id] = (
                 self._fork_child_count.get(parent_correlation_id, 0) + 1
+            )
+            self._fork_created[parent_correlation_id] = (
+                self._fork_created.get(parent_correlation_id, 0) + 1
             )
         return user_session
 
@@ -307,12 +339,18 @@ class UserSessionManager:
            ``create_and_store`` sticky-routing lookup. The last child to
            evict cascades through case 2 and actually drops the parent.
 
-        Note: a FORK parent whose children never actually spawn (e.g.
-        the orchestrator's dispatch all failed) will remain pinned in
-        ``_pending_eviction`` until the session manager is cleaned up
-        at phase teardown. That matches the original permanent-pin
-        behavior for that pathological case; the common flow now evicts
-        once the DAG drains.
+        Note: a FORK parent whose full declared child set never materialises
+        (orchestrator dispatch failed, or the ``--request-count`` cap truncated
+        some children) keeps ``_fork_created < _fork_expected`` forever, so it
+        stays pinned in ``_pending_eviction`` (plus its ``_fork_expected`` /
+        ``_fork_created`` entries) for the lifetime of this session manager --
+        which is the lifetime of the worker process; there is no per-phase
+        reset. This matches the original permanent-pin behavior for that
+        pathological case (the pre-refcount code already retained ``_cache`` /
+        ``_pending_eviction`` for such parents); the common flow evicts once the
+        DAG drains. Under a long run with many truncated DAG trees these entries
+        accumulate -- bounding them (a phase-boundary reset or orchestrator-
+        signalled GC) is tracked separately.
 
         Args:
             x_correlation_id: X-Correlation-ID header value
@@ -340,16 +378,30 @@ class UserSessionManager:
         self._cache.pop(x_correlation_id, None)
         self._pending_eviction.discard(x_correlation_id)
         self._fork_child_count.pop(x_correlation_id, None)
+        self._fork_expected.pop(x_correlation_id, None)
+        self._fork_created.pop(x_correlation_id, None)
 
         if is_fork_child:
-            # Case 2: decrement parent's refcount and cascade-evict if the
-            # parent is pending and we were the last child holding it open.
+            # Case 2: decrement parent's refcount. Only cascade-evict the
+            # parent when (a) no live children remain AND (b) the parent's
+            # FULL declared child set has been created. Without (b), a single
+            # early-finishing child (e.g. a single-turn child under serial
+            # dispatch) drives the live count to zero and would pop a parent
+            # whose remaining siblings have not yet seeded — the wide-fan-out
+            # "parent session not found on this worker" invariant violation.
             parent = session.parent_correlation_id
             remaining = self._fork_child_count.get(parent, 0) - 1
-            if remaining <= 0:
+            all_created = self._fork_created.get(parent, 0) >= self._fork_expected.get(
+                parent, 0
+            )
+            if remaining <= 0 and all_created:
                 self._fork_child_count.pop(parent, None)
+                self._fork_created.pop(parent, None)
+                self._fork_expected.pop(parent, None)
                 if parent in self._pending_eviction:
                     self._pending_eviction.discard(parent)
                     self._cache.pop(parent, None)
             else:
-                self._fork_child_count[parent] = remaining
+                # Either siblings are still live, or more declared children
+                # are still to be created: keep the parent pinned.
+                self._fork_child_count[parent] = max(remaining, 0)
