@@ -72,6 +72,7 @@ def _mk_user_config():
     uc.input.fixed_schedule_end_offset = None
     uc.input.ignore_trace_delays = False
     uc.input.use_think_time_only = False
+    uc.input.use_end_to_start_delays = False
     uc.loadgen.inter_turn_delay_cap_seconds = None
     uc.loadgen.trace_idle_gap_cap_seconds = None
     uc.input.synthesis.max_isl = None

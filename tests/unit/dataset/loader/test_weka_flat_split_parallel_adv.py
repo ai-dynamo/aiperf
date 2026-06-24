@@ -43,6 +43,7 @@ def _mk_user_config(
     model_names: list[str] | None = None,
     idle_gap_cap_seconds: float | None = None,
     think_time_only: bool = False,
+    end_to_start_delays: bool = False,
     ignore_delays: bool = False,
     max_osl: int | None = None,
     inter_turn_delay_cap_seconds: float | None = None,
@@ -53,6 +54,7 @@ def _mk_user_config(
     uc.input.fixed_schedule_end_offset = None
     uc.input.ignore_trace_delays = ignore_delays
     uc.input.use_think_time_only = think_time_only
+    uc.input.use_end_to_start_delays = end_to_start_delays
     uc.loadgen.inter_turn_delay_cap_seconds = inter_turn_delay_cap_seconds
     uc.loadgen.trace_idle_gap_cap_seconds = idle_gap_cap_seconds
     uc.input.synthesis.max_isl = None

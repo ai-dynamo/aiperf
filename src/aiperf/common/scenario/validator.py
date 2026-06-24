@@ -217,6 +217,25 @@ def validate_scenario(
                     spec.name,
                 )
 
+    if spec.require_use_end_to_start_delays:
+        explicit = "use_end_to_start_delays" in user_config.input.model_fields_set
+        if not user_config.input.use_end_to_start_delays:
+            if explicit:
+                violations.append(
+                    ScenarioViolation(
+                        flag="--use-end-to-start-delays",
+                        current_value=False,
+                        required_value=True,
+                        message=f"scenario {spec.name!r} requires --use-end-to-start-delays=true",
+                    )
+                )
+            else:
+                user_config.input.use_end_to_start_delays = True
+                _logger.info(
+                    "Scenario %r: forcing --use-end-to-start-delays=true (was unset).",
+                    spec.name,
+                )
+
     if spec.require_streaming:
         explicit = getattr(user_config.endpoint, "_streaming_explicitly_set", False)
         if not user_config.endpoint.streaming:

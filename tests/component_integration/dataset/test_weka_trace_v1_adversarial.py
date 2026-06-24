@@ -54,6 +54,7 @@ def _mk_user_config(
     uc.input.fixed_schedule_end_offset = end
     uc.input.ignore_trace_delays = False
     uc.input.use_think_time_only = False
+    uc.input.use_end_to_start_delays = False
     uc.input.synthesis.max_isl = max_isl
     uc.input.synthesis.max_osl = max_osl
     uc.input.max_context_length = None

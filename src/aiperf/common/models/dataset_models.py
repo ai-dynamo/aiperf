@@ -122,6 +122,18 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         description="The delay of the turn in the conversation (in milliseconds).",
     )
+    api_time_ms: int | float | None = Field(
+        default=None,
+        description=(
+            "Recorded server processing duration of this turn in milliseconds "
+            "(the capture's per-request api_time). With timestamp_ms it gives the "
+            "turn's recorded interval [timestamp_ms, timestamp_ms + api_time_ms], "
+            "which happens-before completion gating uses to derive cross-turn "
+            "predecessors and the end-to-start residual. A duration, not warped "
+            "(only inter-request idle gaps are compressed). None for loaders "
+            "without per-request timing."
+        ),
+    )
     branch_ids: list[str] = Field(
         default_factory=list,
         description="Branch IDs triggered after this turn completes (DAG projection).",
@@ -185,6 +197,15 @@ class Turn(AIPerfBaseModel):
     delay: int | float | None = Field(
         default=None,
         description="The delay of the turn in the conversation (in milliseconds).",
+    )
+    api_time_ms: int | float | None = Field(
+        default=None,
+        description=(
+            "Recorded server processing duration of this turn in milliseconds "
+            "(capture per-request api_time). Pairs with timestamp to give the "
+            "recorded interval used by happens-before completion gating. A "
+            "duration (not warped). None for loaders without per-request timing."
+        ),
     )
     max_tokens: int | None = Field(
         default=None, description="Maximum number of tokens to generate for this turn."
@@ -287,6 +308,7 @@ class Turn(AIPerfBaseModel):
         return TurnMetadata(
             timestamp_ms=self.timestamp,
             delay_ms=self.delay,
+            api_time_ms=self.api_time_ms,
             branch_ids=self.branch_ids,
             prerequisites=self.prerequisites,
             raw_messages_count=None

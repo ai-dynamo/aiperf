@@ -174,6 +174,7 @@ def _make_user_config(model_names: tuple[str, ...]) -> Any:
     uc.input.fixed_schedule_end_offset = None
     uc.input.ignore_trace_delays = False
     uc.input.use_think_time_only = False
+    uc.input.use_end_to_start_delays = False
     uc.input.synthesis.max_isl = None
     uc.input.synthesis.max_osl = None
     uc.input.max_context_length = None

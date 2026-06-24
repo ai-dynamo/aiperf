@@ -569,6 +569,11 @@
     [
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._emit_flat_chain_conversation"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader._reconstruct_parallel"
     ],
     [
@@ -580,6 +585,11 @@
       "function-size",
       "src/aiperf/dataset/loader/weka_trace.py",
       "WekaTraceLoader.convert_to_conversations"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "_build_trace_idle_timing"
     ],
     [
       "function-size",

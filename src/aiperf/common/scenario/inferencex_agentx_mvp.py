@@ -9,6 +9,7 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
     timing_mode=TimingMode.AGENTIC_REPLAY,
     require_ignore_eos=True,
     require_streaming=True,
+    require_use_end_to_start_delays=True,
     forbid_ignore_trace_delays=True,
     forbid_input_truncation=True,
     require_loader=(

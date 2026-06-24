@@ -26,6 +26,7 @@ def _mk_user_config():
     uc.input.fixed_schedule_end_offset = None
     uc.input.ignore_trace_delays = False
     uc.input.use_think_time_only = False
+    uc.input.use_end_to_start_delays = False
     uc.loadgen.inter_turn_delay_cap_seconds = None
     uc.loadgen.trace_idle_gap_cap_seconds = None
     uc.input.synthesis.max_isl = None
@@ -176,6 +177,15 @@ def test_subagent_finishing_before_following_parent_keeps_join(tmp_path, monkeyp
         if p.kind == PrerequisiteKind.SPAWN_JOIN and p.branch_id == branch.branch_id
     ]
     assert len(join_prereqs) == 1
+    # start_timestamp_ms is the subagent's mapped spawn time (sa.t=1 -> 1000ms),
+    # used to reconstruct in-flight subagents when sampling a mid-trace snapshot.
+    assert branch.start_timestamp_ms == 1000.0
+    # Per-turn api_time_ms is carried for happens-before gating: the subagent's
+    # inner request recorded api_time=1.0s -> 1000.0ms on its child turn.
+    child = next(c for c in convs if c.session_id.startswith("t_sync::sa:"))
+    assert child.turns[0].api_time_ms == 1000.0
+    # Top-level _normal rows carry no api_time -> None (no interval width).
+    assert parent.turns[0].api_time_ms is None
 
 
 def test_subagent_duration_ms_none_falls_back_to_inner_api_time(tmp_path, monkeypatch):

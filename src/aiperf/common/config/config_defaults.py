@@ -73,6 +73,7 @@ class InputDefaults:
     DISABLE_AUTO_FIXED_SCHEDULE = False
     IGNORE_TRACE_DELAYS = False
     USE_THINK_TIME_ONLY = False
+    USE_END_TO_START_DELAYS = False
     GOODPUT = None
     PUBLIC_DATASET = None
     CUSTOM_DATASET_TYPE = None

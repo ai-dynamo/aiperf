@@ -360,6 +360,11 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr − t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
 <br/>_Flag (no value required)_
 
+#### `--use-end-to-start-delays`
+
+For weka_trace inputs, emit Turn.delay as the end-to-start idle gap `t_curr - (t_prev + api_time_prev)` instead of the start-to-start delta `t_curr - t_prev`. The replay dispatches each turn after the previous turn COMPLETES, so adding the start-to-start gap (which already contains the previous request's server time) double-counts `api_time` and makes each stream's clock drift later turn-by-turn, fabricating cross-stream concurrency. End-to-start is the faithful inter-turn idle and reproduces the recording's concurrency exactly at replay-speed parity. Computed from `t`/`api_time` (unlike `--use-think-time-only`, which trusts the recorded `think_time` field that can disagree with the timeline). Floors at 0 for recorded overlap. No effect on non-weka loaders.
+<br/>_Flag (no value required)_
+
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
