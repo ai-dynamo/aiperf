@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import orjson
 import pytest
@@ -243,6 +244,22 @@ def test_canonical_source_model_strips_provider_aliases(
 def test_invalid_filter_lists_typed_values() -> None:
     with pytest.raises(DatasetLoaderError, match=r"available filters:.*Kimi-K2.5"):
         _loader({"source_model": "unknown"})
+
+
+@pytest.mark.asyncio
+async def test_huggingface_dataset_revision_is_pinned() -> None:
+    load_dataset = MagicMock(return_value=[])
+    with patch("aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", load_dataset):
+        _loader()._load_hf_dataset()
+
+    load_dataset.assert_called_once_with(
+        "Exgentic/agent-llm-traces",
+        name=None,
+        split="train",
+        trust_remote_code=False,
+        streaming=True,
+        revision="70036b93a04e61b0ea2706a68b962f4f26774587",
+    )
 
 
 @pytest.mark.asyncio

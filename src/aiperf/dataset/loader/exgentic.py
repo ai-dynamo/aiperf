@@ -193,6 +193,8 @@ def _normalize_tools(value: Any) -> list[dict[str, Any]] | None:
 class ExgenticDatasetLoader(BaseHFDatasetLoader):
     """Replay complete Exgentic LLM request snapshots as AIPerf sessions."""
 
+    hf_revision = "70036b93a04e61b0ea2706a68b962f4f26774587"
+
     def __init__(
         self,
         *,

@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 class BaseHFDatasetLoader(BasePublicDatasetLoader):
     """Base class for loading datasets from HuggingFace via the datasets library."""
 
+    hf_revision: str | None = None
+
     def __init__(
         self,
         run: BenchmarkRun | None = None,
@@ -61,12 +63,14 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         return {"dataset": dataset}
 
     def _load_hf_dataset(self) -> Any:
+        revision = {"revision": self.hf_revision} if self.hf_revision else {}
         return hf_load_dataset(
             self.hf_dataset_name,
             name=self.hf_subset,
             split=self.hf_split,
             trust_remote_code=False,
             streaming=self.streaming,
+            **revision,
         )
 
     def _pil_to_image(self, pil_image: PILImage.Image) -> Image:
