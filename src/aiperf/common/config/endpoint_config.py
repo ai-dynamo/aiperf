@@ -38,9 +38,15 @@ class EndpointConfig(BaseConfig):
     A configuration class for defining endpoint related settings.
     """
 
+    _streaming_explicitly_set: bool = False
+
     @model_validator(mode="after")
     def validate_streaming(self) -> Self:
         """Validate that streaming is supported for the endpoint type."""
+        # Snapshot user intent before the normalization below can flip
+        # streaming off, so scenario validation can distinguish an explicit
+        # --no-streaming from an unset default. Runs first (before any mutation).
+        self._streaming_explicitly_set = "streaming" in self.model_fields_set
         if not self.streaming:
             return self
 
@@ -75,6 +81,23 @@ class EndpointConfig(BaseConfig):
                 f"{shown} has no effect unless --wait-for-model-timeout is set "
                 f"to a positive value. Set --wait-for-model-timeout to enable "
                 f"the readiness probe."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_dynamo_session_control_coherent(self) -> Self:
+        """Reject --use-legacy-dynamo-session-control unless conversation-aware
+        routing is enabled, since the legacy flag only selects the wire contract
+        for the session_control that --use-dynamo-conv-aware-routing emits.
+        """
+        if (
+            self.use_legacy_dynamo_session_control
+            and not self.use_dynamo_conv_aware_routing
+        ):
+            raise ValueError(
+                "--use-legacy-dynamo-session-control has no effect unless "
+                "--use-dynamo-conv-aware-routing is enabled. Enable conversation-"
+                "aware routing, or drop the legacy flag."
             )
         return self
 
@@ -334,6 +357,26 @@ class EndpointConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING
+
+    use_legacy_dynamo_session_control: Annotated[
+        bool,
+        Field(
+            description=(
+                "Emit the legacy Dynamo nvext.session_control lifecycle that "
+                "released Dynamo (v1.2.x) understands: action 'open' on the first "
+                "turn, session_id only on intermediate turns, and action 'close' "
+                "on the final turn. Use this when the target Dynamo predates the "
+                "'bind' action (added in v1.3.0-dev); otherwise 'bind' is rejected "
+                "with an HTTP 400. Requires --use-dynamo-conv-aware-routing, and "
+                "the Dynamo deployment must expose a worker session_control "
+                "endpoint for 'open' to take effect."
+            ),
+        ),
+        CLIParameter(
+            name=("--use-legacy-dynamo-session-control",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.USE_LEGACY_DYNAMO_SESSION_CONTROL
 
     dynamo_session_timeout_seconds: Annotated[
         int,

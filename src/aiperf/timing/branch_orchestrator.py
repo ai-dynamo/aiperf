@@ -856,7 +856,7 @@ class BranchOrchestrator:
         for child, result in zip(immediate_children, results, strict=True):
             if result is not True:
                 self._rollback_failed_first_turn(child, result, parent_corr)
-        self._finalize_failed_dispatches(parent_corr)
+        await self._finalize_failed_dispatches(parent_corr)
 
     def _rollback_failed_first_turn(self, child, result, parent_corr: str) -> None:
         """Undo per-child bookkeeping for a turn-0 dispatch that didn't land.
@@ -924,13 +924,14 @@ class BranchOrchestrator:
             self.stats.children_errored += 1
         self.stats.children_spawned -= 1
 
-    def _finalize_failed_dispatches(self, parent_corr: str) -> None:
+    async def _finalize_failed_dispatches(self, parent_corr: str) -> None:
         """Drain end-game after one or more turn-0 dispatch rollbacks.
 
-        Pops vestigial gates, releases a fully-drained parent, and notifies
-        the drain observer (no credit return follows a rollback to do it).
-        Runs after the immediate gather settles and after each delayed
-        dispatch settles; a no-op when nothing rolled back.
+        Pops vestigial gates, dispatches a satisfied gate that the parent is
+        already suspended on, releases a fully-drained parent, and notifies the
+        drain observer (no credit return follows a rollback to do it). Runs
+        after the immediate gather settles and after each delayed dispatch
+        settles; a no-op when nothing rolled back.
         """
         # If no children at all landed (all failed), pop gates that are now
         # zero-outstanding so the parent is not left suspended on a join
@@ -949,6 +950,18 @@ class BranchOrchestrator:
                 # handler fell through to handle_credit_return ->
                 # _dispatch_next_turn for the identical turn_index.
                 self._pop_future_join(parent_corr, gated_idx)
+        # A gate already promoted into _active_joins (the parent suspended on
+        # it in a prior intercept) is never in _future_joins, so the scan above
+        # cannot see it. A rollback that empties such a gate (a delayed SPAWN
+        # child refused after the parent suspended) leaves the satisfied active
+        # gate with no child-leaf decrement to fire it -> the suspended parent
+        # deadlocks until drain-timeout. Pop and dispatch it here so the parent
+        # resumes; the parent stays suspended otherwise (intercept returned True
+        # for the gate), so this is the only path that advances it.
+        active = self._active_joins.get(parent_corr)
+        drained_active = None
+        if active is not None and active.is_satisfied:
+            drained_active = self._active_joins.pop(parent_corr, None)
         # If no successful children AND no gated turns, release the
         # reserved parent state so the parent can drain.
         #
@@ -967,6 +980,14 @@ class BranchOrchestrator:
         ):
             self._release_slot(parent_corr)
             del self._descendant_counts[parent_corr]
+        # Dispatch the drained active gate's join turn. The gate was satisfied
+        # with zero outstanding children (every child rolled back), so no
+        # child-leaf decrement will ever fire it; without this the suspended
+        # parent's gated turn is orphaned -> a hang. ``_release_slot`` above only
+        # evicts the parent lock dict entry (the held lock is unaffected), so
+        # dispatching after it is safe.
+        if drained_active is not None:
+            await self._release_blocked_join(drained_active)
         self._notify_drain()  # all-children-rolled-back path: no credit return follows
 
     def _branch_start_timestamp_ms(self, branch) -> float | None:
@@ -1049,7 +1070,7 @@ class BranchOrchestrator:
                 result = exc
             if result is not True:
                 self._rollback_failed_first_turn(child, result, parent_corr)
-                self._finalize_failed_dispatches(parent_corr)
+                await self._finalize_failed_dispatches(parent_corr)
 
     def _ensure_future_join(
         self,

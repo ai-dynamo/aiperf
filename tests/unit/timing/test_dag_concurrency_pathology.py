@@ -739,13 +739,13 @@ async def test_leaf_and_errored_for_same_child_one_wins():
 
 
 def test_stop_condition_applies_to_dag_children_truth_table():
-    """Children honor: Cancellation, Duration. Skip: SendingComplete,
-    RequestCount, SessionCount.
+    """Children honor: Cancellation, Duration, RequestCount (the literal wire
+    cap, "N means N"). Skip: SendingComplete, SessionCount.
     """
     assert CancellationStopCondition.applies_to_dag_children is True
     assert DurationStopCondition.applies_to_dag_children is True
     assert SendingCompleteStopCondition.applies_to_dag_children is False
-    assert RequestCountStopCondition.applies_to_dag_children is False
+    assert RequestCountStopCondition.applies_to_dag_children is True
     assert SessionCountStopCondition.applies_to_dag_children is False
 
 

@@ -104,6 +104,24 @@ class CommandType(CaseInsensitiveStrEnum):
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
 
 
+class ProfileCancelReason(CaseInsensitiveStrEnum):
+    """Why a ProfileCancelCommand was issued; controls run exit semantics.
+
+    A USER cancel (Ctrl+C) exits 0 -- the user chose to stop. ABORT reasons
+    exit non-zero: the run broke a contract and its results are invalid, so an
+    automation/CI caller must see a failure, not a clean exit.
+    """
+
+    USER = "user"
+    WARMUP_FAILURE = "warmup_failure"
+    FAILED_REQUEST_THRESHOLD = "failed_request_threshold"
+
+    @property
+    def is_abort(self) -> bool:
+        """True for contract-violation aborts (non-zero exit); False for user cancel."""
+        return self is not ProfileCancelReason.USER
+
+
 class CommandResponseStatus(CaseInsensitiveStrEnum):
     ACKNOWLEDGED = "acknowledged"
     FAILURE = "failure"

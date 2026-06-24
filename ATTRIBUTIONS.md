@@ -192,12 +192,47 @@ This document provides attribution information for public domain assets used in 
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
+## Code Assets
+
+### fzstd (Zstandard decompressor)
+
+**Asset Information:**
+- **File(s)**: [`src/aiperf/analysis/fzstd.umd.js`](src/aiperf/analysis/fzstd.umd.js) (vendored UMD build, v0.1.1)
+- **Source**: [101arrowz/fzstd](https://github.com/101arrowz/fzstd) (npm: `fzstd`)
+- **Author**: Arjun Barrett
+- **License**: MIT License
+- **Usage**: Inlined into the `aiperf analyze turn-messages` HTML viewer to decompress the embedded zstd payload client-side (no network, no WASM).
+
+**License Text:**
+
+> MIT License
+>
+> Copyright (c) 2020 Arjun Barrett
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 ## Usage Summary
 
 - **Public domain assets** (ShareGPT conversation data) - no legal restrictions on use
-- **MIT-licensed assets** (tiktoken encoding data) - permissive, requires copyright notice retention
+- **MIT-licensed assets** (tiktoken encoding data, fzstd zstd decompressor) - permissive, requires copyright notice retention
 - **All assets compatible with Apache 2.0** license used by this project
 - **No endorsement implied** by original sources
 
 ---
-*Last updated: September 15, 2025*
+*Last updated: June 15, 2026*

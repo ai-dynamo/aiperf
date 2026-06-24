@@ -829,6 +829,16 @@
     ],
     [
       "C901",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
+    ],
+    [
+      "C901",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "C901",
       "src/aiperf/cli_runner.py",
       "_run_multi_benchmark"
     ],
@@ -1586,6 +1596,16 @@
       "PLR0915",
       "src/aiperf/analysis/swim_lane.py",
       "plot_swim_lane"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
     ],
     [
       "PLR0915",

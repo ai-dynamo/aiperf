@@ -663,17 +663,44 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         )
 
     async def _dispatch_next_turn(self, credit: Credit) -> None:
-        """Issue the next turn of an in-progress session, honoring delay_ms."""
+        """Issue the next turn of an in-progress session, honoring delay_ms.
+
+        DAG child continuations (``agent_depth > 0``) go through the single
+        child-issuance chokepoint (``_issue_child_continuation_or_drain``) so a
+        ``--request-count`` cap refusal is routed to ``on_child_stopped`` (drain
+        the parent join) instead of being silently swallowed by the discarded
+        ``issue_credit`` return — including on the delayed (``delay_ms``) path,
+        where the refusal would otherwise fire long after the callback handler
+        decided the child could proceed. Root continuations keep ``issue_credit``.
+        """
         next_meta = self.conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit, next_meta)
+        is_child = turn.agent_depth > 0
 
+        coro = (
+            self._issue_child_continuation_or_drain(turn)
+            if is_child
+            else self.credit_issuer.issue_credit(turn)
+        )
         if next_meta.delay_ms is not None and next_meta.delay_ms > 0:
-            self.scheduler.schedule_later(
-                next_meta.delay_ms / MILLIS_PER_SECOND,
-                self.credit_issuer.issue_credit(turn),
-            )
+            self.scheduler.schedule_later(next_meta.delay_ms / MILLIS_PER_SECOND, coro)
         else:
-            await self.credit_issuer.issue_credit(turn)
+            await coro
+
+    async def _issue_child_continuation_or_drain(self, turn: TurnToSend) -> None:
+        """Single child-issuance chokepoint (dataflow-inspired IssuanceAuthority).
+
+        Dispatch a DAG child continuation via ``dispatch_child_turn`` (which
+        returns a clean True-iff-on-wire, avoiding ``issue_credit``'s overloaded
+        False) and, on ANY refusal (e.g. the ``--request-count`` wire cap), notify
+        ``BranchOrchestrator.on_child_stopped`` so the parent's join drains
+        deterministically rather than deadlocking on a child whose remaining
+        turns will never be issued. Centralizing here means no dispatch site can
+        "forget" to drain on refusal.
+        """
+        on_wire = await self.credit_issuer.dispatch_child_turn(turn)
+        if not on_wire and self.branch_orchestrator is not None:
+            await self.branch_orchestrator.on_child_stopped(turn.x_correlation_id)
 
     async def _spawn_from_recycle_or_id(
         self,

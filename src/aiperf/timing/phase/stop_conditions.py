@@ -129,18 +129,23 @@ class SendingCompleteStopCondition(StopCondition):
 class RequestCountStopCondition(StopCondition):
     """Request count based stop condition.
 
-    Bypassed for DAG children. ``--request-count`` is a
-    ``TimingStrategy``-loop target — "dispatch N root credits via the
-    ``DatasetSampler``" — not a global HTTP-request cap. The counter
-    it reads (``requests_sent``) DOES include DAG children for
-    observability (they're real HTTP requests), but the ``<``
-    comparison goes at-cap the instant the last root fires. Without
-    the bypass, children would all be blocked the moment the root
-    plan exhausts (including the root's own about-to-spawn
-    descendants). Duration and cancellation still apply.
-    """
+    Honored by EVERY credit, including DAG children — ``--request-count N``
+    is a literal cap on total wire requests ("N means N"). Once
+    ``requests_sent`` reaches N no further roots OR children are issued; an
+    in-flight tree is truncated mid-stream, exactly as a multi-turn session is
+    truncated mid-conversation. A child refused at this cap is routed through
+    ``BranchOrchestrator.on_child_stopped`` (via the child-issuance chokepoint)
+    so the parent's join drains instead of deadlocking. The "run full trees"
+    knob is ``--num-conversations`` (``SessionCountStopCondition``), which DOES
+    stay bypassed for children.
 
-    applies_to_dag_children = False
+    INVARIANT — do NOT re-add ``applies_to_dag_children = False`` here. This
+    condition inheriting the base ``True`` is one half of the exact-cutoff
+    contract; the other half is ``CreditCounter.increment_sent``'s
+    unconditional request-count arm (it must flip ``is_final_credit`` when a
+    child/join turn crosses the cap). Flipping EITHER re-breaks "N means N" —
+    it has been re-broken 3x historically. See the agentx hard-cap spec.
+    """
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:

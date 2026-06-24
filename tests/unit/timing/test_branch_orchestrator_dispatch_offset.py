@@ -306,3 +306,44 @@ async def test_mixed_branch_immediate_child_unaffected_by_delayed_sibling():
     gate.release()
     await _tick()
     assert issuer.dispatch_first_turn.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_delayed_spawn_rollback_after_parent_suspended_dispatches_active_gate():
+    """A delayed SPAWN child whose dispatch is refused AFTER the parent already
+    suspended must still fire the now-satisfied join.
+
+    Sequence: turn-0 spawns a delayed child gated on turn 1; the parent's
+    ``_maybe_suspend_parent`` promotes that gate into ``_active_joins`` (the
+    child is still sleeping, so the gate is unsatisfied). When the sleep
+    releases and the issuer refuses the child, rollback empties the gate's only
+    prereq -> the gate is satisfied but sits in ``_active_joins`` where the
+    future-join drain scan never looks. The suspended parent would otherwise
+    deadlock until drain-timeout; the join turn must dispatch instead."""
+    parent = _parent_conv(
+        [_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0, is_background=False)],
+        gated_turn=1,
+    )
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("kid", 5_000.0)], dispatch_result=False
+    )
+    gate = _SleepGate()
+    orch._sleep_offset_ms = gate
+
+    # Turn-0 return: child scheduled delayed, gate at turn 1 promoted to active.
+    assert await orch.intercept(_mk_credit("parent", "P", 0)) is True
+    await _tick()
+    assert "P" in orch._active_joins
+    assert orch._active_joins["P"].gated_turn_index == 1
+    assert not orch._active_joins["P"].is_satisfied
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    # Sleep releases -> dispatch refused -> rollback empties the gate.
+    gate.release()
+    await _tick()
+
+    # The satisfied active gate is dispatched; the parent is no longer stuck.
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.parents_resumed == 1
+    assert "P" not in orch._active_joins
+    assert orch.stats.children_truncated == 1

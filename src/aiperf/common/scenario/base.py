@@ -27,6 +27,15 @@ class ScenarioSpec(AIPerfBaseModel):
         default=False,
         description="Force --use-think-time-only=true to exclude response time from inter-turn delays.",
     )
+    require_streaming: bool = Field(
+        default=False,
+        description=(
+            "Force --streaming=true (auto-enabled when unset; error on explicit "
+            "--no-streaming). Streaming is required for the per-token latency "
+            "metrics (TTFT, ITL) that are core to this benchmark; without it a "
+            "run would silently report no first-token signal."
+        ),
+    )
     forbid_ignore_trace_delays: bool = Field(
         default=False,
         description=(

@@ -21,6 +21,7 @@ from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
     MessageType,
+    ProfileCancelReason,
     ServiceRegistrationStatus,
 )
 from aiperf.common.environment import Environment
@@ -101,6 +102,10 @@ class SystemController(SignalHandlerMixin, BaseService):
             warn_accuracy_temperature()
 
         self._was_cancelled = False
+        # Set once an ABORT-reason ProfileCancelCommand is observed (warmup
+        # failure / failed-request-threshold), so the run exits non-zero. A
+        # USER cancel (Ctrl+C) does NOT set this -- a user-chosen stop exits 0.
+        self._abort_recorded = False
         # List of required service types, in no particular order
         # These are services that must be running before the system controller can start profiling
         self.required_services: dict[ServiceTypeT, int] = {
@@ -398,6 +403,38 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.warning(
                 f"Received heartbeat from unknown service: '{service_id}' ('{service_type}')"
             )
+
+    @on_command(CommandType.PROFILE_CANCEL)
+    async def _record_abort_on_profile_cancel(
+        self, message: ProfileCancelCommand
+    ) -> None:
+        """Make an ABORT-reason cancel exit the process non-zero.
+
+        A ProfileCancelCommand broadcast with an abort reason (warmup failure or
+        failed-request-threshold) means the run broke a contract and its results
+        are invalid -- the controller's shutdown is otherwise driven solely by
+        the records manager's ProcessRecordsResultMessage and would exit 0,
+        indistinguishable from success. Record an exit error so the final
+        ``os._exit(1 if self._exit_errors else 0)`` returns non-zero. A USER
+        cancel (Ctrl+C) is a chosen stop and is intentionally left at exit 0.
+
+        Idempotent (first abort wins); does not drive shutdown itself -- that
+        still flows through the records-finalization path.
+        """
+        if not message.reason.is_abort or self._abort_recorded:
+            return
+        self._abort_recorded = True
+        self.warning(f"Run aborted ({message.reason}); will exit non-zero.")
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    type="ProfileAborted",
+                    message=f"Benchmark aborted: {message.reason}.",
+                ),
+                operation="Profiling",
+                service_id=message.service_id,
+            )
+        )
 
     @on_message(MessageType.CREDITS_COMPLETE)
     async def _process_credits_complete_message(
@@ -835,6 +872,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             responses = await self.send_command_and_wait_for_all_responses(
                 ProfileCancelCommand(
                     service_id=self.service_id,
+                    reason=ProfileCancelReason.USER,
                 ),
                 records_manager_ids,
                 timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,

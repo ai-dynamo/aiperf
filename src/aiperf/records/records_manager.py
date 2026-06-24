@@ -24,6 +24,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ProfileCancelReason,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
@@ -570,7 +571,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             "Broadcasting ProfileCancelCommand to terminate the run."
         )
         try:
-            await self.publish(ProfileCancelCommand(service_id=self.service_id))
+            await self.publish(
+                ProfileCancelCommand(
+                    service_id=self.service_id,
+                    reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             # Publish failure must not abort the per-record path; if the
             # broadcast doesn't land, the run will continue and the

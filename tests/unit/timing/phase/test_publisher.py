@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.enums import ProfileCancelReason
+from aiperf.common.messages import ProfileCancelCommand
 from aiperf.common.models import CreditPhaseStats
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.credit.messages import (
@@ -87,3 +89,24 @@ class TestPhasePublisher:
         msg = mock_pub_client.publish.call_args[0][0]
         assert isinstance(msg, CreditsCompleteMessage)
         assert msg.service_id == "tm-001"
+
+    async def test_publish_profile_cancel(self, mock_pub_client: MagicMock) -> None:
+        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        await pub.publish_profile_cancel()
+        mock_pub_client.publish.assert_called_once()
+        msg = mock_pub_client.publish.call_args[0][0]
+        assert isinstance(msg, ProfileCancelCommand)
+        assert msg.service_id == "tm-001"
+        # Defaults to the warmup-failure abort reason (-> non-zero exit).
+        assert msg.reason == ProfileCancelReason.WARMUP_FAILURE
+        assert msg.reason.is_abort
+
+    async def test_publish_profile_cancel_reason_override(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        await pub.publish_profile_cancel(
+            reason=ProfileCancelReason.FAILED_REQUEST_THRESHOLD
+        )
+        msg = mock_pub_client.publish.call_args[0][0]
+        assert msg.reason == ProfileCancelReason.FAILED_REQUEST_THRESHOLD

@@ -261,6 +261,29 @@ class PhaseRunner(TaskManagerMixin):
         if self._on_phase_complete:
             self._on_phase_complete()
 
+    def _should_fire_warmup_backstop(self, strategy: TimingStrategyProtocol) -> bool:
+        """Whether the teardown warmup-failure raise (a BACKSTOP) should fire.
+
+        Only AgenticReplayStrategy exposes ``report_warmup_failures`` (duck-typed);
+        raising it aborts the benchmark via run()'s except handler so PROFILING
+        never starts with a degraded trajectory pool.
+
+        In production this is a backstop, not the primary path: when the live
+        warmup early-abort is wired (``callback_handler.on_warmup_abort`` is not
+        None), the FIRST terminal failure already broadcast ProfileCancelCommand
+        and cancelled this runner, so raising here too is unnecessary and would
+        double-fire. We therefore fire only when the live path is NOT wired (and
+        the runner was not otherwise cancelled). Gating on ``on_warmup_abort is
+        None`` -- a synchronous check -- also avoids the race where the async
+        cancel round-trip has not yet set ``_was_cancelled`` at teardown.
+        """
+        return (
+            getattr(strategy, "report_warmup_failures", None) is not None
+            and self._config.phase == CreditPhase.WARMUP
+            and self._callback_handler.on_warmup_abort is None
+            and not self._was_cancelled
+        )
+
     async def run(
         self,
         is_final_phase: bool,
@@ -379,18 +402,9 @@ class PhaseRunner(TaskManagerMixin):
             self._branch_orchestrator.cleanup()
             self._release_tree_slots()
 
-            # Strategy-specific phase teardown. Currently only AgenticReplayStrategy
-            # uses this hook (to surface accumulated WARMUP terminal failures
-            # before PROFILING starts). Duck-typed because the protocol does not
-            # require a teardown method; raising here intentionally aborts the
-            # benchmark via the outer except handler so PROFILING never starts
-            # with a degraded trajectory pool.
-            report_warmup_failures = getattr(strategy, "report_warmup_failures", None)
-            if (
-                report_warmup_failures is not None
-                and self._config.phase == CreditPhase.WARMUP
-            ):
-                report_warmup_failures()
+            # Strategy-specific phase teardown BACKSTOP (see _should_fire_warmup_backstop).
+            if self._should_fire_warmup_backstop(strategy):
+                strategy.report_warmup_failures()
 
             return self._progress.create_stats(self._lifecycle)
 

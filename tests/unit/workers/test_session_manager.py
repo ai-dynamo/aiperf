@@ -715,3 +715,79 @@ class TestForkPinEviction:
         )
         mgr.evict("solo")
         assert mgr.get("solo") is None
+
+    def test_serial_single_turn_children_do_not_strand_parent(self):
+        """Regression: single-turn FORK children created+evicted one at a time
+        (serial dispatch / concurrency 1) must NOT strand later siblings. The
+        live refcount hits zero between children, but the parent stays pinned
+        until the full DECLARED child set has been created. Without the
+        ``_fork_created >= _fork_expected`` gate this popped the parent after
+        the first child, and every later child raised the
+        ``FORK routing invariant violated`` error (wide fan-out)."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["c1", "c2", "c3"])
+        mgr.create_and_store(
+            x_correlation_id="parent", conversation=parent_conv, num_turns=2
+        )
+        # Parent's final turn completes before any child credit is processed.
+        mgr.evict("parent")
+        assert "parent" in mgr._pending_eviction
+
+        # Serial: each child is created AND evicted before the next exists.
+        for cid in ("c1", "c2"):
+            mgr.create_and_store(
+                x_correlation_id=cid,
+                conversation=_make_child_conv(cid),
+                num_turns=1,
+                parent_correlation_id="parent",
+                branch_mode=ConversationBranchMode.FORK,
+            )
+            assert mgr.get(cid) is not None  # seeds fine: parent still cached
+            mgr.evict(cid)
+            # Transient zero: live count is 0 but declared children remain,
+            # so the parent MUST stay cached.
+            assert mgr.get("parent") is not None, (
+                f"parent stranded after {cid} evicted (transient-zero pop)"
+            )
+
+        # Final declared child: the full set now exists; its eviction cascades.
+        mgr.create_and_store(
+            x_correlation_id="c3",
+            conversation=_make_child_conv("c3"),
+            num_turns=1,
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        assert mgr.get("c3") is not None
+        mgr.evict("c3")
+        assert mgr.get("parent") is None
+        assert "parent" not in mgr._pending_eviction
+        assert "parent" not in mgr._fork_expected
+        assert "parent" not in mgr._fork_created
+
+    def test_partial_child_set_keeps_parent_pinned(self):
+        """When the cap truncates some declared children (their credits never
+        reach this worker), ``created < expected`` so the parent stays pinned
+        until teardown rather than popping early. The children that DID seed
+        all found the parent; no sibling is stranded."""
+        from aiperf.common.enums import ConversationBranchMode
+
+        mgr = UserSessionManager()
+        parent_conv = _make_parent_conv_with_fork(["c1", "c2", "c3"])
+        mgr.create_and_store(
+            x_correlation_id="parent", conversation=parent_conv, num_turns=2
+        )
+        mgr.evict("parent")
+        # Only one of three declared children is ever created.
+        mgr.create_and_store(
+            x_correlation_id="c1",
+            conversation=_make_child_conv("c1"),
+            num_turns=1,
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        mgr.evict("c1")
+        assert mgr.get("parent") is not None
+        assert "parent" in mgr._pending_eviction

@@ -20,6 +20,10 @@ Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
 Render a per-session swim-lane PNG with concurrency curve underneath.
 
+### [`analyze turn-messages`](#aiperf-analyze-turn-messages)
+
+Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -114,6 +118,35 @@ Ramp duration in seconds for the ramp-done marker; overrides the value read from
 #### `--html`, `--no-html`
 
 Also write an interactive HTML trace viewer (``swim_lane.html``, or the ``--out`` path with an ``.html`` suffix).
+
+<hr/>
+
+## `aiperf analyze turn-messages`
+
+Render a collapsible HTML viewer of per-turn input messages (needs --export-level raw).
+
+#### `--run-dirs`, `--empty-run-dirs` `<list>` _(Required)_
+
+One or more AIPerf run directories.
+
+#### `-o`, `--out` `<str>`
+
+Output HTML path. Only valid when a single run directory is given.
+
+#### `-n`, `--limit-conversations` `<int>`
+
+Max conversations to render (roots first, then by earliest request time).
+<br/>_Default: `40`_
+
+#### `--max-turns` `<int>`
+
+Max turns rendered per conversation; the rest are summarized as a hidden count.
+<br/>_Default: `60`_
+
+#### `--content-cap` `<int>`
+
+Max characters kept per unique message body; longer bodies are truncated with a remaining-chars note. Raise for full fidelity.
+<br/>_Default: `8000`_
 
 <hr/>
 
@@ -236,6 +269,11 @@ Use server-reported token counts from API usage fields instead of client-side to
 #### `--use-dynamo-conv-aware-routing`, `--use-dynamo-session-control`
 
 Emit Dynamo nvext.session_control in OpenAI-compatible request bodies so Dynamo can bind all turns from the same replayed conversation lineage to the same backend worker. This is only intended for Dynamo frontends that implement session_control.
+<br/>_Flag (no value required)_
+
+#### `--use-legacy-dynamo-session-control`
+
+Emit the legacy Dynamo nvext.session_control lifecycle that released Dynamo (v1.2.x) understands: action 'open' on the first turn, session_id only on intermediate turns, and action 'close' on the final turn. Use this when the target Dynamo predates the 'bind' action (added in v1.3.0-dev); otherwise 'bind' is rejected with an HTTP 400. Requires --use-dynamo-conv-aware-routing, and the Dynamo deployment must expose a worker session_control endpoint for 'open' to take effect.
 <br/>_Flag (no value required)_
 
 #### `--dynamo-session-timeout-seconds` `<int>`
