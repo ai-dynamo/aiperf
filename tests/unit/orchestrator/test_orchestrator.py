@@ -545,6 +545,35 @@ class TestMultiRunOrchestrator:
 
         assert aggregate.metadata["_was_cancelled"] is expected
 
+    def test_stamp_metadata_includes_public_dataset_provenance(self):
+        """Multi-run aggregates retain the public dataset identity."""
+        from aiperf.orchestrator.aggregation.base import AggregateResult
+
+        user_config = UserConfig(
+            endpoint={"model_names": ["test-model"]},
+            input={
+                "public_dataset": "semianalysis_cc_traces_weka_with_subagents",
+                "conversation": {"num_dataset_entries": 393},
+            },
+        )
+        aggregate = AggregateResult(
+            aggregation_type="confidence",
+            num_runs=1,
+            num_successful_runs=1,
+        )
+
+        MultiRunOrchestrator._stamp_scenario_submission_metadata(
+            aggregate, [], user_config
+        )
+
+        assert aggregate.metadata["dataset"] == {
+            "source_type": "public_dataset",
+            "loader": "semianalysis_cc_traces_weka_with_subagents",
+            "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
+            "hf_split": "train",
+            "num_dataset_entries": 393,
+        }
+
     def test_extract_summary_metrics_missing_file(self, mock_service_config, tmp_path):
         """Test extracting metrics when file doesn't exist."""
         orchestrator = MultiRunOrchestrator(tmp_path, mock_service_config)

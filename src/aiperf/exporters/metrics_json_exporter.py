@@ -73,6 +73,13 @@ class MetricsJsonExporter(MetricsBaseExporter):
             branch_stats=getattr(self._results, "branch_stats", None),
         )
 
+        from aiperf.dataset.provenance import public_dataset_provenance
+
+        run_metadata: dict[str, object] = {}
+        dataset = public_dataset_provenance(self._user_config)
+        if dataset is not None:
+            run_metadata["dataset"] = dataset
+
         context_overflow_count = int(
             getattr(self._results, "context_overflow_count", 0) or 0
         )
@@ -142,13 +149,16 @@ class MetricsJsonExporter(MetricsBaseExporter):
                 context_overflow_count=context_overflow_count,
                 was_cancelled=bool(self._results.was_cancelled),
             )
-            run_metadata = _build_run_metadata_dict(
-                scenario_name=scenario_name,
-                submission_valid=submission_valid,
-                submission_invalid_reasons=submission_invalid_reasons,
+            run_metadata.update(
+                _build_run_metadata_dict(
+                    scenario_name=scenario_name,
+                    submission_valid=submission_valid,
+                    submission_invalid_reasons=submission_invalid_reasons,
+                )
             )
-            if run_metadata:
-                export_data.metadata = run_metadata
+
+        if run_metadata:
+            export_data.metadata = run_metadata
 
         self.trace_or_debug(
             lambda: f"Exporting data to JSON file: {export_data}",

@@ -106,8 +106,15 @@ class MultiRunOrchestrator:
         Stamped here after the strategy has produced ``aggregate`` and
         before export.
 
-        No-op when ``user_config.scenario`` is None.
+        Dataset provenance is stamped for every public-dataset run. Scenario
+        submission carrier keys remain conditional on an active scenario.
         """
+        from aiperf.dataset.provenance import public_dataset_provenance
+
+        dataset = public_dataset_provenance(user_config)
+        if dataset is not None:
+            aggregate.metadata["dataset"] = dataset
+
         if user_config.scenario is None:
             return
 
