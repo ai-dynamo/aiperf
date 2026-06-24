@@ -4,7 +4,12 @@
 import pytest
 
 from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
-from aiperf.common.models import RequestInfo, ParsedResponse, ParsedResponseRecord, RequestRecord
+from aiperf.common.models import (
+    ParsedResponse,
+    ParsedResponseRecord,
+    RequestInfo,
+    RequestRecord,
+)
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -53,8 +58,8 @@ def create_record_with_usage(
     """
     request = RequestRecord(
         request_info=RequestInfo(
-        conversation_id="test-conversation",
-        turn_index=0,
+            conversation_id="test-conversation",
+            turn_index=0,
             credit_num=0,
             credit_phase=CreditPhase.PROFILING,
             x_request_id="",

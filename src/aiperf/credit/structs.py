@@ -164,9 +164,7 @@ class TurnToSend(Struct, frozen=True):
         per-turn ``has_forks`` flag). When provided, ``has_forks`` reflects
         the next turn's intent rather than the previous credit's.
         """
-        has_forks = (
-            next_meta.has_forks if next_meta is not None else credit.has_forks
-        )
+        has_forks = next_meta.has_forks if next_meta is not None else credit.has_forks
         return cls(
             conversation_id=credit.conversation_id,
             x_correlation_id=credit.x_correlation_id,

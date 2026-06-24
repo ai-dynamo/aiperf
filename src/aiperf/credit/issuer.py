@@ -246,7 +246,7 @@ class CreditIssuer:
     # DAG dispatch helpers (used by BranchOrchestrator and RequestRateStrategy)
     # =========================================================================
 
-    async def dispatch_first_turn(self, child_session: "SampledSession") -> bool:
+    async def dispatch_first_turn(self, child_session: SampledSession) -> bool:
         """Dispatch turn-0 of a freshly-spawned DAG child session.
 
         Children inherit the parent's session slot (no new session-slot

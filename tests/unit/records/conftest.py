@@ -47,13 +47,8 @@ def _make_config(**overrides: Any) -> BenchmarkConfig:
     return BenchmarkConfig(**kwargs)
 
 
-def create_test_request_info(
-    model_name: str = "test-model",
-    conversation_id: str = "cid",
-    turn_index: int = 0,
-    turns: list[Turn] | None = None,
-) -> RequestInfo:
-    """Create a RequestInfo for testing."""
+def create_test_model_endpoint(model_name: str = "test-model"):
+    """Create a ModelEndpointInfo for building a real endpoint in tests."""
     from aiperf.common.enums import ModelSelectionStrategy
     from aiperf.common.models.model_endpoint_info import (
         EndpointInfo,
@@ -63,7 +58,7 @@ def create_test_request_info(
     )
     from aiperf.plugin.enums import EndpointType
 
-    model_endpoint = ModelEndpointInfo(
+    return ModelEndpointInfo(
         models=ModelListInfo(
             models=[ModelInfo(name=model_name)],
             model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
@@ -74,6 +69,15 @@ def create_test_request_info(
             custom_endpoint=None,
         ),
     )
+
+
+def create_test_request_info(
+    model_name: str = "test-model",
+    conversation_id: str = "cid",
+    turn_index: int = 0,
+    turns: list[Turn] | None = None,
+) -> RequestInfo:
+    """Create a RequestInfo for testing."""
     return RequestInfo(
         turns=turns or [],
         turn_index=turn_index,

@@ -24,7 +24,6 @@ from pytest import param
 
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder
 
-
 # =============================================================================
 # Helpers
 # =============================================================================

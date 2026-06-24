@@ -56,13 +56,8 @@ def large_message():
             conversation_id="",
             turn_index=0,
         ),
-        request={
-            "id": "123",
-            "url": "http://localhost:8000",
-            "method": "GET",
-            "headers": {
-                "Content-Type": "application/json",
-            },
+        request_headers={
+            "Content-Type": "application/json",
         },
         timestamp_ns=time.time_ns(),
         start_perf_ns=time.perf_counter_ns(),
@@ -77,7 +72,6 @@ def large_message():
             for i in range(1, 101)
         ],
         error=None,
-        delayed_ns=None,
     )
 
 

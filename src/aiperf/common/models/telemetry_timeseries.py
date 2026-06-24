@@ -13,8 +13,21 @@ class GpuMetricTimeSeries:
     """NumPy-backed columnar storage for GPU telemetry.
 
     Stores timestamps once with separate value arrays per metric.
-    Metric schema is determined on first snapshot - all subsequent snapshots
-    must contain the same metrics (DCGM metrics are static per run).
+
+    The metric schema is *dynamic*: a DCGM/AMDSMI scrape may transiently omit
+    a field when a sensor read fails, or only start reporting a field partway
+    through a run. To keep every value array index-aligned with the shared
+    ``_timestamps`` array, missing samples are stored as ``NaN``:
+
+    - A metric absent from a scrape gets ``NaN`` written at that index rather
+      than uninitialized ``np.empty`` garbage.
+    - A metric that first appears in a later scrape allocates its array
+      ``NaN``-backfilled for every prior index.
+
+    All stat computations are therefore NaN-aware: gauges aggregate only the
+    real (non-NaN) samples, counters walk back past NaN reference/final
+    samples, and an all-NaN window raises ``NoMetricValue`` instead of emitting
+    NaN stats.
 
     Data is kept sorted by timestamp using insert-sorted approach:
     O(1) for in-order appends (99.9% of cases), O(k) for out-of-order.
@@ -38,12 +51,18 @@ class GpuMetricTimeSeries:
             timestamp_ns: Timestamp for this scrape
 
         Note:
-            - Metric schema is determined on first snapshot. All subsequent snapshots
-              must contain the same metrics (DCGM metrics are static per run).
+            - The metric schema is dynamic. Metrics missing from this scrape are
+              stored as ``NaN`` at the new index; metrics appearing for the
+              first time allocate a new ``NaN``-backfilled array.
             - Data kept sorted by timestamp (O(1) in-order, O(k) out-of-order).
         """
         if self._size >= self._capacity:
             self._grow()
+
+        # Register any newly-seen metrics, NaN-backfilled for all prior indices.
+        for name in metrics:
+            if name not in self._metrics:
+                self._metrics[name] = np.full(self._capacity, np.nan, dtype=np.float64)
 
         # Fast path: in-order append (99.9% of cases)
         if self._size == 0 or timestamp_ns >= self._timestamps[self._size - 1]:
@@ -66,19 +85,19 @@ class GpuMetricTimeSeries:
         # Insert timestamp at position
         self._timestamps[insert_pos] = timestamp_ns
 
-        # Initialize metric arrays on first snapshot (schema determined here)
-        if not self._metrics:
-            for name in metrics:
-                self._metrics[name] = np.empty(self._capacity, dtype=np.float64)
-
-        # Set values for all metrics at insert position
-        for name, value in metrics.items():
-            self._metrics[name][insert_pos] = value
+        # Write every known metric at this index: NaN for any absent from this
+        # scrape (disappearing metric), real value for those present.
+        for name, arr in self._metrics.items():
+            arr[insert_pos] = metrics.get(name, np.nan)
 
         self._size += 1
 
     def _grow(self) -> None:
-        """Double capacity of all arrays."""
+        """Double capacity of all arrays.
+
+        New metric arrays are ``NaN``-initialized so any index written without
+        an explicit value reads back as missing rather than garbage.
+        """
         new_capacity = self._capacity * 2
 
         # Grow timestamps
@@ -86,9 +105,9 @@ class GpuMetricTimeSeries:
         new_ts[: self._size] = self._timestamps[: self._size]
         self._timestamps = new_ts
 
-        # Grow each metric array
+        # Grow each metric array, NaN-filling the freshly-allocated tail.
         for name, old_arr in self._metrics.items():
-            new_arr = np.empty(new_capacity, dtype=np.float64)
+            new_arr = np.full(new_capacity, np.nan, dtype=np.float64)
             new_arr[: self._size] = old_arr[: self._size]
             self._metrics[name] = new_arr
 
@@ -110,6 +129,11 @@ class GpuMetricTimeSeries:
     ) -> MetricResult:
         """Compute stats for a metric using vectorized NumPy operations.
 
+        NaN-aware: only the real (non-NaN) samples feed the min/max/avg/std/
+        percentile computation. ``count`` is the number of scrapes (array
+        length), not the non-NaN sample count, so it stays aligned with the
+        timestamp axis.
+
         Args:
             metric_name: Name of the metric to analyze
             tag: Unique identifier for this metric
@@ -120,7 +144,7 @@ class GpuMetricTimeSeries:
             MetricResult with min/max/avg/percentiles computed from all values
 
         Raises:
-            NoMetricValue: If no data for this metric
+            NoMetricValue: If no data for this metric, or every sample is NaN
         """
         arr = self.get_metric_array(metric_name)
         if arr is None or len(arr) == 0:
@@ -128,34 +152,14 @@ class GpuMetricTimeSeries:
                 f"No telemetry data available for metric '{metric_name}'"
             )
 
-        # Vectorized stats computation
-        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-            arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
-        )
+        valid = arr[~np.isnan(arr)]
+        if len(valid) == 0:
+            raise NoMetricValue(
+                f"All samples for metric '{metric_name}' are NaN (no valid telemetry)"
+            )
 
-        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
-        std_dev = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
-
-        return MetricResult(
-            tag=tag,
-            header=header,
-            unit=unit,
-            min=float(np.min(arr)),
-            max=float(np.max(arr)),
-            avg=float(np.mean(arr)),
-            sum=float(np.sum(arr)),
-            std=std_dev,
-            count=len(arr),
-            current=float(arr[-1]),
-            p1=p1,
-            p5=p5,
-            p10=p10,
-            p25=p25,
-            p50=p50,
-            p75=p75,
-            p90=p90,
-            p95=p95,
-            p99=p99,
+        return self._stats_result(
+            valid, tag, header, unit, count=len(arr), current=_last_valid(arr)
         )
 
     def get_time_mask(self, time_filter: TimeRangeFilter | None) -> NDArray[np.bool_]:
@@ -218,17 +222,41 @@ class GpuMetricTimeSeries:
         arr: np.ndarray,
         filtered: np.ndarray,
         *,
+        metric_name: str,
         time_filter: TimeRangeFilter | None,
         tag: str,
         header: str,
         unit: str,
     ) -> MetricResult:
-        """Compute counter delta from baseline, clamped to 0 on resets."""
+        """Compute counter delta from baseline, clamped to 0 on resets.
+
+        NaN-aware: the in-window final sample skips trailing NaNs; the baseline
+        reference walks back past NaN samples before start_ns, falling back to
+        the first valid in-window sample when no valid pre-window baseline
+        exists. An all-NaN window raises ``NoMetricValue``.
+        """
+        # Last valid in-window sample.
+        filtered_last = _last_valid(filtered)
+        if filtered_last is None:
+            raise NoMetricValue(
+                f"No valid (non-NaN) samples in time range for counter "
+                f"metric '{metric_name}'"
+            )
+
+        # Walk back from the chosen reference index past NaN samples.
+        reference_value: float | None = None
         reference_idx = self.get_reference_idx(time_filter)
-        reference_value = (
-            arr[reference_idx] if reference_idx is not None else filtered[0]
-        )
-        raw_delta = float(filtered[-1] - reference_value)
+        if reference_idx is not None:
+            for idx in range(reference_idx, -1, -1):
+                if not np.isnan(arr[idx]):
+                    reference_value = float(arr[idx])
+                    break
+
+        # No valid pre-window baseline: anchor on the first valid in-window value.
+        if reference_value is None:
+            reference_value = _first_valid(filtered)
+
+        raw_delta = filtered_last - reference_value
 
         # Handle counter resets (e.g., DCGM restart) by clamping to 0
         delta = max(raw_delta, 0.0)
@@ -242,27 +270,40 @@ class GpuMetricTimeSeries:
         )
 
     @staticmethod
-    def _gauge_stats_result(
-        filtered: np.ndarray, tag: str, header: str, unit: str
+    def _stats_result(
+        valid: np.ndarray,
+        tag: str,
+        header: str,
+        unit: str,
+        *,
+        count: int,
+        current: float | None,
     ) -> MetricResult:
-        """Compute vectorized gauge stats (min/max/avg/std/percentiles) from filtered values."""
+        """Compute vectorized gauge stats from the non-NaN sample array.
+
+        ``valid`` must already be filtered to non-NaN values. ``count`` is the
+        number of scrapes (kept aligned with the timestamp axis) while the
+        std ddof guard uses the non-NaN sample count.
+        """
         p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-            filtered, [1, 5, 10, 25, 50, 75, 90, 95, 99]
+            valid, [1, 5, 10, 25, 50, 75, 90, 95, 99]
         )
 
-        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
-        std_dev = float(np.std(filtered, ddof=1)) if len(filtered) > 1 else 0.0
+        # Use sample std (ddof=1) for unbiased estimate; 0 for a single valid
+        # sample (ddof=1 with one sample is degrees-of-freedom 0 -> NaN+warning).
+        std_dev = float(np.std(valid, ddof=1)) if len(valid) > 1 else 0.0
 
         return MetricResult(
             tag=tag,
             header=header,
             unit=unit,
-            min=float(np.min(filtered)),
-            max=float(np.max(filtered)),
-            avg=float(np.mean(filtered)),
-            sum=float(np.sum(filtered)),
+            min=float(np.min(valid)),
+            max=float(np.max(valid)),
+            avg=float(np.mean(valid)),
+            sum=float(np.sum(valid)),
             std=std_dev,
-            count=len(filtered),
+            count=count,
+            current=current,
             p1=p1,
             p5=p5,
             p10=p10,
@@ -280,14 +321,14 @@ class GpuMetricTimeSeries:
         tag: str,
         header: str,
         unit: str,
-        *,
         time_filter: TimeRangeFilter | None = None,
         is_counter: bool = False,
     ) -> MetricResult:
         """Compute stats with time filtering and optional delta for counters.
 
-        For gauges: Uses vectorized NumPy on filtered array (np.mean, np.std, np.percentile)
-        For counters: Computes delta from reference point before profiling start
+        For gauges: Uses vectorized NumPy on the non-NaN filtered samples
+        (np.mean, np.std, np.percentile).
+        For counters: Computes delta from reference point before profiling start.
 
         Args:
             metric_name: Name of the metric to analyze
@@ -301,7 +342,8 @@ class GpuMetricTimeSeries:
             MetricResult with min/max/avg/percentiles for gauges, or delta for counters
 
         Raises:
-            NoMetricValue: If no data for this metric or no data in filtered range
+            NoMetricValue: If no data for this metric, no data in the filtered
+                range, or every in-range sample is NaN
         """
         arr = self.get_metric_array(metric_name)
         if arr is None or len(arr) == 0:
@@ -318,13 +360,40 @@ class GpuMetricTimeSeries:
             return self._counter_delta_result(
                 arr,
                 filtered,
+                metric_name=metric_name,
                 time_filter=time_filter,
                 tag=tag,
                 header=header,
                 unit=unit,
             )
-        return self._gauge_stats_result(filtered, tag, header, unit)
+
+        valid = filtered[~np.isnan(filtered)]
+        if len(valid) == 0:
+            raise NoMetricValue(
+                f"All in-range samples for metric '{metric_name}' are NaN "
+                f"(no valid telemetry in filtered window)"
+            )
+        return self._stats_result(
+            valid,
+            tag,
+            header,
+            unit,
+            count=len(filtered),
+            current=_last_valid(filtered),
+        )
 
     def __len__(self) -> int:
         """Return the number of snapshots in the time series."""
         return self._size
+
+
+def _last_valid(arr: np.ndarray) -> float | None:
+    """Return the last non-NaN value in ``arr``, or ``None`` if all NaN."""
+    mask = ~np.isnan(arr)
+    return float(arr[mask][-1]) if mask.any() else None
+
+
+def _first_valid(arr: np.ndarray) -> float | None:
+    """Return the first non-NaN value in ``arr``, or ``None`` if all NaN."""
+    mask = ~np.isnan(arr)
+    return float(arr[mask][0]) if mask.any() else None

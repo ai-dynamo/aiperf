@@ -297,24 +297,19 @@ class _PluginRegistryLoaderMixin:
                 looks up classes by module.name.
 
         Returns:
-            A new ExtensibleStrEnum subclass.
-
-        Raises:
-            KeyError: If no types are registered for the category.
+            A new ExtensibleStrEnum subclass. When the category has no
+            registered types (an unknown or stub category registered via
+            categories.yaml with no concrete plugin entries yet), an empty
+            enum is returned so orphan modules that reference it still import
+            cleanly. See the "Accumulator Category (branch-only)" note in
+            categories.yaml.
         """
         from aiperf.plugin.extensible_enums import create_enum as _create_enum
 
         category = _normalize_category(category)
-        if category not in self._types or not self._types[category]:
-            available = "\n".join(f"  • {c}" for c in sorted(self._types.keys()))
-            raise KeyError(
-                f"No types registered for category '{category}'.\n"
-                f"Available categories:\n{available}"
-            )
-
         members = {
             entry.name.replace("-", "_").upper(): entry.name
-            for entry in self._types[category].values()
+            for entry in self._types.get(category, {}).values()
         }
 
         enum_cls = _create_enum(enum_name, members, module=module)

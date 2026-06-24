@@ -223,6 +223,40 @@ class DatasetResolver:
         }
 
     @staticmethod
+    def _read_first_jsonl_record(file_path: str) -> dict | None:
+        """Return the first JSON-object line of ``file_path`` as a dict.
+
+        Returns ``None`` for any of: an empty file, a binary or non-UTF-8
+        file (the text iterator raises ``UnicodeDecodeError``), a
+        non-JSON first line (e.g. BurstGPT's CSV header), or a first
+        line that parses as valid JSON but isn't an object (a list,
+        string, or number). All of these are expected probe outcomes —
+        the caller falls through to structural detection so each
+        loader's ``can_load`` gets a chance.
+
+        Uses ``orjson.loads`` directly rather than ``load_json_str``
+        because the non-JSON case is expected here; ``load_json_str``
+        would log a misleading "Failed to parse JSON string" warning on
+        every successful CSV auto-detect. Lets ``OSError`` propagate so
+        callers can distinguish "can't read the file at all" from "read
+        it but the first line isn't a JSON object".
+        """
+        import orjson
+
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                for line in f:
+                    if line := line.strip():
+                        try:
+                            parsed = orjson.loads(line)
+                        except orjson.JSONDecodeError:
+                            return None
+                        return parsed if isinstance(parsed, dict) else None
+        except UnicodeDecodeError:
+            return None
+        return None
+
+    @staticmethod
     def _detect_type(
         file_path: str,
     ) -> tuple[object | None, dict | None]:
@@ -233,23 +267,15 @@ class DatasetResolver:
         """
         from pathlib import Path
 
-        from aiperf.common.utils import load_json_str
         from aiperf.plugin import plugins
         from aiperf.plugin.enums import CustomDatasetType, PluginType
 
         path = Path(file_path)
-        if path.is_dir():
-            data = None
-        else:
+        data: dict | None = None
+        if not path.is_dir():
             try:
-                with open(file_path) as f:
-                    for line in f:
-                        if line := line.strip():
-                            data = load_json_str(line)
-                            break
-                    else:
-                        return None, None
-            except (OSError, ValueError):
+                data = DatasetResolver._read_first_jsonl_record(file_path)
+            except OSError:
                 return None, None
 
         # Check explicit type field in data

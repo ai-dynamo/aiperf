@@ -26,7 +26,7 @@
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
-		generate-all-docs test-stress stress-tests test-fern-docs internal-help help \
+		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
 		generate-crd check-crd check-chart-consistency crd-release benchmark-resources \
 		kube-setup kube-doctor kube-status kube-cleanup kube-teardown kube-reload \
 		kube-build kube-load kube-logs kube-cluster-create kube-cluster-delete \
@@ -327,10 +327,25 @@ component-integration-tests-verbose test-component-integration-verbose: #? run c
 	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'component_integration and not stress and not performance and not slow' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Fake Component Integration tests passed!$(reset)\n"
 
-test-fern-docs: #? validate Fern documentation (check, strict check, dev server).
+test-fern-docs: #? validate Fern documentation (check, strict broken-link + broken-links checks, dev server).
 	@printf "$(bold)$(blue)Running Fern documentation checks...$(reset)\n"
 	$(activate_venv) && pytest tests/unit/fern/ -m fern -v --tb=short $(args)
 	@printf "$(bold)$(green)Fern documentation checks passed!$(reset)\n"
+
+fern-preview: #? local Fern docs preview (mirrors the CI md_to_mdx conversion in .github/workflows/fern-docs.yml).
+	@command -v fern >/dev/null || { printf "$(bold)$(red)fern CLI not found. Install with: npm i -g fern-api$(reset)\n"; exit 1; }
+	@printf "$(bold)$(blue)Staging docs into fern/.local-preview/...$(reset)\n"
+	@rm -rf fern/.local-preview
+	@mkdir -p fern/.local-preview/fern fern/.local-preview/docs
+	@rsync -a --exclude='.local-preview' fern/ fern/.local-preview/fern/
+	@rsync -a docs/ fern/.local-preview/docs/
+	@printf "$(bold)$(blue)Converting Markdown to Fern MDX...$(reset)\n"
+	@python3 fern/md_to_mdx.py --dir fern/.local-preview/docs
+	@printf "$(bold)$(green)Starting fern docs dev (Ctrl-C to stop)...$(reset)\n"
+	@cd fern/.local-preview && fern docs dev $(args)
+
+fern-release-dryrun: #? local dry-run of the Fern release-version job: build a versioned snapshot from a tag and run the strict guard (no publish). Usage: make fern-release-dryrun args="v0.9.0".
+	@./tools/fern_release_dryrun.sh $(args)
 
 generate-cli-docs: #? generate the CLI documentation.
 	$(activate_venv) && ./tools/generate_cli_docs.py

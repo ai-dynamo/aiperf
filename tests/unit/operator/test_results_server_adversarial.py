@@ -400,9 +400,16 @@ class TestResultsServerAdminAndPortOwnership:
     """Read-only results-server must not expose writer or operator-only surfaces."""
 
     @pytest.mark.asyncio
-    async def test_admin_rebuild_route_disabled_in_results_server_sidecar(
+    async def test_admin_rebuild_route_fails_closed_without_token(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """An unauthenticated rebuild POST is denied before any writer side effect.
+
+        ``/admin/index/rebuild`` on the results-server is a mutating route gated
+        by the mutating-route auth dependency, disabled by default. An
+        unauthenticated POST is rejected with 403 ("disabled") before the
+        handler body runs, so ``runs_index.bootstrap`` is never invoked.
+        """
         from aiperf.operator import runs_index
         from aiperf.operator.results_server import create_app
 
@@ -427,8 +434,8 @@ class TestResultsServerAdminAndPortOwnership:
         ) as client:
             response = await client.post("/admin/index/rebuild")
 
-        assert response.status_code == 503
-        assert "read-only results-server sidecar" in response.json()["detail"]
+        assert response.status_code == 403
+        assert "disabled" in response.json()["detail"]
         assert bootstrap_calls == []
 
     def test_results_server_main_runs_uvicorn_on_results_server_port(

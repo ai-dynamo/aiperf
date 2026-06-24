@@ -55,13 +55,18 @@ class TestAioHttpTransport:
     @pytest.fixture
     def transport(self, config_non_streaming):
         """Create an AioHttpTransport instance."""
-        return AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        return AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
 
     @pytest.fixture
     def transport_with_tcp_kwargs(self, config_non_streaming):
         """Create an AioHttpTransport with custom TCP settings."""
         tcp_kwargs = {"limit": 200, "limit_per_host": 50}
-        return AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming), tcp_kwargs=tcp_kwargs)
+        return AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming),
+            tcp_kwargs=tcp_kwargs,
+        )
 
     @pytest.fixture
     async def initialized_transport(self, transport):
@@ -134,7 +139,9 @@ class TestAioHttpTransport:
     def test_get_transport_headers(self, streaming, expected_accept):
         """Test transport headers for different streaming modes."""
         model_endpoint = make_run(streaming=streaming)
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         request_info = create_request_info(model_endpoint.cfg)
         headers = transport.get_transport_headers(request_info)
 
@@ -159,7 +166,9 @@ class TestAioHttpTransport:
             base_url=cfg_base_url, custom_endpoint=custom_endpoint
         )
 
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         request_info = create_request_info(model_endpoint.cfg)
         url = transport.get_url(request_info)
         assert url == expected_url
@@ -210,7 +219,9 @@ class TestAioHttpTransport:
         model_endpoint = make_run(
             base_url=cfg_base_url, custom_endpoint=custom_endpoint
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         request_info = create_request_info(model_endpoint.cfg)
         url = transport.get_url(request_info)
         assert url == expected_url
@@ -343,7 +354,9 @@ class TestAioHttpTransport:
     @pytest.mark.asyncio
     async def test_send_request_streaming_headers(self, config_streaming):
         """Test correct headers for streaming requests."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_streaming)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -413,7 +426,9 @@ class TestAioHttpTransportLifecycle:
     @pytest.mark.asyncio
     async def test_init_creates_client(self, config_non_streaming):
         """Test that init creates aiohttp client."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         assert transport.aiohttp_client is None
 
         await transport.initialize()
@@ -423,7 +438,9 @@ class TestAioHttpTransportLifecycle:
     @pytest.mark.asyncio
     async def test_stop_closes_client(self, config_non_streaming):
         """Test that stop closes aiohttp client."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.initialize()
 
         client = transport.aiohttp_client
@@ -435,7 +452,9 @@ class TestAioHttpTransportLifecycle:
     @pytest.mark.asyncio
     async def test_multiple_init_calls(self, config_non_streaming):
         """Test that multiple init calls are handled correctly."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
 
         await transport.initialize()
         _ = transport.aiohttp_client
@@ -449,7 +468,9 @@ class TestAioHttpTransportLifecycle:
     @pytest.mark.asyncio
     async def test_stop_without_init(self, config_non_streaming):
         """Test that stop works if init was never called."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.stop()
         assert transport.aiohttp_client is None
 
@@ -466,7 +487,9 @@ class TestAioHttpTransportIntegration:
             headers={"Custom-Header": "value"},
         )
 
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         request_info = RequestInfo(
@@ -581,7 +604,9 @@ class TestAioHttpTransportCancellation:
     @pytest.mark.asyncio
     async def test_send_request_without_cancellation(self, config_non_streaming):
         """Test that request without cancel_after_ns is sent normally."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -607,7 +632,9 @@ class TestAioHttpTransportCancellation:
         When cancel_after_ns is set, the transport uses _request_with_cancellation which
         waits for the request to be sent before starting the cancellation timer.
         """
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.initialize()
 
         capture_session, holder = self._create_mock_session_factory(
@@ -648,7 +675,9 @@ class TestAioHttpTransportCancellation:
         With cancel_after_ns=0, the transport waits for the full request to be sent
         (via on_request_end trace event), then immediately cancels (timeout=0 seconds).
         """
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.initialize()
 
         capture_session, holder = self._create_mock_session_factory(
@@ -688,7 +717,9 @@ class TestAioHttpTransportCancellation:
         self, config_non_streaming
     ):
         """Test request cancellation with a small delay (100ms)."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.initialize()
 
         capture_session, holder = self._create_mock_session_factory(
@@ -724,7 +755,9 @@ class TestAioHttpTransportCancellation:
         self, config_non_streaming
     ):
         """Test that cancellation record has proper timing fields."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.initialize()
 
         capture_session, holder = self._create_mock_session_factory(
@@ -762,7 +795,9 @@ class TestAioHttpTransportCancellation:
     @pytest.mark.looptime
     async def test_cancellation_error_details(self, config_non_streaming):
         """Test that cancellation error has correct details."""
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(config_non_streaming))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(config_non_streaming)
+        )
         await transport.initialize()
 
         capture_session, holder = self._create_mock_session_factory(
@@ -875,7 +910,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.POOLED
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         # No lease manager for pooled strategy
@@ -900,7 +937,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.NEVER
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         # No lease manager for never strategy
@@ -925,7 +964,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         # Lease manager should be created
@@ -940,7 +981,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -978,7 +1021,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1015,7 +1060,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1046,7 +1093,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1081,7 +1130,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         # Mock a cancelled request - cancellation_perf_ns indicates cancellation
@@ -1105,7 +1156,9 @@ class TestConnectionStrategies:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         # Mock a successful (non-cancelled) request
@@ -1137,7 +1190,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1178,7 +1233,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1216,7 +1273,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1267,7 +1326,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1307,7 +1368,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1358,7 +1421,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.NEVER
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1393,7 +1458,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.POOLED
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()
@@ -1430,7 +1497,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         # Create records: some cancelled, some successful
@@ -1528,7 +1597,9 @@ class TestConnectionStrategiesStress:
         model_endpoint = make_run(
             connection_reuse_strategy=ConnectionReuseStrategy.STICKY_USER_SESSIONS
         )
-        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(model_endpoint))
+        transport = AioHttpTransport(
+            model_endpoint=ModelEndpointInfo.from_run(model_endpoint)
+        )
         await transport.initialize()
 
         mock_record = RequestRecord()

@@ -91,7 +91,9 @@ spec: {}`,
         ("valid-name", "a" * 64),
     ],
 )  # fmt: skip
-def test_launch_rejects_invalid_kubernetes_metadata_names(name: str, namespace: str) -> None:
+def test_launch_rejects_invalid_kubernetes_metadata_names(
+    name: str, namespace: str
+) -> None:
     script = _launch_helper_script(
         f"""
         const yaml = `apiVersion: aiperf.nvidia.com/v1alpha1
@@ -111,7 +113,9 @@ spec: {{}}`;
     assert result["name"] is None
 
 
-def test_launch_parser_handles_huge_scalar_without_accepting_huge_metadata_name() -> None:
+def test_launch_parser_handles_huge_scalar_without_accepting_huge_metadata_name() -> (
+    None
+):
     script = _launch_helper_script(
         """
         const huge = 'x'.repeat(20000);
@@ -139,7 +143,10 @@ spec: {}`;
     result = json.loads(run_node(script))
 
     assert result["valid"] == 20000
-    assert result["invalid"]["parseError"] == "metadata.name must be a valid Kubernetes DNS subdomain."
+    assert (
+        result["invalid"]["parseError"]
+        == "metadata.name must be a valid Kubernetes DNS subdomain."
+    )
 
 
 def test_launch_rejects_prototype_pollution_like_keys() -> None:

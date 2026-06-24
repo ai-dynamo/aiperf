@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-import msgspec
 import orjson
 import pytest
 

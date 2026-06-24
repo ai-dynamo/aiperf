@@ -106,8 +106,12 @@ class ServerMetricEntry:
         """Create a ServerMetricEntry from a MetricFamily.
 
         Factory method that automatically selects the appropriate time series
-        storage type based on the metric type. Gauges and counters use
-        ScalarTimeSeries, histograms use HistogramTimeSeries.
+        storage type based on the metric type. Only HISTOGRAM uses
+        HistogramTimeSeries; gauges, counters, and UNKNOWN (Prometheus
+        ``untyped`` families, treated as gauge-equivalent scalars) all use
+        ScalarTimeSeries. Routing UNKNOWN to histogram storage would crash on
+        first scrape with "Buckets are required for histogram time series",
+        since untyped samples carry a single ``value`` and no buckets.
 
         Args:
             metric_family: MetricFamily from parsed Prometheus metrics containing
@@ -119,8 +123,7 @@ class ServerMetricEntry:
         return cls(
             metric_type=metric_family.type,
             description=metric_family.description,
-            data=ScalarTimeSeries()
-            if metric_family.type
-            in (PrometheusMetricType.GAUGE, PrometheusMetricType.COUNTER)
-            else HistogramTimeSeries(),
+            data=HistogramTimeSeries()
+            if metric_family.type == PrometheusMetricType.HISTOGRAM
+            else ScalarTimeSeries(),
         )

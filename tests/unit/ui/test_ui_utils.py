@@ -3,10 +3,8 @@
 
 
 import pytest
-from pytest import param
 
 from aiperf.ui.utils import format_bytes, format_elapsed_time, format_eta
-
 
 
 @pytest.mark.parametrize(
@@ -87,4 +85,3 @@ def test_format_elapsed_time(seconds, expected) -> None:
 # ---------------------------------------------------------------------------
 # extractNamespaceField (lib/yaml-namespace.js)
 # ---------------------------------------------------------------------------
-

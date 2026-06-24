@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -12,7 +13,6 @@ from aiperf.common.models import (
     ReasoningResponseData,
     RequestInfo,
     RequestRecord,
-    Text,
     ToolCallResponseData,
     Turn,
 )
@@ -47,7 +47,7 @@ class ChatEndpoint(BaseEndpoint):
         model_endpoint = self.run.cfg
 
         if turns[-1].raw_messages is not None:
-            messages = turns[-1].raw_messages
+            messages = self._format_messages(request_info, turns[-1].raw_messages)
         else:
             messages = self._create_messages(
                 turns, request_info.system_message, request_info.user_context_message
@@ -151,6 +151,62 @@ class ChatEndpoint(BaseEndpoint):
             self._set_message_content(message, turn)
             messages.append(message)
         return messages
+
+    @staticmethod
+    def _format_messages(
+        request_info: RequestInfo, rendered: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Apply RequestInfo-level prompts to pre-rendered (raw) messages.
+
+        Authored ``raw_messages`` own the wire shape: an author-supplied leading
+        system message wins over ``request_info.system_message`` EXCEPT during
+        the WARMUP phase, where the warmup marker is merged into the leading
+        system message so the server can still identify warmup traffic. When
+        there is no leading system message, ``request_info.system_message`` is
+        prepended as its own system message. The original ``rendered`` list and
+        its dicts are never mutated.
+        """
+        messages: list[dict[str, Any]] = []
+        first_is_system = (
+            bool(rendered)
+            and isinstance(rendered[0], dict)
+            and rendered[0].get("role") == "system"
+        )
+        if request_info.system_message:
+            if first_is_system and request_info.credit_phase == CreditPhase.WARMUP:
+                rendered = ChatEndpoint._prepend_system_message(
+                    rendered, request_info.system_message
+                )
+            elif not first_is_system:
+                messages.append(
+                    {"role": "system", "content": request_info.system_message}
+                )
+        if request_info.user_context_message:
+            messages.append(
+                {"role": "user", "content": request_info.user_context_message}
+            )
+        messages.extend(rendered)
+        return messages
+
+    @staticmethod
+    def _prepend_system_message(
+        rendered: list[dict[str, Any]], system_message: str
+    ) -> list[dict[str, Any]]:
+        """Prepend ``system_message`` to the leading rendered system message
+        without mutating the caller's list/dicts."""
+        first = dict(rendered[0])
+        content = first.get("content")
+        if isinstance(content, str):
+            first["content"] = (
+                f"{system_message}\n{content}" if content else system_message
+            )
+        elif isinstance(content, list):
+            first["content"] = [{"type": "text", "text": system_message}, *content]
+        elif content is None:
+            first["content"] = system_message
+        else:
+            first["content"] = f"{system_message}\n{content}"
+        return [first, *rendered[1:]]
 
     def _set_message_content(self, message: dict[str, Any], turn: Turn) -> None:
         """Create message content from turn for OpenAI Chat Completions."""
@@ -284,9 +340,7 @@ class ChatEndpoint(BaseEndpoint):
                 content_parts.append(msg["content"])
             for tc in msg.get("tool_calls") or []:
                 idx = tc.get("index", len(tool_calls_by_index))
-                tool_calls_by_index[idx] = {
-                    k: v for k, v in tc.items() if k != "index"
-                }
+                tool_calls_by_index[idx] = {k: v for k, v in tc.items() if k != "index"}
             ChatEndpoint._absorb_legacy_function_call(
                 msg.get("function_call"), tool_calls_by_index
             )
@@ -503,8 +557,15 @@ class ChatEndpoint(BaseEndpoint):
             case "chat.completion.chunk":
                 data_key = "delta"
             case _:
-                object_type = json_obj.get("object")
-                raise ValueError(f"Unsupported OpenAI object type: {object_type!r}")
+                # Unrecognized / missing object type: the server can return
+                # error bodies, proxy pages, or truncated streams on crash.
+                # Degrade to None so the worker records a request failure rather
+                # than crashing the parser (see the malformed-response contract
+                # in tests/unit/records/test_inference_result_parser.py).
+                self.debug(
+                    lambda: f"Unsupported OpenAI object type: {json_obj.get('object')!r}"
+                )
+                return None
 
         choices = json_obj.get("choices")
         if not choices:

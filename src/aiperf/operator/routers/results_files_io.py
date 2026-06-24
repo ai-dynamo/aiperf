@@ -182,8 +182,15 @@ async def _build_artifact_bundle(
 
 
 async def _build_job_bundle(job_dir: Path) -> bytes:
-    """Build an in-memory zip of every direct file in ``job_dir``."""
-    return await _build_artifact_bundle(job_dir)
+    """Build an in-memory zip of a run dir's visible artifacts.
+
+    Mirrors what ``list_job_files_with_readiness`` exposes: the direct files
+    plus the ``checkpoints/`` subtree. Without the explicit ``relative_dirs``,
+    ``_list_file_artifacts`` skips ``CHECKPOINTS_DIR_NAME`` during the root
+    walk, so the bundle would omit checkpoint parquet files that the run-detail
+    listing shows as downloadable — a visible-but-unbundlable mismatch.
+    """
+    return await _build_artifact_bundle(job_dir, (CHECKPOINTS_DIR_NAME,))
 
 
 async def _stream_artifact_bundle(
@@ -196,8 +203,14 @@ async def _stream_artifact_bundle(
 
 
 async def _stream_job_bundle(job_dir: Path) -> AsyncIterator[bytes]:
-    """Yield a prebuilt job bundle in fixed-size chunks."""
-    async for chunk in _stream_artifact_bundle(job_dir):
+    """Yield a prebuilt job bundle (direct files + ``checkpoints/`` subtree).
+
+    Passes ``CHECKPOINTS_DIR_NAME`` so the streamed ``.zip`` matches
+    ``list_job_files_with_readiness``: checkpoint parquet files shown as
+    downloadable in the run-detail listing are also present in the archive,
+    rather than silently dropped during the root-only walk.
+    """
+    async for chunk in _stream_artifact_bundle(job_dir, (CHECKPOINTS_DIR_NAME,)):
         yield chunk
 
 

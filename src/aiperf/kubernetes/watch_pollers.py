@@ -27,12 +27,24 @@ from aiperf.kubernetes.watch_models import (
     ProgressSnapshot,
     WorkersSnapshot,
 )
+
+# Re-exported so callers (watch_orchestrator) and tests can patch the full
+# poller set on a single module. The pod/event pollers live in a sibling module
+# to keep file size down, but they are part of the watch_pollers public surface.
+from aiperf.kubernetes.watch_pod_event_pollers import EventPoller, PodPoller
 from aiperf.operator.status import parse_timestamp
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "CRPoller",
+    "EventPoller",
+    "PodPoller",
+    "SweepCRPoller",
+]
 
 _CAMEL_RE = re.compile(r"(?<!^)(?=[A-Z])")
 

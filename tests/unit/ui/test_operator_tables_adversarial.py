@@ -124,6 +124,9 @@ def _sweeps_script(expression: str) -> str:
         const api = {{ listSweeps: async () => {{ throw new Error('not called'); }} }};
         function poll() {{}}
         const sweeps = {{ value: [] }};
+        const freshness = {{ value: {{}} }};
+        function FreshnessPill(props) {{ return {{ component: 'FreshnessPill', props }}; }}
+        function StaleBanner(props) {{ return {{ component: 'StaleBanner', props }}; }}
         function dedupeByNsName(rows) {{ return rows; }}
         function navigate() {{}}
         const query = {{ value: {{}} }};

@@ -88,11 +88,11 @@ export function TopNav({ onSearchClick, features }) {
                 ${item.label}
               </a>
             ` : html`
-              <button
+              <button type="button"
                 key=${item.path}
                 class=${'nav-tab' + (isActive(item.path, currentRoute) ? ' active' : '')}
-                onclick=${() => navigate(item.path)}
                 aria-current=${isActive(item.path, currentRoute) ? 'page' : undefined}
+                onclick=${() => navigate(item.path)}
                 data-testid=${item.testId || ('nav-link-' + routeSlug(item.path))}
               >
                 ${item.label}
@@ -102,7 +102,7 @@ export function TopNav({ onSearchClick, features }) {
         </nav>
       </div>
       <div class="topbar-right">
-        <button
+        <button type="button"
           class="topbar-icon-btn"
           data-testid="topbar-theme-toggle"
           title=${`Theme: ${resolved}`}
@@ -111,7 +111,7 @@ export function TopNav({ onSearchClick, features }) {
         >
           ${resolved === 'dark' ? '☾' : '☀'}
         </button>
-        <button
+        <button type="button"
           class="search-btn"
           onclick=${onSearchClick}
           title="Search (Ctrl+K)"

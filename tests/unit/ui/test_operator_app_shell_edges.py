@@ -51,7 +51,15 @@ def test_command_palette_search_covers_every_internal_top_nav_destination() -> N
     top_nav_source = _source(TOP_NAV_PATH)
     command_palette_source = _source(COMMAND_PALETTE_PATH)
 
-    internal_paths = ["/", "/jobs", "/sweeps", "/launch", "/leaderboard", "/compare", "/history"]
+    internal_paths = [
+        "/",
+        "/jobs",
+        "/sweeps",
+        "/launch",
+        "/leaderboard",
+        "/compare",
+        "/history",
+    ]
     for path in internal_paths:
         if f"path: '{path}'" in top_nav_source:
             assert f"path: '{path}'" in command_palette_source

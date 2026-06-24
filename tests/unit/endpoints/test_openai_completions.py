@@ -5,7 +5,11 @@ import pytest
 
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config, create_request_info
+from tests.unit.endpoints.conftest import (
+    _wrap_model_endpoint,
+    create_config,
+    create_request_info,
+)
 
 
 class TestCompletionsEndpoint:
@@ -22,7 +26,9 @@ class TestCompletionsEndpoint:
         )
 
     def test_format_payload_basic(self, model_endpoint, sample_conversations):
-        endpoint = CompletionsEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
+        endpoint = CompletionsEndpoint(
+            model_endpoint=_wrap_model_endpoint(model_endpoint)
+        )
         # Use the first turn from the sample_conversations fixture
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]

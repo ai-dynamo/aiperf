@@ -173,7 +173,9 @@ def test_missing_workers_progress_and_metrics_render_as_placeholders() -> None:
     assert "undefined" not in out["text"]
 
 
-def test_sorting_by_age_throughput_and_latency_uses_expected_direction_and_missing_sink() -> None:
+def test_sorting_by_age_throughput_and_latency_uses_expected_direction_and_missing_sink() -> (
+    None
+):
     jobs = [
         {
             "namespace": "bench",
@@ -238,5 +240,11 @@ def test_job_table_keeps_row_navigation_encoded_by_delegating_to_caller() -> Non
     assert "onRowClick && onRowClick(job)" in source
     assert "#/jobs/${" not in source
     assert "`/jobs/${" not in source
-    assert "#/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}" in source
-    assert "navigate(`/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`)" in source
+    assert (
+        "#/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}"
+        in source
+    )
+    assert (
+        "navigate(`/sweeps/${encodeURIComponent(job.namespace)}/${encodeURIComponent(job.sweepName)}`)"
+        in source
+    )

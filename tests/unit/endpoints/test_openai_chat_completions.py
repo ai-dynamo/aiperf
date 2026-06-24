@@ -7,7 +7,6 @@ from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     _wrap_model_endpoint,
-    _wrap_run,
     create_config,
     create_request_info,
 )

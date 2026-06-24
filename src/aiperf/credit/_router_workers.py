@@ -75,6 +75,8 @@ class _WorkersMixin:
         # so we can cheat and just set minimum load to 0 without recalculating.
         self._min_load = 0
         self._workers_by_load[0].add(worker_id)
+        # Release any phase blocked in wait_for_workers() now that a worker exists.
+        self._worker_available_event.set()
 
     def _unregister_worker(
         self,
@@ -95,6 +97,9 @@ class _WorkersMixin:
 
         self._workers_cache = list(self._workers.values())
         self._maybe_recompute_min_load(worker_load)
+        # Re-arm the startup gate so a later phase waits again once the pool empties.
+        if not self._workers:
+            self._worker_available_event.clear()
 
         self._pending_reconciliation.pop(worker_id, None)
         self._missed_reconciliation_cycles.pop(worker_id, None)

@@ -193,7 +193,9 @@ class BaseHTTPTransport(BaseTransport):
             url = _append_path_deduped(base_url, path)
         # Normalize scheme prefix: case-insensitive match so callers can
         # write ``HTTP://`` or ``HTTPS://`` without us doubly-prefixing.
-        return url if url.lower().startswith(("http://", "https://")) else f"http://{url}"
+        return (
+            url if url.lower().startswith(("http://", "https://")) else f"http://{url}"
+        )
 
     # -- Video polling methods (shared by aiohttp and httpcore transports) --
 

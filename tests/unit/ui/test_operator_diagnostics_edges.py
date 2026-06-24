@@ -30,11 +30,19 @@ def test_diagnostics_query_param_parsing_is_diag_only_and_allowlisted() -> None:
     assert "window.history.replaceState(null, '', url.toString());" in src
 
 
-def test_archived_diagnostics_fallback_uses_conditions_not_events_or_removed_tabs() -> None:
+def test_archived_diagnostics_fallback_uses_conditions_not_events_or_removed_tabs() -> (
+    None
+):
     src = _source(_DIAGNOSTICS_PANEL_JS)
 
-    assert "const availableTabs = useMemo(() => archived ? ['events', 'conditions'] : ALL_TABS, [archived]);" in src
-    assert "const defaultTab = (mode === 'live' && !archived) ? 'events' : 'conditions';" in src
+    assert (
+        "const availableTabs = useMemo(() => archived ? ['events', 'conditions'] : ALL_TABS, [archived]);"
+        in src
+    )
+    assert (
+        "const defaultTab = (mode === 'live' && !archived) ? 'events' : 'conditions';"
+        in src
+    )
     assert "setActive(defaultTab);" in src
     assert "setActive(availableTabs[0]);" not in src
 
@@ -72,7 +80,10 @@ def test_hidden_events_and_logs_tabs_do_not_fetch_or_stream() -> None:
     assert "if (!active) return;" in events_src
     assert "}, [ns, name, kind, active]);" in events_src
     assert "if (!active) return;" in logs_src
-    assert "}, [ns, name, selectedPod, selectedContainer, follow, tailLines, kind, active]);" in logs_src
+    assert (
+        "}, [ns, name, selectedPod, selectedContainer, follow, tailLines, kind, active]);"
+        in logs_src
+    )
 
 
 def test_job_and_sweep_diagnostics_use_different_api_roots() -> None:
@@ -83,8 +94,23 @@ def test_job_and_sweep_diagnostics_use_different_api_roots() -> None:
     assert "kind === 'sweep'" in events_src
     assert "? await api.getSweepEvents(ns, name)" in events_src
     assert ": await api.getJobEvents(ns, name);" in events_src
-    assert "const fetchLogs = kind === 'sweep' ? api.getSweepLogs : api.getJobLogs;" in logs_src
-    assert "`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/events`" in api_src
-    assert "`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/events`" in api_src
-    assert "`${BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`" in api_src
-    assert "`${BASE}/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`" in api_src
+    assert (
+        "const fetchLogs = kind === 'sweep' ? api.getSweepLogs : api.getJobLogs;"
+        in logs_src
+    )
+    assert (
+        "`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/events`"
+        in api_src
+    )
+    assert (
+        "`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/events`"
+        in api_src
+    )
+    assert (
+        "`${BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`"
+        in api_src
+    )
+    assert (
+        "`${BASE}/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`"
+        in api_src
+    )

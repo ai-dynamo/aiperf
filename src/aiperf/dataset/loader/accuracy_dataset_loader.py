@@ -85,7 +85,11 @@ class AccuracyDatasetLoader:
             except Exception:
                 meta = None
             if meta:
-                default = meta.get("default_system_prompt") if isinstance(meta, dict) else None
+                default = (
+                    meta.get("default_system_prompt")
+                    if isinstance(meta, dict)
+                    else None
+                )
                 if isinstance(default, str) and default:
                     system_prompt = default
         conversations: list[Conversation] = []

@@ -33,9 +33,7 @@ class TestDatasetMagicLists:
     def test_osl_comma_list_promotes_to_dataset_sweep(self):
         cli = CLIConfig(model_names=["m"], prompt_output_tokens_mean="64,128,256")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.variables == {
-            "datasets.main.prompts.osl.mean": [64, 128, 256]
-        }
+        assert cfg.sweep.variables == {"datasets.main.prompts.osl.mean": [64, 128, 256]}
 
     def test_isl_osl_grid_cross_product(self):
         cli = CLIConfig(
@@ -75,9 +73,7 @@ class TestPhaseMagicLists:
     def test_benchmark_duration_list_sweeps_phases_profiling_duration(self):
         cli = CLIConfig(model_names=["m"], benchmark_duration="30,60,120")
         cfg = convert_cli_to_aiperf(cli)
-        assert cfg.sweep.variables == {
-            "phases.profiling.duration": [30.0, 60.0, 120.0]
-        }
+        assert cfg.sweep.variables == {"phases.profiling.duration": [30.0, 60.0, 120.0]}
 
     def test_num_users_list_sweeps_phases_profiling_users(self):
         # num_users requires --user-centric-rate to land on UserCentricPhase.

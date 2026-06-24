@@ -61,13 +61,48 @@ Prometheus labels become individual columns (alphabetically sorted):
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `engine` | `string` | Yes | vLLM engine ID |
-| `engine_type` | `string` | Yes | Engine type (`trtllm`, `unified`) |
+| `engine_type` | `string` | Yes | Engine type (`trtllm`, `unified`, `prefill`, `decode`) |
 | `finished_reason` | `string` | Yes | Request completion reason |
+| `reason` | `string` | Yes | vLLM waiting reason or Triton failure reason |
+| `sleep_state` | `string` | Yes | vLLM engine sleep state |
+| `source` | `string` | Yes | vLLM prompt-token source |
+| `position` | `string` | Yes | vLLM speculative-decoding draft position |
+| `transfer_type` | `string` | Yes | vLLM KV offload transfer type |
 | `model_name` | `string` | Yes | Model identifier |
 | `dynamo_component` | `string` | Yes | Dynamo worker component |
+| `worker_id` | `string` | Yes | Dynamo worker identifier |
+| `worker_type` | `string` | Yes | Dynamo worker type (`prefill`, `decode`, etc.) |
+| `router_id` | `string` | Yes | Dynamo router identifier |
+| `operation` | `string` | Yes | Dynamo operation name |
+| `migration_type` | `string` | Yes | Dynamo request migration type |
+| `event_type` | `string` | Yes | Dynamo KV publisher event type |
+| `worker` | `string` | Yes | Tokio worker index |
+| `pool` | `string` | Yes | Dynamo KVBM logical pool name |
+| `instance_id` | `string` | Yes | Dynamo KVBM external instance label |
 | `tp_rank` | `string` | Yes | Tensor parallel rank |
 | `pp_rank` | `string` | Yes | Pipeline parallel rank |
+| `moe_ep_rank` | `string` | Yes | SGLang MoE expert-parallel rank |
+| `dp_rank` | `string` | Yes | SGLang data-parallel rank |
+| `priority` | `string` | Yes | SGLang priority-scheduling value |
 | `stage` | `string` | Yes | SGLang processing stage |
+| `mode` | `string` | Yes | SGLang token/CUDA graph mode |
+| `category` | `string` | Yes | SGLang forward execution category |
+| `cache_source` | `string` | Yes | SGLang cache source (`device`, `host`, `storage_*`, `total`) |
+| `num_prefill_ranks` | `string` | Yes | SGLang DP cooperation prefill-rank count |
+| `input_estimation` | `string` | Yes | SGLang prefill-delayer input estimate |
+| `output_allow` | `string` | Yes | SGLang prefill-delayer output allowance |
+| `output_reason` | `string` | Yes | SGLang prefill-delayer output reason |
+| `actual_execution` | `string` | Yes | SGLang prefill-delayer execution outcome |
+| `forward_mode` | `string` | Yes | SGLang expert-parallel forward mode |
+| `layer` | `string` | Yes | SGLang model layer |
+| `request_type` | `string` | Yes | Triton/TensorRT-LLM backend request type |
+| `model_namespace` | `string` | Yes | Triton model namespace |
+| `gpu_uuid` | `string` | Yes | Triton GPU UUID |
+| `_custom_tag` | `string` | Yes | Triton model tag labels (actual column name uses the configured tag name prefixed with `_`) |
+| `memory_type` | `string` | Yes | TensorRT-LLM backend memory type |
+| `kv_cache_block_type` | `string` | Yes | TensorRT-LLM backend KV-cache block type |
+| `disaggregated_serving_type` | `string` | Yes | TensorRT-LLM backend disaggregated-serving metric type |
+| `version` | `string` | Yes | Triton model version |
 | *(others)* | `string` | Yes | Any additional Prometheus labels |
 
 Label columns vary by endpoint/model. Use `union_by_name=true` for cross-file queries.

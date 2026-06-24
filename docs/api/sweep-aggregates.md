@@ -355,6 +355,44 @@ Number of Successful Runs,12
 
 ## Artifact Directory Structure
 
+### Artifact Directory Layout Reference
+
+The artifact tree branches on three flags: whether a sweep is configured
+(`is_sweep`), whether multiple trials run per cell (`trials > 1`), and
+the sweep iteration order (`REPEATED` vs `INDEPENDENT`).
+
+| sweep | trials | order       | layout                                          |
+|-------|--------|-------------|-------------------------------------------------|
+| no    | 1      | -           | `<base>/`                                       |
+| no    | >1     | -           | `<base>/profile_runs/run_NNNN/`                 |
+| yes   | 1      | -           | `<base>/<dir_name>/`                            |
+| yes   | >1     | REPEATED    | `<base>/profile_runs/trial_NNNN/<dir_name>/`    |
+| yes   | >1     | INDEPENDENT | `<base>/<dir_name>/profile_runs/trial_NNNN/`    |
+| adaptive | any | -      | `<base>/search_iter_NNNN/profile_runs/run_NNNN/` |
+
+`<dir_name>` is the `{leaf_param_name}_{value}` form (e.g.
+`concurrency_10`, `request_rate_5.0`); multi-dim sweep cells join
+components with `__` (e.g. `concurrency_10__isl_512`). Inner-dir
+naming is asymmetric on purpose: the no-sweep multi-run case uses
+`run_NNNN`, the sweep + INDEPENDENT case uses `trial_NNNN`.
+
+For the per-variation *aggregate* directory, scenario sweeps that omit an
+explicit `values:` block carry nested override dicts (e.g.
+`{"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}`) as the
+variation values. Serializing those into a `{key}_{value}` segment would
+produce an unreadable on-disk path, so when any variation value is
+non-scalar the aggregate dir falls back to the scenario's `variation_label`
+(e.g. `aa-1k`) instead of the `<dir_name>` form. Set an explicit `values:`
+block on the scenario to get the `{leaf_param_name}_{value}` form back.
+
+The sweep-level aggregate path follows a parallel rule:
+
+- REPEATED + multi-run: `<base>/aggregate/sweep_aggregate/`
+- everything else (sweep-only, sweep + INDEPENDENT): `<base>/sweep_aggregate/`
+
+Per-variation aggregates land at `<base>/aggregate/<dir_name>/` in
+REPEATED mode and `<base>/<dir_name>/aggregate/` in INDEPENDENT mode.
+
 ### Repeated Mode (`--parameter-sweep-mode repeated`)
 
 Default mode where the full sweep is executed N times:

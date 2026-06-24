@@ -16,6 +16,119 @@ aiperf profile Qwen/Qwen2.5-1.5B-Instruct \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 ```
 
+```bash
+# AIME competition math — defaults match the trt-llm benchmark recipe
+# (8-shot, chain-of-thought on, sympy-backed math grader)
+aiperf profile Qwen/Qwen2.5-7B-Instruct \
+  --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark aime \
+  --num-requests 30 \
+  --concurrency 10 \
+  --extra-inputs '{"temperature": 0}'
+```
+
+## trt-llm reference alignment
+
+The `aime` benchmark is aligned with the trt-llm benchmark recipe's
+DeepEval-backed AIME path
+(`trt-llm-benchmark-recipe/src/accuracy/aime/`):
+
+- **Dataset:** `Maxwell-Jia/AIME_2024`, train split.
+- **Defaults:** `n_shots=8`, `enable_cot=True` (the recipe enforces
+  `n_shots <= 8` and aiperf raises `ValueError` if you exceed it).
+- **Prompt format:** byte-equal to `AIMETemplate.generate_output` —
+  `**Problem**: ... **Solution**: ... **Answer**: ...` blocks for
+  few-shots (Solution only when CoT is on), trailing
+  `Let's think step-by-step.` after the final `**Answer**:`.
+- **System prompt (auto-injected):**
+  `"Please reason step by step, and put your final answer within \\boxed{}."`
+  This default lives in `plugins.yaml` under the `aime` benchmark's
+  `default_system_prompt` metadata. Override it with
+  `--accuracy-system-prompt 'your prompt here'`. Pass `--accuracy-system-prompt ''`
+  to disable injection.
+- **Grader:** `MathGrader` with `_math_strip.strip_string` + sympy/
+  latex2sympy2-extended `math_equal`. Requires the `[accuracy]` extra:
+  `uv pip install 'aiperf[accuracy]'`. Without those packages installed
+  the grader falls back to a stdlib normalize+Fraction comparison and
+  emits a one-time warning; reference parity is only achieved with the
+  full sympy stack.
+
+### Per-benchmark default system prompts
+
+| Benchmark | `default_system_prompt` |
+|---|---|
+| `aime` | `Please reason step by step, and put your final answer within \boxed{}.` |
+| (others) | _none — pass via `--accuracy-system-prompt` if desired_ |
+
+The CLI's `--accuracy-system-prompt` flag always wins; the per-benchmark
+default is only consulted when the flag is unset. An empty-string default
+in metadata is treated as no default (aiperf doesn't inject a zero-length
+system message).
+
+## Available Benchmarks
+
+| Benchmark | Default grader | Default n-shots | Source |
+|---|---|---|---|
+| `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects) |
+| `aime` | `math` | 8 | `Maxwell-Jia/AIME_2024` (trt-llm reference, 8-shot CoT) |
+| `hellaswag` | `exact_match` | 10 | `Rowan/hellaswag` (trt-llm/DeepEval reference; one few-shot per unique activity_label) |
+| `bigbench` | `exact_match` | 3 | `lukaemon/bbh` (trt-llm/DeepEval reference; 27 subtasks, canonical CoT/non-CoT prompt files) |
+| `aime24` | `lighteval_expr` | 0 | `HuggingFaceH4/aime_2024` (trt-llm/lighteval reference, bare problem text, `expr_gold_metric`) |
+| `aime25` | `lighteval_expr` | 0 | `yentinglin/aime_2025` (trt-llm/lighteval reference, bare problem text, `expr_gold_metric`) |
+| `math_500` | `lighteval_latex` | 0 | `HuggingFaceH4/MATH-500` (trt-llm/lighteval reference, gold is full solution containing `\boxed{answer}`, `latex_gold_metric`) |
+| `gpqa_diamond` | `lighteval_gpqa` | 0 | `Idavidrein/gpqa` subset `gpqa_diamond` (trt-llm/lighteval reference, simple-evals template with SHA-256-seeded deterministic A/B/C/D shuffling, `gpqa_metric`) |
+| `lcb_codegeneration` | `code_execution` | 0 | `livecodebench/code_generation_lite` (trt-llm/lighteval reference; LCB test-case payload serialized into `BenchmarkProblem.ground_truth` as an orjson blob; `code_execution` grader runs the generated code against the bundled test cases via lighteval's `codegen_metrics`) |
+| `gsm8k` | `lighteval_gsm8k` | 0 | `gsm8k` subset `main` (trt-llm/lighteval reference, `gsm8k_leaderboard` config; prompt `"Question: {question}\nAnswer:"`, gold is the raw answer ending in `#### <number>`, `quasi_exact_match_gsm8k`) |
+
+### LiveCodeBench (lcb_codegeneration) version pinning
+
+LiveCodeBench publishes monthly snapshots of `livecodebench/code_generation_lite`
+as HuggingFace **configs** (e.g. `v4_v5`, `v6`, …). The loader pins a
+specific subset so accuracy numbers are reproducible across runs and
+branches; the default is `v4_v5` (the same subset lighteval's reference
+LCB task treats as its base). Override at runtime via:
+
+```bash
+export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or any published subset
+```
+
+The env var is read at every `load_problems` call (no module-reload needed)
+and is passed as the positional `name` arg to
+`load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)` —
+the standard HF config-name selector, matching lighteval's `hf_subset=`
+usage. `trust_remote_code=True` is set by the loader so LCB's
+dataset-loading script can execute on `datasets` v4+ (which dropped
+the implicit-trust default); this mirrors lighteval's reference path
+(`get_dataset_config_names(..., trust_remote_code=True)` plus
+`trust_dataset=True` on the task config). Nothing is bundled with the
+aiperf wheel — all subsets are fetched on-demand and cached under
+`~/.cache/huggingface/datasets/`.
+
+**Compatibility:** the positional-name API is the standard HF
+`load_dataset` shape, and the explicit `trust_remote_code=True` opt-in
+means the loader works on `datasets` v3 **and** v4+ without operator
+env-var fiddling. If a future LCB release renames or removes the
+pinned subset, the loader raises `RuntimeError` prefixed
+`lcb_codegeneration: failed to load …`; recover by bumping the env var:
+
+```bash
+export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or whatever LCB now ships
+```
+
+The remap also surfaces the installed `datasets` version when ≥ 4 in
+case you've explicitly disabled remote-code execution at the env level
+(`HF_DATASETS_TRUST_REMOTE_CODE=0`); the safest workaround there is to
+install a compatible `datasets`:
+
+```bash
+uv pip install 'datasets>=3.0,<4'
+```
+
+The error message names which condition fired (it includes the installed
+`datasets` version when ≥ 4) so operators get an actionable next step
+without reading the source.
+
 ## CLI Flags
 
 | Flag | Description | Default |

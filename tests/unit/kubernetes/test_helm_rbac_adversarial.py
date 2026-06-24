@@ -116,11 +116,16 @@ def _verbs(rule: K8sRule) -> set[str]:
 
 
 def _resources(rule: K8sRule) -> set[str]:
-    return {str(resource) for resource in _as_list(rule.get("resources", []), "rule resources")}
+    return {
+        str(resource)
+        for resource in _as_list(rule.get("resources", []), "rule resources")
+    }
 
 
 def _api_groups(rule: K8sRule) -> set[str]:
-    return {str(group) for group in _as_list(rule.get("apiGroups", []), "rule apiGroups")}
+    return {
+        str(group) for group in _as_list(rule.get("apiGroups", []), "rule apiGroups")
+    }
 
 
 def _metadata_name(resource: K8sDoc) -> str:
@@ -174,8 +179,12 @@ class TestOperatorClusterRoleLeastPrivilege:
         resource = _find(docs, kind, resource_name)
 
         for rule in _rules(resource):
-            assert "*" not in _api_groups(rule), f"{kind}/{resource_name} has wildcard API group"
-            assert "*" not in _resources(rule), f"{kind}/{resource_name} has wildcard resource"
+            assert "*" not in _api_groups(rule), (
+                f"{kind}/{resource_name} has wildcard API group"
+            )
+            assert "*" not in _resources(rule), (
+                f"{kind}/{resource_name} has wildcard resource"
+            )
             assert "*" not in _verbs(rule), f"{kind}/{resource_name} has wildcard verb"
 
     def test_clusterrole_jobsets_has_manage_verbs_but_status_is_read_only(self) -> None:
@@ -283,7 +292,9 @@ class TestBenchmarkRoleStatusPatchContract:
 class TestServiceAccountBindingContract:
     """Rendered subjects must bind the service accounts that Pods actually use."""
 
-    def test_custom_serviceaccount_name_propagates_to_deployment_and_binding(self) -> None:
+    def test_custom_serviceaccount_name_propagates_to_deployment_and_binding(
+        self,
+    ) -> None:
         docs = _helm_template(
             "--set",
             "serviceAccount.name=aiperf-operator-runner",
@@ -312,7 +323,9 @@ class TestServiceAccountBindingContract:
             "namespace": "observability-aiperf",
         }
 
-    def test_helm_test_crd_clusterrole_is_resource_name_scoped_to_aiperf_crds(self) -> None:
+    def test_helm_test_crd_clusterrole_is_resource_name_scoped_to_aiperf_crds(
+        self,
+    ) -> None:
         docs = _helm_template()
         test_role = _find(docs, "ClusterRole", "aiperf-operator-tests")
         rules = _rules(test_role)
@@ -332,7 +345,9 @@ class TestServiceAccountBindingContract:
             "aiperf-operator-test-health",
         ],
     )  # fmt: skip
-    def test_helm_test_pods_use_dedicated_test_serviceaccount(self, pod_name: str) -> None:
+    def test_helm_test_pods_use_dedicated_test_serviceaccount(
+        self, pod_name: str
+    ) -> None:
         docs = _helm_template()
         pod = _find(docs, "Pod", pod_name)
         pod_spec = _as_mapping(pod["spec"], "test pod spec")
@@ -361,10 +376,7 @@ class TestResultsServerNetworkBoundary:
         docs = _helm_template(*extra_args)
         service = _find(docs, "Service", "aiperf-operator")
         ports = _as_list(_as_mapping(service["spec"], "Service spec")["ports"], "ports")
-        port_names = {
-            _as_mapping(port, "Service port")["name"]
-            for port in ports
-        }
+        port_names = {_as_mapping(port, "Service port")["name"] for port in ports}
         assert port_names == expected_ports
         assert "dashboard" not in port_names
 
@@ -385,12 +397,16 @@ class TestResultsServerNetworkBoundary:
         all_ports = {
             _as_mapping(port, "NetworkPolicy port")["port"]
             for rule in ingress
-            for port in _as_list(_as_mapping(rule, "ingress rule").get("ports", []), "ports")
+            for port in _as_list(
+                _as_mapping(rule, "ingress rule").get("ports", []), "ports"
+            )
         }
         assert all_ports == {8080, 8081, 9090}
         assert 8099 not in all_ports
 
-    def test_networkpolicy_allows_results_from_release_and_benchmark_namespaces(self) -> None:
+    def test_networkpolicy_allows_results_from_release_and_benchmark_namespaces(
+        self,
+    ) -> None:
         docs = _helm_template(
             "--set",
             "networkPolicy.enabled=true",

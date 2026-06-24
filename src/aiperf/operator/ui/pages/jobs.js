@@ -179,7 +179,7 @@ export function Jobs() {
             const key = f.value ? f.label.toLowerCase() : null;
             const active = (phaseKey ?? null) === key;
             return html`
-              <button
+              <button type="button"
                 key=${f.label}
                 role="tab"
                 aria-pressed=${active}
@@ -305,7 +305,7 @@ export function Jobs() {
           </select>
         `}
         ${hasFilters && html`
-          <button
+          <button type="button"
             onclick=${clearFilters}
             style=${'padding: var(--space-2) var(--space-3); background: transparent; border: 1px solid ' + palette.surface0 + '; border-radius: var(--radius-md); color: ' + palette.overlay0 + '; cursor: pointer; font-size: var(--font-size-sm)'}
           >
@@ -338,7 +338,7 @@ export function Jobs() {
       ${!firstLoad && !loadError && filtered.length === 0 && localJobs.length > 0 && html`
         <div class="card" data-testid="jobs-empty-filtered" style="text-align: center; padding: var(--space-6)">
           <p style=${'color:' + palette.text + ';margin:0 0 var(--space-3) 0'}>No jobs match these filters.</p>
-          <button
+          <button type="button"
             onclick=${clearFilters}
             style=${'padding: var(--space-2) var(--space-4); background: ' + palette.surface0 + '; border: 1px solid ' + palette.surface1 + '; border-radius: var(--radius-md); color: ' + palette.text + '; cursor: pointer; font-size: var(--font-size-sm)'}
           >

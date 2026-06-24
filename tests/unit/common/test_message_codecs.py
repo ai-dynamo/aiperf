@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.channel_codecs import RECORDS_CODEC
-from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.message_codecs import (
     MsgspecStructCodec,
     codec_cache_key,
     get_message_codec,
 )
+from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsBatchWireMessage,

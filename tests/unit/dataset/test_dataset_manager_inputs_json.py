@@ -15,7 +15,6 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import InputsFile, RequestInfo, RequestRecord, SessionPayloads
 from aiperf.common.models.base_models import _msgspec_dec_hook
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.dataset.loader.inputs_json import InputsJsonPayloadLoader
 from aiperf.plugin import plugins

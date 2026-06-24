@@ -10,7 +10,15 @@ import pytest
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.dataset.composer.public import PublicDatasetComposer
-from aiperf.plugin.enums import PublicDatasetType  # dynamic enum (has AIMO etc.)
+from aiperf.dataset.loader.hf_conversation import HFConversationDatasetLoader
+from aiperf.dataset.loader.hf_instruction_response import (
+    HFInstructionResponseDatasetLoader,
+)
+from aiperf.dataset.loader.sharegpt import ShareGPTLoader
+from aiperf.plugin.enums import (  # PublicDatasetType is a dynamic enum (has AIMO etc.)
+    DatasetSamplingStrategy,
+    PublicDatasetType,
+)
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["test-model"],
@@ -79,7 +87,9 @@ class TestPublicDatasetComposerInit:
 class TestBuildLoaderKwargs:
     def test_hf_kwargs_populated_from_metadata(self, aimo_run):
         composer = PublicDatasetComposer(aimo_run, None)
-        kwargs = composer._build_loader_kwargs("aimo")
+        kwargs = composer._build_loader_kwargs(
+            PublicDatasetType.AIMO, HFInstructionResponseDatasetLoader
+        )
 
         assert kwargs["hf_dataset_name"] == "AI-MO/NuminaMath-TIR"
         assert kwargs["hf_split"] == "train"
@@ -87,7 +97,9 @@ class TestBuildLoaderKwargs:
 
     def test_no_subset_when_metadata_lacks_it(self, aimo_run):
         composer = PublicDatasetComposer(aimo_run, None)
-        kwargs = composer._build_loader_kwargs("aimo")
+        kwargs = composer._build_loader_kwargs(
+            PublicDatasetType.AIMO, HFInstructionResponseDatasetLoader
+        )
         assert "hf_subset" not in kwargs
 
     def test_no_kwargs_when_no_hf_metadata(self, aimo_run):
@@ -99,38 +111,57 @@ class TestBuildLoaderKwargs:
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=PublicDatasetLoaderMetadata(),
         ):
-            kwargs = composer._build_loader_kwargs("aimo")
+            kwargs = composer._build_loader_kwargs(
+                PublicDatasetType.AIMO, HFInstructionResponseDatasetLoader
+            )
         assert kwargs == {}
 
-    def test_category_forwarded_when_set(self, aimo_run):
+    def test_multi_turn_forwarded_to_supporting_loader(self, aimo_run):
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
         composer = PublicDatasetComposer(aimo_run, None)
         with patch(
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=PublicDatasetLoaderMetadata(
-                hf_dataset_name="nvidia/SPEED-Bench",
-                hf_split="test",
-                hf_subset="qualitative",
-                category="coding",
+                hf_dataset_name="test/data",
+                hf_split="train",
+                conversation_column="conversation",
+                multi_turn=True,
             ),
         ):
-            kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
-        assert kwargs["category"] == "coding"
+            kwargs = composer._build_loader_kwargs(
+                PublicDatasetType.AIMO, HFConversationDatasetLoader
+            )
+        assert kwargs["multi_turn"] is True
 
-    def test_no_category_in_kwargs_when_none(self, aimo_run):
+    def test_multi_turn_raises_for_unsupported_loader(self, aimo_run):
+        """A loader that doesn't declare multi_turn on its __init__ must not
+        silently swallow the kwarg via **kwargs; composer should refuse."""
+        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+
+        composer = PublicDatasetComposer(aimo_run, None)
+        with (
+            patch(
+                "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+                return_value=PublicDatasetLoaderMetadata(multi_turn=True),
+            ),
+            pytest.raises(ValueError, match="does not support the 'multi_turn'"),
+        ):
+            composer._build_loader_kwargs(PublicDatasetType.AIMO, ShareGPTLoader)
+
+    def test_multi_turn_false_does_not_validate_loader_support(self, aimo_run):
+        """multi_turn=False is the default; no need to gate it on loader support."""
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
         composer = PublicDatasetComposer(aimo_run, None)
         with patch(
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=PublicDatasetLoaderMetadata(
-                hf_dataset_name="nvidia/SPEED-Bench",
-                hf_split="test",
-            ),
+            return_value=PublicDatasetLoaderMetadata(multi_turn=False),
         ):
-            kwargs = composer._build_loader_kwargs(PublicDatasetType.AIMO)
-        assert "category" not in kwargs
+            kwargs = composer._build_loader_kwargs(
+                PublicDatasetType.AIMO, ShareGPTLoader
+            )
+        assert "multi_turn" not in kwargs
 
 
 @pytest.mark.asyncio
@@ -157,6 +188,8 @@ class TestCreateDatasetAsync:
                     hf_split="train",
                     hf_subset=None,
                     prompt_column="problem",
+                    multi_turn=False,
+                    streaming=False,
                 ),
             ),
         ):
@@ -167,3 +200,41 @@ class TestCreateDatasetAsync:
         for conv in result:
             for turn in conv.turns:
                 assert turn.model == "test-model"
+
+    async def test_sets_sampling_strategy_from_loader(self, aimo_run):
+        # The composer no longer mutates the v1 cli_config sampling strategy;
+        # this assertion was a v1 reverse-flow artifact. Verify instead that
+        # create_dataset_async runs to completion when the user did not
+        # configure a sampling strategy.
+        conversations = _make_conversations(1)
+        mock_loader = AsyncMock()
+        mock_loader.load_dataset = AsyncMock(return_value={"dataset": []})
+        mock_loader.convert_to_conversations = AsyncMock(return_value=conversations)
+
+        mock_loader_class = MagicMock()
+        mock_loader_class.get_preferred_sampling_strategy.return_value = (
+            DatasetSamplingStrategy.SEQUENTIAL
+        )
+        mock_loader_class.return_value = mock_loader
+
+        composer = PublicDatasetComposer(aimo_run, None)
+        with (
+            patch(
+                "aiperf.dataset.composer.public.plugins.get_class",
+                return_value=mock_loader_class,
+            ),
+            patch(
+                "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+                return_value=MagicMock(
+                    hf_dataset_name="test/dataset",
+                    hf_split="train",
+                    hf_subset=None,
+                    prompt_column="problem",
+                    multi_turn=False,
+                    streaming=False,
+                ),
+            ),
+        ):
+            result = await composer.create_dataset_async()
+
+        assert len(result) == 1

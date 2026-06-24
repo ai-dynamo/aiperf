@@ -432,7 +432,9 @@ class TestCompletionResultsAvailableGating:
         assert conditions[ConditionType.FAILED.value]["status"] == "False"
         assert patch.status["summary"]["request_latency"]["p99"] == 900.2
         captured.completed.assert_called_once()
-        captured.delete_jobset.assert_awaited_once_with(_FIXTURE_NAMESPACE, _FIXTURE_JOBSET)
+        captured.delete_jobset.assert_awaited_once_with(
+            _FIXTURE_NAMESPACE, _FIXTURE_JOBSET
+        )
 
     @pytest.mark.asyncio
     async def test_handle_completion_fresh_transient_error_names_job_and_retries(
@@ -462,8 +464,12 @@ class TestCompletionResultsAvailableGating:
         ):
             from datetime import datetime, timezone
 
-            datetime_mock.now.return_value = datetime(2024, 4, 25, 17, 2, 5, tzinfo=timezone.utc)
-            datetime_mock.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            datetime_mock.now.return_value = datetime(
+                2024, 4, 25, 17, 2, 5, tzinfo=timezone.utc
+            )
+            datetime_mock.side_effect = lambda *args, **kwargs: datetime(
+                *args, **kwargs
+            )
             with pytest.raises(
                 kopf.TemporaryError,
                 match=rf"{_FIXTURE_NAMESPACE}/{_FIXTURE_JOB_ID}.*ConnectionResetError",
@@ -473,7 +479,10 @@ class TestCompletionResultsAvailableGating:
                     namespace=_FIXTURE_NAMESPACE,
                     jobset_name=_FIXTURE_JOBSET,
                     job_id=_FIXTURE_JOB_ID,
-                    status={"workers": {"total": 4}, "startTime": "2026-05-17T00:00:00Z"},
+                    status={
+                        "workers": {"total": 4},
+                        "startTime": "2026-05-17T00:00:00Z",
+                    },
                     sb=sb,
                     result=result,
                 )
@@ -524,7 +533,11 @@ class TestCompletionNonFiniteMetricBoundary:
             metrics={
                 "metrics": {
                     "request_throughput": {"avg": float("nan"), "unit": "req/s"},
-                    "request_latency": {"avg": float("inf"), "p99": 900.2, "unit": "ms"},
+                    "request_latency": {
+                        "avg": float("inf"),
+                        "p99": 900.2,
+                        "unit": "ms",
+                    },
                 }
             },
             downloaded=["profile_export_aiperf.json", "profile_export_aiperf.csv"],

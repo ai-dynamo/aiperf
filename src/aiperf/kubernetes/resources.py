@@ -14,8 +14,8 @@ from pydantic import Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config import AIPerfConfig
-from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.config.deployment import DeploymentConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.kubernetes.constants import (
     DEFAULT_BENCHMARK_NAMESPACE,
     AIPerfLabels,

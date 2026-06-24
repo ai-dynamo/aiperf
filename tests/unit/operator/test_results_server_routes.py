@@ -119,9 +119,8 @@ async def test_create_job_route_allows_configured_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The configured bearer token authorizes job creation before handler logic runs."""
-    from aiperf.operator.routers.mutating_auth import mutating_route_dependencies
-
     from aiperf.operator.routers.jobs import create_jobs_router
+    from aiperf.operator.routers.mutating_auth import mutating_route_dependencies
 
     monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "true")
     monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "correct-token")
@@ -151,9 +150,8 @@ async def test_cancel_job_route_allows_configured_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The configured bearer token authorizes job cancellation before handler logic runs."""
-    from aiperf.operator.routers.mutating_auth import mutating_route_dependencies
-
     from aiperf.operator.routers.jobs import create_jobs_router
+    from aiperf.operator.routers.mutating_auth import mutating_route_dependencies
 
     monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "true")
     monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "correct-token")

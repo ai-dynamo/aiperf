@@ -168,27 +168,37 @@ class TestDynamoManifestDisaggregated:
         assert "VllmDecodeWorker" in services
         assert "VllmPrefillWorker" in services
 
-    def test_decode_worker_has_decode_flag(self, kubectl: KubectlClient) -> None:
+    def test_decode_worker_has_decode_role(self, kubectl: KubectlClient) -> None:
+        # v1.1.0+ disagg workers express their role via --disaggregation-mode
+        # instead of the retired --is-decode-worker flag.
         config = DynamoConfig(mode=DynamoMode.DISAGGREGATED)
         deployer = DynamoDeployer(kubectl, config)
         docs = _parse_manifest(deployer)
 
         worker = docs[1]["spec"]["services"]["VllmDecodeWorker"]
         args = worker["extraPodSpec"]["mainContainer"]["args"]
-        assert "--is-decode-worker" in args
+        assert "--is-decode-worker" not in args
+        assert "--disaggregation-mode" in args
+        assert args[args.index("--disaggregation-mode") + 1] == "decode"
         assert worker["subComponentType"] == "decode"
 
-    def test_prefill_worker_has_prefill_flag(self, kubectl: KubectlClient) -> None:
+    def test_prefill_worker_has_prefill_role(self, kubectl: KubectlClient) -> None:
+        # v1.1.0+ disagg workers express their role via --disaggregation-mode
+        # instead of the retired --is-prefill-worker flag.
         config = DynamoConfig(mode=DynamoMode.DISAGGREGATED)
         deployer = DynamoDeployer(kubectl, config)
         docs = _parse_manifest(deployer)
 
         worker = docs[1]["spec"]["services"]["VllmPrefillWorker"]
         args = worker["extraPodSpec"]["mainContainer"]["args"]
-        assert "--is-prefill-worker" in args
+        assert "--is-prefill-worker" not in args
+        assert "--disaggregation-mode" in args
+        assert args[args.index("--disaggregation-mode") + 1] == "prefill"
         assert worker["subComponentType"] == "prefill"
 
     def test_connectors_on_prefill_worker(self, kubectl: KubectlClient) -> None:
+        # "nixl" is handled by --kv-transfer-config (NixlConnector) and is
+        # stripped from the legacy --connector list; only "kvbm" remains.
         config = DynamoConfig(
             mode=DynamoMode.DISAGGREGATED,
             connectors=["kvbm", "nixl"],
@@ -201,7 +211,7 @@ class TestDynamoManifestDisaggregated:
         assert "--connector" in args
         idx = args.index("--connector")
         assert args[idx + 1] == "kvbm"
-        assert args[idx + 2] == "nixl"
+        assert "nixl" not in args[idx + 1 :]
 
     def test_kvbm_cpu_cache_on_prefill(self, kubectl: KubectlClient) -> None:
         config = DynamoConfig(

@@ -309,6 +309,9 @@ export function Leaderboard() {
                   return html`
                     <tr
                       key=${entry.job_id}
+                      role="row"
+                      tabindex=${canNavigate ? '0' : undefined}
+                      onkeydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToJob(); } }}
                       onclick=${goToJob}
                       onmouseenter=${(e) => { if (canNavigate) e.currentTarget.style.background = hoverBg; }}
                       onmouseleave=${(e) => { if (canNavigate) e.currentTarget.style.background = baseBg; }}

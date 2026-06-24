@@ -97,7 +97,7 @@ def test_api_fetch_returns_null_for_204_without_reading_json_body() -> None:
           };
         };
 
-        const value = await api.cancelJob('team/ns', 'bench/name');
+        const value = await api.getCluster();
         console.log(JSON.stringify({value, calls}));
         """
     )
@@ -106,8 +106,7 @@ def test_api_fetch_returns_null_for_204_without_reading_json_body() -> None:
         "value": None,
         "calls": [
             {
-                "url": "/api/v1/jobs/team%2Fns/bench%2Fname/cancel",
-                "method": "POST",
+                "url": "/api/v1/cluster",
             }
         ],
     }

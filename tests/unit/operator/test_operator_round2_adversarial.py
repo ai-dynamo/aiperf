@@ -370,8 +370,35 @@ class TestConcurrentFanoutStress:
         apiserver level (same key=value patch). What we DO pin is "no
         crashes, all complete, setter awaited >=1".
         """
+        from aiperf.kubernetes.constants import AIPerfLabels
+        from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
+
         new = [{"type": "Completed", "status": "True"}]
-        body = {"metadata": {"name": "ajob", "annotations": {}}, "status": {}}
+        body = {
+            "metadata": {"name": "ajob", "uid": "uid-ajob", "annotations": {}},
+            "status": {},
+        }
+        # handle_jobset_conditions verifies AIPerfJob ownership via labels +
+        # ownerReferences before annotating; supply a trusted JobSet body so the
+        # 50 concurrent fires actually reach the setter (not the trust-check
+        # early return).
+        trusted_jobset_body = {
+            "metadata": {
+                "name": "aiperf-ajob",
+                "labels": {
+                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+                    AIPerfLabels.JOB_ID: "ajob",
+                },
+                "ownerReferences": [
+                    {
+                        "apiVersion": AIPERF_JOB_API_VERSION,
+                        "kind": "AIPerfJob",
+                        "name": "ajob",
+                        "uid": "uid-ajob",
+                    }
+                ],
+            }
+        }
         with (
             mock_patch(
                 "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
@@ -385,7 +412,11 @@ class TestConcurrentFanoutStress:
             await asyncio.gather(
                 *(
                     handle_jobset_conditions(
-                        old=[], new=new, namespace="ns", jobset_name="aiperf-ajob"
+                        old=[],
+                        new=new,
+                        namespace="ns",
+                        jobset_name="aiperf-ajob",
+                        jobset_body=trusted_jobset_body,
                     )
                     for _ in range(50)
                 )
@@ -514,8 +545,20 @@ class TestCompletionClaimRacesCounter:
                 "annotations": {Annotations.COMPLETION_CLAIMED: "2026-01-01T00:00:00Z"},
             },
         }
+
+        # The body annotation no longer short-circuits (it is user-writable);
+        # the atomic patch is attempted and rejected with a 422 because the
+        # annotation is genuinely already set, which we simulate here. The lost
+        # race still increments the counter.
+        async def fake_submit(*_a: Any, **_kw: Any) -> bool:
+            return False
+
         before = _race_counter()
-        result = await try_claim_completion("ns", "j", body)
+        with mock_patch(
+            "aiperf.operator.client_cache._submit_claim_patch",
+            side_effect=fake_submit,
+        ):
+            result = await try_claim_completion("ns", "j", body)
         after = _race_counter()
 
         assert result is False

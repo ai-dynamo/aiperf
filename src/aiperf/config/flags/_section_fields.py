@@ -115,6 +115,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "synthesis_prefix_len_multiplier",
         "synthesis_prefix_root_multiplier",
         "synthesis_prompt_len_multiplier",
+        "synthesis_output_len_multiplier",
         "synthesis_max_isl",
         "synthesis_max_osl",
     }
@@ -215,6 +216,7 @@ SWEEPING_FIELDS: frozenset[str] = frozenset(
         "search_random_seed",
         "search_recipe",
         "search_sla",
+        "search_sla_tier",
         "search_space",
         "search_stat",
         "search_style",

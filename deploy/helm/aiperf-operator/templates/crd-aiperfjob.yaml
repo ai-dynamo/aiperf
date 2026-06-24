@@ -549,6 +549,24 @@ spec:
                         items:
                           type: string
                         description: Artifact glob overrides for MLflow upload.
+                  wandb:
+                    type: object
+                    description: Weights & Biases run-upload configuration.
+                    properties:
+                      project:
+                        type: string
+                        description: Weights & Biases project name. Setting this enables wandb export.
+                      entity:
+                        type: string
+                        description: Weights & Biases entity (team or user). Defaults to the API key's default entity.
+                      runName:
+                        type: string
+                        description: Weights & Biases run name.
+                      tags:
+                        type: array
+                        items:
+                          type: string
+                        description: Additional Weights & Biases run tags to attach on upload.
                   runtime:
                     type: object
                     description: Runtime configuration for worker processes and inter-process communication.
@@ -664,6 +682,7 @@ spec:
                         - aime24
                         - aime25
                         - math_500
+                        - gsm8k
                         - gpqa_diamond
                         - lcb_codegeneration
                         description: 'Accuracy benchmark to run. When set, enables accuracy benchmarking alongside performance
@@ -697,6 +716,7 @@ spec:
                         - lighteval_expr
                         - lighteval_latex
                         - lighteval_gpqa
+                        - lighteval_gsm8k
                         description: Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice,
                           code_execution). If not set, uses the benchmark's default grader.
                       systemPrompt:

@@ -792,12 +792,12 @@ def _make_full_dag_metadata() -> DatasetMetadata:
 def test_dataset_metadata_orjson_roundtrip_idempotent():
     """orjson.dumps(to_builtins) then orjson.loads -> convert yields an equal
     DatasetMetadata."""
+    import msgspec
+
     from aiperf.common.models.base_models import (
         _msgspec_dec_hook,
         _msgspec_enc_hook,
     )
-
-    import msgspec
 
     m = _make_full_dag_metadata()
     raw = orjson.dumps(msgspec.to_builtins(m, enc_hook=_msgspec_enc_hook))
@@ -809,12 +809,12 @@ def test_dataset_metadata_orjson_roundtrip_idempotent():
 def test_dataset_metadata_stdlib_json_roundtrip_idempotent():
     """stdlib json.dumps -> json.loads -> msgspec.convert yields an equal
     DatasetMetadata."""
+    import msgspec
+
     from aiperf.common.models.base_models import (
         _msgspec_dec_hook,
         _msgspec_enc_hook,
     )
-
-    import msgspec
 
     m = _make_full_dag_metadata()
     raw = json.dumps(msgspec.to_builtins(m, enc_hook=_msgspec_enc_hook))
@@ -827,12 +827,12 @@ def test_dataset_metadata_orjson_dump_loads_with_stdlib_json():
     """Encoding compatibility: orjson-serialized bytes must be parseable by
     stdlib json (and the reverse). Catches any orjson-only escape forms
     that would break interop."""
+    import msgspec
+
     from aiperf.common.models.base_models import (
         _msgspec_dec_hook,
         _msgspec_enc_hook,
     )
-
-    import msgspec
 
     m = _make_full_dag_metadata()
     orjson_bytes = orjson.dumps(msgspec.to_builtins(m, enc_hook=_msgspec_enc_hook))
@@ -843,12 +843,12 @@ def test_dataset_metadata_orjson_dump_loads_with_stdlib_json():
 
 def test_dataset_metadata_stdlib_dump_loads_with_orjson():
     """Reverse direction: stdlib JSON output must orjson-decode equally."""
+    import msgspec
+
     from aiperf.common.models.base_models import (
         _msgspec_dec_hook,
         _msgspec_enc_hook,
     )
-
-    import msgspec
 
     m = _make_full_dag_metadata()
     stdlib_bytes = json.dumps(

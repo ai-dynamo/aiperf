@@ -50,9 +50,7 @@ spec:
     endpoint:
       urls: ["http://server:8000/v1/chat/completions"]
       type: chat
-    models:
-      items:
-      - name: meta-llama/Llama-3.1-8B-Instruct
+    models: [meta-llama/Llama-3.1-8B-Instruct]
     datasets:
     - name: main
       type: synthetic

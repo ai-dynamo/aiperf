@@ -11,12 +11,14 @@ This module provides validated models for:
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
 from aiperf.common.enums import SweepMode
+from aiperf.common.finite import FiniteFloat, is_finite_value
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import DeploymentConfig
@@ -108,8 +110,8 @@ class PhaseProgress(K8sCamelModel):
     requests_in_flight: int = Field(
         description="Number of requests currently awaiting a response"
     )
-    requests_per_second: float = Field(description="Current request throughput")
-    requests_progress_percent: float = Field(
+    requests_per_second: FiniteFloat = Field(description="Current request throughput")
+    requests_progress_percent: FiniteFloat = Field(
         description="Percentage of total requests completed (0.0 to 100.0)"
     )
     sessions_sent: int = Field(description="Number of multi-turn sessions dispatched")
@@ -126,8 +128,8 @@ class PhaseProgress(K8sCamelModel):
         description="Number of individual records completed successfully"
     )
     records_error: int = Field(description="Number of individual records that failed")
-    records_per_second: float = Field(description="Current record throughput")
-    records_progress_percent: float = Field(
+    records_per_second: FiniteFloat = Field(description="Current record throughput")
+    records_progress_percent: FiniteFloat = Field(
         description="Percentage of total records completed (0.0 to 100.0)"
     )
     sending_complete: bool = Field(
@@ -158,10 +160,10 @@ class PhaseProgress(K8sCamelModel):
     records_eta_seconds: int | None = Field(
         default=None, description="Estimated seconds until all records complete"
     )
-    expected_duration_seconds: float | None = Field(
+    expected_duration_seconds: FiniteFloat | None = Field(
         default=None, description="Expected total duration of the phase in seconds"
     )
-    elapsed_time_seconds: float | None = Field(
+    elapsed_time_seconds: FiniteFloat | None = Field(
         default=None, description="Wall-clock time elapsed since the phase started"
     )
 
@@ -201,7 +203,9 @@ class MetricsSummary:
             return cls()
         by_tag = _normalize_to_by_tag(metrics)
         out: dict[str, Any] = {
-            tag: by_tag[tag] for tag in _SUMMARY_TAGS if tag in by_tag
+            tag: by_tag[tag]
+            for tag in _SUMMARY_TAGS
+            if tag in by_tag and _metric_dict_is_finite(by_tag[tag])
         }
         out.update(_derived_scalars(metrics, by_tag))
         return cls(data=out)
@@ -316,6 +320,26 @@ def _normalize_to_by_tag(metrics: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {}
 
 
+def _metric_dict_is_finite(metric: dict[str, Any]) -> bool:
+    """Return True unless a numeric stat in the metric dict is NaN/inf.
+
+    A summary tag whose headline stats carry non-finite values must not be
+    mirrored into ``status.summary`` — orjson would serialize NaN/inf as
+    JSON ``null`` and the dashboard would render garbage. Non-numeric values
+    (``unit`` strings, nested dicts) are ignored; only actual float/int stats
+    gate the tag. An ``avg`` of ``inf`` drops the whole tag rather than
+    writing a half-scrubbed dict.
+    """
+    for value in metric.values():
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and not is_finite_value(value)
+        ):
+            return False
+    return True
+
+
 def _derived_scalars(
     metrics: dict[str, Any], by_tag: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
@@ -323,16 +347,17 @@ def _derived_scalars(
 
     Prefers the live counts (``request_count``/``error_request_count`` metric
     tags); falls back to the top-level scalars ``profile_export_aiperf.json``
-    keeps for completed runs.
+    keeps for completed runs. Non-finite derived values (e.g. an
+    ``error_request_count`` of NaN) are dropped rather than written.
     """
     out: dict[str, Any] = {}
     rc = (by_tag.get("request_count") or {}).get("avg")
     ec = (by_tag.get("error_request_count") or {}).get("avg")
     if isinstance(rc, (int, float)) and rc > 0:
         out["total_requests"] = int(rc)
-        if isinstance(ec, (int, float)):
+        if is_finite_value(ec):
             out["error_rate"] = float(ec) / float(rc)
-    if "error_rate" not in out and isinstance(metrics.get("error_rate"), (int, float)):
+    if "error_rate" not in out and is_finite_value(metrics.get("error_rate")):
         out["error_rate"] = float(metrics["error_rate"])
     if "total_requests" not in out and isinstance(
         metrics.get("request_count"), (int, float)
@@ -470,6 +495,26 @@ class AIPerfSweepSpec(AIPerfWorkloadSpec):
                 "AIPerfSweep.spec.sweep is required; set a `sweep:` block "
                 "(grid or scenarios). For a single benchmark, use AIPerfJob."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_non_finite_sweep_knobs(self) -> AIPerfSweepSpec:
+        """Reject NaN/inf on scalar sweep knobs at the CRD-spec boundary.
+
+        The underlying sweep-config models (``aiperf.config.sweep.config``)
+        type these as plain ``float`` with ``ge=0``/``gt=0`` bounds, which inf
+        satisfies (``inf >= 0`` is True) — so a non-finite ``cooldownSeconds``,
+        ``plateauThreshold``, or ``slaWarmupSeconds`` would otherwise survive
+        into ``status``/the CRD where orjson coerces it to JSON ``null``.
+        Validate here so an AIPerfSweep CR with a non-finite knob is rejected
+        before the operator ever acts on it.
+        """
+        if self.sweep is None:
+            return self
+        for knob in ("cooldown_seconds", "plateau_threshold", "sla_warmup_seconds"):
+            value = getattr(self.sweep, knob, None)
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"sweep.{knob} must be finite, got {value!r}")
         return self
 
     @model_validator(mode="after")

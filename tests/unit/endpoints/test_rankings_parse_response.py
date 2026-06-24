@@ -14,7 +14,7 @@ from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
 from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config
+from tests.unit.endpoints.conftest import _wrap_model_endpoint, create_config
 
 
 def mock_response_nim(rankings):

@@ -234,6 +234,21 @@ def test_list_runs_malformed_entries_and_bad_epochs_are_ignored(
     assert all(run.file_count == 1 for run in runs)
 
 
+def _poison_latest_pointer(base: Path, namespace: str, job_id: str, value: str) -> None:
+    """Write a garbage value straight into latest.txt, bypassing write_latest.
+
+    ``write_latest`` now rejects non-epoch values (the write-time guard tested
+    in ``test_latest_pointer_adversarial.py``). These read-side tests need to
+    simulate an already-corrupted pointer on disk — e.g. left by an older
+    operator build or a manual edit — so they write the file directly and then
+    assert the READ path (``list_runs`` / ``resolve_run_dir``) refuses to trust
+    it. Defense in depth: both the writer and the reader reject junk.
+    """
+    pointer = results_layout.job_dir(base, namespace, job_id) / "latest.txt"
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(value)
+
+
 def test_list_runs_corrupt_latest_pointer_lists_disk_runs_without_false_latest(
     tmp_path: Path,
 ) -> None:
@@ -241,7 +256,7 @@ def test_list_runs_corrupt_latest_pointer_lists_disk_runs_without_false_latest(
     base = tmp_path / "results"
     _make_run_dir(base, epoch=_EPOCH_OLD)
     _make_run_dir(base, epoch=_EPOCH_NEW)
-    results_layout.write_latest(
+    _poison_latest_pointer(
         base, "bench-prod", "llama-results-7f2a", "not-an-epoch-anymore"
     )
 
@@ -259,7 +274,7 @@ def test_resolve_run_dir_corrupt_latest_path_traversal_returns_none(
     _make_run_dir(base, epoch=_EPOCH_NEW)
     escape = base / "bench-prod" / "escaped-results-9d2c"
     escape.mkdir(parents=True)
-    results_layout.write_latest(
+    _poison_latest_pointer(
         base, "bench-prod", "llama-results-7f2a", "../escaped-results-9d2c"
     )
 

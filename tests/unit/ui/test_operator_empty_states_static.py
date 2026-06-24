@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 UI_ROOT = Path(__file__).resolve().parents[3] / "src" / "aiperf" / "operator" / "ui"
 PAGES = UI_ROOT / "pages"
 
@@ -49,7 +47,9 @@ def test_jobs_page_distinguishes_loading_error_real_empty_and_filtered_empty() -
     assert "Clear filters" in source
 
 
-def test_sweeps_page_distinguishes_loading_error_real_empty_and_filtered_empty() -> None:
+def test_sweeps_page_distinguishes_loading_error_real_empty_and_filtered_empty() -> (
+    None
+):
     source = _source("sweeps.js")
 
     assert "firstLoad" in source
@@ -65,7 +65,9 @@ def test_sweeps_page_distinguishes_loading_error_real_empty_and_filtered_empty()
     assert "No sweeps yet." in source
 
 
-def test_leaderboard_page_has_metric_loading_error_real_empty_and_filtered_empty_copy() -> None:
+def test_leaderboard_page_has_metric_loading_error_real_empty_and_filtered_empty_copy() -> (
+    None
+):
     source = _source("leaderboard.js")
 
     assert "setLoading(true)" in source
@@ -78,7 +80,9 @@ def test_leaderboard_page_has_metric_loading_error_real_empty_and_filtered_empty
     assert "Clear filters" in source
 
 
-def test_history_page_has_metric_loading_error_real_empty_and_filtered_empty_copy() -> None:
+def test_history_page_has_metric_loading_error_real_empty_and_filtered_empty_copy() -> (
+    None
+):
     source = _source("history.js")
 
     assert "setLoading(true)" in source
@@ -99,7 +103,10 @@ def test_compare_page_covers_selector_and_results_empty_loading_error_states() -
     assert "compare-jobs-loading" in source
     assert "jobsError" in source
     assert "No completed jobs found." in source
-    assert "No completed jobs yet. Run an AIPerfJob to populate the comparison list." in source
+    assert (
+        "No completed jobs yet. Run an AIPerfJob to populate the comparison list."
+        in source
+    )
     assert "Select 2 or more jobs from the list to compare them." in source
     assert "Select at least one more job" in source
     assert "Running comparison…" in source
@@ -108,7 +115,10 @@ def test_compare_page_covers_selector_and_results_empty_loading_error_states() -
     assert "No comparable metrics returned for the selected runs." in source
     assert "compare-no-entries" in source
     assert "Cluster has no stored runs" in source
-    assert "No clusters visible. Toggle the chips above to bring runs back into the chart." in source
+    assert (
+        "No clusters visible. Toggle the chips above to bring runs back into the chart."
+        in source
+    )
 
 
 def test_compare_selector_distinguishes_real_empty_from_filtered_empty_copy() -> None:
@@ -119,7 +129,9 @@ def test_compare_selector_distinguishes_real_empty_from_filtered_empty_copy() ->
     assert "No completed jobs match these filters." in source
 
 
-def test_job_detail_has_initial_error_loading_artifact_loading_and_stale_data_resets() -> None:
+def test_job_detail_has_initial_error_loading_artifact_loading_and_stale_data_resets() -> (
+    None
+):
     source = _source("job-detail.js")
 
     assert "!job && !error" in source
@@ -142,7 +154,9 @@ def test_job_detail_has_initial_error_loading_artifact_loading_and_stale_data_re
     assert "Per-request records could not be read." in source
 
 
-def test_sweep_detail_has_initial_error_loading_pending_child_and_artifact_states() -> None:
+def test_sweep_detail_has_initial_error_loading_pending_child_and_artifact_states() -> (
+    None
+):
     source = _source("sweep-detail.js")
 
     assert "if (error)" in source
@@ -153,14 +167,21 @@ def test_sweep_detail_has_initial_error_loading_pending_child_and_artifact_state
     assert "setArtifactFilesLoaded(false);" in source
     assert "sweep-detail-live-stale" in source
     assert "Live updates paused" in source
-    assert "waiting: 'Waiting for a sweep epoch before showing aggregate artifacts.'" in source
-    assert "completed: 'No aggregate artifacts available for this sweep epoch.'" in source
+    assert (
+        "waiting: 'Waiting for a sweep epoch before showing aggregate artifacts.'"
+        in source
+    )
+    assert (
+        "completed: 'No aggregate artifacts available for this sweep epoch.'" in source
+    )
     assert "running: 'No aggregate artifacts yet.'" in source
     assert "Sweep is being initialized — children will appear here shortly." in source
     assert "No children persisted for this epoch yet." in source
 
 
-def test_launch_page_has_no_cold_loading_state_but_covers_submit_parse_error_http_error_and_success() -> None:
+def test_launch_page_has_no_cold_loading_state_but_covers_submit_parse_error_http_error_and_success() -> (
+    None
+):
     source = _source("launch.js")
 
     assert "useState(() => buildTemplates())" in source

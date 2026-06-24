@@ -50,7 +50,9 @@ def _rule_bodies(selector: str, *, css: str | None = None) -> list[str]:
     ]
 
 
-def _assert_rule_contains(selector: str, fragments: set[str], *, css: str | None = None) -> None:
+def _assert_rule_contains(
+    selector: str, fragments: set[str], *, css: str | None = None
+) -> None:
     bodies = _rule_bodies(selector, css=css)
     assert bodies, selector
     compact_bodies = [body.replace("\n", " ") for body in bodies]
@@ -81,7 +83,7 @@ def _media_block(query_fragment: str) -> str:
 def test_detail_split_collapses_from_two_columns_to_one_column() -> None:
     _assert_source_references(
         _PAGES / "job-detail.js",
-        {'class="detail-split"', '<${ChartWrapper}', '<${DiagnosticsPanel}'},
+        {'class="detail-split"', "<${ChartWrapper}", "<${DiagnosticsPanel}"},
     )
     _assert_rule_contains(
         ".detail-split",
@@ -173,7 +175,7 @@ def test_log_strip_is_app_level_and_height_bounded() -> None:
     _assert_source_references(
         _COMPONENTS / "log-strip.js",
         {
-            "data-testid=\"log-strip\"",
+            'data-testid="log-strip"',
             "log-strip--collapsed",
             'class="log-strip-head"',
             'class="log-strip-body"',
@@ -211,7 +213,11 @@ def test_chart_cards_keep_responsive_canvas_and_grid_wrappers() -> None:
     )
     _assert_source_references(
         _PAGES / "dashboard.js",
-        {'class="metrics-row"', 'class="card" style="margin-bottom: var(--space-6)"', "<${ChartWrapper}"},
+        {
+            'class="metrics-row"',
+            'class="card" style="margin-bottom: var(--space-6)"',
+            "<${ChartWrapper}",
+        },
     )
     _assert_source_references(
         _PAGES / "job-detail.js",
@@ -245,7 +251,7 @@ def test_navigation_uses_responsive_flex_groups_and_app_content_scrolls() -> Non
     )
     _assert_source_references(
         _UI_ROOT / "app.js",
-        {'class="app"', 'class="content"', '<${TopNav}'},
+        {'class="app"', 'class="content"', "<${TopNav}"},
     )
     _assert_rule_contains(
         ".topbar",

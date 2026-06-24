@@ -665,7 +665,7 @@ export function SweepDetail({ namespace, name, epoch }) {
             <div class="card-title" style="margin:0">Pareto · ${paretoAxis.x.label} × ${paretoAxis.y.label}</div>
             <div class="filter-tabs" role="tablist" aria-label="Pareto axis selector" style="margin:0">
               ${PARETO_AXES.map(a => html`
-                <button
+                <button type="button"
                   key=${a.key}
                   role="tab"
                   aria-pressed=${paretoAxisKey === a.key}
@@ -750,7 +750,10 @@ export function SweepDetail({ namespace, name, epoch }) {
                       <tr
                         key=${c.namespace + '/' + c.name + '/' + (c.childRunEpoch ?? c.child_run_epoch ?? '')}
                         class="job-table-row"
+                        role="row"
+                        tabindex="0"
                         style="cursor:pointer"
+                        onkeydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(buildJobPath({ ...c, childRunEpoch: c.childRunEpoch ?? c.child_run_epoch })); } }}
                         onclick=${() => navigate(buildJobPath({ ...c, childRunEpoch: c.childRunEpoch ?? c.child_run_epoch }))}
                       >
                         <td class="job-table-td">${c.name}</td>

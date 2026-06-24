@@ -61,8 +61,14 @@ class MultiRunPNGExporter(BasePNGExporter):
 
         for spec in plot_specs:
             try:
-                if not self._can_generate_plot(spec, df):
-                    self.debug(f"Skipping {spec.name} - required columns not available")
+                missing = self._missing_required_columns(spec, df)
+                if missing:
+                    self.warning(
+                        f"Skipping plot '{spec.name}': required metric column(s) "
+                        f"missing from run data: {missing}. Verify the benchmark "
+                        f"recorded these metrics (e.g. 'time_to_first_token' "
+                        f"only exists for streaming runs)."
+                    )
                     continue
 
                 fig = self._create_plot_from_spec(spec, df, available_metrics)
@@ -79,21 +85,19 @@ class MultiRunPNGExporter(BasePNGExporter):
 
         return generated_files
 
-    def _can_generate_plot(self, spec: PlotSpec, df: pd.DataFrame) -> bool:
-        """
-        Check if a plot can be generated based on column availability.
+    def _missing_required_columns(self, spec: PlotSpec, df: pd.DataFrame) -> list[str]:
+        """Return the spec's required metric columns that aren't in ``df``.
 
-        Args:
-            spec: Plot specification
-            df: DataFrame with aggregated metrics
-
-        Returns:
-            True if the plot can be generated, False otherwise
+        Empty list means the plot can be generated. ``concurrency`` is
+        treated as always-available because the DataFrame builder
+        materializes it from ``RunMetadata.concurrency`` (with a fallback)
+        even when the input JSON has no corresponding metric.
         """
-        for metric in spec.metrics:
-            if metric.name not in df.columns and metric.name != "concurrency":
-                return False
-        return True
+        return [
+            metric.name
+            for metric in spec.metrics
+            if metric.name not in df.columns and metric.name != "concurrency"
+        ]
 
     def _create_plot_from_spec(
         self, spec: PlotSpec, df: pd.DataFrame, available_metrics: dict

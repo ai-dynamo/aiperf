@@ -162,7 +162,7 @@ def _api_script(body: str) -> str:
     return f"""
         import fs from 'node:fs';
         let source = fs.readFileSync({json.dumps(str(API_PATH))}, 'utf8')
-          .replace("import {{ setError }} from './state.js';", "const setError = () => {{}};");
+          .replace(/import \{{[\s\S]*?\}} from '\.\/state\.js';/, "const setError = () => {{}};");
         const module = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
         const api = module.api;
         {body}

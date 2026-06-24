@@ -13,22 +13,10 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CELLS_TABLE_JS = (
-    _REPO_ROOT
-    / "src"
-    / "aiperf"
-    / "operator"
-    / "ui"
-    / "components"
-    / "cells-table.js"
+    _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "components" / "cells-table.js"
 )
 _CELLS_CHART_JS = (
-    _REPO_ROOT
-    / "src"
-    / "aiperf"
-    / "operator"
-    / "ui"
-    / "components"
-    / "cells-chart.js"
+    _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "components" / "cells-chart.js"
 )
 _SWEEP_DETAIL_JS = (
     _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "sweep-detail.js"

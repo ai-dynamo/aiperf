@@ -12,6 +12,8 @@ import pytest
 
 from aiperf.cli_runner._sweep_aggregate import (
     _per_variation_aggregate_dir,
+    _variation_dir_name,
+    _variation_key,
     aggregate_per_variation_and_export,
     aggregate_sweep_and_export,
 )
@@ -161,7 +163,8 @@ def _make_plan_mode(mode: SweepMode) -> BenchmarkPlan:
     cfg = BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS)
     return BenchmarkPlan(
         configs=[cfg],
-        sweep=GridSweep(variables={"phases.profiling.concurrency": [1]},
+        sweep=GridSweep(
+            variables={"phases.profiling.concurrency": [1]},
             iteration_order=mode,
         ),
     )
@@ -189,6 +192,73 @@ def test_per_variation_aggregate_dir_repeated_mode():
         SweepMode.REPEATED,
     )
     assert out == Path("/tmp/x/aggregate/phases.profiling.concurrency=10")
+
+
+# =============================================================================
+# AIP-956: per-variation dir name stays readable for nested-dict scenario sweeps
+# =============================================================================
+
+
+def test_variation_dir_name_scalar_values_uses_format_dir_name():
+    """Scalar sweep values keep the readable ``{leaf}_{value}`` dir form."""
+    values = {"phases.profiling.concurrency": 10}
+    key = _variation_key("concurrency=10", values)
+    group = [
+        RunResult(
+            label="c10",
+            success=True,
+            variation_label="concurrency=10",
+            variation_values=values,
+        )
+    ]
+    assert _variation_dir_name(key, "concurrency=10", group) == "concurrency_10"
+
+
+def test_variation_dir_name_nested_dict_values_uses_label():
+    """Scenario sweeps without explicit ``values:`` carry nested override dicts.
+
+    ``_format_dir_name`` would mangle the JSON-serialized override into an
+    unreadable path; the dir name must fall back to the human-authored label.
+    """
+    nested = {"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}
+    key = _variation_key("aa-1k", nested)
+    group = [
+        RunResult(
+            label="aa1k",
+            success=True,
+            variation_label="aa-1k",
+            variation_values=nested,
+        )
+    ]
+    assert _variation_dir_name(key, "aa-1k", group) == "aa-1k"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_per_variation_nested_values_dir_uses_label(tmp_path, logger):
+    """End-to-end: nested-dict scenario sweep writes ``<base>/<label>/aggregate/``.
+
+    The JSON-serialized override must NOT leak into the on-disk dir name.
+    """
+    plan = _make_plan_mode(SweepMode.INDEPENDENT)
+    nested = {"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}
+    results = []
+    for i, tput in enumerate([100.0, 105.0]):
+        r = _result(f"aa1k_t{i}", concurrency=10, throughput=tput, ttft_p99=50.0 + i)
+        r.variation_label = "aa-1k"
+        r.variation_values = nested
+        r.trial_index = i
+        results.append(r)
+
+    written = await aggregate_per_variation_and_export(results, plan, tmp_path, logger)
+
+    assert len(written) == 1
+    agg_json = tmp_path / "aa-1k" / "aggregate" / "profile_export_aiperf_aggregate.json"
+    assert agg_json.exists(), (
+        f"expected per-variation dir named after the label; wrote {written}"
+    )
+    assert not any(p.name.startswith("benchmark_{") for p in tmp_path.iterdir()), (
+        "JSON-serialized override leaked into the per-variation dir name"
+    )
 
 
 @pytest.mark.asyncio
@@ -233,6 +303,9 @@ async def test_aggregate_per_variation_writes_aggregate_per_cell_independent(
             f"phases.profiling.concurrency={concurrency}"
         )
         assert str(meta["sweep_mode"]).lower() == "independent"
+        # The model is stamped so the plot loader can recover it for
+        # aggregate-only runs (no input_config in the aggregate JSON).
+        assert meta["model"] == "test-model"
 
 
 @pytest.mark.asyncio
@@ -489,3 +562,61 @@ def test_execute_multi_benchmark_skips_table_when_suppressed() -> None:
 
     kwargs = mock_orch_cls.call_args.kwargs
     assert kwargs.get("cell_callback") is None
+
+
+class TestResolveModelNameForVariation:
+    """Unit tests for ``_resolve_model_name_for_variation``."""
+
+    def test__resolve_model_name_for_variation_single_config_no_variations_returns_first_model(
+        self,
+    ):
+        from aiperf.cli_runner._sweep_aggregate import (
+            _resolve_model_name_for_variation,
+        )
+
+        plan = _make_plan()  # one config with models=["test-model"], no variations
+        key = ("any-label", ())
+
+        assert _resolve_model_name_for_variation(plan, key) == "test-model"
+
+    def test__resolve_model_name_for_variation_multi_config_matches_variation_index_returns_expected(
+        self,
+    ):
+        from aiperf.cli_runner._sweep_aggregate import (
+            _resolve_model_name_for_variation,
+        )
+        from aiperf.config.sweep.config import SweepVariation
+
+        cfg_a = BenchmarkConfig(**{**_MINIMAL_CONFIG_KWARGS, "models": ["model-a"]})
+        cfg_b = BenchmarkConfig(**{**_MINIMAL_CONFIG_KWARGS, "models": ["model-b"]})
+        plan = BenchmarkPlan(
+            configs=[cfg_a, cfg_b],
+            variations=[
+                SweepVariation(index=0, label="cell_a", values={}),
+                SweepVariation(index=1, label="cell_b", values={}),
+            ],
+        )
+
+        assert _resolve_model_name_for_variation(plan, ("cell_a", ())) == "model-a"
+        assert _resolve_model_name_for_variation(plan, ("cell_b", ())) == "model-b"
+
+    def test__resolve_model_name_for_variation_unmatched_label_falls_back_to_first_config(
+        self,
+    ):
+        from aiperf.cli_runner._sweep_aggregate import (
+            _resolve_model_name_for_variation,
+        )
+        from aiperf.config.sweep.config import SweepVariation
+
+        cfg_a = BenchmarkConfig(**{**_MINIMAL_CONFIG_KWARGS, "models": ["model-a"]})
+        cfg_b = BenchmarkConfig(**{**_MINIMAL_CONFIG_KWARGS, "models": ["model-b"]})
+        plan = BenchmarkPlan(
+            configs=[cfg_a, cfg_b],
+            variations=[
+                SweepVariation(index=0, label="cell_a", values={}),
+                SweepVariation(index=1, label="cell_b", values={}),
+            ],
+        )
+
+        # Unmatched label -> fall back to configs[0].
+        assert _resolve_model_name_for_variation(plan, ("ghost_label", ())) == "model-a"

@@ -65,6 +65,38 @@ __all__ = [
 ]
 
 
+def _validate_epoch(epoch: str) -> None:
+    """Reject any epoch that is not 9-20 decimal digits.
+
+    Guards the latest-pointer writers against persisting an unresolvable or
+    path-escaping value: ``"latest"`` (the symbolic sentinel ``resolve_run_dir``
+    treats specially), ``"../escaped"`` (path traversal into a sibling dir),
+    and lengths outside the legacy/uid-suffix epoch range. The repr is included
+    in the message so the rejected value is visible in nested validation logs.
+
+    Raises:
+        ValueError: if ``epoch`` does not match :data:`EPOCH_RE`.
+    """
+    if not EPOCH_RE.match(epoch):
+        raise ValueError(f"epoch must be 9-20 decimal digits, got {epoch!r}")
+
+
+def _existing_pointer_is_newer(pointer: Path, epoch: str) -> bool:
+    """Return True if ``pointer`` already names a numerically newer epoch.
+
+    A delayed older completion must not roll ``latest.txt`` backward from a
+    newer run. Both the stored and candidate epochs are validated decimal
+    strings here, so an integer compare is exact. A missing or corrupt pointer
+    is treated as "not newer" so the candidate wins.
+    """
+    if not pointer.is_file():
+        return False
+    current = pointer.read_text().strip()
+    if not EPOCH_RE.match(current):
+        return False
+    return int(current) > int(epoch)
+
+
 @dataclass(slots=True)
 class RunEntry:
     """One run directory with summary metadata.
@@ -109,9 +141,7 @@ def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
     for p in parent.iterdir():
         if not p.is_dir() or not EPOCH_RE.match(p.name):
             continue
-        files = [
-            f for f in p.iterdir() if f.is_file() and f.name != _READY_MARKER_NAME
-        ]
+        files = [f for f in p.iterdir() if f.is_file() and f.name != _READY_MARKER_NAME]
         runs.append(
             RunEntry(
                 epoch=p.name,
@@ -201,10 +231,24 @@ def write_latest(base: Path, namespace: str, name: str, epoch: str) -> None:
     Writes to ``<job_dir>/latest.txt.tmp`` first then ``os.replace`` onto
     the final path so concurrent readers never observe a partial write.
 
+    Rejects epochs that do not match :data:`EPOCH_RE` (9-20 decimal digits)
+    so a symbolic value (``"latest"``), a path-traversal segment
+    (``"../escaped"``), or an out-of-range length can never be persisted into
+    ``latest.txt`` where ``resolve_latest`` would later hand it back to a path
+    join. A delayed older completion is also ignored: if the current pointer
+    already names a numerically newer epoch the write is a no-op, so a
+    late-arriving stale epoch never rolls the pointer backward.
+
+    Raises:
+        ValueError: if ``epoch`` is not 9-20 decimal digits.
+
     Example:
         >>> write_latest(Path("/data"), "bench", "warmup-7f2a", "1714069323")
     """
+    _validate_epoch(epoch)
     target = job_dir(base, namespace, name)
+    if _existing_pointer_is_newer(target / LATEST_POINTER, epoch):
+        return
     target.mkdir(parents=True, exist_ok=True)
     pointer = target / LATEST_POINTER
     staged = target / f"{LATEST_POINTER}.tmp"
@@ -289,16 +333,25 @@ def write_sweep_latest(base: Path, namespace: str, name: str, epoch: str) -> Non
     """Persist ``<base>/<ns>/sweeps/<name>/latest.txt`` with the given epoch.
 
     Creates the sweep root if absent. Mirrors :func:`write_latest` for the
-    sweep side; sweep-controllers call this at the end of each aggregate
-    write so subsequent reads default to the freshest epoch.
+    sweep side: rejects non-:data:`EPOCH_RE` epochs and refuses to roll the
+    pointer back to a numerically older epoch. Sweep-controllers call this at
+    the end of each aggregate write so subsequent reads default to the
+    freshest epoch.
+
+    Raises:
+        ValueError: if ``epoch`` is not 9-20 decimal digits.
 
     Example
     -------
     >>> write_sweep_latest(Path("/data"), "bench", "satsweep", "1714069323")
     """
+    _validate_epoch(epoch)
     sweep_root = base / namespace / "sweeps" / name
+    pointer = sweep_root / LATEST_POINTER
+    if _existing_pointer_is_newer(pointer, epoch):
+        return
     sweep_root.mkdir(parents=True, exist_ok=True)
-    (sweep_root / LATEST_POINTER).write_text(epoch)
+    pointer.write_text(epoch)
 
 
 def resolve_sweep_latest(base: Path, namespace: str, name: str) -> str | None:

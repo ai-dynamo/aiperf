@@ -28,7 +28,7 @@ from aiperf.plugin.enums import DataExporterType, PluginType
 
 if TYPE_CHECKING:
     from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
-    from aiperf.config import BenchmarkConfig
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
     from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 
 
@@ -47,11 +47,13 @@ class ExporterManager(AIPerfLoggerMixin):
         server_metrics_results: ServerMetricsResults | None = None,
         steady_state_results: SteadyStateSummary | None = None,
         energy_efficiency_results: EnergyEfficiencySummary | None = None,
+        run: BenchmarkRun | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._results = results
         self._config = config
+        self._run = run
         self._tasks: set[asyncio.Task] = set()
         self._exporter_config = ExporterConfig(
             results=self._results,
@@ -60,6 +62,7 @@ class ExporterManager(AIPerfLoggerMixin):
             server_metrics_results=server_metrics_results,
             steady_state_results=steady_state_results,
             energy_efficiency_results=energy_efficiency_results,
+            run=run,
         )
         self._exported_file_infos: dict[str, FileExportInfo] = {}
 

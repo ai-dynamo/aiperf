@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -127,6 +129,12 @@ _TRUST_REMOTE_CODE_RE = re.compile(r"trust_remote_code", re.IGNORECASE)
 _BACKEND_TOKENIZER_INSTANTIATION_RE = re.compile(
     r"couldn't instantiate the backend tokenizer", re.IGNORECASE
 )
+# HF raises this when ``tokenizer_config.json`` references a class not registered in
+# the installed transformers (e.g. ``TokenizersBackend`` is v5-only; nvidia/GLM-5-NVFP4
+# fails on v4). The class name varies, so the insight is built dynamically.
+_MISSING_TOKENIZER_CLASS_RE = re.compile(
+    r"Tokenizer class (\S+) does not exist or is not currently imported"
+)
 _MISSING_PACKAGE_PATTERNS = [
     re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE),
     re.compile(
@@ -162,6 +170,36 @@ _SERVER_TOKEN_FIX = (
 )
 
 
+def _missing_tokenizer_class_insight(
+    error_message: str,
+) -> TokenizerErrorInsight | None:
+    """Build the insight for HF's "Tokenizer class ... does not exist" error, or None."""
+    match = _MISSING_TOKENIZER_CLASS_RE.search(error_message)
+    if match is None:
+        return None
+    missing = match.group(1)
+    try:
+        version = _pkg_version("transformers")
+    except PackageNotFoundError:
+        version = "<unknown>"
+    fixes: list[str] = []
+    if version.split(".", 1)[0] == "4":
+        fixes.append(
+            f"Upgrade transformers (e.g. [green]pip install -U 'transformers>=5'[/green] for [cyan]{missing}[/cyan])"
+        )
+    return TokenizerErrorInsight(
+        title="Unsupported Tokenizer Class",
+        causes=[
+            f"Tokenizer references class [cyan]{missing}[/cyan] which is "
+            f"not registered in your installed transformers [cyan]{version}[/cyan]",
+        ],
+        investigation=[
+            "Check installed version: [cyan]pip show transformers[/cyan]",
+        ],
+        fixes=fixes,
+    )
+
+
 def _detect_error(
     cause_chain: list[str] | None, error_message: str | None = None
 ) -> TokenizerErrorInsight:
@@ -181,6 +219,11 @@ def _detect_error(
                 "Add: [green]--tokenizer-trust-remote-code[/green]",
             ],
         )
+
+    # Check for a tokenizer_class not registered in the installed transformers
+    # (e.g. ``TokenizersBackend`` is v5-only) before type-specific matching.
+    if error_message and (insight := _missing_tokenizer_class_insight(error_message)):
+        return insight
 
     # Check for backend tokenizer instantiation failure before type-specific matching
     if error_message and _BACKEND_TOKENIZER_INSTANTIATION_RE.search(error_message):
@@ -248,10 +291,10 @@ def log_tokenizer_validation_results(
     for entry in results:
         if entry.was_resolved:
             logger.info(
-                f"✓ Tokenizer {entry.resolved_name} detected for {entry.original_name}"
+                f"[OK] Tokenizer {entry.resolved_name} detected for {entry.original_name}"
             )
         else:
-            logger.info(f"✓ Tokenizer {entry.resolved_name} detected")
+            logger.info(f"[OK] Tokenizer {entry.resolved_name} detected")
 
     total = len(results)
     resolved = sum(1 for e in results if e.was_resolved)
@@ -260,7 +303,7 @@ def log_tokenizer_validation_results(
         parts.append(f"{resolved} resolved")
     if elapsed_seconds is not None:
         parts.append(f"{elapsed_seconds:.1f}s")
-    logger.info(" • ".join(parts))
+    logger.info(" | ".join(parts))
 
 
 def _display_panel(title: str, content: str, console: Console | None = None) -> None:

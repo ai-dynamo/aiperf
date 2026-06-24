@@ -403,7 +403,7 @@ class TestStatusMessaging:
 
             # Add a mock collector that will fail to start
             mock_collector = AsyncMock(spec=DCGMTelemetryCollector)
-            mock_collector.initialize.side_effect = Exception("Failed to initialize")
+            mock_collector.start.side_effect = Exception("Failed to start")
             manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
             start_msg = ProfileStartCommand(
@@ -758,8 +758,8 @@ class TestProfileStartCommand:
             assert hasattr(manager, "_shutdown_task")
 
     @pytest.mark.asyncio
-    async def test_start_no_redundant_reachability_check(self):
-        """Test that collectors are started without re-checking reachability."""
+    async def test_start_no_redundant_reachability_check_or_initialize(self):
+        """Test that collectors are started without re-checking reachability or re-initializing."""
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
 
@@ -772,9 +772,9 @@ class TestProfileStartCommand:
         )
         await manager._on_start_profiling(start_msg)
 
-        # Verify collector.initialize() and start() were called without is_url_reachable()
+        # Verify start() was called without re-checking reachability or re-initializing
         mock_collector.is_url_reachable.assert_not_called()
-        mock_collector.initialize.assert_called_once()
+        mock_collector.initialize.assert_not_called()
         mock_collector.start.assert_called_once()
 
 
@@ -926,6 +926,7 @@ class TestPynvmlCollectorIntegration:
         manager._telemetry_disabled = False
         manager._collection_interval = 0.333
         manager._collector_type = GPUTelemetryCollectorType.PYNVML
+        manager.info = MagicMock()
         manager.error = MagicMock()
         manager.warning = MagicMock()
         manager.debug = MagicMock()

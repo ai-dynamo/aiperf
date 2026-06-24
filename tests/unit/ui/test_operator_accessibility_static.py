@@ -10,10 +10,19 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _UI_ROOT = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui"
 _INTERACTIVE_EXTENSIONS = {".html", ".js"}
-_TAG_BLOCK_RE = re.compile(r"<(?P<tag>button|a)\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</(?P=tag)>")
-_TABLIST_RE = re.compile(r"<(?P<tag>[^\s>/]+)\b(?P<attrs>[^>]*)\brole=[\"']tablist[\"'][^>]*>(?P<body>[\s\S]*?)</(?P=tag)>")
-_PROGRESSBAR_TAG_RE = re.compile(r"<(?P<tag>[^\s>/]+)\b(?P<attrs>[^>]*\brole=[\"']progressbar[\"'][^>]*)(?:/>|>[\s\S]*?</(?P=tag)>)")
-_ONCLICK_NAV_RE = re.compile(r"<(?P<tag>div|span|li|tr|td)\b(?P<attrs>[^>]*)\bonclick=\$?\{(?P<handler>[^}]*(?:navigate|window\.location)[^}]*)\}", re.IGNORECASE)
+_TAG_BLOCK_RE = re.compile(
+    r"<(?P<tag>button|a)\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</(?P=tag)>"
+)
+_TABLIST_RE = re.compile(
+    r"<(?P<tag>[^\s>/]+)\b(?P<attrs>[^>]*)\brole=[\"']tablist[\"'][^>]*>(?P<body>[\s\S]*?)</(?P=tag)>"
+)
+_PROGRESSBAR_TAG_RE = re.compile(
+    r"<(?P<tag>[^\s>/]+)\b(?P<attrs>[^>]*\brole=[\"']progressbar[\"'][^>]*)(?:/>|>[\s\S]*?</(?P=tag)>)"
+)
+_ONCLICK_NAV_RE = re.compile(
+    r"<(?P<tag>div|span|li|tr|td)\b(?P<attrs>[^>]*)\bonclick=\$?\{(?P<handler>[^}]*(?:navigate|window\.location)[^}]*)\}",
+    re.IGNORECASE,
+)
 
 
 _KNOWN_NON_INTERACTIVE_NAV_DEBT = {
@@ -30,7 +39,9 @@ def _ui_files() -> list[Path]:
     return sorted(
         path
         for path in _UI_ROOT.rglob("*")
-        if path.is_file() and path.suffix in _INTERACTIVE_EXTENSIONS and "vendor" not in path.parts
+        if path.is_file()
+        and path.suffix in _INTERACTIVE_EXTENSIONS
+        and "vendor" not in path.parts
     )
 
 
@@ -53,7 +64,10 @@ def _literal_or_dynamic_text(body: str) -> str:
 
 
 def _has_accessible_name(attrs: str, body: str) -> bool:
-    return bool(re.search(r"\b(?:aria-label|title)\s*=", attrs) or _literal_or_dynamic_text(body))
+    return bool(
+        re.search(r"\b(?:aria-label|title)\s*=", attrs)
+        or _literal_or_dynamic_text(body)
+    )
 
 
 def _has_attr(attrs: str, name: str) -> bool:
@@ -68,11 +82,15 @@ def _interactive_elements_missing_names() -> list[str]:
             tag = match.group("tag")
             attrs = match.group("attrs")
             body = match.group("body")
-            if tag == "a" and not ("target=\"_blank\"" in attrs or "target='_blank'" in attrs):
+            if tag == "a" and not (
+                'target="_blank"' in attrs or "target='_blank'" in attrs
+            ):
                 continue
             if _has_accessible_name(attrs, body):
                 continue
-            missing.append(f"{_relative(path)}:{_line_number(src, match.start())} <{tag}>")
+            missing.append(
+                f"{_relative(path)}:{_line_number(src, match.start())} <{tag}>"
+            )
     return missing
 
 
@@ -82,13 +100,19 @@ def _tablist_violations() -> list[str]:
         src = _source(path)
         for tablist in _TABLIST_RE.finditer(src):
             body = tablist.group("body")
-            if "role=\"tab\"" not in body and "role='tab'" not in body:
-                violations.append(f"{_relative(path)}:{_line_number(src, tablist.start())} tablist has no role=tab descendants")
+            if 'role="tab"' not in body and "role='tab'" not in body:
+                violations.append(
+                    f"{_relative(path)}:{_line_number(src, tablist.start())} tablist has no role=tab descendants"
+                )
                 continue
-            for tab in re.finditer(r"<button\b(?P<attrs>[^>]*\brole=[\"']tab[\"'][^>]*)>", body):
+            for tab in re.finditer(
+                r"<button\b(?P<attrs>[^>]*\brole=[\"']tab[\"'][^>]*)>", body
+            ):
                 if not _has_attr(tab.group("attrs"), "aria-selected"):
                     line = _line_number(src, tablist.start() + tab.start())
-                    violations.append(f"{_relative(path)}:{line} role=tab missing aria-selected")
+                    violations.append(
+                        f"{_relative(path)}:{line} role=tab missing aria-selected"
+                    )
     return violations
 
 
@@ -98,9 +122,15 @@ def _progressbar_violations() -> list[str]:
         src = _source(path)
         for progressbar in _PROGRESSBAR_TAG_RE.finditer(src):
             attrs = progressbar.group("attrs")
-            missing = [name for name in ("aria-valuenow", "aria-valuemin", "aria-valuemax") if not _has_attr(attrs, name)]
+            missing = [
+                name
+                for name in ("aria-valuenow", "aria-valuemin", "aria-valuemax")
+                if not _has_attr(attrs, name)
+            ]
             if missing:
-                violations.append(f"{_relative(path)}:{_line_number(src, progressbar.start())} missing {', '.join(missing)}")
+                violations.append(
+                    f"{_relative(path)}:{_line_number(src, progressbar.start())} missing {', '.join(missing)}"
+                )
     return violations
 
 
@@ -113,7 +143,9 @@ def _onclick_only_nav_violations() -> list[str]:
             tag = match.group("tag").lower()
             if (rel, tag) in _KNOWN_NON_INTERACTIVE_NAV_DEBT:
                 continue
-            violations.append(f"{rel}:{_line_number(src, match.start())} <{tag}> uses onclick navigation")
+            violations.append(
+                f"{rel}:{_line_number(src, match.start())} <{tag}> uses onclick navigation"
+            )
     return violations
 
 
@@ -129,5 +161,7 @@ def test_progressbars_expose_value_bounds() -> None:
     assert _progressbar_violations() == []
 
 
-def test_critical_navigation_does_not_use_onclick_only_non_interactive_elements() -> None:
+def test_critical_navigation_does_not_use_onclick_only_non_interactive_elements() -> (
+    None
+):
     assert _onclick_only_nav_violations() == []

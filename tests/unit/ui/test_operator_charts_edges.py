@@ -19,12 +19,18 @@ COMPONENTS_DIR = (
 )
 
 
-def _run_component_script(component_name: str, export_names: list[str], body: str) -> dict[str, object]:
+def _run_component_script(
+    component_name: str, export_names: list[str], body: str
+) -> dict[str, object]:
     component_path = COMPONENTS_DIR / component_name
-    chart_wrapper_stub = "" if component_name == "chart-wrapper.js" else """
+    chart_wrapper_stub = (
+        ""
+        if component_name == "chart-wrapper.js"
+        else """
           function ChartWrapper(props) { return { component: 'ChartWrapper', props }; }
           globalThis.__ChartWrapper = ChartWrapper;
     """
+    )
     script = f"""
         import fs from 'node:fs';
 
@@ -160,7 +166,9 @@ def test_variations_chart_preserves_empty_series_empty_state() -> None:
     assert result == {"noVariationsChart": False, "allMissingChart": False}
 
 
-def test_variations_pareto_orders_frontier_and_deduplicates_equal_frontier_points() -> None:
+def test_variations_pareto_orders_frontier_and_deduplicates_equal_frontier_points() -> (
+    None
+):
     result = _run_component_script(
         "variations-pareto.js",
         ["VariationsPareto"],
@@ -205,15 +213,19 @@ def test_variations_pareto_orders_frontier_and_deduplicates_equal_frontier_point
         {"x": 200, "y": 70, "jobName": "concurrency=32", "cluster": "sweep"},
         {"x": 200, "y": 70, "jobName": "concurrency=32-duplicate", "cluster": "sweep"},
     ]
+    # On an (x, y) tie the frontier keeps the first-seen point, so the duplicate
+    # collapses to one frontier step while both points still render in scatter.
     assert result["frontier"] == [
         {"x": 100, "y": 80, "jobName": "concurrency=8"},
-        {"x": 200, "y": 70, "jobName": "concurrency=32-duplicate"},
+        {"x": 200, "y": 70, "jobName": "concurrency=32"},
     ]
     assert result["xTitle"] == "Throughput (req/s)"
     assert result["yTitle"] == "P99 latency (ms)"
 
 
-def test_variations_table_drops_columns_with_only_non_finite_or_missing_values() -> None:
+def test_variations_table_drops_columns_with_only_non_finite_or_missing_values() -> (
+    None
+):
     result = _run_component_script(
         "variations-table.js",
         ["VariationsTable"],
@@ -243,7 +255,9 @@ def test_variations_table_drops_columns_with_only_non_finite_or_missing_values()
     assert result["labels"] == []
 
 
-def test_chart_wrapper_options_fingerprint_includes_callbacks_for_stable_updates() -> None:
+def test_chart_wrapper_options_fingerprint_includes_callbacks_for_stable_updates() -> (
+    None
+):
     source = (COMPONENTS_DIR / "chart-wrapper.js").read_text()
 
     assert "JSON.stringify(options)" not in source

@@ -368,5 +368,5 @@ You can also check `feasible_count` in `best_trials`. With `outcome_constraints`
 
 - [Bayesian Optimization](../sweeping/bayesian-optimization.md) — full reference for both single- and multi-objective BO: flag reference, acquisition / sampler / reference-point semantics, the `Objective.threshold` vs `OutcomeConstraint` vs `sla_filters` distinction, reference-point auto-derivation, hypervolume-based stopping, and the qLogNEHVI acquisition.
 - [Search Recipes](../sweeping/search-recipes.md) — registered single-objective recipes (`max-throughput-ttft-sla`, `pareto-sweep`, etc.) and when to reach for one instead of writing a YAML config from scratch.
-- [Sweep Troubleshooting](../troubleshooting/sweeps.md) — common configuration errors (acquisition / objective-count mismatches, `n_initial_points >= max_iterations`, missing optional BoTorch extra) and how to fix them.
+- [Sweep Troubleshooting](../troubleshooting/adaptive-search-errors.md) — common configuration errors (acquisition / objective-count mismatches, `n_initial_points >= max_iterations`, missing optional BoTorch extra) and how to fix them.
 - [Search History API](../api/search-history.md) — full `search_history.json` schema, including the `best_trials` Pareto-front shape, `feasible_count` semantics, and convergence reasons.

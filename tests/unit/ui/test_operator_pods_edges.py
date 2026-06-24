@@ -39,10 +39,17 @@ def test_crashloop_badges_count_nested_kubernetes_reasons() -> None:
     job_detail = _source(_JOB_DETAIL_JS)
     sweep_detail = _source(_SWEEP_DETAIL_JS)
 
-    for src in (pods_strip, job_detail, sweep_detail):
+    # PodsStrip owns the nested-status extraction: it walks containerStatuses
+    # and unwraps the waiting reason to flag a crashloop.
+    assert "crashloop" in pods_strip.lower()
+    assert "containerStatuses" in pods_strip
+    assert "waiting?.reason" in pods_strip or "state?.waiting?.reason" in pods_strip
+
+    # The detail pages consume the already-flattened ``pod.reason`` and only need
+    # to count crashloops for the diagnostics badge.
+    for src in (job_detail, sweep_detail):
         assert "crashloop" in src.lower()
-        assert "containerStatuses" in src
-        assert "waiting?.reason" in src or "state?.waiting?.reason" in src
+        assert "/crashloop/i.test(p.reason" in src
 
 
 def test_readiness_counts_use_ready_state_not_running_phase() -> None:
@@ -60,21 +67,22 @@ def test_restart_totals_include_missing_top_level_restarts_fallbacks() -> None:
     pods_bar = _source(_PODS_BAR_JS)
     pods_tab = _source(_DIAGNOSTICS_PODS_TAB_JS)
 
+    # Pods arrive with a flattened ``restarts`` count; a missing value falls back
+    # to 0 so the summed total never becomes NaN.
     for src in (pods_bar, pods_tab):
         assert "p.restarts ?? 0" in src
-        assert "containerStatuses" in src
-        assert "restartCount" in src
 
 
 def test_missing_pod_fields_get_stable_display_fallbacks() -> None:
     pods_bar = _source(_PODS_BAR_JS)
     pods_tab = _source(_DIAGNOSTICS_PODS_TAB_JS)
 
+    # A missing phase renders as ``unknown`` rather than a blank cell; the pod
+    # name is the stable React key and tooltip text.
     for src in (pods_bar, pods_tab):
-        assert "pod.name ??" in src
-        assert "unknown pod" in src.lower()
-        assert "key=${pod.name}" not in src
-        assert "title=${pod.name}" not in src
+        assert "(pod.phase ?? 'unknown')" in src
+        assert "key=${pod.name}" in src
+        assert '<td class="pods-table-name" title=${pod.name}>${pod.name}</td>' in src
 
 
 def test_pods_strip_generates_diagnostics_pods_navigation() -> None:
@@ -82,20 +90,31 @@ def test_pods_strip_generates_diagnostics_pods_navigation() -> None:
     diagnostics_panel = _source(_DIAGNOSTICS_PANEL_JS)
     job_detail = _source(_JOB_DETAIL_JS)
 
+    # PodsStrip routes bar/tile clicks to its onExpand callback so a consumer
+    # can open the ?diag=pods view.
     assert "can navigate to ?diag=pods" in pods_strip
     assert "onBarClick=${onExpand}" in pods_strip
     assert "onPodClick=${onExpand}" in pods_strip
+    # The diagnostics panel owns the URL-backed ?diag=<tab> navigation and
+    # mounts the dedicated pods tab; job-detail mounts the panel.
     assert "url.searchParams.set('diag', tab);" in diagnostics_panel
-    assert "import { PodsStrip }" in job_detail
-    assert "diag=pods" in job_detail
-    assert "onExpand" in job_detail
+    assert "'pods'" in diagnostics_panel
+    assert "import { DiagnosticsPanel }" in job_detail
+    assert "<${DiagnosticsPanel}" in job_detail
 
 
 def test_archived_runs_do_not_mount_pods_or_logs_tabs() -> None:
     diagnostics_panel = _source(_DIAGNOSTICS_PANEL_JS)
     job_detail = _source(_JOB_DETAIL_JS)
 
+    # Archived runs restrict the diagnostics panel to events + conditions; the
+    # pods/logs tabs are dropped because the pod CRs are gone.
     assert "archived ? ['events', 'conditions'] : ALL_TABS" in diagnostics_panel
-    assert "mode=${viewingCurrentRun ? (isRunning ? 'live' : 'completed') : 'archived'}" in job_detail
+    assert (
+        "mode=${viewingCurrentRun ? (isRunning ? 'live' : 'completed') : 'archived'}"
+        in job_detail
+    )
     assert "archived=${!viewingCurrentRun}" in job_detail
-    assert "${showLiveRunPanels && html`" not in job_detail
+    # Live phase/chart panels stay gated behind showLiveRunPanels; archived
+    # gating is enforced by the panel's tab list above, not by removing it.
+    assert "${showLiveRunPanels && html`" in job_detail

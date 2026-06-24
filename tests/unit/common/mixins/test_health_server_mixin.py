@@ -245,7 +245,7 @@ class TestHealthServerMixin:
                 service._state = LifecycleState.RUNNING
 
                 # Now should be ready
-                status, body = await make_http_request(18087, "/readyz")
+                status, body = await make_http_request(unused_tcp_port, "/readyz")
                 assert status == 200
                 assert body == "ok"
             finally:

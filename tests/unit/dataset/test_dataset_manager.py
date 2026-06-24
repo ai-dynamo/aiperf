@@ -20,11 +20,7 @@ from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import (
     CustomDatasetType,
-    DatasetSamplingStrategy,
     EndpointType,
-    PublicDatasetType,
-    ServiceRunType,
-    TimingMode,
 )
 
 

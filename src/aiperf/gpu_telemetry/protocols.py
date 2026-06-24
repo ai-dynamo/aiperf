@@ -14,6 +14,7 @@ if TYPE_CHECKING:
         MetricResult,
         TelemetryExportData,
     )
+    from aiperf.common.models.server_metrics_models import TimeRangeFilter
 
 
 @runtime_checkable
@@ -137,6 +138,26 @@ class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
         by pressing the telemetry option in the UI without having passed the 'dashboard' parameter
         at startup.
         """
+
+    def compute_efficiency_metrics(
+        self,
+        metric_results: list[MetricResult],
+        time_filter: TimeRangeFilter,
+    ) -> list[MetricResult]:
+        """Compute cross-boundary power efficiency metrics.
+
+        Args:
+            metric_results: All metric results from the profiling phase.
+            time_filter: Time range covering the profiling phase.
+
+        Returns:
+            Up to three MetricResult objects covering total GPU power, total
+            GPU energy, and output tokens per joule. Each metric is
+            independently omitted when its underlying GPU signal is
+            unavailable; returns an empty list when no GPU has any of the
+            relevant signals.
+        """
+        ...
 
     async def summarize(self) -> list[MetricResult]:
         """Generate MetricResult list with hierarchical tags for telemetry data.

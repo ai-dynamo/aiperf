@@ -106,6 +106,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     many records before finalizing results.
     """
 
+    # The "enable cache reporting" server-knob hint fires at most once per run.
+    _warned_missing_cache_reporting: bool = False
+
     def __init__(
         self,
         run: BenchmarkRun,

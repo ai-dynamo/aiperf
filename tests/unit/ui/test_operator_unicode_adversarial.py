@@ -159,9 +159,8 @@ def _api_script(expression: str) -> str:
     return f"""
         import fs from 'node:fs';
         let source = fs.readFileSync({str(_API_PATH)!r}, 'utf8');
-        source = source.replace("import {{ setError }} from './state.js';", 'function setError() {{}}');
-        source = source.replace('export const api =', 'const api =');
-        source = source.replace('export function poll', 'function poll');
+        source = source.replace(/import \{{[\s\S]*?\}} from '\.\/state\.js';/, 'function setError() {{}}');
+        source = source.replace(/^export /gm, '');
         eval(source + '\\nglobalThis.api = api;');
         {expression}
     """

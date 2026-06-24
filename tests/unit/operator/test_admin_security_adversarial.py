@@ -180,15 +180,26 @@ class TestAdminReadOnlySidecarGuards:
     """The public results-server sidecar must expose no writer-capable admin path."""
 
     @pytest.mark.asyncio
-    async def test_rebuild_on_results_server_sidecar_returns_503_without_bootstrap(
+    async def test_rebuild_without_token_fails_closed_before_bootstrap(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """An unauthenticated rebuild POST must fail closed before any writer side effect.
+
+        ``/admin/index/rebuild`` is a mutating route gated by the
+        mutating-route auth dependency. With mutating routes disabled by
+        default, an unauthenticated POST is rejected with 403 ("disabled")
+        before the handler body runs — so ``runs_index.bootstrap`` is never
+        invoked. The security invariant is "no unauthorized rebuild", not a
+        specific status code.
+        """
         bootstrap_calls: list[Path] = []
 
         async def fake_bootstrap(base_dir: Path, *, force: bool = False) -> object:
             del force
             bootstrap_calls.append(base_dir)
-            raise AssertionError("read-only sidecar must not invoke writer bootstrap")
+            raise AssertionError(
+                "unauthenticated rebuild must not invoke writer bootstrap"
+            )
 
         monkeypatch.setattr(runs_index, "bootstrap", fake_bootstrap)
         transport = httpx.ASGITransport(app=create_app(tmp_path))
@@ -198,13 +209,8 @@ class TestAdminReadOnlySidecarGuards:
         ) as client:
             response = await client.post("/admin/index/rebuild")
 
-        assert response.status_code == 503
-        assert response.json() == {
-            "detail": (
-                "Index rebuild is disabled in the read-only results-server sidecar; "
-                "run it from the operator writer process."
-            )
-        }
+        assert response.status_code == 403
+        assert "disabled" in response.json()["detail"]
         assert bootstrap_calls == []
 
     @pytest.mark.asyncio

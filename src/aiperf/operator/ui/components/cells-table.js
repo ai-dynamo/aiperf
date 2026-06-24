@@ -42,6 +42,9 @@ export function CellsTable({ dimensions, cells, metric, stat, onCellClick }) {
             return html`
               <tr key=${variationIndex}
                   class="job-table-row"
+                  role="row"
+                  tabindex=${onCellClick ? '0' : undefined}
+                  onKeyDown=${(e) => { if (onCellClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onCellClick(c); } }}
                   onclick=${() => onCellClick && onCellClick(c)}
                   style=${onCellClick ? 'cursor: pointer' : ''}
                   data-testid=${'sweep-cell-row-' + variationIndex}>

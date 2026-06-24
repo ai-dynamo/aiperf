@@ -41,7 +41,9 @@ def _exported_function_source(source: str, function_name: str) -> str:
         rf"export function {re.escape(function_name)}\([^)]*\)", source
     )
     assert signature is not None
-    return signature.group(0).replace("export ", "") + " {" + match.group("body") + "\n}"
+    return (
+        signature.group(0).replace("export ", "") + " {" + match.group("body") + "\n}"
+    )
 
 
 def _run_node(script: str) -> str:
@@ -56,16 +58,31 @@ def _run_node(script: str) -> str:
     return result.stdout.strip()
 
 
+def _strip_js_comments(source: str) -> str:
+    """Drop // line and /* */ block comments so substring scans only see code.
+
+    The relaunch component documents the server-owned fields it drops
+    (``managedFields``, ``resourceVersion``, ``uid``, ...) in a leading comment;
+    those words must not be matched as if they were live manifest keys.
+    """
+    no_blocks = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", "", no_blocks)
+
+
 def test_relaunch_manifest_strips_existing_resource_metadata_and_status() -> None:
     """Cloned manifests must not carry server-owned CR metadata into Launch."""
     src = _source()
+    code = _strip_js_comments(src)
 
-    assert "metadata: {\n            name: suggestRetryName(name),\n            namespace," in src
-    assert "metadata: config.metadata" not in src
-    assert "status:" not in src
-    assert "managedFields" not in src
-    assert "resourceVersion" not in src
-    assert "uid" not in src
+    assert (
+        "metadata: {\n            name: suggestRetryName(name),\n            namespace,"
+        in src
+    )
+    assert "metadata: config.metadata" not in code
+    assert "status:" not in code
+    assert "managedFields" not in code
+    assert "resourceVersion" not in code
+    assert "uid" not in code
 
 
 def test_relaunch_manifest_preserves_source_namespace_in_manifest_and_prefill() -> None:
@@ -74,7 +91,10 @@ def test_relaunch_manifest_preserves_source_namespace_in_manifest_and_prefill() 
 
     assert "namespace," in src
     assert "sourceNs: namespace" in src
-    assert "metadata: {\n            name: suggestRetryName(name),\n            namespace," in src
+    assert (
+        "metadata: {\n            name: suggestRetryName(name),\n            namespace,"
+        in src
+    )
 
 
 def test_relaunch_preserves_job_vs_sweep_kind_and_copies_spec_verbatim() -> None:
@@ -83,7 +103,9 @@ def test_relaunch_preserves_job_vs_sweep_kind_and_copies_spec_verbatim() -> None
 
     assert "kind: config.kind ?? 'AIPerfJob'" in src
     assert "const spec = config?.spec;" in src
-    assert "spec," in src
+    # Spec is copied wholesale (job stays a job, sweep stays a sweep) but routed
+    # through redactConfigForYaml so sensitive keys never land in the editor.
+    assert "spec: redactConfigForYaml(spec)," in src
     assert "delete spec.sweep" not in src
     assert "kind: 'AIPerfJob'" not in src
 

@@ -10,8 +10,8 @@ from typing import Annotated
 from cyclopts import App, Parameter
 
 from aiperf.config import AIPerfConfig
-from aiperf.config.kube import KubeOptions
 from aiperf.config.flags import CLIConfig
+from aiperf.config.kube import KubeOptions
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 
 app = App(name="generate")
@@ -231,9 +231,7 @@ async def generate(
     with cli_utils.exit_on_error(title="Error Generating Kubernetes Manifests"):
         from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
-        spec, config, name = _resolve_spec_and_name(
-            cli_config, kube_options
-        )
+        spec, config, name = _resolve_spec_and_name(cli_config, kube_options)
         namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
 
         yaml = ruamel.yaml.YAML()

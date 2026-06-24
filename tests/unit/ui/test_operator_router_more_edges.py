@@ -71,7 +71,9 @@ def test_set_query_preserves_existing_values_and_removes_blank_updates() -> None
         console.log(window.location.hash);
     """
 
-    assert run_node(script) == "#/jobs?ns=default&search=new%2Fjob%3F&sort=created%20desc"
+    assert (
+        run_node(script) == "#/jobs?ns=default&search=new%2Fjob%3F&sort=created%20desc"
+    )
 
 
 def test_set_query_noops_without_reordering_when_update_is_unchanged() -> None:

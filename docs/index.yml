@@ -160,6 +160,8 @@ navigation:
       path: tutorials/gpu-telemetry.md
     - page: OTel and MLflow Telemetry
       path: tutorials/otel-mlflow.md
+    - page: Weights & Biases Export
+      path: tutorials/wandb.md
   - section: Configuration
     collapsed: true
     contents:
@@ -273,6 +275,10 @@ navigation:
     path: reference/time-synchronization.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
+  - page: HTTP API Endpoints
+    path: reference/api-endpoints.md
+  - page: YAML Config Roadmap
+    path: reference/yaml-config-roadmap.md
 
 - section: Server Metrics
   collapsed: true

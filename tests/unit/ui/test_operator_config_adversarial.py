@@ -75,10 +75,12 @@ def test_config_display_and_relaunch_use_shared_recursive_secret_redaction() -> 
     assert re.search(r"function\s+redact[A-Za-z0-9_]*\(", combined), (
         "config display and relaunch need an explicit shared redaction helper"
     )
-    assert re.search(r"Object\.entries\(|for \(const \[[^\]]+\] of Object\.entries", combined), (
-        "redaction must walk object entries instead of only known top-level paths"
+    assert re.search(
+        r"Object\.entries\(|for \(const \[[^\]]+\] of Object\.entries", combined
+    ), "redaction must walk object entries instead of only known top-level paths"
+    assert "Array.isArray" in combined, (
+        "redaction must recurse into arrays of secret-bearing objects"
     )
-    assert "Array.isArray" in combined, "redaction must recurse into arrays of secret-bearing objects"
     assert all(key in combined for key in _SECRET_KEY_EXAMPLES), (
         "redaction key matcher should cover snake/camel/key-ref variants seen in configs"
     )
@@ -90,10 +92,18 @@ def test_config_modal_serializes_redacted_sweep_specs_not_raw_spec() -> None:
     src = _source(_JOB_DETAIL_JS)
     body = _function_body(src, "JobConfigSection")
 
-    assert "redact" in body.lower(), "JobConfigSection must redact before passing content to the modal"
-    assert "content=${serializeYaml({" not in body, "modal content must not serialize raw spec inline"
-    assert "spec.sweep" in body or "benchmark.sweep" in body, "summary/display logic must account for sweep specs"
-    assert "AIPerfSweep" in body or "config.kind" in body, "modal should preserve sweep kind when showing sweep YAML"
+    assert "redact" in body.lower(), (
+        "JobConfigSection must redact before passing content to the modal"
+    )
+    assert "content=${serializeYaml({" not in body, (
+        "modal content must not serialize raw spec inline"
+    )
+    assert "spec.sweep" in body or "benchmark.sweep" in body, (
+        "summary/display logic must account for sweep specs"
+    )
+    assert "AIPerfSweep" in body or "config.kind" in body, (
+        "modal should preserve sweep kind when showing sweep YAML"
+    )
 
 
 def test_yaml_serializers_quote_urls_with_colons_in_display_and_relaunch() -> None:
@@ -101,8 +111,12 @@ def test_yaml_serializers_quote_urls_with_colons_in_display_and_relaunch() -> No
     job_src = _source(_JOB_DETAIL_JS)
     relaunch_src = _source(_RELAUNCH_BUTTON_JS)
 
-    assert "/^[\\w./@\\-+]+$/" in job_src, "job-detail YAML serializer must exclude ':' from bare scalars"
-    assert "/^[\\w./@\\-+]+$/" in relaunch_src, "relaunch YAML serializer must exclude ':' from bare scalars"
+    assert "/^[\\w./@\\-+]+$/" in job_src, (
+        "job-detail YAML serializer must exclude ':' from bare scalars"
+    )
+    assert "/^[\\w./@\\-+]+$/" in relaunch_src, (
+        "relaunch YAML serializer must exclude ':' from bare scalars"
+    )
     assert "/^[\\w./:@\\-+]+$/" not in job_src + relaunch_src
 
 
@@ -113,19 +127,30 @@ def test_yaml_serializers_handle_multiline_strings_explicitly() -> None:
     assert "includes('\\n')" in combined or 'includes("\\n")' in combined, (
         "YAML serializers must branch explicitly for multiline strings"
     )
-    assert "|" in combined or "\\n" in combined, "multiline strings should be block-emitted or escaped deliberately"
+    assert "|" in combined or "\\n" in combined, (
+        "multiline strings should be block-emitted or escaped deliberately"
+    )
 
 
 def test_malformed_config_fetch_reaches_terminal_unavailable_state() -> None:
     """404s, invalid JSON, and network errors must not leave the config card spinning forever."""
     src = _source(_JOB_DETAIL_JS)
 
-    assert "jobConfigLoaded" in src or "jobConfigError" in src or "configUnavailable" in src
-    assert ".then(r => r.ok ? r.json() : null)" not in src, "non-OK config responses need explicit loaded/error state"
+    assert (
+        "jobConfigLoaded" in src
+        or "jobConfigError" in src
+        or "configUnavailable" in src
+    )
+    assert ".then(r => r.ok ? r.json() : null)" not in src, (
+        "non-OK config responses need explicit loaded/error state"
+    )
     assert re.search(r"catch\([^)]*\)\s*=>\s*\{[^}]*setJobConfig", src, re.DOTALL), (
         "config fetch catch path should update config state, not silently swallow"
     )
-    assert "configuration unavailable" in src.lower() or "config unavailable" in src.lower()
+    assert (
+        "configuration unavailable" in src.lower()
+        or "config unavailable" in src.lower()
+    )
 
 
 def test_relaunch_manifest_strips_server_owned_metadata_and_status() -> None:
@@ -133,13 +158,19 @@ def test_relaunch_manifest_strips_server_owned_metadata_and_status() -> None:
     src = _source(_RELAUNCH_BUTTON_JS)
     body = _function_body(src, "RelaunchButton")
 
-    assert "status" not in body, "relaunch manifest must not carry status back to the launch form"
+    assert "status" not in body, (
+        "relaunch manifest must not carry status back to the launch form"
+    )
     assert "metadata: config.metadata" not in body
     assert "labels: config" not in body and "annotations: config" not in body
     assert all(field in src for field in _K8S_METADATA_EXAMPLES), (
         "metadata stripping should name the server-owned fields it intentionally drops"
     )
-    assert re.search(r"metadata:\s*\{\s*name: suggestRetryName\(name\),\s*namespace,\s*\}", body, re.DOTALL)
+    assert re.search(
+        r"metadata:\s*\{\s*name: suggestRetryName\(name\),\s*namespace,\s*\}",
+        body,
+        re.DOTALL,
+    )
 
 
 def test_relaunch_does_not_navigate_when_session_storage_set_fails() -> None:
@@ -155,7 +186,9 @@ def test_relaunch_does_not_navigate_when_session_storage_set_fails() -> None:
     assert "console.warn('Unable to prepare launch prefill', err);" in body
 
 
-def test_launch_consumes_prefill_defensively_when_session_storage_access_fails() -> None:
+def test_launch_consumes_prefill_defensively_when_session_storage_access_fails() -> (
+    None
+):
     """SecurityError from getItem/removeItem and malformed JSON should not break Launch mount."""
     src = _source(_LAUNCH_JS)
     body = _function_body(src, "Launch")
@@ -166,4 +199,6 @@ def test_launch_consumes_prefill_defensively_when_session_storage_access_fails()
     json_parse_pos = body.index("JSON.parse(raw)")
     stale_check_pos = body.index("Date.now() - payload.at > 60000")
     assert get_pos < first_catch_pos < remove_pos < json_parse_pos < stale_check_pos
-    assert body.count("catch (_e)") >= 3, "getItem, removeItem, and JSON.parse must each be guarded"
+    assert body.count("catch (_e)") >= 3, (
+        "getItem, removeItem, and JSON.parse must each be guarded"
+    )

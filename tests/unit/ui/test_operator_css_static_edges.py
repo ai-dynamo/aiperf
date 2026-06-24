@@ -38,7 +38,12 @@ def _literal_class_tokens(src: str) -> set[str]:
         tokens.update(_CLASS_TOKEN_RE.findall(quoted[1]))
     for quoted in re.findall(r"(['\"])([^'\"]*[A-Za-z][A-Za-z0-9_-]+[^'\"]*)\1", src):
         text = quoted[1]
-        if "class" in text or "log-strip" in text or "diagnostics-" in text or "job-table" in text:
+        if (
+            "class" in text
+            or "log-strip" in text
+            or "diagnostics-" in text
+            or "job-table" in text
+        ):
             tokens.update(_CLASS_TOKEN_RE.findall(text))
     return tokens
 
@@ -173,7 +178,8 @@ def test_critical_selectors_do_not_have_conflicting_duplicate_blocks() -> None:
     conflicting = {
         selector: selector_bodies
         for selector, selector_bodies in bodies.items()
-        if selector in critical_selectors and _has_conflicting_full_blocks(selector_bodies)
+        if selector in critical_selectors
+        and _has_conflicting_full_blocks(selector_bodies)
     }
 
     assert conflicting == {}

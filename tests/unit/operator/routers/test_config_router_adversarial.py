@@ -207,7 +207,10 @@ class TestConfigRouterKubernetesApiErrors:
                 response = client.get("/api/v1/config/aiperf-bench/deleted-job")
 
             assert response.status_code == 404
-            assert response.json()["detail"] == "No config found for aiperf-bench/deleted-job"
+            assert (
+                response.json()["detail"]
+                == "No config found for aiperf-bench/deleted-job"
+            )
         finally:
             subject.db.close()
 
@@ -331,7 +334,8 @@ class TestConfigRouterEncodingAndSchema:
             "aiperf.operator.environment.OperatorEnvironment.RESULTS.RETAIN_DAYS", 14
         )
         monkeypatch.setattr(
-            "aiperf.operator.environment.OperatorEnvironment.DASHBOARD.PROXY_ENABLED", True
+            "aiperf.operator.environment.OperatorEnvironment.DASHBOARD.PROXY_ENABLED",
+            True,
         )
         subject = _make_config_route_subject(tmp_path, api_holder=[None])
         try:

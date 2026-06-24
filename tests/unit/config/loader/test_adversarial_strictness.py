@@ -116,7 +116,8 @@ def test_grid_sweep_rejects_inf_value() -> None:
 
 def test_zip_sweep_rejects_nan_value() -> None:
     with pytest.raises(ValidationError, match=r"not\s+finite|NaN"):
-        ZipSweep(variables={
+        ZipSweep(
+            variables={
                 "phases.profiling.rate": [1.0, math.nan],
                 "phases.profiling.concurrency": [1, 2],
             }
@@ -125,7 +126,8 @@ def test_zip_sweep_rejects_nan_value() -> None:
 
 def test_grid_sweep_accepts_well_formed_paths() -> None:
     """Sanity: the validator does not reject legitimate sweep paths."""
-    sweep = GridSweep(variables={
+    sweep = GridSweep(
+        variables={
             "phases.profiling.concurrency": [1, 2, 4],
             "variables.isl": [128, 256],
         }

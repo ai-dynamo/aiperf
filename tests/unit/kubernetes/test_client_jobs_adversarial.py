@@ -31,7 +31,6 @@ from aiperf.kubernetes.client_jobs import (
 )
 from aiperf.kubernetes.client_jobsets import find_jobset, list_jobsets
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -131,7 +130,9 @@ class TestAIPerfJobListAdversarial:
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
         mock_custom.list_cluster_custom_object = AsyncMock(return_value={"items": []})
-        mock_custom.list_namespaced_custom_object = AsyncMock(return_value={"items": []})
+        mock_custom.list_namespaced_custom_object = AsyncMock(
+            return_value={"items": []}
+        )
 
         with patch(
             "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
@@ -146,7 +147,9 @@ class TestAIPerfJobListAdversarial:
         assert result == []
         mock_custom.list_cluster_custom_object.assert_awaited_once()
         mock_custom.list_namespaced_custom_object.assert_not_called()
-        assert "namespace" not in mock_custom.list_cluster_custom_object.call_args.kwargs
+        assert (
+            "namespace" not in mock_custom.list_cluster_custom_object.call_args.kwargs
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -356,7 +359,9 @@ class TestJobSetLookupAdversarial:
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
         mock_custom.list_cluster_custom_object = AsyncMock(return_value={"items": []})
-        mock_custom.list_namespaced_custom_object = AsyncMock(return_value={"items": []})
+        mock_custom.list_namespaced_custom_object = AsyncMock(
+            return_value={"items": []}
+        )
 
         with patch(
             "aiperf.kubernetes.client_jobsets.client.CustomObjectsApi",
@@ -424,8 +429,12 @@ class TestJobSetLookupAdversarial:
             )
 
         assert result is None
-        first_kwargs = mock_custom.list_namespaced_custom_object.call_args_list[0].kwargs
-        second_kwargs = mock_custom.list_namespaced_custom_object.call_args_list[1].kwargs
+        first_kwargs = mock_custom.list_namespaced_custom_object.call_args_list[
+            0
+        ].kwargs
+        second_kwargs = mock_custom.list_namespaced_custom_object.call_args_list[
+            1
+        ].kwargs
         assert first_kwargs["label_selector"] == (
             "app=aiperf,aiperf.nvidia.com/job-id=llama3-throughput-v07"
         )

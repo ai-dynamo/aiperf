@@ -42,8 +42,14 @@ def test_load_results_processors_skips_plugins_without_results_protocol() -> Non
         return _SideChannelProcessor if name == "side" else _ValidResultsProcessor
 
     with (
-        patch("aiperf.records.records_manager_processing.plugins.iter_entries", return_value=iter(entries)),
-        patch("aiperf.records.records_manager_processing.plugins.get_class", side_effect=get_class),
+        patch(
+            "aiperf.records.records_manager_processing.plugins.iter_entries",
+            return_value=iter(entries),
+        ),
+        patch(
+            "aiperf.records.records_manager_processing.plugins.get_class",
+            side_effect=get_class,
+        ),
     ):
         processors = load_results_processors(host)
 

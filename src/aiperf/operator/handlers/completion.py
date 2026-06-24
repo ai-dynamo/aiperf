@@ -77,6 +77,25 @@ def _has_key_result_files(paths: list[str] | None) -> bool:
     return any(key in names or f"{key}.zst" in names for key in _KEY_RESULT_FILES)
 
 
+def _key_files_materialized(namespace: str, job_id: str, epoch: str) -> bool:
+    """Return True when an authoritative export is actually on disk for this run.
+
+    The controller's ``downloaded`` list claims which files it pushed, but the
+    operator must not advance ``latest.txt``/``runEpoch``/the in-DB latest
+    pointer (or even create the run dir) until a key export is materialized on
+    its own PVC — otherwise a transport race that reports the file without
+    landing it would point readers at an empty directory. Checks both the raw
+    and ``.zst`` on-disk names, mirroring :func:`_has_key_result_files`.
+    """
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+    if not dest_dir.exists():
+        return False
+    return any(
+        (dest_dir / key).is_file() or (dest_dir / f"{key}.zst").is_file()
+        for key in _KEY_RESULT_FILES
+    )
+
+
 def _recover_result_from_disk(
     *,
     body: dict[str, Any],
@@ -435,7 +454,7 @@ def _record_results_on_status(
                 sb.set_summary(file_summary_dict)
             logger.info(f"Parsed metrics from result files for {job_id}")
 
-    if has_files:
+    if has_files and _key_files_materialized(namespace, job_id, epoch):
         dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
         write_ready_marker(dest_dir)
         sb.set_results_path(str(dest_dir))
@@ -577,7 +596,12 @@ async def _update_job_index_safe(
                 error=error or "unknown",
                 phase=phase,
             )
-        await runs_index.set_latest(namespace, job_id, epoch)
+        # Only advance the in-DB latest pointer once the authoritative export
+        # is materialized on disk. A row whose key files never landed must not
+        # become the discoverable latest run (mirrors the latest.txt gate in
+        # ``_record_results_on_status``).
+        if _key_files_materialized(namespace, job_id, epoch):
+            await runs_index.set_latest(namespace, job_id, epoch)
     except Exception as e:
         logger.exception(f"Failed to update runs_index for {job_id}")
         sb.conditions.set_false(

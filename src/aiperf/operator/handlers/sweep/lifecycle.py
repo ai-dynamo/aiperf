@@ -90,7 +90,12 @@ async def on_delete(*, name: str, namespace: str, **_: Any) -> None:
                     plural="aiperfjobs",
                     label_selector=f"aiperf.nvidia.com/sweep={name}",
                 )
-            except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+            except (
+                ApiException,
+                aiohttp.ClientError,
+                ConnectionError,
+                TimeoutError,
+            ) as e:
                 logger.warning(
                     "AIPerfSweep on_delete: cooperative-cancel best-effort failed for %s/%s: %s",
                     namespace,

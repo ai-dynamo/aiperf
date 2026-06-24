@@ -3,7 +3,7 @@
 
 """Core API router for AIPerf API.
 
-Provides config, health, readiness, and shutdown endpoints.
+Provides config, run-identity, health, readiness, and shutdown endpoints.
 """
 
 from __future__ import annotations
@@ -16,12 +16,13 @@ from fastapi.responses import Response
 
 from aiperf.api.api_service import ServiceDep
 from aiperf.api.routers.base_router import BaseRouter
+from aiperf.common.models.export_models import RunInfo
 
 core_router = APIRouter()
 
 
 class CoreRouter(BaseRouter):
-    """Config, health, readiness, and shutdown endpoints."""
+    """Config, run-identity, health, readiness, and shutdown endpoints."""
 
     def get_router(self) -> APIRouter:
         return core_router
@@ -36,6 +37,27 @@ async def get_config(svc: ServiceDep) -> dict[str, Any]:
         exclude_none=True,
         exclude={"endpoint": {"api_key"}},
     )
+
+
+@core_router.get(
+    "/api/run",
+    response_model=RunInfo,
+    response_model_exclude_none=True,
+    tags=["API"],
+)
+async def get_run(svc: ServiceDep) -> RunInfo:
+    """Get run-identity metadata for the currently executing benchmark run.
+
+    Same shape as ``run_info`` in ``profile_export_aiperf.json`` — including
+    the matching exclude-None projection, so unset optional fields are omitted
+    from the response rather than serialized as ``null``. Includes the redacted
+    ``cli_command``, ``benchmark_id``, ``sweep_id``, ``trial``, ``random_seed``,
+    and sweep variation coordinates.
+    """
+    info = RunInfo.from_run(svc.run)
+    if info is None:
+        raise HTTPException(status_code=503, detail="No active benchmark run.")
+    return info
 
 
 @core_router.get("/healthz", include_in_schema=False)

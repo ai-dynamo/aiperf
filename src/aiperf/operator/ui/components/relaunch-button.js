@@ -129,7 +129,7 @@ export function RelaunchButton({ namespace, name, config }) {
   const spec = config?.spec;
   if (!spec || Object.keys(spec).length === 0 || !namespace || !name) return null;
   return html`
-    <button
+    <button type="button"
       class="btn btn--primary"
       onclick=${() => {
         const manifest = {

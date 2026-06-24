@@ -194,7 +194,9 @@ class TestRecordsManagerSnapshotBranchStats:
     branch stats — DAG branch stats are wired through a different path.
     """
 
-    pytestmark = pytest.mark.skip(reason="branch's RecordsManager dropped _snapshot_branch_stats")
+    pytestmark = pytest.mark.skip(
+        reason="branch's RecordsManager dropped _snapshot_branch_stats"
+    )
 
     def test_snapshot_returns_none_when_phase_not_recorded(self):
         mgr = MagicMock(spec=RecordsManager)
@@ -231,7 +233,9 @@ class TestRecordsManagerOnCreditPhaseComplete:
     branch-stats wire path.
     """
 
-    pytestmark = pytest.mark.skip(reason="branch's RecordsManager dropped _phase_branch_stats dict")
+    pytestmark = pytest.mark.skip(
+        reason="branch's RecordsManager dropped _phase_branch_stats dict"
+    )
     """Handler stores sub-agent stats from CreditPhaseCompleteMessage per phase."""
 
     @staticmethod

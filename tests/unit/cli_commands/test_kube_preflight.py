@@ -81,12 +81,12 @@ def mock_kube_env():
                 yield  # noqa: F841, RET503
 
             client_patch = patch(
-                "aiperf.kubernetes.client.k8s_client",
+                "aiperf.kubernetes.preflight.k8s_client",
                 new=_boom,
             )
         else:
             client_patch = patch(
-                "aiperf.kubernetes.client.k8s_client",
+                "aiperf.kubernetes.preflight.k8s_client",
                 return_value=_yields(api),
             )
 

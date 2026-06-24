@@ -5,11 +5,12 @@
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.models.record_models import InferenceServerResponse, TextResponseData
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config
+from tests.unit.endpoints.conftest import _wrap_model_endpoint, create_config
 
 
 class TestCompletionsEndpointParseResponse:
@@ -196,3 +197,22 @@ class TestCompletionsEndpointParseResponse:
 
         assert parsed is not None
         assert parsed.data.text == long_text
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            param({"choices": [{"text": "hi"}]}, id="missing-object"),
+            param(
+                {"object": "error", "message": "backend died", "code": 500},
+                id="vllm-error-object",
+            ),
+            param({"error": {"message": "Internal Server Error"}}, id="error-body"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_unrecognized_object_returns_none(self, endpoint, body):
+        """Malformed/error bodies (server crash, proxy errors) degrade to None
+        instead of raising, so the worker records a failure and continues."""
+        mock_response = Mock(spec=InferenceServerResponse)
+        mock_response.perf_ns = 123456789
+        mock_response.get_json.return_value = body
+        assert endpoint.parse_response(mock_response) is None

@@ -242,7 +242,7 @@ export function Sweeps() {
             const key = f.value ? f.label.toLowerCase() : null;
             const active = (phaseKey ?? null) === key;
             return html`
-              <button
+              <button type="button"
                 key=${f.label}
                 role="tab"
                 aria-pressed=${active}
@@ -326,7 +326,7 @@ export function Sweeps() {
             ? (hasFilters
               ? html`<div class="job-table-empty" data-testid="sweeps-empty-filtered" style="text-align:center;padding:var(--space-6)">
                   <p style=${'color:' + palette.text + ';margin:0 0 var(--space-3) 0'}>No sweeps match these filters.</p>
-                  <button
+                  <button type="button"
                     onclick=${clearFilters}
                     style=${'padding: var(--space-2) var(--space-4); background: ' + palette.surface0 + '; border: 1px solid ' + palette.surface1 + '; border-radius: var(--radius-md); color: ' + palette.text + '; cursor: pointer; font-size: var(--font-size-sm)'}
                   >
@@ -347,6 +347,9 @@ export function Sweeps() {
                   ${COLUMNS.map(col => html`
                     <th key=${col.key}
                         class="job-table-th"
+                        role="columnheader"
+                        tabindex="0"
+                        onkeydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(col.key); } }}
                         onclick=${() => toggleSort(col.key)}
                         data-testid=${'col-header-' + col.key}>
                       ${col.label} ${renderSortIcon(col.key)}
@@ -364,6 +367,9 @@ export function Sweeps() {
                   return html`
                     <tr key=${`${s.namespace}/${s.name}`}
                         class="job-table-row"
+                        role="row"
+                        tabindex="0"
+                        onkeydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rowClick(s); } }}
                         onclick=${() => rowClick(s)}
                         style="cursor: pointer"
                         data-testid=${'sweep-row-' + (s.namespace ?? '') + '-' + (s.name ?? '')}>

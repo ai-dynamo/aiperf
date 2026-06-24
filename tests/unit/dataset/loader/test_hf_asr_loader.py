@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from aiperf.config import BenchmarkRun
 from aiperf.common.models import Conversation
+from aiperf.config import BenchmarkRun
 from aiperf.dataset.loader.hf_asr import (
     _ASR_PROMPT,
     _MAX_DURATION_SECONDS,

@@ -124,15 +124,45 @@ def _history_page_script(expression: str) -> str:
 
 def test_history_orders_archived_and_current_runs_by_start_time_then_job_id() -> None:
     entries = [
-        {"job_id": "current-newer", "namespace": "ns", "phase": "Running", "start_time": "2026-05-03T00:00:00Z", "value": 3},
-        {"job_id": "archived-newest", "namespace": "ns", "phase": "Archived", "start_time": "2026-05-04T00:00:00Z", "value": 4},
-        {"job_id": "archived-oldest", "namespace": "ns", "phase": "Archived", "start_time": "2026-05-01T00:00:00Z", "value": 1},
-        {"job_id": "current-middle-a", "namespace": "ns", "phase": "Completed", "start_time": "2026-05-02T00:00:00Z", "value": 2},
-        {"job_id": "current-middle-b", "namespace": "ns", "phase": "Completed", "start_time": "2026-05-02T00:00:00Z", "value": 2},
+        {
+            "job_id": "current-newer",
+            "namespace": "ns",
+            "phase": "Running",
+            "start_time": "2026-05-03T00:00:00Z",
+            "value": 3,
+        },
+        {
+            "job_id": "archived-newest",
+            "namespace": "ns",
+            "phase": "Archived",
+            "start_time": "2026-05-04T00:00:00Z",
+            "value": 4,
+        },
+        {
+            "job_id": "archived-oldest",
+            "namespace": "ns",
+            "phase": "Archived",
+            "start_time": "2026-05-01T00:00:00Z",
+            "value": 1,
+        },
+        {
+            "job_id": "current-middle-a",
+            "namespace": "ns",
+            "phase": "Completed",
+            "start_time": "2026-05-02T00:00:00Z",
+            "value": 2,
+        },
+        {
+            "job_id": "current-middle-b",
+            "namespace": "ns",
+            "phase": "Completed",
+            "start_time": "2026-05-02T00:00:00Z",
+            "value": 2,
+        },
     ]
     script = _history_page_script(
         f"""
-        const ids = {json.dumps([entry['job_id'] for entry in entries])};
+        const ids = {json.dumps([entry["job_id"] for entry in entries])};
         const rendered = renderHistory({{ entries: {json.dumps(entries)} }});
         console.log(JSON.stringify(visibleJobIds(rendered, ids)));
         """
@@ -147,10 +177,22 @@ def test_history_orders_archived_and_current_runs_by_start_time_then_job_id() ->
     ]
 
 
-def test_history_chart_keeps_each_run_as_its_own_dated_point_without_bucketing() -> None:
+def test_history_chart_keeps_each_run_as_its_own_dated_point_without_bucketing() -> (
+    None
+):
     entries = [
-        {"job_id": "morning", "namespace": "ns", "start_time": "2026-05-02T09:00:00Z", "value": 10},
-        {"job_id": "evening", "namespace": "ns", "start_time": "2026-05-02T18:00:00Z", "value": 20},
+        {
+            "job_id": "morning",
+            "namespace": "ns",
+            "start_time": "2026-05-02T09:00:00Z",
+            "value": 10,
+        },
+        {
+            "job_id": "evening",
+            "namespace": "ns",
+            "start_time": "2026-05-02T18:00:00Z",
+            "value": 20,
+        },
     ]
     script = _history_page_script(
         f"""
@@ -170,16 +212,46 @@ def test_history_chart_keeps_each_run_as_its_own_dated_point_without_bucketing()
     assert out["labels"][0] == out["labels"][1]
 
 
-def test_history_filters_model_endpoint_substrings_case_insensitively_and_namespace_exactly() -> None:
+def test_history_filters_model_endpoint_substrings_case_insensitively_and_namespace_exactly() -> (
+    None
+):
     entries = [
-        {"job_id": "match", "namespace": "prod", "model": "Llama-3", "endpoint": "https://API.example/v1", "start_time": "2026-05-01T00:00:00Z", "value": 1},
-        {"job_id": "wrong-model", "namespace": "prod", "model": "Mixtral", "endpoint": "https://API.example/v1", "start_time": "2026-05-02T00:00:00Z", "value": 2},
-        {"job_id": "wrong-endpoint", "namespace": "prod", "model": "llama-3-small", "endpoint": "https://other.example/v1", "start_time": "2026-05-03T00:00:00Z", "value": 3},
-        {"job_id": "wrong-namespace", "namespace": "production", "model": "llama-3", "endpoint": "https://api.example/v2", "start_time": "2026-05-04T00:00:00Z", "value": 4},
+        {
+            "job_id": "match",
+            "namespace": "prod",
+            "model": "Llama-3",
+            "endpoint": "https://API.example/v1",
+            "start_time": "2026-05-01T00:00:00Z",
+            "value": 1,
+        },
+        {
+            "job_id": "wrong-model",
+            "namespace": "prod",
+            "model": "Mixtral",
+            "endpoint": "https://API.example/v1",
+            "start_time": "2026-05-02T00:00:00Z",
+            "value": 2,
+        },
+        {
+            "job_id": "wrong-endpoint",
+            "namespace": "prod",
+            "model": "llama-3-small",
+            "endpoint": "https://other.example/v1",
+            "start_time": "2026-05-03T00:00:00Z",
+            "value": 3,
+        },
+        {
+            "job_id": "wrong-namespace",
+            "namespace": "production",
+            "model": "llama-3",
+            "endpoint": "https://api.example/v2",
+            "start_time": "2026-05-04T00:00:00Z",
+            "value": 4,
+        },
     ]
     script = _history_page_script(
         f"""
-        const ids = {json.dumps([entry['job_id'] for entry in entries])};
+        const ids = {json.dumps([entry["job_id"] for entry in entries])};
         const rendered = renderHistory({{
           entries: {json.dumps(entries)},
           queryValue: {{ ns: 'prod', model: 'llama', endpoint: 'api.example' }},
@@ -199,7 +271,12 @@ def test_history_filters_model_endpoint_substrings_case_insensitively_and_namesp
 
 def test_history_missing_timestamps_sort_first_and_render_missing_date_marker() -> None:
     entries = [
-        {"job_id": "dated", "namespace": "ns", "start_time": "2026-05-01T00:00:00Z", "value": 1},
+        {
+            "job_id": "dated",
+            "namespace": "ns",
+            "start_time": "2026-05-01T00:00:00Z",
+            "value": 1,
+        },
         {"job_id": "missing-b", "namespace": "ns", "value": 2},
         {"job_id": "missing-a", "namespace": "ns", "start_time": None, "value": 3},
     ]
@@ -219,7 +296,9 @@ def test_history_missing_timestamps_sort_first_and_render_missing_date_marker() 
     assert out["missingMarkers"] >= 2
 
 
-def test_history_row_links_delegate_run_epoch_and_child_run_epoch_entries_to_router() -> None:
+def test_history_row_links_delegate_run_epoch_and_child_run_epoch_entries_to_router() -> (
+    None
+):
     entry = {
         "job_id": "sweep-child",
         "namespace": "bench",

@@ -20,6 +20,7 @@ RAW_INFERENCE_CODEC = MsgspecStructCodec(
     cache_key="raw-inference-msgpack",
 )
 
+
 class RecordsChannelCodec:
     cache_key = "records-msgpack"
 

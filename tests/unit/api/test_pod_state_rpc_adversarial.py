@@ -36,7 +36,6 @@ from aiperf.common.messages import WorkerPodStateMessage
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.system_controller import AggregateWorkerStatus
 
-
 # ============================================================================
 # Helpers
 # ============================================================================
@@ -213,7 +212,10 @@ class TestQueryControllerPodStatesRPC:
     async def test_query_controller_pod_states_command_failure_returns_none(
         self, response: object
     ) -> None:
-        assert await query_controller_pod_states(_FakeConn(_Service(response)), 2.0) is None
+        assert (
+            await query_controller_pod_states(_FakeConn(_Service(response)), 2.0)
+            is None
+        )
 
     @pytest.mark.parametrize(
         "conn",
@@ -260,7 +262,9 @@ class TestQueryControllerPodStatesRPC:
             )
         )
 
-        assert await query_controller_pod_states(_FakeConn(service), timeout=2.0) is None
+        assert (
+            await query_controller_pod_states(_FakeConn(service), timeout=2.0) is None
+        )
 
 
 # ============================================================================
@@ -360,7 +364,9 @@ class TestPodStateRoutersAdversarialPayloads:
         self, progress_client: TestClient
     ) -> None:
         progress_client.app.state.controller = _Controller()
-        progress_client.app.state.service = _Service(_ok(["malformed", "sidecar", "rpc"]))
+        progress_client.app.state.service = _Service(
+            _ok(["malformed", "sidecar", "rpc"])
+        )
 
         response = progress_client.get("/api/progress")
 
@@ -392,6 +398,7 @@ class TestProgressPatchNames:
         expected_name: str,
     ) -> None:
         import kubernetes_asyncio
+
         import aiperf.api.routers.progress as progress_mod
         import aiperf.kubernetes.client as kclient
 

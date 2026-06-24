@@ -178,9 +178,7 @@ class StartRealtimeTelemetryCommand(
     command: str = CommandType.START_REALTIME_TELEMETRY
 
 
-class SpawnWorkersCommand(
-    CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
-):
+class SpawnWorkersCommand(CommandMessage, kw_only=True, tag=MessageType.COMMAND.value):
     command: str = CommandType.SPAWN_WORKERS
     num_workers: int = 0  # validated > 0 in __post_init__
 
@@ -235,9 +233,7 @@ class ProfileConfigureCommand(
     command: str = CommandType.PROFILE_CONFIGURE
 
 
-class ProfileStartCommand(
-    CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
-):
+class ProfileStartCommand(CommandMessage, kw_only=True, tag=MessageType.COMMAND.value):
     """Command sent to request services to start profiling."""
 
     command: str = CommandType.PROFILE_START
@@ -254,17 +250,13 @@ class ProfileCompleteCommand(
     command: str = CommandType.PROFILE_COMPLETE
 
 
-class ProfileCancelCommand(
-    CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
-):
+class ProfileCancelCommand(CommandMessage, kw_only=True, tag=MessageType.COMMAND.value):
     """Command sent to request services to cancel profiling."""
 
     command: str = CommandType.PROFILE_CANCEL
 
 
-class ShutdownCommand(
-    CommandMessage, kw_only=True, tag=MessageType.COMMAND.value
-):
+class ShutdownCommand(CommandMessage, kw_only=True, tag=MessageType.COMMAND.value):
     """Command sent to request a service to shutdown."""
 
     command: str = CommandType.SHUTDOWN

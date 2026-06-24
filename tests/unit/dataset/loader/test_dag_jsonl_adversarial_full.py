@@ -30,8 +30,8 @@ from aiperf.common.models import (
     TurnMetadata,
     TurnPrerequisite,
 )
-from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v1
 from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook
+from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v1
 from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader, DagLoadError
 from aiperf.dataset.loader.dag_jsonl_models import DagSpawn
 from aiperf.plugin.enums import DatasetSamplingStrategy

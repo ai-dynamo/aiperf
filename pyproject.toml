@@ -14,7 +14,7 @@ artifacts = ["aiperf/operator/ui/**"]
 
 [project]
 name = "aiperf"
-version = "0.8.0"
+version = "0.11.0"
 description = "AIPerf is a package for performance testing of AI models"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -89,6 +89,9 @@ aiperf = "aiperf.plugin:plugins.yaml"
 mlflow = [
   "mlflow>=3.10.0,<4.0.0",
 ]
+wandb = [
+  "wandb>=0.19.0,<1.0.0",
+]
 otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
@@ -101,12 +104,13 @@ test = [
   "pytest>=7.0.0",
   "pytest-asyncio",
   "pytest-cov",
+  "pytest-rerunfailures>=15.0",
   "pytest-xdist>=3.8.0",
   "trustme>=1.0.0",
   "pympler>=1.1",
 ]
 dev = [
-  "aiperf[mlflow,otel,test]",
+  "aiperf[mlflow,otel,test,wandb]",
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",
@@ -131,6 +135,13 @@ accuracy = [
     "latex2sympy2-extended>=1.0.6",
     "lighteval>=0.13.0",
     "sympy>=1.14.0",
+    # deepeval is the upstream reference for the HellaSwag and
+    # BigBench-Hard benchmark prompt templates. Aiperf calls
+    # ``HellaSwagTemplate.generate_output`` (and
+    # ``BigBenchHardTemplate.generate_output`` on the BigBench branch)
+    # directly so prompts are byte-equal to what the trt-llm benchmark
+    # recipe ships.
+    "deepeval>=2.9.0,<5.0.0",
 ]
 
 [dependency-groups]
@@ -244,6 +255,7 @@ markers = [
     "memory_limit(mb=N): cap this test's virtual address space at N MiB (default 4096)",
     "no_memory_limit: disable the per-test virtual address space cap entirely",
     "network: marks tests that require network access",
+    "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
 ]
 # Better console output
 console_output_style = "progress"
@@ -267,7 +279,7 @@ filterwarnings = [
     "ignore:Argument ``constraints_func`` is an experimental feature.*:optuna.exceptions.ExperimentalWarning",
     "ignore:ORJSONResponse is deprecated.*:fastapi.exceptions.FastAPIDeprecationWarning",
     "ignore:CUDA initialization.*The NVIDIA driver on your system is too old.*:UserWarning",
-    "ignore:The model inputs are of type torch.float32.*:botorch.exceptions.warnings.InputDataWarning",
+    "ignore:The model inputs are of type torch.float32.*",
     "ignore:Optimization failed in `gen_candidates_scipy`.*:RuntimeWarning",
     "ignore:Optimization failed on the second try.*:RuntimeWarning",
     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",

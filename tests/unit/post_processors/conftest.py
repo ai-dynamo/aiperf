@@ -54,7 +54,6 @@ from tests.unit.conftest import (
 T = TypeVar("T", bound=AIPerfLifecycleMixin)
 
 
-
 def install_fake_otel_modules(
     monkeypatch: pytest.MonkeyPatch,
     state: dict[str, Any] | None = None,
@@ -258,8 +257,6 @@ def install_fake_otel_modules(
 @pytest.fixture
 def fake_otel(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     return install_fake_otel_modules(monkeypatch)
-
-
 
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {

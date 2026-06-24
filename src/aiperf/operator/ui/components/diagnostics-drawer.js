@@ -1,5 +1,5 @@
 import { html } from 'htm/preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import { DiagnosticsPanel } from './diagnostics-panel.js';
 
 /**
@@ -38,12 +38,26 @@ import { DiagnosticsPanel } from './diagnostics-panel.js';
  *   Every other prop is forwarded verbatim to ``DiagnosticsPanel``.
  */
 export function DiagnosticsDrawer({ open, onClose, ...panelProps }) {
+  const asideRef = useRef(null);
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  // Pull keyboard focus into the drawer when it opens and restore it to the
+  // trigger on close so the Escape handler and close button are reachable.
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement;
+    asideRef.current?.focus();
+    return () => {
+      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+        previouslyFocused.focus();
+      }
+    };
+  }, [open]);
 
   if (!open) return null;
 
@@ -55,16 +69,19 @@ export function DiagnosticsDrawer({ open, onClose, ...panelProps }) {
       style=${BACKDROP_STYLE}
     ></div>
     <aside
+      ref=${asideRef}
+      tabindex="-1"
       class="diagnostics-drawer"
       data-testid="diagnostics-drawer"
       role="dialog"
+      aria-modal="true"
       aria-label="Diagnostics"
       style=${ASIDE_STYLE}
       onClick=${(e) => e.stopPropagation()}
     >
       <header class="diagnostics-drawer__head" style=${HEAD_STYLE}>
         <span class="diagnostics-drawer__title" style=${TITLE_STYLE}>Diagnostics</span>
-        <button
+        <button type="button"
           class="diagnostics-drawer__close"
           aria-label="Close diagnostics"
           data-testid="diagnostics-drawer-close"

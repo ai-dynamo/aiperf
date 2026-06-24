@@ -34,6 +34,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - YAML plugin registry for extensible features (`src/aiperf/plugin/plugins.yaml`).
 - Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
 - Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
+- Reading filesystem paths: use `aiperf.common.path_safety.safe_read_template_path` instead of inline `Path().read_text()` / `open().read()`. Returns `None` on safety-check failure; caller picks the fallback semantic. See `docs/dev/patterns.md` § "Safe Filesystem Reads Pattern".
 - No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
 - Comments only for "why?" not "what".
 - Enums are string-based - use `MessageType.X` directly, never `.value`.
@@ -43,6 +44,7 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - Do not over-comment code. Removing code is fine without adding comments to explain why.
 - No emojis in code or comments.
 - Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
+- Platform-conditional code MUST branch on `IS_WINDOWS` / `IS_MACOS` / `IS_LINUX` from `aiperf.common.constants`, never on `platform.system()` directly. The constants are evaluated once at import time, are uniformly greppable, and produce smaller diffs. See `src/aiperf/common/bootstrap.py` and `src/aiperf/config/comm/ipc.py` for canonical examples.
 
 ## NaN/Inf Discipline
 

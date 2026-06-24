@@ -148,7 +148,7 @@ export function CompareEpochs({ namespace, name, epochA, epochB }) {
 
   const header = html`
     <header style="display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4)">
-      <button
+      <button type="button"
         style=${backStyle}
         onclick=${() => navigate(backHref)}
         title="Back to job"

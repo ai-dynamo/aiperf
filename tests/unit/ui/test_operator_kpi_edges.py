@@ -66,7 +66,9 @@ def test_realtime_grid_slo_coloring_uses_metric_direction() -> None:
     assert "'request_throughput'" in source
 
 
-def test_realtime_grid_sparkline_matches_displayed_stat_and_filters_bad_samples() -> None:
+def test_realtime_grid_sparkline_matches_displayed_stat_and_filters_bad_samples() -> (
+    None
+):
     source = _source(REALTIME_GRID)
     pluck = _function_body(source, "pluck")
 
@@ -107,7 +109,9 @@ def test_realtime_grid_formats_negative_numbers_but_rejects_nan_and_infinity() -
     assert "isFinite(reqVal)" in reliability
 
 
-def test_kpi_card_value_and_progress_sanitize_nan_without_hiding_negative_numbers() -> None:
+def test_kpi_card_value_and_progress_sanitize_nan_without_hiding_negative_numbers() -> (
+    None
+):
     source = _source(KPI_CARD)
 
     assert "Math.max(0, Number(progress))" in source

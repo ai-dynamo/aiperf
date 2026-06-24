@@ -31,7 +31,6 @@ from aiperf.config.kube import KubeOptions
 from aiperf.kubernetes import validate as kube_validate
 from aiperf.operator.models import AIPerfJobSpec, AIPerfSweepSpec
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -312,7 +311,11 @@ class TestValidateYamlTrustBoundary:
         ],
     )  # fmt: skip
     def test_validate_file_kind_sweep_cardinality_errors_name_kind_and_field(
-        self, tmp_path: Path, kind: str, sweep_value: dict[str, object] | None, expected: str
+        self,
+        tmp_path: Path,
+        kind: str,
+        sweep_value: dict[str, object] | None,
+        expected: str,
     ) -> None:
         doc = _job_doc_with(kind=kind, metadata={"name": "cardinality-lock"})
         spec = dict(doc["spec"])
@@ -389,7 +392,9 @@ class TestValidateCliOutputSurfaces:
             await validate(files=[path])
 
         assert exc_info.value.code == 1
-        assert any(str(path) in str(call.args[0]) for call in print_error.call_args_list)
+        assert any(
+            str(path) in str(call.args[0]) for call in print_error.call_args_list
+        )
         rendered = "\n".join(str(call.args[0]) for call in log_info.call_args_list)
         assert "spec.sweep" in rendered
         assert "AIPerfJob" in rendered

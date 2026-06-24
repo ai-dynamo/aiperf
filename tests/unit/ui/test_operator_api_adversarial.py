@@ -26,7 +26,7 @@ def _run_api_script(body: str) -> object:
 
         const sourcePath = {_API_JS_PATH.as_posix()!r};
         const source = fs.readFileSync(sourcePath, 'utf8').replace(
-          "import {{ setError }} from './state.js';",
+          /import \{{[\s\S]*?\}} from '\.\/state\.js';/,
           'function setError(_) {{}}',
         );
         const moduleUrl = `data:text/javascript;base64,${{Buffer.from(source).toString('base64')}}`;
@@ -79,8 +79,7 @@ def test_path_segments_encode_slashes_dots_spaces_and_unicode() -> None:
         },
         {
             "url": (
-                f"/api/v1/results/{resource}/runs/{epoch_segment}"
-                "/profile_export.jsonl"
+                f"/api/v1/results/{resource}/runs/{epoch_segment}/profile_export.jsonl"
             ),
             "accept": "application/x-ndjson, text/plain",
         },
@@ -105,7 +104,7 @@ def test_artifact_filenames_with_parent_components_remain_single_url_segment() -
     assert result == {
         "file": (
             "/api/v1/sweeps/ns%2F%CE%B1/sweep%2F%CE%B2/epochs/epoch%2F%CE%B3"
-            "/artifacts/..%2Fnested%2F..%2F..%2Fsecret.json"
+            "/artifacts/../nested/../../secret.json"
         ),
         "bundle": "/api/v1/results/ns%2F%CE%B1/..%2Fjob%2F%CE%B2/runs/..%2Fepoch%2F%CE%B3.zip",
     }
@@ -255,13 +254,19 @@ def test_aborted_fetches_propagate_or_return_skipped_by_api_contract() -> None:
         ],
         "outcomes": [
             {"method": "summary", "name": "AbortError", "message": "user cancelled"},
-            {"method": "requests", "skipped": "fetch failed: user cancelled", "records": []},
+            {
+                "method": "requests",
+                "skipped": "fetch failed: user cancelled",
+                "records": [],
+            },
             {"method": "logs", "name": "AbortError", "message": "user cancelled"},
         ],
     }
 
 
-def test_compare_jobs_keeps_repeated_params_but_slash_ids_are_identity_ambiguous() -> None:
+def test_compare_jobs_keeps_repeated_params_but_slash_ids_are_identity_ambiguous() -> (
+    None
+):
     result = _run_api_script(
         """
         const calls = [];

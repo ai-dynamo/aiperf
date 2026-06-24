@@ -116,8 +116,11 @@ def test_launch_submit_uses_operator_create_job_payload_wrapper() -> None:
     api_source = API_PATH.read_text()
 
     assert "const r = await api.createJob(manifest);" in launch_source
-    assert "body: JSON.stringify({ manifest })" in api_source
-    assert "method: 'POST'" in api_source
+    # Browser-app mutations are disabled (no safe bearer-token delivery path),
+    # so createJob short-circuits to dashboardMutationDisabled() instead of
+    # issuing a POST. The launch button is gated behind DASHBOARD_MUTATIONS_ENABLED.
+    assert "createJob(_manifest) {" in api_source
+    assert "return dashboardMutationDisabled();" in api_source
 
 
 def test_launch_rejects_empty_or_comment_only_manifests_before_submit() -> None:
@@ -202,8 +205,14 @@ def test_launch_json_manifest_mode_is_not_advertised_as_yaml() -> None:
 def test_launch_success_url_and_navigation_encode_namespace_and_name() -> None:
     launch_source = LAUNCH_PATH.read_text()
 
-    assert "href=${`#/jobs/${encodeURIComponent(state.namespace)}/${encodeURIComponent(state.name)}`}" in launch_source
-    assert "navigate(`/jobs/${encodeURIComponent(state.namespace)}/${encodeURIComponent(state.name)}`);" in launch_source
+    assert (
+        "href=${`#/jobs/${encodeURIComponent(state.namespace)}/${encodeURIComponent(state.name)}`}"
+        in launch_source
+    )
+    assert (
+        "navigate(`/jobs/${encodeURIComponent(state.namespace)}/${encodeURIComponent(state.name)}`);"
+        in launch_source
+    )
     assert "href=${`#/jobs/${state.namespace}/${state.name}`}" not in launch_source
     assert "navigate(`/jobs/${state.namespace}/${state.name}`);" not in launch_source
 

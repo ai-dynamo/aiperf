@@ -58,7 +58,16 @@ def test_log_strip_phase_severity_counts_are_derived_from_event_severity() -> No
     )
 
     assert json.loads(run_node(script)) == {
-        "severities": ["info", "info", "info", "info", "error", "error", "info", "info"],
+        "severities": [
+            "info",
+            "info",
+            "info",
+            "info",
+            "error",
+            "error",
+            "info",
+            "info",
+        ],
         "counts": {"all": 8, "warn": 0, "error": 2},
     }
 
@@ -70,7 +79,9 @@ def test_log_strip_filters_by_exact_severity_and_keeps_collapsed_tail_window() -
     assert "error: events.filter(e => e.severity === 'error').length" in src
     assert "if (filter === 'all') return true;" in src
     assert "return e.severity === filter;" in src
-    assert "const visible = collapsed ? filtered.slice(-COLLAPSED_ROWS) : filtered;" in src
+    assert (
+        "const visible = collapsed ? filtered.slice(-COLLAPSED_ROWS) : filtered;" in src
+    )
     assert "const hiddenCount = filtered.length - visible.length;" in src
 
 
@@ -141,7 +152,9 @@ def test_events_tab_sorting_treats_malformed_timestamps_as_oldest() -> None:
     assert json.loads(run_node(script)) == ["bad", "early", "late"]
 
 
-def test_logs_tab_follow_and_non_follow_paths_use_different_response_contracts() -> None:
+def test_logs_tab_follow_and_non_follow_paths_use_different_response_contracts() -> (
+    None
+):
     src = _source(_DIAGNOSTICS_LOGS_TAB_JS)
 
     assert "if (follow) {" in src
@@ -164,8 +177,14 @@ def test_hidden_logs_and_events_tabs_gate_all_network_work_on_active_prop() -> N
     assert "}, [ns, name, kind, active]);" in events_src
     assert "if (!active) return;" in logs_src
     assert "if (!selectedPod) return;" in logs_src
-    assert "const fetchLogs = kind === 'sweep' ? api.getSweepLogs : api.getJobLogs;" in logs_src
-    assert "}, [ns, name, selectedPod, selectedContainer, follow, tailLines, kind, active]);" in logs_src
+    assert (
+        "const fetchLogs = kind === 'sweep' ? api.getSweepLogs : api.getJobLogs;"
+        in logs_src
+    )
+    assert (
+        "}, [ns, name, selectedPod, selectedContainer, follow, tailLines, kind, active]);"
+        in logs_src
+    )
 
 
 def test_logs_and_events_empty_states_are_explicit_and_specific() -> None:
@@ -186,10 +205,15 @@ def test_logs_and_events_error_states_preserve_actionable_messages() -> None:
     events_src = _source(_DIAGNOSTICS_EVENTS_TAB_JS)
     logs_src = _source(_DIAGNOSTICS_LOGS_TAB_JS)
 
-    assert "if (/\\b404\\b/.test(err.message)) setState({ kind: 'none' });" in events_src
+    assert (
+        "if (/\\b404\\b/.test(err.message)) setState({ kind: 'none' });" in events_src
+    )
     assert "else setState({ kind: 'err', msg: err.message });" in events_src
     assert "run-events--err" in events_src
-    assert "<div class=\"run-event run-event--error\">${state.msg}</div>" in events_src
-    assert "if (/\\b404\\b/.test(e.message)) setErr('Pod not found (it may have been evicted).');" in logs_src
+    assert '<div class="run-event run-event--error">${state.msg}</div>' in events_src
+    assert (
+        "if (/\\b404\\b/.test(e.message)) setErr('Pod not found (it may have been evicted).');"
+        in logs_src
+    )
     assert "else setErr(e.message);" in logs_src
-    assert "${err && html`<div class=\"run-logs-error\">${err}</div>`}" in logs_src
+    assert '${err && html`<div class="run-logs-error">${err}</div>`}' in logs_src

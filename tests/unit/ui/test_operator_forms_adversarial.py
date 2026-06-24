@@ -158,7 +158,8 @@ def test_launch_submit_handler_rechecks_disabled_state_inside_action() -> None:
         source.index("async function launch") : source.index("function copyYaml")
     ]
 
-    assert "const canSubmit = state.kind !== 'submitting'" in source
+    assert "const canSubmit = DASHBOARD_MUTATIONS_ENABLED" in source
+    assert "&& state.kind !== 'submitting'" in source
     assert "disabled=${!canSubmit}" in source
     assert "const submitGuardRef = useRef({ canSubmit, yaml });" in source
     assert "const guard = submitGuardRef.current;" in handler

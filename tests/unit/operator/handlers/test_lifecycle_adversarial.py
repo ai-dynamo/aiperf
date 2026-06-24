@@ -212,8 +212,12 @@ class TestOnCancelAdversarial:
         patch = _patch()
 
         with (
-            mock_patch("aiperf.operator.handlers.lifecycle.k8s_client") as mock_k8s_client,
-            mock_patch("aiperf.operator.handlers.lifecycle.events.cancelled") as mock_event,
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.k8s_client"
+            ) as mock_k8s_client,
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.events.cancelled"
+            ) as mock_event,
         ):
             await on_cancel(
                 body=_body(generation=3),
@@ -435,7 +439,9 @@ class TestOnDeleteAdversarial:
         async def fake_close(key: str) -> None:
             call_order.append(f"close:{key}")
 
-        async def fake_cleanup(namespace: str, name: str, status: dict[str, Any]) -> None:
+        async def fake_cleanup(
+            namespace: str, name: str, status: dict[str, Any]
+        ) -> None:
             call_order.append(f"cleanup:{namespace}/{name}:{bool(status)}")
 
         with (

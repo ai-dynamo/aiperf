@@ -26,6 +26,8 @@ def _to_dict(obj: Any) -> dict[str, Any]:
     if hasattr(obj, "model_dump"):
         return obj.model_dump()
     return dict(obj)
+
+
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MetricTagT
 
@@ -229,7 +231,9 @@ class SteadyStateSummary(AIPerfBaseModel):
             "effective_concurrency": _to_dict(
                 self.effective_concurrency.to_json_result()
             ),
-            "effective_throughput": _to_dict(self.effective_throughput.to_json_result()),
+            "effective_throughput": _to_dict(
+                self.effective_throughput.to_json_result()
+            ),
             "effective_prefill_throughput": _to_dict(
                 self.effective_prefill_throughput.to_json_result()
             ),

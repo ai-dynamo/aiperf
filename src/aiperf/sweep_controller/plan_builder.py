@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.config.resolution.plan import BenchmarkPlan
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.loader.plan import _apply_sweep_seed_derivation
+from aiperf.config.resolution.plan import BenchmarkPlan
 from aiperf.config.sweep import expand_sweep
 from aiperf.operator.models import AIPerfSweepSpec
 

@@ -1176,6 +1176,20 @@ class TestOnCancelHandler:
 class TestMonitorProgressHandler:
     """Tests for monitor_progress kopf timer handler."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_state(self):
+        # on_delete (TestOnDeleteHandler) sets a STICKY cancellation flag for
+        # default/test-job in client_cache._cancellation_events that is not
+        # cleared by _close_unlocked; without a reset it leaks here and
+        # monitor_progress short-circuits on the cancellation check before
+        # stamping status.phase. Mirror the reset the other monitor test
+        # classes (TestMonitorProgressAdvanced, ...) already use.
+        from aiperf.operator.client_cache import _reset_for_testing
+
+        _reset_for_testing()
+        yield
+        _reset_for_testing()
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "phase",

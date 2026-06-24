@@ -164,7 +164,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         )
 
     def _filter_and_cap_trace(self, trace: TraceT) -> bool:
-        """Apply timestamp-window, max_isl, and max_osl filters.
+        """Apply timestamp-window and max_isl filters.
 
         Returns `True` if the trace should be kept, `False` to skip.
         """
@@ -182,16 +182,23 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             self._skipped_max_isl += 1
             return False
 
-        output_length = getattr(trace, "output_length", None)
-        if (
-            self._max_osl is not None
-            and output_length is not None
-            and output_length > self._max_osl
-        ):
-            self._capped_max_osl += 1
-            trace.output_length = self._max_osl  # type: ignore[attr-defined]
-
         return True
+
+    def _cap_grouped_traces_max_osl(
+        self, data: dict[str, list[TraceT]]
+    ) -> dict[str, list[TraceT]]:
+        """Apply max_osl to final traces after optional synthesis."""
+        if self._max_osl is None:
+            return data
+
+        for traces in data.values():
+            for trace in traces:
+                output_length = getattr(trace, "output_length", None)
+                if output_length is not None and output_length > self._max_osl:
+                    self._capped_max_osl += 1
+                    trace.output_length = self._max_osl  # type: ignore[attr-defined]
+
+        return data
 
     def _log_filtering_summary(self) -> None:
         """Emit info-level messages for any skipped or capped traces."""
@@ -241,8 +248,6 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
 
                 items.append(trace)
 
-        self._log_filtering_summary()
-
         data = self._group_traces(items)
         self.debug(
             lambda: (
@@ -253,6 +258,9 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
 
         if _synthesis_should_apply(self._synthesis_config):
             data = self._apply_synthesis(data)
+
+        data = self._cap_grouped_traces_max_osl(data)
+        self._log_filtering_summary()
 
         return data
 

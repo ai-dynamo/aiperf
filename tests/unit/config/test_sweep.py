@@ -29,7 +29,8 @@ class TestSweepModels:
         assert sweep.variables == {"phases.concurrency": [8, 16, 32]}
 
     def test_grid_sweep_multiple_variables(self):
-        sweep = GridSweep(variables={
+        sweep = GridSweep(
+            variables={
                 "phases.concurrency": [8, 16],
                 "phases.rate": [10.0, 20.0],
             }
@@ -853,7 +854,8 @@ class TestZipSweepModel:
     """Pydantic-level checks on the ``ZipSweep`` model."""
 
     def test_zip_sweep_basic(self):
-        sweep = ZipSweep(variables={
+        sweep = ZipSweep(
+            variables={
                 "datasets.default.prompts.isl": [128, 512, 2048],
                 "datasets.default.prompts.osl": [128, 256, 512],
             }
@@ -871,7 +873,8 @@ class TestZipSweepModel:
 
     def test_zip_sweep_rejects_mismatched_lengths(self):
         with pytest.raises(ValidationError, match=r"equal length"):
-            ZipSweep(variables={
+            ZipSweep(
+                variables={
                     "phases.profiling.a": [1, 2, 3],
                     "phases.profiling.b": [10, 20],
                 }
@@ -1095,7 +1098,8 @@ class TestExpandZipSweep:
     def test_zip_sweep_mismatched_lengths_raise_at_pydantic_time(self):
         """Mismatched lengths must error at model-construction time."""
         with pytest.raises(ValidationError, match=r"equal length"):
-            ZipSweep(variables={
+            ZipSweep(
+                variables={
                     "phases.profiling.concurrency": [1, 2, 3],
                     "phases.profiling.requests": [10, 20],
                 }

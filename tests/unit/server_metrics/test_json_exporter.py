@@ -186,7 +186,6 @@ def server_metrics_results_with_summaries():
 
     return ServerMetricsResults(
         benchmark_id="test-benchmark-id",
-        server_metrics_data=None,  # Not sent over ZMQ
         endpoint_summaries={
             "localhost:8081": endpoint1_summary,
             "localhost:8082": endpoint2_summary,
@@ -265,7 +264,6 @@ def server_metrics_results_with_labeled_metrics():
 
     return ServerMetricsResults(
         benchmark_id="test-benchmark-id",
-        server_metrics_data=None,
         endpoint_summaries={"localhost:8081": endpoint_summary},
         start_ns=1_000_000_000_000,
         end_ns=1_100_000_000_000,
@@ -638,8 +636,13 @@ class TestServerMetricsJsonExporterGenerateContent:
         mock_cfg,
         mock_profile_results,
     ):
-        """Test that counters with total=0 only include total field."""
-        # Create a fixture with a zero-total counter
+        """Test that a zero-change counter still exports its stats.total.
+
+        Production ``_compute_counter_series`` always populates ``stats`` (even
+        for zero-change counters) for a consistent API, so a counter that never
+        incremented exports ``stats.total == 0.0`` and omits the unset rate
+        fields under ``exclude_none``.
+        """
         endpoint_summary = ServerMetricsEndpointSummary(
             endpoint_url="http://localhost:8081/metrics",
             info=ServerMetricsEndpointInfo(
@@ -659,7 +662,7 @@ class TestServerMetricsJsonExporterGenerateContent:
                     series=[
                         CounterSeries(
                             labels=None,
-                            value=0.0,
+                            stats=CounterStats(total=0.0, rate=0.0),
                         ),
                     ],
                 ),
@@ -667,7 +670,6 @@ class TestServerMetricsJsonExporterGenerateContent:
         )
         server_metrics_results = ServerMetricsResults(
             benchmark_id="test-benchmark-id",
-            server_metrics_data=None,
             endpoint_summaries={"localhost:8081": endpoint_summary},
             start_ns=1_000_000_000_000,
             end_ns=1_100_000_000_000,
@@ -685,13 +687,14 @@ class TestServerMetricsJsonExporterGenerateContent:
         content = exporter._generate_content()
         data = orjson.loads(content)
 
-        # Counter with no change should use value instead of stats
         assert "error_count_total" in data["metrics"]
         counter_metric = data["metrics"]["error_count_total"]
         series_data = counter_metric["series"][0]
 
-        assert series_data["value"] == 0.0
-        assert "stats" not in series_data
+        assert series_data["stats"]["total"] == 0.0
+        assert series_data["stats"]["rate"] == 0.0
+        # exclude_none drops the rate aggregate fields that were never set.
+        assert "rate_avg" not in series_data["stats"]
 
 
 class TestServerMetricsJsonExporterIntegration:

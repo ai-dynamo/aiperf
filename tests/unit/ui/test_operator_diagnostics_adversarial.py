@@ -48,10 +48,16 @@ def test_archived_mode_strips_logs_and_pods_even_when_url_requests_them() -> Non
     src = _source(_DIAGNOSTICS_PANEL_JS)
 
     assert "archived ? ['events', 'conditions'] : ALL_TABS" in src
-    assert "const defaultTab = (mode === 'live' && !archived) ? 'events' : 'conditions';" in src
+    assert (
+        "const defaultTab = (mode === 'live' && !archived) ? 'events' : 'conditions';"
+        in src
+    )
     assert "if (!availableTabs.includes(active))" in src
     assert "setActive(defaultTab);" in src
-    assert "const renderedActive = availableTabs.includes(active) ? active : defaultTab;" in src
+    assert (
+        "const renderedActive = availableTabs.includes(active) ? active : defaultTab;"
+        in src
+    )
     assert "${renderedActive === 'logs' && html`<${LogsTab}" in src
     assert "${renderedActive === 'pods' && html`<${PodsTab}" in src
 
@@ -62,7 +68,7 @@ def test_log_lines_with_html_or_script_text_are_rendered_as_text() -> None:
     assert "dangerouslySetInnerHTML" not in src
     assert ".innerHTML" not in src
     assert "insertAdjacentHTML" not in src
-    assert "<pre class=\"run-logs-body\"" in src
+    assert '<pre class="run-logs-body"' in src
     assert "${tail.join('\\n')}</pre>" in src
     assert "text.split('\\n')" in src
 
@@ -88,7 +94,10 @@ def test_kubernetes_event_messages_with_unicode_and_newlines_stay_plain_text() -
     assert "dangerouslySetInnerHTML" not in src
     assert ".innerHTML" not in src
     assert "${e.message ? html`<span>${e.message}</span>` : ''}" in src
-    assert "${obj.kind ? html` <span style=\"color:var(--dim)\">· ${obj.kind}${obj.name ? '/' + obj.name : ''}</span>` : ''}" in src
+    assert (
+        "${obj.kind ? html` <span style=\"color:var(--dim)\">· ${obj.kind}${obj.name ? '/' + obj.name : ''}</span>` : ''}"
+        in src
+    )
     assert json.loads(run_node(script)) == {
         "tones": ["error", "warn", "scheduled"],
         "renderedMessages": [
@@ -98,7 +107,9 @@ def test_kubernetes_event_messages_with_unicode_and_newlines_stay_plain_text() -
     }
 
 
-def test_massive_event_arrays_are_copied_sorted_and_filtered_without_mutating_api_payload() -> None:
+def test_massive_event_arrays_are_copied_sorted_and_filtered_without_mutating_api_payload() -> (
+    None
+):
     src = _source(_DIAGNOSTICS_EVENTS_TAB_JS)
     script = _events_helpers_script(
         """
@@ -125,7 +136,10 @@ def test_massive_event_arrays_are_copied_sorted_and_filtered_without_mutating_ap
 
     assert "const events = Array.isArray(r) ? r : (r?.events ?? []);" in src
     assert "const sortedEvents = [...okEvents].sort((a, b) => {" in src
-    assert "const shown = filter === 'warn' ? sortedEvents.filter(e => e.type === 'Warning') : sortedEvents;" in src
+    assert (
+        "const shown = filter === 'warn' ? sortedEvents.filter(e => e.type === 'Warning') : sortedEvents;"
+        in src
+    )
     assert json.loads(run_node(script)) == {
         "originalFirst": "newest",
         "stillOriginalFirst": "newest",
@@ -147,7 +161,7 @@ def test_pod_names_with_slash_or_dot_are_not_used_as_path_segments() -> None:
     assert "setSelectedPod(wp.name);" in logs_src
     assert "value=${selectedIsController ? '' : (selectedPod ?? '')}" in logs_src
     assert "<option key=${p.name} value=${p.name}>" in logs_src
-    assert "<td class=\"pods-table-name\" title=${pod.name}>${pod.name}</td>" in pods_src
+    assert '<td class="pods-table-name" title=${pod.name}>${pod.name}</td>' in pods_src
     assert "`/pods/${encodeURIComponent(pod)}`" not in api_src
 
 
@@ -165,6 +179,9 @@ def test_hidden_diagnostics_tabs_do_not_mount_or_fetch_until_selected() -> None:
     assert "}, [ns, name, kind, active]);" in events_src
     assert "if (!active) return;" in logs_src
     assert "if (!selectedPod) return;" in logs_src
-    assert "}, [ns, name, selectedPod, selectedContainer, follow, tailLines, kind, active]);" in logs_src
+    assert (
+        "}, [ns, name, selectedPod, selectedContainer, follow, tailLines, kind, active]);"
+        in logs_src
+    )
     assert "component does not fetch" in pods_src
     assert "api." not in pods_src

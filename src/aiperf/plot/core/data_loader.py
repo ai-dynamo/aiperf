@@ -363,33 +363,83 @@ class DataLoader(
             **timing_fields,
         )
 
-    @staticmethod
-    def _extract_input_config_fields(aggregated: dict[str, Any]) -> dict[str, Any]:
-        """Pull model/concurrency/request_count/endpoint_type from input_config."""
+    @classmethod
+    def _extract_input_config_fields(cls, aggregated: dict[str, Any]) -> dict[str, Any]:
+        """Pull model/concurrency/request_count/endpoint_type from aggregated data.
+
+        Handles two artifact shapes:
+        - YAML v2: model at ``input_config.models.items[].name`` and
+          concurrency/request_count on the profiling phase in
+          ``input_config.phases[]``.
+        - Legacy: model at ``input_config.endpoint.model_names[]`` and
+          concurrency/request_count on ``input_config.loadgen``.
+
+        v2 shapes win when both are present. Aggregate-only runs (no
+        input_config) fall back to ``aggregated["metadata"]["model"]``.
+        """
         fields: dict[str, Any] = {
             "model": None,
             "concurrency": None,
             "request_count": None,
             "endpoint_type": None,
         }
-        if not aggregated or "input_config" not in aggregated:
+        if not aggregated:
             return fields
 
-        config = aggregated["input_config"]
-        endpoint = config.get("endpoint", {}) if isinstance(config, dict) else {}
-        loadgen = config.get("loadgen", {}) if isinstance(config, dict) else {}
+        config = aggregated.get("input_config")
+        config = config if isinstance(config, dict) else {}
+        endpoint = config.get("endpoint") or {}
+        loadgen = config.get("loadgen") or {}
+        phases = config.get("phases") or []
 
-        models = endpoint.get("model_names")
-        if models:
-            fields["model"] = models[0]
-        if "concurrency" in loadgen:
-            fields["concurrency"] = loadgen["concurrency"]
-        if "request_count" in loadgen:
-            fields["request_count"] = loadgen["request_count"]
+        fields["model"] = cls._resolve_model_name(endpoint, config, aggregated)
+
+        concurrency, request_count = cls._resolve_load_fields(phases, loadgen)
+        fields["concurrency"] = concurrency
+        fields["request_count"] = request_count
+
         if "type" in endpoint:
             fields["endpoint_type"] = endpoint["type"]
 
         return fields
+
+    @staticmethod
+    def _resolve_model_name(
+        endpoint: dict[str, Any],
+        config: dict[str, Any],
+        aggregated: dict[str, Any],
+    ) -> str | None:
+        """Resolve the model name across v2, legacy, and aggregate-metadata shapes."""
+        models = config.get("models") if isinstance(config.get("models"), dict) else {}
+        items = models.get("items") or []
+        if items and isinstance(items[0], dict) and items[0].get("name"):
+            return items[0]["name"]
+
+        legacy_names = endpoint.get("model_names")
+        if legacy_names:
+            return legacy_names[0]
+
+        metadata = aggregated.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("model"):
+            return metadata["model"]
+
+        return None
+
+    @staticmethod
+    def _resolve_load_fields(
+        phases: list[Any],
+        loadgen: dict[str, Any],
+    ) -> tuple[Any, Any]:
+        """Resolve (concurrency, request_count), preferring the v2 profiling phase."""
+        valid_phases = [p for p in phases if isinstance(p, dict)]
+        if valid_phases:
+            phase = next(
+                (p for p in valid_phases if p.get("name") == "profiling"),
+                valid_phases[0],
+            )
+            return phase.get("concurrency"), phase.get("requests")
+
+        return loadgen.get("concurrency"), loadgen.get("request_count")
 
     @staticmethod
     def _extract_run_timing_fields(aggregated: dict[str, Any]) -> dict[str, Any]:

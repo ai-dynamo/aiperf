@@ -207,6 +207,9 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
         self._detached_worker_deadlines_ns: dict[str, int] = {}
         self._detached_reclaim_tasks: dict[str, asyncio.Task[None]] = {}
         self._reclaimed_credit_ids: set[tuple[str, int]] = set()
+        # Set while >=1 worker is registered; lets wait_for_workers() gate a
+        # phase on worker readiness (see that method for the race it closes).
+        self._worker_available_event: asyncio.Event = asyncio.Event()
 
     def set_return_callback(
         self, callback: Callable[[str, CreditReturn], Awaitable[None]]
@@ -219,6 +222,31 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
     ) -> None:
         """Set callback for first token events (enables prefill concurrency release)."""
         self._on_first_token_callback = callback
+
+    async def wait_for_workers(self, timeout: float) -> None:
+        """Close the startup race where a phase issues its first credit before
+        any worker has sent ``WorkerReady`` (which makes ``send_credit`` raise
+        on empty workers). Called once per phase before the first credit.
+
+        Best-effort startup gate, not an absolute postcondition: the last worker
+        can unregister between this returning and the first ``send_credit``, so
+        callers must not treat a non-empty pool as guaranteed afterwards.
+
+        Args:
+            timeout: Seconds to wait for the first worker before giving up.
+
+        Raises:
+            RuntimeError: If no worker registers within ``timeout`` seconds.
+        """
+        if self._workers:
+            return
+        try:
+            await asyncio.wait_for(self._worker_available_event.wait(), timeout)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"No workers registered with the credit router within {timeout}s "
+                "(tunable via AIPERF_SERVICE_START_TIMEOUT); cannot start credit issuance"
+            ) from exc
 
     async def send_credit(self, credit: Credit) -> None:
         """Determine the worker based on sticky sessions or least-loaded and send the credit to the worker.

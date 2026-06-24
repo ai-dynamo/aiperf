@@ -4,6 +4,7 @@ from typing import Any
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
+
 # Re-export the wire-layer payload type so existing call-sites that imported
 # ``MetricRecordsData`` from this module keep working after the wholesale
 # msgspec port. The canonical home is ``aiperf.common.metric_records_wire``.

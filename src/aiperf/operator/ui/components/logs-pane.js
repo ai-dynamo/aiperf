@@ -231,7 +231,7 @@ export function LogsPane({ ns, name, pods }) {
       <div class="run-logs-head">
         <div class="run-logs-title">Logs</div>
         <div class="run-logs-actions">
-          <button
+          <button type="button"
             class=${'btn' + (follow ? ' btn--primary' : ' btn--ghost')}
             onclick=${() => setFollow(f => !f)}
             data-testid="run-logs-follow"
@@ -332,7 +332,7 @@ export function LogsPane({ ns, name, pods }) {
       <pre class="run-logs-body" ref=${bodyRef} onscroll=${onScroll} data-testid="run-logs-body">${tail.join('\n')}</pre>
       ${err && html`<div class="run-logs-error">${err}</div>`}
       ${!autoScroll && html`
-        <button class="btn btn--ghost run-logs-jump" onclick=${jumpToLatest} data-testid="run-logs-jump">
+        <button type="button" class="btn btn--ghost run-logs-jump" onclick=${jumpToLatest} data-testid="run-logs-jump">
           Jump to latest
         </button>
       `}

@@ -84,7 +84,9 @@ class TestTrackHandlerOutcomeCounters:
     """Kopf handler metrics must classify every terminal outcome distinctly."""
 
     @pytest.mark.asyncio
-    async def test_track_handler_success_returns_value_and_records_success_only(self) -> None:
+    async def test_track_handler_success_returns_value_and_records_success_only(
+        self,
+    ) -> None:
         @_tracked_handler("jobset_terminal_success")
         async def handler() -> str:
             return "aiperf-bench-7f2a"

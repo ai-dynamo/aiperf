@@ -12,7 +12,7 @@ from aiperf.common.models.record_models import (
 )
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config
+from tests.unit.endpoints.conftest import _wrap_model_endpoint, create_config
 
 
 class TestEmbeddingsEndpointParseResponse:

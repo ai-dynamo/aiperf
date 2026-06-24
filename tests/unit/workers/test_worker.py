@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.enums import MessageType, WorkerStartupState
+from aiperf.common.enums import CreditPhase, MessageType, WorkerStartupState
 from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import (
     Conversation,
@@ -263,6 +263,35 @@ class TestWorkerFirstTokenCallback:
         results = [await callback(msg.perf_ns, msg) for msg in messages]
 
         assert results == [False, False, True]
+
+
+class TestWarmupSystemMessage:
+    def test_profiling_preserves_system_message(self):
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.PROFILING,
+            )
+            == "existing system"
+        )
+
+    def test_warmup_sets_system_message_when_missing(self):
+        assert (
+            Worker._system_message_for_phase(
+                system_message=None,
+                phase=CreditPhase.WARMUP,
+            )
+            == "warmup"
+        )
+
+    def test_warmup_prefixes_existing_system_message(self):
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.WARMUP,
+            )
+            == "warmup\nexisting system"
+        )
 
 
 # --- Fixture for CreditContext ---

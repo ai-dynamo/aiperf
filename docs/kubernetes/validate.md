@@ -203,7 +203,7 @@ Add to `.pre-commit-config.yaml`:
 ```yaml
 - name: Validate AIPerfJob specs
   run: |
-    pip install aiperf
+    uv tool install aiperf
     aiperf kube validate --strict recipes/**/*.yaml
 ```
 

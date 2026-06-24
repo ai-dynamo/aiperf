@@ -20,6 +20,7 @@ from typing import Any
 import orjson
 import zstandard
 
+from aiperf.common.finite import is_finite_value
 from aiperf.operator import runs_index
 from aiperf.operator.results_layout import (
     list_run_epochs,
@@ -58,7 +59,10 @@ class ResultsDB:
             return disk_rows
         try:
             index_rows = await runs_index.leaderboard(*args, **kwargs)
-        except (RuntimeError, sqlite3.Error) as exc:
+        except (RuntimeError, ValueError, sqlite3.Error) as exc:
+            # ValueError covers a rejected metric/stat identifier
+            # (``_validate_identifier``) — an invalid query must degrade to the
+            # disk scan's empty result, not surface as a 500.
             logger.debug("runs_index leaderboard unavailable: %s", exc)
             return disk_rows
         rows = self._merge_latest_rows(
@@ -77,7 +81,10 @@ class ResultsDB:
             return disk_rows
         try:
             index_rows = await runs_index.history(*args, **kwargs)
-        except (RuntimeError, sqlite3.Error) as exc:
+        except (RuntimeError, ValueError, sqlite3.Error) as exc:
+            # ValueError covers a rejected metric/stat identifier
+            # (``_validate_identifier``) — an invalid query must degrade to the
+            # disk scan's empty result, not surface as a 500.
             logger.debug("runs_index history unavailable: %s", exc)
             return disk_rows
         rows = self._merge_latest_rows(
@@ -417,10 +424,22 @@ class ResultsDB:
     def _metric_stat(
         self, summary: dict[str, Any], metric: str, stat: str
     ) -> tuple[float | None, str | None]:
+        """Return the ``(value, unit)`` for one metric stat, or ``(None, None)``.
+
+        The summary is a parsed ``profile_export_aiperf.json`` whose cells are
+        attacker- or bug-shaped: a stat may be a string (``"fast"``), a nested
+        object, a list, or NaN/inf. Anything that isn't a finite real number is
+        treated as missing so a single malformed run is skipped by the
+        leaderboard / history scan rather than crashing the whole endpoint when
+        the rows are later sorted or coerced into a float-typed response model.
+        """
         metric_data = summary.get(metric)
         if not isinstance(metric_data, dict):
             return None, None
-        return metric_data.get(stat), metric_data.get("unit")
+        value = metric_data.get(stat)
+        if not is_finite_value(value):
+            return None, None
+        return float(value), metric_data.get("unit")
 
     async def _summary_from_disk(
         self,

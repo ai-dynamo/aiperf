@@ -151,12 +151,12 @@ export function EventsTab({ ns, name, kind = 'job', active }) {
   const metaText = `${events.length} total${refreshed != null ? ' · ' + relTime(new Date(refreshed).toISOString()) : ''}`;
   const filterControls = html`
     <span style="display:inline-flex; gap:4px">
-      <button
+      <button type="button"
         class=${'btn btn--ghost' + (filter === 'all' ? ' btn--primary' : '')}
         style="font-size:10px; padding:2px 8px"
         onclick=${() => setFilter('all')}
       >All</button>
-      <button
+      <button type="button"
         class=${'btn btn--ghost' + (filter === 'warn' ? ' btn--primary' : '')}
         style="font-size:10px; padding:2px 8px"
         onclick=${() => setFilter('warn')}

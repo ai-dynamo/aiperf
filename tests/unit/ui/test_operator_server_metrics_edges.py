@@ -6,8 +6,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import orjson
-
 REPO = Path(__file__).resolve().parents[3]
 HELPERS = (
     REPO
@@ -121,9 +119,7 @@ def test_curate_server_metrics_labels_backend_rows_from_label_columns() -> None:
         const rows = curateServerMetrics(normalizeServerMetrics(snapshot)).detailRows;
         console.log(JSON.stringify(rows.map(row => [row.backend, row.reqRate])));
     """
-    assert _run_node(script) == (
-        '[["engine-3",3],["prefill",1],["tp1/pp0",2]]'
-    )
+    assert _run_node(script) == ('[["engine-3",3],["prefill",1],["tp1/pp0",2]]')
 
 
 def test_normalize_server_metrics_ignores_malformed_endpoint_series_shape() -> None:
@@ -211,23 +207,40 @@ def test_live_and_final_source_chips_are_explicit_in_component() -> None:
 
 def test_job_detail_prefers_final_server_metrics_over_live_snapshot() -> None:
     source = JOB_DETAIL.read_text()
-    assert "const displayedServerMetrics = serverMetrics || liveServerMetrics;" in source
+    assert (
+        "const displayedServerMetrics = serverMetrics || liveServerMetrics;" in source
+    )
     assert "const serverMetricsSource = serverMetrics ? 'final' : 'live';" in source
 
 
 def test_malformed_server_metrics_artifact_json_shows_error_card() -> None:
     source = JOB_DETAIL.read_text()
-    assert "fetch(`${resultsBase}/server_metrics_export.json`, { signal: ac.signal })" in source
-    assert ".then(r => r.ok ? r.json() : null)" in source
-    assert "setServerMetricsError(err?.message ?? 'Server metrics artifact could not be read.');" in source
+    assert (
+        "fetch(`${resultsBase}/server_metrics_export.json`, { signal: ac.signal })"
+        in source
+    )
+    assert ".then(r => (r.ok ? r.json() : null))" in source
+    assert (
+        "setServerMetricsError(err?.message ?? 'Server metrics artifact could not be read.');"
+        in source
+    )
     assert "${isTerminal && serverMetricsError && html`" in source
-    assert "<div class=\"card-title\">Server Metrics</div>" in source
+    assert '<div class="card-title">Server Metrics</div>' in source
 
 
 def test_server_metrics_component_formats_units_for_kpis_and_detail_rows() -> None:
     source = SERVER_METRICS_COMPONENT.read_text()
-    assert "if (kpi.unit === 'req/s' || kpi.unit === 'tok/s') return fmtThroughput(kpi.value);" in source
+    assert (
+        "if (kpi.unit === 'req/s' || kpi.unit === 'tok/s') return fmtThroughput(kpi.value);"
+        in source
+    )
     assert "if (kpi.unit === '%') return fmtNumber(kpi.value, 1);" in source
-    assert "if (kpi.unit === 'ms') return fmtNumber(kpi.value, kpi.value >= 100 ? 0 : 1);" in source
+    assert (
+        "if (kpi.unit === 'ms') return fmtNumber(kpi.value, kpi.value >= 100 ? 0 : 1);"
+        in source
+    )
     assert "if (unit === 'percent') return `${fmtNumber(value, 1)}%`;" in source
-    assert "if (unit === 'ms') return `${fmtNumber(value, value >= 100 ? 0 : 1)} ms`;" in source
+    assert (
+        "if (unit === 'ms') return `${fmtNumber(value, value >= 100 ? 0 : 1)} ms`;"
+        in source
+    )

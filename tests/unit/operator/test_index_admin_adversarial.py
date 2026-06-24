@@ -76,6 +76,7 @@ class _FakeAsyncClient:
         self.base_url: str | None = None
         self.timeout: float | None = None
         self.post_calls: list[str] = []
+        self.post_headers: list[dict[str, str] | None] = []
 
     async def __aenter__(self) -> _FakeAsyncClient:
         return self
@@ -83,8 +84,11 @@ class _FakeAsyncClient:
     async def __aexit__(self, *_: object) -> None:
         return None
 
-    async def post(self, url: str) -> _FakeResponse:
+    async def post(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _FakeResponse:
         self.post_calls.append(url)
+        self.post_headers.append(headers)
         if self._post_exc is not None:
             raise self._post_exc
         return _FakeResponse(self._post_payload)
@@ -149,7 +153,9 @@ class TestAdminIndexRebuildApi:
         release = asyncio.Event()
         bootstrap_calls: list[Path] = []
 
-        async def fake_bootstrap(base_dir: Path, *, force: bool = False) -> SimpleNamespace:
+        async def fake_bootstrap(
+            base_dir: Path, *, force: bool = False
+        ) -> SimpleNamespace:
             assert force is True
             bootstrap_calls.append(base_dir)
             started.set()
@@ -184,7 +190,9 @@ class TestAdminIndexRebuildApi:
     ) -> None:
         """A failed rebuild must not be reported as a stale successful rebuild."""
 
-        async def fake_bootstrap(base_dir: Path, *, force: bool = False) -> SimpleNamespace:
+        async def fake_bootstrap(
+            base_dir: Path, *, force: bool = False
+        ) -> SimpleNamespace:
             del base_dir, force
             raise RuntimeError("sqlite disk I/O error while rebuilding aiperf index")
 
@@ -208,7 +216,9 @@ class TestAdminIndexRebuildApi:
     ) -> None:
         """The admin response schema is the CLI contract; extra attrs must not leak."""
 
-        async def fake_bootstrap(base_dir: Path, *, force: bool = False) -> SimpleNamespace:
+        async def fake_bootstrap(
+            base_dir: Path, *, force: bool = False
+        ) -> SimpleNamespace:
             assert base_dir == tmp_path
             assert force is True
             return SimpleNamespace(
@@ -240,7 +250,9 @@ class TestAdminIndexRebuildApi:
         """The endpoint has no partial-rebuild schema; bodies must fail closed."""
         bootstrap_calls: list[Path] = []
 
-        async def fake_bootstrap(base_dir: Path, *, force: bool = False) -> SimpleNamespace:
+        async def fake_bootstrap(
+            base_dir: Path, *, force: bool = False
+        ) -> SimpleNamespace:
             del force
             bootstrap_calls.append(base_dir)
             return SimpleNamespace(
@@ -270,7 +282,9 @@ class TestAdminIndexRebuildApi:
         """Read-only sidecars expose the route but must not call the writer path."""
         bootstrap_calls: list[Path] = []
 
-        async def fake_bootstrap(base_dir: Path, *, force: bool = False) -> SimpleNamespace:
+        async def fake_bootstrap(
+            base_dir: Path, *, force: bool = False
+        ) -> SimpleNamespace:
             del force
             bootstrap_calls.append(base_dir)
             return SimpleNamespace(
@@ -328,7 +342,9 @@ class TestKubeIndexRebuildCli:
 
         assert client.post_calls == ["/admin/index/rebuild"]
         assert client.timeout == 300.0
-        assert console.lines == [orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode()]
+        assert console.lines == [
+            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode()
+        ]
         assert orjson.loads(console.lines[0]) == payload
         assert "Indexed" not in console.lines[0]
 

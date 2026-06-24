@@ -20,7 +20,9 @@ CONDITION_HELPERS_PATH = (
 )
 
 
-def test_visible_condition_badges_hide_noisy_success_conditions_case_insensitively() -> None:
+def test_visible_condition_badges_hide_noisy_success_conditions_case_insensitively() -> (
+    None
+):
     script = f"""
         import {{ visibleConditionBadges }} from {CONDITION_HELPERS_PATH.as_uri()!r};
         const badges = visibleConditionBadges([
@@ -83,7 +85,9 @@ def test_warning_conditions_are_prettified_and_progress_classed() -> None:
     ]
 
 
-def test_unknown_condition_type_falls_back_to_readable_label_and_unknown_class() -> None:
+def test_unknown_condition_type_falls_back_to_readable_label_and_unknown_class() -> (
+    None
+):
     script = f"""
         import {{ visibleConditionBadges }} from {CONDITION_HELPERS_PATH.as_uri()!r};
         const badges = visibleConditionBadges([
@@ -103,7 +107,9 @@ def test_unknown_condition_type_falls_back_to_readable_label_and_unknown_class()
     ]
 
 
-def test_visible_condition_badge_summary_keeps_filtered_order_and_overflow_count() -> None:
+def test_visible_condition_badge_summary_keeps_filtered_order_and_overflow_count() -> (
+    None
+):
     script = f"""
         import {{ visibleConditionBadgeSummary }} from {CONDITION_HELPERS_PATH.as_uri()!r};
         const summary = visibleConditionBadgeSummary([

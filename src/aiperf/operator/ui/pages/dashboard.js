@@ -159,10 +159,10 @@ function ThroughputLatencyScatter({ completedJobs }) {
           <div style="font-size:18px;font-weight:600;color:${palette.text};line-height:1.2">Throughput vs Latency</div>
         </div>
         <div class="axis-toggles">
-          <button class="nav-tab${axisMode === 'tps_p99' ? ' active' : ''}" onclick=${() => setAxisMode('tps_p99')}>TPS / P99</button>
-          <button class="nav-tab${axisMode === 'tps_ttft' ? ' active' : ''}" onclick=${() => setAxisMode('tps_ttft')}>TPS / TTFT</button>
-          <button class="nav-tab${axisMode === 'tokps_p99' ? ' active' : ''}" onclick=${() => setAxisMode('tokps_p99')}>Tok/s / P99</button>
-          <button class="nav-tab${logScale ? ' active' : ''}" onclick=${() => setLogScale(!logScale)}>Log</button>
+          <button type="button" class="nav-tab${axisMode === 'tps_p99' ? ' active' : ''}" aria-pressed=${axisMode === 'tps_p99'} onclick=${() => setAxisMode('tps_p99')}>TPS / P99</button>
+          <button type="button" class="nav-tab${axisMode === 'tps_ttft' ? ' active' : ''}" aria-pressed=${axisMode === 'tps_ttft'} onclick=${() => setAxisMode('tps_ttft')}>TPS / TTFT</button>
+          <button type="button" class="nav-tab${axisMode === 'tokps_p99' ? ' active' : ''}" aria-pressed=${axisMode === 'tokps_p99'} onclick=${() => setAxisMode('tokps_p99')}>Tok/s / P99</button>
+          <button type="button" class="nav-tab${logScale ? ' active' : ''}" aria-pressed=${logScale} onclick=${() => setLogScale(!logScale)}>Log</button>
         </div>
       </div>
       <${ChartWrapper}
@@ -465,7 +465,7 @@ export function Dashboard() {
       ${recent.length > 0 ? html`
         <div class="section-header" style="margin-top:var(--space-6)">
           <div class="section-title">Recent Jobs</div>
-          <button class="nav-tab" onclick=${() => navigate('/jobs')} style="font-size:12px;padding:4px 10px;">View All \u2192</button>
+          <button type="button" class="nav-tab" onclick=${() => navigate('/jobs')} style="font-size:12px;padding:4px 10px;">View All \u2192</button>
         </div>
         <table class="compare-table">
           <thead>

@@ -987,6 +987,13 @@ data_exporter:
       and generated artifacts (including plots) to an MLflow Tracking server.
       Enabled when --mlflow-tracking-uri is configured.
 
+  wandb:
+    class: aiperf.exporters.wandb_data_exporter:WandbDataExporter
+    description: |
+      Weights & Biases post-run exporter that uploads benchmark config, metrics,
+      tags, and generated artifacts to a wandb project.
+      Enabled when --wandb-project is configured.
+
   raw_record_aggregator:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator
     description: |
@@ -1265,10 +1272,9 @@ accuracy_grader:
   exact_match:
     class: aiperf.accuracy.graders.exact_match:ExactMatchGrader
     description: |
-      Exact match grader that compares extracted answers against ground truth
-      using exact string matching. Suitable for factual Q&A and classification tasks.
-    metadata:
-      is_implemented: false
+      Strict ``pred.strip() == gold.strip()`` grader matching DeepEval's
+      ``Scorer.exact_match_score``. Used by HellaSwag and BigBench-Hard for
+      trt-llm reference parity (case-sensitive, no normalization).
 
   math:
     class: aiperf.accuracy.graders.math:MathGrader
@@ -1315,6 +1321,15 @@ accuracy_grader:
       ``IndicesExtractionConfig(prefix_for_extraction="NativeLetters")``
       to find the chosen A/B/C/D letter in both gold and prediction.
 
+  lighteval_gsm8k:
+    class: aiperf.accuracy.graders.gsm8k_grader:LightevalGSM8KGrader
+    description: |
+      Lighteval ``quasi_exact_match_gsm8k`` grader — used by GSM8K. Extracts
+      the number after "####" from the gold answer using gsm8k_normalizer,
+      and extracts the last number from the model prediction (preferring a
+      "####" marker when present). Compares numerically so "24" and "24.0"
+      match. Pure-regex; no lighteval install required.
+
 # =============================================================================
 # Accuracy Benchmarks
 # =============================================================================
@@ -1348,69 +1363,101 @@ accuracy_benchmark:
   hellaswag:
     class: aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark
     description: |
-      HellaSwag commonsense reasoning benchmark for sentence completion tasks.
+      HellaSwag commonsense reasoning benchmark, aligned with the trt-llm
+      benchmark recipe's DeepEval-backed configuration. Prompts are byte-equal
+      to ``deepeval.benchmarks.HellaSwag`` (n_shots=10, one few-shot per unique
+      activity_label). Pairs with ``exact_match`` for the recipe's strict
+      ``Scorer.exact_match_score`` semantics. Requires the ``[accuracy]``
+      install (deepeval ships the prompt template).
     metadata:
-      default_grader: multiple_choice
-      default_n_shots: 0
-      is_implemented: false
+      default_grader: exact_match
+      default_n_shots: 10
 
   bigbench:
     class: aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark
     description: |
-      BigBench benchmark for diverse language understanding tasks spanning
-      linguistics, reasoning, and world knowledge.
+      BigBench-Hard benchmark, aligned with the trt-llm benchmark recipe's
+      DeepEval-backed configuration. Prompts are byte-equal to
+      ``deepeval.benchmarks.BigBenchHard`` (n_shots=3, enable_cot=True,
+      using DeepEval's bundled per-subtask CoT prompt files). Pairs with
+      ``exact_match`` for the recipe's strict ``Scorer.exact_match_score``
+      semantics. Requires the ``[accuracy]`` install (deepeval ships the
+      27 canonical prompt files).
     metadata:
       default_grader: exact_match
       default_n_shots: 3
-      is_implemented: false
+      default_enable_cot: true
 
   aime24:
     class: aiperf.accuracy.benchmarks.aime24:AIME24Benchmark
     description: |
-      AIME 2024 benchmark with problems from the 2024 competition year.
+      AIME 2024 benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (HuggingFaceH4/aime_2024 + lighteval
+      ``expr_gold_metric``).
     metadata:
-      default_grader: math
+      default_grader: lighteval_expr
       default_n_shots: 0
-      is_implemented: false
 
   aime25:
     class: aiperf.accuracy.benchmarks.aime25:AIME25Benchmark
     description: |
-      AIME 2025 benchmark with problems from the 2025 competition year.
+      AIME 2025 benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (yentinglin/aime_2025 + lighteval
+      ``expr_gold_metric``).
     metadata:
-      default_grader: math
+      default_grader: lighteval_expr
       default_n_shots: 0
-      is_implemented: false
 
   math_500:
     class: aiperf.accuracy.benchmarks.math_500:Math500Benchmark
     description: |
-      MATH-500 benchmark with 500 curated mathematical reasoning problems
-      spanning algebra, geometry, number theory, and combinatorics.
+      MATH-500 benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (HuggingFaceH4/MATH-500 + lighteval
+      ``latex_gold_metric``). Gold is the full ``solution`` text;
+      ``LightevalLatexGrader`` extracts the boxed expression at grade time.
     metadata:
-      default_grader: math
+      default_grader: lighteval_latex
       default_n_shots: 0
-      is_implemented: false
+
+  gsm8k:
+    class: aiperf.accuracy.benchmarks.gsm8k:GSM8KBenchmark
+    description: |
+      GSM8K (Grade School Math 8K) benchmark. Grade-school math word
+      problems requiring multi-step reasoning. Aligned with lighteval's
+      ``gsm8k_leaderboard`` task config (gsm8k/main test split, prompt
+      ``"Question: {question}\nAnswer:"``, ``generation_size=256``).
+      Gold is the raw ``answer`` field ending in ``#### <number>``;
+      ``LightevalGSM8KGrader`` extracts the number at grade time.
+    metadata:
+      default_grader: lighteval_gsm8k
+      default_n_shots: 0
 
   gpqa_diamond:
     class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
     description: |
-      GPQA Diamond benchmark with graduate-level science questions in physics,
-      chemistry, and biology requiring expert-level reasoning.
+      GPQA Diamond benchmark, aligned with the trt-llm benchmark recipe's
+      lighteval-backed configuration (Idavidrein/gpqa subset gpqa_diamond
+      + lighteval ``gpqa_metric``). Uses the simple-evals prompt template
+      with SHA-256-seeded deterministic A/B/C/D shuffling so gold
+      positions are reproducible across runs.
     metadata:
-      default_grader: multiple_choice
+      default_grader: lighteval_gpqa
       default_n_shots: 0
-      is_implemented: false
 
   lcb_codegeneration:
     class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
     description: |
-      LiveCodeBench code generation benchmark for evaluating code synthesis
-      capabilities with test-case-based validation.
+      LiveCodeBench code generation benchmark, aligned with the trt-llm
+      benchmark recipe's lighteval-backed configuration
+      (livecodebench/code_generation_lite + lighteval ``codegen_metrics``).
+      Serializes the LCB-style test-case payload (starter_code,
+      public_test_cases, private_test_cases, upstream metadata) into
+      ``BenchmarkProblem.ground_truth`` as an orjson blob so
+      ``CodeExecutionGrader`` can run the generated code against the
+      bundled public + private test cases.
     metadata:
       default_grader: code_execution
       default_n_shots: 0
-      is_implemented: false
 
 # =============================================================================
 # Communication Backends
@@ -1565,6 +1612,205 @@ public_dataset_loader:
       conversation_column: conversations
       message_content_key: value
       image_column: image
+      streaming: true
+
+  aimo_aime:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      AIMO validation AIME competition problems from HuggingFace (AI-MO).
+      Loads 90 AIME competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/aimo-validation-aime
+      hf_split: train
+      prompt_column: problem
+
+  aimo_numina_cot:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      NuminaMath chain-of-thought math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-CoT
+      hf_split: train
+      prompt_column: problem
+
+  aimo_numina_1_5:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      NuminaMath 1.5 math reasoning dataset from HuggingFace (AI-MO).
+      Loads competition math problems as single-turn requests.
+    metadata:
+      hf_dataset_name: AI-MO/NuminaMath-1.5
+      hf_split: train
+      prompt_column: problem
+
+  spec_bench:
+    class: aiperf.dataset.loader.spec_bench:SpecBenchLoader
+    description: |
+      SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
+      Loads single-turn questions for evaluating speculative decoding methods.
+
+  # ---------------------------------------------------------------------------
+  # Speculative-decoding acceptance-length benchmarks (auto-downloaded from HF).
+  # These are the datasets the spec-decode literature reports acceptance length
+  # against (GSM8K, MT-Bench, MATH-500, HumanEval, MBPP). Run each with
+  # `--public-dataset spec_al_<name>` then `aiperf speed-bench-report ...
+  # --metric accept_length`. Prompts are emitted bare; set greedy decoding with
+  # `--extra-inputs temperature:0` to match the literature's headline numbers.
+  # ---------------------------------------------------------------------------
+  spec_al_gsm8k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      GSM8K grade-school math word problems from HuggingFace (openai/gsm8k, main
+      config, test split, 1319 prompts). Single-turn prompts for speculative
+      decoding acceptance-length measurement. License: MIT.
+    metadata:
+      hf_dataset_name: openai/gsm8k
+      hf_subset: main
+      hf_split: test
+      prompt_column: question
+
+  spec_al_math500:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MATH-500 competition math problems from HuggingFace (HuggingFaceH4/MATH-500,
+      test split, 500 prompts). Single-turn prompts for speculative decoding
+      acceptance-length measurement. License: MIT (inherited from Hendrycks MATH).
+    metadata:
+      hf_dataset_name: HuggingFaceH4/MATH-500
+      hf_split: test
+      prompt_column: problem
+
+  spec_al_humaneval:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      HumanEval Python code-completion prompts from HuggingFace
+      (openai/openai_humaneval, test split, 164 prompts). Single-turn prompts for
+      speculative decoding acceptance-length measurement. The literature runs
+      HumanEval as raw text completion; serving it through a chat template here
+      shifts acceptance length away from the papers' headline numbers (MBPP shares
+      this caveat to a lesser degree). License: MIT.
+    metadata:
+      hf_dataset_name: openai/openai_humaneval
+      hf_split: test
+      prompt_column: prompt
+
+  spec_al_mbpp:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MBPP basic Python programming tasks from HuggingFace
+      (google-research-datasets/mbpp, full config, test split, 500 prompts).
+      Single-turn prompts for speculative decoding acceptance-length measurement.
+      License: CC-BY-4.0.
+    metadata:
+      hf_dataset_name: google-research-datasets/mbpp
+      hf_subset: full
+      hf_split: test
+      prompt_column: text
+
+  spec_al_mtbench:
+    class: aiperf.dataset.loader.mt_bench:MTBenchDatasetLoader
+    description: |
+      MT-Bench two-turn chat prompts from HuggingFace (HuggingFaceH4/mt_bench_prompts,
+      train split, 80 prompts). Multi-turn conversations for speculative decoding
+      acceptance-length measurement. License: Apache-2.0.
+    metadata:
+      hf_dataset_name: HuggingFaceH4/mt_bench_prompts
+      hf_split: train
+
+  instruct_coder:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      InstructCoder code instruction dataset from HuggingFace (likaixin).
+      Loads code generation instructions as single-turn requests.
+    metadata:
+      hf_dataset_name: likaixin/InstructCoder
+      hf_split: train
+      prompt_column: instruction
+
+  blazedit_5k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      Blazedit edit-distance benchmark dataset with ~5k character code contexts (vdaita).
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
+    metadata:
+      hf_dataset_name: vdaita/edit_5k_char
+      hf_split: train
+      prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
+
+  blazedit_10k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      Blazedit edit-distance benchmark dataset with ~10k character code contexts (vdaita).
+      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
+    metadata:
+      hf_dataset_name: vdaita/edit_10k_char
+      hf_split: train
+      prompt_column: change_request
+      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
+
+  # ---------------------------------------------------------------------------
+  # ASR (Automatic Speech Recognition) datasets
+  # ---------------------------------------------------------------------------
+  librispeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      LibriSpeech ASR benchmark dataset (openslr). Clean read-speech clips from
+      audiobooks. Uses the test.clean split by default.
+    metadata:
+      hf_dataset_name: openslr/librispeech_asr
+      hf_split: test
+      hf_subset: clean
+      streaming: true
+      audio_column: audio
+
+  voxpopuli:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      VoxPopuli English ASR dataset (facebook). Unlabelled speech data from
+      European Parliament recordings.
+    metadata:
+      hf_dataset_name: facebook/voxpopuli
+      hf_split: test
+      hf_subset: en
+      audio_column: audio
+      streaming: true
+
+  gigaspeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      GigaSpeech English ASR dataset (speechcolab). Large-scale multi-domain
+      corpus from audiobooks, podcasts, and YouTube. Requires HuggingFace authentication.
+    metadata:
+      hf_dataset_name: speechcolab/gigaspeech
+      hf_split: test
+      hf_subset: xs
+      audio_column: audio
+      streaming: true
+
+  ami:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      AMI Meeting Corpus ASR dataset (Edinburgh CSTR). Meeting recordings with
+      individual headset microphone audio. Public, no authentication required.
+    metadata:
+      hf_dataset_name: edinburghcstr/ami
+      hf_split: test
+      hf_subset: ihm
+      audio_column: audio
+      streaming: true
+
+  spgispeech:
+    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
+    description: |
+      SPGISpeech ASR dataset (Kensho). Financial earnings call recordings.
+      Requires HuggingFace authentication and terms acceptance.
+    metadata:
+      hf_dataset_name: kensho/spgispeech
+      hf_split: test
+      hf_subset: test
+      audio_column: audio
       streaming: true
 
   # ---------------------------------------------------------------------------
@@ -1899,136 +2145,6 @@ public_dataset_loader:
       hf_subset: throughput_32k
       category: high_entropy
 
-  aimo_aime:
-    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
-    description: |
-      AIMO validation AIME competition problems from HuggingFace (AI-MO).
-      Loads 90 AIME competition math problems as single-turn requests.
-    metadata:
-      hf_dataset_name: AI-MO/aimo-validation-aime
-      hf_split: train
-      prompt_column: problem
-
-  aimo_numina_cot:
-    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
-    description: |
-      NuminaMath chain-of-thought math reasoning dataset from HuggingFace (AI-MO).
-      Loads competition math problems as single-turn requests.
-    metadata:
-      hf_dataset_name: AI-MO/NuminaMath-CoT
-      hf_split: train
-      prompt_column: problem
-
-  aimo_numina_1_5:
-    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
-    description: |
-      NuminaMath 1.5 math reasoning dataset from HuggingFace (AI-MO).
-      Loads competition math problems as single-turn requests.
-    metadata:
-      hf_dataset_name: AI-MO/NuminaMath-1.5
-      hf_split: train
-      prompt_column: problem
-
-  spec_bench:
-    class: aiperf.dataset.loader.spec_bench:SpecBenchLoader
-    description: |
-      SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
-      Loads single-turn questions for evaluating speculative decoding methods.
-
-  instruct_coder:
-    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
-    description: |
-      InstructCoder code instruction dataset from HuggingFace (likaixin).
-      Loads code generation instructions as single-turn requests.
-    metadata:
-      hf_dataset_name: likaixin/InstructCoder
-      hf_split: train
-      prompt_column: instruction
-
-  blazedit_5k:
-    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
-    description: |
-      Blazedit edit-distance benchmark dataset with ~5k character code contexts (vdaita).
-      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
-    metadata:
-      hf_dataset_name: vdaita/edit_5k_char
-      hf_split: train
-      prompt_column: change_request
-      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
-
-  blazedit_10k:
-    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
-    description: |
-      Blazedit edit-distance benchmark dataset with ~10k character code contexts (vdaita).
-      Prompts combine the code file and change request, matching vLLM's BlazeditDataset format.
-    metadata:
-      hf_dataset_name: vdaita/edit_10k_char
-      hf_split: train
-      prompt_column: change_request
-      prompt_template: "Given a code file, please apply the change requests and generate the new file.\n\nOriginal file:\n```python\n{code}\n```\n\nChange request:\n{change_request}\n\nPlease generate the new code file in the \"New file\" section below."
-
-  # ---------------------------------------------------------------------------
-  # ASR (Automatic Speech Recognition) datasets
-  # ---------------------------------------------------------------------------
-  librispeech:
-    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
-    description: |
-      LibriSpeech ASR benchmark dataset (openslr). Clean read-speech clips from
-      audiobooks. Uses the test.clean split by default.
-    metadata:
-      hf_dataset_name: openslr/librispeech_asr
-      hf_split: test
-      hf_subset: clean
-      streaming: true
-      audio_column: audio
-
-  voxpopuli:
-    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
-    description: |
-      VoxPopuli English ASR dataset (facebook). Unlabelled speech data from
-      European Parliament recordings.
-    metadata:
-      hf_dataset_name: facebook/voxpopuli
-      hf_split: test
-      hf_subset: en
-      audio_column: audio
-      streaming: true
-
-  gigaspeech:
-    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
-    description: |
-      GigaSpeech English ASR dataset (speechcolab). Large-scale multi-domain
-      corpus from audiobooks, podcasts, and YouTube. Requires HuggingFace authentication.
-    metadata:
-      hf_dataset_name: speechcolab/gigaspeech
-      hf_split: test
-      hf_subset: xs
-      audio_column: audio
-      streaming: true
-
-  ami:
-    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
-    description: |
-      AMI Meeting Corpus ASR dataset (Edinburgh CSTR). Meeting recordings with
-      individual headset microphone audio. Public, no authentication required.
-    metadata:
-      hf_dataset_name: edinburghcstr/ami
-      hf_split: test
-      hf_subset: ihm
-      audio_column: audio
-      streaming: true
-
-  spgispeech:
-    class: aiperf.dataset.loader.hf_asr:HFASRDatasetLoader
-    description: |
-      SPGISpeech ASR dataset (Kensho). Financial earnings call recordings.
-      Requires HuggingFace authentication and terms acceptance.
-    metadata:
-      hf_dataset_name: kensho/spgispeech
-      hf_split: test
-      hf_subset: test
-      audio_column: audio
-      streaming: true
 
 # =============================================================================
 # ZMQ Proxies

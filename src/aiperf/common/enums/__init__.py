@@ -5,17 +5,12 @@
 # These were re-exported through enums.enums on the branch; on main they are
 # in dedicated split files. Importing here keeps `from aiperf.common.enums
 # import X` working for K8s code without flattening the split.
-from aiperf.common.enums.dataset_enums import OslMode, SweepType
-from aiperf.common.enums.export_enums import RecordExportFormat, SummaryFormat
-from aiperf.common.enums.lifecycle_enums import WorkerStartupState
-from aiperf.common.enums.metric_enums import AggregationKind
-from aiperf.common.enums.server_metrics_enums import GpuTelemetryType
-
 from aiperf.common.enums.base_enums import (
     BasePydanticBackedStrEnum,
     BasePydanticEnumInfo,
     CaseInsensitiveStrEnum,
 )
+from aiperf.common.enums.dataset_enums import OslMode, SweepType
 from aiperf.common.enums.enums import (
     AIPerfLogLevel,
     AudioFormat,
@@ -58,7 +53,10 @@ from aiperf.common.enums.enums import (
     VideoSynthType,
     WorkerStatus,
 )
+from aiperf.common.enums.export_enums import RecordExportFormat, SummaryFormat
+from aiperf.common.enums.lifecycle_enums import WorkerStartupState
 from aiperf.common.enums.metric_enums import (
+    AggregationKind,
     BaseMetricUnit,
     BaseMetricUnitInfo,
     EnergyMetricUnit,
@@ -87,6 +85,7 @@ from aiperf.common.enums.metric_enums import (
     TemperatureMetricUnit,
     TemperatureMetricUnitInfo,
 )
+from aiperf.common.enums.server_metrics_enums import GpuTelemetryType
 from aiperf.plugin.enums import DatasetFormat
 
 __all__ = [

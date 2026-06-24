@@ -205,19 +205,11 @@ async def try_claim_completion(
     if key in _shutdown_sent:
         return False
 
-    # Annotation fast path: a previous operator run (or the annotation
-    # handler itself) already claimed this job.
-    if is_completion_claimed(body):
-        _shutdown_sent.add(key)
-        # A peer (this operator's prior run, an HA replica, or the
-        # controller-pod's own annotation write) already claimed completion
-        # before this caller's body snapshot was taken. Count as a race-loss
-        # so operators can graph duplicate-completion attempts.
-        from aiperf.operator.metrics import COMPLETION_CLAIM_RACES
-
-        COMPLETION_CLAIM_RACES.inc()
-        return False
-
+    # No annotation fast path: the CR body's COMPLETION_CLAIMED annotation is
+    # user-writable, so trusting it to skip the claim would let a forged
+    # annotation suppress completion. The atomic apiserver ``test``-op patch
+    # below is the sole authority — a genuine prior claim makes it fail with
+    # 422 (counted as a race-loss), which is the safe outcome.
     patch_ops = _build_claim_patch_ops(body)
     claimed = await _submit_claim_patch(namespace, name, patch_ops)
     if claimed is True:

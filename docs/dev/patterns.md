@@ -944,6 +944,35 @@ except Exception as e:
     await self.publish(ResultMsg(error=ErrorDetails.from_exception(e)))
 ```
 
+## Platform Branching
+
+Platform-conditional code MUST branch on `IS_WINDOWS` / `IS_MACOS` / `IS_LINUX`
+from `aiperf.common.constants` — never on `platform.system()` directly. The
+constants are evaluated once at import time, are uniformly greppable, and
+produce smaller diffs.
+
+```python
+# Yes — uniform pattern across the codebase
+from aiperf.common.constants import IS_WINDOWS, IS_MACOS
+
+if IS_WINDOWS:
+    ctypes.WinDLL("winmm").timeBeginPeriod(1)
+elif IS_MACOS:
+    _redirect_stdio_to_devnull()
+
+# No — re-imports `platform`, hits `platform.system()` per call, harder to grep
+import platform
+if platform.system() == "Windows":
+    ...
+```
+
+Canonical examples:
+- `src/aiperf/common/bootstrap.py` — event-loop policy switch, timer-resolution bump, stdio FD redirect (Windows + macOS branches)
+- `src/aiperf/config/comm/ipc.py` — `build_socket_address` (ipc:// on POSIX vs tcp:// loopback on Windows)
+- `src/aiperf/common/base_service.py` — force-kill path (`os._exit` on Windows vs SIGKILL on POSIX)
+
+For tests that exercise both branches from non-target hosts, patch the constant at its consumer site (not at the source) — see `tests/unit/common/test_bootstrap_windows.py` for the pattern.
+
 ## Logging Pattern
 
 Use lambda for expensive log messages:
@@ -955,6 +984,256 @@ self.debug(lambda: f"Processing {len(self._items())} items")
 # Cheap - direct string is fine
 self.info("Starting service")
 ```
+
+## NaN/Inf Discipline Pattern
+
+NaN/+inf/-inf in metric data corrupts downstream artifacts in three ways:
+`orjson.dumps` (and Pydantic `model_dump_json`) silently coerce them to JSON
+`null`, which is indistinguishable from "metric was missing"; CSV writers
+emit literal `"nan"`/`"inf"` strings that pandas/duckdb parse
+inconsistently; and `np.mean`/`np.std`/`polyfit` poison downstream decision
+logic (Pareto fronts, BO acquisition maxima, plateau detectors) without
+raising.
+
+The `aiperf.common.finite` module centralizes the discipline as four
+primitives. Use them at every numeric boundary.
+
+### `FiniteFloat` for Pydantic metric fields
+
+```python
+from pydantic import Field
+from aiperf.common.finite import FiniteFloat
+from aiperf.common.models import AIPerfBaseModel
+
+class MetricSummary(AIPerfBaseModel):
+    mean: FiniteFloat = Field(description="Sample mean (must be finite)")
+    std: FiniteFloat | None = Field(
+        default=None,
+        description="Sample stddev; None means insufficient samples",
+    )
+    p99: FiniteFloat | None = Field(
+        default=None,
+        description="99th percentile latency in ms; None means no samples",
+    )
+```
+
+The `AfterValidator` rejects NaN/+inf/-inf at config-load and
+`model_validate` time with a debuggable message. For
+finite-or-explicitly-missing semantics, use `FiniteFloat | None` — the
+validator only fires when a non-None value is provided.
+
+### `scrub_non_finite` before every JSON exporter
+
+```python
+import orjson
+from aiperf.common.finite import scrub_non_finite
+
+def export_records_json(records: list[Record], out_path: Path) -> None:
+    payload = {"records": [r.model_dump() for r in records]}
+    out_path.write_bytes(orjson.dumps(scrub_non_finite(payload)))
+```
+
+`scrub_non_finite` recursively walks `dict`/`list`/`tuple` containers and
+rewrites non-finite numeric values to `None`. It leaves `str`/`bytes`/`bool`
+alone and handles numpy scalar types correctly (`numpy.float32`,
+`numpy.float64`).
+
+### `is_finite_value` for the canonical finiteness check
+
+```python
+from aiperf.common.finite import is_finite_value
+
+def maybe_record_throughput(value: float) -> None:
+    if not is_finite_value(value):
+        self.warning(lambda: f"Skipping non-finite throughput: {value!r}")
+        return
+    self._records.append(value)
+```
+
+Use `is_finite_value` instead of `math.isfinite` or `not math.isnan`:
+`isinstance(x, float)` misses numpy scalar types on some numpy versions,
+and `math.isfinite` raises on non-numeric inputs.
+
+### `nan_safe_mean` / `nan_safe_std` for aggregation
+
+```python
+from aiperf.common.finite import nan_safe_mean, nan_safe_std
+
+# Partial-failure samples may contain NaN; np.mean would propagate.
+samples = [r.latency_ms for r in records]  # may contain NaN
+mean = nan_safe_mean(samples)               # None if no finite values
+std = nan_safe_std(samples, ddof=1)         # None if < 2 finite values
+```
+
+Both functions return `None` (not NaN) when the input has too few finite
+values, so callers can distinguish "no data" from "data averaged to NaN".
+
+### Don't: the bug pattern these primitives prevent
+
+```python
+# WRONG: raw float field accepts NaN silently
+class BadSummary(AIPerfBaseModel):
+    p99: float = Field(description="99th percentile latency")  # accepts NaN
+
+# WRONG: orjson silently coerces NaN/inf to JSON null
+out_path.write_bytes(orjson.dumps({"p99": float("nan")}))
+# Result on disk: {"p99": null}  -- indistinguishable from "missing"
+
+# WRONG: np.mean propagates NaN through Pareto/BO downstream
+import numpy as np
+mean = float(np.mean([1.0, 2.0, float("nan")]))  # NaN, poisons callers
+```
+
+Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py`
+reject all three patterns for new code; see
+[`global-invariants.md`](global-invariants.md) for the full contract and
+the baseline-ratchet mechanism.
+
+## Safe Filesystem Reads Pattern
+
+User-supplied filesystem paths reaching AIPerf (e.g. `--extra-inputs
+payload_template=<path>`, `endpoint.template.body` in a YAML config) must
+go through `aiperf.common.path_safety.safe_read_template_path` rather than
+inline `Path(...).read_text()` / `open(...).read()`. The helper is the
+canonical CWE-22 path-traversal sanitizer recognized by SAST tools — every
+inline read regenerates that finding.
+
+### What the helper does
+
+```python
+from aiperf.common.path_safety import safe_read_template_path
+
+body = safe_read_template_path(user_string)
+if body is None:
+    # safety check failed — caller picks the fallback semantic
+    body = user_string          # template "path or inline" idiom
+    # or: raise ValueError(f"Template file not readable: {user_string!r}")
+```
+
+Sanitizer chain (in the order SAST engines walk it):
+
+1. `Path(ts).expanduser()` — catches `TypeError` / `ValueError` /
+   `RuntimeError` (the last fires on unresolvable `~user` prefixes).
+2. Reject if `path` or any component in `path.parents` is a symlink.
+   `resolve()` alone is insufficient because it follows symlinked parent
+   directories silently.
+3. `path.resolve(strict=True)` — the canonical sanitizer that
+   Snyk/CodeQL/Semgrep recognize; raises on missing paths.
+4. Require `resolved.is_file()` — rejects directories, devices, fifos.
+5. `read_text(encoding="utf-8")` — explicit decode; no platform default. Catches `UnicodeError` alongside `OSError` so non-UTF-8 files fall back to the literal-string branch rather than crashing config conversion.
+
+Returning `None` on any failure preserves the existing "treat as a literal
+value" fallback that both call sites (`_converter_endpoint` and
+`TemplateEndpoint.__init__`) already implement.
+
+### When this pattern does NOT apply
+
+- **Path joining of trusted strings** — `Path(__file__).parent / "data.yaml"`,
+  `artifact_dir / "inputs.json"`. These never resolve untrusted input; no
+  sanitizer needed.
+- **Binary reads** — `open(p, "rb")` for parquet/orjson/etc. The helper is
+  UTF-8-text only. If a hardened binary variant is needed, add it to
+  `aiperf.common.path_safety` alongside the existing helper rather than
+  inlining `read_bytes()`.
+- **Reads where missing-file should hard-fail rather than fall back** — the
+  helper still works (returns `None`); the caller is responsible for
+  raising instead of substituting a literal.
+
+## Externally-Injected Derived Metric Pattern
+
+A normal `BaseDerivedMetric` computes its value from peer metrics in the
+`MetricResultsDict` via `_derive_value`. Some derived metrics, however, are
+computed from data that never lives in the `MetricResultsDict` at all —
+GPU power and energy come from telemetry scrapes, not from request
+records, so their values must be injected by the accumulator that owns
+the sensor data rather than derived by the standard registry walk.
+
+Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py).
+Injection site: `GPUTelemetryAccumulator.compute_efficiency_metrics`
+([`src/aiperf/gpu_telemetry/accumulator.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/accumulator.py)).
+
+### The three-part contract
+
+A metric class that participates in registry listings but is computed
+externally must spell out the contract in three places so future agents
+don't copy-paste the shape as the canonical derived-metric pattern.
+
+**1. `Invariant:` paragraph in the class docstring.** Name the injection
+site and the catching path explicitly:
+
+```python
+class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
+    """Sum of GPU energy consumed across all GPUs during the benchmark phase, in joules.
+
+    Invariant: externally injected by
+    `GPUTelemetryAccumulator.compute_efficiency_metrics` from
+    energy_consumption counter deltas. `_derive_value` is intentionally
+    non-functional; `MetricResultsProcessor.update_derived_metrics` is
+    expected to catch NoMetricValue and skip the tag during its
+    derivation walk.
+    """
+```
+
+**2. `_derive_value` returns `NoReturn`.** The body unconditionally
+raises, so the truthful annotation is `NoReturn` from `typing`. Returning
+`float` would lie to type-checkers and downstream code that assumes the
+derivation succeeded.
+
+```python
+from typing import NoReturn
+from aiperf.common.exceptions import NoMetricValue
+from aiperf.metrics.metric_dicts import MetricResultsDict
+
+def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
+    raise NoMetricValue(
+        "Cannot derive 'total_gpu_energy' from MetricResultsDict: this metric "
+        "is externally injected by "
+        "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
+        "surfaces, the derivation walk is missing its NoMetricValue handler "
+        "(see MetricResultsProcessor.update_derived_metrics)."
+    )
+```
+
+**3. Error message names the operation, the injection site, and the catching
+path.** A message that only names the source ("X is computed by the GPU
+telemetry accumulator") gives debugging agents no clue where the contract
+is enforced. The recommended shape is:
+
+- *Operation*: what derivation was attempted (`Cannot derive 'X' from
+  MetricResultsDict`).
+- *Injection site*: which method is the source of truth
+  (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
+- *Catching path*: where the exception is expected to be absorbed
+  (`MetricResultsProcessor.update_derived_metrics`). If this fires in
+  production, the catching path has a bug.
+
+### Why not just skip the class entirely?
+
+The class is still required because the rest of the system reads class
+attributes (`tag`, `header`, `unit`, `display_order`, `flags`) when
+emitting `MetricResult`s, ordering the console table, and gating display
+behavior. The registry entry is structural metadata; the *value* is the
+external injection.
+
+### Where the injection happens
+
+`RecordsManager._apply_gpu_efficiency_metrics` calls
+`GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
+`MetricResult` objects directly with the relevant tags and appends them
+to the records list before `ProcessRecordsResult` is built. The standard
+`update_derived_metrics` walk sees these tags too, raises `NoMetricValue`
+via `_derive_value`, catches it, and skips — so the externally-injected
+values are not overwritten.
+
+### Test contract
+
+The error-message invariants are pinned by
+[`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
+(parametrized over the three classes): every `_derive_value` call must
+raise `NoMetricValue` with a message that names the tag, the operation
+source (`MetricResultsDict`), and the injection site
+(`compute_efficiency_metrics`). A future weakening of any message fails
+the test rather than silently drifting.
 
 ## Testing Pattern
 

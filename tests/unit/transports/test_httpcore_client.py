@@ -10,12 +10,12 @@ import pytest
 
 from aiperf.common.enums import ConnectionReuseStrategy, SSEEventType, SSEFieldType
 from aiperf.common.models import ErrorDetails, SSEField, SSEMessage
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.httpcore_client import HttpCoreClient
 from aiperf.transports.httpcore_transport import HttpCoreTransport
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -320,17 +320,24 @@ async def test_handle_completion_missing_materialized_key_file_does_not_update_l
 
 
 @pytest.mark.asyncio
-async def test_fetch_sweep_aggregate_download_list_without_files_does_not_update_latest(
+async def test_fetch_sweep_aggregate_empty_download_list_does_not_update_latest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Sweep latest.txt must not advance until the aggregate files exist on disk."""
+    """An empty sidecar listing must not advance the sweep latest pointer.
+
+    ``fetch_sweep_aggregate_to_disk`` derives its harvest count from the
+    sidecar's reported file list (the sidecar's ``download_all_results``
+    materializes the bytes onto the PVC as a side effect — see
+    ``test_aggregate_fetch.py`` for the authoritative count contract). When the
+    sidecar is reachable but pre-marker, it returns an empty list: the count is
+    0 and the advisory ``latest.txt`` pointer must stay unwritten so readers
+    never default to an epoch with no aggregate.
+    """
     base = tmp_path / "results"
     fake_progress_client = MagicMock()
     fake_progress_client.__aenter__ = AsyncMock(return_value=fake_progress_client)
     fake_progress_client.__aexit__ = AsyncMock(return_value=None)
-    fake_progress_client.download_all_results = AsyncMock(
-        return_value=["aggregate.json", "children.json"]
-    )
+    fake_progress_client.download_all_results = AsyncMock(return_value=[])
     monkeypatch.setattr(
         _aggregate_fetch, "ProgressClient", lambda *args, **kwargs: fake_progress_client
     )

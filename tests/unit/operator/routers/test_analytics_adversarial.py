@@ -224,7 +224,9 @@ class TestAnalyticsEmptyAndMalformedRuns:
         _seed_summary_run(
             tmp_path,
             job_id="healthy-h100-load",
-            payload=_summary_payload(metric_value=321.0, model="meta-llama/Llama-3.1-70B"),
+            payload=_summary_payload(
+                metric_value=321.0, model="meta-llama/Llama-3.1-70B"
+            ),
         )
 
         response = await client.get("/api/v1/analytics/leaderboard")
@@ -341,7 +343,9 @@ class TestAnalyticsQueryAndCompareFilters:
             tmp_path,
             namespace="bench-canary",
             job_id="shared-load",
-            payload=_summary_payload(metric_value=200.0, model="meta-llama/Llama-3.1-70B"),
+            payload=_summary_payload(
+                metric_value=200.0, model="meta-llama/Llama-3.1-70B"
+            ),
         )
 
         response = await client.get(
@@ -435,7 +439,9 @@ class TestAnalyticsFilteringAndEncoding:
             tmp_path,
             namespace="team.alpha+gpu",
             job_id="llama-3.1+8b-load",
-            payload=_summary_payload(metric_value=444.0, model="meta-llama/Llama-3.1-8B"),
+            payload=_summary_payload(
+                metric_value=444.0, model="meta-llama/Llama-3.1-8B"
+            ),
         )
 
         response = await client.get(
@@ -462,7 +468,9 @@ class TestAnalyticsFilteringAndEncoding:
         _seed_summary_run(
             tmp_path,
             epoch=_EPOCH_NEW,
-            payload=_summary_payload(metric_value=99.0, model="meta-llama/Llama-3.1-8B"),
+            payload=_summary_payload(
+                metric_value=99.0, model="meta-llama/Llama-3.1-8B"
+            ),
         )
 
         response = await client.get(f"/api/v1/analytics/leaderboard?epoch={_EPOCH_OLD}")
@@ -492,7 +500,9 @@ class TestAnalyticsIndexFallbackAndSchema:
             tmp_path,
             namespace="bench-prod",
             job_id="disk-authoritative-run",
-            payload=_summary_payload(metric_value=123.0, model="meta-llama/Llama-3.1-8B"),
+            payload=_summary_payload(
+                metric_value=123.0, model="meta-llama/Llama-3.1-8B"
+            ),
         )
 
         response = await client.get("/api/v1/index")

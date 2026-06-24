@@ -161,9 +161,7 @@ class TestServerMetricsResultsProcessor:
 
         error_summary = [
             ErrorDetailsCount(
-                error_details=ErrorDetails(
-                    type="ConnectionError", message="Failed"
-                ),
+                error_details=ErrorDetails(type="ConnectionError", message="Failed"),
                 count=5,
             )
         ]

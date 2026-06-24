@@ -17,11 +17,12 @@ from aiperf.common.base_component_service import BaseComponentService
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.channel_codecs import RAW_INFERENCE_CODEC
-from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.constants import BYTES_PER_MIB, WARMUP_SYSTEM_MESSAGE_PREFIX
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
+    CreditPhase,
     MessageType,
     WorkerStartupState,
 )
@@ -954,7 +955,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             session=session,
             credit_context=credit_context,
             x_request_id=x_request_id,
-            system_message=session.conversation.system_message,
+            system_message=self._system_message_for_phase(
+                system_message=session.conversation.system_message,
+                phase=credit_context.credit.phase,
+            ),
             user_context_message=session.conversation.user_context_message,
         )
         record: RequestRecord = await self.inference_client.send_request(
@@ -1024,6 +1028,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )
+
+    @staticmethod
+    def _system_message_for_phase(
+        *, system_message: str | None, phase: CreditPhase
+    ) -> str | None:
+        if phase != CreditPhase.WARMUP:
+            return system_message
+        if not system_message:
+            return WARMUP_SYSTEM_MESSAGE_PREFIX
+        return f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{system_message}"
 
     async def _retrieve_conversation(
         self,

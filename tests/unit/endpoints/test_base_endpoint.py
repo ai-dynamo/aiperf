@@ -13,7 +13,6 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     _wrap_model_endpoint,
-    _wrap_run,
     create_config,
     create_endpoint_with_mock_transport,
     create_request_info,

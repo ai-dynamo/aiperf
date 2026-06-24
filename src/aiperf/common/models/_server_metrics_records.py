@@ -1,11 +1,42 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import math
 from dataclasses import dataclass
 
 import msgspec
+from pydantic_core import InitErrorDetails, ValidationError
 
 from aiperf.common.enums import PrometheusMetricType
+
+
+def _raise_metric_sample_error(message: str) -> None:
+    """Raise a pydantic ``ValidationError`` for an invalid ``MetricSample``.
+
+    ``MetricSample`` is a ``msgspec.Struct`` for zero-copy JSONL serialization,
+    so it cannot use a pydantic ``@model_validator``. The producer hot path
+    (``data_collector._process_*_family``) catches ``pydantic.ValidationError``
+    to drop only the offending sample, and the project's NaN/Inf Discipline
+    tests assert ``pydantic.ValidationError`` carrying a "finite" message. A
+    real ``pydantic_core.ValidationError`` satisfies both: it subclasses
+    ``ValueError`` (so the mutual-exclusivity ``pytest.raises(ValueError)``
+    assertions still match) while remaining the exact pydantic type the
+    producer and finite-contract tests expect.
+
+    Raises:
+        ValidationError: always, wrapping ``message``.
+    """
+    raise ValidationError.from_exception_data(
+        "MetricSample",
+        [
+            InitErrorDetails(
+                type="value_error",
+                loc=(),
+                input={},
+                ctx={"error": ValueError(message)},
+            )
+        ],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +141,42 @@ class MetricSample(
 
     count: float | None = None
     """Total number of observations (for histogram only)."""
+
+    def __post_init__(self) -> None:
+        """Validate finiteness and value/histogram mutual exclusivity.
+
+        Enforces the same contract main's pydantic ``MetricSample`` did, but
+        from a ``msgspec.Struct`` (see :func:`_raise_metric_sample_error`):
+
+        1. ``value``, ``sum``, ``count``, and every ``buckets`` count must be
+           finite when present (NaN/Inf would orjson-encode to ``null`` on the
+           ZMQ/JSONL hop and poison downstream histogram series).
+        2. Exactly one of ``{value, buckets}`` is set (not both, not neither).
+        3. If ``value`` is set (counter/gauge), ``sum`` and ``count`` must be
+           unset (those belong only to histograms).
+
+        Raises:
+            ValidationError: If any rule above is violated.
+        """
+        if self.value is not None and not math.isfinite(self.value):
+            _raise_metric_sample_error(f"value must be finite, got {self.value!r}")
+        if self.sum is not None and not math.isfinite(self.sum):
+            _raise_metric_sample_error(f"sum must be finite, got {self.sum!r}")
+        if self.count is not None and not math.isfinite(self.count):
+            _raise_metric_sample_error(f"count must be finite, got {self.count!r}")
+        if self.buckets is not None:
+            for bound, bucket_count in self.buckets.items():
+                if not math.isfinite(bucket_count):
+                    _raise_metric_sample_error(
+                        f"bucket {bound!r} count must be finite, got {bucket_count!r}"
+                    )
+
+        if self.value is not None and self.buckets is not None:
+            _raise_metric_sample_error("Only one of value or buckets can be set")
+        if self.value is None and self.buckets is None:
+            _raise_metric_sample_error("One of value or buckets must be set")
+        if self.value is not None and (self.sum is not None or self.count is not None):
+            _raise_metric_sample_error("If value is set, sum and count must not be set")
 
 
 class MetricFamily(

@@ -123,11 +123,23 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
 
         from aiperf import __version__ as aiperf_version
 
+        # `_build_hybrid_metrics` returns the live discriminated Pydantic
+        # ``*MetricData`` models (built by the accumulator), but
+        # ``ServerMetricsExportData.metrics`` is typed against the unified
+        # ``ServerMetricData`` dataclass. Dump each metric to its JSON dict so
+        # pydantic re-validates it into the unified dataclass — the two shapes
+        # are identical, and this is what the export reader (plot loader) also
+        # round-trips through.
+        metrics_data = {
+            name: metric.model_dump(mode="json", exclude_none=True)
+            for name, metric in metrics.items()
+        }
+
         export_data = ServerMetricsExportData(
             aiperf_version=aiperf_version,
             benchmark_id=self._server_metrics_results.benchmark_id,
             summary=summary,
-            metrics=metrics,
+            metrics=metrics_data,
             input_config=input_config,
         )
 

@@ -16,7 +16,11 @@ from aiperf.endpoints.huggingface_generate import HuggingFaceGenerateEndpoint
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
 from aiperf.plugin.schema.schemas import EndpointMetadata
-from tests.unit.endpoints.conftest import _wrap_model_endpoint, _wrap_run, create_config, create_request_info
+from tests.unit.endpoints.conftest import (
+    _wrap_model_endpoint,
+    create_config,
+    create_request_info,
+)
 
 
 class TestHuggingFaceGenerateEndpoint:
@@ -31,7 +35,9 @@ class TestHuggingFaceGenerateEndpoint:
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
-        ep = HuggingFaceGenerateEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
+        ep = HuggingFaceGenerateEndpoint(
+            model_endpoint=_wrap_model_endpoint(model_endpoint)
+        )
         ep.debug = Mock()
         ep.make_text_response_data = Mock(return_value=TextResponseData(text="parsed"))
         return ep

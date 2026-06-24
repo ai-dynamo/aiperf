@@ -24,11 +24,13 @@ import orjson
 import pytest
 
 from aiperf.config import BenchmarkConfig, BenchmarkRun, SweepVariation
-from aiperf.operator.handlers.sweep import _child_phase_buckets, _child_runs
 from aiperf.operator.handlers.sweep import _aggregate_fetch as aggregate_fetch
-from aiperf.operator.handlers.sweep import child_rollup
+from aiperf.operator.handlers.sweep import (
+    _child_phase_buckets,
+    _child_runs,
+    child_rollup,
+)
 from aiperf.sweep_controller.k8s_executor import K8sChildJobExecutor
-
 
 # ============================================================
 # Helpers
@@ -168,7 +170,9 @@ class TestChildRollupBuckets:
         children = [
             _owned_child(name="latency-sweep-v00-t1", phase="Cancelled", index="00"),
             _owned_child(name="latency-sweep-v01-t1", phase="Failed", index="01"),
-            _owned_child(name="latency-sweep-v02-t1", phase="PartiallyFailed", index="02"),
+            _owned_child(
+                name="latency-sweep-v02-t1", phase="PartiallyFailed", index="02"
+            ),
             _owned_child(name="latency-sweep-v03-t1", phase="Completed", index="03"),
         ]
 
@@ -192,9 +196,13 @@ class TestChildRollupBuckets:
         assert current is not None
         assert current["metadata"]["name"] == "latency-sweep-v02-t1"
 
-    def test_find_current_child_malformed_index_sorts_behind_valid_pending(self) -> None:
+    def test_find_current_child_malformed_index_sorts_behind_valid_pending(
+        self,
+    ) -> None:
         children = [
-            _owned_child(name="latency-sweep-vbad-t1", phase="Pending", index="not-int"),
+            _owned_child(
+                name="latency-sweep-vbad-t1", phase="Pending", index="not-int"
+            ),
             _owned_child(name="latency-sweep-v04-t1", phase="Pending", index="04"),
         ]
 
@@ -385,9 +393,9 @@ class TestSweepRunsTruncation:
             api=MagicMock(),
         )
 
-        patch_body = fake_custom.patch_namespaced_custom_object_status.await_args.kwargs[
-            "body"
-        ]
+        patch_body = (
+            fake_custom.patch_namespaced_custom_object_status.await_args.kwargs["body"]
+        )
         assert patch_body == {
             "status": {
                 "runsTruncated": {
@@ -428,9 +436,9 @@ class TestSweepRunsTruncation:
             api=MagicMock(),
         )
 
-        patch_body = fake_custom.patch_namespaced_custom_object_status.await_args.kwargs[
-            "body"
-        ]
+        patch_body = (
+            fake_custom.patch_namespaced_custom_object_status.await_args.kwargs["body"]
+        )
         assert patch_body["status"]["runsTruncated"] == {
             "total": 9,
             "included": 0,
@@ -471,7 +479,10 @@ class TestChildMetadataPassthrough:
         )
 
         assert metadata["labels"]["team"] == "ai-platform"
-        assert metadata["annotations"]["runbook"] == "https://runbooks.example/aiperf-sweeps"
+        assert (
+            metadata["annotations"]["runbook"]
+            == "https://runbooks.example/aiperf-sweeps"
+        )
         variation_values = orjson.loads(
             metadata["annotations"]["aiperf.nvidia.com/variation-values"]
         )

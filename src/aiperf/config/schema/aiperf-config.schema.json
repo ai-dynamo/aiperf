@@ -26,6 +26,7 @@
         "aime24",
         "aime25",
         "math_500",
+        "gsm8k",
         "gpqa_diamond",
         "lcb_codegeneration"
       ],
@@ -149,7 +150,8 @@
         "code_execution",
         "lighteval_expr",
         "lighteval_latex",
-        "lighteval_gpqa"
+        "lighteval_gpqa",
+        "lighteval_gsm8k"
       ],
       "title": "AccuracyGraderType",
       "type": "string"
@@ -552,6 +554,14 @@
           ],
           "title": "Constraintmode",
           "type": "string"
+        },
+        "slaTiers": {
+          "description": "Multi-tier SLO definitions parsed from --search-sla-tier flags. Each tier is a named group of SLA filters sharing a common boundary search. When non-empty (2-10 tiers), the MultiTierPlanner is activated instead of single-tier planners.",
+          "items": {
+            "$ref": "#/$defs/SLOTier"
+          },
+          "title": "Slatiers",
+          "type": "array"
         }
       },
       "required": [
@@ -2168,6 +2178,9 @@
         },
         "mlflow": {
           "$ref": "#/$defs/MLflowConfig"
+        },
+        "wandb": {
+          "$ref": "#/$defs/WandbConfig"
         },
         "runtime": {
           "$ref": "#/$defs/RuntimeConfig",
@@ -5849,7 +5862,39 @@
         "sagemaker_data_capture",
         "multi_turn",
         "random_pool",
-        "single_turn"
+        "single_turn",
+        "speed_bench_qualitative",
+        "speed_bench_coding",
+        "speed_bench_humanities",
+        "speed_bench_math",
+        "speed_bench_multilingual",
+        "speed_bench_qa",
+        "speed_bench_rag",
+        "speed_bench_reasoning",
+        "speed_bench_roleplay",
+        "speed_bench_stem",
+        "speed_bench_summarization",
+        "speed_bench_writing",
+        "speed_bench_throughput_1k",
+        "speed_bench_throughput_2k",
+        "speed_bench_throughput_8k",
+        "speed_bench_throughput_16k",
+        "speed_bench_throughput_32k",
+        "speed_bench_throughput_1k_low_entropy",
+        "speed_bench_throughput_1k_mixed",
+        "speed_bench_throughput_1k_high_entropy",
+        "speed_bench_throughput_2k_low_entropy",
+        "speed_bench_throughput_2k_mixed",
+        "speed_bench_throughput_2k_high_entropy",
+        "speed_bench_throughput_8k_low_entropy",
+        "speed_bench_throughput_8k_mixed",
+        "speed_bench_throughput_8k_high_entropy",
+        "speed_bench_throughput_16k_low_entropy",
+        "speed_bench_throughput_16k_mixed",
+        "speed_bench_throughput_16k_high_entropy",
+        "speed_bench_throughput_32k_low_entropy",
+        "speed_bench_throughput_32k_mixed",
+        "speed_bench_throughput_32k_high_entropy"
       ],
       "title": "DatasetFormat",
       "type": "string"
@@ -9679,42 +9724,15 @@
         "mmvu",
         "vision_arena",
         "llava_onevision",
-        "speed_bench_qualitative",
-        "speed_bench_coding",
-        "speed_bench_humanities",
-        "speed_bench_math",
-        "speed_bench_multilingual",
-        "speed_bench_qa",
-        "speed_bench_rag",
-        "speed_bench_reasoning",
-        "speed_bench_roleplay",
-        "speed_bench_stem",
-        "speed_bench_summarization",
-        "speed_bench_writing",
-        "speed_bench_throughput_1k",
-        "speed_bench_throughput_2k",
-        "speed_bench_throughput_8k",
-        "speed_bench_throughput_16k",
-        "speed_bench_throughput_32k",
-        "speed_bench_throughput_1k_low_entropy",
-        "speed_bench_throughput_1k_mixed",
-        "speed_bench_throughput_1k_high_entropy",
-        "speed_bench_throughput_2k_low_entropy",
-        "speed_bench_throughput_2k_mixed",
-        "speed_bench_throughput_2k_high_entropy",
-        "speed_bench_throughput_8k_low_entropy",
-        "speed_bench_throughput_8k_mixed",
-        "speed_bench_throughput_8k_high_entropy",
-        "speed_bench_throughput_16k_low_entropy",
-        "speed_bench_throughput_16k_mixed",
-        "speed_bench_throughput_16k_high_entropy",
-        "speed_bench_throughput_32k_low_entropy",
-        "speed_bench_throughput_32k_mixed",
-        "speed_bench_throughput_32k_high_entropy",
         "aimo_aime",
         "aimo_numina_cot",
         "aimo_numina_1_5",
         "spec_bench",
+        "spec_al_gsm8k",
+        "spec_al_math500",
+        "spec_al_humaneval",
+        "spec_al_mbpp",
+        "spec_al_mtbench",
         "instruct_coder",
         "blazedit_5k",
         "blazedit_10k",
@@ -10128,10 +10146,17 @@
           "description": "Statistic on the metric to compare against the threshold.",
           "enum": [
             "avg",
+            "p1",
+            "p5",
+            "p10",
+            "p25",
             "p50",
+            "p75",
             "p90",
             "p95",
-            "p99"
+            "p99",
+            "min",
+            "max"
           ],
           "title": "Stat",
           "type": "string"
@@ -10176,6 +10201,57 @@
         "threshold"
       ],
       "title": "SLAFilter",
+      "type": "object"
+    },
+    "SLOTier": {
+      "additionalProperties": false,
+      "description": "Named group of SLA filters representing one service-level objective.\n\nDefines a single tier for multi-tier SLO boundary search. Each tier\ncontains one or more SLA filters that must ALL pass for the tier to be\nconsidered feasible at a given concurrency level.\n\nLives in the config layer (alongside SLAFilter) to avoid circular imports\nbetween config and orchestrator packages. Re-exported from\n``aiperf.orchestrator.search_planner.multi_tier_models`` for ergonomic\norchestrator usage.",
+      "properties": {
+        "label": {
+          "description": "Unique tier identifier for output artifacts",
+          "title": "Label",
+          "type": "string"
+        },
+        "filters": {
+          "description": "SLA filters that must ALL pass for this tier to be feasible",
+          "items": {
+            "$ref": "#/$defs/SLAFilter"
+          },
+          "minItems": 1,
+          "title": "Filters",
+          "type": "array"
+        },
+        "orderingRank": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Rank in detected monotonic ordering (0=strictest); None if unordered",
+          "title": "Orderingrank",
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "label",
+        "filters"
+      ],
+      "title": "SLOTier",
       "type": "object"
     },
     "SamplingDimension": {
@@ -11135,6 +11211,31 @@
               "description": "Multiplier for leaf path (unique prompt) lengths. 2.0 means prompts are 2x longer.",
               "exclusiveMinimum": 0.0,
               "title": "Promptlenmultiplier",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "outputLenMultiplier": {
+          "default": 1.0,
+          "description": "Multiplier for output lengths in synthesized traces.",
+          "title": "Outputlenmultiplier",
+          "oneOf": [
+            {
+              "default": 1.0,
+              "description": "Multiplier for output lengths in synthesized traces.",
+              "minimum": 0.0,
+              "title": "Outputlenmultiplier",
               "type": "number"
             },
             {
@@ -12424,6 +12525,80 @@
       ],
       "title": "VideoSynthType",
       "type": "string"
+    },
+    "WandbConfig": {
+      "additionalProperties": false,
+      "dependentRequired": {
+        "entity": [
+          "project"
+        ],
+        "runName": [
+          "project"
+        ],
+        "tags": [
+          "project"
+        ]
+      },
+      "description": "Weights & Biases run-upload configuration.",
+      "properties": {
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weights & Biases project name. Setting this enables wandb export.",
+          "title": "Project"
+        },
+        "entity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weights & Biases entity (team or user). Defaults to the API key's default entity.",
+          "title": "Entity"
+        },
+        "runName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Weights & Biases run name.",
+          "title": "Runname"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Additional Weights & Biases run tags to attach on upload.",
+          "title": "Tags"
+        }
+      },
+      "title": "WandbConfig",
+      "type": "object"
     },
     "ZipSweep": {
       "additionalProperties": false,

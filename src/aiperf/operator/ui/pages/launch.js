@@ -463,7 +463,7 @@ export function Launch() {
         <div class="card-title" style="margin-bottom: var(--space-3)">Template</div>
         <div style="display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4)" aria-label="Templates">
           ${templates.map((t) => html`
-            <button
+            <button type="button"
               key=${t.id}
               style=${pillBase + (t.id === templateId ? pillActive : pillIdle)}
               onclick=${() => pickTemplate(t.id)}
@@ -540,13 +540,13 @@ export function Launch() {
         `}
 
         <div style="display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-4)">
-          <button
+          <button type="button"
             class="btn btn--ghost"
             onclick=${copyYaml}
             data-testid="launch-copy"
             title="Copy YAML to clipboard"
           >Copy</button>
-          <button
+          <button type="button"
             class="btn btn--primary"
             disabled=${!canSubmit}
             onclick=${launch}

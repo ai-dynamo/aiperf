@@ -155,7 +155,9 @@ def test_pills_hide_null_and_empty_labels() -> None:
     }
 
 
-def test_clickable_namespace_and_model_pills_preserve_long_labels_and_stop_row_clicks() -> None:
+def test_clickable_namespace_and_model_pills_preserve_long_labels_and_stop_row_clicks() -> (
+    None
+):
     out = _component_probe()
 
     ns = out["nsPill"]
@@ -191,7 +193,9 @@ def test_epoch_pill_keeps_zero_padded_epoch_label_and_latest_suffix() -> None:
     assert epoch["label"] == "000123"
 
 
-def test_relative_time_helpers_handle_null_future_invalid_and_timestamp_inputs() -> None:
+def test_relative_time_helpers_handle_null_future_invalid_and_timestamp_inputs() -> (
+    None
+):
     out = _component_probe()["timeHelpers"]
 
     assert out["nullRelative"] == "---"

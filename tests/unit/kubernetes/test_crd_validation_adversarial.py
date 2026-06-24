@@ -35,7 +35,9 @@ _VALID_BENCHMARK: SchemaNode = {
     "models": ["meta-llama/Llama-3.1-8B-Instruct"],
     "endpoint": {
         "type": "chat",
-        "urls": ["http://llm-gateway.aiperf.svc.cluster.local:8000/v1/chat/completions"],
+        "urls": [
+            "http://llm-gateway.aiperf.svc.cluster.local:8000/v1/chat/completions"
+        ],
     },
     "datasets": [
         {
@@ -153,7 +155,9 @@ class TestWorkloadKindPydanticCardinality:
         ):
             AIPerfJobSpec.model_validate(_job_spec(sweep=_VALID_SWEEP))
 
-    def test_aiperfsweep_spec_without_sweep_block_rejected_with_kind_guidance(self) -> None:
+    def test_aiperfsweep_spec_without_sweep_block_rejected_with_kind_guidance(
+        self,
+    ) -> None:
         with pytest.raises(
             ValidationError,
             match=r"AIPerfSweep\.spec\.sweep is required.*AIPerfJob",
@@ -227,7 +231,9 @@ class TestGeneratedCrdKindSpecificCel:
         assert "sweep" not in cast(list[str], spec.get("required", []))
         assert "!has(self.sweep)" in _rule_texts(spec)
 
-    def test_aiperfsweep_sweep_schema_requires_type_without_spec_required_trap(self) -> None:
+    def test_aiperfsweep_sweep_schema_requires_type_without_spec_required_trap(
+        self,
+    ) -> None:
         spec = _sweep_spec_node()
         sweep = cast(SchemaNode, _properties(spec)["sweep"])
 
@@ -237,7 +243,9 @@ class TestGeneratedCrdKindSpecificCel:
         assert sweep["x-kubernetes-preserve-unknown-fields"] is True
         assert "has(self.sweep)" in _rule_texts(spec)
 
-    def test_aiperfsweep_orchestration_axes_are_immutable_and_typed_for_cel(self) -> None:
+    def test_aiperfsweep_orchestration_axes_are_immutable_and_typed_for_cel(
+        self,
+    ) -> None:
         props = _properties(_sweep_spec_node())
 
         for field in ("sweep", "multiRun"):
@@ -266,7 +274,9 @@ class TestPreserveUnknownCelBoundaries:
     def test_benchmark_shorthand_siblings_are_typeless_preserve_unknown(
         self, shortcut: str
     ) -> None:
-        shortcut_node = cast(SchemaNode, _properties(_benchmark_node(_job_spec_node()))[shortcut])
+        shortcut_node = cast(
+            SchemaNode, _properties(_benchmark_node(_job_spec_node()))[shortcut]
+        )
 
         assert shortcut_node["x-kubernetes-preserve-unknown-fields"] is True
         assert "type" not in shortcut_node
@@ -304,7 +314,9 @@ class TestPreserveUnknownCelBoundaries:
     def test_benchmark_union_array_items_are_opaque_preserve_unknown(
         self, array_field: str
     ) -> None:
-        array_node = cast(SchemaNode, _properties(_benchmark_node(_job_spec_node()))[array_field])
+        array_node = cast(
+            SchemaNode, _properties(_benchmark_node(_job_spec_node()))[array_field]
+        )
         items = cast(SchemaNode, array_node["items"])
 
         assert array_node["type"] == "array"
@@ -349,7 +361,9 @@ class TestGeneratedCrdSchemaConsistency:
         assert _rule_texts(sweep_runtime) == _rule_texts(job_runtime)
         assert _message_texts(sweep_runtime) == _message_texts(job_runtime)
 
-    def test_shared_benchmark_schema_keeps_same_strict_and_opaque_boundaries(self) -> None:
+    def test_shared_benchmark_schema_keeps_same_strict_and_opaque_boundaries(
+        self,
+    ) -> None:
         job_props = _properties(_benchmark_node(_job_spec_node()))
         sweep_props = _properties(_benchmark_node(_sweep_spec_node()))
 
@@ -369,9 +383,13 @@ class TestGeneratedCrdSchemaConsistency:
         assert walk(_build_crd({})) is False
         assert walk(build_aiperfsweep_crd()) is False
 
-    def test_aiperfjob_only_fields_do_not_leak_to_aiperfsweep_only_surface(self) -> None:
+    def test_aiperfjob_only_fields_do_not_leak_to_aiperfsweep_only_surface(
+        self,
+    ) -> None:
         job_names = cast(SchemaNode, cast(SchemaNode, _build_crd({})["spec"])["names"])
-        sweep_names = cast(SchemaNode, cast(SchemaNode, build_aiperfsweep_crd()["spec"])["names"])
+        sweep_names = cast(
+            SchemaNode, cast(SchemaNode, build_aiperfsweep_crd()["spec"])["names"]
+        )
 
         assert job_names["kind"] == "AIPerfJob"
         assert job_names["plural"] == "aiperfjobs"

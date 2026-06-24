@@ -63,7 +63,7 @@ CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "Custo
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEED_BENCH_SUMMARIZATION, PublicDatasetType.VOXPOPULI"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEED_BENCH_REASONING, PublicDatasetType.VOXPOPULI"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
@@ -91,15 +91,15 @@ ServerMetricsProcessorType = plugins.create_enum(PluginType.SERVER_METRICS_PROCE
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
-"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.LIGHTEVAL_GPQA, AccuracyGraderType.MULTIPLE_CHOICE"""
+"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.LIGHTEVAL_GSM8K, AccuracyGraderType.MULTIPLE_CHOICE"""
 
 AccuracyBenchmarkTypeStr: TypeAlias = str
 AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "AccuracyBenchmarkType", module=__name__)
-"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.GPQA_DIAMOND, AccuracyBenchmarkType.MMLU"""
+"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.GSM8K, AccuracyBenchmarkType.MMLU"""
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)
-"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.RAW_RECORD_AGGREGATOR, DataExporterType.TIMESLICE_JSON"""
+"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.SERVER_METRICS_CSV, DataExporterType.WANDB"""
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)

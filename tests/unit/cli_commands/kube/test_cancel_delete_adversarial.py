@@ -266,7 +266,9 @@ class TestCancelDeleteJobSweepDistinction:
                 new=AsyncMock(return_value=_jobset_info(name="latency-grid-search")),
             ) as mock_find_jobset,
         ):
-            resolved = await resolve_target("latency-grid-search", namespace="bench-prod")
+            resolved = await resolve_target(
+                "latency-grid-search", namespace="bench-prod"
+            )
 
         assert isinstance(resolved, ResolvedSweep)
         assert resolved.sweep_info is sweep
@@ -325,7 +327,9 @@ class TestCancelDeleteMutationBoundaries:
     ) -> None:
         api = MagicMock(spec=ApiClient)
         custom = MagicMock()
-        custom.patch_namespaced_custom_object = AsyncMock(side_effect=_api_exception(409))
+        custom.patch_namespaced_custom_object = AsyncMock(
+            side_effect=_api_exception(409)
+        )
 
         with (
             patch(
@@ -441,7 +445,9 @@ class TestConfirmationAndLastBenchmarkGuards:
             result = await confirm_action("Delete bench-prod/llama3-throughput-v07?")
 
         assert result is expected
-        mock_input.assert_called_once_with("Delete bench-prod/llama3-throughput-v07? [y/N] ")
+        mock_input.assert_called_once_with(
+            "Delete bench-prod/llama3-throughput-v07? [y/N] "
+        )
         out = capsys.readouterr().out
         if expected:
             assert "Aborted" not in out

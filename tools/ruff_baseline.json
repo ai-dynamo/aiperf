@@ -175,11 +175,6 @@
     [
       "BLE001",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
-      "PyNVMLTelemetryCollector._collect_and_process_metrics"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector._shutdown_nvml_sync"
     ],
     [

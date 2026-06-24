@@ -12,9 +12,9 @@ from aiperf.cli_commands.kube._kube_common import (
     generate_benchmark_name,
     print_memory_estimate,
 )
-from aiperf.config.kube import KubeOptions
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.kube import KubeOptions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -265,9 +265,7 @@ async def profile(
         from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
         _check_config_file_for_sweep_keys(cli_config.config_file)
-        spec, config, name = _resolve_spec_and_name(
-            cli_config, kube_options
-        )
+        spec, config, name = _resolve_spec_and_name(cli_config, kube_options)
         namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
         _print_memory_estimate(config, kube_options, spec)
 

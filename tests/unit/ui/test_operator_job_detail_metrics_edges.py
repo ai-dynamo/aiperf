@@ -29,7 +29,9 @@ def _assert_in_order(source: str, *needles: str) -> None:
         cursor = pos
 
 
-def test_polling_throughput_summary_prefers_live_summary_then_final_summary_then_live_metrics() -> None:
+def test_polling_throughput_summary_prefers_live_summary_then_final_summary_then_live_metrics() -> (
+    None
+):
     source = _source()
 
     _assert_in_order(
@@ -42,7 +44,9 @@ def test_polling_throughput_summary_prefers_live_summary_then_final_summary_then
     )
 
 
-def test_rendered_metric_summary_prefers_results_before_live_metrics_before_summary_snapshots() -> None:
+def test_rendered_metric_summary_prefers_results_before_live_metrics_before_summary_snapshots() -> (
+    None
+):
     source = _source()
 
     _assert_in_order(
@@ -58,7 +62,9 @@ def test_rendered_metric_summary_prefers_results_before_live_metrics_before_summ
     )
 
 
-def test_archived_epoch_views_do_not_mix_current_live_run_data_into_artifact_view() -> None:
+def test_archived_epoch_views_do_not_mix_current_live_run_data_into_artifact_view() -> (
+    None
+):
     source = _source()
 
     _assert_in_order(
@@ -72,7 +78,9 @@ def test_archived_epoch_views_do_not_mix_current_live_run_data_into_artifact_vie
     )
 
 
-def test_latency_histogram_uses_second_buckets_and_formats_millisecond_labels_below_one_second() -> None:
+def test_latency_histogram_uses_second_buckets_and_formats_millisecond_labels_below_one_second() -> (
+    None
+):
     source = _source()
 
     _assert_in_order(
@@ -87,7 +95,9 @@ def test_latency_histogram_uses_second_buckets_and_formats_millisecond_labels_be
     )
 
 
-def test_profile_jsonl_loading_is_artifact_gated_text_line_oriented_and_best_effort() -> None:
+def test_profile_jsonl_loading_is_artifact_gated_text_line_oriented_and_best_effort() -> (
+    None
+):
     source = _source()
 
     _assert_in_order(
@@ -119,7 +129,9 @@ def test_server_metrics_fetch_and_loading_state_are_gated_by_artifact_listing() 
     )
 
 
-def test_live_server_metrics_fall_back_to_rest_snapshot_unless_websocket_summary_is_connected() -> None:
+def test_live_server_metrics_fall_back_to_rest_snapshot_unless_websocket_summary_is_connected() -> (
+    None
+):
     source = _source()
 
     _assert_in_order(

@@ -894,14 +894,14 @@ export function Compare() {
           ${!jobsLoading && storedJobs.length >= 2 && selectedKeys.length === 0 && html`
             <div style="display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3)" data-testid="compare-quick-pick">
               <span class="text-dim" style="font-size: var(--font-size-xs); align-self: center">Quick pick:</span>
-              <button
+              <button type="button"
                 onclick=${() => selectRecent(Math.min(3, storedJobs.length))}
                 disabled=${storedJobs.length < 2}
                 style="padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); border: 1px solid var(--surface1); background: transparent; color: var(--subtext1); font-size: var(--font-size-xs); cursor: pointer"
                 title="Pick the 3 most recent completed runs"
               >Last 3</button>
               ${storedJobs.length >= 5 && html`
-                <button
+                <button type="button"
                   onclick=${() => selectRecent(5)}
                   style="padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); border: 1px solid var(--surface1); background: transparent; color: var(--subtext1); font-size: var(--font-size-xs); cursor: pointer"
                   title="Pick the 5 most recent completed runs"
@@ -957,7 +957,7 @@ export function Compare() {
           </div>
 
           <div style="margin-top: var(--space-3); display: flex; gap: var(--space-2)">
-            <button
+            <button type="button"
               onclick=${handleCompare}
               disabled=${selectedKeys.length < 2 || comparing}
               style=${'flex: 1; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid; font-size: var(--font-size-sm); cursor: pointer;'
@@ -970,7 +970,7 @@ export function Compare() {
                 : `Compare (${selectedKeys.length})`}
             </button>
             ${selectedKeys.length > 0 && html`
-              <button
+              <button type="button"
                 onclick=${clearSelection}
                 style="padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--surface1); background: transparent; color: var(--subtext0); font-size: var(--font-size-sm); cursor: pointer"
               >
@@ -1266,7 +1266,7 @@ export function Compare() {
                     ${LAB_AXES.map((a) => {
                       const isActive = a.key === labAxisKey;
                       return html`
-                        <button
+                        <button type="button"
                           key=${a.key}
                           onclick=${() => setLabAxisKey(a.key)}
                           title=${a.label}
@@ -1289,7 +1289,7 @@ export function Compare() {
                       const on = labActiveSet.has(ck);
                       const dot = isSingleton ? MUTED_CLUSTER_COLOR : modelColor(grp.model);
                       return html`
-                        <button
+                        <button type="button"
                           key=${ck}
                           onclick=${() => toggleLabCluster(ck)}
                           title=${ck + (isSingleton ? ' (singleton)' : '')}

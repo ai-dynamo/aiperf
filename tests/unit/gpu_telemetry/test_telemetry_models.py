@@ -3,7 +3,6 @@
 
 import numpy as np
 import pytest
-from pydantic import ValidationError
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.server_metrics_models import TimeRangeFilter

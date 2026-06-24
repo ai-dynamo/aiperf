@@ -37,9 +37,9 @@ from pytest import param
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
-    RequestInfo,
     ParsedResponse,
     ParsedResponseRecord,
+    RequestInfo,
     RequestRecord,
 )
 from aiperf.common.models.record_models import TextResponseData, TokenCounts

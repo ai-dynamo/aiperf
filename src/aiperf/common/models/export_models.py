@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import ConfigDict, Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.config import BenchmarkConfig
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 # =============================================================================
 # JSON Metric Result
@@ -208,6 +211,108 @@ class TimesliceCollectionExportData(AIPerfBaseModel):
 
 
 # =============================================================================
+# Run Metadata
+# =============================================================================
+
+
+class RunInfo(AIPerfBaseModel):
+    """Per-run reproducibility metadata.
+
+    Captures the variation/trial coordinates and the actual seed the run used,
+    so a downstream reader of ``profile_export_aiperf.json`` alone can locate
+    the run's place in a sweep and reproduce its workload deterministically
+    without needing the internal ``run_config.json`` handoff file.
+    """
+
+    benchmark_id: str | None = Field(
+        default=None,
+        description=(
+            "Unique identifier for this benchmark run "
+            "(BenchmarkRun.benchmark_id). Duplicates the top-level "
+            "`benchmark_id` for readers that consume `run_info` as a "
+            "self-contained reproducibility block."
+        ),
+    )
+    sweep_id: str | None = Field(
+        default=None,
+        description=(
+            "UUID of the outer sweep this run belongs to "
+            "(BenchmarkPlan.sweep_id). Stable across every variation and "
+            "trial of one plan; lets readers join all per-run JSON exports "
+            "from the same sweep without consulting the parent multi-run "
+            "artifact directory. None for runs constructed outside the "
+            "multi-run orchestrator."
+        ),
+    )
+    random_seed: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Resolved per-run random seed (envelope `random_seed` for "
+            "single-run; SHA-derived for adaptive iterations beyond the "
+            "plan-time list). None when the user opted out of consistent "
+            "seeding and no `--random-seed` was set."
+        ),
+    )
+    trial: int | None = Field(
+        default=None,
+        ge=0,
+        description="Zero-based trial index within this variation.",
+    )
+    run_label: str | None = Field(
+        default=None,
+        description=("Human-readable run label (e.g. `concurrency_10`, `run_0001`)."),
+    )
+    variation_label: str | None = Field(
+        default=None,
+        description="Sweep variation label, or `base` for non-sweep runs.",
+    )
+    variation_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Sweep variation index (0 for non-sweep / first cell).",
+    )
+    variation_values: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Sweep parameter point as `{path: value}`. Empty dict for "
+            "non-sweep runs; populated for grid/zip/scenario/adaptive cells."
+        ),
+    )
+    cli_command: str | None = Field(
+        default=None,
+        description=(
+            "Redacted CLI command that launched this run "
+            "(`BenchmarkRun.cli_command`), captured from sys.argv. None when "
+            "the run was constructed without a CLI context."
+        ),
+    )
+
+    @classmethod
+    def from_run(cls, run: BenchmarkRun | None) -> RunInfo | None:
+        """Project a ``BenchmarkRun`` envelope onto its run-identity shape.
+
+        Single source of truth shared by ``profile_export_aiperf.json`` and the
+        live ``GET /api/run`` endpoint, so the on-disk and live shapes cannot
+        diverge.
+        """
+        if run is None:
+            return None
+        variation = run.variation
+        return cls(
+            benchmark_id=run.benchmark_id,
+            sweep_id=run.sweep_id,
+            random_seed=run.random_seed,
+            trial=run.trial,
+            run_label=run.label or None,
+            variation_label=variation.label if variation is not None else None,
+            variation_index=variation.index if variation is not None else None,
+            variation_values=dict(variation.values) if variation is not None else None,
+            cli_command=run.cli_command,
+        )
+
+
+# =============================================================================
 # Main JSON Export Data
 # =============================================================================
 
@@ -334,6 +439,11 @@ class JsonExportData(AIPerfBaseModel):
     )
     input_config: BenchmarkConfig | None = Field(
         default=None, description="Resolved benchmark configuration used for this run."
+    )
+    run_info: RunInfo | None = Field(
+        default=None,
+        description="Per-run reproducibility metadata (variation/trial coordinates, "
+        "resolved seed, redacted CLI command). Mirrors the live GET /api/run shape.",
     )
     was_cancelled: bool | None = Field(
         default=None,

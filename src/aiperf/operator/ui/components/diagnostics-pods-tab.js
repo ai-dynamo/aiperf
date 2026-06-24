@@ -90,15 +90,15 @@ export function PodsTab({ pods }) {
   const headerCell = (col, label, extraClass) => html`
     <th
       class=${(extraClass ?? '') + ' pods-table-sortable' + (sortCol === col ? ' pods-table-sorted' : '')}
-      onclick=${() => onHeaderClick(col)}
+      role="button"
+      tabindex="0"
       onkeydown=${(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onHeaderClick(col);
         }
       }}
-      role="button"
-      tabindex="0"
+      onclick=${() => onHeaderClick(col)}
       aria-sort=${sortCol === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
       style="cursor:pointer; user-select:none"
     >${label}${sortIndicator(col)}</th>

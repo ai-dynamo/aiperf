@@ -91,15 +91,27 @@ def write_search_history(
         }
         for h in history
     ]
-    payload = {
-        "config": _build_config_block(cfg),
+    config_block = _build_config_block(cfg)
+    payload: dict[str, Any] = {
+        "config": config_block,
         "iterations": iterations_payload,
         "best": _compute_best_payload(history, cfg),
         "best_trials": _compute_best_trials(history, cfg),
         "boundary_summary": _resolve_boundary_summary(history, cfg, planner),
-        "recipe": cfg.recipe_name,
-        "convergence_reason": convergence_reason,
     }
+
+    # Multi-tier extension: add tier_results, tier_metadata, config.tiers
+    if planner is not None and _is_multi_tier(planner):
+        config_block["tiers"] = [
+            {"label": t.label, "filters": [f.model_dump() for f in t.filters]}
+            for t in cfg.sla_tiers
+        ]
+        payload["tier_results"] = [tr.model_dump() for tr in planner.tier_results()]
+        payload["tier_metadata"] = planner.tier_metadata()
+
+    payload["recipe"] = cfg.recipe_name
+    payload["convergence_reason"] = convergence_reason
+
     out = base_dir / "search_history.json"
     out.write_bytes(orjson.dumps(scrub_non_finite(payload), option=orjson.OPT_INDENT_2))
 
@@ -188,6 +200,7 @@ def _build_config_block(cfg: AdaptiveSearchSweep) -> dict[str, Any]:
             }
             for o in objectives
         ],
+        "outcome_constraints": [c.model_dump() for c in cfg.outcome_constraints],
         "max_iterations": cfg.max_iterations,
         "n_initial_points": cfg.n_initial_points,
         "random_seed": cfg.random_seed,
@@ -275,3 +288,8 @@ def _compute_boundary_summary(
         "feasible_max": feasible_max,
         "infeasible_min": infeasible_min,
     }
+
+
+def _is_multi_tier(planner: Any) -> bool:
+    """Check if planner is a MultiTierPlanner without importing it at module level."""
+    return hasattr(planner, "tier_results") and hasattr(planner, "tier_metadata")

@@ -100,6 +100,7 @@ class SystemControllerOutputMixin:
                 config=self.run.cfg,
                 telemetry_results=self._telemetry_results,
                 server_metrics_results=self._server_metrics_results,
+                run=self.run,
             )
             await self._exporter_manager.export_data()
             self._results_exported = True

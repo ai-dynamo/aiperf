@@ -855,7 +855,7 @@ aiperf profile --config sweep_ci.yaml
 
 ## Troubleshooting
 
-For schema validation errors and config-load failures, see [Sweep & Adaptive Search Errors](../troubleshooting/sweeps.md). At runtime, the most common issues are:
+For schema validation errors and config-load failures, see [Sweep & Adaptive Search Errors](../troubleshooting/parameter-sweeping-errors.md). At runtime, the most common issues are:
 
 - **High CV at one variation, low elsewhere.** Usually a system-threshold effect — that load level is near a saturation point or hits resource contention. Increase `multi_run.num_runs`, add `sweep.cooldown_seconds`, and inspect server-side metrics at that load.
 - **Pareto frontier looks wrong.** If a variation you expected to be dominated appears as Pareto optimal, check its CV: high variance can flip dominance. Lower variance (more trials, more cooldown) and re-check.
@@ -897,4 +897,4 @@ The full schema (every field, every metric stat, the `failed_runs` shape) is doc
 - [Warmup Phase Configuration](./warmup.md) -- Warmup phase setup and best practices
 - [Sequence Length Distributions](./sequence-distributions.md) -- ISL/OSL distribution configuration
 - [Arrival Patterns](./arrival-patterns.md) -- Rate-controlled arrival distributions
-- [Sweep & Adaptive Search Errors](../troubleshooting/sweeps.md) -- schema validation and config-load failures
+- [Sweep & Adaptive Search Errors](../troubleshooting/parameter-sweeping-errors.md) -- schema validation and config-load failures

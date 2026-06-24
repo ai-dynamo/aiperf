@@ -24,9 +24,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
-from pytest import param
 from kubernetes_asyncio.client import ApiClient, CoreV1Api
 from kubernetes_asyncio.client.exceptions import ApiException
+from pytest import param
 
 from aiperf.cli_commands.kube import preflight as preflight_cmd
 from aiperf.config.kube import KubeManageOptions
@@ -37,7 +37,6 @@ from aiperf.kubernetes.preflight import (
     CLIPreflightChecker,
     PreflightResults,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -125,7 +124,9 @@ def _result(name: str, status: CheckStatus = CheckStatus.PASS) -> CheckResult:
     return CheckResult(name=name, status=status, message=f"{name} completed")
 
 
-def _async_result(name: str, status: CheckStatus = CheckStatus.PASS) -> Callable[[], Awaitable[CheckResult]]:
+def _async_result(
+    name: str, status: CheckStatus = CheckStatus.PASS
+) -> Callable[[], Awaitable[CheckResult]]:
     """Return an async check function for ``CLIPreflightChecker`` monkeypatching."""
 
     async def _check() -> CheckResult:
@@ -161,17 +162,17 @@ class TestPreflightCliTrustBoundary:
             kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
             kube_context="kind-aiperf-ci",
         )
+        # The orchestrator opens the shared client and stamps self._api; the
+        # per-check methods consume it. Stub the quick checks so this test
+        # asserts only that the kubeconfig/context are forwarded to k8s_client.
+        checker._check_cluster_connectivity = _async_result("Cluster Connectivity")
+        checker._check_jobset_crd = _async_result("JobSet CRD")
+        checker._check_rbac_permissions = _async_result("RBAC Permissions")
 
-        with (
-            patch("aiperf.kubernetes.client.k8s_client", new=factory),
-            patch(
-                "aiperf.kubernetes.preflight_checks.check_cluster_connectivity",
-                new=AsyncMock(return_value=_result("Cluster Connectivity")),
-            ),
-        ):
-            result = await checker._check_cluster_connectivity()
+        with patch("aiperf.kubernetes.preflight.k8s_client", new=factory):
+            results = await checker.run_quick_checks()
 
-        assert result.status == CheckStatus.PASS
+        assert results.passed is True
         assert factory.calls == [
             _K8sClientCall(
                 kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
@@ -328,7 +329,9 @@ class TestPreflightErrorClassification:
         core.read_namespace = AsyncMock(side_effect=api_error)
 
         with (
-            patch("aiperf.kubernetes.preflight_checks.client.CoreV1Api", return_value=core),
+            patch(
+                "aiperf.kubernetes.preflight_checks.client.CoreV1Api", return_value=core
+            ),
             patch(
                 "aiperf.kubernetes.preflight_checks._shared_check_rbac_access",
                 new=AsyncMock(return_value=False),
@@ -371,7 +374,9 @@ class TestPreflightErrorClassification:
     ) -> None:
         api = MagicMock(spec=ApiClient)
         version_api = MagicMock()
-        version_api.get_code = AsyncMock(side_effect=asyncio.TimeoutError("slow apiserver"))
+        version_api.get_code = AsyncMock(
+            side_effect=asyncio.TimeoutError("slow apiserver")
+        )
 
         with patch(
             "aiperf.kubernetes.preflight_checks.client.VersionApi",
@@ -392,7 +397,9 @@ class TestPreflightErrorClassification:
 
         with patch(
             "aiperf.kubernetes.preflight_checks._shared_check_rbac_access",
-            new=AsyncMock(side_effect=RuntimeError("authorization endpoint unavailable")),
+            new=AsyncMock(
+                side_effect=RuntimeError("authorization endpoint unavailable")
+            ),
         ):
             result = await preflight_checks.check_rbac_permissions(
                 api, namespace="llama-benchmarks"
@@ -400,7 +407,9 @@ class TestPreflightErrorClassification:
 
         assert result.status == CheckStatus.WARN
         assert "transient apiserver errors" in result.message
-        assert any("authorization endpoint unavailable" in detail for detail in result.details)
+        assert any(
+            "authorization endpoint unavailable" in detail for detail in result.details
+        )
         assert any("Re-run preflight" in hint for hint in result.hints)
 
 

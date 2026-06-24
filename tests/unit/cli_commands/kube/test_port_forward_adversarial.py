@@ -36,7 +36,9 @@ from aiperf.kubernetes.subproc import CommandResult
 class _ReadableStream:
     """Async byte stream exposing the subprocess stdout/stderr surface used here."""
 
-    def __init__(self, *, lines: list[bytes] | None = None, read_bytes: bytes = b"") -> None:
+    def __init__(
+        self, *, lines: list[bytes] | None = None, read_bytes: bytes = b""
+    ) -> None:
         self._lines = list(lines or [])
         self._read_bytes = read_bytes
 
@@ -85,7 +87,9 @@ class _FakeProcess:
 
 def _ready_process(port: int = 31817) -> _FakeProcess:
     return _FakeProcess(
-        stdout=_ReadableStream(lines=[f"Forwarding from 127.0.0.1:{port} -> 8081\n".encode()]),
+        stdout=_ReadableStream(
+            lines=[f"Forwarding from 127.0.0.1:{port} -> 8081\n".encode()]
+        ),
         stderr=_ReadableStream(read_bytes=b""),
     )
 
@@ -183,7 +187,7 @@ class TestPortForwardProcessStartup:
     ) -> None:
         proc = _FakeProcess(
             stdout=_ReadableStream(lines=[]),
-            stderr=_ReadableStream(read_bytes=b"pods \"aiperf-operator-7f2a\" not found"),
+            stderr=_ReadableStream(read_bytes=b'pods "aiperf-operator-7f2a" not found'),
             returncode=1,
         )
         with (
@@ -249,7 +253,10 @@ class TestApiReadinessVerification:
         assert mock_cleanup.await_args_list[0].args == (first_proc,)
         assert mock_start.await_args_list[1].kwargs["timeout"] > 0.0
         assert mock_start.await_args_list[1].kwargs["timeout"] <= 30.0
-        assert mock_start.await_args_list[1].kwargs["kubeconfig"] == "/secure/kubeconfigs/dgx-prod.yaml"
+        assert (
+            mock_start.await_args_list[1].kwargs["kubeconfig"]
+            == "/secure/kubeconfigs/dgx-prod.yaml"
+        )
         assert mock_start.await_args_list[1].kwargs["kube_context"] == "dgx-prod-admin"
         assert mock_start.await_args_list[1].args == (
             "bench-prod",
@@ -309,7 +316,10 @@ class TestApiReadinessVerification:
         proc = _FakeProcess(stderr=_ReadableStream(read_bytes=b"api container exited"))
         with (
             patch("aiohttp.ClientSession", new=_Session),
-            patch("aiperf.transports.aiohttp_client.create_tcp_connector", return_value=None),
+            patch(
+                "aiperf.transports.aiohttp_client.create_tcp_connector",
+                return_value=None,
+            ),
             patch.object(pf, "_API_INITIAL_DELAY", 0.0),
         ):
             if should_return:
@@ -399,7 +409,9 @@ class TestPortForwardCleanupAndReconnect:
                 pf, "start_port_forward", new=AsyncMock(return_value=(proc, 32100))
             ),
             patch.object(pf, "cleanup_port_forward", new=AsyncMock()) as mock_cleanup,
-            pytest.raises(RuntimeError, match="consumer failed while reading dashboard"),
+            pytest.raises(
+                RuntimeError, match="consumer failed while reading dashboard"
+            ),
         ):
             async with pf.port_forward_to_controller(
                 "bench-prod",

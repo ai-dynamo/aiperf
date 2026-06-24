@@ -764,7 +764,7 @@ function JobConfigSection({ config, namespace, name }) {
     <div class="card" style="margin-top: var(--space-4)">
       <div style=${'display: flex; align-items: center; justify-content: space-between'}>
         <div class="card-title" style="margin: 0">Job Configuration</div>
-        <button
+        <button type="button"
           onclick=${() => setShowSpec(true)}
           data-testid="job-config-view-spec"
           style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-xs)'}
@@ -868,16 +868,16 @@ function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, childre
           <span style=${'font-size: var(--font-size-sm); font-weight: 600; color: ' + palette.text + '; font-family: monospace'}>${filename}</span>
           <div style="display: flex; gap: var(--space-2); align-items: center">
             ${onCopy && html`
-              <button
+              <button type="button"
                 onclick=${onCopy}
                 style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-xs)'}
               >${copyLabel ?? 'Copy'}</button>
             `}
-            <button
+            <button type="button"
               onclick=${onDownload}
               style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-xs)'}
             >Download</button>
-            <button
+            <button type="button"
               onclick=${onClose}
               style=${'background: transparent; color: ' + palette.overlay1 + '; border: 1px solid ' + palette.surface1 + '; padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); line-height: 1'}
             >\u00d7</button>
@@ -1293,6 +1293,9 @@ function PerRecordAnalysis({ records }) {
                   ${COL_DEFS.map((col, i) => html`
                     <th
                       key=${col.key}
+                      role="columnheader"
+                      tabindex="0"
+                      onkeydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort(col.key); } }}
                       onclick=${() => handleSort(col.key)}
                       style=${i === 0 ? th1Style : thStyle(col.key)}
                     >
@@ -1985,7 +1988,7 @@ export function JobDetail({ namespace, name, epoch }) {
           ${isRunning && DASHBOARD_MUTATIONS_ENABLED && html`
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
               ${cancelState === 'idle' && html`
-                <button
+                <button type="button"
                   class="btn btn--danger"
                   onclick=${() => setCancelState('confirm')}
                   style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}
@@ -2000,14 +2003,14 @@ export function JobDetail({ namespace, name, epoch }) {
                   <span style=${'font-size: var(--font-size-sm); color: ' + colors.error}>
                     Stop benchmark for <strong>${name}</strong>? The CR is kept (use "kubectl delete" to remove it).
                   </span>
-                  <button
+                  <button type="button"
                     onclick=${handleCancel}
                     style=${'background: ' + colors.error + '; color: white; border: none; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-sm)'}
                     data-testid="job-detail-cancel-confirm"
                   >
                     Yes, cancel
                   </button>
-                  <button
+                  <button type="button"
                     onclick=${() => { setCancelState('idle'); setCancelError(null); }}
                     style=${'background: transparent; color: ' + palette.subtext0 + '; border: 1px solid ' + palette.overlay0 + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--font-size-sm)'}
                   >
@@ -2016,7 +2019,7 @@ export function JobDetail({ namespace, name, epoch }) {
                 </div>
               `}
               ${cancelState === 'pending' && html`
-                <button
+                <button type="button"
                   disabled
                   style=${'background: ' + colors.error + '22; color: ' + colors.error + '; border: 1px solid ' + colors.error + '44; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); cursor: not-allowed; font-size: var(--font-size-sm); display: inline-flex; align-items: center; gap: var(--space-2); opacity: 0.7'}
                   data-testid="job-detail-cancel"

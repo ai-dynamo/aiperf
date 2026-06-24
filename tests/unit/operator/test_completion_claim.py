@@ -69,22 +69,24 @@ class TestIsCompletionClaimed:
 
 class TestTryClaimCompletion:
     @pytest.mark.asyncio
-    async def test_fast_path_annotation_already_set(self) -> None:
-        """If annotation is already on body, skip the API call and return False."""
+    async def test_annotation_present_still_submits_atomic_claim(self) -> None:
+        """A body-snapshot COMPLETION_CLAIMED annotation must NOT short-circuit
+        the claim. The annotation is user-writable, so trusting it as a skip
+        would let a forged annotation suppress completion; the atomic apiserver
+        patch is the sole authority. A genuine prior claim is rejected there
+        with a 422, simulated here by ``_submit_claim_patch`` returning False."""
         body = _body_with_annotation()
-
-        # Patch k8s_client to blow up if entered — we should not hit it.
-        def _raise(*_, **__):
-            raise AssertionError("should not open a k8s client")
+        submit = AsyncMock(return_value=False)
 
         with mock_patch(
-            "aiperf.operator.client_cache.k8s_client",
-            new=_raise,
+            "aiperf.operator.client_cache._submit_claim_patch",
+            new=submit,
         ):
             result = await try_claim_completion("ns", "j", body)
 
+        submit.assert_awaited_once()
         assert result is False
-        # Fast-path also populates the in-process cache.
+        # A lost race still populates the in-process cache.
         assert "ns/j" in _shutdown_sent
 
     @pytest.mark.asyncio

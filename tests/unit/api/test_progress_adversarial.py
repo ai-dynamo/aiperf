@@ -42,7 +42,6 @@ from aiperf.common.models.server_metrics_models import (
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
 
-
 # ============================================================================
 # Helpers
 # ============================================================================
@@ -312,7 +311,9 @@ class TestProgressSnapshotSchema:
         transport = ASGITransport(app=app)
         valid_states = {state.value for state in SystemState}
 
-        async with AsyncClient(transport=transport, base_url="http://api.local") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://api.local"
+        ) as client:
             for state in (
                 SystemState.CONFIGURING,
                 SystemState.READY,
@@ -465,7 +466,9 @@ class TestServerMetricsSummaryBoundaries:
         await server_metrics_router._on_realtime_server_metrics(
             RealtimeServerMetricsMessage(
                 service_id="server_metrics_manager",
-                endpoint_summaries={second_endpoint: _endpoint_summary(second_endpoint)},
+                endpoint_summaries={
+                    second_endpoint: _endpoint_summary(second_endpoint)
+                },
             )
         )
 

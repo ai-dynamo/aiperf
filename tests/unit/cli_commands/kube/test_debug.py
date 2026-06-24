@@ -839,6 +839,14 @@ class TestDebugCommand:
                 return_value=_fake_k8s_client(api),
             ),
             patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
                 "aiperf.kubernetes.client.find_jobset",
                 new=AsyncMock(return_value=jobset),
             ) as mock_find,
@@ -872,6 +880,14 @@ class TestDebugCommand:
             patch(
                 "aiperf.kubernetes.client.k8s_client",
                 return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
             ),
             patch(
                 "aiperf.kubernetes.client.find_jobset",
@@ -1037,6 +1053,14 @@ class TestDebugCommand:
             patch(
                 "aiperf.kubernetes.client.k8s_client",
                 return_value=_fake_k8s_client(api),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_job",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.client.find_aiperf_sweep",
+                new=AsyncMock(return_value=None),
             ),
             patch(
                 "aiperf.kubernetes.client.find_jobset",

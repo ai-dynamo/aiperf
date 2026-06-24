@@ -1026,9 +1026,7 @@ async def _index_run_from_disk(
         return False
 
     files = [
-        f.name
-        for f in run_path.iterdir()
-        if f.is_file() and f.name != READY_MARKER
+        f.name for f in run_path.iterdir() if f.is_file() and f.name != READY_MARKER
     ]
     total_size = sum((run_path / f).stat().st_size for f in files)
     mtime_epoch = int(run_path.stat().st_mtime)

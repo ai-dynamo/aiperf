@@ -179,6 +179,13 @@ async def get_pod_logs_impl(
     _validate_log_args(pod, container, tail_lines)
     pod_obj = await _resolve_owned_pod(api, namespace, name, pod)
     effective_container = container or _default_container(pod_obj)
+    # The default container can come from the pod's
+    # ``kubectl.kubernetes.io/default-container`` annotation, which is
+    # attacker-controllable on a hostile manifest. Validate the resolved name
+    # too — not just the query param — so a path-traversal-shaped annotation
+    # can never reach ``read_namespaced_pod_log``.
+    if effective_container is not None:
+        _validate_k8s_name(effective_container, "container")
     core = client.CoreV1Api(api)
     if not follow:
         return await _read_pod_log_text(

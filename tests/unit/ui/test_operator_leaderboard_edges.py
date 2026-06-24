@@ -17,7 +17,9 @@ ROUTER_PATH = UI_ROOT / "lib" / "router.js"
 ROUTER_HELPERS_PATH = UI_ROOT / "lib" / "router-helpers.js"
 
 
-def _leaderboard_script(state_values_js: str, body: str, *, run_effects: bool = False) -> str:
+def _leaderboard_script(
+    state_values_js: str, body: str, *, run_effects: bool = False
+) -> str:
     effect_impl = "fn();" if run_effects else ""
     effect_runner = ""
     return f"""
@@ -95,7 +97,9 @@ def _leaderboard_state(
     ns_filter: list[str] | None = None,
     model_filter: list[str] | None = None,
 ) -> str:
-    selected_js = json.dumps(selected or {"metric": "request_throughput", "stat": "avg"})
+    selected_js = json.dumps(
+        selected or {"metric": "request_throughput", "stat": "avg"}
+    )
     ns_js = json.dumps(ns_filter or [])
     model_js = json.dumps(model_filter or [])
     entries_js = json.dumps(entries)
@@ -132,13 +136,27 @@ def test_leaderboard_keeps_api_order_for_sorting_direction() -> None:
     source = LEADERBOARD_PATH.read_text()
 
     assert "api\n      .getLeaderboard(selected.metric, selected.stat, 1000)" in source
-    assert not re.search(r"filtered\.slice\(\)\.sort|filtered\.sort|entries\.sort", source)
+    assert not re.search(
+        r"filtered\.slice\(\)\.sort|filtered\.sort|entries\.sort", source
+    )
 
 
 def test_leaderboard_skips_missing_metric_values_before_ranking() -> None:
     entries = [
-        {"job_id": "missing", "namespace": "ns", "model": "llama", "value": None, "unit": "tok/s"},
-        {"job_id": "with-value", "namespace": "ns", "model": "llama", "value": 12.5, "unit": "tok/s"},
+        {
+            "job_id": "missing",
+            "namespace": "ns",
+            "model": "llama",
+            "value": None,
+            "unit": "tok/s",
+        },
+        {
+            "job_id": "with-value",
+            "namespace": "ns",
+            "model": "llama",
+            "value": 12.5,
+            "unit": "tok/s",
+        },
     ]
     script = _leaderboard_script(
         _leaderboard_state(entries),
@@ -154,8 +172,18 @@ def test_leaderboard_skips_missing_metric_values_before_ranking() -> None:
 def test_namespace_and_model_filters_stack_without_substring_matches() -> None:
     entries = [
         {"job_id": "prod-llama", "namespace": "prod", "model": "llama", "value": 30},
-        {"job_id": "prod-mixtral", "namespace": "prod", "model": "mixtral", "value": 25},
-        {"job_id": "production-llama", "namespace": "production", "model": "llama", "value": 20},
+        {
+            "job_id": "prod-mixtral",
+            "namespace": "prod",
+            "model": "mixtral",
+            "value": 25,
+        },
+        {
+            "job_id": "production-llama",
+            "namespace": "production",
+            "model": "llama",
+            "value": 20,
+        },
         {"job_id": "dev-llama", "namespace": "dev", "model": "llama", "value": 15},
     ]
     script = _leaderboard_script(
@@ -171,7 +199,12 @@ def test_namespace_and_model_filters_stack_without_substring_matches() -> None:
 
 def test_chart_limit_is_top_ten_but_table_keeps_filterable_fetch_limit() -> None:
     entries = [
-        {"job_id": f"job-{idx:02d}", "namespace": "ns", "model": "llama", "value": 100 - idx}
+        {
+            "job_id": f"job-{idx:02d}",
+            "namespace": "ns",
+            "model": "llama",
+            "value": 100 - idx,
+        }
         for idx in range(12)
     ]
     script = _leaderboard_script(

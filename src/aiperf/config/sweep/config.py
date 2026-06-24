@@ -21,7 +21,7 @@ from aiperf.common.enums import OptimizationDirection, SweepMode
 from aiperf.common.finite import FiniteFloat
 from aiperf.config.base import BaseConfig
 from aiperf.config.loader.dotted_path import _validate_dotted_path
-from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
+from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter, SLOTier
 from aiperf.plugin.enums import SearchPlannerType
 from aiperf.search_recipes._post_process import PostProcessSpec
 
@@ -505,6 +505,19 @@ class AdaptiveSearchSweep(_SweepBase):
         Field(
             default="penalty",
             description="Constrained-BO acquisition mode (penalty | eic).",
+        ),
+    ]
+
+    sla_tiers: Annotated[
+        list[SLOTier],
+        Field(
+            default_factory=list,
+            description=(
+                "Multi-tier SLO definitions parsed from --search-sla-tier flags. "
+                "Each tier is a named group of SLA filters sharing a common "
+                "boundary search. When non-empty (2-10 tiers), the MultiTierPlanner "
+                "is activated instead of single-tier planners."
+            ),
         ),
     ]
 

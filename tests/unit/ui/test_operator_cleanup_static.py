@@ -29,11 +29,11 @@ _GLOBAL_LISTENER_ALLOWLIST = {
 
 _ONE_SHOT_TIMEOUT_ALLOWLIST = {
     # User-initiated feedback/download timers do not keep polling or external resources alive.
-    ("components/artifacts-card.js", 200),
-    ("components/artifacts-card.js", 396),
-    ("pages/job-detail.js", 1028),
+    ("components/artifacts-card.js", 216),
+    ("components/artifacts-card.js", 412),
+    ("pages/job-detail.js", 1029),
     # Zero-delay parsing yield is bounded by the aborted signal checks around the loop.
-    ("pages/job-detail.js", 1698),
+    ("pages/job-detail.js", 1725),
 }
 
 

@@ -10,7 +10,7 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.response_mixin import JMESPathResponseMixin
 
 if TYPE_CHECKING:
-    from aiperf.config import BenchmarkRun
+    pass
 
 
 class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):

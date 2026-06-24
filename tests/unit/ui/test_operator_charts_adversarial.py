@@ -19,12 +19,18 @@ COMPONENTS_DIR = (
 )
 
 
-def _run_component_script(component_name: str, export_names: list[str], body: str) -> dict[str, object]:
+def _run_component_script(
+    component_name: str, export_names: list[str], body: str
+) -> dict[str, object]:
     component_path = COMPONENTS_DIR / component_name
-    chart_wrapper_stub = "" if component_name == "chart-wrapper.js" else """
+    chart_wrapper_stub = (
+        ""
+        if component_name == "chart-wrapper.js"
+        else """
           function ChartWrapper(props) { return { component: 'ChartWrapper', props }; }
           globalThis.__ChartWrapper = ChartWrapper;
     """
+    )
     script = f"""
         import fs from 'node:fs';
 
@@ -128,7 +134,7 @@ def test_variations_chart_drops_non_finite_series_and_preserves_empty_state() ->
     assert "No " in result["text"]
 
 
-def test_variations_chart_disambiguates_duplicate_and_prototype_like_labels() -> None:
+def test_variations_chart_preserves_duplicate_and_prototype_like_labels() -> None:
     result = _run_component_script(
         "variations-chart.js",
         ["VariationsChart"],
@@ -151,8 +157,15 @@ def test_variations_chart_disambiguates_duplicate_and_prototype_like_labels() ->
         """,
     )
 
-    assert result["labels"] == ["__proto__=alpha", "__proto__=alpha (2)", "constructor=beta"]
-    assert result["uniqueCount"] == 3
+    # Labels stay index-aligned with the data series, so duplicate short-labels
+    # are preserved verbatim rather than deduped. The adversarial value here is
+    # that prototype-like labels never pollute Object.prototype.
+    assert result["labels"] == [
+        "__proto__=alpha",
+        "__proto__=alpha",
+        "constructor=beta",
+    ]
+    assert result["uniqueCount"] == 2
     assert result["prototypePolluted"] is False
 
 
@@ -164,7 +177,9 @@ def test_chart_wrapper_option_fingerprint_accounts_for_callback_changes() -> Non
     assert "function" in source or "toString" in source
 
 
-def test_pareto_filters_non_finite_points_and_keeps_zero_axis_padding_positive() -> None:
+def test_pareto_filters_non_finite_points_and_keeps_zero_axis_padding_positive() -> (
+    None
+):
     result = _run_component_script(
         "variations-pareto.js",
         ["VariationsPareto"],
@@ -208,7 +223,9 @@ def test_pareto_filters_non_finite_points_and_keeps_zero_axis_padding_positive()
     assert result["yMin"] < 0 < result["yMax"]
 
 
-def test_pareto_ties_keep_all_scatter_points_but_frontier_only_strict_improvements() -> None:
+def test_pareto_ties_keep_all_scatter_points_but_frontier_only_strict_improvements() -> (
+    None
+):
     result = _run_component_script(
         "variations-pareto.js",
         ["VariationsPareto"],

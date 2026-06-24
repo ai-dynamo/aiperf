@@ -13,6 +13,10 @@ from aiperf.common.exceptions import MetricTypeError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.metrics.cache_reporting_hint import (
+    CACHE_REPORTING_HINT,
+    usage_without_cache_in_results,
+)
 from aiperf.metrics.metric_registry import MetricRegistry
 
 
@@ -34,6 +38,11 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         self._print_renderable(
             console, self.get_renderable(self._results.records, console)
         )
+
+        # Persist the cache-reporting hint in the final summary (the mid-run log
+        # line is ephemeral in dashboard mode); see cache_reporting_hint.
+        if usage_without_cache_in_results(self._results.records):
+            console.print(f"\n[yellow]{CACHE_REPORTING_HINT}[/yellow]")
 
     def _print_renderable(self, console: Console, renderable: RenderableType) -> None:
         console.print("\n")
@@ -69,21 +78,34 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         except MetricTypeError:
             return sys.maxsize
 
-    def _should_show(self, record: MetricResult) -> bool:
-        """Only show metrics that are not error-only or hidden."""
-        try:
-            metric_class = MetricRegistry.get_class(record.tag)
-        except MetricTypeError:
-            return True
+    # Flags that exclude a metric from the console summary table. Shared with
+    # WandbDataExporter so the uploaded table mirrors the console's visibility.
+    EXCLUDE_FLAGS = (
+        MetricFlags.ERROR_ONLY | MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
+    )
+
+    @classmethod
+    def should_show_metric_class(cls, metric_class: type) -> bool:
+        """Whether a metric class belongs in the console summary table.
+
+        Single source of truth for console visibility, reused by
+        WandbDataExporter so its uploaded summary table mirrors the console.
+        """
         # NO_CONSOLE was retired in favour of ``MetricConsoleGroup.NONE``;
         # treat any metric whose console_group is NONE as if it had the
         # legacy NO_CONSOLE flag set so the filter still excludes it from
         # the console table.
         if getattr(metric_class, "console_group", None) == MetricConsoleGroup.NONE:
             return False
-        return metric_class.missing_flags(
-            MetricFlags.ERROR_ONLY | MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
-        )
+        return metric_class.missing_flags(cls.EXCLUDE_FLAGS)
+
+    def _should_show(self, record: MetricResult) -> bool:
+        """Only show metrics that are not error-only or hidden."""
+        try:
+            metric_class = MetricRegistry.get_class(record.tag)
+        except MetricTypeError:
+            return True
+        return self.should_show_metric_class(metric_class)
 
     def _format_row(self, record: MetricResult) -> list[str]:
         delimiter = "\n" if len(record.header) > 30 else " "

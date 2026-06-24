@@ -48,9 +48,12 @@ def test_plots_navigation_is_feature_gated_external_dashboard_link() -> None:
     assert "path: '/dashboard/'" in top_nav_source
     assert "features && features.dashboard_enabled" in top_nav_source
     assert "label: 'Plots ↗'" in top_nav_source
-    assert "target=\"_blank\"" in top_nav_source
-    assert "rel=\"noopener\"" in top_nav_source
-    assert "data-testid=${item.testId || ('nav-link-' + routeSlug(item.path))}" in top_nav_source
+    assert 'target="_blank"' in top_nav_source
+    assert 'rel="noopener noreferrer"' in top_nav_source
+    assert (
+        "data-testid=${item.testId || ('nav-link-' + routeSlug(item.path))}"
+        in top_nav_source
+    )
 
 
 def test_plot_artifact_file_urls_encode_archive_inputs_and_nested_paths() -> None:
@@ -85,12 +88,19 @@ def test_sweep_aggregate_artifact_urls_are_epoch_scoped_and_encoded() -> None:
     assert "sweepArtifactListUrl(ns, sweepName, epoch)" in source
     assert "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`" in source
     assert "sweepArtifactBundleUrl(ns, sweepName, epoch)" in source
-    assert "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`" in source
+    assert (
+        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`" in source
+    )
     assert "sweepArtifactFileUrl(ns, sweepName, epoch, filename)" in source
-    assert "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`" in source
+    assert (
+        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`"
+        in source
+    )
     assert "sweepProfileExportUrl(ns, sweepName, epoch, format = 'json')" in source
     assert "profile_export?format=${formatSeg}" in source
-    assert "encodeURIComponent(filename)" in source
+    # Nested artifact paths (e.g. ``plots/foo.png``) keep their ``/`` separators
+    # but each segment is encoded individually so unsafe chars never break out.
+    assert "filename.split('/').map(encodeURIComponent).join('/')" in source
 
 
 def test_metric_selection_defaults_fallbacks_and_url_elision_are_explicit() -> None:
@@ -98,16 +108,31 @@ def test_metric_selection_defaults_fallbacks_and_url_elision_are_explicit() -> N
     metric_selector_source = _source(_METRIC_SELECTOR_PATH)
     sweep_source = _source(_SWEEP_DETAIL_PATH)
 
-    assert "const metric = value?.metric ?? 'request_throughput'" in metric_selector_source
+    assert (
+        "const metric = value?.metric ?? 'request_throughput'" in metric_selector_source
+    )
     assert "const stat = value?.stat ?? 'avg'" in metric_selector_source
-    assert "onSelect({ metric: e.target.value, stat })" in metric_selector_source
-    assert "onSelect({ metric, stat: e.target.value })" in metric_selector_source
+    # The selector validates the chosen option against its known METRICS/STATS
+    # lists before emitting, so unknown ``e.target.value`` params can't leak out.
+    assert "onSelect({ metric: selectedMetric.value, stat })" in metric_selector_source
+    assert "onSelect({ metric, stat: selectedStat.value })" in metric_selector_source
 
-    assert "const DEFAULT_CHART_METRIC_KEY = 'output_token_throughput.avg'" in sweep_source
-    assert "const urlMetric = query.value.metric ?? DEFAULT_CHART_METRIC_KEY" in sweep_source
-    assert "HEADLINE_METRICS.find(x => x.key + '.' + x.stat === chartMetricKey)" in sweep_source
+    assert (
+        "const DEFAULT_CHART_METRIC_KEY = 'output_token_throughput.avg'" in sweep_source
+    )
+    assert (
+        "const urlMetric = query.value.metric ?? DEFAULT_CHART_METRIC_KEY"
+        in sweep_source
+    )
+    assert (
+        "HEADLINE_METRICS.find(x => x.key + '.' + x.stat === chartMetricKey)"
+        in sweep_source
+    )
     assert "?? HEADLINE_METRICS[0]" in sweep_source
-    assert "setQuery({ metric: e.target.value === DEFAULT_CHART_METRIC_KEY ? undefined : e.target.value })" in sweep_source
+    assert (
+        "setQuery({ metric: e.target.value === DEFAULT_CHART_METRIC_KEY ? undefined : e.target.value })"
+        in sweep_source
+    )
 
 
 def test_archived_run_state_disables_live_plot_inputs() -> None:
@@ -139,16 +164,34 @@ def test_detail_pages_pass_archived_epoch_inputs_to_artifact_and_plot_fetches() 
 
     assert "const resultsBase = epoch\n    ? `/api/v1/results/" in job_source
     assert "fetch(resultsBase, { signal: ac.signal })" in job_source
-    assert "fetch(`${resultsBase}/profile_export.jsonl`, { signal: ac.signal })" in job_source
-    assert "<${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />" in job_source
-    assert "resolvedEpoch=${epoch}" in job_source
+    assert (
+        "fetch(`${resultsBase}/profile_export.jsonl`, { signal: ac.signal })"
+        in job_source
+    )
+    assert (
+        "<${LatencyTimelineChart} ns=${namespace} name=${name} epoch=${epoch} />"
+        in job_source
+    )
+    assert "resolvedEpoch=${resolvedEpoch}" in job_source
 
     assert "api.getSweepCells(namespace, name, epoch)" in sweep_source
     assert "api.getSweepChildren(namespace, name, epoch)" in sweep_source
-    assert "fetch(api.sweepArtifactListUrl(namespace, name, resolvedEpoch), { signal: ac.signal })" in sweep_source
-    assert "bundleUrl=${resolvedEpoch != null ? api.sweepArtifactBundleUrl(namespace, name, resolvedEpoch) : null}" in sweep_source
-    assert "quickExportUrl=${resolvedEpoch != null ? api.sweepProfileExportUrl(namespace, name, resolvedEpoch, 'json') : null}" in sweep_source
-    assert "? api.sweepArtifactFileUrl(namespace, name, resolvedEpoch, fileName)" in sweep_source
+    assert (
+        "fetch(api.sweepArtifactListUrl(namespace, name, resolvedEpoch), { signal: ac.signal })"
+        in sweep_source
+    )
+    assert (
+        "bundleUrl=${resolvedEpoch != null ? api.sweepArtifactBundleUrl(namespace, name, resolvedEpoch) : null}"
+        in sweep_source
+    )
+    assert (
+        "quickExportUrl=${resolvedEpoch != null ? api.sweepProfileExportUrl(namespace, name, resolvedEpoch, 'json') : null}"
+        in sweep_source
+    )
+    assert (
+        "? api.sweepArtifactFileUrl(namespace, name, resolvedEpoch, fileName)"
+        in sweep_source
+    )
 
 
 def test_empty_and_error_states_for_missing_plot_artifacts_are_visible() -> None:
@@ -163,13 +206,16 @@ def test_empty_and_error_states_for_missing_plot_artifacts_are_visible() -> None
     assert "No result files yet." in artifacts_source
     assert "Looking up result files…" in artifacts_source
     assert "Unable to load preview for ${filename}: ${details}" in artifacts_source
-    assert "data-testid=\"artifacts-empty\"" in artifacts_source
+    assert 'data-testid="artifacts-empty"' in artifacts_source
 
     assert "if (means.every(m => m == null)) return null" in variations_source
-    assert "data-testid=\"variations-chart-empty\"" in variations_source
-    assert "No ${metricLabel || 'variation'} data available for any variation yet." in variations_source
+    assert 'data-testid="variations-chart-empty"' in variations_source
+    assert (
+        "No ${metricLabel || 'variation'} data available for any variation yet."
+        in variations_source
+    )
 
-    assert "data-testid=\"job-detail-error\"" in job_source
+    assert 'data-testid="job-detail-error"' in job_source
     assert "Failed to load job" in job_source
-    assert "data-testid=\"page-sweep-detail\"" in sweep_source
+    assert 'data-testid="page-sweep-detail"' in sweep_source
     assert "<strong>Error:</strong> ${error}" in sweep_source

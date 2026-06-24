@@ -338,6 +338,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/gpu_telemetry/accumulator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/gpu_telemetry/amdsmi_collector.py",
       ""
     ],
@@ -413,6 +418,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/orchestrator/search_planner/multi_tier_planner.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/orchestrator/search_planner/optuna_planner.py",
       ""
     ],
@@ -434,6 +444,11 @@
     [
       "file-size",
       "src/aiperf/plot/dashboard/styling.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/plugin/schema/schemas.py",
       ""
     ],
     [

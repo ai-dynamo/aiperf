@@ -15,7 +15,9 @@ _LATEST_DASHBOARD_IMAGE = _MEDIA_IMAGES / "api-dashboard-v2.png"
 
 _MARKDOWN_REF_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 _HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"']", re.IGNORECASE)
-_STALE_OPERATOR_UI_IMAGE_RE = re.compile(r"operator-ui[^\s)\"']*\.(?:png|jpg|jpeg|webp)", re.IGNORECASE)
+_STALE_OPERATOR_UI_IMAGE_RE = re.compile(
+    r"operator-ui[^\s)\"']*\.(?:png|jpg|jpeg|webp)", re.IGNORECASE
+)
 
 
 def _markdown_sources() -> list[Path]:
@@ -53,7 +55,9 @@ def test_docs_media_image_references_point_to_existing_files() -> None:
 
 
 def test_dashboard_doc_uses_no_stale_operator_ui_screenshot_paths() -> None:
-    stale_refs = sorted(set(_STALE_OPERATOR_UI_IMAGE_RE.findall(_doc_text(_DASHBOARD_DOC))))
+    stale_refs = sorted(
+        set(_STALE_OPERATOR_UI_IMAGE_RE.findall(_doc_text(_DASHBOARD_DOC)))
+    )
 
     assert not stale_refs
 

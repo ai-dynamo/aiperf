@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
 import aiohttp
@@ -76,21 +76,29 @@ def _response_destination(
     return dest_name
 
 
-def _retry_incomplete_download(
+def _incomplete_download_action(
     *,
     dest_name: str,
     expected: int | None,
     actual: int,
     attempt: int,
     max_retries: int,
-) -> bool:
+) -> Literal["write", "retry", "skip"]:
+    """Decide what to do with a downloaded body given its content-length.
+
+    Returns ``"write"`` when the body is complete (or length is unknown),
+    ``"retry"`` when the body is short but retries remain, and ``"skip"``
+    when the body is short and retries are exhausted. ``"skip"`` must NOT be
+    written to disk -- conflating it with ``"write"`` silently persists a
+    truncated artifact.
+    """
     if expected is None or actual == expected:
-        return False
+        return "write"
     print_warning(f"{dest_name}: expected {expected} bytes but received {actual}")
     if attempt < max_retries:
-        return True
+        return "retry"
     print_warning(f"Skipping {dest_name}: incomplete download after retries")
-    return False
+    return "skip"
 
 
 async def _download_artifact(
@@ -125,14 +133,17 @@ async def _download_artifact(
                 if dest_name is None:
                     return None
                 content = await resp.read()
-                if _retry_incomplete_download(
+                action = _incomplete_download_action(
                     dest_name=dest_name,
                     expected=resp.content_length,
                     actual=len(content),
                     attempt=attempt,
                     max_retries=max_retries,
-                ):
+                )
+                if action == "retry":
                     continue
+                if action == "skip":
+                    return None
 
                 await asyncio.to_thread((output_dir / dest_name).write_bytes, content)
                 file_size = len(content)

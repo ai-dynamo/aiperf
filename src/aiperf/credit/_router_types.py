@@ -97,6 +97,17 @@ class CreditRouterProtocol(Protocol):
         """
         ...
 
+    async def wait_for_workers(self, timeout: float) -> None:
+        """Wait for the router to observe at least one registered worker.
+
+        Best-effort startup gate, not an absolute guarantee: a worker can
+        unregister again after this returns. Raises on timeout.
+
+        Args:
+            timeout: Seconds to wait for the first worker before giving up.
+        """
+        ...
+
     async def cancel_all_credits(self) -> None:
         """Cancel all in-flight credits.
 

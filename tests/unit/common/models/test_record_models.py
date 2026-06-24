@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from pydantic import BaseModel, Field, SerializeAsAny
+from pydantic import BaseModel, Field
 
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import MetricResult, ProfileResults, SSEMessage

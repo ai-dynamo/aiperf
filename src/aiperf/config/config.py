@@ -92,6 +92,9 @@ from aiperf.config.sweep.multi_run import (
 from aiperf.config.tokenizer import (
     TokenizerConfig,
 )
+from aiperf.config.wandb import (
+    WandbConfig,
+)
 
 _logger = AIPerfLogger(__name__)
 
@@ -330,6 +333,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    wandb: Annotated[
+        WandbConfig,
+        Field(
+            default_factory=WandbConfig,
+            description="Weights & Biases run-upload configuration.",
+        ),
+    ]
+
     runtime: Annotated[
         RuntimeConfig,
         Field(
@@ -434,9 +445,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         """
         # Skip validation if user explicitly only declared 'warmup' phases.
         non_warmup = [
-            p
-            for p in self.phases
-            if not getattr(p, "exclude_from_results", False)
+            p for p in self.phases if not getattr(p, "exclude_from_results", False)
         ]
         if not non_warmup:
             raise ValueError(

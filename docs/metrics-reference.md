@@ -91,6 +91,11 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [HTTP Connection Reused](#http-connection-reused)
     - [HTTP Chunks Sent](#http-chunks-sent)
     - [HTTP Chunks Received](#http-chunks-received)
+  - [GPU Power Efficiency Metrics](#gpu-power-efficiency-metrics)
+    - [Total GPU Power](#total-gpu-power)
+    - [Total GPU Energy](#total-gpu-energy)
+    - [Output Tokens per Joule](#output-tokens-per-joule)
+    - [Energy per User](#energy-per-user)
 - [Metric Flags Reference](#metric-flags-reference)
 
 ---
@@ -709,6 +714,174 @@ usage_reasoning_tokens = response.usage.completion_tokens_details.reasoning_toke
 **Notes:**
 - Taken from the API response for reasoning-enabled models.
 - May differ from client-side Reasoning Token Count due to different tokenizers.
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Prompt Cache Read Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of prompt tokens that were served from cache (cache hits) as reported by the API's `usage` field for a single request.
+
+**Formula:**
+```python
+# OpenAI shape: nested under prompt_tokens_details
+usage_prompt_cache_read_tokens = response.usage.prompt_tokens_details.cached_tokens  # from last non-None response
+# Anthropic shape: top-level
+usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- OpenAI surfaces cache reads as `prompt_tokens_details.cached_tokens` (or `input_tokens_details.cached_tokens`); writes are transparent and not reported.
+- Anthropic surfaces cache reads at the top level as `cache_read_input_tokens`; writes are reported separately as [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens).
+- **Self-hosted servers gate this behind a flag:** vLLM needs `--enable-prompt-tokens-details` and SGLang needs `--enable-cache-report` (both default off); TRT-LLM emits `cached_tokens` by default. Without the flag these metrics read all-None even when the server is caching — see [Vendor Usage Field Reference](reference/vendor-usage-fields.md).
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Prompt Cache Write Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of prompt tokens written to cache (cache creations) as reported by the API's `usage.cache_creation_input_tokens` field for a single request. Anthropic-specific.
+
+**Formula:**
+```python
+usage_prompt_cache_write_tokens = response.usage.cache_creation_input_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Reported only by APIs that bill cache writes separately (Anthropic). OpenAI does not surface cache writes — they happen transparently and are not billed separately, so this metric is empty for OpenAI workloads.
+- Cache writes are typically billed at a premium relative to ordinary input tokens but enable cheap reads on subsequent requests, so the metric is intentionally not flagged "larger is better."
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Prompt Audio Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of audio tokens from the prompt as reported by the API's `usage.prompt_tokens_details.audio_tokens` field for a single request.
+
+**Formula:**
+```python
+usage_prompt_audio_tokens = response.usage.prompt_tokens_details.audio_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only available for audio-capable endpoints.
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Completion Audio Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of audio tokens in the completion as reported by the API's `usage.completion_tokens_details.audio_tokens` field for a single request.
+
+**Formula:**
+```python
+usage_completion_audio_tokens = response.usage.completion_tokens_details.audio_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only available for audio-capable endpoints.
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Accepted Prediction Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of accepted prediction tokens as reported by the API's `usage.completion_tokens_details.accepted_prediction_tokens` field for a single request. These are tokens from a predicted completion that the model actually used.
+
+**Formula:**
+```python
+usage_accepted_prediction_tokens = response.usage.completion_tokens_details.accepted_prediction_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only relevant when using predicted outputs (speculative decoding).
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Rejected Prediction Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of rejected prediction tokens as reported by the API's `usage.completion_tokens_details.rejected_prediction_tokens` field for a single request. These are tokens from a predicted completion that the model did not use.
+
+**Formula:**
+```python
+usage_rejected_prediction_tokens = response.usage.completion_tokens_details.rejected_prediction_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only relevant when using predicted outputs (speculative decoding).
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Prompt Cache Miss Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of prompt tokens that *missed* cache (and required fresh processing) as reported by the API's `usage.prompt_cache_miss_tokens` field for a single request. **DeepSeek-specific.**
+
+**Formula:**
+```python
+usage_prompt_cache_miss_tokens = response.usage.prompt_cache_miss_tokens  # from last non-None response
+```
+
+**Notes:**
+- DeepSeek bills cache hits and misses at different rates and surfaces both as their own fields. Other vendors don't report a separate miss count (you can derive it from `prompt_tokens - prompt_cache_read_tokens`, but it's not its own first-class field).
+- Not flagged "larger is better" — misses are unhelpful (they're the part you didn't cache).
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Tool Use Prompt Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of prompt tokens consumed by tool / function-call declarations sent in the request, separate from user-content prompt tokens. **Gemini-specific.**
+
+**Formula:**
+```python
+# Gemini wraps usage in usageMetadata; the property reads through the envelope.
+usage_tool_use_prompt_tokens = response.usage.toolUsePromptTokenCount  # from last non-None response
+```
+
+**Notes:**
+- Surfaces what fraction of input tokens are spent on function/tool definitions vs user content. Useful for tool-heavy agentic workloads.
+- Other vendors fold tool definitions into the regular `prompt_tokens` count, so this metric will raise `NoMetricValue` for OpenAI / Anthropic / etc.
+- For streaming responses, uses the last non-None value reported.
+
+
+### Usage Prompt Audio Seconds
+
+**Type:** [Record Metric](#record-metrics)
+
+The audio duration of the input prompt in **seconds (not tokens)** as reported by the API's `usage.prompt_audio_seconds` field for a single request. **Mistral-specific.**
+
+**Formula:**
+```python
+usage_prompt_audio_seconds = response.usage.prompt_audio_seconds  # from last non-None response
+```
+
+**Notes:**
+- Distinct from [Usage Prompt Audio Tokens](#usage-prompt-audio-tokens) — this is a duration in seconds, not a token count. Both can coexist for frameworks that report both.
+- Returned as `float` (so `12.5s` is preserved exactly even when the API reports an integer).
 - For streaming responses, uses the last non-None value reported.
 
 ---
@@ -1334,6 +1507,105 @@ http_req_chunks_received = trace.response_chunks_count
 
 **Notes:**
 - Not displayed in console output (`NO_CONSOLE` flag).
+
+---
+
+## GPU Power Efficiency Metrics
+
+> [!NOTE]
+> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector (DCGM, pynvml, or amdsmi) to expose the relevant signal (`gpu_power_usage` and/or `energy_consumption`). They are computed once per profiling phase by `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the standard derivation walk — see the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern).
+
+Each metric's header surfaces the number of GPUs that contributed valid data (e.g. `Total GPU Power (8 GPUs)`), so a partial-cohort run (where one or more GPUs failed to report) is distinguishable from a full run. Tags are emitted in this order when present: `total_gpu_power`, `total_gpu_energy`, `output_tokens_per_joule`, `energy_per_user`. Each tag is independently omitted when its underlying signal is unavailable.
+
+### Total GPU Power
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Sum of average GPU power across all reporting GPUs during the profiling phase, in watts. Useful as a baseline for cross-run power comparisons.
+
+**Formula:**
+```python
+# Per GPU: average of gpu_power_usage gauge samples in the profiling window
+# (warmup excluded). Summed across all GPUs that reported valid samples.
+total_gpu_power_w = sum(
+    avg(gpu_power_usage[start_ns:end_ns])
+    for gpu in reporting_gpus
+)
+```
+
+**Notes:**
+- Unit: watts (`W`).
+- Time-filtered to the profiling-phase window; warmup samples are excluded.
+- Power is a gauge, so the window stays bounded — post-bench idle samples don't drag the average down.
+- Omitted when no GPU reports `gpu_power_usage` in the window.
+
+---
+
+### Total GPU Energy
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Sum of energy consumed across all reporting GPUs during the profiling phase, in joules. Computed as a counter delta (`final − baseline`) per GPU and summed.
+
+**Formula:**
+```python
+# Per GPU: delta of the energy_consumption monotonic counter over the
+# profiling window, widened on the end by FINAL_SCRAPE_GRACE_NS so the
+# trailing scrape that lands just after requests_end_ns is captured.
+grace_ns = Environment.GPU.FINAL_SCRAPE_GRACE_NS  # default 666_000_000 (~666 ms)
+total_gpu_energy_j = sum(
+    delta(energy_consumption[start_ns : end_ns + grace_ns])
+    for gpu in reporting_gpus
+)
+# Negative deltas are clamped to 0 to handle counter resets (DCGM restart).
+```
+
+**Notes:**
+- Unit: joules (`J`). Source samples are reported in megajoules and converted via `EnergyMetricUnit.MEGAJOULE.joules`.
+- The end-of-window grace is bounded (not open-ended) so cooldown samples and any subsequent-phase samples cannot leak into the delta. Tune via `AIPERF_GPU_FINAL_SCRAPE_GRACE_NS` if you also tune `AIPERF_GPU_COLLECTION_INTERVAL` — keep grace at roughly `2x` the collection cadence.
+- Per-GPU deltas use the nearest non-NaN baseline and the nearest non-NaN final sample; arrays containing transient NaN sensor failures still yield a meaningful delta.
+- Omitted when no GPU reports `energy_consumption` in the window.
+
+---
+
+### Output Tokens per Joule
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Inference energy efficiency: number of output tokens produced per joule of GPU energy consumed during the profiling phase. Higher is better.
+
+**Formula:**
+```python
+output_tokens_per_joule = total_output_tokens / total_gpu_energy
+```
+
+**Notes:**
+- Unit: `tokens/J`.
+- Flagged `LARGER_IS_BETTER | PRODUCES_TOKENS_ONLY`.
+- Numerator comes from the request records (`total_output_tokens`); denominator comes from the GPU telemetry counter delta above. The header reports the energy-side GPU count, since that's the cohort the metric depends on.
+- Omitted when `total_output_tokens` is absent from the records or aggregate `total_gpu_energy` is zero.
+
+---
+
+### Energy per User
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Per-user energy footprint during the profiling phase: total GPU energy consumed divided by the configured concurrency. Lower is better — a more efficient deployment serves the same load for less energy per concurrent user.
+
+**Formula:**
+```python
+# concurrency from the resolved profiling phase config
+# (run.cfg.get_profiling_phases()[0].concurrency).
+energy_per_user_j = total_gpu_energy / concurrency
+```
+
+**Notes:**
+- Unit: `joules/user`.
+- Flagged `MetricFlags.NONE` — smaller-is-better is the default for unflagged metrics.
+- Denominator is the profiling phase's configured `concurrency`. The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
+- Header reports the energy-side GPU count (the same cohort `total_gpu_energy` reports), e.g. `Energy per User (8 GPUs)`.
+- Omitted when concurrency is unset (e.g. pure `--request-rate` mode) or aggregate GPU energy is unavailable.
 
 ---
 

@@ -62,7 +62,9 @@ def test_job_config_yaml_viewer_redacts_secret_like_fields_before_serializing() 
 
     assert "redact" in src.lower(), "config display needs an explicit redaction path"
     assert all(key in src for key in SENSITIVE_KEYS)
-    assert "content=${serializeYaml" not in body, "raw spec should not be serialized directly"
+    assert "content=${serializeYaml" not in body, (
+        "raw spec should not be serialized directly"
+    )
 
 
 def test_relaunch_prefill_redacts_secret_like_fields_before_session_storage() -> None:
@@ -70,19 +72,28 @@ def test_relaunch_prefill_redacts_secret_like_fields_before_session_storage() ->
     src = _source(_RELAUNCH_BUTTON_JS)
     body = _function_body(src, "RelaunchButton")
 
-    assert "redact" in src.lower(), "relaunch should scrub credentials before writing sessionStorage"
+    assert "redact" in src.lower(), (
+        "relaunch should scrub credentials before writing sessionStorage"
+    )
     assert all(key in src for key in SENSITIVE_KEYS)
-    assert "spec," not in body, "raw spec should not be embedded in the prefilled manifest"
+    assert "spec," not in body, (
+        "raw spec should not be embedded in the prefilled manifest"
+    )
 
 
-def test_missing_config_fetch_does_not_leave_job_detail_in_permanent_loading_state() -> None:
+def test_missing_config_fetch_does_not_leave_job_detail_in_permanent_loading_state() -> (
+    None
+):
     """A missing/404 config response should render an unavailable state, not spin forever."""
     src = _source(_JOB_DETAIL_JS)
 
     assert "const [jobConfigMissing" in src or "const [jobConfigLoaded" in src
     assert ".then(r => r.ok ? r.json() : null)" not in src
     assert "Loading job configuration" in src
-    assert "configuration unavailable" in src.lower() or "config unavailable" in src.lower()
+    assert (
+        "configuration unavailable" in src.lower()
+        or "config unavailable" in src.lower()
+    )
 
 
 def test_nested_benchmark_and_sweep_config_are_addressed_by_summary_logic() -> None:
@@ -98,7 +109,9 @@ def test_nested_benchmark_and_sweep_config_are_addressed_by_summary_logic() -> N
     assert "spec.sweep" in body or "benchmark.sweep" in body
 
 
-def test_yaml_serializers_quote_urls_so_launch_parser_does_not_split_on_colons() -> None:
+def test_yaml_serializers_quote_urls_so_launch_parser_does_not_split_on_colons() -> (
+    None
+):
     """The display and relaunch YAML emitters should share URL-safe quoting rules."""
     job_src = _source(_JOB_DETAIL_JS)
     relaunch_src = _source(_RELAUNCH_BUTTON_JS)
@@ -121,13 +134,18 @@ def test_config_modal_uses_yaml_download_and_preserves_long_nested_values() -> N
     assert "word-break: break-all" in section
 
 
-def test_relaunch_button_only_renders_for_non_empty_specs_and_keeps_source_identity() -> None:
+def test_relaunch_button_only_renders_for_non_empty_specs_and_keeps_source_identity() -> (
+    None
+):
     """Relaunch assumes a CR-shaped config and should preserve source metadata in the handoff."""
     src = _source(_RELAUNCH_BUTTON_JS)
     body = _function_body(src, "RelaunchButton")
 
     assert "const spec = config?.spec;" in body
-    assert "if (!spec || Object.keys(spec).length === 0 || !namespace || !name) return null;" in body
+    assert (
+        "if (!spec || Object.keys(spec).length === 0 || !namespace || !name) return null;"
+        in body
+    )
     assert "sourceNs: namespace" in body
     assert "sourceName: name" in body
     assert "kind: config.kind ?? 'AIPerfJob'" in body

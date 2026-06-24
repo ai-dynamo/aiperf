@@ -349,7 +349,9 @@ class TestFindControllerPodAdversarial:
         assert result == ("controller-no-status", PodPhase.UNKNOWN)
 
     @pytest.mark.asyncio
-    async def test_find_controller_pod_kube_reason_phase_raises_value_error(self) -> None:
+    async def test_find_controller_pod_kube_reason_phase_raises_value_error(
+        self,
+    ) -> None:
         api = MagicMock(spec=ApiClient)
         mock_core = MagicMock()
         mock_core.list_namespaced_pod = AsyncMock(

@@ -19,7 +19,9 @@ _RECORD_PROCESSING_JS = (
     / "components"
     / "record-processing.js"
 )
-_JOB_DETAIL_JS = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "job-detail.js"
+_JOB_DETAIL_JS = (
+    _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages" / "job-detail.js"
+)
 
 
 def _source(path: Path) -> str:
@@ -64,7 +66,9 @@ def test_phase_ordering_preserves_operator_status_order() -> None:
     phase_mapping = detail_src[
         detail_src.index("const phasesArray =") : detail_src.index("const pods =")
     ]
-    phase_bar_loop = phase_src[phase_src.index("${phases.map") : phase_src.index("</div>\n  `;")]
+    phase_bar_loop = phase_src[
+        phase_src.index("${phases.map") : phase_src.index("</div>\n  `;")
+    ]
 
     assert "Object.entries(rawPhases).map(([phaseName, p]) => ({" in phase_mapping
     assert "${phases.map((phase) => {" in phase_bar_loop
@@ -79,4 +83,4 @@ def test_phase_progress_components_keep_narrow_view_overflow_bounded() -> None:
     assert '<div style="overflow-x: auto; max-width: 100%">' in detail_src
     assert '<div class="phase-bar" style="min-width:0;max-width:100%">' in phase_src
     assert 'style="min-width:0;flex:1 1 0"' in phase_src
-    assert 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' in phase_src
+    assert "overflow:hidden;text-overflow:ellipsis;white-space:nowrap" in phase_src

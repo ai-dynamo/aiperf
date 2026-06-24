@@ -182,7 +182,9 @@ class TestSweepSelectorValidation:
         mock_run.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_logs_trial_without_variation_rejects_before_parent_lookup(self) -> None:
+    async def test_logs_trial_without_variation_rejects_before_parent_lookup(
+        self,
+    ) -> None:
         from aiperf.cli_commands.kube.logs import logs
 
         with (
@@ -281,7 +283,9 @@ class TestSweepListDetailResolution:
             patch("aiperf.kubernetes.cli_helpers.print_error") as mock_error,
             patch("aiperf.kubernetes.cli_helpers.print_info") as mock_info,
         ):
-            resolved = await cli_helpers.resolve_target("missing-sweep", namespace="tenant-a")
+            resolved = await cli_helpers.resolve_target(
+                "missing-sweep", namespace="tenant-a"
+            )
 
         assert resolved is None
         assert api.closed is True
@@ -299,7 +303,9 @@ class TestSweepListDetailResolution:
             await list_aiperfsweeps(MagicMock(), namespace=None, all_namespaces=False)
 
     @pytest.mark.asyncio
-    async def test_find_aiperfsweep_404_returns_none_without_cluster_fallback(self) -> None:
+    async def test_find_aiperfsweep_404_returns_none_without_cluster_fallback(
+        self,
+    ) -> None:
         from aiperf.kubernetes.client import find_aiperfsweep
 
         custom = MagicMock()
@@ -337,7 +343,9 @@ class TestSweepCommandPropagationAndOutput:
             kube_context="dgx-prod-admin",
         )
         with (
-            patch("aiperf.kubernetes.client.k8s_client", new=_fake_k8s_client) as _client,
+            patch(
+                "aiperf.kubernetes.client.k8s_client", new=_fake_k8s_client
+            ) as _client,
             patch("kubernetes_asyncio.client.CustomObjectsApi", return_value=custom),
             patch("aiperf.kubernetes.console.console"),
             patch("aiperf.kubernetes.console.save_last_benchmark") as mock_save,
@@ -359,7 +367,9 @@ class TestSweepCommandPropagationAndOutput:
         from aiperf.cli_commands.kube.sweep import _submit_sweep
 
         custom = MagicMock()
-        custom.create_namespaced_custom_object = AsyncMock(side_effect=_api_exception(409))
+        custom.create_namespaced_custom_object = AsyncMock(
+            side_effect=_api_exception(409)
+        )
         cr = {
             "metadata": {"name": "latency-sweep"},
             "spec": {"image": "aiperf:branch"},
@@ -367,7 +377,9 @@ class TestSweepCommandPropagationAndOutput:
         with (
             patch("aiperf.kubernetes.client.k8s_client", new=_fake_k8s_client),
             patch("kubernetes_asyncio.client.CustomObjectsApi", return_value=custom),
-            pytest.raises(RuntimeError, match=r"tenant-a/latency-sweep.*already exists"),
+            pytest.raises(
+                RuntimeError, match=r"tenant-a/latency-sweep.*already exists"
+            ),
         ):
             await _submit_sweep(
                 cr_dict=cr,
@@ -514,7 +526,9 @@ class TestSweepArtifactEncoding:
                 {"Accept-Encoding": "zstd, gzip, identity"},
             )
         ]
-        assert (tmp_path / "sweep_aggregate" / "profile export #1.json").read_bytes() == b"profile"
+        assert (
+            tmp_path / "sweep_aggregate" / "profile export #1.json"
+        ).read_bytes() == b"profile"
 
     @pytest.mark.parametrize(
         "artifact_name",
@@ -532,7 +546,9 @@ class TestSweepArtifactEncoding:
         from aiperf.kubernetes.results_operator import _download_sweep_operator_file
 
         session = _Session(_Response(body=b"should-not-download"))
-        with patch("aiperf.kubernetes.results_operator.print_warning") as mock_warning:
+        with patch(
+            "aiperf.kubernetes.results_operator_sweeps.print_warning"
+        ) as mock_warning:
             result = await _download_sweep_operator_file(
                 session,
                 api_base="http://operator",

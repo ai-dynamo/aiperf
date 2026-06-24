@@ -178,8 +178,8 @@ export function SweepLiveTrialBoard({ manifest, childSummaries }) {
                     role="button"
                     tabindex="0"
                     aria-label=${`Select ${rowTitle(row)} variation row`}
-                    onclick=${() => selectRow(row)}
                     onkeydown=${event => onRowKeyDown(event, row)}
+                    onclick=${() => selectRow(row)}
                     style=${
                       `border-bottom:1px solid ${palette.borderSubtle};` +
                       `cursor:pointer;` +

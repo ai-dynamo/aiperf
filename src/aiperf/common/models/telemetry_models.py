@@ -6,13 +6,15 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import msgspec
-import numpy as np
 from pydantic import ConfigDict
 
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
-from aiperf.common.models.telemetry_timeseries import GpuMetricTimeSeries
+from aiperf.common.models.telemetry_timeseries import (
+    GpuMetricTimeSeries,
+    _last_valid,
+)
 
 __all__ = [
     "GpuMetadata",
@@ -23,6 +25,7 @@ __all__ = [
     "TelemetryHierarchy",
     "TelemetryMetrics",
     "TelemetryRecord",
+    "_last_valid",
 ]
 
 
@@ -222,12 +225,6 @@ class GpuTelemetrySnapshot(
 
     metrics: dict[str, float] = msgspec.field(default_factory=dict)
     """All metric values at this timestamp."""
-
-
-def _last_valid(arr: np.ndarray) -> float | None:
-    """Return the last non-NaN value in ``arr``, or ``None`` if all NaN."""
-    mask = ~np.isnan(arr)
-    return float(arr[mask][-1]) if mask.any() else None
 
 
 class GpuTelemetryData(msgspec.Struct, kw_only=True):

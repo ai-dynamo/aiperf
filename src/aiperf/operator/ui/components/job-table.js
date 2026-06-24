@@ -387,6 +387,9 @@ export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onS
                   <th
                     key=${col.key}
                     class="job-table-th"
+                    role="columnheader"
+                    tabindex="0"
+                    onkeydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(col.key); } }}
                     onclick=${() => toggleSort(col.key)}
                     onmouseenter=${() => setHoverCol(col.key)}
                     onmouseleave=${() => setHoverCol(null)}
@@ -405,6 +408,9 @@ export function JobTable({ jobs, onRowClick, filter, onNamespaceClick, sort, onS
               <tr
                 key=${job.namespace + '/' + job.name}
                 class="job-table-row"
+                role="row"
+                tabindex=${onRowClick ? '0' : undefined}
+                onkeydown=${(e) => { if (onRowClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(job); } }}
                 onclick=${() => onRowClick && onRowClick(job)}
                 style=${onRowClick ? 'cursor: pointer' : ''}
                 data-testid=${'job-row-' + (job.namespace ?? '') + '-' + (job.name ?? '')}

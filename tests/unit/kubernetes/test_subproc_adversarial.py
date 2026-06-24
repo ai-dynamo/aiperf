@@ -74,7 +74,9 @@ class TestRunCommandAdversarialOutput:
         assert result.stderr == "kubectl rejected namespace perf-lab\n"
 
     @pytest.mark.asyncio
-    async def test_run_command_invalid_utf8_replaces_bytes_in_both_streams(self) -> None:
+    async def test_run_command_invalid_utf8_replaces_bytes_in_both_streams(
+        self,
+    ) -> None:
         result = await run_command(
             _python_cmd(
                 "import sys; "
@@ -97,9 +99,7 @@ class TestRunCommandAdversarialOutput:
 
         result = await run_command(
             _python_cmd(
-                "import sys; "
-                "sys.stdout.write(sys.argv[1]); "
-                "sys.stdout.write('\\n')",
+                "import sys; sys.stdout.write(sys.argv[1]); sys.stdout.write('\\n')",
                 payload,
             ),
             timeout=5.0,
@@ -119,7 +119,9 @@ class TestRunCommandAdversarialControlFlow:
     """Timeouts and cancellations must not masquerade as ordinary command exits."""
 
     @pytest.mark.asyncio
-    async def test_run_command_timeout_terminates_child_and_raises_timeout(self) -> None:
+    async def test_run_command_timeout_terminates_child_and_raises_timeout(
+        self,
+    ) -> None:
         with pytest.raises(asyncio.TimeoutError):
             await run_command(
                 _python_cmd("import time; time.sleep(30)"),
@@ -153,7 +155,9 @@ class TestRunCommandAdversarialControlFlow:
         )
 
     @pytest.mark.asyncio
-    async def test_run_command_task_cancellation_propagates_cancelled_error(self) -> None:
+    async def test_run_command_task_cancellation_propagates_cancelled_error(
+        self,
+    ) -> None:
         task = asyncio.create_task(
             run_command(
                 _python_cmd("import time; time.sleep(30)"),
@@ -227,7 +231,9 @@ class TestStreamingProcessAdversarialTermination:
         assert proc.returncode is not None
 
     @pytest.mark.asyncio
-    async def test_terminate_process_already_exited_stream_keeps_returncode(self) -> None:
+    async def test_terminate_process_already_exited_stream_keeps_returncode(
+        self,
+    ) -> None:
         proc = await start_streaming_process(
             _python_cmd("import sys; sys.stdout.write('done\\n')")
         )

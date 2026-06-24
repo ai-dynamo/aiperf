@@ -62,12 +62,14 @@ def test_artifact_url_builders_never_decode_or_normalize_adversarial_names() -> 
         ".pathname",
         ".normalize(",
         "replace('../'",
-        "replace(\"../\"",
+        'replace("../"',
     ]:
         assert forbidden not in combined
 
 
-def test_artifact_urls_encode_namespace_name_epoch_and_spaces_unicode_segments() -> None:
+def test_artifact_urls_encode_namespace_name_epoch_and_spaces_unicode_segments() -> (
+    None
+):
     card = _source(_ARTIFACTS_CARD_JS)
     api = _source(_API_JS)
 
@@ -138,9 +140,21 @@ def test_job_archives_and_sweep_aggregate_artifacts_use_distinct_routes() -> Non
     sweep_bundle = _method_body(api, "sweepArtifactBundleUrl")
     sweep_file = _method_body(api, "sweepArtifactFileUrl")
 
-    assert "`${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`" in job_bundle
-    assert "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`" in sweep_bundle
-    assert "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`" in sweep_file
+    assert (
+        "`${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`"
+        in job_bundle
+    )
+    assert (
+        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`"
+        in sweep_bundle
+    )
+    assert (
+        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`"
+        in sweep_file
+    )
     assert "api.sweepArtifactBundleUrl(namespace, name, resolvedEpoch)" in sweep_detail
-    assert "api.sweepArtifactFileUrl(namespace, name, resolvedEpoch, fileName)" in sweep_detail
+    assert (
+        "api.sweepArtifactFileUrl(namespace, name, resolvedEpoch, fileName)"
+        in sweep_detail
+    )
     assert 'title="Aggregate Artifacts"' in sweep_detail

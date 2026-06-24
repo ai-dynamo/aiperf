@@ -722,7 +722,10 @@ async def _list_events_impl(
             errors (e.g. 401/403) propagate via the app-level handler
             registered in ``results_server._register_k8s_exception_handler``.
     """
-    cr = await get_raw_aiperfjob(api, namespace, name)
+    # suppress_api_errors=False keeps the 404-vs-500 contract distinct: a gone
+    # CR (404) is an archived run -> empty events; an apiserver failure (500,
+    # etcd unavailable, 401/403) must surface, not masquerade as "no events".
+    cr = await get_raw_aiperfjob(api, namespace, name, suppress_api_errors=False)
     if cr is None:
         return JobEventsResponse(events=[])
 

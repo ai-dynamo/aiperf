@@ -11,12 +11,7 @@ from pathlib import Path
 from tests.unit.ui.node_utils import run_node
 
 UI_PAGES_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "src"
-    / "aiperf"
-    / "operator"
-    / "ui"
-    / "pages"
+    Path(__file__).resolve().parents[3] / "src" / "aiperf" / "operator" / "ui" / "pages"
 )
 COMPARE_PATH = UI_PAGES_DIR / "compare.js"
 LEADERBOARD_PATH = UI_PAGES_DIR / "leaderboard.js"
@@ -43,7 +38,9 @@ def _compare_helper_script(body: str) -> str:
     """
 
 
-def test_compare_lab_groups_frontiers_by_namespace_and_model_without_aggregating() -> None:
+def test_compare_lab_groups_frontiers_by_namespace_and_model_without_aggregating() -> (
+    None
+):
     script = _compare_helper_script(
         """
         const entries = [
@@ -165,5 +162,7 @@ def test_compare_api_preserves_selected_namespace_qualified_run_identity() -> No
     source = COMPARE_PATH.read_text()
 
     assert "const bareJobIds = keys.map((k) => splitKey(k).jobId);" not in source
-    assert "const bareJobIds = selectedKeys.map((k) => splitKey(k).jobId);" not in source
+    assert (
+        "const bareJobIds = selectedKeys.map((k) => splitKey(k).jobId);" not in source
+    )
     assert re.search(r"api\.compareJobs\((keys|selectedKeys)\)", source)

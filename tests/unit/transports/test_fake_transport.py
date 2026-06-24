@@ -10,10 +10,10 @@ import pytest
 from aiperf_mock_server.config import MockServerConfig
 
 from aiperf.common.models import RequestInfo, RequestRecord, SSEMessage, TextResponse
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from tests.harness.fake_transport import FakeTransport as FakeTransport
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["test-model"],
@@ -97,7 +97,10 @@ class TestFakeTransportInit:
         """Test transport uses provided config."""
         run = _make_run()
         custom_config = MockServerConfig(ttft=50, itl=10)
-        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run), mock_server_config=custom_config)
+        transport = FakeTransport(
+            model_endpoint=ModelEndpointInfo.from_run(run),
+            mock_server_config=custom_config,
+        )
         assert transport.mock_server_config is custom_config
         assert transport.mock_server_config.ttft == 50
         assert transport.mock_server_config.itl == 10
@@ -133,7 +136,8 @@ class TestFakeTransportChat:
     ):
         """Test streaming chat returns SSEMessage responses."""
         transport = FakeTransport(
-            model_endpoint=ModelEndpointInfo.from_run(streaming_endpoint), mock_server_config=fast_config
+            model_endpoint=ModelEndpointInfo.from_run(streaming_endpoint),
+            mock_server_config=fast_config,
         )
         await transport.initialize()
 
@@ -158,7 +162,8 @@ class TestFakeTransportChat:
     ):
         """Test non-streaming chat returns TextResponse."""
         transport = FakeTransport(
-            model_endpoint=ModelEndpointInfo.from_run(non_streaming_endpoint), mock_server_config=fast_config
+            model_endpoint=ModelEndpointInfo.from_run(non_streaming_endpoint),
+            mock_server_config=fast_config,
         )
         await transport.initialize()
 
@@ -183,7 +188,8 @@ class TestFakeTransportChat:
     ):
         """Test FirstTokenCallback is fired during streaming."""
         transport = FakeTransport(
-            model_endpoint=ModelEndpointInfo.from_run(streaming_endpoint), mock_server_config=fast_config
+            model_endpoint=ModelEndpointInfo.from_run(streaming_endpoint),
+            mock_server_config=fast_config,
         )
         await transport.initialize()
 
@@ -223,7 +229,10 @@ class TestFakeTransportEmbedding:
             ttft=1, itl=1, embedding_base_latency=1, embedding_per_input_latency=0
         )
         run = _make_run(endpoint_type=EndpointType.EMBEDDINGS)
-        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run), mock_server_config=fast_config)
+        transport = FakeTransport(
+            model_endpoint=ModelEndpointInfo.from_run(run),
+            mock_server_config=fast_config,
+        )
         await transport.initialize()
 
         request_info = create_request_info(run.cfg)
@@ -250,7 +259,10 @@ class TestFakeTransportRanking:
             ttft=1, itl=1, ranking_base_latency=1, ranking_per_passage_latency=0
         )
         run = _make_run(endpoint_type=EndpointType.NIM_RANKINGS)
-        transport = FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run), mock_server_config=fast_config)
+        transport = FakeTransport(
+            model_endpoint=ModelEndpointInfo.from_run(run),
+            mock_server_config=fast_config,
+        )
         await transport.initialize()
 
         request_info = create_request_info(run.cfg)

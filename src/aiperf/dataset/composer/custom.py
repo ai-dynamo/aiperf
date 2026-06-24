@@ -251,6 +251,9 @@ class CustomDatasetComposer(BaseDatasetComposer):
             entries = getattr(self.dataset_config, "entries", None)
             kwargs["num_conversations"] = entries or 100
 
+        if loader_metadata.category is not None:
+            kwargs["category"] = loader_metadata.category
+
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
         self.loader = LoaderClass(
             filename=file_path,

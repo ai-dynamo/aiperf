@@ -9,7 +9,6 @@ schema without pulling in mmap/zstd code paths.
 import types
 
 import msgspec
-import orjson
 from pydantic import Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel, Conversation

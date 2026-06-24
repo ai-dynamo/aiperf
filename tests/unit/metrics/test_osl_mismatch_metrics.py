@@ -7,7 +7,6 @@ from aiperf.common.enums import (
     CreditPhase,
     MetricConsoleGroup,
     MetricFlags,
-    ModelSelectionStrategy,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
@@ -18,12 +17,6 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.models.dataset_models import Turn
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.osl_mismatch_metrics import (
@@ -34,7 +27,6 @@ from aiperf.metrics.types.osl_mismatch_metrics import (
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
-from aiperf.plugin.enums import EndpointType
 from tests.unit.metrics.conftest import run_simple_metrics_pipeline
 
 

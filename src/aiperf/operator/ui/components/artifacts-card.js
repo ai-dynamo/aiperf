@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { html } from 'htm/preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { fmtBytes as defaultFmtBytes } from '../lib/format.js';
 import { palette } from '../lib/theme.js';
 import { LoadingPanel, Spinner } from './spinner.js';
@@ -42,9 +42,25 @@ const MODAL_BASE_STYLE = [
 const MODAL_STYLE_WIDE = MODAL_BASE_STYLE + ' max-width: 95vw; width: 1400px;';
 
 function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, copyDisabled = false, children }) {
+  const dialogRef = useRef(null);
+  // Move keyboard focus into the dialog on open so the Escape handler and the
+  // header controls are reachable without a mouse, and restore it on close.
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    dialogRef.current?.focus();
+    return () => {
+      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+        previouslyFocused.focus();
+      }
+    };
+  }, []);
+  const onKeyDown = (e) => { if (e.key === 'Escape') onClose(); };
   return html`
     <div style=${BACKDROP_STYLE} onclick=${e => { if (e.target === e.currentTarget) onClose(); }}>
       <div
+        ref=${dialogRef}
+        tabindex="-1"
+        onKeyDown=${onKeyDown}
         style=${MODAL_STYLE_WIDE}
         role="dialog"
         aria-modal="true"
@@ -54,17 +70,17 @@ function ModalChrome({ filename, onCopy, onDownload, onClose, copyLabel, copyDis
           <span id="artifact-preview-title" style=${'font-size: var(--font-size-sm); font-weight: 600; color: ' + palette.text + '; font-family: monospace'}>${filename}</span>
           <div style="display: flex; gap: var(--space-2); align-items: center">
             ${onCopy && html`
-              <button
+              <button type="button"
                 onclick=${copyDisabled ? undefined : onCopy}
                 disabled=${copyDisabled}
                 style=${'background: ' + palette.teal + '22; color: ' + palette.teal + '; border: 1px solid ' + palette.teal + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: ' + (copyDisabled ? 'not-allowed' : 'pointer') + '; font-size: var(--font-size-xs); opacity: ' + (copyDisabled ? '0.55' : '1')}
               >${copyLabel ?? 'Copy'}</button>
             `}
-            <button
+            <button type="button"
               onclick=${onDownload}
               style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-xs)'}
             >Download</button>
-            <button
+            <button type="button"
               onclick=${onClose}
               aria-label="Close preview"
               style=${'background: transparent; color: ' + palette.overlay1 + '; border: 1px solid ' + palette.surface1 + '; padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm); line-height: 1'}
@@ -429,7 +445,7 @@ export function ArtifactsCard({
               </a>
             `}
             ${showIndividualDownloadAll && canBuildFileUrls && html`
-              <button
+              <button type="button"
                 onclick=${downloadAll}
                 data-testid=${`${testIdPrefix}-download-individual`}
                 style=${'background: ' + palette.blue + '22; color: ' + palette.blue + '; border: 1px solid ' + palette.blue + '44; padding: var(--space-1) var(--space-3); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-size-sm)'}

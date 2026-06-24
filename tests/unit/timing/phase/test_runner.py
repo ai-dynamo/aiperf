@@ -8,12 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.models import (
     ConversationMetadata,
     CreditPhaseStats,
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import ArrivalPattern, DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
@@ -169,6 +171,7 @@ def pub() -> MagicMock:
 def router() -> MagicMock:
     m = MagicMock()
     m.send_credit = m.cancel_all_credits = AsyncMock()
+    m.wait_for_workers = AsyncMock()
     m.mark_credits_complete = MagicMock()
     return m
 
@@ -767,3 +770,84 @@ class TestFixedScheduleConfigCorrection:
         # Config should reflect the filtered dataset, not the original
         assert r._config.total_expected_requests == 2
         assert r._config.expected_num_sessions == 2
+
+
+class TestPhaseRunnerWorkerReadiness:
+    """The phase must gate credit issuance on worker readiness. Regression
+    coverage for the startup-race deadlock (see PhaseRunner._run_strategy)."""
+
+    async def test_run_strategy_awaits_wait_for_workers_with_start_timeout(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        # Pins the barrier's timeout to START_TIMEOUT. Gating is proven by the
+        # real-router test below; the mock barrier here never blocks.
+        # ``_prepare_phase`` is where this branch awaits the worker-readiness
+        # barrier (before ``_start_phase`` creates the execution task).
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        r._progress.all_credits_sent_event.set()
+        r._progress.all_credits_returned_event.set()
+
+        await r._prepare_phase(MockStrategy())
+
+        router.wait_for_workers.assert_awaited_once_with(
+            timeout=Environment.SERVICE.START_TIMEOUT
+        )
+
+    async def test_run_strategy_blocks_execution_until_worker_registers(
+        self,
+        benchmark_run,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        # Regression guard for the startup-race deadlock. Uses the REAL
+        # StickyCreditRouter barrier (not a mock), so it actually gates
+        # execution: with no workers, ``_prepare_phase`` must block on the
+        # barrier before ``_start_phase`` creates the issuance task. A barrier
+        # placed after execution kickoff (the original bug) would let
+        # execute_phase run here and fail the first assert.
+        real_router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        r = make_runner(cfg(), conv_src, pub, real_router, conc, cancel, cb)
+
+        class GatedStrategy(MockStrategy):
+            async def execute_phase(self) -> None:
+                self.execute_called = True
+                r._progress.all_credits_sent_event.set()
+                r._progress.all_credits_returned_event.set()
+
+        strategy = GatedStrategy()
+
+        async def _drive() -> None:
+            # Mirrors ``run()``: prepare (awaits the worker barrier) then start
+            # (creates ``_execution_task``).
+            await r._prepare_phase(strategy)
+            await r._start_phase(strategy)
+            if r._execution_task is not None:
+                await r._execution_task
+
+        run_task = asyncio.create_task(_drive())
+
+        # Advance to the barrier. With no worker registered the phase must block
+        # in ``_prepare_phase``, before ``_start_phase`` kicks off the issuance
+        # task. ``_execution_task`` stays None iff the barrier precedes issuance;
+        # if it has been created here the barrier is not gating execution.
+        await asyncio.sleep(0.1)
+        assert r._execution_task is None, (
+            "issuance task was created before the worker-readiness barrier "
+            "released: the barrier is not gating execution (startup-race "
+            "regression)"
+        )
+        assert not run_task.done()
+
+        # First worker registers -> barrier releases -> phase runs to completion.
+        real_router._register_worker("worker-1")
+        await asyncio.wait_for(run_task, timeout=5.0)
+        assert strategy.execute_called

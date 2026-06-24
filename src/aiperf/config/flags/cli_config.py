@@ -1574,6 +1574,18 @@ class CLIConfig(BaseConfig):
         ),
     ] = 1.0
 
+    synthesis_output_len_multiplier: Annotated[
+        float,
+        Field(
+            default=1.0,
+            ge=0.0,
+            description="Multiplier for output lengths in synthesized traces",
+        ),
+        CLIParameter(
+            name=("--synthesis-output-len-multiplier",), group=Groups.SYNTHESIS
+        ),
+    ] = 1.0
+
     synthesis_max_isl: Annotated[
         int | None,
         Field(
@@ -2189,6 +2201,47 @@ class CLIConfig(BaseConfig):
         BeforeValidator(parse_str_or_list),
         CLIParameter(
             name=("--mlflow-artifact-glob",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
+    wandb_project: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases project name. Setting this enables wandb export.",
+        ),
+        CLIParameter(name=("--wandb-project",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_entity: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases entity (team or user). Defaults to the API key's default entity.",
+        ),
+        CLIParameter(name=("--wandb-entity",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_run_name: Annotated[
+        str | None,
+        Field(default=None, description="Weights & Biases run name."),
+        CLIParameter(name=("--wandb-run-name",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_tags: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Additional Weights & Biases run tags to attach on upload. "
+                "Can be specified multiple times or as a comma-separated list."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--wandb-tag",),
             consume_multiple=True,
             group=Groups.OUTPUT,
         ),
@@ -2871,6 +2924,28 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--search-sla",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_sla_tier: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Multi-tier SLO grouping flag. Each invocation defines one tier "
+                "of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or "
+                "'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). "
+                "Requires 2-10 invocations. Example: --search-sla-tier "
+                "'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' "
+                "--search-sla-tier "
+                "'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. "
+                "When used, all --search-sla filters are still parsed and compose "
+                "with tier definitions."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-sla-tier",),
             group=Groups.MULTI_RUN,
         ),
     ] = None

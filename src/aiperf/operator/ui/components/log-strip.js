@@ -166,9 +166,9 @@ export function LogStrip() {
               key=${f.key}
               type="button"
               class=${'log-strip-filter' + (filter === f.key ? ' log-strip-filter--active' : '')}
-              onclick=${() => setFilter(f.key)}
               role="tab"
               aria-selected=${filter === f.key}
+              onclick=${() => setFilter(f.key)}
             >
               ${f.label}
               <span class="log-strip-filter-count">${counts[f.key]}</span>

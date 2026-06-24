@@ -23,8 +23,12 @@ JOB_DETAIL_STATE_PATH = (
 )
 
 
-def derive_state(*, phase: str | None, epoch: object = None, run_epoch: object = None) -> dict[str, object]:
-    epoch_line = "epoch: undefined" if epoch is _UNDEFINED else f"epoch: {json.dumps(epoch)}"
+def derive_state(
+    *, phase: str | None, epoch: object = None, run_epoch: object = None
+) -> dict[str, object]:
+    epoch_line = (
+        "epoch: undefined" if epoch is _UNDEFINED else f"epoch: {json.dumps(epoch)}"
+    )
     script = f"""
         import {{ deriveJobRunState }} from {JOB_DETAIL_STATE_PATH.as_uri()!r};
         const state = deriveJobRunState({{
@@ -77,7 +81,9 @@ def test_terminal_phases_stop_polling_and_hide_live_panels(
         param("Mystery", "mystery", id="unknown-phase"),
     ],
 )  # fmt: skip
-def test_non_terminal_phases_keep_live_panels_available(phase: str | None, expected_lower: str) -> None:
+def test_non_terminal_phases_keep_live_panels_available(
+    phase: str | None, expected_lower: str
+) -> None:
     state = derive_state(phase=phase, epoch="100", run_epoch="100")
 
     assert state["phaseLower"] == expected_lower

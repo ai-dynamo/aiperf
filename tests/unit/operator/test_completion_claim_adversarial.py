@@ -34,7 +34,6 @@ from aiperf.operator.client_cache import (
     try_claim_completion,
 )
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -90,7 +89,9 @@ def _resolve_parent(
     parts = _decode_json_pointer(pointer)
     for part in parts[:-1]:
         if not isinstance(current, dict):
-            raise AssertionError(f"JSON pointer {pointer!r} crossed non-object {part!r}")
+            raise AssertionError(
+                f"JSON pointer {pointer!r} crossed non-object {part!r}"
+            )
         current = current[part]
     if not isinstance(current, dict):
         raise AssertionError(f"JSON pointer {pointer!r} parent is not an object")
@@ -247,9 +248,9 @@ class TestCompletionClaimJsonPatchAtomicity:
         assert live_body["metadata"]["annotations"][_OTHER_ANNOTATION] == (
             "requests-complete"
         )
-        assert live_body["metadata"]["annotations"]["aiperf.nvidia.com/system-state"] == (
-            "processing"
-        )
+        assert live_body["metadata"]["annotations"][
+            "aiperf.nvidia.com/system-state"
+        ] == ("processing")
         assert live_body["metadata"]["annotations"][Annotations.COMPLETION_CLAIMED]
 
     @pytest.mark.asyncio
