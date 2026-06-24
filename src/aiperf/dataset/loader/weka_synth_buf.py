@@ -285,6 +285,14 @@ class ConversationReconstructor:
         bs = self.block_size
         m_curr = len(curr_hash_ids)
         m_curr_full = curr_in_tokens // bs
+        # Mirror init_turn_0's ``covered_blocks = min(m_full, len(hash_ids))``:
+        # a hashed-but-partial last block (len(curr_hash_ids) > curr_in_tokens
+        # // bs, e.g. in=250 with hash_ids=[..,4] at bs=64) covers only its
+        # ``curr_in_tokens % bs`` partial tail, not a full ``bs``-token block.
+        # Decoding it as a full block AND appending the partial tail below
+        # double-counts ~bs tokens and breaks the sum(seg.tokens) ==
+        # curr_in_tokens invariant the byte-exact contract depends on.
+        m_curr_covered = min(m_curr, m_curr_full)
         missing_block_tokens = max(0, (m_curr_full - m_curr) * bs)
         lcp = longest_common_prefix(prev_hash_ids, curr_hash_ids)
 
@@ -296,7 +304,7 @@ class ConversationReconstructor:
         )
         self._last_disturbance_at = truncate_disturbance
 
-        new_blocks = curr_hash_ids[lcp:m_curr]
+        new_blocks = curr_hash_ids[lcp:m_curr_covered]
         new_partial_tail_n = curr_in_tokens % bs
         new_region_tokens = self.decode_block_tokens(new_blocks)
         synth_tail_n = missing_block_tokens + new_partial_tail_n
@@ -304,7 +312,7 @@ class ConversationReconstructor:
             new_region_tokens.extend(
                 self.sample_partial_tail_tokens(synth_tail_n, seed)
             )
-        new_blocks_count = m_curr - lcp
+        new_blocks_count = max(0, m_curr_covered - lcp)
 
         self._turn_index += 1
         asst_blocks_target = (
