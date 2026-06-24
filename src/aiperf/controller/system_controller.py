@@ -8,8 +8,6 @@ import time
 import uuid
 from typing import TYPE_CHECKING, cast
 
-import orjson
-
 from aiperf.analysis.energy_analyzer import compute_energy_efficiency_from_summaries
 from aiperf.cli_utils import (
     print_developer_mode_warning,
@@ -1415,15 +1413,14 @@ class SystemController(
         for response in responses:
             if isinstance(response, CommandOk) and response.payload:
                 try:
-                    data = orjson.loads(response.payload)
-                    result = ProcessRecordsResult.model_validate(data)
+                    result = ProcessRecordsResult.model_validate_json(response.payload)
                     self.debug(
                         f"Received ProcessRecordsResult from cancel command: {result}"
                     )
                     self._profile_results = result
                     self._profile_results_received = True
                     return
-                except (orjson.JSONDecodeError, ValueError) as e:
+                except (ValueError, TypeError) as e:
                     self.warning(f"Failed to parse cancel response payload: {e}")
 
     @on_stop
@@ -1670,6 +1667,7 @@ class SystemController(
         self._exporter_manager = ExporterManager(
             results=self._profile_results.results,
             config=self.run.cfg,
+            run=self.run,
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
             steady_state_results=self._steady_state_results,

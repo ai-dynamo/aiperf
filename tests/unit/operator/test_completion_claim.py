@@ -69,24 +69,59 @@ class TestIsCompletionClaimed:
 
 class TestTryClaimCompletion:
     @pytest.mark.asyncio
-    async def test_annotation_present_still_submits_atomic_claim(self) -> None:
-        """A body-snapshot COMPLETION_CLAIMED annotation must NOT short-circuit
-        the claim. The annotation is user-writable, so trusting it as a skip
-        would let a forged annotation suppress completion; the atomic apiserver
-        patch is the sole authority. A genuine prior claim is rejected there
-        with a 422, simulated here by ``_submit_claim_patch`` returning False."""
-        body = _body_with_annotation()
-        submit = AsyncMock(return_value=False)
+    async def test_annotation_present_with_live_claim_loses_race(self) -> None:
+        """A body-snapshot claim confirmed against LIVE state is a lost race.
 
-        with mock_patch(
-            "aiperf.operator.client_cache._submit_claim_patch",
-            new=submit,
+        We must NOT submit an overwriting claim patch in this case: the
+        ``test``+``add`` patch would otherwise re-claim an already-claimed CR
+        (the ``add`` overwrites the existing annotation) and re-run the
+        non-idempotent ``handle_completion``."""
+        body = _body_with_annotation()
+        submit = AsyncMock(return_value=True)  # would (wrongly) win if reached
+        live = AsyncMock(return_value=True)
+
+        with (
+            mock_patch(
+                "aiperf.operator.client_cache._submit_claim_patch",
+                new=submit,
+            ),
+            mock_patch(
+                "aiperf.operator.client_cache._read_live_completion_claimed",
+                new=live,
+            ),
         ):
             result = await try_claim_completion("ns", "j", body)
 
-        submit.assert_awaited_once()
         assert result is False
+        live.assert_awaited_once()
+        submit.assert_not_awaited()
         # A lost race still populates the in-process cache.
+        assert "ns/j" in _shutdown_sent
+
+    @pytest.mark.asyncio
+    async def test_forged_annotation_does_not_suppress_claim(self) -> None:
+        """A snapshot annotation absent from LIVE state (forged/stale) must NOT
+        suppress completion: we still submit the atomic claim. The annotation
+        is user-writable, so it cannot be trusted as a skip on its own."""
+        body = _body_with_annotation()
+        submit = AsyncMock(return_value=True)
+        live = AsyncMock(return_value=False)
+
+        with (
+            mock_patch(
+                "aiperf.operator.client_cache._submit_claim_patch",
+                new=submit,
+            ),
+            mock_patch(
+                "aiperf.operator.client_cache._read_live_completion_claimed",
+                new=live,
+            ),
+        ):
+            result = await try_claim_completion("ns", "j", body)
+
+        assert result is True
+        live.assert_awaited_once()
+        submit.assert_awaited_once()
         assert "ns/j" in _shutdown_sent
 
     @pytest.mark.asyncio
@@ -309,7 +344,8 @@ class TestLifecycleIntegration:
 
     @pytest.mark.asyncio
     async def test_annotation_preset_on_body_skips_handle_completion(self) -> None:
-        """If body already carries the annotation, handler returns early."""
+        """If the body carries the claim AND it is confirmed in LIVE state,
+        the handler loses the race and does not re-run handle_completion."""
         from aiperf.operator.handlers.lifecycle import on_benchmark_complete
 
         patch = MagicMock()
@@ -327,6 +363,10 @@ class TestLifecycleIntegration:
             mock_patch(
                 "aiperf.operator.handlers.lifecycle.close_progress_client",
                 new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.client_cache._read_live_completion_claimed",
+                new=AsyncMock(return_value=True),
             ),
         ):
             await on_benchmark_complete(

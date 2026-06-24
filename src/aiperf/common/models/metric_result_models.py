@@ -217,3 +217,23 @@ class ProcessRecordsResult:
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
         return self.results.get(tag)
+
+    @classmethod
+    def model_validate_json(cls, value: str | bytes) -> ProcessRecordsResult:
+        """Pydantic-compat constructor from a JSON string / bytes.
+
+        Mirrors ``ProfileResults.model_validate_json``: this is a slotted
+        dataclass, not a Pydantic model, so the stdlib ``model_validate`` does
+        not exist. Bridges the nested Pydantic ``BranchStats`` (inside
+        ``results``) via a ``dec_hook``.
+        """
+        import msgspec
+
+        from aiperf.common.models.branch_stats import BranchStats
+
+        def _dec(typ: type, obj: Any) -> Any:
+            if typ is BranchStats and isinstance(obj, dict):
+                return BranchStats(**obj)
+            raise NotImplementedError
+
+        return msgspec.json.decode(value, type=cls, dec_hook=_dec)

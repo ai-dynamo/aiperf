@@ -225,8 +225,8 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
 
     async def wait_for_workers(self, timeout: float) -> None:
         """Close the startup race where a phase issues its first credit before
-        any worker has sent ``WorkerReady`` (which makes ``send_credit`` raise
-        on empty workers). Called once per phase before the first credit.
+        any worker has sent ``WorkerDispatchable`` (which makes ``send_credit``
+        raise on empty workers). Called once per phase before the first credit.
 
         Best-effort startup gate, not an absolute postcondition: the last worker
         can unregister between this returning and the first ``send_credit``, so

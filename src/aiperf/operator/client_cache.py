@@ -173,20 +173,24 @@ async def try_claim_completion(
 
     Uses a JSON-patch with a ``test`` op so two concurrent handlers cannot
     both acquire the claim: only the first patch succeeds, the second
-    gets a 422/409 and returns False.
+    gets a 422/409 and returns False. When the body snapshot already shows
+    the claim annotation, the live CR is re-read (the snapshot is
+    user-writable and not trusted) and a genuine live claim is treated as a
+    lost race — without re-submitting an overwriting claim patch.
 
     Args:
         namespace: Namespace of the AIPerfJob CR.
         name: Name of the AIPerfJob CR.
-        body: The CR body (checked for an existing claim annotation to
-            avoid an unnecessary API round-trip on the slow path).
+        body: The CR body. If its snapshot carries the claim annotation, the
+            live CR is re-read to confirm before losing the race; a forged or
+            stale snapshot annotation does not by itself suppress completion.
 
     Returns:
         True iff this call newly won the race and the caller should
-        proceed with ``handle_completion``. False if the annotation was
-        already present (another handler or a previous operator run
-        claimed it) or if the claim attempt fails for any reason
-        (fail-safe: don't double complete).
+        proceed with ``handle_completion``. False if a genuine prior claim
+        exists (another handler or a previous operator run claimed it) or if
+        the claim attempt fails for any reason (fail-safe: don't double
+        complete).
 
     Raises:
         No exceptions escape — unexpected errors are logged and return
@@ -205,11 +209,24 @@ async def try_claim_completion(
     if key in _shutdown_sent:
         return False
 
-    # No annotation fast path: the CR body's COMPLETION_CLAIMED annotation is
-    # user-writable, so trusting it to skip the claim would let a forged
-    # annotation suppress completion. The atomic apiserver ``test``-op patch
-    # below is the sole authority — a genuine prior claim makes it fail with
-    # 422 (counted as a race-loss), which is the safe outcome.
+    # The CR body's COMPLETION_CLAIMED annotation is user-writable, so a forged
+    # value must not be trusted as a skip (that would let an attacker suppress
+    # completion). But a genuine prior claim MUST make this call lose the race:
+    # handle_completion is not idempotent, so re-running it double-completes
+    # (re-fetch results, re-emit events, re-delete the JobSet). When the
+    # snapshot shows a claim, resolve both concerns by verifying against LIVE
+    # apiserver state (not the snapshot): a real live claim is a decisive lost
+    # race; a stale/forged snapshot falls through to the atomic claim below,
+    # whose ``test``-op still guards the concurrent first-claim race.
+    if is_completion_claimed(body):
+        live_claimed = await _read_live_completion_claimed(namespace, name)
+        if live_claimed is True:
+            _shutdown_sent.add(key)
+            from aiperf.operator.metrics import COMPLETION_CLAIM_RACES
+
+            COMPLETION_CLAIM_RACES.inc()
+            return False
+
     patch_ops = _build_claim_patch_ops(body)
     claimed = await _submit_claim_patch(namespace, name, patch_ops)
     if claimed is True:

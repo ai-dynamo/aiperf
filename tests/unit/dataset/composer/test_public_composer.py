@@ -134,6 +134,36 @@ class TestBuildLoaderKwargs:
             )
         assert kwargs["multi_turn"] is True
 
+    def test_category_forwarded_to_loader(self, aimo_run):
+        """Public loaders that disambiguate a shared hf_subset by category
+        (e.g. the SPEED-Bench per-category / entropy-tier datasets) rely on the
+        composer forwarding metadata.category to the loader ctor. Without it
+        every per-category entry silently loads the full subset."""
+        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+
+        composer = PublicDatasetComposer(aimo_run, None)
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=PublicDatasetLoaderMetadata(
+                hf_dataset_name="nvidia/SPEED-Bench",
+                hf_split="test",
+                hf_subset="qualitative",
+                category="coding",
+            ),
+        ):
+            kwargs = composer._build_loader_kwargs(
+                PublicDatasetType.AIMO, HFInstructionResponseDatasetLoader
+            )
+        assert kwargs["category"] == "coding"
+
+    def test_category_absent_when_metadata_lacks_it(self, aimo_run):
+        """category is opt-in: a loader whose metadata omits it gets no kwarg."""
+        composer = PublicDatasetComposer(aimo_run, None)
+        kwargs = composer._build_loader_kwargs(
+            PublicDatasetType.AIMO, HFInstructionResponseDatasetLoader
+        )
+        assert "category" not in kwargs
+
     def test_multi_turn_raises_for_unsupported_loader(self, aimo_run):
         """A loader that doesn't declare multi_turn on its __init__ must not
         silently swallow the kwarg via **kwargs; composer should refuse."""

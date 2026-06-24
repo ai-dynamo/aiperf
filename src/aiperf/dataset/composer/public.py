@@ -93,6 +93,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
             "video_column": loader_metadata.video_column,
             "audio_column": loader_metadata.audio_column,
             "prompt_template": loader_metadata.prompt_template,
+            "category": loader_metadata.category,
         }
         kwargs.update({k: v for k, v in optional_fields.items() if v is not None})
 

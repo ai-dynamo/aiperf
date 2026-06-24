@@ -461,6 +461,15 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default=None,
         description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
     )
+    category: str | None = Field(
+        default=None,
+        description=(
+            "Filter dataset rows to a specific category value. Used by public "
+            "loaders that support per-category subsets (e.g. the SPEED-Bench "
+            "per-category and entropy-tier datasets, which share one hf_subset "
+            "and disambiguate by category)."
+        ),
+    )
 
 
 class ServiceMetadata(BaseModel):
