@@ -6,7 +6,12 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ParsedResponseRecord
-from aiperf.common.models.record_models import RawRecordInfo
+from aiperf.common.models.record_models import (
+    MetricRecordInfo,
+    RawRecordInfo,
+    RawRecordSummaryInfo,
+    SSEMessage,
+)
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.post_processors.raw_record_writer_processor import (
@@ -18,6 +23,11 @@ from tests.unit.post_processors.conftest import (
     create_metric_metadata,
     raw_record_processor,
 )
+
+
+def _sse_packet(data: dict, perf_ns: int) -> SSEMessage:
+    payload = orjson.dumps(data).decode()
+    return SSEMessage.parse(f"data: {payload}\n\n", perf_ns=perf_ns)
 
 
 # Alias for backward compatibility and clearer intent
@@ -113,6 +123,148 @@ class TestRawRecordWriterProcessorProcessRecord:
         assert record.request_headers == {"Content-Type": "application/json"}
         assert record.error is None
         assert len(record.responses) == 2
+
+    @pytest.mark.asyncio
+    async def test_process_streaming_record_writes_nvext_summary(
+        self,
+        cfg_raw: CLIConfig,
+        run_raw,
+        sample_parsed_record: ParsedResponseRecord,
+    ):
+        """Streaming packets with nvext.timing produce one compact summary row."""
+        start_ns = sample_parsed_record.request.start_perf_ns
+        sample_parsed_record.request.responses = [
+            _sse_packet(
+                {
+                    "id": "cmpl-123",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "delta": {"content": "Hello "},
+                            "finish_reason": None,
+                        }
+                    ],
+                    "nvext": {"worker_id": "decode-worker-0"},
+                },
+                start_ns + 10_000_000,
+            ),
+            _sse_packet(
+                {
+                    "id": "cmpl-123",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "delta": {"content": "world"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "nvext": {
+                        "worker_id": "decode-worker-0",
+                        "timing": {
+                            "request_received_ms": 101.0,
+                            "prefill_wait_time_ms": 2.5,
+                            "prefill_time_ms": 18.0,
+                            "ttft_ms": 42.0,
+                            "total_time_ms": 55.0,
+                            "kv_hit_rate": 0.875,
+                            "router_queue_depth": 3,
+                        },
+                    },
+                },
+                start_ns + 25_000_000,
+            ),
+            _sse_packet(
+                {
+                    "id": "cmpl-123",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "delta": {},
+                            "finish_reason": None,
+                        }
+                    ],
+                    "nvext": {"worker_id": "decode-worker-1"},
+                },
+                start_ns + 28_000_000,
+            ),
+            SSEMessage.parse("data: [DONE]\n\n", perf_ns=start_ns + 30_000_000),
+        ]
+        sample_parsed_record.request.end_perf_ns = start_ns + 30_000_000
+
+        async with raw_record_processor("processor-1", run_raw) as processor:
+            metadata = create_metric_metadata(
+                session_num=7,
+                conversation_id="conv-123",
+                turn_index=2,
+                request_start_ns=11,
+                request_ack_ns=22,
+                request_end_ns=33,
+                x_request_id="req-123",
+                x_correlation_id="corr-123",
+            )
+
+            await processor.process_record(sample_parsed_record, metadata)
+
+        raw_dict = orjson.loads(processor.output_file.read_text().splitlines()[0])
+        assert "data_chunk_count" not in raw_dict
+        assert "nvext" not in raw_dict
+        assert RawRecordInfo.model_validate(raw_dict).responses == (
+            sample_parsed_record.request.responses
+        )
+
+        summary_lines = processor.summary_output_file.read_text().splitlines()
+        assert len(summary_lines) == 1
+        summary_dict = orjson.loads(summary_lines[0])
+        summary = RawRecordSummaryInfo.model_validate(summary_dict)
+
+        profile_record = MetricRecordInfo(metadata=metadata, metrics={})
+        assert summary.metadata.model_dump(mode="json") == (
+            profile_record.metadata.model_dump(mode="json")
+        )
+        assert summary.request_id == "cmpl-123"
+        assert summary.status == 200
+        assert summary.data_chunk_count == 3
+        assert summary.finish_reason == "stop"
+        assert summary.first_chunk_ms == 10.0
+        assert summary.last_chunk_ms == 28.0
+        assert summary.stream_decode_ms == 18.0
+        assert summary.nvext is not None
+        assert summary.nvext.worker_id == "decode-worker-1"
+        assert summary.nvext.timing == {
+            "request_received_ms": 101.0,
+            "prefill_wait_time_ms": 2.5,
+            "prefill_time_ms": 18.0,
+            "ttft_ms": 42.0,
+            "total_time_ms": 55.0,
+            "kv_hit_rate": 0.875,
+            "router_queue_depth": 3,
+        }
+
+    @pytest.mark.asyncio
+    async def test_process_record_without_nvext_writes_summary_without_timing(
+        self,
+        cfg_raw: CLIConfig,
+        run_raw,
+        sample_parsed_record: ParsedResponseRecord,
+    ):
+        """Raw export without nvext still emits a valid compact summary row."""
+        async with raw_record_processor("processor-1", run_raw) as processor:
+            metadata = create_metric_metadata(
+                session_num=0,
+                conversation_id="conv-no-nvext",
+            )
+
+            await processor.process_record(sample_parsed_record, metadata)
+
+        summary_dict = orjson.loads(
+            processor.summary_output_file.read_text().splitlines()[0]
+        )
+        assert "nvext" not in summary_dict
+
+        summary = RawRecordSummaryInfo.model_validate(summary_dict)
+        assert summary.metadata.conversation_id == "conv-no-nvext"
+        assert summary.data_chunk_count == 2
+        assert summary.nvext is None
 
     @pytest.mark.asyncio
     async def test_process_record_with_error(
@@ -240,6 +392,12 @@ class TestRawRecordAggregator:
         lines = aggregator.output_file.read_text().splitlines()
 
         assert len(lines) == 6  # 3 processors * 2 records each
+        summary_output = run_raw.cfg.artifacts.profile_export_raw_summary_jsonl_file
+        assert summary_output.exists()
+        summary_lines = summary_output.read_text().splitlines()
+        assert len(summary_lines) == 6
+        for line in summary_lines:
+            RawRecordSummaryInfo.model_validate(orjson.loads(line))
 
         # Verify raw_records directory is cleaned up
         raw_records_dir = cfg_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER

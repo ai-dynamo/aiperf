@@ -82,6 +82,23 @@ class TestOutputFormats:
         assert result.raw_records is not None
         assert len(result.raw_records) > 0
         assert len(result.raw_records) == defaults.request_count
+        assert result.raw_record_summaries is not None
+        assert len(result.raw_record_summaries) == defaults.request_count
+        assert result.jsonl is not None
+
+        raw_file = next(result.artifacts_dir.glob("**/*profile_export_raw.jsonl"))
+        raw_summary_file = next(result.artifacts_dir.glob("**/*raw_summary.jsonl"))
+        assert raw_summary_file.stat().st_size < raw_file.stat().st_size
+
+        profile_metadata_by_key = {
+            (record.metadata.session_num, record.metadata.turn_index): record.metadata
+            for record in result.jsonl
+        }
+        for summary in result.raw_record_summaries:
+            key = (summary.metadata.session_num, summary.metadata.turn_index)
+            assert summary.metadata.model_dump(mode="json") == (
+                profile_metadata_by_key[key].model_dump(mode="json")
+            )
 
         # Validate raw record structure and content
         for record in result.raw_records:

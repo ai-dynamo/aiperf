@@ -56,6 +56,25 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 Note that `request_throughput` (derived) and `request_count` (aggregate) carry only `unit` + `avg` — no `count`, no `sum`, no percentiles. `request_latency` (record) carries the full set.
 
+## Raw summary JSONL
+
+When `--export-level raw` is enabled, AIPerf writes the full raw request/response dump to `profile_export_raw.jsonl` and also writes a compact per-request sidecar, `profile_export_raw_summary.jsonl`. The sidecar is one JSON object per request and is written from the same raw response packets while the full raw export is produced, so common timing analysis does not need to re-parse the full raw payload dump.
+
+Each row contains:
+
+| Field | Type | Notes |
+|---|---|---|
+| `metadata` | object | The same `MetricRecordMetadata` shape used by `profile_export.jsonl`, including join fields such as `x_request_id`, `x_correlation_id`, `conversation_id`, `session_num`, `turn_index`, `request_start_ns`, `request_ack_ns`, `request_end_ns`, and AIPerf `worker_id`. |
+| `request_id` | string | Response-level `request_id` or `id` from the backend packet, if present. |
+| `status` | int | HTTP response status, if available. |
+| `data_chunk_count` | int | Count of non-empty, non-`[DONE]` raw response data chunks observed for the request. |
+| `finish_reason` | string | Last non-empty `finish_reason` found in response packets, if present. |
+| `first_chunk_ms`, `last_chunk_ms`, `stream_decode_ms` | number | Chunk offsets in milliseconds from AIPerf perf-counter timestamps, when chunk timestamps are available. |
+| `nvext.timing` | object | Dynamo `nvext.timing` object from response packets, if present. |
+| `nvext.worker_id` | string | Dynamo `nvext.worker_id` from response packets, if present. |
+
+Optional fields are omitted when the backend does not send them. Prefix handling mirrors other profile exports: `--profile-export-prefix foo` writes `foo_raw_summary.jsonl`.
+
 ## Top-level fields
 
 In addition to the per-metric stats blocks, `profile_export_aiperf.json` includes top-level provenance:

@@ -7,8 +7,8 @@ On `main`, passing `--profile-export-prefix foo` makes EVERY export file use
 
     foo.csv                  foo.json                  foo_timeslices.csv
     foo_timeslices.json      foo.jsonl                 foo_raw.jsonl
-    foo_gpu_telemetry.jsonl  foo_server_metrics.jsonl  foo_server_metrics.json
-    foo_server_metrics.csv   foo_server_metrics.parquet
+    foo_raw_summary.jsonl    foo_gpu_telemetry.jsonl   foo_server_metrics.jsonl
+    foo_server_metrics.json  foo_server_metrics.csv    foo_server_metrics.parquet
 
 This branch narrowed the prefix to only the summary/timeslice files. The
 JSONL family, GPU telemetry, and server-metrics exports stopped honoring
@@ -16,8 +16,8 @@ the prefix. These tests pin the restoration of full-coverage parity.
 
 When `--profile-export-prefix` is NOT given, the historical per-file
 defaults remain: `profile_export_aiperf.csv`, `profile_export.jsonl`,
-`profile_export_raw.jsonl`, `gpu_telemetry_export.jsonl`, and the
-`server_metrics_export.*` family.
+`profile_export_raw.jsonl`, `profile_export_raw_summary.jsonl`,
+`gpu_telemetry_export.jsonl`, and the `server_metrics_export.*` family.
 """
 
 from __future__ import annotations
@@ -55,6 +55,12 @@ class TestPrefixAppliedToEveryExport:
 
     def test_raw_jsonl(self):
         assert self._cfg().profile_export_raw_jsonl_file.name == "foo_raw.jsonl"
+
+    def test_raw_summary_jsonl(self):
+        assert (
+            self._cfg().profile_export_raw_summary_jsonl_file.name
+            == "foo_raw_summary.jsonl"
+        )
 
     def test_gpu_telemetry_jsonl(self):
         assert (
@@ -118,6 +124,12 @@ class TestUnsetPrefixPreservesPerFileDefaults:
             self._cfg().profile_export_raw_jsonl_file.name == "profile_export_raw.jsonl"
         )
 
+    def test_raw_summary_jsonl_default(self):
+        assert (
+            self._cfg().profile_export_raw_summary_jsonl_file.name
+            == "profile_export_raw_summary.jsonl"
+        )
+
     def test_gpu_telemetry_jsonl_default(self):
         assert (
             self._cfg().profile_export_gpu_telemetry_jsonl_file.name
@@ -143,6 +155,11 @@ class TestPrefixStripsKnownSuffixes:
         assert cfg.profile_export_jsonl_file.name == "foo.jsonl"
         assert cfg.profile_export_raw_jsonl_file.name == "foo_raw.jsonl"
 
+    def test_strips_raw_summary_jsonl_suffix(self):
+        cfg = ArtifactsConfig(prefix="foo_raw_summary.jsonl")
+        assert cfg.profile_export_jsonl_file.name == "foo.jsonl"
+        assert cfg.profile_export_raw_summary_jsonl_file.name == "foo_raw_summary.jsonl"
+
     def test_strips_timeslices_csv_suffix(self):
         cfg = ArtifactsConfig(prefix="foo_timeslices.csv")
         assert cfg.profile_export_csv_file.name == "foo.csv"
@@ -166,6 +183,7 @@ class TestCLIWiringPropagatesPrefix:
         art = cfg.benchmark.artifacts
         assert art.profile_export_jsonl_file.name == "foo.jsonl"
         assert art.profile_export_raw_jsonl_file.name == "foo_raw.jsonl"
+        assert art.profile_export_raw_summary_jsonl_file.name == "foo_raw_summary.jsonl"
         assert (
             art.profile_export_gpu_telemetry_jsonl_file.name
             == "foo_gpu_telemetry.jsonl"
