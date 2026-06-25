@@ -189,13 +189,13 @@ class ZMQSubClient(BaseZMQClient):
         if topic in self._subscribers:
             try:
                 await call_all_functions(self._subscribers[topic], message)
-            except Exception:
+            except Exception:  # noqa: BLE001 - subscription-handler boundary: a misbehaving callback must not kill the SUB receive loop
                 self.exception(f"Error in subscription handler for topic {topic}")
 
         if self._wildcard_subscriber is not None:
             try:
                 await self._wildcard_subscriber(message)
-            except Exception:
+            except Exception:  # noqa: BLE001 - wildcard-handler boundary: a misbehaving callback must not kill the SUB receive loop
                 self.exception(
                     f"Error in wildcard subscription handler for topic {topic}"
                 )
