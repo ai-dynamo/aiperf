@@ -926,6 +926,11 @@ The maximum number of warmup requests to send before benchmarking. If not set an
 The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
 <br/>_Constraints: > 0_
 
+#### `--agentic-cache-warmup-duration` `<float>`
+
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state.
+<br/>_Constraints: > 0_
+
 #### `--num-warmup-sessions` `<int>`
 
 The number of sessions to use for the warmup phase. If not set, it will use the `--warmup-request-count` value.

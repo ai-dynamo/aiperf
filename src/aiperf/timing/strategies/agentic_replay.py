@@ -65,6 +65,7 @@ from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.trajectory_source import (
+    ConversationState,
     Trajectory,
     TrajectorySnapshot,
     TrajectorySource,
@@ -156,6 +157,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             t.conversation_id for t in conversation_source.trajectories
         )
         self._failed_warmup_traces: list[str] = []
+        cache_warmup_duration = getattr(
+            config, "agentic_cache_warmup_duration_sec", None
+        )
+        self._cache_warmup_duration: float | None = (
+            float(cache_warmup_duration)
+            if isinstance(cache_warmup_duration, int | float)
+            else None
+        )
+        self._baseline_warmup_returns: dict[str, Credit] = {}
+        self._baseline_correlations: set[str] = set()
+        self._accelerated_warmup_started = False
+        self._handoff_credits: dict[str, Credit] = {}
+        self._root_to_lane: dict[str, int] = {}
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
         # instances (PhaseRunner builds a fresh AgenticReplayStrategy per
@@ -234,10 +248,23 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     @property
     def _has_tree_registry(self) -> bool:
         """True when per-tree session-slot accounting is engaged (PROFILING)."""
-        return (
-            self._session_tree_registry is not None
-            and self.config.phase == CreditPhase.PROFILING
+        return self._session_tree_registry is not None and (
+            self.config.phase == CreditPhase.PROFILING
+            or self._cache_warmup_duration is not None
         )
+
+    @property
+    def wants_returns_after_sending_complete(self) -> bool:
+        """Pressure warmup returns must be observed to build the handoff state."""
+        return (
+            self.config.phase == CreditPhase.WARMUP
+            and self._cache_warmup_duration is not None
+        )
+
+    @property
+    def allows_pending_branch_handoff_after_sending_complete(self) -> bool:
+        """Pressure warmup preserves paused DAG branches for profiling handoff."""
+        return self.wants_returns_after_sending_complete
 
     def _lane_root_corr(self, snapshot: TrajectorySnapshot) -> str | None:
         """Tree-root id shared by every stream of a snapshot lane.
@@ -410,6 +437,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     session, trajectory.start_turn_index
                 )
                 prepared.append((turn, None))
+                self._baseline_correlations.add(turn.x_correlation_id)
+                self._root_to_lane[turn.effective_root_correlation_id] = lane
                 continue
 
             t_star_ms = trajectory.snapshot.t_star_ms
@@ -432,6 +461,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     if warm_ts is not None:
                         lead_ms = self._capped_warmup_lead_ms(t_star_ms - warm_ts)
                 prepared.append((turn, lead_ms))
+                self._baseline_correlations.add(turn.x_correlation_id)
+                self._root_to_lane[turn.effective_root_correlation_id] = lane
 
         # Pass 2: dispatch.
         if not spread:
@@ -440,8 +471,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
             for turn, _ in prepared:
                 await self.credit_issuer.issue_credit(turn)
-            if not self.lifecycle.is_sending_complete:
-                self.lifecycle.mark_sending_complete()
+            await self._finish_initial_warmup_dispatch(prepared)
             return
 
         # Global t*-alignment: a request that fired ``lead`` before its t*
@@ -468,6 +498,256 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 )
             else:
                 await self.credit_issuer.issue_credit(turn)
+        await self._start_accelerated_warmup_if_empty(prepared)
+
+    async def _finish_initial_warmup_dispatch(
+        self, prepared: list[tuple[TurnToSend, float | None]]
+    ) -> None:
+        """Finish burst warmup or enter cache pressure when no priming exists."""
+        if self._cache_warmup_duration is None:
+            if not self.lifecycle.is_sending_complete:
+                self.lifecycle.mark_sending_complete()
+            return
+        await self._start_accelerated_warmup_if_empty(prepared)
+
+    async def _start_accelerated_warmup_if_empty(
+        self, prepared: list[tuple[TurnToSend, float | None]]
+    ) -> None:
+        if not prepared and self._cache_warmup_duration is not None:
+            await self._start_accelerated_warmup()
+
+    async def _start_accelerated_warmup(self) -> None:
+        """Continue the sampled trajectories under compressed warmup traffic."""
+        if self._accelerated_warmup_started:
+            return
+        assert self._cache_warmup_duration is not None
+        self._accelerated_warmup_started = True
+        self.credit_issuer.set_max_tokens_override(_WARMUP_MAX_TOKENS)
+        self.info(
+            "WARMUP cache pressure: replaying live trajectories for "
+            f"{self._cache_warmup_duration:.1f}s with zero idle delay and "
+            f"max_tokens={_WARMUP_MAX_TOKENS}"
+        )
+        if self.branch_orchestrator is not None:
+            self.branch_orchestrator.start_accelerated_warmup()
+        self.scheduler.schedule_later(
+            self._cache_warmup_duration,
+            self._finish_accelerated_warmup(),
+        )
+        results = await asyncio.gather(
+            *(
+                self._dispatch_accelerated_trajectory(trajectory, lane)
+                for lane, trajectory in enumerate(self.conversation_source.trajectories)
+            ),
+            return_exceptions=True,
+        )
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            raise errors[0]
+
+    async def _finish_accelerated_warmup(self) -> None:
+        """Stop new pressure traffic and let all issued requests drain."""
+        self.info("WARMUP cache pressure duration reached; draining requests")
+        self.credit_issuer.mark_sending_complete()
+
+    async def _dispatch_accelerated_trajectory(
+        self, trajectory: Trajectory, lane: int
+    ) -> None:
+        """Dispatch one lane from its post-snapshot state without idle delays."""
+        if trajectory.snapshot is None:
+            session = self.conversation_source.session_for(trajectory)
+            resume_index = trajectory.start_turn_index + 1
+            turn = self._build_turn_for_session(session, resume_index)
+            turn = _struct_replace(turn, is_session_start=False)
+            self._correlation_to_lane[turn.x_correlation_id] = lane
+            self._root_to_lane[turn.effective_root_correlation_id] = lane
+            await self.credit_issuer.issue_credit(turn)
+            return
+
+        snapshot = trajectory.snapshot
+        for state in snapshot.states:
+            self._correlation_to_lane[state.x_correlation_id] = lane
+            self._root_to_lane[state.root_correlation_id or state.x_correlation_id] = (
+                lane
+            )
+            self._mint_marker_for_session(
+                state.root_correlation_id or state.x_correlation_id,
+                state.conversation_id,
+                lane,
+            )
+
+        if self.branch_orchestrator is not None:
+            self.branch_orchestrator.seed_snapshot(
+                snapshot.states,
+                cache_bust_markers=self._session_marker,
+            )
+
+        dispatchable = [
+            state for state in snapshot.states if not state.waiting_on_children
+        ]
+        has_baseline_root = any(
+            state.agent_depth == 0
+            and state.x_correlation_id in self._baseline_correlations
+            for state in snapshot.states
+        )
+        has_dispatchable_root = any(state.agent_depth == 0 for state in dispatchable)
+        if dispatchable and not has_baseline_root and not has_dispatchable_root:
+            root_correlation_id = self._lane_root_corr(snapshot)
+            if root_correlation_id is not None:
+                self._correlation_to_lane[root_correlation_id] = lane
+            await self.credit_issuer.acquire_lane_credit(
+                root_correlation_id,
+                root_pending=any(state.agent_depth == 0 for state in snapshot.states),
+            )
+
+        for state in dispatchable:
+            session = self.conversation_source.session_for_state(state)
+            turn = self._build_turn_for_session(session, state.next_turn_index)
+            turn = _struct_replace(
+                turn,
+                is_session_start=(
+                    state.agent_depth == 0
+                    and state.x_correlation_id not in self._baseline_correlations
+                ),
+            )
+            await self.credit_issuer.issue_credit(turn)
+
+    def observe_credit_return(self, credit: Credit) -> None:
+        """Track the next live turn for the warmup-to-profile handoff."""
+        if not self._accelerated_warmup_started:
+            return
+        root_correlation_id = credit.effective_root_correlation_id
+        lane = self._root_to_lane.get(root_correlation_id)
+        if lane is None:
+            lane = self._correlation_to_lane.get(credit.x_correlation_id)
+        if lane is not None:
+            self._root_to_lane[root_correlation_id] = lane
+            self._correlation_to_lane[credit.x_correlation_id] = lane
+        if credit.is_final_turn:
+            self._handoff_credits.pop(credit.x_correlation_id, None)
+        else:
+            self._handoff_credits[credit.x_correlation_id] = credit
+
+    async def _handle_accelerated_warmup_return(self, credit: Credit) -> None:
+        """Issue the next compressed turn or recycle a completed tree."""
+        if credit.is_final_turn:
+            if credit.agent_depth == 0 and not self._has_tree_registry:
+                await self._spawn_from_recycle_or_id(
+                    credit.conversation_id,
+                    finished_correlation_id=credit.x_correlation_id,
+                )
+            return
+
+        next_meta = self.conversation_source.get_next_turn_metadata(credit)
+        turn = TurnToSend.from_previous_credit(credit, next_meta)
+        turn = _struct_replace(turn, max_tokens_override=_WARMUP_MAX_TOKENS)
+        if turn.agent_depth > 0:
+            await self._issue_child_continuation_or_drain(turn)
+        else:
+            await self.credit_issuer.issue_credit(turn)
+
+    async def finalize_phase(self) -> None:
+        """Persist the drained accelerated-warmup DAG for profiling."""
+        if not self._accelerated_warmup_started:
+            return
+        states_by_lane = self._build_handoff_states()
+        self.conversation_source.trajectories = self._build_handoff_trajectories(
+            states_by_lane
+        )
+        self.info(
+            "WARMUP cache pressure handoff: persisted "
+            f"{sum(len(states) for states in states_by_lane.values())} live streams"
+        )
+
+    def _build_handoff_states(self) -> dict[int, list[ConversationState]]:
+        """Convert drained credits and join annotations into lane states."""
+        blocked: dict[str, int] = {}
+        child_annotations: dict[str, tuple[str | None, int | None]] = {}
+        if self.branch_orchestrator is not None:
+            blocked, child_annotations = self.branch_orchestrator.snapshot_annotations()
+
+        states_by_lane: dict[int, list[ConversationState]] = {
+            lane: [] for lane in range(len(self.conversation_source.trajectories))
+        }
+        for credit in self._handoff_credits.values():
+            lane = self._root_to_lane.get(credit.effective_root_correlation_id)
+            if lane is None or credit.turn_index + 1 >= credit.num_turns:
+                continue
+            branch_id, join_target = child_annotations.get(
+                credit.x_correlation_id, (None, None)
+            )
+            states_by_lane[lane].append(
+                ConversationState(
+                    conversation_id=credit.conversation_id,
+                    x_correlation_id=credit.x_correlation_id,
+                    next_turn_index=credit.turn_index + 1,
+                    agent_depth=credit.agent_depth,
+                    parent_correlation_id=credit.parent_correlation_id,
+                    root_correlation_id=credit.root_correlation_id,
+                    waiting_on_children=credit.x_correlation_id in blocked,
+                    join_target_turn_index=(
+                        blocked.get(credit.x_correlation_id, join_target)
+                    ),
+                    branch_id=branch_id,
+                    branch_mode=credit.branch_mode,
+                )
+            )
+        return states_by_lane
+
+    def _build_handoff_trajectories(
+        self, states_by_lane: dict[int, list[ConversationState]]
+    ) -> list[Trajectory]:
+        """Build the shared trajectory list consumed by profiling."""
+        rebuilt: list[Trajectory] = []
+        for lane, previous in enumerate(self.conversation_source.trajectories):
+            states = states_by_lane[lane]
+            if not states:
+                trace_id = self.conversation_source.next_recycle_conversation_id()
+                if trace_id is None:
+                    rebuilt.append(previous)
+                    continue
+                correlation_id = str(uuid.uuid4())
+                states = [
+                    ConversationState(
+                        conversation_id=trace_id,
+                        x_correlation_id=correlation_id,
+                        next_turn_index=0,
+                    )
+                ]
+            root_state = next(
+                (state for state in states if state.agent_depth == 0), None
+            )
+            root_trace_id = (
+                root_state.conversation_id
+                if root_state is not None
+                else previous.conversation_id
+            )
+            rebuilt.append(
+                Trajectory(
+                    conversation_id=root_trace_id,
+                    start_turn_index=(
+                        root_state.next_turn_index if root_state is not None else 0
+                    ),
+                    snapshot=TrajectorySnapshot(
+                        t_star_ms=0.0,
+                        states=tuple(
+                            sorted(
+                                states,
+                                key=lambda state: (
+                                    state.agent_depth,
+                                    state.x_correlation_id,
+                                ),
+                            )
+                        ),
+                    ),
+                    x_correlation_id=(
+                        root_state.x_correlation_id
+                        if root_state is not None
+                        else previous.x_correlation_id
+                    ),
+                )
+            )
+        return rebuilt
 
     async def _execute_profiling(self) -> None:
         """Resume each trajectory at ``k_i + 1`` to seed the steady state.
@@ -608,6 +888,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         second time the parent re-runs.
         """
         if self.config.phase == CreditPhase.WARMUP:
+            await self._handle_warmup_return(credit)
             return
 
         terminal_overflow = (
@@ -661,6 +942,20 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             credit.conversation_id,
             finished_correlation_id=credit.x_correlation_id,
         )
+
+    async def _handle_warmup_return(self, credit: Credit) -> None:
+        """Advance baseline warmup into the optional cache-pressure stage."""
+        if self._cache_warmup_duration is None:
+            return
+        if self._accelerated_warmup_started:
+            await self._handle_accelerated_warmup_return(credit)
+            return
+        self._baseline_warmup_returns[credit.x_correlation_id] = credit
+        if (
+            len(self._baseline_warmup_returns)
+            >= self.conversation_source.warmup_credit_count
+        ):
+            await self._start_accelerated_warmup()
 
     async def _dispatch_next_turn(self, credit: Credit) -> None:
         """Issue the next turn of an in-progress session, honoring delay_ms.
@@ -761,6 +1056,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
 
         self._correlation_to_lane[session.x_correlation_id] = lane
+        self._root_to_lane[session.effective_root_correlation_id] = lane
         self._mint_marker_for_session(
             session.effective_root_correlation_id, next_trace_id, lane
         )

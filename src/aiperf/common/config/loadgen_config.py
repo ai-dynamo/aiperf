@@ -475,6 +475,21 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Additional agentic replay warmup duration in seconds. "
+            "After the normal snapshot warmup drains, AIPerf continues the live "
+            "trajectories without recorded idle delays and with one-token outputs, "
+            "then drains and resumes profiling from the resulting trajectory state.",
+        ),
+        CLIParameter(
+            name=("--agentic-cache-warmup-duration",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     warmup_num_sessions: Annotated[
         int | None,
         Field(
@@ -880,6 +895,7 @@ class LoadGeneratorConfig(BaseConfig):
         # Core warmup parameters
         self.warmup_request_count = None
         self.warmup_duration = None
+        self.agentic_cache_warmup_duration = None
         self.warmup_num_sessions = None
 
         # Warmup load parameters

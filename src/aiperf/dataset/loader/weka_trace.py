@@ -1300,8 +1300,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         split_stats.total_worker_group += n_wg
         split_stats.total_seams += detection.seams_merged
         split_stats.total_empty_hash += detection.unclassified_empty_hash
-        _logger.info(
-            f"Trace {trace_id}: detected {1 + len(detection.worker_indices)} "
+        _logger.debug(
+            lambda: f"Trace {trace_id}: detected {1 + len(detection.worker_indices)} "
             f"agents ({detection.seams_merged} seams merged, "
             f"{len(detection.worker_indices)} spawned chains "
             f"[{n_aux} aux sidecars ({n_red} reductions), {n_wg} worker-group], "

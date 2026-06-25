@@ -91,6 +91,7 @@ def _make_strategy(
     scheduler: MagicMock | None = None,
     user_config: object | None = None,
     dataset: DatasetMetadata | None = None,
+    cache_warmup_duration: float | None = None,
 ) -> tuple[AgenticReplayStrategy, AsyncMock, MagicMock, TrajectorySource]:
     src = _build_real_trajectory_source(
         num_traces, turns_per_trace, trajectories, dataset=dataset
@@ -98,6 +99,7 @@ def _make_strategy(
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = len(trajectories)
+    cfg.agentic_cache_warmup_duration_sec = cache_warmup_duration
     issuer = issuer if issuer is not None else AsyncMock()
     scheduler = scheduler if scheduler is not None else MagicMock()
     strategy = AgenticReplayStrategy(
@@ -218,6 +220,79 @@ async def test_warmup_dispatches_one_credit_per_trajectory():
     await strategy.setup_phase()
     await strategy.execute_phase()
     assert issuer.issue_credit.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_starts_after_baseline_and_removes_idle_delay():
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, scheduler, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+    assert baseline.turn_index == 1
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+
+    pressure = issuer.issue_credit.await_args_list[1].args[0]
+    assert pressure.turn_index == 2
+    assert pressure.max_tokens_override == 1
+    assert pressure.is_session_start is False
+    issuer.set_max_tokens_override.assert_called_once_with(1)
+    scheduler.schedule_later.assert_called_once()
+    assert scheduler.schedule_later.call_args.args[0] == 600.0
+
+
+@pytest.mark.asyncio
+async def test_cache_warmup_cutoff_stops_issuer_and_persists_next_turn():
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, _, source = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_duration=10.0,
+    )
+    issuer.mark_sending_complete = MagicMock()
+
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+    returned = _make_credit(
+        conversation_id="trace_0",
+        x_correlation_id=baseline.x_correlation_id,
+        turn_index=2,
+        num_turns=4,
+        phase=CreditPhase.WARMUP,
+    )
+    strategy.observe_credit_return(returned)
+
+    await strategy._finish_accelerated_warmup()
+    await strategy.finalize_phase()
+
+    issuer.mark_sending_complete.assert_called_once_with()
+    snapshot = source.trajectories[0].snapshot
+    assert snapshot is not None
+    assert len(snapshot.states) == 1
+    assert snapshot.states[0].next_turn_index == 3
+    assert snapshot.states[0].x_correlation_id == baseline.x_correlation_id
 
 
 @pytest.mark.asyncio

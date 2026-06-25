@@ -188,6 +188,16 @@ class TestBasicCreditIssuance:
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.max_tokens_override == 1
 
+    async def test_runtime_max_tokens_override_covers_undecorated_turns(
+        self, credit_issuer, mock_router
+    ):
+        credit_issuer.set_max_tokens_override(1)
+
+        await credit_issuer.issue_credit(make_turn())
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.max_tokens_override == 1
+
     async def test_issue_credit_returns_true_when_more_credits_can_be_sent(
         self, credit_issuer, mock_progress
     ):

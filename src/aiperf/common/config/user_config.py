@@ -1213,6 +1213,18 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_agentic_cache_warmup(self) -> Self:
+        """Restrict accelerated cache warmup to agentic replay."""
+        if self.loadgen.agentic_cache_warmup_duration is None:
+            return self
+        if self.timing_mode != TimingMode.AGENTIC_REPLAY:
+            raise ValueError(
+                "--agentic-cache-warmup-duration requires the agentic_replay "
+                "timing mode."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_cache_bust_compatibility(self) -> Self:
         """Refuse cache-bust on incompatible timing modes / endpoint types.
 

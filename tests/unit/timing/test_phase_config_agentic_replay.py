@@ -18,6 +18,7 @@ def _ar_user_config(
     cfg.loadgen.inter_turn_delay_cap_seconds = cap
     cfg.loadgen.warmup_request_count = None
     cfg.loadgen.warmup_duration = None
+    cfg.loadgen.agentic_cache_warmup_duration = None
     cfg.loadgen.warmup_num_sessions = None
     cfg.loadgen.warmup_concurrency = None
     cfg.loadgen.warmup_prefill_concurrency = None
@@ -88,3 +89,14 @@ def test_warmup_config_total_expected_requests_tracks_concurrency() -> None:
         warmup = _build_warmup_config(cfg)
         assert warmup is not None
         assert warmup.total_expected_requests == concurrency
+
+
+def test_cache_warmup_uses_strategy_controlled_stop() -> None:
+    cfg = _ar_user_config(concurrency=10)
+    cfg.loadgen.agentic_cache_warmup_duration = 600.0
+
+    warmup = _build_warmup_config(cfg)
+
+    assert warmup is not None
+    assert warmup.total_expected_requests is None
+    assert warmup.agentic_cache_warmup_duration_sec == 600.0

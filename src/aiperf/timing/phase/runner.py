@@ -114,6 +114,10 @@ class PhaseRunner(TaskManagerMixin):
         self._conversation_source = conversation_source
         self._user_config = user_config
         self._session_tree_registry = session_tree_registry
+        cache_warmup_enabled = isinstance(
+            getattr(config, "agentic_cache_warmup_duration_sec", None),
+            int | float,
+        )
 
         # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
         # Config values may reflect pre-filtered file size, but dataset_metadata
@@ -142,6 +146,7 @@ class PhaseRunner(TaskManagerMixin):
             config.timing_mode == TimingMode.AGENTIC_REPLAY
             and config.phase == CreditPhase.WARMUP
             and isinstance(conversation_source, TrajectorySource)
+            and not cache_warmup_enabled
         ):
             trajectory_count = conversation_source.warmup_credit_count
             if (
@@ -177,6 +182,9 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             url_selection_strategy=url_selection_strategy,
             session_tree_registry=self._session_tree_registry,
+            session_tree_registry_enabled=(
+                self._config.phase == CreditPhase.PROFILING or cache_warmup_enabled
+            ),
         )
         self._branch_orchestrator = BranchOrchestrator(
             conversation_source=self._conversation_source,
@@ -196,6 +204,7 @@ class PhaseRunner(TaskManagerMixin):
             cache_bust_ledger=getattr(
                 self._conversation_source, "cache_bust_ledger", None
             ),
+            allow_accelerated_warmup=(cache_warmup_enabled),
         )
         self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
 
@@ -389,16 +398,19 @@ class PhaseRunner(TaskManagerMixin):
             #     Progress task continues in background until phase complete
             if self._config.seamless and not is_final_phase:
                 self._return_wait_task = self.execute_async(
-                    self._wait_for_returning_complete()
+                    self._wait_for_returning_complete(strategy)
                 )
                 self._return_wait_task.add_done_callback(self._on_return_wait_complete)
             else:
-                await self._wait_for_returning_complete()
+                await self._wait_for_returning_complete(strategy)
                 self._progress_task.cancel()
 
             for ramper in self._rampers:
                 ramper.stop()
             self._scheduler.cancel_all()
+            finalize_phase = getattr(strategy, "finalize_phase", None)
+            if finalize_phase is not None:
+                await finalize_phase()
             self._branch_orchestrator.cleanup()
             self._release_tree_slots()
 
@@ -626,7 +638,9 @@ class PhaseRunner(TaskManagerMixin):
             await self._phase_publisher.publish_progress(stats)
             await self._phase_publisher.publish_phase_sending_complete(stats)
 
-    async def _wait_for_returning_complete(self) -> None:
+    async def _wait_for_returning_complete(
+        self, strategy: TimingStrategyProtocol
+    ) -> None:
         """Wait for all credits to return (with grace period).
 
         Multi-stage process on timeout:
@@ -644,12 +658,36 @@ class PhaseRunner(TaskManagerMixin):
             # return True the moment the last root returns even while
             # children are still in flight. Consult the orchestrator to
             # avoid declaring the phase complete mid-DAG.
-            if (
-                self._progress.check_all_returned_or_cancelled()
-                and not self._branch_orchestrator.has_pending_branch_work()
+            allows_pending_branch_handoff = (
+                getattr(
+                    strategy,
+                    "allows_pending_branch_handoff_after_sending_complete",
+                    False,
+                )
+                is True
+                and self._lifecycle.is_sending_complete
+            )
+            all_wire_requests_returned = (
+                self._progress.in_flight == 0
+                if allows_pending_branch_handoff
+                else self._progress.check_all_returned_or_cancelled()
+            )
+            if all_wire_requests_returned and (
+                allows_pending_branch_handoff
+                or not self._branch_orchestrator.has_pending_branch_work()
             ):
                 self.info(
                     "All credits already returned. Setting all_credits_returned_event."
+                )
+                self._progress.all_credits_returned_event.set()
+                return
+
+            if allows_pending_branch_handoff:
+                while self._progress.in_flight > 0:
+                    await asyncio.sleep(0.1)
+                self.info(
+                    "All accelerated-warmup wire requests returned; "
+                    "preserving paused DAG work for profiling handoff."
                 )
                 self._progress.all_credits_returned_event.set()
                 return

@@ -237,6 +237,7 @@ class BranchOrchestrator:
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
         session_tree_registry=None,
         cache_bust_ledger=None,
+        allow_accelerated_warmup: bool = False,
     ) -> None:
         self._cs = conversation_source
         self._issuer = credit_issuer
@@ -255,6 +256,9 @@ class BranchOrchestrator:
         # the slot happens in the credit issuer; the orchestrator only adjusts
         # the per-tree outstanding count.
         self._session_tree_registry = session_tree_registry
+        self._allow_accelerated_warmup = allow_accelerated_warmup
+        self._accelerated_warmup_started = False
+        self._handoff_snapshot_taken = False
         # child x_correlation_id -> its tree's root_correlation_id, so the
         # terminal-completion / rollback paths can decrement the right tree.
         self._child_root: dict[str, str] = {}
@@ -318,6 +322,31 @@ class BranchOrchestrator:
         # ``(branch_id, gated_turn_idx)`` tuple must not appear twice — that
         # would mean two identical prereq entries were authored.
         self._build_prereq_index()
+
+    def start_accelerated_warmup(self) -> None:
+        """Enable normal DAG interception during accelerated warmup replay."""
+        if self._allow_accelerated_warmup:
+            self._accelerated_warmup_started = True
+
+    def snapshot_annotations(
+        self,
+    ) -> tuple[dict[str, int], dict[str, tuple[str | None, int | None]]]:
+        """Return blocked-parent and child-join metadata for phase handoff."""
+        self._handoff_snapshot_taken = True
+        blocked = {
+            correlation_id: pending.gated_turn_index
+            for correlation_id, pending in self._active_joins.items()
+            if pending.gated_turn_index is not None
+        }
+        children: dict[str, tuple[str | None, int | None]] = {}
+        for correlation_id, entries in self._child_to_join.items():
+            entry = next((item for item in entries if item.prereq_key), None)
+            if entry is None:
+                children[correlation_id] = (None, None)
+                continue
+            branch_id = entry.prereq_key.split(":", 1)[1]
+            children[correlation_id] = (branch_id, entry.gated_turn_index)
+        return blocked, children
 
     def _build_prereq_index(self) -> None:
         dataset_meta = getattr(self._cs, "dataset_metadata", None)
@@ -664,7 +693,7 @@ class BranchOrchestrator:
         # child continuation turns. Spawning here leaks _descendant_counts
         # (children never reach is_final_turn) and wedges
         # all_credits_returned_event. DAG dispatch runs in PROFILING.
-        if credit.phase == CreditPhase.WARMUP:
+        if credit.phase == CreditPhase.WARMUP and not self._accelerated_warmup_started:
             return False
 
         # Child path: handled by the callback handler directly (child leaf /
@@ -844,6 +873,8 @@ class BranchOrchestrator:
         immediate_children: list = []
         for child in all_children:
             offset_ms = dispatch_offset_by_corr.get(child.x_correlation_id, 0.0)
+            if self._accelerated_warmup_started:
+                offset_ms = 0.0
             if offset_ms > 0.0:
                 self._start_delayed_first_turn(child, offset_ms, parent_corr)
             else:
@@ -1457,7 +1488,9 @@ class BranchOrchestrator:
             s.children_delayed,
         )
         leaked = self._iter_pending_joins()
-        if leaked or self._child_to_join or self._descendant_counts:
+        if not self._handoff_snapshot_taken and (
+            leaked or self._child_to_join or self._descendant_counts
+        ):
             logger.warning(
                 "BranchOrchestrator leaked state at cleanup: "
                 "%d active_joins, %d future_joins, %d tracked children, "

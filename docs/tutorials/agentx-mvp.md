@@ -254,6 +254,18 @@ defaults to no limit, so a warmup that is merely slow runs to completion. If
 the warmup is taking longer than you expect, that's a signal worth
 investigating in the server logs.
 
+#### Optional cache-pressure warmup
+
+Set `--agentic-cache-warmup-duration SECONDS` to add a sustained cache-pressure
+stage after the snapshot warmup. AIPerf continues the same live trajectory
+trees for that duration with recorded idle delays removed and every request
+limited to one output token. When the duration expires, it stops issuing new
+requests, drains requests already on the wire, snapshots each live root,
+subagent, and unresolved join, and starts profiling from that exact state.
+
+These requests remain part of `warmup`, so they are excluded from exported
+request metrics. The option is disabled by default.
+
 ### Profiling Phase: Replay, Recycle, Idle-Gap Compression
 
 After warmup, the profiling phase opens. Now you're measuring. Each trajectory

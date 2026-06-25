@@ -314,6 +314,35 @@ class TestNextTurnDispatch:
         mock_strategy.handle_credit_return.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_warmup_open_tree_uses_registry_terminal_path(
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+):
+    """Accelerated warmup roots drain through SessionTreeRegistry."""
+    registry = MagicMock()
+    registry.has_tree.return_value = True
+    handler = CreditCallbackHandler(mock_concurrency, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.WARMUP,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+    credit = make_credit(phase=CreditPhase.WARMUP)
+
+    await handler.on_credit_return("worker-1", make_credit_return(credit))
+
+    registry.on_root_terminal.assert_called_once_with(
+        credit.effective_root_correlation_id
+    )
+    mock_concurrency.release_session_slot.assert_not_called()
+
+
 # =============================================================================
 # Test: Credit Return - Unregistered/Complete Phase
 # =============================================================================
@@ -794,6 +823,40 @@ class TestDagCallbackGuards:
         await registered_dag_handler.on_credit_return("worker-1", credit_return)
 
         assert mock_progress.all_credits_returned_event.is_set()
+
+    async def test_cache_warmup_handoff_allows_paused_dag_work(
+        self,
+        dag_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        mock_strategy,
+        mock_orchestrator,
+    ):
+        mock_progress.increment_returned = MagicMock(return_value=True)
+        mock_progress.check_all_returned_or_cancelled = MagicMock(return_value=True)
+        mock_progress.in_flight = 0
+        mock_lifecycle.is_sending_complete = True
+        mock_strategy.allows_pending_branch_handoff_after_sending_complete = True
+        mock_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+        mock_orchestrator.intercept = AsyncMock(return_value=True)
+        dag_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=mock_strategy,
+        )
+
+        credit = make_credit(
+            phase=CreditPhase.WARMUP,
+            turn_index=0,
+            num_turns=2,
+        )
+        await dag_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+        assert mock_progress.all_credits_returned_event.is_set()
+        mock_orchestrator.has_pending_branch_work.assert_called_once_with()
 
     async def test_child_leaf_reached_called_on_child_final_turn(
         self, registered_dag_handler, mock_orchestrator

@@ -213,6 +213,12 @@ class CreditPhaseConfig(AIPerfBaseModel):
         ge=0,
         description="The fixed schedule end offset of the timing manager.",
     )
+    agentic_cache_warmup_duration_sec: float | None = Field(
+        default=None,
+        gt=0,
+        description="Duration of the accelerated cache-pressure substage for "
+        "agentic replay warmup.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -237,10 +243,13 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
     # fire after the warmup burst completes; if pool_size < concurrency the
     # strategy emits `mark_sending_complete()` itself in `_execute_warmup`.
     if user_config.timing_mode == TimingMode.AGENTIC_REPLAY:
+        cache_warmup_duration = loadgen.agentic_cache_warmup_duration
         return CreditPhaseConfig(
             phase=CreditPhase.WARMUP,
             timing_mode=TimingMode.AGENTIC_REPLAY,
-            total_expected_requests=loadgen.concurrency,
+            total_expected_requests=(
+                None if cache_warmup_duration is not None else loadgen.concurrency
+            ),
             expected_duration_sec=None,
             expected_num_sessions=None,
             concurrency=loadgen.concurrency,
@@ -252,6 +261,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
             grace_period_sec=loadgen.warmup_grace_period
             if loadgen.warmup_grace_period is not None
             else float("inf"),
+            agentic_cache_warmup_duration_sec=cache_warmup_duration,
         )
 
     if not (

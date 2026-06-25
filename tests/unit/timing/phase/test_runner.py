@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -759,6 +759,64 @@ class TestPhaseTypes:
 
 
 class TestEdgeCases:
+    async def test_cache_warmup_handoff_ignores_paused_dag_work(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        r._branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+        r._progress.freeze_sent_counts()
+
+        await r._wait_for_returning_complete(strategy)
+
+        assert r._progress.all_credits_returned_event.is_set()
+        assert r._lifecycle.is_complete
+        r._branch_orchestrator.has_pending_branch_work.assert_not_called()
+
+    async def test_cache_warmup_handoff_polls_until_wire_drain(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+        r._progress.freeze_sent_counts()
+
+        with (
+            patch.object(
+                type(r._progress),
+                "in_flight",
+                new_callable=PropertyMock,
+                side_effect=[1, 1, 0],
+            ),
+            patch("aiperf.timing.phase.runner.asyncio.sleep", new=AsyncMock()) as sleep,
+        ):
+            await r._wait_for_returning_complete(strategy)
+
+        sleep.assert_awaited_once_with(0.1)
+        assert r._progress.all_credits_returned_event.is_set()
+        assert r._lifecycle.is_complete
+
     async def test_already_complete_returns_immediately(
         self,
         conv_src: MagicMock,

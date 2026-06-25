@@ -131,12 +131,15 @@ class CreditCallbackHandler:
     def _tree_registry_engaged(self, credit: Credit) -> bool:
         """True when per-tree session-slot accounting owns this credit's slot.
 
-        Scoped to PROFILING (WARMUP keeps the legacy in-flight teardown release;
-        warmup credits spawn no descendants). None elsewhere -> legacy path.
+        Ownership is determined by whether the registry has an open tree for
+        this credit, not by phase name. Accelerated agentic warmup opens trees
+        during WARMUP, while ordinary one-shot warmup does not.
         """
         return (
             self._session_tree_registry is not None
-            and credit.phase == CreditPhase.PROFILING
+            and self._session_tree_registry.has_tree(
+                credit.effective_root_correlation_id
+            )
         )
 
     def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
@@ -287,7 +290,9 @@ class CreditCallbackHandler:
             # reset the flag so a later warmup return retries, and the runner's
             # teardown backstop can still surface the failure.
             self._warmup_abort_triggered = False
-            _logger.warning(lambda exc=exc: f"Failed to broadcast warmup abort: {exc!r}")
+            _logger.warning(
+                lambda exc=exc: f"Failed to broadcast warmup abort: {exc!r}"
+            )
 
     async def on_credit_return(
         self, worker_id: str, credit_return: CreditReturn
@@ -399,6 +404,10 @@ class CreditCallbackHandler:
                     f"{credit.x_correlation_id}: {exc}"
                 )
 
+        observe_credit_return = getattr(handler.strategy, "observe_credit_return", None)
+        if observe_credit_return is not None:
+            observe_credit_return(credit)
+
         # 5. Dispatch next turn / DAG spawn.
         #
         # The orchestrator intercept runs FIRST and unconditionally (not gated
@@ -415,6 +424,7 @@ class CreditCallbackHandler:
         if self._branch_orchestrator is not None:
             intercepted = await self._branch_orchestrator.intercept(credit)
             if intercepted:
+                self._signal_all_credits_returned_if_ready(handler)
                 return
 
         # Per-tree slot release: a root's final-turn return marks its tree's
@@ -448,7 +458,11 @@ class CreditCallbackHandler:
         # observer hooks still need to fire).
         is_child = credit.agent_depth > 0
         if not is_child:
-            if handler.stop_checker.can_send_any_turn():
+            wants_stopped_returns = (
+                getattr(handler.strategy, "wants_returns_after_sending_complete", False)
+                is True
+            )
+            if handler.stop_checker.can_send_any_turn() or wants_stopped_returns:
                 await handler.strategy.handle_credit_return(
                     credit, error=credit_return.error
                 )
@@ -478,11 +492,34 @@ class CreditCallbackHandler:
         # child's evict-and-drain cascade is what clears
         # ``has_pending_branch_work``, at which point this check on the
         # child's own return path fires the event.
+        self._signal_all_credits_returned_if_ready(handler)
+
+    def _signal_all_credits_returned_if_ready(
+        self, handler: PhaseCallbackContext
+    ) -> None:
+        """Complete a drained phase, preserving paused warmup DAG state."""
+        allows_pending_branch_handoff = (
+            getattr(
+                handler.strategy,
+                "allows_pending_branch_handoff_after_sending_complete",
+                False,
+            )
+            is True
+            and handler.lifecycle.is_sending_complete
+        )
+        all_wire_requests_returned = (
+            handler.progress.in_flight == 0
+            if allows_pending_branch_handoff
+            else handler.progress.check_all_returned_or_cancelled()
+        )
         if (
             self._branch_orchestrator is not None
             and not handler.progress.all_credits_returned_event.is_set()
-            and handler.progress.check_all_returned_or_cancelled()
-            and not self._branch_orchestrator.has_pending_branch_work()
+            and all_wire_requests_returned
+            and (
+                allows_pending_branch_handoff
+                or not self._branch_orchestrator.has_pending_branch_work()
+            )
         ):
             handler.progress.all_credits_returned_event.set()
 
