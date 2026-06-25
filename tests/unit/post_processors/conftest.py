@@ -785,6 +785,7 @@ def create_metric_records_message(
     metadata: MetricRecordMetadata | None = None,
     x_request_id: str | None = None,
     trace_data: Any | None = None,
+    raw_summary: Any | None = None,
     **metadata_kwargs,
 ) -> MetricRecordsMessage:
     """
@@ -797,6 +798,7 @@ def create_metric_records_message(
         metadata: Pre-built metadata, or None to build from kwargs
         x_request_id: Record ID (set as x_request_id in metadata if provided)
         trace_data: HTTP trace data for the request (optional)
+        raw_summary: Compact raw response metadata for profile JSONL export (optional)
         **metadata_kwargs: Args passed to create_metric_metadata if metadata is None
 
     Returns:
@@ -818,6 +820,7 @@ def create_metric_records_message(
         results=results,
         error=error,
         trace_data=trace_data,
+        raw_summary=raw_summary,
     )
 
 

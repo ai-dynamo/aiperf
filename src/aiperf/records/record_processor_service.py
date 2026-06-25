@@ -32,6 +32,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
 from aiperf.records.inference_result_parser import InferenceResultParser
+from aiperf.records.raw_record_summary import build_raw_record_summary
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -186,6 +187,11 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
         )
+        raw_summary = (
+            build_raw_record_summary(parsed_record)
+            if self.run.cfg.artifacts.export_level == ExportLevel.RAW
+            else None
+        )
         raw_results = await self._process_record(parsed_record, metadata)
 
         trace_data, error = self._free_record_data(record, parsed_record)
@@ -205,6 +211,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 metadata=metadata,
                 results=results,
                 trace_data=trace_data,
+                raw_summary=raw_summary,
                 error=error,
             )
         )
@@ -216,7 +223,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         All metrics and post-processors consume these fields during _process_record().
         The only data sent downstream in MetricRecordsMessage is metadata, results,
-        trace_data, and error -- so everything else can be released here.
+        trace_data, raw_summary, and error -- so everything else can be released here.
 
         We assign None to fields typed as non-optional lists (turns, responses) to let
         the GC reclaim the underlying objects. Using .clear() would keep the empty list

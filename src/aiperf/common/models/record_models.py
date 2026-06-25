@@ -1203,6 +1203,11 @@ class MetricRecordInfo(AIPerfBaseModel):
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
     )
+    raw_summary: SerializeAsAny[RawRecordSummary] | None = Field(
+        default=None,
+        description="Compact raw response metadata extracted from response packets when raw export is enabled. "
+        "This includes chunk counts, finish reason, and Dynamo nvext timing fields without full packet payloads.",
+    )
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
@@ -1259,13 +1264,9 @@ class RawRecordSummaryNvext(AIPerfBaseModel):
     )
 
 
-class RawRecordSummaryInfo(AIPerfBaseModel):
-    """Compact per-request summary derived while writing raw records."""
+class RawRecordSummary(AIPerfBaseModel):
+    """Compact raw response metadata extracted from raw response packets."""
 
-    metadata: MetricRecordMetadata = Field(
-        ...,
-        description="The metadata of the record. This should match profile_export.jsonl metadata for joins.",
-    )
     request_id: str | None = Field(
         default=None,
         description="The response-level request or completion ID, if present in the raw response packet.",
@@ -1302,4 +1303,13 @@ class RawRecordSummaryInfo(AIPerfBaseModel):
     nvext: RawRecordSummaryNvext | None = Field(
         default=None,
         description="Compact Dynamo nvext fields extracted from response packets, if present.",
+    )
+
+
+class RawRecordSummaryInfo(RawRecordSummary):
+    """Compact per-request summary derived while writing raw records."""
+
+    metadata: MetricRecordMetadata = Field(
+        ...,
+        description="The metadata of the record. This should match profile_export.jsonl metadata for joins.",
     )

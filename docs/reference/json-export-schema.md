@@ -60,7 +60,9 @@ Note that `request_throughput` (derived) and `request_count` (aggregate) carry o
 
 When `--export-level raw` is enabled, AIPerf writes the full raw request/response dump to `profile_export_raw.jsonl` and also writes a compact per-request sidecar, `profile_export_raw_summary.jsonl`. The sidecar is one JSON object per request and is written from the same raw response packets while the full raw export is produced, so common timing analysis does not need to re-parse the full raw payload dump.
 
-Each row contains:
+The same compact fields are also embedded in each `profile_export.jsonl` row as `raw_summary` when raw export is enabled. In `profile_export.jsonl`, join fields stay in the row's top-level `metadata`; `raw_summary` contains only the compact raw response details. The standalone sidecar includes its own `metadata` because it must be independently joinable.
+
+Each standalone sidecar row contains:
 
 | Field | Type | Notes |
 |---|---|---|

@@ -94,10 +94,20 @@ class TestOutputFormats:
             (record.metadata.session_num, record.metadata.turn_index): record.metadata
             for record in result.jsonl
         }
+        profile_records_by_key = {
+            (record.metadata.session_num, record.metadata.turn_index): record
+            for record in result.jsonl
+        }
         for summary in result.raw_record_summaries:
             key = (summary.metadata.session_num, summary.metadata.turn_index)
             assert summary.metadata.model_dump(mode="json") == (
                 profile_metadata_by_key[key].model_dump(mode="json")
+            )
+            assert profile_records_by_key[key].raw_summary is not None
+            assert profile_records_by_key[key].raw_summary.model_dump(
+                mode="json", exclude_none=True
+            ) == summary.model_dump(
+                mode="json", exclude={"metadata"}, exclude_none=True
             )
 
         # Validate raw record structure and content
