@@ -12,6 +12,11 @@ jobs:
   build:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    # Force CPython UTF-8 mode so file reads default to UTF-8 instead of the
+    # Windows cp1252 code page (no-op on POSIX). Without it, reading a UTF-8
+    # file on Windows raises UnicodeDecodeError on bytes like 0x8f.
+    env:
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -80,8 +85,11 @@ jobs:
     # tests/unit/conftest.py.
     - name: Install dependencies (Windows ARM)
       if: matrix.os == 'windows-arm'
-      env:
-        PYTHONIOENCODING: utf-8
+      # bash (git-bash) runs with -eo pipefail, so a failed install fails the
+      # step. The default Windows shell is PowerShell, which does NOT fail-fast
+      # on a non-final failing command -- a broken install would otherwise be
+      # masked by the trailing artifact-generation commands and report green.
+      shell: bash
       run: |
         uv venv .venv --python ${{ matrix.python-version }}
         uv pip install -e ".[test]"

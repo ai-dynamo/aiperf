@@ -72,6 +72,7 @@ def _soundfile_usable() -> bool:
 _HAS_PYARROW = _is_installed("pyarrow")
 _HAS_DATASETS = _is_installed("datasets")
 _HAS_SOUNDFILE = _soundfile_usable()
+_HAS_TRUSTME = _is_installed("trustme")
 
 # Skip (at collection time) the unit-test modules whose top-level import chains
 # hard-depend on native libraries that have no Windows-on-ARM build. Without
@@ -90,6 +91,9 @@ if not _HAS_DATASETS or not _HAS_SOUNDFILE:
 if not _HAS_SOUNDFILE:
     collect_ignore.append("dataset/generator/test_audio_generator.py")
     collect_ignore.append("dataset/generator/test_video_generator.py")
+if not _HAS_TRUSTME:
+    # trustme (TLS test certs) pulls cryptography, no Windows-on-ARM wheel.
+    collect_ignore.append("transports/test_tcp_connector.py")
 
 # Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
