@@ -11,7 +11,6 @@ from pathlib import Path
 
 import ffmpeg
 import numpy as np
-import soundfile as sf
 from PIL import Image, ImageDraw
 
 from aiperf.common import random_generator as rng
@@ -331,6 +330,10 @@ class VideoGenerator(BaseGenerator):
         audio_data = (signal * max_val).astype(numpy_type)
 
         output_buffer = io.BytesIO()
+        # Lazy import: soundfile's bundled libsndfile has no Windows-on-ARM
+        # build, so importing it at module load breaks WoA even for non-audio runs.
+        import soundfile as sf
+
         sf.write(
             output_buffer,
             audio_data,

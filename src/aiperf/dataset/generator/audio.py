@@ -5,7 +5,6 @@ import base64
 import io
 
 import numpy as np
-import soundfile as sf
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import AudioFormat
@@ -154,6 +153,11 @@ class AudioGenerator(BaseGenerator):
             subtype = "MPEG_LAYER_III"
         elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
+
+        # Lazy import: soundfile's bundled libsndfile has no Windows-on-ARM
+        # build, so importing it at module load breaks WoA even for text-only
+        # runs. Only audio generation actually needs it.
+        import soundfile as sf
 
         sf.write(
             output_buffer,
