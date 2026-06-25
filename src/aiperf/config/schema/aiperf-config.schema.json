@@ -2096,6 +2096,10 @@
           "$ref": "#/$defs/ServerMetricsConfig",
           "description": "Server metrics configuration for Prometheus scraping. Collects operational metrics (queue depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled: false to disable."
         },
+        "networkLatency": {
+          "$ref": "#/$defs/NetworkLatencyConfig",
+          "description": "Network latency calibration configuration. Probes the endpoint RTT during profiling and subtracts the mean from latency metrics, emitted as separate network_adjusted_* metrics. Disabled by default."
+        },
         "otel": {
           "$ref": "#/$defs/OTelConfig"
         },
@@ -8183,6 +8187,69 @@
         "peaks"
       ],
       "title": "MultimodalDistribution",
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
+    },
+    "NetworkLatencyConfig": {
+      "additionalProperties": false,
+      "description": "Network latency calibration configuration.\n\nWhen ``enabled``, AIPerf opens a fresh TCP connection to the endpoint\nhost:port on an interval during profiling and records the handshake RTT.\nThe mean RTT is subtracted from the request-start-anchored latency metrics\n(request_latency, time_to_first_token, time_to_first_output_token) to produce\nnon-destructive ``network_adjusted_*``\nvariants. ``mean_ms`` supplies a fixed mean RTT and skips active probing.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Enable network latency calibration. When true, AIPerf measures the endpoint RTT (or uses mean_ms) and subtracts it from latency metrics, emitted as separate network_adjusted_* metrics.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "pingInterval": {
+          "description": "Seconds between TCP-handshake RTT probes during profiling. Ignored when mean_ms is set.",
+          "title": "Pinginterval",
+          "oneOf": [
+            {
+              "description": "Seconds between TCP-handshake RTT probes during profiling. Ignored when mean_ms is set.",
+              "exclusiveMinimum": 0.0,
+              "title": "Pinginterval",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "meanMs": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Fixed mean network RTT in milliseconds to subtract, bypassing active probing. When set, no probes are sent and this value is used directly.",
+          "title": "Meanms",
+          "x-jinja2-supported": true
+        }
+      },
+      "title": "NetworkLatencyConfig",
       "type": "object",
       "x-kubernetes-preserve-unknown-fields": true
     },
