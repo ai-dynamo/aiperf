@@ -190,7 +190,7 @@ The `CreditIssuer` is timing-mode agnostic; the strategy in `src/aiperf/timing/s
 - **Fixed schedule** (`fixed_schedule.py`): replay trace timestamps from dataset metadata.
 - **Request-rate** (`request_rate.py`): issue at a target rate with constant / Poisson / gamma / concurrency-burst arrival patterns.
 - **User-centric rate** (`user_centric_rate.py`): each session is an independent user; turn gaps come from the trace.
-- **Agentic replay** (`agentic_replay.py`): scenario-driven DAG replay where children are dispatched on parent completion via the `BranchOrchestrator`.
+- **Agentic replay** (`agentic_replay.py`): scenario-driven DAG replay. Weka loaders persist interval-order predecessor frontiers derived from `[t, t + api_time]`; `ReplayBarrierCoordinator` enforces their fan-out/join barriers, while `BranchOrchestrator` starts branches from the parent send when their recorded intervals overlap and otherwise uses the normal completion path.
 
 #### Relationship to `--request-count`, `--num-conversations`, Concurrency
 

@@ -75,6 +75,11 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v21: Weka traces carry explicit api_time interval-frontier metadata in
+    # DatasetMetadata (replay_scope_id + per-turn replay_predecessors). Cached
+    # manifests produced before v21 deserialize with empty defaults, silently
+    # disabling fan-out/join barriers even though dataset.dat remains usable.
+    # Rebuild so the manifest sidecar contains the inferred dependency graph.
     # v20: DAG datasets (any FORK/SPAWN branch) are no longer preformatted into
     # the PAYLOAD_BYTES mmap fast path -- they are delta-compressed and
     # accumulate context across the tree (FORK children seed from the parent's
@@ -137,7 +142,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    20
+    21
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

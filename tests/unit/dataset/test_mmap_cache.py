@@ -345,6 +345,19 @@ class TestLookupAndPopulate:
         manifest_path.write_bytes(orjson.dumps(raw))
         assert mmap_cache.lookup("oldver", compressed=False) is None
 
+    def test_lookup_rejects_pre_overlap_frontier_manifest(self, tmp_path: Path) -> None:
+        cache_root = mmap_cache.cache_dir()
+        _populate_entry(cache_root, cache_key="pre-overlap-frontier")
+        manifest_path = (
+            cache_root / "pre-overlap-frontier" / mmap_cache.MANIFEST_FILENAME
+        )
+        raw = orjson.loads(manifest_path.read_bytes())
+        raw["version"] = 20
+        manifest_path.write_bytes(orjson.dumps(raw))
+
+        assert mmap_cache.MANIFEST_VERSION == 21
+        assert mmap_cache.lookup("pre-overlap-frontier", compressed=False) is None
+
     def test_lookup_compressed_mismatch_returns_none(self, tmp_path: Path) -> None:
         cache_root = mmap_cache.cache_dir()
         _populate_entry(cache_root, cache_key="uncomp", compressed=False)

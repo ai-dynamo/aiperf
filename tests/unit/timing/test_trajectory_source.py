@@ -189,6 +189,10 @@ def test_timestamped_snapshot_includes_inflight_subagent_and_gated_parent():
     by_cid = {state.conversation_id: state for state in trajectory.snapshot.states}
     parent = by_cid["trace"]
     child = by_cid["trace::sa:agent_0"]
+    resume_boundaries = {
+        boundary.conversation_id: boundary.next_turn_index
+        for boundary in trajectory.snapshot.replay_resume_boundaries
+    }
 
     assert parent.waiting_on_children is True
     assert parent.next_turn_index == 2
@@ -197,6 +201,7 @@ def test_timestamped_snapshot_includes_inflight_subagent_and_gated_parent():
     assert child.branch_id == branch_id
     assert child.branch_mode == ConversationBranchMode.SPAWN
     assert child.next_dispatch_offset_ms == pytest.approx(500.0)
+    assert resume_boundaries == {"trace": 2, "trace::sa:agent_0": 1}
     # Both active-at-t* sessions are warmed: the mid-flight child (turn 0) and
     # the gated parent (turn 1, priming its join turn). Gated parents are no
     # longer excluded from warmup.
@@ -284,11 +289,16 @@ def test_timestamped_snapshot_after_spawning_turn_schedules_future_child_start()
     by_cid = {state.conversation_id: state for state in trajectory.snapshot.states}
     parent = by_cid["trace"]
     child = by_cid["trace::sa:agent_0"]
+    resume_boundaries = {
+        boundary.conversation_id: boundary.next_turn_index
+        for boundary in trajectory.snapshot.replay_resume_boundaries
+    }
 
     assert parent.waiting_on_children is True
     assert parent.next_turn_index == 2
     assert child.next_turn_index == 0
     assert child.next_dispatch_offset_ms == pytest.approx(500.0)
+    assert resume_boundaries == {"trace": 2}
 
 
 def test_next_recycle_conversation_id_uses_sampler_round_robin():

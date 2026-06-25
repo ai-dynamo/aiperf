@@ -22,6 +22,7 @@ from msgspec.structs import replace as _struct_replace
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.timing.replay_dependencies import ReplayIssueGate
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
+    from aiperf.timing.replay_dependencies import ReplayBarrierCoordinator
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
     from aiperf.timing.session_tree import SessionTreeRegistry
 
@@ -71,6 +73,7 @@ class CreditIssuer:
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
         session_tree_registry: SessionTreeRegistry | None = None,
         session_tree_registry_enabled: bool | None = None,
+        replay_barrier: ReplayBarrierCoordinator | None = None,
     ) -> None:
         """Initialize credit issuer.
 
@@ -108,6 +111,7 @@ class CreditIssuer:
             else None
         )
         self._issuing_stopped = False
+        self.replay_gate = ReplayIssueGate(replay_barrier)
         self._max_tokens_override: int | None = None
 
     def set_max_tokens_override(self, max_tokens: int | None) -> None:
@@ -222,6 +226,11 @@ class CreditIssuer:
             5. Create and send Credit
             6. If final credit: freeze counts + set event
         """
+        gate = getattr(self, "replay_gate", ReplayIssueGate(None))
+        return await gate.submit(turn, lambda: self._issue_credit_ready(turn))
+
+    async def _issue_credit_ready(self, turn: TurnToSend) -> bool:
+        """Issue a turn whose recorded predecessor frontier is complete."""
         if self._issuing_stopped:
             return False
 
@@ -327,11 +336,7 @@ class CreditIssuer:
         return await self._issue_credit_internal(turn)
 
     async def _issue_credit_internal(self, turn: TurnToSend) -> bool:
-        """Issue credit after slots are acquired. Mark as final if this was the final credit.
-
-        Returns:
-            True if more credits can be sent, False if this was the final credit.
-        """
+        """Issue credit after slots are acquired and mark the final credit."""
         if self._max_tokens_override is not None:
             turn = _struct_replace(turn, max_tokens_override=self._max_tokens_override)
         credit_index, is_final_credit = self._progress.increment_sent(turn)
@@ -376,6 +381,9 @@ class CreditIssuer:
         )
 
         await self._credit_router.send_credit(credit=credit)
+        replay_gate = getattr(self, "replay_gate", None)
+        if replay_gate is not None:
+            await replay_gate.observe_issued(credit)
         if is_final_credit:
             self._progress.freeze_sent_counts()
             self._progress.all_credits_sent_event.set()
@@ -414,6 +422,15 @@ class CreditIssuer:
         attempt would send the first sibling and permanently truncate every
         other sibling spawned in the same gather.
         """
+        gate = getattr(self, "replay_gate", ReplayIssueGate(None))
+        return await gate.submit(
+            turn,
+            lambda: self._dispatch_child_turn_ready(turn),
+            child_refusal_cleanup=True,
+        )
+
+    async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> bool:
+        """Dispatch a child after its recorded predecessor frontier completes."""
         if self._issuing_stopped:
             return False
         can_proceed_fn = self._stop_checker.can_send_child_turn
@@ -474,5 +491,8 @@ class CreditIssuer:
             cache_bust_marker=pending.parent_cache_bust_marker,
             cache_bust_target=pending.parent_cache_bust_target,
         )
-        result = await self.try_issue_credit(turn)
-        return result is True
+        replay_gate = getattr(self, "replay_gate", None)
+        if replay_gate is None or not replay_gate.enabled:
+            result = await self.try_issue_credit(turn)
+            return result is True
+        return await self.issue_credit(turn)

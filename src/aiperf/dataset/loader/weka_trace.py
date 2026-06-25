@@ -25,7 +25,7 @@ from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import ConversationContextMode, TurnInputKind
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
-from aiperf.common.models import Conversation
+from aiperf.common.models import Conversation, ReplayTurnReference
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_loader import BaseFileLoader
@@ -42,6 +42,56 @@ _logger = AIPerfLogger(__name__)
 
 _NormalRequestT = WekaNormalRequest | WekaStreamingRequest
 _JOIN_EPSILON_SECONDS = 1e-6
+
+
+def _replay_scope_for_session(session_id: str, parent_trace_id: str) -> str:
+    """Keep each captured agent/subagent's interval graph independent."""
+    marker = "::sa:"
+    if marker not in session_id:
+        return parent_trace_id
+    trace_id, suffix = session_id.split(marker, 1)
+    agent_id = suffix
+    for worker_marker in (":aux:red:", ":aux:", ":fa:", ":wg:"):
+        if worker_marker in agent_id:
+            agent_id = agent_id.rsplit(worker_marker, 1)[0]
+    return f"{trace_id}{marker}{agent_id}"
+
+
+def _install_replay_dependencies(conversations: list[Conversation]) -> None:
+    """Persist cross-stream interval frontiers on reconstructed Weka turns."""
+    from aiperf.timing.replay_dependencies import (
+        RecordedTurnInterval,
+        ReplayTurnKey,
+        infer_cross_stream_predecessors,
+    )
+
+    by_scope: dict[str, list[RecordedTurnInterval]] = defaultdict(list)
+    turns_by_key = {}
+    for conversation in conversations:
+        scope_id = conversation.replay_scope_id
+        if scope_id is None:
+            continue
+        for turn_index, turn in enumerate(conversation.turns):
+            key = ReplayTurnKey(conversation.session_id, turn_index)
+            turns_by_key[key] = turn
+            by_scope[scope_id].append(
+                RecordedTurnInterval(
+                    key=key,
+                    stream_id=conversation.session_id,
+                    start_ms=turn.timestamp,
+                    api_time_ms=turn.api_time_ms,
+                )
+            )
+
+    for intervals in by_scope.values():
+        for key, predecessors in infer_cross_stream_predecessors(intervals).items():
+            turns_by_key[key].replay_predecessors = [
+                ReplayTurnReference(
+                    conversation_id=predecessor.conversation_id,
+                    turn_index=predecessor.turn_index,
+                )
+                for predecessor in predecessors
+            ]
 
 
 def _subagent_request_absolute_t(
@@ -1595,6 +1645,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             # that share the same PromptGenerator.
             self.prompt_generator._cache.clear()
 
+        _install_replay_dependencies(conversations)
+
         from aiperf.common.models import DatasetMetadata
         from aiperf.common.validators.orchestrator_v1 import (
             validate_for_orchestrator_v1,
@@ -1689,6 +1741,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             conv = Conversation(
                 session_id=plan.trace_id,
                 context_mode=self._resolved_context_mode(),
+                replay_scope_id=plan.trace_id,
             )
             recon = ConversationReconstructor(
                 block_size=plan.block_size,
@@ -2036,6 +2089,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 is_root=False,
                 agent_depth=1,
                 parent_conversation_id=cp.parent_trace_id,
+                replay_scope_id=_replay_scope_for_session(
+                    cp.session_id, cp.parent_trace_id
+                ),
             )
             child_metric_values = metric_values_by_trace[cp.parent_trace_id]
             for k, creq in enumerate(cp.requests):
@@ -2138,6 +2194,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             is_root=False,
             agent_depth=1,
             parent_conversation_id=fp.parent_trace_id,
+            replay_scope_id=fp.parent_trace_id,
         )
         from aiperf.common.models import Turn
 
@@ -2625,6 +2682,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             parent_conv = Conversation(
                 session_id=trace_id,
                 context_mode=self._resolved_context_mode(),
+                replay_scope_id=trace_id,
             )
             for t_dict in result["parent_turns"]:
                 parent_conv.turns.append(
@@ -2677,6 +2735,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     agent_depth=child["agent_depth"],
                     parent_conversation_id=child.get(
                         "parent_conversation_id", result["trace_id"]
+                    ),
+                    replay_scope_id=_replay_scope_for_session(
+                        child["session_id"], result["trace_id"]
                     ),
                 )
                 for t_dict in child["turns"]:

@@ -1,0 +1,14 @@
+{
+  "id": "abc_join_d",
+  "models": ["m"],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "tool_tokens": 0,
+  "system_tokens": 0,
+  "requests": [
+    {"t": 0.0, "type": "n", "model": "m", "in": 64, "out": 1, "hash_ids": [1], "api_time": 5.0},
+    {"t": 0.1, "type": "n", "model": "m", "in": 64, "out": 1, "hash_ids": [2], "api_time": 5.0},
+    {"t": 0.2, "type": "n", "model": "m", "in": 64, "out": 1, "hash_ids": [3], "api_time": 5.0},
+    {"t": 6.0, "type": "n", "model": "m", "in": 128, "out": 1, "hash_ids": [1, 4], "api_time": 1.0}
+  ]
+}

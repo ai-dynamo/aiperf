@@ -64,6 +64,7 @@ from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.conversation_source import SampledSession
+from aiperf.timing.replay_dependencies import ReplayResumeBoundary
 from aiperf.timing.trajectory_source import (
     ConversationState,
     Trajectory,
@@ -274,10 +275,53 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         root is present, or the shared parent of the background subagents when
         rootless). Falls back to a state's x_correlation_id for snapshots built
         without the field (older fixtures)."""
-        return next(
-            (s.root_correlation_id or s.x_correlation_id for s in snapshot.states),
-            None,
+        return (
+            next(
+                (
+                    state.root_correlation_id
+                    for state in snapshot.states
+                    if state.root_correlation_id is not None
+                ),
+                None,
+            )
+            or next(
+                (
+                    state.x_correlation_id
+                    for state in snapshot.states
+                    if state.agent_depth == 0
+                ),
+                None,
+            )
+            or next(
+                (
+                    state.parent_correlation_id
+                    for state in snapshot.states
+                    if state.parent_correlation_id is not None
+                ),
+                None,
+            )
+            or next(
+                (state.x_correlation_id for state in snapshot.states),
+                None,
+            )
         )
+
+    def _seed_trajectory_replay_prefix(self, trajectory: Trajectory) -> None:
+        """Seed the exact completed history before a resumed phase dispatches."""
+        if trajectory.snapshot is None:
+            root_correlation_id = trajectory.x_correlation_id
+            boundaries = (
+                ReplayResumeBoundary(
+                    trajectory.conversation_id, trajectory.start_turn_index + 1
+                ),
+            )
+        else:
+            root_correlation_id = self._lane_root_corr(trajectory.snapshot)
+            boundaries = trajectory.snapshot.replay_resume_boundaries
+        if root_correlation_id is not None:
+            self.credit_issuer.replay_gate.seed_completed_prefixes(
+                root_correlation_id, boundaries
+            )
 
     def _on_tree_drained(self, root_corr: str, phase: CreditPhase) -> None:
         """Registry drain callback: a session tree fully drained and freed its
@@ -290,6 +334,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         already released by the registry, so the recycled root's acquire keeps
         occupancy at exactly the configured concurrency.
         """
+        self.credit_issuer.replay_gate.close_root(root_corr)
+        if self.branch_orchestrator is not None:
+            self.branch_orchestrator.close_replay_root(root_corr)
         lane = self._correlation_to_lane.pop(root_corr, None)
         self._session_marker.pop(root_corr, None)
         if lane is None:
@@ -318,6 +365,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         if self._has_tree_registry:
             self._session_tree_registry.set_drain_callback(self._on_tree_drained)
         if self.config.phase == CreditPhase.PROFILING:
+            for trajectory in self.conversation_source.trajectories:
+                self._seed_trajectory_replay_prefix(trajectory)
+            self.credit_issuer.replay_gate.activate()
             if not self.conversation_source.trajectories:
                 raise RuntimeError(
                     "AgenticReplayStrategy PROFILING setup: trajectories empty. "
@@ -522,6 +572,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
         assert self._cache_warmup_duration is not None
         self._accelerated_warmup_started = True
+        for trajectory in self.conversation_source.trajectories:
+            self._seed_trajectory_replay_prefix(trajectory)
+        self.credit_issuer.replay_gate.activate()
         self.credit_issuer.set_max_tokens_override(_WARMUP_MAX_TOKENS)
         self.info(
             "WARMUP cache pressure: replaying live trajectories for "
@@ -614,6 +667,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     def observe_credit_return(self, credit: Credit) -> None:
         """Track the next live turn for the warmup-to-profile handoff."""
+        self.credit_issuer.replay_gate.complete(credit)
         if not self._accelerated_warmup_started:
             return
         root_correlation_id = credit.effective_root_correlation_id
@@ -651,8 +705,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         if not self._accelerated_warmup_started:
             return
         states_by_lane = self._build_handoff_states()
+        boundaries_by_lane = {
+            lane: self._build_handoff_replay_boundaries(states)
+            for lane, states in states_by_lane.items()
+        }
         self.conversation_source.trajectories = self._build_handoff_trajectories(
-            states_by_lane
+            states_by_lane, boundaries_by_lane
         )
         self.info(
             "WARMUP cache pressure handoff: persisted "
@@ -694,13 +752,44 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
         return states_by_lane
 
+    def _build_handoff_replay_boundaries(
+        self, states: list[ConversationState]
+    ) -> tuple[ReplayResumeBoundary, ...]:
+        """Merge live stream positions with terminal history from warmup."""
+        next_turn_by_conversation = {
+            state.conversation_id: state.next_turn_index
+            for state in states
+            if state.next_turn_index > 0
+        }
+        if states:
+            root_correlation_id = self._lane_root_corr(
+                TrajectorySnapshot(t_star_ms=0.0, states=tuple(states))
+            )
+            if root_correlation_id is not None:
+                for boundary in self.credit_issuer.replay_gate.completed_prefixes(
+                    root_correlation_id
+                ):
+                    next_turn_by_conversation[boundary.conversation_id] = max(
+                        next_turn_by_conversation.get(boundary.conversation_id, 0),
+                        boundary.next_turn_index,
+                    )
+        return tuple(
+            ReplayResumeBoundary(conversation_id, next_turn_index)
+            for conversation_id, next_turn_index in sorted(
+                next_turn_by_conversation.items()
+            )
+        )
+
     def _build_handoff_trajectories(
-        self, states_by_lane: dict[int, list[ConversationState]]
+        self,
+        states_by_lane: dict[int, list[ConversationState]],
+        boundaries_by_lane: dict[int, tuple[ReplayResumeBoundary, ...]],
     ) -> list[Trajectory]:
         """Build the shared trajectory list consumed by profiling."""
         rebuilt: list[Trajectory] = []
         for lane, previous in enumerate(self.conversation_source.trajectories):
             states = states_by_lane[lane]
+            boundaries = boundaries_by_lane[lane]
             if not states:
                 trace_id = self.conversation_source.next_recycle_conversation_id()
                 if trace_id is None:
@@ -714,6 +803,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                         next_turn_index=0,
                     )
                 ]
+                boundaries = ()
             root_state = next(
                 (state for state in states if state.agent_depth == 0), None
             )
@@ -739,6 +829,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                                 ),
                             )
                         ),
+                        replay_resume_boundaries=boundaries,
                     ),
                     x_correlation_id=(
                         root_state.x_correlation_id

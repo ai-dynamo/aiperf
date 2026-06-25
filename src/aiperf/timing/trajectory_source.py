@@ -33,6 +33,7 @@ from aiperf.common.models import DatasetMetadata
 from aiperf.common.scenario.base import EmptyTracePoolError
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 from aiperf.timing.conversation_source import ConversationSource, SampledSession
+from aiperf.timing.replay_dependencies import ReplayResumeBoundary
 
 _logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class TrajectorySnapshot:
 
     t_star_ms: float
     states: tuple[ConversationState, ...]
+    replay_resume_boundaries: tuple[ReplayResumeBoundary, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -569,6 +571,25 @@ class TrajectorySource(ConversationSource):
             return None
         return min(timestamps), max(timestamps)
 
+    def _replay_resume_boundaries(
+        self, root_id: str, t_star_ms: float
+    ) -> tuple[ReplayResumeBoundary, ...]:
+        """Return exact completed stream prefixes at the sampled instant."""
+        boundaries: list[ReplayResumeBoundary] = []
+        for conversation_id in sorted(self._collect_trace_conversation_ids(root_id)):
+            metadata = self._metadata_lookup.get(conversation_id)
+            if metadata is None:
+                continue
+            next_turn_index = _next_turn_index_at_or_after(metadata, t_star_ms)
+            completed_turns = (
+                len(metadata.turns) if next_turn_index is None else next_turn_index
+            )
+            if completed_turns > 0:
+                boundaries.append(
+                    ReplayResumeBoundary(conversation_id, completed_turns)
+                )
+        return tuple(boundaries)
+
     def _warn_if_live_delta_snapshot_needs_prior_responses(
         self, root_id: str, snapshot: TrajectorySnapshot
     ) -> None:
@@ -690,7 +711,11 @@ class TrajectorySource(ConversationSource):
             return None
         if not any(not state.waiting_on_children for state in states):
             return None
-        return TrajectorySnapshot(t_star_ms=t_star_ms, states=tuple(states))
+        return TrajectorySnapshot(
+            t_star_ms=t_star_ms,
+            states=tuple(states),
+            replay_resume_boundaries=self._replay_resume_boundaries(root_id, t_star_ms),
+        )
 
     def _branch_runtimes(self, parent_meta) -> list[_BranchRuntime]:
         join_by_branch: dict[str, int] = {}

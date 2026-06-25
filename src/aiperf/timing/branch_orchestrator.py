@@ -279,6 +279,7 @@ class BranchOrchestrator:
         # children are not dispatched a second time when the parent's
         # turn 0 credit returns.
         self._pre_dispatched_branches: set[tuple[str, str]] = set()
+        self._overlap_dispatched_branches: set[tuple[str, str]] = set()
         self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
         # SPAWN children whose recorded first request starts after the branch
@@ -327,6 +328,14 @@ class BranchOrchestrator:
         """Enable normal DAG interception during accelerated warmup replay."""
         if self._allow_accelerated_warmup:
             self._accelerated_warmup_started = True
+
+    def close_replay_root(self, root_correlation_id: str) -> None:
+        """Discard per-instance overlap markers after a tree drains."""
+        self._overlap_dispatched_branches = {
+            item
+            for item in self._overlap_dispatched_branches
+            if item[0] != root_correlation_id
+        }
 
     def snapshot_annotations(
         self,
@@ -393,6 +402,44 @@ class BranchOrchestrator:
         if credit.turn_index >= len(meta.turns):
             return []
         return list(meta.turns[credit.turn_index].branch_ids)
+
+    async def on_credit_issued(self, credit) -> None:
+        """Start branches that overlapped their spawning request in the capture."""
+        if self._cleaning_up or credit.agent_depth > 0:
+            return
+        if credit.phase == CreditPhase.WARMUP and not self._accelerated_warmup_started:
+            return
+        parent_meta = self._cs.get_metadata(credit.conversation_id)
+        if getattr(parent_meta, "replay_scope_id", None) is None:
+            return
+        if credit.turn_index >= len(parent_meta.turns):
+            return
+        turn_meta = parent_meta.turns[credit.turn_index]
+        parent_start_ms = _as_timestamp_ms(turn_meta.timestamp_ms)
+        parent_api_ms = _as_timestamp_ms(turn_meta.api_time_ms)
+        if parent_start_ms is None or parent_api_ms is None or parent_api_ms <= 0:
+            return
+        parent_end_ms = parent_start_ms + parent_api_ms
+        branches_by_id = {branch.branch_id: branch for branch in parent_meta.branches}
+        overlapping = [
+            branch_id
+            for branch_id in turn_meta.branch_ids
+            if (branch := branches_by_id.get(branch_id)) is not None
+            and (branch_start := self._branch_start_timestamp_ms(branch)) is not None
+            and branch_start < parent_end_ms
+        ]
+        if not overlapping:
+            return
+        parent_corr = credit.x_correlation_id
+        async with self._parent_locks[parent_corr]:
+            await self._spawn_children_and_register_gates(
+                credit,
+                overlapping,
+                dispatch_origin_ms=parent_start_ms,
+            )
+            self._overlap_dispatched_branches.update(
+                (parent_corr, branch_id) for branch_id in overlapping
+            )
 
     def _marker_for_root(self, root_correlation_id: str | None) -> str | None:
         """Resolve the tree-root cache-bust marker for a spawned descendant.
@@ -711,7 +758,11 @@ class BranchOrchestrator:
             return self._maybe_suspend_parent(credit)
 
     async def _spawn_children_and_register_gates(
-        self, credit, branch_ids: list[str]
+        self,
+        credit,
+        branch_ids: list[str],
+        *,
+        dispatch_origin_ms: float | None = None,
     ) -> None:
         """Resolve branches, start children, and register future joins.
 
@@ -752,6 +803,11 @@ class BranchOrchestrator:
             # are recorded in _pre_dispatched_branches; skip them on the
             # parent's turn-0 return to avoid double-dispatch.
             if (credit.conversation_id, b_id) in self._pre_dispatched_branches:
+                continue
+            if (
+                dispatch_origin_ms is None
+                and (parent_corr, b_id) in self._overlap_dispatched_branches
+            ):
                 continue
             branch_gates = gate_for_branch.get(branch.branch_id, [])
             # Background branches never gate the parent even if the dataset
@@ -796,7 +852,10 @@ class BranchOrchestrator:
                 per_child_branch_mode[child_corr] = branch.mode
                 per_child_gates[child_corr] = list(branch_gates)
                 dispatch_offset_by_corr[child_corr] = self._child_dispatch_offset_ms(
-                    branch_start_ms, child
+                    dispatch_origin_ms
+                    if dispatch_origin_ms is not None
+                    else branch_start_ms,
+                    child,
                 )
                 all_children.append(child)
 
@@ -1519,6 +1578,7 @@ class BranchOrchestrator:
         self._descendant_counts.clear()
         self._parent_locks.clear()
         self._pre_dispatched_branches.clear()
+        self._overlap_dispatched_branches.clear()
 
 
 def any_child_tracked_for_parent(

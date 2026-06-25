@@ -25,6 +25,7 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import RampConfig, Ramper, RampType
+from aiperf.timing.replay_dependencies import ReplayBarrierCoordinator
 from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.trajectory_source import TrajectorySource
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
@@ -172,6 +173,11 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             counter=self._progress.counter,
         )
+        self._replay_barrier = (
+            ReplayBarrierCoordinator(self._conversation_source.dataset_metadata)
+            if self._config.timing_mode == TimingMode.AGENTIC_REPLAY
+            else None
+        )
         self._credit_issuer = CreditIssuer(
             phase=self._config.phase,
             stop_checker=self._stop_checker,
@@ -185,6 +191,7 @@ class PhaseRunner(TaskManagerMixin):
             session_tree_registry_enabled=(
                 self._config.phase == CreditPhase.PROFILING or cache_warmup_enabled
             ),
+            replay_barrier=self._replay_barrier,
         )
         self._branch_orchestrator = BranchOrchestrator(
             conversation_source=self._conversation_source,
@@ -206,6 +213,13 @@ class PhaseRunner(TaskManagerMixin):
             ),
             allow_accelerated_warmup=(cache_warmup_enabled),
         )
+        self._credit_issuer.replay_gate.set_child_refused(
+            self._branch_orchestrator.on_child_stopped
+        )
+        if self._replay_barrier is not None:
+            self._credit_issuer.replay_gate.set_credit_issued(
+                self._branch_orchestrator.on_credit_issued
+            )
         self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
 
         # Execution state
@@ -632,6 +646,10 @@ class PhaseRunner(TaskManagerMixin):
                 self._progress.freeze_sent_counts()
                 self._scheduler.cancel_all_pending()
                 self._progress.all_credits_sent_event.set()
+
+            await self._credit_issuer.replay_gate.cancel(
+                notify_refused=self._config.phase == CreditPhase.PROFILING
+            )
 
             stats = self._progress.create_stats(self._lifecycle)
             self.notice(self._format_phase_sending_complete(stats))

@@ -26,6 +26,7 @@ from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.credit.structs import Credit
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.timing.replay_dependencies import ReplayResumeBoundary
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
     ConversationState,
@@ -101,6 +102,8 @@ def _make_strategy(
     cfg.concurrency = len(trajectories)
     cfg.agentic_cache_warmup_duration_sec = cache_warmup_duration
     issuer = issuer if issuer is not None else AsyncMock()
+    issuer.replay_gate = MagicMock()
+    issuer.replay_gate.completed_prefixes.return_value = ()
     scheduler = scheduler if scheduler is not None else MagicMock()
     strategy = AgenticReplayStrategy(
         config=cfg,
@@ -293,6 +296,32 @@ async def test_cache_warmup_cutoff_stops_issuer_and_persists_next_turn():
     assert len(snapshot.states) == 1
     assert snapshot.states[0].next_turn_index == 3
     assert snapshot.states[0].x_correlation_id == baseline.x_correlation_id
+    assert snapshot.replay_resume_boundaries == (ReplayResumeBoundary("trace_0", 3),)
+
+
+def test_handoff_preserves_completed_streams_absent_from_live_state() -> None:
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
+        cache_warmup_duration=10.0,
+    )
+    issuer.replay_gate.completed_prefixes.return_value = (
+        ReplayResumeBoundary("trace_0::aux:0", 1),
+    )
+    live_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root",
+        root_correlation_id="root",
+        next_turn_index=3,
+    )
+
+    boundaries = strategy._build_handoff_replay_boundaries([live_state])
+
+    assert boundaries == (
+        ReplayResumeBoundary("trace_0", 3),
+        ReplayResumeBoundary("trace_0::aux:0", 1),
+    )
+    issuer.replay_gate.completed_prefixes.assert_called_once_with("root")
 
 
 @pytest.mark.asyncio

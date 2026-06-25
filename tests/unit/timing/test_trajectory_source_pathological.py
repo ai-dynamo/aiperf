@@ -296,6 +296,11 @@ def test_background_only_snapshot_keeps_child_but_start_index_defaults_to_zero()
     assert traj.snapshot is not None
     cids = {s.conversation_id for s in traj.snapshot.states}
     assert cids == {"trace::bg"}  # only the background child survives
+    resume_boundaries = {
+        boundary.conversation_id: boundary.next_turn_index
+        for boundary in traj.snapshot.replay_resume_boundaries
+    }
+    assert resume_boundaries == {"trace": 2, "trace::bg": 1}
     assert traj.start_turn_index == 0  # sentinel default, no root state
     assert src.warmup_credit_count == 1  # the one ready child state
 

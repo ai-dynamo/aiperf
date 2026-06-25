@@ -246,6 +246,23 @@ aiperf profile \
 
 **How it works:** The strategy picks `--concurrency` distinct conversations as *trajectories*, samples a per-trajectory starting turn `k_i` somewhere between 25% and 75% of each conversation (the default `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` window, clamped to leave at least one profile turn after warmup), and warms each trajectory by dispatching that one turn before profiling starts. During profiling, each trajectory resumes from `k_i + 1` and replays the remaining turns honoring the trace's recorded request-start schedule after applying the per-trace idle-gap rule. The default `--trace-idle-gap-cap-seconds` is `None` (no compression); the `inferencex-agentx-mvp` scenario locks it to `60` so coffee-break request-start gaps don't distort steady-state while preserving local subagent overlap.
 
+Weka replay also preserves the capture's fan-out/join shape. The loader compares
+request intervals `[t, t + api_time]` within each logical agent or subagent
+scope and records an explicit cross-stream completion frontier on every turn.
+Requests whose intervals overlap have no ordering edge and may execute in
+parallel. A later request waits until every request on its recorded predecessor
+frontier reaches a terminal outcome. Exact interval-boundary touches are
+sequential. Long transitive overlaps use this dependency frontier rather than
+an overlap connected-component, so a long request can overlap multiple
+sequential requests on another stream without launching all of them at once.
+Branches that began while their spawning request was in flight are scheduled
+from that request's send time; independent subagent scopes are not globally
+joined. The same barriers remain active during accelerated cache-pressure
+warmup, where idle delays are otherwise removed. When replay resumes at a
+sampled `t*` or crosses from accelerated warmup into profiling, the snapshot
+seeds each stream's exact completed prefix before any request can dispatch;
+request arrival order therefore cannot weaken or deadlock a join barrier.
+
 Concurrency is **per session tree**: each `--concurrency` lane holds one slot for a whole tree — the root conversation plus every subagent it spawns (children, subchildren, background `::fa:`/`::aux:` sidecars). A lane's slot is released, and the lane recycled into a fresh root, only once the entire tree drains (root terminal **and** all descendants returned) — so a background subagent that outlives its root does not free the lane early. Recycle then draws the next root from the dataset sampler (honoring the dataset's `sampling_strategy` — sequential / shuffle / random), starting it from turn 0. This keeps exactly `--concurrency` trees live at all times. The shared tree id (`root_correlation_id`) is persisted per record in `profile_export.jsonl`, so `aiperf analyze swim-lane` groups each tree under one lane and renders exactly `--concurrency` slots.
 
 **When to use:** A scenario-locked timing mode for multi-turn agentic-coding traces (currently WEKA), especially long runs where you want steady-state metrics rather than first-turn-only metrics. Pairs naturally with `--cache-bust first_turn_prefix` (auto-injected by the `inferencex-agentx-mvp` scenario) so recycled plays don't progressively warm the server's KV-cache prefix on identical content.
