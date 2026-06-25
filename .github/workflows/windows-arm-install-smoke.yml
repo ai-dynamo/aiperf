@@ -63,8 +63,8 @@ jobs:
       - name: SPEED-Bench benchmark (file-based dataset)
         run: |
           cat > speedbench.jsonl <<'JSONL'
-          {"question_id": "speed-coding-1", "category": "coding", "sub_category": null, "source": "https://example.test/speed-bench", "src_id": "speed-coding-1", "difficulty": null, "multiturn": false, "messages": [{"role": "user", "content": "Implement binary search."}]}
-          {"question_id": "speed-coding-2", "category": "coding", "sub_category": null, "source": "https://example.test/speed-bench", "src_id": "speed-coding-2", "difficulty": null, "multiturn": false, "messages": [{"role": "user", "content": "Implement quicksort."}]}
+          {"question_id": "0123456789abcdef0123456789abcdef", "category": "coding", "sub_category": null, "source": "https://example.test/speed-bench", "src_id": "speed-coding-1", "difficulty": null, "multiturn": false, "messages": [{"role": "user", "content": "Implement binary search."}]}
+          {"question_id": "fedcba9876543210fedcba9876543210", "category": "coding", "sub_category": null, "source": "https://example.test/speed-bench", "src_id": "speed-coding-2", "difficulty": null, "multiturn": false, "messages": [{"role": "user", "content": "Implement quicksort."}]}
           JSONL
           uv run aiperf profile --model mock --tokenizer gpt2 \
             --url http://localhost:8000 --endpoint-type chat \
