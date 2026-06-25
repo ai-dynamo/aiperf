@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Windows-on-ARM install smoke test.
+#
+# Our existing Windows CI runner (windows-latest) is x86-64, so Windows-ARM
+# install regressions are invisible until a user hits them — e.g. pyarrow has
+# no win_arm64 wheel and source-builds fail there. This job does a clean,
+# user-style install on a GitHub-hosted windows-11-arm runner and confirms the
+# CLI runs, catching that class of breakage in CI.
+#
+# Runs on the GitHub-hosted `windows-11-arm` label (no self-hosted/velonix
+# infra needed). If the org doesn't permit that label yet, this job will fail
+# to find a runner — that's the signal to have it allow-listed.
+
+name: Windows-ARM install smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  install-smoke:
+    name: Windows-ARM clean install + CLI
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - name: Clean install of aiperf (mimics a user pip install)
+        run: |
+          uv venv .venv
+          uv pip install .
+      - name: aiperf CLI runs
+        run: |
+          uv run aiperf --version
