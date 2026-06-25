@@ -80,6 +80,17 @@ class TimingStrategyProtocol(Protocol):
         """
         ...
 
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        """Handle a non-final credit returned after a seamless phase boundary.
+
+        The returned credit itself belongs to the previous phase. Implementations
+        dispatch the next turn as the first session-owned credit of this phase.
+
+        Args:
+            credit: Completed credit from the previous phase.
+        """
+        ...
+
 
 # =============================================================================
 # RateSettableProtocol - Protocol for strategies that support dynamic rate adjustment

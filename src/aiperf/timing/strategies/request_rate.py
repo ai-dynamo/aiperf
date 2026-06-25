@@ -19,6 +19,7 @@ from aiperf.timing.intervals import IntervalGeneratorConfig
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
+    from aiperf.common.models import TurnMetadata
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.config import CreditPhaseConfig
@@ -254,7 +255,26 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         meta = self._conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit, meta)
+        await self._dispatch_or_queue_continuation(credit, turn, meta)
 
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        """Queue the first continuation owned by this phase after handoff."""
+        if credit.is_final_turn:
+            return
+
+        meta = self._conversation_source.get_next_turn_metadata(credit)
+        turn = TurnToSend.from_previous_credit(
+            credit,
+            meta,
+            as_session_start=True,
+            handoff_source_phase=credit.phase,
+        )
+        await self._dispatch_or_queue_continuation(credit, turn, meta)
+
+    async def _dispatch_or_queue_continuation(
+        self, credit: Credit, turn: TurnToSend, meta: TurnMetadata
+    ) -> None:
+        """Dispatch or queue a continuation turn according to request-rate rules."""
         if credit.agent_depth > 0:
             if meta.delay_ms is not None:
                 self._scheduler.schedule_later(

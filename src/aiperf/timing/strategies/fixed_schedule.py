@@ -18,6 +18,7 @@ from aiperf.credit.structs import Credit, TurnToSend
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
+    from aiperf.common.models import TurnMetadata
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
@@ -154,7 +155,26 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         # This contains the delay_ms or timestamp_ms for the next turn
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit)
+        self._schedule_continuation(turn, next_meta)
 
+    async def handle_phase_handoff(
+        self,
+        credit: Credit,
+    ) -> None:
+        """Dispatch the first continuation owned by this phase after handoff."""
+        if credit.is_final_turn:
+            return
+
+        next_meta = self._conversation_source.get_next_turn_metadata(credit)
+        turn = TurnToSend.from_previous_credit(
+            credit,
+            as_session_start=True,
+            handoff_source_phase=credit.phase,
+        )
+        self._schedule_continuation(turn, next_meta)
+
+    def _schedule_continuation(self, turn: TurnToSend, next_meta: TurnMetadata) -> None:
+        """Schedule a continuation according to trace timing metadata."""
         if next_meta.timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(
                 self._timestamp_to_perf_sec(next_meta.timestamp_ms),

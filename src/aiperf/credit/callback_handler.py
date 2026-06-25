@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
+from aiperf.credit.phase_handoff import PhaseHandoffCoordinator
 
 if TYPE_CHECKING:
     from aiperf.credit.messages import CreditReturn, FirstToken
@@ -84,6 +85,7 @@ class CreditCallbackHandler:
         self._concurrency_manager = concurrency_manager
         self._phase_handlers: dict[CreditPhase, PhaseCallbackContext] = {}
         self._branch_orchestrator: BranchOrchestrator | None = None
+        self._phase_handoffs = PhaseHandoffCoordinator()
 
     def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
         """Inject (or detach) the DAG branch orchestrator.
@@ -186,6 +188,20 @@ class CreditCallbackHandler:
             del self._phase_handlers[phase]
             _logger.debug(lambda: f"Unregistered callback handler for phase {phase}")
 
+    def start_phase_handoff(
+        self, source_phase: CreditPhase, target_phase: CreditPhase
+    ) -> None:
+        """Route non-final source-phase returns into the target phase."""
+        self._phase_handoffs.start(source_phase, target_phase)
+
+    def clear_phase_handoff(self, source_phase: CreditPhase) -> None:
+        """Stop routing returns from ``source_phase`` into another phase."""
+        self._phase_handoffs.clear(source_phase)
+
+    async def drain_pending_handoffs(self, target_phase: CreditPhase) -> None:
+        """Dispatch returns that arrived before the target phase was ready."""
+        await self._phase_handoffs.drain(target_phase, self._phase_handlers)
+
     async def on_credit_return(
         self, worker_id: str, credit_return: CreditReturn
     ) -> None:
@@ -206,7 +222,18 @@ class CreditCallbackHandler:
         if handler is None:
             return
 
+        handoff_target = self._phase_handoffs.target_for(credit, handler)
+        if handoff_target is not None:
+            handler.progress.increment_handed_off_session()
+
         self._count_and_release(credit, credit_return, handler)
+
+        if handoff_target is not None:
+            await self._phase_handoffs.dispatch_or_queue(
+                credit, handoff_target, self._phase_handlers
+            )
+            self._maybe_signal_dag_completion(handler)
+            return
 
         # 4b. DAG child completion hook.
         # When a child session's final turn returns, notify the orchestrator

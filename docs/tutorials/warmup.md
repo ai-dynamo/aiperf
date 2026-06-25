@@ -316,7 +316,7 @@ Per warmup session, a start ratio is sampled uniformly in `[0.3, 0.7]`, so a ses
 **Notes:**
 
 - **Enable with the max.** Setting `--trajectory-start-max-ratio > 0` enables seeding; `--trajectory-start-min-ratio` defaults to `0.0` (range `[0, max]`). The min must be ≤ the max. Both require a warmup trigger (`--warmup-duration` / `--warmup-request-count` / `--warmup-num-sessions`).
-- **Warmup-only.** Seeded sessions prime the in-flight depth distribution but, like all warmup traffic, are excluded from results. Use a `seamless` profiling phase so the primed warmup sessions are still in flight when profiling begins.
+- **Warmup handoff.** Seeded warmup requests are excluded from results. With `seamless: true` on the profiling phase, non-final warmup sessions can continue as profiling traffic, so profiling begins with carried conversation depth instead of only turn-0 sessions.
 - **Synthesized multi-turn only.** Valid for the `DELTAS_WITHOUT_RESPONSES` context mode (synthesized prompts with live-captured responses). Raw-payload and pre-rendered message-array conversations are rejected with a clear error.
 - **Per-session, clamped.** A session with `N` turns starts at `floor(ratio * N)`, clamped so at least the final turn still runs on the wire. Short sessions whose ratio rounds to 0 start normally at turn 0.
 

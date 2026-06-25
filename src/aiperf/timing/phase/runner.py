@@ -368,6 +368,7 @@ class PhaseRunner(TaskManagerMixin):
         stats = self._progress.create_stats(self._lifecycle)
         self.notice(self._format_phase_started(stats))
         await self._phase_publisher.publish_phase_start(self._config, stats)
+        await self._callback_handler.drain_pending_handoffs(self._config.phase)
 
         self._progress_task = self.execute_async(self._progress_report_loop())
 

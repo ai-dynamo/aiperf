@@ -59,6 +59,9 @@ class MockStrategy:
     async def handle_credit_return(self, credit: Credit) -> None:
         self.handle_credit_return_calls.append(credit)
 
+    async def handle_phase_handoff(self, credit: Credit) -> None:
+        self.handle_credit_return_calls.append(credit)
+
 
 def mock_conc_mgr() -> MagicMock:
     m = MagicMock()
@@ -81,6 +84,7 @@ def mock_callback() -> MagicMock:
     m = MagicMock()
     m.register_phase = m.unregister_phase = MagicMock()
     m.on_credit_return = m.on_first_token = AsyncMock()
+    m.drain_pending_handoffs = AsyncMock()
     return m
 
 

@@ -78,19 +78,22 @@ class TimingConfig(AIPerfBaseModel):
     def from_run(cls, run: BenchmarkRun) -> TimingConfig:
         """Build ordered list of credit-phase configs from a ``BenchmarkRun``.
 
-        Iterates ``run.cfg.get_warmup_phases()`` first (each becomes a WARMUP
-        CreditPhaseConfig) followed by ``run.cfg.get_profiling_phases()``
-        (each becomes a PROFILING CreditPhaseConfig). The cancellation policy
-        is sourced from the first profiling phase that declares one; URLs and
-        url-selection strategy come from the endpoint section.
+        Iterates the YAML phase list in order. User-facing ``seamless`` lives
+        on phase N ("start this phase immediately after the previous phase
+        stops sending"), while the internal runner switch belongs to phase N-1
+        ("return after this phase stops sending"). The conversion below keeps
+        that boundary translation local to timing config construction.
         """
         cfg = run.cfg
 
         configs: list[CreditPhaseConfig] = []
-        for phase in cfg.get_warmup_phases():
-            configs.append(_build_warmup_config(phase))
-        for phase in cfg.get_profiling_phases():
-            configs.append(_build_profiling_config(phase))
+        for phase in cfg.phases:
+            if phase.seamless and configs:
+                configs[-1] = configs[-1].model_copy(update={"seamless": True})
+            if phase.exclude_from_results:
+                configs.append(_build_warmup_config(phase))
+            else:
+                configs.append(_build_profiling_config(phase))
 
         cancellation_config: RequestCancellationConfig = RequestCancellationConfig()
         for phase in cfg.get_profiling_phases():
@@ -139,10 +142,9 @@ class CreditPhaseConfig(AIPerfBaseModel):
     )
     seamless: bool = Field(
         default=False,
-        description="Whether the credit phase should be seamless. "
-        "Seamless phases start immediately after the previous phase sends all credits, "
-        "without waiting for all credits to return. This can be used to maintain concurrency "
-        "during phase transitions.",
+        description="Internal outgoing-phase seamless switch. When True, this "
+        "phase returns after sending completes and waits for returns in the "
+        "background so the next phase can start immediately.",
     )
     concurrency: int | None = Field(
         default=None,
@@ -262,8 +264,9 @@ def _build_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig:
 
     When the phase doesn't set ``grace_period``, default to infinity (wait
     forever for in-flight requests). This differs from the CreditPhaseConfig
-    field default of None (disabled) because warmup should always complete all
-    in-flight requests before transitioning to profiling.
+    field default of None (disabled) because warmup should eventually account
+    for all warmup requests. A seamless following phase may still start before
+    that background drain completes.
     """
     grace_period = phase.grace_period
     if grace_period is None:
@@ -311,7 +314,7 @@ def _build_profiling_config(phase: PhaseConfig) -> CreditPhaseConfig:
         request_rate=_phase_request_rate(phase),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),
-        seamless=phase.seamless,
+        seamless=False,
         grace_period_sec=phase.grace_period,
         trajectory_start_min_ratio=phase.trajectory_start_min_ratio,
         trajectory_start_max_ratio=phase.trajectory_start_max_ratio,

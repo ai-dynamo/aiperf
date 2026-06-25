@@ -220,3 +220,27 @@ async def test_root_credit_return_uses_continuation_queue() -> None:
 
     credit_issuer.dispatch_child_turn.assert_not_called()
     assert not strategy._continuation_turns.empty()
+
+
+@pytest.mark.asyncio
+async def test_phase_handoff_queues_next_turn_as_new_phase_session_start() -> None:
+    strategy, _ = _make_strategy(branch_orchestrator=MagicMock())
+    warmup_credit = Credit(
+        id=7,
+        phase=CreditPhase.WARMUP,
+        conversation_id="conv-root",
+        x_correlation_id="root-xcid",
+        turn_index=20,
+        num_turns=100,
+        start_turn_index=20,
+        issued_at_ns=0,
+        agent_depth=0,
+    )
+
+    await strategy.handle_phase_handoff(warmup_credit)
+
+    turn = strategy._continuation_turns.get_nowait()
+    assert turn.turn_index == 21
+    assert turn.start_turn_index == 21
+    assert turn.handoff_source_phase == CreditPhase.WARMUP
+    assert turn.is_session_start is True

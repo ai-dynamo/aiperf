@@ -322,6 +322,97 @@ class TestNextTurnDispatch:
         mock_strategy.handle_credit_return.assert_not_called()
 
 
+class TestPhaseHandoff:
+    """Tests for seamless handoff between phase callback contexts."""
+
+    async def test_non_final_source_return_handoffs_to_target_phase(
+        self, callback_handler
+    ) -> None:
+        source_progress = MagicMock()
+        source_progress.increment_returned = MagicMock(return_value=False)
+        source_progress.increment_prefill_released = MagicMock()
+        source_progress.increment_handed_off_session = MagicMock()
+        source_progress.all_credits_returned_event = asyncio.Event()
+        source_progress.in_flight_sessions = 0
+
+        source_strategy = MagicMock()
+        source_strategy.handle_credit_return = AsyncMock()
+
+        target_strategy = MagicMock()
+        target_strategy.handle_phase_handoff = AsyncMock()
+
+        callback_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=source_progress,
+            lifecycle=MagicMock(is_complete=False),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
+            strategy=source_strategy,
+        )
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=MagicMock(),
+            lifecycle=MagicMock(is_started=True, is_complete=False),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            strategy=target_strategy,
+        )
+        callback_handler.start_phase_handoff(CreditPhase.WARMUP, CreditPhase.PROFILING)
+        credit = make_credit(
+            phase=CreditPhase.WARMUP,
+            turn_index=20,
+            num_turns=100,
+        )
+
+        await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+        source_progress.increment_handed_off_session.assert_called_once()
+        source_progress.increment_returned.assert_called_once_with(
+            False, False, errored=False
+        )
+        source_strategy.handle_credit_return.assert_not_called()
+        target_strategy.handle_phase_handoff.assert_awaited_once_with(credit)
+
+    async def test_refused_handoff_releases_source_session_slot(
+        self, callback_handler, mock_concurrency
+    ) -> None:
+        source_progress = MagicMock()
+        source_progress.increment_returned = MagicMock(return_value=False)
+        source_progress.increment_prefill_released = MagicMock()
+        source_progress.increment_handed_off_session = MagicMock()
+        source_progress.all_credits_returned_event = asyncio.Event()
+        source_progress.in_flight_sessions = 0
+
+        target_strategy = MagicMock()
+        target_strategy.handle_phase_handoff = AsyncMock()
+
+        callback_handler.register_phase(
+            phase=CreditPhase.WARMUP,
+            progress=source_progress,
+            lifecycle=MagicMock(is_complete=False),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
+            strategy=MagicMock(handle_credit_return=AsyncMock()),
+        )
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=MagicMock(),
+            lifecycle=MagicMock(is_started=True, is_complete=False),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
+            strategy=target_strategy,
+        )
+        callback_handler.start_phase_handoff(CreditPhase.WARMUP, CreditPhase.PROFILING)
+        credit = make_credit(
+            phase=CreditPhase.WARMUP,
+            turn_index=20,
+            num_turns=100,
+        )
+
+        await callback_handler.on_credit_return("worker-1", make_credit_return(credit))
+
+        target_strategy.handle_phase_handoff.assert_not_called()
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.WARMUP
+        )
+
+
 # =============================================================================
 # Test: Credit Return - Unregistered/Complete Phase
 # =============================================================================

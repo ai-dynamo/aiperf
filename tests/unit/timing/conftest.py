@@ -607,6 +607,7 @@ def mock_callback_handler() -> MagicMock:
     m = MagicMock()
     m.register_phase = m.unregister_phase = MagicMock()
     m.on_credit_return = m.on_first_token = _async_noop
+    m.drain_pending_handoffs = _async_noop
     return m
 
 

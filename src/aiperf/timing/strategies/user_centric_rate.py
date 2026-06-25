@@ -66,12 +66,13 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.timing.conversation_source import SampledSession
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.config import CreditPhaseConfig
-    from aiperf.timing.conversation_source import ConversationSource, SampledSession
+    from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
@@ -347,5 +348,41 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         user.next_send_time = max(current_sec, user.next_send_time + self._turn_gap)
         self._scheduler.schedule_at_perf_sec(
             user.next_send_time,
+            self._credit_issuer.issue_credit(turn),
+        )
+
+    async def handle_phase_handoff(
+        self,
+        credit: Credit,
+    ) -> None:
+        """Schedule the first continuation owned by this phase after handoff."""
+        if credit.is_final_turn:
+            return
+
+        current_sec = time.perf_counter()
+        metadata = self._conversation_source.get_metadata(credit.conversation_id)
+        user = User(
+            user_id=self._next_user_id,
+            sampled=SampledSession(
+                conversation_id=credit.conversation_id,
+                metadata=metadata,
+                x_correlation_id=credit.x_correlation_id,
+                agent_depth=credit.agent_depth,
+                parent_correlation_id=credit.parent_correlation_id,
+                branch_mode=credit.branch_mode,
+            ),
+            next_send_time=current_sec,
+            max_turns=credit.num_turns - credit.turn_index - 1,
+        )
+        self._next_user_id += 1
+        self._session_to_user[user.x_correlation_id] = user
+
+        turn = TurnToSend.from_previous_credit(
+            credit,
+            as_session_start=True,
+            handoff_source_phase=credit.phase,
+        )
+        self._scheduler.schedule_at_perf_sec(
+            current_sec,
             self._credit_issuer.issue_credit(turn),
         )

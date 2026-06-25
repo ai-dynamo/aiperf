@@ -1440,7 +1440,7 @@ session_throughput = session_count / benchmark_duration_hours
 **Notes:**
 - Counts only root sessions (`agent_depth == 0`); DAG sub-agent children belong to their parent's session.
 - For multi-turn datasets this is lower than [Request Throughput](#request-throughput) (which counts every turn); for single-turn datasets the two count the same events.
-- Reflects the steady-state window: pair with a seamless warmup so the profiling window begins at full concurrency, and a fixed `--benchmark-duration` (rather than a session-count cap) so concurrency is sustained by resampling.
+- Reflects the steady-state window: set `seamless: true` on the profiling phase after warmup so the profiling window begins at full concurrency, and use a fixed `--benchmark-duration` (rather than a session-count cap) so concurrency is sustained by resampling.
 
 ---
 

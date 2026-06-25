@@ -190,14 +190,22 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         3. Runner handles setup, execution, and cleanup
 
         Seamless Mode:
-            With seamless=True, a phase can start before the previous phase
-            completes waiting for returns. This allows smooth phase transitions
-            without gaps in request issuance. Multiple runners may be active
-            simultaneously (old phase waiting for returns while new phase sends).
+            Internally, seamless=True on a CreditPhaseConfig means this phase
+            exits after sending completes, then the next phase can start while
+            this phase waits for returns in the background. YAML phase N's
+            ``seamless`` flag is translated onto phase N-1 when timing config
+            is built.
         """
         for i, phase_config in enumerate(self._ordered_phase_configs):
             is_final_phase = i == len(self._ordered_phase_configs) - 1
             is_seamless_non_final = phase_config.seamless and not is_final_phase
+
+            if i > 0:
+                previous = self._ordered_phase_configs[i - 1]
+                if previous.seamless:
+                    self._callback_handler.start_phase_handoff(
+                        previous.phase, phase_config.phase
+                    )
 
             runner = PhaseRunner(
                 config=phase_config,
@@ -241,6 +249,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             if runner in self._active_runners:
                 self._active_runners.remove(runner)
                 self.debug(f"Removed completed runner for phase {runner.phase}")
+            self._callback_handler.clear_phase_handoff(runner.phase)
 
         return cleanup
 

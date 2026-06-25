@@ -1,12 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from aiperf.common.enums import CreditPhase
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import ArrivalPattern, TimingMode
 from aiperf.timing.config import (
     CreditPhaseConfig,
@@ -14,6 +17,28 @@ from aiperf.timing.config import (
     TimingConfig,
 )
 from tests.unit.conftest import make_run_from_cli
+
+
+def _run_from_phase_dicts(phases: list[dict[str, Any]]) -> BenchmarkRun:
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets=[
+            {
+                "name": "main",
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
+        phases=phases,
+    )
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=cfg,
+        artifact_dir=Path("/tmp/aiperf-test"),
+        cli_command=None,
+    )
 
 
 def make_phase_config(**overrides) -> CreditPhaseConfig:
@@ -129,6 +154,37 @@ class TestTimingConfig:
         assert pc.timing_mode == TimingMode.REQUEST_RATE
         assert pc.concurrency is None
         assert pc.request_rate is None
+
+    def test_yaml_seamless_on_profiling_marks_warmup_credit_phase(self) -> None:
+        run = _run_from_phase_dicts(
+            [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "concurrency": 5,
+                    "duration": 120,
+                    "trajectory_start_min_ratio": 0.3,
+                    "trajectory_start_max_ratio": 0.7,
+                },
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 5,
+                    "duration": 600,
+                    "seamless": True,
+                },
+            ]
+        )
+
+        cfg = TimingConfig.from_run(run)
+
+        warmup, profiling = cfg.phase_configs
+        assert warmup.phase == CreditPhase.WARMUP
+        assert warmup.seamless is True
+        assert warmup.trajectory_start_min_ratio == 0.3
+        assert warmup.trajectory_start_max_ratio == 0.7
+        assert profiling.phase == CreditPhase.PROFILING
+        assert profiling.seamless is False
 
     def test_full_request_rate_config(self) -> None:
         pc = make_phase_config(

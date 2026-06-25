@@ -137,6 +137,10 @@ class TurnToSend(Struct, frozen=True):
         has_forks: True iff this turn declares any FORK-mode branch; the sticky router
                    uses it to defer parent-entry eviction.
         branch_mode: FORK or SPAWN; ignored when parent_correlation_id is None.
+        handoff_source_phase: Previous phase that owns this session's current
+            concurrency slot. Set only for the first continuation issued after
+            a seamless phase boundary so the issuer can transfer slot ownership
+            to the new phase before sending the credit.
     """
 
     conversation_id: str
@@ -148,6 +152,7 @@ class TurnToSend(Struct, frozen=True):
     parent_correlation_id: str | None = None
     has_forks: bool = False
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    handoff_source_phase: CreditPhase | None = None
 
     @property
     def is_final_turn(self) -> bool:
@@ -161,7 +166,12 @@ class TurnToSend(Struct, frozen=True):
 
     @classmethod
     def from_previous_credit(
-        cls, credit: Credit, next_meta: "TurnMetadata | None" = None
+        cls,
+        credit: Credit,
+        next_meta: "TurnMetadata | None" = None,
+        *,
+        as_session_start: bool = False,
+        handoff_source_phase: CreditPhase | None = None,
     ) -> Self:
         """Create the next turn to send from the previous turn's credit.
 
@@ -170,15 +180,23 @@ class TurnToSend(Struct, frozen=True):
             next_meta: Metadata for the NEW turn being built. When provided, the
                 ``has_forks`` flag is derived from it so the sticky
                 router can defer parent-entry eviction until DAG children drain.
+            as_session_start: When True, the returned turn becomes the first
+                turn counted in the new phase. Used for seamless phase handoff.
+            handoff_source_phase: Previous phase whose session slot should be
+                transferred when this turn is issued.
         """
+        turn_index = credit.turn_index + 1
         return cls(
             conversation_id=credit.conversation_id,
             x_correlation_id=credit.x_correlation_id,
-            turn_index=credit.turn_index + 1,
+            turn_index=turn_index,
             num_turns=credit.num_turns,
-            start_turn_index=credit.start_turn_index,
+            start_turn_index=turn_index
+            if as_session_start
+            else credit.start_turn_index,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
             has_forks=next_meta.has_forks if next_meta is not None else False,
             branch_mode=credit.branch_mode,
+            handoff_source_phase=handoff_source_phase,
         )

@@ -137,6 +137,10 @@ class PhaseProgressTracker:
         """
         self._counter.increment_prefill_released()
 
+    def increment_handed_off_session(self) -> None:
+        """Mark one active root session as transferred to the next phase."""
+        self._counter.increment_handed_off_session()
+
     # =========================================================================
     # Freezing Methods
     # =========================================================================

@@ -17,6 +17,8 @@ CRITICAL: Warmup and profiling phases have SEPARATE credit tracking.
 Each phase should balance independently.
 """
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.common.enums import CreditPhase
@@ -238,6 +240,72 @@ class TestWarmupPhaseTransition:
         # Both should be sequential
         assert warmup_ids == set(range(10))
         assert profiling_ids == set(range(12))
+
+    def test_yaml_seamless_profiling_continues_seeded_warmup_sessions(
+        self, cli: AIPerfCLI, tmp_path: Path
+    ) -> None:
+        """YAML seamless on profiling carries active warmup sessions forward."""
+        config_path = tmp_path / "seamless_warmup.yaml"
+        config_path.write_text(
+            f"""
+random_seed: 42
+benchmark:
+  model: {defaults.model}
+  endpoint:
+    urls: ["http://localhost:8000/v1/chat/completions"]
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 5
+    prompts: {{isl: 8, osl: 20}}
+    turns: 100
+  phases:
+    - name: warmup
+      type: concurrency
+      concurrency: 5
+      duration: 0.12
+      trajectory_start_min_ratio: 0.3
+      trajectory_start_max_ratio: 0.7
+    - name: profiling
+      type: concurrency
+      concurrency: 5
+      duration: 0.20
+      seamless: true
+""",
+            encoding="utf-8",
+        )
+        cmd = f"""
+            aiperf profile \
+                --config {config_path} \
+                --ui {defaults.ui}
+        """
+
+        result = cli.run_sync(cmd, timeout=30.0)
+        runner = result.runner_result
+        credit_payloads = [
+            p.payload for p in runner.sent_payloads if isinstance(p.payload, Credit)
+        ]
+        warmup_credits = [c for c in credit_payloads if c.phase == CreditPhase.WARMUP]
+        profiling_credits = [
+            c for c in credit_payloads if c.phase == CreditPhase.PROFILING
+        ]
+
+        assert warmup_credits
+        assert profiling_credits
+        warmup_starts = [c for c in warmup_credits if c.is_session_start]
+        assert warmup_starts
+        assert min(c.turn_index for c in warmup_starts) >= 30
+        assert max(c.turn_index for c in warmup_starts) <= 69
+
+        warmup_session_ids = {c.x_correlation_id for c in warmup_credits}
+        carried = [
+            c
+            for c in profiling_credits
+            if c.x_correlation_id in warmup_session_ids and c.turn_index > 0
+        ]
+        assert carried, "profiling should continue seeded warmup sessions"
+        assert min(c.turn_index for c in carried) > 0
 
 
 @pytest.mark.component_integration

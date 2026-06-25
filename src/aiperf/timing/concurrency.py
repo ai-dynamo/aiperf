@@ -282,6 +282,49 @@ class GlobalPhaseConcurrencyLimiter:
                 self._global_limit.release()
             raise
 
+    async def transfer(
+        self,
+        source_phase: CreditPhase,
+        target_phase: CreditPhase,
+        can_proceed_fn: Callable[[], bool],
+    ) -> bool:
+        """Transfer one held slot from ``source_phase`` to ``target_phase``.
+
+        Keeps the global limiter acquired while moving ownership between the
+        per-phase limiters. This is used for seamless phase handoff: an active
+        session already occupies global capacity, but its subsequent requests
+        should be governed by the target phase's per-phase limit.
+        """
+        if source_phase not in self._phase_limits:
+            raise ValueError(f"Phase {source_phase} not configured in limiter")
+        if target_phase not in self._phase_limits:
+            raise ValueError(f"Phase {target_phase} not configured in limiter")
+
+        source_limit = self._phase_limits[source_phase]
+        target_limit = self._phase_limits[target_phase]
+        source_limit.release()
+
+        acquired_target = False
+        try:
+            if not can_proceed_fn():
+                self._global_limit.release()
+                return False
+
+            await target_limit.acquire()
+            acquired_target = True
+
+            if not can_proceed_fn():
+                target_limit.release()
+                self._global_limit.release()
+                return False
+
+            return True
+        except Exception:
+            if acquired_target:
+                target_limit.release()
+            self._global_limit.release()
+            raise
+
     def try_acquire(
         self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
     ) -> bool:
@@ -459,6 +502,19 @@ class ConcurrencyManager:
         if not self._session_limiter.enabled:
             return can_proceed_fn()
         return await self._session_limiter.acquire(phase, can_proceed_fn)
+
+    async def transfer_session_slot(
+        self,
+        source_phase: CreditPhase,
+        target_phase: CreditPhase,
+        can_proceed_fn: Callable[[], bool],
+    ) -> bool:
+        """Move a held session slot from one phase to another."""
+        if not self._session_limiter.enabled:
+            return can_proceed_fn()
+        return await self._session_limiter.transfer(
+            source_phase, target_phase, can_proceed_fn
+        )
 
     def try_acquire_session_slot(
         self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
