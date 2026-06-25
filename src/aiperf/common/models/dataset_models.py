@@ -264,10 +264,12 @@ class Turn(AIPerfBaseModel):
     )
     headers: dict[str, str] | None = Field(
         default=None,
+        repr=False,
         description="Per-turn custom HTTP headers to inject into the outgoing request. "
         "Merged after endpoint-config headers so per-turn values win on key conflict. "
         "Set by trace dataset loaders (e.g., MooncakeTrace) when the source data "
-        "carries per-row headers.",
+        "carries per-row headers. repr=False so secret headers (Authorization, "
+        "API keys) never leak into str()/repr TRACE logs before record redaction.",
     )
 
     def metadata(self) -> TurnMetadata:
