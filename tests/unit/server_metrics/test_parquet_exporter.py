@@ -252,7 +252,11 @@ class TestParquetExporterBasics:
         with pytest.raises(DataExporterDisabled, match="format not selected"):
             ServerMetricsParquetExporter(mock_accumulator, time_filter)
 
-    def test_parquet_disabled_when_pyarrow_missing(self, mock_cfg, monkeypatch):
+    def test_parquet_disabled_when_pyarrow_missing(
+        self,
+        mock_cfg: BenchmarkRun,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """On platforms with no pyarrow wheel (e.g. Windows-on-ARM), the exporter
         self-disables with an actionable message instead of crashing the run."""
         import aiperf.server_metrics.parquet_exporter as pe
@@ -265,6 +269,32 @@ class TestParquetExporterBasics:
 
         with pytest.raises(DataExporterDisabled, match="pyarrow"):
             ServerMetricsParquetExporter(mock_accumulator, time_filter)
+
+    def test_parquet_module_imports_without_pyarrow(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The module must import on platforms without pyarrow (e.g. Windows-on-ARM).
+
+        This exercises the import-time guard directly: removing the ``try/except``
+        around the top-level pyarrow import would make the module fail to import
+        on WoA (breaking the whole install), which the constructor-guard test
+        above cannot catch because it runs where pyarrow is present.
+        """
+        import importlib
+        import sys
+
+        import aiperf.server_metrics.parquet_exporter as pe
+
+        monkeypatch.setitem(sys.modules, "pyarrow", None)
+        monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+        try:
+            importlib.reload(pe)
+            assert pe.pa is None
+            assert pe.pq is None
+        finally:
+            monkeypatch.undo()
+            importlib.reload(pe)
 
     async def test_parquet_file_created(self, mock_cfg, gauge_hierarchy):
         """Parquet file is created with valid schema."""
