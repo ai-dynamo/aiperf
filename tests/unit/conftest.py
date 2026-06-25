@@ -8,6 +8,7 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
+import importlib.util
 import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -39,6 +40,56 @@ from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.plugins import _PluginRegistry as PluginRegistry
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.time_traveler import TimeTraveler
+
+
+def _is_installed(module: str) -> bool:
+    """Whether ``module`` is importable (present) without importing it.
+
+    Used for native deps that are simply absent on some platforms -- e.g.
+    pyarrow and datasets publish no Windows-on-ARM wheel, so they fail with
+    ImportError there.
+    """
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _soundfile_usable() -> bool:
+    """Whether ``soundfile`` can actually load on this platform.
+
+    ``find_spec`` is insufficient: soundfile installs everywhere, but its
+    bundled ``libsndfile`` has no Windows-on-ARM build, so the import raises
+    OSError at native-library load time rather than ImportError.
+    """
+    try:
+        import soundfile  # noqa: F401
+    except (ImportError, OSError):
+        return False
+    return True
+
+
+_HAS_PYARROW = _is_installed("pyarrow")
+_HAS_DATASETS = _is_installed("datasets")
+_HAS_SOUNDFILE = _soundfile_usable()
+
+# Skip (at collection time) the unit-test modules whose top-level import chains
+# hard-depend on native libraries that have no Windows-on-ARM build. Without
+# this, collection itself crashes on win-arm before any test runs. On every
+# other platform these libs are present, so nothing is skipped. The base
+# package and the bulk of the suite remain fully covered on win-arm.
+collect_ignore: list[str] = []
+if not _HAS_PYARROW:
+    collect_ignore.append("server_metrics/test_parquet_exporter.py")
+if not _HAS_DATASETS:
+    collect_ignore.append("accuracy/test_lcb_codegeneration_benchmark.py")
+if not _HAS_DATASETS or not _HAS_SOUNDFILE:
+    # These import HF loaders that eagerly import both datasets and soundfile.
+    collect_ignore.append("dataset/loader/test_hf_image_feature_schemas.py")
+    collect_ignore.append("dataset/loader/test_hf_asr_loader.py")
+if not _HAS_SOUNDFILE:
+    collect_ignore.append("dataset/generator/test_audio_generator.py")
+    collect_ignore.append("dataset/generator/test_video_generator.py")
 
 # Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
