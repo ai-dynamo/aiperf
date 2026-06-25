@@ -301,8 +301,8 @@ class FileDataset(BaseConfig):
             description="Path to file or directory containing benchmark dataset. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
-            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, "
-            "directories for random_pool.",
+            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/"
+            "bailian_trace, Parquet for baseten_trace, directories for random_pool.",
         ),
     ]
 
@@ -326,7 +326,8 @@ class FileDataset(BaseConfig):
             description="Dataset file format determining parsing logic and expected file structure. "
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
-            "mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. "
+            "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
+            "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
             "random_pool: directory of reusable prompts.",
         ),
@@ -370,6 +371,19 @@ class FileDataset(BaseConfig):
             description="Random seed for deterministic sampling. "
             "When set, makes random/shuffle sampling reproducible across runs. "
             "Overrides global random_seed for this dataset.",
+        ),
+    ]
+
+    trace_session_sample_ratio: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            le=1.0,
+            default=None,
+            description="Optional fraction of trace sessions to keep for replay. "
+            "Applied at the whole-session level after rows are grouped into "
+            "sessions, preserving multi-turn integrity. Useful for replaying "
+            "a deterministic slice of a large production trace.",
         ),
     ]
 

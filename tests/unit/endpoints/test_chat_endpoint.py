@@ -159,6 +159,20 @@ class TestChatEndpoint:
         assert "max_completion_tokens" not in payload
         assert "max_tokens" not in payload
 
+    def test_format_payload_forwards_extra_body(self, endpoint, model_endpoint):
+        """Test per-turn extra_body fields are forwarded into chat payload."""
+        turn = Turn(
+            texts=[Text(contents=["Generate text"])],
+            model="test-model",
+            extra_body={"hash_ids": [1, 2], "block_size": 64},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["hash_ids"] == [1, 2]
+        assert payload["block_size"] == 64
+
     def test_format_payload_legacy_max_tokens(self):
         """Test legacy max_tokens field is used when flag is enabled."""
         # Create model endpoint with use_legacy_max_tokens=True

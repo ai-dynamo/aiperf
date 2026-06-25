@@ -242,6 +242,11 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         out["sampling"] = cli.dataset_sampling_strategy
     if "conversation_num_dataset_entries" in cli.model_fields_set:
         out["entries"] = cli.conversation_num_dataset_entries
+    if (
+        _set(cli, "trace_session_sample_ratio")
+        and cli.trace_session_sample_ratio is not None
+    ):
+        out["trace_session_sample_ratio"] = cli.trace_session_sample_ratio
     return out
 
 
@@ -521,6 +526,18 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
         )
 
 
+def _reject_trace_session_sampling_without_file(cli: CLIConfig) -> None:
+    if (
+        "trace_session_sample_ratio" in cli.model_fields_set
+        and cli.trace_session_sample_ratio is not None
+        and not cli.input_file
+    ):
+        raise ValueError(
+            "--trace-session-sample-ratio is only supported with trace file datasets; "
+            "provide --input-file and a trace --custom-dataset-type."
+        )
+
+
 def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--osl`` onto ``FileDataset.osl`` when --input-file is set.
 
@@ -650,6 +667,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     """
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
+    _reject_trace_session_sampling_without_file(cli)
 
     d = _flat_dataset_fields(cli)
     _attach_subtables(d, cli)

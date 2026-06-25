@@ -6,6 +6,7 @@ from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.base_loader import BaseFileLoader, BaseLoader
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
+from aiperf.dataset.loader.baseten_trace import BasetenTrace, BasetenTraceDatasetLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import (
     BailianTrace,
@@ -23,6 +24,8 @@ from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
 __all__ = [
     "BailianTrace",
     "BailianTraceDatasetLoader",
+    "BasetenTrace",
+    "BasetenTraceDatasetLoader",
     "BaseFileLoader",
     "BaseLoader",
     "BasePublicDatasetLoader",

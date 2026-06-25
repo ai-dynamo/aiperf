@@ -2420,7 +2420,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
                   "title": "Path"
                 },
                 "records": {
@@ -2453,7 +2453,7 @@
                 "format": {
                   "$ref": "#/$defs/DatasetFormat",
                   "default": "single_turn",
-                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
                 },
                 "sampling": {
                   "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -2498,6 +2498,21 @@
                   "default": null,
                   "description": "Random seed for deterministic sampling. When set, makes random/shuffle sampling reproducible across runs. Overrides global random_seed for this dataset.",
                   "title": "Randomseed"
+                },
+                "traceSessionSampleRatio": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "maximum": 1.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Optional fraction of trace sessions to keep for replay. Applied at the whole-session level after rows are grouped into sessions, preserving multi-turn integrity. Useful for replaying a deterministic slice of a large production trace.",
+                  "title": "Tracesessionsampleratio"
                 },
                 "interTurnDelayCapSeconds": {
                   "anyOf": [
@@ -5638,6 +5653,7 @@
       "enum": [
         "burst_gpt_trace",
         "bailian_trace",
+        "baseten_trace",
         "mooncake_trace",
         "raw_payload",
         "inputs_json",
@@ -6268,7 +6284,7 @@
             }
           ],
           "default": null,
-          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
           "title": "Path"
         },
         "records": {
@@ -6301,7 +6317,7 @@
         "format": {
           "$ref": "#/$defs/DatasetFormat",
           "default": "single_turn",
-          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
         },
         "sampling": {
           "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -6367,6 +6383,32 @@
           "default": null,
           "description": "Random seed for deterministic sampling. When set, makes random/shuffle sampling reproducible across runs. Overrides global random_seed for this dataset.",
           "title": "Randomseed",
+          "x-jinja2-supported": true
+        },
+        "traceSessionSampleRatio": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Optional fraction of trace sessions to keep for replay. Applied at the whole-session level after rows are grouped into sessions, preserving multi-turn integrity. Useful for replaying a deterministic slice of a large production trace.",
+          "title": "Tracesessionsampleratio",
           "x-jinja2-supported": true
         },
         "interTurnDelayCapSeconds": {

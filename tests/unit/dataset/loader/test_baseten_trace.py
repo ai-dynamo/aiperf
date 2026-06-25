@@ -1,0 +1,617 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from pathlib import Path
+from unittest.mock import Mock
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from aiperf.common.enums import ConversationContextMode
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.dataset.loader.baseten_trace import (
+    BasetenTrace,
+    BasetenTraceDatasetLoader,
+    count_baseten_parquet_records_and_sessions,
+)
+from aiperf.plugin.enums import CustomDatasetType
+from tests.unit.conftest import make_run_from_cli
+
+
+def _write_parquet(path: Path, rows: list[dict]) -> Path:
+    table = pa.Table.from_pylist(rows)
+    pq.write_table(table, path)
+    return path
+
+
+def _mock_prompt_generator() -> Mock:
+    generator = Mock()
+    generator._decoded_cache = {}
+    generator.tokenizer.resolved_name = "test-tokenizer"
+    return generator
+
+
+def _make_run(input_file: str | Path | None = None, **kwargs):
+    if input_file is not None:
+        kwargs.setdefault("input_file", str(input_file))
+        kwargs.setdefault("custom_dataset_type", CustomDatasetType.BASETEN_TRACE)
+    return make_run_from_cli(CLIConfig(model_names=["test-model"], **kwargs))
+
+
+class TestBasetenTraceDatasetLoader:
+    def test_can_load_parquet_schema(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 10,
+                    "prompt": "hello",
+                    "input_tokens": 3,
+                    "output_tokens": 4,
+                }
+            ],
+        )
+
+        assert BasetenTraceDatasetLoader.can_load(filename=path) is True
+
+    def test_can_load_parquet_schema_without_optional_columns(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 10,
+                    "prompt": "hello",
+                    "input_tokens": 3,
+                    "output_tokens": 4,
+                }
+            ],
+        )
+
+        assert BasetenTraceDatasetLoader.can_load(filename=path) is True
+
+    def test_load_dataset_normalizes_timestamps_and_groups_sessions(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 250,
+                    "prompt": "second prompt",
+                    "input_tokens": 20,
+                    "output_tokens": 8,
+                    "total_hashes": [7, 8],
+                    "provided_session_id": "1",
+                    "poor_man_session_id": 42,
+                    "request_canceled": 0,
+                    "block_size": 64,
+                },
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "first prompt",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_hashes": [1, 2],
+                    "provided_session_id": "2",
+                    "poor_man_session_id": 42,
+                    "request_canceled": 1,
+                    "block_size": 64,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "other session prompt",
+                    "input_tokens": 15,
+                    "output_tokens": 6,
+                    "total_hashes": [9],
+                    "provided_session_id": "3",
+                    "poor_man_session_id": 99,
+                    "request_canceled": 0,
+                    "block_size": 64,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        assert list(dataset.keys()) == ["42", "99"]
+        assert [trace.timestamp for trace in dataset["42"]] == [0, 150]
+        assert dataset["42"][0].text_input == "first prompt"
+        assert dataset["42"][0].request_canceled == 1
+        assert dataset["42"][0].request_body == {
+            "min_tokens": 5,
+            "hash_ids": [1, 2],
+            "block_size": 64,
+        }
+
+    def test_convert_to_conversations_uses_literal_prompts(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "literal prompt",
+                    "input_tokens": 10,
+                    "output_tokens": 12,
+                    "total_hashes": [11, 12],
+                    "provided_session_id": "a",
+                    "poor_man_session_id": 7,
+                    "block_size": 64,
+                }
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert turn.texts[0].contents == ["literal prompt"]
+        assert turn.max_tokens == 12
+        assert turn.extra_body == {
+            "min_tokens": 12,
+            "hash_ids": [11, 12],
+            "block_size": 64,
+        }
+
+    def test_convert_to_conversations_grouped_session_is_self_contained(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "this is turn 1",
+                    "input_tokens": 10,
+                    "output_tokens": 12,
+                    "poor_man_session_id": 7,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "this is turn 1, response to turn 1, and now turn 2 with all context included.",
+                    "input_tokens": 22,
+                    "output_tokens": 13,
+                    "poor_man_session_id": 7,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+        assert len(conversations[0].turns) == 2
+
+    def test_sessions_are_ordered_by_first_timestamp_not_session_id(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "later session",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 1,
+                },
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "earlier session",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 999,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        ordered_prompts = [traces[0].text_input for traces in dataset.values()]
+        assert ordered_prompts == ["earlier session", "later session"]
+
+    def test_trace_session_sample_ratio_samples_whole_sessions(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "s1-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "s1-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "s2-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 400,
+                    "prompt": "s2-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 200,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.01, random_seed=7),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 1
+        kept_session = next(iter(dataset.values()))
+        assert len(kept_session) == 2
+
+    def test_trace_session_sampling_skips_when_no_effective_session_key(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "row-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-1",
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "row-2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-2",
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.01, random_seed=7),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 2
+        assert sorted(
+            trace.text_input for traces in dataset.values() for trace in traces
+        ) == [
+            "row-1",
+            "row-2",
+        ]
+
+    def test_trace_session_sampling_falls_back_to_poor_man_session_id(
+        self, tmp_path: Path
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "s1-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-1",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "s1-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-2",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "s2-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-3",
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 400,
+                    "prompt": "s2-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-4",
+                    "poor_man_session_id": 200,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.01, random_seed=7),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        assert len(dataset) == 1
+        kept_session = next(iter(dataset.values()))
+        assert len(kept_session) == 2
+
+    def test_resolver_session_count_uses_same_key_as_loader(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "s1-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-1",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "s1-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-2",
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "s2-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-3",
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 400,
+                    "prompt": "s2-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "unique-4",
+                    "poor_man_session_id": 200,
+                },
+            ],
+        )
+
+        assert count_baseten_parquet_records_and_sessions(str(path)) == (4, 2)
+
+    def test_fixed_schedule_offsets_filter_relative_window_on_unix_timestamps(
+        self, tmp_path: Path
+    ):
+        # fixed_schedule_start_offset/end_offset are inclusive bounds [start, end],
+        # applied to normalized trace-relative timestamps (first row becomes t=0).
+        base_ts_ms = 1_730_000_000_000
+        one_hour_ms = 60 * 60 * 1000
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": base_ts_ms,
+                    "prompt": "hour0",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 1,
+                },
+                {
+                    "timestamp_start_unix_ms": base_ts_ms + (2 * one_hour_ms),
+                    "prompt": "hour2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 2,
+                },
+                {
+                    "timestamp_start_unix_ms": base_ts_ms + (3 * one_hour_ms),
+                    "prompt": "hour3",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 3,
+                },
+                {
+                    "timestamp_start_unix_ms": base_ts_ms + (4 * one_hour_ms),
+                    "prompt": "hour4",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 4,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(
+                path,
+                fixed_schedule=True,
+                fixed_schedule_start_offset=2 * one_hour_ms,
+                fixed_schedule_end_offset=3 * one_hour_ms,
+            ),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+        traces = [trace for session in dataset.values() for trace in session]
+
+        assert sorted(trace.text_input for trace in traces) == ["hour2", "hour3"]
+        assert sorted(int(trace.timestamp or 0) for trace in traces) == [
+            2 * one_hour_ms,
+            3 * one_hour_ms,
+        ]
+
+    def test_request_body_uses_capped_output_length(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "cap me",
+                    "input_tokens": 5,
+                    "output_tokens": 10,
+                    "poor_man_session_id": 1,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, synthesis_max_osl=3),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+        trace = next(iter(next(iter(dataset.values()))))
+
+        assert trace.output_length == 3
+        assert trace.request_body == {"min_tokens": 3}
+
+
+class TestBasetenTraceModel:
+    def test_model_maps_alias_fields(self):
+        trace = BasetenTrace(
+            timestamp_start_unix_ms=123,
+            prompt="hello",
+            input_tokens=10,
+            output_tokens=20,
+            total_hashes=[1, 2],
+            __version__="0.0.11",
+        )
+
+        assert trace.dataset_version == "0.0.11"
+
+    def test_model_accepts_null_hashes_and_numeric_provided_session_id(self):
+        trace = BasetenTrace(
+            timestamp_start_unix_ms=123,
+            prompt="hello",
+            input_tokens=10,
+            output_tokens=20,
+            total_hashes=None,
+            provided_session_id=42,
+            request_canceled=1,
+            org_id=7,
+        )
+
+        assert trace.total_hashes == []
+        assert trace.provided_session_id == 42
+        assert trace.request_canceled == 1
+        assert trace.org_id == 7
+
+
+class TestSynthesisHooks:
+    def test_synthesis_exclude_fields(self, tmp_path: Path) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        excluded = loader._synthesis_exclude_fields()
+
+        assert "prompt" in excluded
+        assert "request_body" in excluded
+        assert "provided_session_id" in excluded
+        assert "poor_man_session_id" in excluded
+        assert "total_hashes" in excluded
+
+    def test_reconstruct_traces_preserves_original_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+        originals = [
+            BasetenTrace(
+                timestamp_start_unix_ms=100,
+                prompt="original",
+                input_tokens=10,
+                output_tokens=20,
+                poor_man_session_id=7,
+                total_hashes=[1, 2],
+                block_size=64,
+            )
+        ]
+        synth_dicts = [
+            {"timestamp": 5, "input_length": 50, "output_length": 60},
+        ]
+
+        result = loader._reconstruct_traces(originals, synth_dicts)
+
+        assert len(result) == 1
+        assert result[0].timestamp == 5
+        assert result[0].input_length == 50
+        assert result[0].output_length == 60
+        assert result[0].request_body == {
+            "min_tokens": 60,
+            "hash_ids": [1, 2],
+            "block_size": 64,
+        }
+        assert result[0].prompt == "original"
+        assert result[0].poor_man_session_id == 7
+        assert result[0].total_hashes == [1, 2]
+
+    def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+        originals = [
+            BasetenTrace(
+                timestamp_start_unix_ms=100,
+                prompt="only-original",
+                input_tokens=10,
+                output_tokens=20,
+                poor_man_session_id=7,
+            )
+        ]
+        synth_dicts = [
+            {"timestamp": 5, "input_length": 50, "output_length": 60},
+            {"timestamp": 6, "input_length": 51, "output_length": 61},
+        ]
+
+        result = loader._reconstruct_traces(originals, synth_dicts)
+
+        assert len(result) == 2
+        assert result[1].timestamp == 6
+        assert result[1].input_length == 51
+        assert result[1].output_length == 61
+        assert result[1].prompt == "only-original"
+        assert result[1].poor_man_session_id == 7

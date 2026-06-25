@@ -209,18 +209,13 @@ class DatasetResolver:
         from aiperf.common.enums import DatasetFormat
         from aiperf.plugin.enums import CustomDatasetType
 
-        return {
-            str(DatasetFormat.SINGLE_TURN): CustomDatasetType.SINGLE_TURN,
-            str(DatasetFormat.MULTI_TURN): CustomDatasetType.MULTI_TURN,
-            str(DatasetFormat.MOONCAKE_TRACE): CustomDatasetType.MOONCAKE_TRACE,
-            str(DatasetFormat.RANDOM_POOL): CustomDatasetType.RANDOM_POOL,
-            str(DatasetFormat.BAILIAN_TRACE): CustomDatasetType.BAILIAN_TRACE,
-            str(DatasetFormat.BURST_GPT_TRACE): CustomDatasetType.BURST_GPT_TRACE,
-            str(DatasetFormat.DAG_JSONL): CustomDatasetType.DAG_JSONL,
-            str(
-                DatasetFormat.SAGEMAKER_DATA_CAPTURE
-            ): CustomDatasetType.SAGEMAKER_DATA_CAPTURE,
-        }
+        mapping: dict[str, object] = {}
+        for fmt in DatasetFormat:
+            try:
+                mapping[str(fmt)] = CustomDatasetType(str(fmt))
+            except ValueError:
+                continue
+        return mapping
 
     @staticmethod
     def _read_first_jsonl_record(file_path: str) -> dict | None:
@@ -321,6 +316,8 @@ class DatasetResolver:
             # load time (see ``BurstGPTTraceDatasetLoader._REQUIRED_COLUMNS``),
             # so the dataset cannot load without timing.
             return True
+        if dataset_type == CustomDatasetType.BASETEN_TRACE:
+            return True
 
         record = first_record
         if record is None:
@@ -353,6 +350,13 @@ class DatasetResolver:
         chat_id fields. For single-turn, each record is its own session.
         """
         from aiperf.plugin.enums import CustomDatasetType
+
+        if dataset_type == CustomDatasetType.BASETEN_TRACE:
+            from aiperf.dataset.loader.baseten_trace import (
+                count_baseten_parquet_records_and_sessions,
+            )
+
+            return count_baseten_parquet_records_and_sessions(file_path)
 
         is_multi_turn = dataset_type in (
             CustomDatasetType.MULTI_TURN,

@@ -482,7 +482,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
-            "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
+            "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
         CLIParameter(
@@ -523,7 +523,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
+            "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
             "per-entry associations - use `single_turn` if paired modalities must stay together). "
@@ -560,6 +560,24 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--random-seed",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
+    trace_session_sample_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            le=1.0,
+            description="Optional fraction of trace sessions to keep for replay. "
+            "Applied at the whole-session level after rows are grouped into "
+            "sessions, preserving multi-turn integrity. Useful for replaying "
+            "a live 10% slice of a large production trace. Sampling is "
+            "deterministic when `--random-seed` is set.",
+        ),
+        CLIParameter(
+            name=("--trace-session-sample-ratio",),
             group=Groups.INPUT,
         ),
     ] = None
@@ -976,10 +994,10 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, "
+            description="Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`, `baseten_trace`). When `hash_ids` are provided in trace entries, "
             "prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation "
             "of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. "
-            "When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).",
+            "When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).",
         ),
         CLIParameter(
             name=(

@@ -59,7 +59,7 @@ ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType", 
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType", module=__name__)
-"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.BAILIAN_TRACE, CustomDatasetType.SPEED_BENCH_THROUGHPUT_16K, CustomDatasetType.SPEED_BENCH_WRITING"""
+"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.BAILIAN_TRACE, CustomDatasetType.SPEED_BENCH_SUMMARIZATION, CustomDatasetType.SPEED_BENCH_WRITING"""
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
@@ -187,4 +187,4 @@ def _build_datasetformat_members() -> dict[str, str]:
             members[alias.upper()] = alias
     return members
 DatasetFormat = create_enum("DatasetFormat", _build_datasetformat_members(), module=__name__)
-"""Format of file-based datasets. Mirrors the custom_dataset_loader plugin registry: every loader name surfaces here, because ``--custom-dataset-type`` resolves into ``benchmark.datasets[].file.format``. Example: DatasetFormat.BAILIAN_TRACE, DatasetFormat.BURST_GPT_TRACE, DatasetFormat.DAG_JSONL"""
+"""Format of file-based datasets. Mirrors the custom_dataset_loader plugin registry: every loader name surfaces here, because ``--custom-dataset-type`` resolves into ``benchmark.datasets[].file.format``. Example: DatasetFormat.BAILIAN_TRACE, DatasetFormat.BASETEN_TRACE, DatasetFormat.BURST_GPT_TRACE"""
