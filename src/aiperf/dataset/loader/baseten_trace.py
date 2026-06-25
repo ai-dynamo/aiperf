@@ -420,10 +420,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             if not self._filter_and_cap_trace(trace):
                 continue
 
-            self._set_request_body(trace)
             items.append(trace)
 
-        self._log_filtering_summary()
         data = self._group_traces(items)
         self.debug(
             lambda: (
@@ -435,6 +433,12 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if _has_meaningful_synthesis(self._synthesis):
             data = self._apply_synthesis(data)
 
+        data = self._cap_grouped_traces_max_osl(data)
+        for traces in data.values():
+            for trace in traces:
+                self._set_request_body(trace)
+
+        self._log_filtering_summary()
         return data
 
     def _choose_session_key(self, items: list[BasetenTrace]) -> str | None:
