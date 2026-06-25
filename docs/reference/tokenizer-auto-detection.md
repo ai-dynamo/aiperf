@@ -134,6 +134,18 @@ If a tokenizer fails during service initialization, AIPerf walks the `__cause__`
 | `TimeoutError` | Network Timeout | Pre-download and use: `--tokenizer ./local-path` |
 | `OSError` | Tokenizer Load Error | Clear cache and retry |
 
+## Model Compatibility Shims
+
+Some checkpoints ship a `model_type` in `config.json` that the installed `transformers` release does not yet recognize. When the config also lacks an `auto_map`, there is no remote class for `transformers` to import, so `--tokenizer-trust-remote-code` cannot help and tokenizer loading aborts before any benchmark traffic.
+
+AIPerf registers a narrow config alias for these cases before loading the tokenizer:
+
+| Model type | Aliased to | Notes |
+|---|---|---|
+| `deepseek_v32` (DeepSeek-V3.2-Exp) | `DeepseekV3Config` | V3.2 reuses the V3 config schema. Same approach as vLLM and SGLang. |
+
+The shim is best-effort and idempotent: it is a no-op on `transformers` releases that already register the model type natively, and it never raises (loading falls through to the normal error path if the expected base config class is unavailable). Native `deepseek_v32` support landed in `transformers` via [huggingface/transformers#41251](https://github.com/huggingface/transformers/pull/41251); this alias covers the older releases in AIPerf's supported range (`transformers>=4.56`) that predate it, and can be removed once that floor moves past it.
+
 ## CLI Options
 
 | Option | Description |

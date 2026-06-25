@@ -376,6 +376,51 @@ def _missing_tokenizer_class_hint(error: Exception) -> str | None:
     )
 
 
+_DEEPSEEK_V32_MODEL_TYPE = "deepseek_v32"
+
+
+def _ensure_deepseek_v32_config_registered() -> None:
+    """Register a ``deepseek_v32`` config alias when transformers lacks one.
+
+    DeepSeek-V3.2-Exp ships ``config.json`` with ``model_type: "deepseek_v32"``
+    and no ``auto_map``. On transformers releases without a native
+    ``deepseek_v32`` entry (the ``>=4.56`` floor we still support), the
+    ``AutoConfig`` lookup that ``AutoTokenizer`` performs internally falls back
+    to an empty config and tokenizer loading aborts -- and
+    ``--tokenizer-trust-remote-code`` cannot help, since with no ``auto_map``
+    there is no remote config class to import. V3.2 reuses the V3 config schema,
+    so we alias it onto ``DeepseekV3Config`` (vLLM and SGLang do the same).
+
+    Idempotent and best-effort: a no-op once the model type is known (native
+    support on newer transformers, or a prior call), and silent when the
+    expected DeepSeek-V3 config class is unavailable so tokenizer loading
+    proceeds to its normal error path. Native support landed in transformers
+    via huggingface/transformers#41251; this shim covers the older releases in
+    our supported range (``>=4.56``) that predate it, and self-disables where
+    native support exists, so it can be removed once that floor moves past it.
+    """
+    try:
+        from transformers import AutoConfig, DeepseekV3Config
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+
+        if _DEEPSEEK_V32_MODEL_TYPE in CONFIG_MAPPING:
+            return
+
+        class _DeepseekV32ConfigAlias(DeepseekV3Config):
+            model_type = _DEEPSEEK_V32_MODEL_TYPE
+
+        AutoConfig.register(
+            _DEEPSEEK_V32_MODEL_TYPE, _DeepseekV32ConfigAlias, exist_ok=True
+        )
+    except (ImportError, TypeError, ValueError) as e:
+        # ImportError: DeepseekV3Config / CONFIG_MAPPING moved or renamed in a
+        # transformers version we don't pin. TypeError: base config unavailable
+        # (e.g. patched to None) so subclassing fails. ValueError: register()
+        # rejected the model type. All mean "leave the registry untouched and
+        # let tokenizer loading hit its normal error path."
+        _logger.debug(f"deepseek_v32 config alias registration skipped: {e!r}")
+
+
 class Tokenizer:
     """Simplified interface for HuggingFace tokenizers with sensible defaults."""
 
@@ -479,6 +524,8 @@ class Tokenizer:
         resolve_alias: bool,
     ) -> "Tokenizer":
         from transformers import AutoTokenizer
+
+        _ensure_deepseek_v32_config_registered()
 
         if _is_offline_mode():
             tokenizer_instance = cls._from_pretrained_local(
