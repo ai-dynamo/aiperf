@@ -260,6 +260,10 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.info("Server metrics disabled via --no-server-metrics")
             self._should_wait_for_server_metrics = False
 
+        if self.run.cfg.network_latency.should_probe:
+            self.debug("Starting optional NetworkLatencyManager service")
+            await self.service_manager.run_service(ServiceType.NETWORK_LATENCY_MANAGER)
+
         # Start AIPerf API if enabled
         api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
         api_host = self.run.cfg.runtime.api_host or Environment.API_SERVER.HOST
