@@ -15,6 +15,8 @@ from aiperf.common.protocols import (
     ReplyClientProtocol,
     RequestClientProtocol,
     StreamingDealerClientProtocol,
+    StreamingPullClientProtocol,
+    StreamingPushClientProtocol,
     StreamingRouterClientProtocol,
     SubClientProtocol,
 )
@@ -198,5 +200,39 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 socket_ops=socket_ops,
                 identity=identity,
                 decode_type=decode_type,
+            ),
+        )
+
+    def create_streaming_push_client(
+        self,
+        address: CommAddressType,
+        bind: bool = False,
+        socket_ops: dict | None = None,
+    ) -> StreamingPushClientProtocol:
+        return cast(
+            StreamingPushClientProtocol,
+            self.create_client(
+                CommClientType.STREAMING_PUSH,
+                address,
+                bind=bind,
+                socket_ops=socket_ops,
+            ),
+        )
+
+    def create_streaming_pull_client(
+        self,
+        address: CommAddressType,
+        bind: bool = True,
+        socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
+    ) -> StreamingPullClientProtocol:
+        return cast(
+            StreamingPullClientProtocol,
+            self.create_client(
+                CommClientType.STREAMING_PULL,
+                address,
+                bind=bind,
+                socket_ops=socket_ops,
+                additional_bind_address=additional_bind_address,
             ),
         )

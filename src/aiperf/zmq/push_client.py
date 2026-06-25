@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from typing import Any
 
 import zmq.asyncio
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.message_codecs import MessageCodecProtocol, get_message_codec
+from aiperf.common.messages import Message
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
@@ -49,6 +49,7 @@ class ZMQPushClient(BaseZMQClient):
         address: str,
         bind: bool,
         socket_ops: dict | None = None,
+        *,
         codec: MessageCodecProtocol | None = None,
         **kwargs,
     ) -> None:
@@ -59,13 +60,16 @@ class ZMQPushClient(BaseZMQClient):
             address (str): The address to bind or connect to.
             bind (bool): Whether to bind or connect the socket.
             socket_ops (dict, optional): Additional socket options to set.
+            codec (MessageCodecProtocol, optional): Wire codec for Message
+                envelopes (defaults to the shared msgpack codec). PUSH/PULL must
+                use the same codec on both ends.
         """
         super().__init__(zmq.SocketType.PUSH, address, bind, socket_ops, **kwargs)
         self._codec = codec or get_message_codec()
 
     async def _push_message(
         self,
-        message: Any,
+        message: Message,
         retry_count: int = 0,
         max_retries: int | None = None,
     ) -> None:
@@ -80,10 +84,20 @@ class ZMQPushClient(BaseZMQClient):
             max_retries = Environment.ZMQ.PUSH_MAX_RETRIES
 
         try:
-            data = self._codec.encode(message)
-            await self.socket.send(data)
+            data_bytes = self._codec.encode(message)
+            # copy=False sends without memcpy'ing the payload into a libzmq frame on
+            # the event loop thread. The PUSH path carries record/result payloads
+            # (e.g. multi-thousand-token inference results) where that copy shows up
+            # as event-loop block time under high concurrency. Safe here: the bytes
+            # are freshly serialized, never mutated, and re-serialized on retry, so
+            # pyzmq can hold the buffer until libzmq finishes the send.
+            # Sync NOBLOCK send skips zmq.asyncio's await/Future machinery.
+            # PUSH is send-only (no recv driver on this socket), so there is no
+            # FD edge-trigger to contend with. With the default SNDHWM=0 it never
+            # blocks; a finite HWM raises zmq.Again and falls to the retry path.
+            zmq.Socket.send(self.socket, data_bytes, flags=zmq.NOBLOCK, copy=False)
             if self.is_trace_enabled:
-                self.trace(f"Pushed encoded data: {len(data)} bytes")
+                self.trace(f"Pushed data: {data_bytes}")
         except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug("Push client cancelled or context terminated")
             return
@@ -99,22 +113,22 @@ class ZMQPushClient(BaseZMQClient):
         except Exception as e:
             raise CommunicationError(f"Failed to push data: {e}") from e
 
-    async def push(self, message: Any) -> None:
+    async def push(self, message: Message) -> None:
         """Push data to a target. The message will be routed automatically
         based on the message type.
 
         Args:
-            message: Message object or msgspec struct understood by this client's codec
+            message: Message to be sent must be a Message object
         """
         await self._check_initialized()
 
         await self._push_message(message)
 
     async def push_raw(self, data: bytes) -> None:
-        """Push pre-serialized bytes to the socket.
+        """Push pre-serialized bytes to the socket, bypassing the codec.
 
         Use this when serialization has already been done (e.g. in a thread pool)
-        to avoid blocking the event loop with model_dump + orjson on large messages.
+        to avoid blocking the event loop with encode on large messages.
 
         Args:
             data: Pre-serialized wire bytes
@@ -122,7 +136,9 @@ class ZMQPushClient(BaseZMQClient):
         await self._check_initialized()
 
         try:
-            await self.socket.send(data)
+            # Sync NOBLOCK send, matching _push_message: PUSH is send-only, so
+            # there is no FD edge-trigger to contend with; SNDHWM=0 never blocks.
+            zmq.Socket.send(self.socket, data, flags=zmq.NOBLOCK, copy=False)
             if self.is_trace_enabled:
                 self.trace(f"Pushed raw data: {len(data)} bytes")
         except (asyncio.CancelledError, zmq.ContextTerminated):

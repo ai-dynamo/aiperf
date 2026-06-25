@@ -217,6 +217,27 @@ class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):
 
 
 @runtime_checkable
+class StreamingPushClientProtocol(CommunicationClientProtocol, Protocol):
+    """Protocol for a PUSH client that sends typed structs (credit-channel wire)."""
+
+    async def send(self, message: MessageT) -> None:
+        """Encode and send a typed struct to the PULL peer."""
+        ...
+
+
+@runtime_checkable
+class StreamingPullClientProtocol(CommunicationClientProtocol, Protocol):
+    """Protocol for a PULL client that decodes typed WorkerToRouterMessage structs."""
+
+    def register_receiver(
+        self,
+        handler: Callable[[MessageT], Coroutine[Any, Any, None]],
+    ) -> None:
+        """Register the handler invoked for each decoded message (no peer identity)."""
+        ...
+
+
+@runtime_checkable
 class SubClientProtocol(CommunicationClientProtocol, Protocol):
     async def subscribe(
         self,
@@ -342,6 +363,27 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     ) -> StreamingDealerClientProtocol:
         """Create a STREAMING_DEALER client for the given address and identity, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
+        ...
+
+    def create_streaming_push_client(
+        self,
+        address: CommAddressType,
+        bind: bool = False,
+        socket_ops: dict | None = None,
+    ) -> StreamingPushClientProtocol:
+        """Create a STREAMING_PUSH client (typed struct fan-out) for the given address,
+        which will be automatically started and stopped with the CommunicationProtocol instance."""
+        ...
+
+    def create_streaming_pull_client(
+        self,
+        address: CommAddressType,
+        bind: bool = True,
+        socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
+    ) -> StreamingPullClientProtocol:
+        """Create a STREAMING_PULL client (typed struct fan-in) for the given address,
+        which will be automatically started and stopped with the CommunicationProtocol instance."""
         ...
 
 

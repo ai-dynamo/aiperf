@@ -1,26 +1,23 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import zmq.asyncio
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.hooks import background_task
+from aiperf.common.hooks import background_task, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.types import MessageTypeT
-from aiperf.common.utils import call_all_functions, yield_to_event_loop
+from aiperf.common.utils import call_all_functions
+from aiperf.zmq.fd_reader import FdEdgeReader
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 from aiperf.zmq.zmq_defaults import (
     TOPIC_END_ENCODED,
     TOPIC_END_LENGTH,
     WILDCARD_TOPIC,
 )
-
-if TYPE_CHECKING:
-    from aiperf.common.event_loop_monitor import EventLoopMonitor
 
 
 class ZMQSubClient(BaseZMQClient):
@@ -81,7 +78,7 @@ class ZMQSubClient(BaseZMQClient):
         self._wildcard_subscriber: Callable[[Message], Awaitable[None]] | None = None
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.SUB_YIELD_INTERVAL
-        self.event_loop_monitor: EventLoopMonitor | None = None
+        self._fd_reader: FdEdgeReader | None = None
 
     async def subscribe_all(
         self,
@@ -180,15 +177,9 @@ class ZMQSubClient(BaseZMQClient):
             lambda: f"Received message from topic: '{topic}', message: {message_bytes}"
         )
 
-        monitor = self.event_loop_monitor
-
         # Use AUTO-LOOKUP for all messages - single parse with multi-level routing
         # This is optimal for our workload (84% large messages in push/pull, 45% in pub/sub)
-        if monitor is not None:
-            with monitor.activity(f"from_json topic={topic}"):
-                message = Message.from_json(message_bytes)
-        else:
-            message = Message.from_json(message_bytes)
+        message = Message.from_json(message_bytes)
 
         self.trace(
             lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
@@ -197,27 +188,41 @@ class ZMQSubClient(BaseZMQClient):
         # Call callbacks with the parsed message object
         if topic in self._subscribers:
             try:
-                if monitor is not None:
-                    with monitor.activity(
-                        f"handler topic={topic} msg={message.__class__.__name__}"
-                    ):
-                        await call_all_functions(self._subscribers[topic], message)
-                else:
-                    await call_all_functions(self._subscribers[topic], message)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - subscriber handler boundary, must not crash SUB loop
+                await call_all_functions(self._subscribers[topic], message)
+            except Exception:
                 self.exception(f"Error in subscription handler for topic {topic}")
 
         if self._wildcard_subscriber is not None:
             try:
                 await self._wildcard_subscriber(message)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - wildcard handler boundary, must not crash SUB loop
+            except Exception:
                 self.exception(
                     f"Error in wildcard subscription handler for topic {topic}"
                 )
+
+    def _recv_one_sub(self) -> tuple[bytes, bytes]:
+        """Synchronous NOBLOCK multipart recv for the FD-reader drain.
+
+        SUB envelope: [topic, message_bytes]. Assembled manually via the direct
+        base-class ``recv`` because ``recv_multipart`` delegates to the async
+        ``self.recv``. First frame raises ``zmq.Again`` when drained.
+        """
+        topic = zmq.Socket.recv(self.socket, flags=zmq.NOBLOCK)
+        payload = b""
+        while self.socket.getsockopt(zmq.RCVMORE):
+            payload = zmq.Socket.recv(self.socket, flags=zmq.NOBLOCK)
+        return topic, payload
+
+    def _dispatch_sub(self, frames: tuple[bytes, bytes]) -> None:
+        topic_bytes, message_bytes = frames
+        # Must be async, otherwise it may deadlock the event loop (see await path).
+        self.execute_async(self._handle_message(topic_bytes, message_bytes))
+
+    @on_stop
+    async def _stop_fd_reader(self) -> None:
+        if self._fd_reader is not None:
+            self._fd_reader.stop()
+            self._fd_reader = None
 
     @background_task(immediate=True, interval=None)
     async def _sub_receiver(self) -> None:
@@ -226,40 +231,15 @@ class ZMQSubClient(BaseZMQClient):
         This method is a coroutine that will run indefinitely until the client is
         shutdown. It will wait for messages from the socket and handle them.
         """
-        self.debug(
-            lambda: f"SUB client {self.client_id} receiver task started, subscriptions: {list(self._subscribers.keys())}"
+        # Always drive the SUB socket off its raw FD with an edge-triggered
+        # NOBLOCK multipart drain.
+        self._fd_reader = FdEdgeReader(
+            socket=self.socket,
+            recv_one=self._recv_one_sub,
+            dispatch=self._dispatch_sub,
+            batch_limit=self._yield_interval,
+            on_error=lambda e: self.exception(
+                f"Exception draining sub socket for {self.client_id}: {e!r}"
+            ),
         )
-        while not self.stop_requested:
-            try:
-                topic_bytes, message_bytes = await self.socket.recv_multipart()
-                if self.is_trace_enabled:
-                    self.trace(
-                        f"Socket received message: {topic_bytes} {message_bytes}"
-                    )
-                # NOTE: This must be async otherwise it may deadlock the event loop.
-                self.execute_async(self._handle_message(topic_bytes, message_bytes))
-                self._msg_count += 1
-                # Yield periodically to allow scheduled handlers to run
-                # and prevent event loop starvation during message bursts.
-                if (
-                    self._yield_interval > 0
-                    and self._msg_count % self._yield_interval == 0
-                ):
-                    await yield_to_event_loop()
-
-            except zmq.Again:
-                self.trace(f"Sub client {self.client_id} receiver task timed out")
-                await yield_to_event_loop()
-            except asyncio.CancelledError:
-                self.debug(f"Sub client {self.client_id} receiver task cancelled")
-                raise
-            except zmq.ContextTerminated:
-                self.debug(
-                    f"Sub client {self.client_id} receiver task stopped (ZMQ context terminated)"
-                )
-                break
-            except (zmq.ZMQError, asyncio.TimeoutError) as e:
-                self.exception(
-                    f"Exception receiving message from subscription: {e}, {type(e)}"
-                )
-                await yield_to_event_loop()
+        self._fd_reader.start()

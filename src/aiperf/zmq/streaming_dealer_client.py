@@ -5,7 +5,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import msgspec
 import zmq
@@ -13,20 +13,23 @@ from msgspec import Struct
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
-from aiperf.common.utils import yield_to_event_loop
+from aiperf.zmq.fd_reader import FdEdgeReader
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
-# Shared encoder (stateless, safe to reuse across instances)
+# Shared encoder (stateless, safe to reuse across instances). The decoder is
+# per-instance because ``decode_type`` is configurable (see __init__).
 _encoder = msgspec.msgpack.Encoder()
+
+RouterToWorkerHandler: TypeAlias = Callable[[Any], Awaitable[None]]
 
 
 class ZMQStreamingDealerClient(BaseZMQClient):
     """
     ZMQ DEALER socket client for bidirectional streaming with ROUTER.
 
-    Supports both pure streaming (fire-and-forget) and request-reply patterns.
-    The message type is configurable via ``decode_type`` (defaults to
-    ``RouterToWorkerMessage`` for backwards compatibility).
+    Unlike ZMQDealerRequestClient (request-response pattern), this client is
+    designed for streaming scenarios where messages flow bidirectionally without
+    request-response pairing.
 
     The DEALER socket sets an identity which allows the ROUTER to send messages back
     to this specific DEALER instance.
@@ -34,7 +37,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
     ASCII Diagram:
     ┌──────────────┐                    ┌──────────────┐
     │    DEALER    │◄──── Stream ──────►│    ROUTER    │
-    │   (Client)   │                    │  (Service)   │
+    │   (Worker)   │                    │  (Manager)   │
     │              │                    │              │
     └──────────────┘                    └──────────────┘
 
@@ -42,8 +45,39 @@ class ZMQStreamingDealerClient(BaseZMQClient):
     - DEALER connects to ROUTER with a unique identity
     - DEALER sends messages to ROUTER
     - DEALER receives messages from ROUTER (routed by identity)
-    - Supports both streaming and request-reply (via ``request()``)
+    - No request-response pairing - pure streaming
     - Supports concurrent message processing
+
+    Example:
+    ```python
+        from aiperf.common.structs import (
+            Credit, CancelCredits, WorkerReady, WorkerShutdown, CreditReturn
+        )
+
+        # Create via comms (recommended - handles lifecycle management)
+        dealer = comms.create_streaming_dealer_client(
+            address=CommAddress.CREDIT_ROUTER,
+            identity="worker-1",
+        )
+
+        async def handle_message(message: Credit | CancelCredits) -> None:
+            match message:
+                case Credit() as credit:
+                    do_some_work(credit)
+                    await dealer.send(CreditReturn(credit_id=credit.id))
+                case CancelCredits(credit_ids=ids):
+                    cancel_credits(ids)
+
+        dealer.register_receiver(handle_message)
+
+        # Lifecycle managed by comms
+        await comms.initialize()
+        await comms.start()
+        await dealer.send(WorkerReady(worker_id="worker-1"))
+        ...
+        await dealer.send(WorkerShutdown(worker_id="worker-1"))
+        await comms.stop()
+    ```
     """
 
     def __init__(
@@ -87,13 +121,16 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         self._pending_requests: dict[str, asyncio.Future[Any]] = {}
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.STREAMING_DEALER_YIELD_INTERVAL
+        self._fd_reader: FdEdgeReader | None = None
 
-    def register_receiver(self, handler: Callable[[Any], Awaitable[None]]) -> None:
+    def register_receiver(self, handler: RouterToWorkerHandler) -> None:
         """
         Register handler for incoming messages from ROUTER.
 
+        The handler will be called for each message received (Credit or CancelCredits).
+
         Args:
-            handler: Async function that takes the decoded message.
+            handler: Async function that takes a RouterToWorkerMessage (Credit | CancelCredits)
         """
         if self._receiver_handler is not None:
             raise ValueError("Receiver handler already registered")
@@ -105,40 +142,72 @@ class ZMQStreamingDealerClient(BaseZMQClient):
     @on_stop
     async def _clear_receiver(self) -> None:
         """Clear receiver handler and pending requests on stop."""
+        if self._fd_reader is not None:
+            self._fd_reader.stop()
+            self._fd_reader = None
         self._receiver_handler = None
         for future in self._pending_requests.values():
             if not future.done():
                 future.cancel()
         self._pending_requests.clear()
 
+    def _recv_one_dealer(self) -> Any:
+        """Synchronous NOBLOCK recv + decode for the FD-reader drain."""
+        return self._decoder.decode(zmq.Socket.recv(self.socket, flags=zmq.NOBLOCK))
+
+    def _dispatch_dealer(self, message: Any) -> None:
+        # Request-reply: a reply carrying the rid/cid of a pending request
+        # resolves that future instead of going to the streaming handler. The
+        # match is a synchronous dict lookup so it stays inside the FD drain.
+        key = getattr(message, "rid", None) or getattr(message, "cid", None)
+        if key and key in self._pending_requests:
+            future = self._pending_requests.pop(key)
+            if not future.done():
+                future.set_result(message)
+            return
+        if self._receiver_handler is not None:
+            self.execute_async(self._receiver_handler(message))
+        else:
+            self.warning(f"Received {type(message).__name__} but no handler registered")
+
+    def _send_one_dealer(self, data: bytes) -> None:
+        """Synchronous NOBLOCK single-frame send for the FD-driver."""
+        zmq.Socket.send(self.socket, data, flags=zmq.NOBLOCK, copy=False)
+
     async def send(self, struct: Struct) -> None:
-        """Send struct to ROUTER (fire-and-forget)."""
+        """Send struct to ROUTER."""
         await self._check_initialized()
 
-        try:
-            await self.socket.send(_encoder.encode(struct))
-            if self.is_trace_enabled:
-                self.trace(f"Sent struct: {struct}")
-        except Exception as e:
-            self.exception(f"Failed to send message: {e}")
-            raise
+        # copy=False avoids memcpy'ing the encoded frame into libzmq on the event
+        # loop thread; the encoded buffer is freshly produced here and never reused.
+        data = _encoder.encode(struct)
+        # FD-driver owns both directions of the socket; never touch zmq.asyncio
+        # send here or it corrupts the shared FD edge-trigger. Before the
+        # receiver task has created the driver (early WorkerReady), send
+        # directly — SNDHWM=0 means the NOBLOCK send will not block.
+        if self._fd_reader is not None:
+            self._fd_reader.send(data)
+        else:
+            self._send_one_dealer(data)
+        if self.is_trace_enabled:
+            self.trace(f"Sent struct: {struct}")
 
     async def request(self, struct: Struct, timeout: float) -> Any:
-        """Send a request and wait for a response matched by ``rid`` or ``cid``.
+        """Send a request and await the response matched by ``rid``/``cid``.
 
-        The struct must have a ``rid`` or ``cid`` attribute. The response from
-        the ROUTER is matched by the same attribute and returned. Other messages
-        are dispatched normally to the receiver handler.
+        The struct must carry an ``rid`` or ``cid`` attribute; the ROUTER's reply
+        with the same key resolves the returned future (see ``_dispatch_dealer``).
+        Other messages dispatch normally to the receiver handler.
 
         Args:
             struct: The request struct to send (must have ``rid`` or ``cid``).
-            timeout: Maximum time to wait for a response in seconds.
+            timeout: Maximum time to wait for a response, in seconds.
 
         Returns:
             The decoded response struct.
 
         Raises:
-            asyncio.TimeoutError: If no response is received within timeout.
+            asyncio.TimeoutError: If no response is received within ``timeout``.
         """
         key = getattr(struct, "rid", None) or getattr(struct, "cid", None)
         if key is None:
@@ -146,64 +215,34 @@ class ZMQStreamingDealerClient(BaseZMQClient):
 
         future: asyncio.Future[Any] = asyncio.Future()
         self._pending_requests[key] = future
-
         try:
             await self.send(struct)
             return await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
-            raise
         finally:
             self._pending_requests.pop(key, None)
 
-    async def _process_received_message(self, message: Any) -> None:
-        """Dispatch a decoded message to a pending request future or the handler."""
-        # Check if this is a response to a pending request (by rid or cid)
-        key = getattr(message, "rid", None) or getattr(message, "cid", None)
-        if key and key in self._pending_requests:
-            future = self._pending_requests.pop(key)
-            if not future.done():
-                future.set_result(message)
-            return
-
-        if self._receiver_handler:
-            self.execute_async(self._receiver_handler(message))
-            self._msg_count += 1
-            if self._yield_interval > 0 and self._msg_count % self._yield_interval == 0:
-                await yield_to_event_loop()
-        else:
-            self.warning(f"Received {type(message).__name__} but no handler registered")
-
     @background_task(immediate=True, interval=None)
     async def _streaming_dealer_receiver(self) -> None:
-        """Background task for receiving messages from ROUTER."""
+        """
+        Background task for receiving messages from ROUTER.
+
+        Runs continuously until stop is requested. Decodes messages as
+        RouterToWorkerMessage (Credit | CancelCredits) using msgpack.
+        """
         self.debug(
             lambda: f"Streaming DEALER receiver task started for {self.identity}"
         )
 
-        while not self.stop_requested:
-            try:
-                message_bytes = await self.socket.recv()
-                if self.is_trace_enabled:
-                    self.trace(f"Received message: {message_bytes}")
-                message = self._decoder.decode(message_bytes)
-                await self._process_received_message(message)
-            except zmq.Again:
-                self.trace("No data on dealer socket received, yielding to event loop")
-                await yield_to_event_loop()
-            except asyncio.CancelledError:
-                self.debug("Streaming DEALER receiver task cancelled")
-                raise
-            except zmq.ContextTerminated:
-                self.debug(
-                    "Streaming DEALER receiver task stopped (ZMQ context terminated)"
-                )
-                break
-            except (zmq.ZMQError, asyncio.TimeoutError, msgspec.DecodeError) as e:
-                self.exception(
-                    f"Exception receiving messages for client {self.client_id}: {e!r}"
-                )
-                await yield_to_event_loop()
-
-        self.debug(
-            lambda: f"Streaming DEALER receiver task stopped for {self.identity}"
+        # Always drive the DEALER off its raw FD: edge-triggered NOBLOCK drain on
+        # recv, sync NOBLOCK on send (the driver owns both directions).
+        self._fd_reader = FdEdgeReader(
+            socket=self.socket,
+            recv_one=self._recv_one_dealer,
+            dispatch=self._dispatch_dealer,
+            batch_limit=self._yield_interval,
+            send_one=self._send_one_dealer,
+            on_error=lambda e: self.exception(
+                f"Exception draining dealer socket for {self.client_id}: {e!r}"
+            ),
         )
+        self._fd_reader.start()

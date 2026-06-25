@@ -104,7 +104,8 @@ def mock_worker(
     worker._measure_baseline_rtt = AsyncMock()
     worker.get_process_health = Mock(return_value=_STUB_PROCESS_HEALTH)
     worker.get_pss_memory = Mock(return_value=None)
-    worker.return_dealer_client.send = AsyncMock()
+    worker.credit_return_push_client.send = AsyncMock()
+    worker.credit_dealer_client.send = AsyncMock()
     return worker
 
 
@@ -122,7 +123,8 @@ def k8s_worker(
     worker._measure_baseline_rtt = AsyncMock()
     worker.get_process_health = Mock(return_value=_STUB_PROCESS_HEALTH)
     worker.get_pss_memory = Mock(return_value=None)
-    worker.return_dealer_client.send = AsyncMock()
+    worker.credit_return_push_client.send = AsyncMock()
+    worker.credit_dealer_client.send = AsyncMock()
     if worker.pod_lifecycle_dealer_client is not None:
         worker.pod_lifecycle_dealer_client.send = AsyncMock()
     return worker
@@ -178,7 +180,7 @@ class TestWorkerCancellation:
 
         assert ctx.cancelled is True
         assert ctx.returned is True
-        sent = mock_worker.return_dealer_client.send.await_args.args[0]
+        sent = mock_worker.credit_return_push_client.send.await_args.args[0]
         assert isinstance(sent, CreditReturn)
         assert sent.cancelled is True
         assert sent.error is None
@@ -193,7 +195,7 @@ class TestWorkerCancellation:
 
         await mock_worker._on_credit_drop_message_task(ctx)
 
-        sent = mock_worker.return_dealer_client.send.await_args.args[0]
+        sent = mock_worker.credit_return_push_client.send.await_args.args[0]
         assert isinstance(sent, CreditReturn)
         assert sent.error == "boom"
         assert ctx.returned is True
@@ -216,7 +218,7 @@ class TestWorkerCancellation:
             )
             await mock_worker._on_credit_drop_message_task(ctx)
 
-        sent = mock_worker.return_dealer_client.send.await_args.args[0]
+        sent = mock_worker.credit_return_push_client.send.await_args.args[0]
         assert isinstance(sent, CreditReturn)
         assert ctx.returned is True
 
@@ -347,7 +349,7 @@ class TestCreditDoneCallback:
         assert 42 not in mock_worker.credit_tasks
         assert ctx.returned is True
         assert ctx.cancelled is True
-        sent = mock_worker.return_dealer_client.send.await_args.args[0]
+        sent = mock_worker.credit_return_push_client.send.await_args.args[0]
         assert isinstance(sent, CreditReturn)
         assert sent.cancelled is True
 
@@ -370,7 +372,7 @@ class TestCreditDoneCallback:
         # No additional send; tracking dict still cleaned up.
         await asyncio.sleep(0)
         assert 7 not in mock_worker.credit_tasks
-        assert mock_worker.return_dealer_client.send.await_count == 0
+        assert mock_worker.credit_return_push_client.send.await_count == 0
 
 
 # ============================================================
@@ -425,7 +427,7 @@ class TestOnCreditMessageDispatch:
             InFlightReconciliation(credit_ids=frozenset({5, 6}))
         )
 
-        sent = mock_worker.return_dealer_client.send.await_args.args[0]
+        sent = mock_worker.credit_dealer_client.send.await_args.args[0]
         assert isinstance(sent, InFlightReport)
         assert sent.credit_ids == frozenset({5, 6})
         await sentinel_task
@@ -635,7 +637,7 @@ class TestShutdownMessageErrorSuppression:
     async def test_send_failure_is_suppressed(
         self, mock_worker: Worker, exc: Exception
     ) -> None:
-        mock_worker.return_dealer_client.send = AsyncMock(side_effect=exc)
+        mock_worker.credit_dealer_client.send = AsyncMock(side_effect=exc)
         mock_worker.warning = Mock()
 
         # Must not raise.
@@ -645,7 +647,7 @@ class TestShutdownMessageErrorSuppression:
 
     async def test_cancelled_error_propagates(self, mock_worker: Worker) -> None:
         """CancelledError MUST re-raise so caller sees the cancellation."""
-        mock_worker.return_dealer_client.send = AsyncMock(
+        mock_worker.credit_dealer_client.send = AsyncMock(
             side_effect=asyncio.CancelledError
         )
 
@@ -654,7 +656,7 @@ class TestShutdownMessageErrorSuppression:
 
     async def test_unrelated_exception_propagates(self, mock_worker: Worker) -> None:
         """A non-shutdown-class exception (RuntimeError) must NOT be silently swallowed."""
-        mock_worker.return_dealer_client.send = AsyncMock(
+        mock_worker.credit_dealer_client.send = AsyncMock(
             side_effect=RuntimeError("boom")
         )
 
@@ -834,7 +836,7 @@ class TestFirstTokenCallbackConstruction:
 
         assert result is True
         assert ctx.first_token_sent is True
-        sent = mock_worker.return_dealer_client.send.await_args.args[0]
+        sent = mock_worker.credit_return_push_client.send.await_args.args[0]
         assert isinstance(sent, FirstToken)
         assert sent.credit_id == 99
         assert sent.ttft_ns == 123_456
@@ -856,7 +858,7 @@ class TestFirstTokenCallbackConstruction:
 
         assert result is False
         assert ctx.first_token_sent is False
-        mock_worker.return_dealer_client.send.assert_not_called()
+        mock_worker.credit_return_push_client.send.assert_not_called()
 
 
 # ============================================================

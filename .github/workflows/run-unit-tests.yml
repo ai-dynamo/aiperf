@@ -88,6 +88,13 @@ jobs:
       if: runner.os == 'Windows'
       run: |
         uv run pytest tests/unit -n auto --tb=short -m 'not performance and not stress and not slow'
+    - name: Run zmq real-transport tests (Windows)
+      # Real-socket libzmq tests (no looptime). ``!cancelled()`` lets them run
+      # even if the unit step failed, matching the POSIX ``make test-ci``
+      # exit-code aggregation across tiers.
+      if: ${{ !cancelled() && runner.os == 'Windows' }}
+      run: |
+        uv run pytest tests/zmq --tb=short --no-looptime -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
       # ``!cancelled()`` overrides the implicit ``success()`` so component
       # integration still runs even if the unit-test step failed — matching

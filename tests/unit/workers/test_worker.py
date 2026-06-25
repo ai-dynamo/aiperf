@@ -556,7 +556,7 @@ class TestKubernetesMode:
         )
         worker.publish = AsyncMock()
         worker._measure_baseline_rtt = AsyncMock()
-        worker.return_dealer_client.send = AsyncMock()
+        worker.credit_dealer_client.send = AsyncMock()
 
         await worker._send_worker_ready_message()
 
@@ -590,14 +590,14 @@ class TestKubernetesMode:
         self, k8s_worker: Worker
     ) -> None:
         """K8s workers should connect to the router before dataset readiness."""
-        k8s_worker.return_dealer_client.send = AsyncMock()
+        k8s_worker.credit_dealer_client.send = AsyncMock()
         k8s_worker._query_pod_dataset_state = AsyncMock(return_value=None)
 
         await k8s_worker._send_worker_ready_message()
 
         sent_messages = [
             call.args[0]
-            for call in k8s_worker.return_dealer_client.send.await_args_list
+            for call in k8s_worker.credit_dealer_client.send.await_args_list
         ]
         assert isinstance(sent_messages[0], WorkerConnected)
         assert not any(
@@ -617,7 +617,7 @@ class TestKubernetesMode:
             service_id="k8s-worker",
         )
         worker._pod_index = "0"
-        worker.return_dealer_client.send = AsyncMock()
+        worker.credit_dealer_client.send = AsyncMock()
         worker._query_pod_dataset_state = AsyncMock(return_value=None)
         worker._initialize_dataset_client = AsyncMock()
 
@@ -636,7 +636,7 @@ class TestKubernetesMode:
         worker._initialize_dataset_client.assert_awaited_once()
         worker._query_pod_dataset_state.assert_not_awaited()
         assert isinstance(
-            worker.return_dealer_client.send.await_args_list[-1].args[0],
+            worker.credit_dealer_client.send.await_args_list[-1].args[0],
             WorkerDispatchable,
         )
         assert worker._worker_ready_event.is_set()
@@ -659,7 +659,7 @@ class TestKubernetesMode:
         self, k8s_worker: Worker
     ) -> None:
         """K8s workers should become dispatchable from pod-local current state."""
-        k8s_worker.return_dealer_client.send = AsyncMock()
+        k8s_worker.credit_dealer_client.send = AsyncMock()
         k8s_worker._query_pod_dataset_state = AsyncMock(
             return_value=GroupDatasetStateSnapshot(
                 rid="rid-1",
@@ -679,7 +679,7 @@ class TestKubernetesMode:
 
         k8s_worker._initialize_dataset_client.assert_awaited_once()
         assert isinstance(
-            k8s_worker.return_dealer_client.send.await_args_list[-1].args[0],
+            k8s_worker.credit_dealer_client.send.await_args_list[-1].args[0],
             WorkerDispatchable,
         )
         assert k8s_worker._worker_ready_event.is_set()
@@ -703,7 +703,7 @@ class TestKubernetesMode:
                 ready=True,
             ),
         ]
-        k8s_worker.return_dealer_client.send = AsyncMock()
+        k8s_worker.credit_dealer_client.send = AsyncMock()
         k8s_worker._query_pod_dataset_state = AsyncMock(side_effect=snapshots)
         k8s_worker._initialize_dataset_client = AsyncMock()
 
@@ -735,7 +735,7 @@ class TestKubernetesMode:
     async def test_k8s_shutdown_notifies_pod_manager(self, k8s_worker: Worker) -> None:
         """Kubernetes workers should revoke dispatchability before shutdown."""
         k8s_worker.pod_lifecycle_dealer_client.send = AsyncMock()
-        k8s_worker.return_dealer_client.send = AsyncMock()
+        k8s_worker.credit_dealer_client.send = AsyncMock()
 
         await k8s_worker._send_worker_shutdown_message()
 
@@ -744,7 +744,7 @@ class TestKubernetesMode:
         assert lifecycle_sent[-1].args[0].service_id == "k8s-worker"
         sent_messages = [
             call.args[0]
-            for call in k8s_worker.return_dealer_client.send.await_args_list
+            for call in k8s_worker.credit_dealer_client.send.await_args_list
         ]
         assert isinstance(sent_messages[0], WorkerUndispatchable)
 
@@ -759,7 +759,7 @@ class TestKubernetesMode:
             service_id="k8s-worker",
         )
         worker._pod_index = "0"
-        worker.return_dealer_client.send = AsyncMock()
+        worker.credit_dealer_client.send = AsyncMock()
         worker.pod_lifecycle_dealer_client.send = AsyncMock()
 
         init_started = asyncio.Event()
@@ -805,7 +805,7 @@ class TestKubernetesMode:
         worker._initialize_dataset_client.assert_awaited_once()
         dispatchable_messages = [
             call.args[0]
-            for call in worker.return_dealer_client.send.await_args_list
+            for call in worker.credit_dealer_client.send.await_args_list
             if isinstance(call.args[0], WorkerDispatchable)
         ]
         ready_state_messages = [
@@ -830,7 +830,7 @@ class TestKubernetesMode:
         )
         worker._pod_index = "0"
         worker._initialize_dataset_client = AsyncMock()
-        worker.return_dealer_client.send = AsyncMock()
+        worker.credit_dealer_client.send = AsyncMock()
 
         snapshot = GroupDatasetStateSnapshot(
             rid="rid-1",
@@ -925,7 +925,7 @@ class TestKubernetesMode:
             run=self._make_run(config),
             service_id="k8s-worker",
         )
-        worker.return_dealer_client.send = AsyncMock()
+        worker.credit_dealer_client.send = AsyncMock()
         worker._initialize_dataset_client = AsyncMock()
 
         await worker._complete_group_startup_flow(
@@ -941,6 +941,6 @@ class TestKubernetesMode:
         worker._initialize_dataset_client.assert_not_awaited()
         assert not any(
             isinstance(call.args[0], WorkerDispatchable)
-            for call in worker.return_dealer_client.send.await_args_list
+            for call in worker.credit_dealer_client.send.await_args_list
         )
         assert not worker._worker_ready_event.is_set()

@@ -130,6 +130,19 @@ class CreditReturn(
 
     Sent by worker to router after completing (or failing/cancelling) a request.
     Router uses this to update load tracking and notify timing manager.
+
+    Attributes:
+        credit: The credit being returned.
+        cancelled: True if the credit was cancelled before completion.
+        first_token_sent: True if FirstToken was sent before this return.
+            Used by orchestrator to release prefill slot if not already released.
+        error: Error message if the request failed (None on success).
+        worker_id: Returning worker's id. Stamped on the PUSH/PULL return channel
+            (CommAddress.CREDIT_RETURN), which carries no ZMQ envelope identity,
+            so the router can attribute the return to the right worker.
+        worker_detached: True if the router received this return after the worker
+            had already shut down. Set router-side during reconciliation; not on
+            the wire.
     """
 
     credit: Credit
@@ -143,6 +156,10 @@ class CreditReturn(
 
     error: str | None = None
     """Error message if the request failed (None on success)."""
+
+    worker_id: str | None = None
+    """Returning worker's id, stamped on the PUSH/PULL return channel (which has
+    no ZMQ envelope identity) so the router can attribute the return."""
 
     worker_detached: bool = False
     """True if the router received this return after the worker had already shut down."""

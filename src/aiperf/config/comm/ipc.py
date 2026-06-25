@@ -283,6 +283,7 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
             ("records_push_pull", ipc_filename("records_push_pull.ipc")),
             ("credit_router", ipc_filename("credit_router.ipc")),
             ("credit_return_router", ipc_filename("credit_return_router.ipc")),
+            ("credit_return_push_pull", ipc_filename("credit_return_push_pull.ipc")),
             ("control", ipc_filename("control.ipc")),
             ("group_lifecycle", ipc_filename("group_lifecycle.ipc")),
         ]
@@ -331,6 +332,13 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
         """Get the records push/pull address (ipc:// on POSIX, tcp:// on Windows)."""
         return build_socket_address(
             self.path, "records_push_pull.ipc", self._collision_salt
+        )
+
+    @property
+    def credit_return_push_pull_address(self) -> str:
+        """Get the credit-return push/pull address (ipc:// on POSIX, tcp:// on Windows)."""
+        return build_socket_address(
+            self.path, "credit_return_push_pull.ipc", self._collision_salt
         )
 
     @property

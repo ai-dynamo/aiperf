@@ -27,7 +27,7 @@ class TestStickyCreditRouterWorkerRoutingState:
         router = StickyCreditRouter(run=run, service_id="test-router")
         router._credit_router_client.send_to = AsyncMock()
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-connected",
             WorkerConnected(worker_id="worker-connected"),
         )
@@ -44,11 +44,11 @@ class TestStickyCreditRouterWorkerRoutingState:
         router = StickyCreditRouter(run=run, service_id="test-router")
         router._credit_router_client.send_to = AsyncMock()
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-dispatchable",
             WorkerConnected(worker_id="worker-dispatchable"),
         )
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-dispatchable",
             WorkerDispatchable(worker_id="worker-dispatchable"),
         )
@@ -66,7 +66,7 @@ class TestStickyCreditRouterWorkerRoutingState:
     ) -> None:
         router = StickyCreditRouter(run=run, service_id="test-router")
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-dispatchable-only",
             WorkerDispatchable(worker_id="worker-dispatchable-only"),
         )
@@ -79,7 +79,7 @@ class TestStickyCreditRouterWorkerRoutingState:
     ) -> None:
         router = StickyCreditRouter(run=run, service_id="test-router")
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-undispatchable-only",
             WorkerUndispatchable(
                 worker_id="worker-undispatchable-only",
@@ -96,18 +96,18 @@ class TestStickyCreditRouterWorkerRoutingState:
         router = StickyCreditRouter(run=run, service_id="test-router")
         router._credit_router_client.send_to = AsyncMock()
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-undispatchable",
             WorkerConnected(worker_id="worker-undispatchable"),
         )
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-undispatchable",
             WorkerDispatchable(worker_id="worker-undispatchable"),
         )
         assert "worker-undispatchable" in router._workers
         assert "worker-undispatchable" in router._connected_workers
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-undispatchable",
             WorkerUndispatchable(
                 worker_id="worker-undispatchable",
@@ -131,11 +131,11 @@ class TestStickyCreditRouterWorkerRoutingState:
     ) -> None:
         router = StickyCreditRouter(run=run, service_id="test-router")
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-shutdown",
             WorkerConnected(worker_id="worker-shutdown"),
         )
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-shutdown",
             WorkerDispatchable(worker_id="worker-shutdown"),
         )
@@ -143,7 +143,7 @@ class TestStickyCreditRouterWorkerRoutingState:
         assert "worker-shutdown" in router._workers
         assert "worker-shutdown" in router._connected_workers
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-shutdown",
             WorkerShutdown(worker_id="worker-shutdown"),
         )
@@ -504,7 +504,7 @@ class TestStickyCreditRouterFirstToken:
             ttft_ns=150_000_000,  # 150ms
         )
 
-        await router._handle_return_router_message("worker-1", first_token)
+        await router._handle_router_message("worker-1", first_token)
 
         assert len(callback_received) == 1
         assert callback_received[0].credit_id == 42
@@ -523,7 +523,7 @@ class TestStickyCreditRouterFirstToken:
         )
 
         # Should not raise
-        await router._handle_return_router_message("worker-1", first_token)
+        await router._handle_router_message("worker-1", first_token)
 
     async def test_first_token_warmup_phase(self, run) -> None:
         """Test that FirstToken works for warmup phase."""
@@ -543,7 +543,7 @@ class TestStickyCreditRouterFirstToken:
             ttft_ns=50_000_000,
         )
 
-        await router._handle_return_router_message("worker-1", first_token)
+        await router._handle_router_message("worker-1", first_token)
 
         assert received_phases == ["warmup"]
 
@@ -743,7 +743,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         router._workers["worker-1"].active_sessions = 1
         router._workers["worker-1"].active_session_ids = {"session-7"}
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
@@ -753,7 +753,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         assert "worker-1" in router._detached_workers
         on_return.assert_not_awaited()
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             CreditReturn(
                 credit=credit,
@@ -780,7 +780,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         credit = make_credit(id=8, corr_id="session-8", turn=0, num_turns=3)
         router._track_credit_sent("worker-1", credit)
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
@@ -808,18 +808,18 @@ class TestStickyCreditRouterWorkerUnregistration:
         credit = make_credit(id=9, corr_id="session-9", turn=0, num_turns=2)
         router._track_credit_sent("worker-1", credit)
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
         router._detached_worker_deadlines_ns["worker-1"] = 0
         await router._reclaim_expired_detached_workers()
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             FirstToken(credit_id=credit.id, phase=credit.phase, ttft_ns=123),
         )
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             CreditReturn(
                 credit=credit,
@@ -843,7 +843,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         async def on_return(worker_id: str, message: CreditReturn) -> None:
             events.append((message.credit.id, message.cancelled))
             if message.credit.id == credit1.id:
-                await router._handle_return_router_message(
+                await router._handle_router_message(
                     worker_id,
                     CreditReturn(
                         credit=credit2,
@@ -857,7 +857,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         router._track_credit_sent("worker-1", credit1)
         router._track_credit_sent("worker-1", credit2)
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
@@ -882,7 +882,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         router._workers["worker-1"].active_sessions = 1
         router._workers["worker-1"].active_session_ids = {"session-16"}
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerConnected(worker_id="worker-1"),
         )
@@ -896,7 +896,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         assert reclaimed.error.startswith("worker_unavailable:")
         assert "session-16" not in router._unavailable_sessions
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerDispatchable(worker_id="worker-1"),
         )
@@ -917,11 +917,11 @@ class TestStickyCreditRouterWorkerUnregistration:
         old_credit = make_credit(id=12, corr_id="session-12", turn=0, num_turns=3)
         router._track_credit_sent("worker-1", old_credit)
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerConnected(worker_id="worker-1"),
         )
@@ -931,7 +931,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         assert "worker-1" in router._detached_workers
         on_return.assert_not_awaited()
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerDispatchable(worker_id="worker-1"),
         )
@@ -946,7 +946,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         on_return.reset_mock()
         new_credit = make_credit(id=13, corr_id="session-13", turn=0, num_turns=1)
         router._track_credit_sent("worker-1", new_credit)
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             CreditReturn(
                 credit=new_credit,
@@ -974,7 +974,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         router._workers["worker-1"].active_sessions = 1
         router._workers["worker-1"].active_session_ids = {"session-lost"}
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
@@ -1010,7 +1010,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         router._workers["worker-1"].active_sessions = 1
         router._workers["worker-1"].active_session_ids = {"session-migrate"}
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             WorkerShutdown(worker_id="worker-1"),
         )
@@ -1061,7 +1061,7 @@ class TestStickyCreditRouterWorkerUnregistration:
         router = StickyCreditRouter(run=run, service_id="test-router")
         router._credit_router_client.send_to = AsyncMock()
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             TimePing(sequence=1, sent_at_ns=1),
         )
@@ -1071,7 +1071,7 @@ class TestStickyCreditRouterWorkerUnregistration:
             patch.object(router, "info") as mock_info,
             patch.object(router, "warning") as mock_warning,
         ):
-            await router._handle_return_router_message(
+            await router._handle_router_message(
                 "worker-1",
                 WorkerShutdown(worker_id="worker-1"),
             )
@@ -1188,7 +1188,7 @@ class TestStickyCreditRouterMinLoadTracking:
         await router._send_reconciliation()
         assert "worker-1" in router._pending_reconciliation
 
-        await router._handle_return_router_message(
+        await router._handle_router_message(
             "worker-1",
             CreditReturn(
                 credit=credit,

@@ -55,8 +55,8 @@ class TestZMQPushClientPush:
 
         await client.push(sample_message)
 
-        mock_zmq_socket.send.assert_called_once()
-        sent_data = mock_zmq_socket.send.call_args[0][0]
+        mock_zmq_socket._sync_send.assert_called_once()
+        sent_data = mock_zmq_socket._sync_send.call_args[0][0]
         # sent_data is bytes, so decode to string for comparison
         assert str(sample_message.message_type).encode() in sent_data
 
@@ -72,7 +72,7 @@ class TestZMQPushClientPush:
 
         await client.push(message)
 
-        sent_data = mock_zmq_socket.send.call_args[0][0]
+        sent_data = mock_zmq_socket._sync_send.call_args[0][0]
         decoded = get_message_codec().decode(sent_data)
         assert isinstance(decoded, ConnectionProbeMessage)
         assert decoded.service_id == "test"
@@ -108,7 +108,7 @@ class TestZMQPushClientPush:
 
         await client.push(message)
 
-        sent_data = mock_zmq_socket.send.call_args[0][0]
+        sent_data = mock_zmq_socket._sync_send.call_args[0][0]
         assert isinstance(sent_data, bytes)
         assert b'"message_type"' not in sent_data
 
@@ -128,7 +128,10 @@ class TestZMQPushClientPush:
         payload = b"\x82\xa1t\xa4test"
         await client.push_raw(payload)
 
-        mock_zmq_socket.send.assert_called_once_with(payload)
+        # push_raw sends the bytes verbatim via the sync NOBLOCK path (recorded
+        # on _sync_send), bypassing the codec.
+        mock_zmq_socket._sync_send.assert_called_once()
+        assert mock_zmq_socket._sync_send.call_args[0][0] == payload
 
     @pytest.mark.asyncio
     async def test_push_retries_on_zmq_again(self, mock_zmq_context):
@@ -136,8 +139,8 @@ class TestZMQPushClientPush:
         mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
         mock_socket.bind = Mock()
         mock_socket.setsockopt = Mock()
-        # First call fails, second succeeds
-        mock_socket.send = AsyncMock(side_effect=[zmq.Again(), None])
+        # Sync FD-send path: first call fails (zmq.Again), second succeeds.
+        mock_socket._sync_send = Mock(side_effect=[zmq.Again(), None])
         mock_zmq_context.socket = Mock(return_value=mock_socket)
 
         with (
@@ -153,7 +156,7 @@ class TestZMQPushClientPush:
             await client.push(message)
 
             # Verify it was called twice (once failed, once succeeded)
-            assert mock_socket.send.call_count == 2
+            assert mock_socket._sync_send.call_count == 2
 
     @pytest.mark.asyncio
     async def test_push_raises_communication_error_after_max_retries(
@@ -163,7 +166,7 @@ class TestZMQPushClientPush:
         mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
         mock_socket.bind = Mock()
         mock_socket.setsockopt = Mock()
-        mock_socket.send = AsyncMock(side_effect=zmq.Again())
+        mock_socket._sync_send = Mock(side_effect=zmq.Again())
         mock_zmq_context.socket = Mock(return_value=mock_socket)
 
         with (
@@ -233,4 +236,4 @@ class TestZMQPushClientEdgeCases:
         for msg in messages:
             await client.push(msg)
 
-        assert mock_zmq_socket.send.call_count == 5
+        assert mock_zmq_socket._sync_send.call_count == 5

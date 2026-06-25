@@ -78,6 +78,7 @@ from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
     StreamingDealerClientProtocol,
+    StreamingPushClientProtocol,
 )
 from aiperf.credit.messages import (
     CancelCredits,
@@ -197,6 +198,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._init_pod_lifecycle_channel()
         self._init_startup_state()
 
+        # Dual-channel returns: CreditReturn/FirstToken go out a dedicated typed
+        # PUSH -> router PULL fan-in instead of back on the bidirectional credit
+        # DEALER, so the dispatch DEALER carries only inbound credits plus the
+        # low-frequency control messages (no high-volume shared-FD send/recv
+        # contention). WorkerConnected/Dispatchable/Undispatchable/Shutdown/TimePing
+        # still go on the DEALER so the ROUTER registers/tracks identity. Returns
+        # carry worker_id in-message since PUSH/PULL has no ZMQ envelope identity.
+        self.credit_return_push_client: StreamingPushClientProtocol = (
+            self.comms.create_streaming_push_client(
+                CommAddress.CREDIT_RETURN,
+                bind=False,
+            )
+        )
+
         self.memory_usage_before_profiling: float | None = None
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
         self.session_manager: UserSessionManager = UserSessionManager()
@@ -242,9 +257,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
 
     def _init_credit_channels(self) -> None:
-        """Wire up DEALER sockets for the credit and return channels."""
-        # Credit channel (Router -> Worker): receive-only, gets Credit and CancelCredits.
-        # Identity must be unique - ZMQ ROUTER uses it to address messages.
+        """Wire up the credit dispatch DEALER (CreditReturn/FirstToken go out the
+        separate PUSH return channel set up in __init__)."""
+        # Credit dispatch channel (Router <-> Worker): receives Credit/CancelCredits/
+        # TimePong/InFlightReconciliation, and sends the low-frequency control
+        # messages (WorkerConnected/Dispatchable/Undispatchable/Shutdown/TimePing)
+        # so the ROUTER learns this worker's identity. The high-volume returns go
+        # out the PUSH channel instead, keeping this DEALER off the shared-FD
+        # send/recv contention. Identity must be unique - ZMQ ROUTER uses it to
+        # address messages.
         self.credit_dealer_client: StreamingDealerClientProtocol = (
             self.comms.create_streaming_dealer_client(
                 address=CommAddress.CREDIT_ROUTER,
@@ -254,17 +275,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
         self.credit_dealer_client.register_receiver(self._on_credit_message)
-
-        # Return channel (Worker -> Router): send-only. CreditReturn, FirstToken,
-        # WorkerConnected, WorkerDispatchable, WorkerShutdown, TimePing.
-        # No incoming messages.
-        self.return_dealer_client: StreamingDealerClientProtocol = (
-            self.comms.create_streaming_dealer_client(
-                address=CommAddress.CREDIT_RETURN_ROUTER,
-                identity=self.service_id,
-                bind=False,
-            )
-        )
 
     def _init_pod_lifecycle_channel(self) -> None:
         """Wire up the optional pod-lifecycle DEALER socket used in group-managed mode."""
@@ -300,7 +310,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _send_worker_ready_message(self) -> None:
         """Announce connectivity, then become dispatchable when startup gates clear."""
         await self._publish_startup_state(WorkerStartupState.STARTING)
-        await self.return_dealer_client.send(WorkerConnected(worker_id=self.service_id))
+        await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
         if self._is_group_managed_mode():
             if self.pod_lifecycle_dealer_client is not None:
                 await _send_group_peer_hello_with_retry(
@@ -348,7 +358,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _measure_baseline_rtt(self) -> None:
         """Measure baseline RTT on the credit channel before announcing readiness."""
         await self.clock_offset_tracker.measure_baseline_rtt(
-            send_ping=self.return_dealer_client.send,
+            send_ping=self.credit_dealer_client.send,
         )
 
     async def _on_pod_lifecycle_message(
@@ -542,7 +552,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Send the ready transition exactly once while holding the ready lock."""
         if self._worker_ready_event.is_set():
             return
-        await self.return_dealer_client.send(
+        await self.credit_dealer_client.send(
             WorkerDispatchable(worker_id=self.service_id)
         )
         await self._publish_startup_state(WorkerStartupState.READY)
@@ -604,7 +614,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if retry_task is not None and not retry_task.done():
                 retry_task.cancel()
             if self._is_kubernetes_mode():
-                await self.return_dealer_client.send(
+                await self.credit_dealer_client.send(
                     WorkerUndispatchable(worker_id=self.service_id, reason="shutdown")
                 )
             if self.pod_lifecycle_dealer_client is not None:
@@ -614,7 +624,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         service_type=str(self.service_type),
                     )
                 )
-            await self.return_dealer_client.send(
+            await self.credit_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
             )
             self.debug(
@@ -706,7 +716,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     async def _on_reconciliation(self, message: InFlightReconciliation) -> None:
         """Respond to router's reconciliation request with current in-flight credits."""
-        await self.return_dealer_client.send(
+        await self.credit_dealer_client.send(
             InFlightReport(credit_ids=frozenset(self.credit_tasks.keys()))
         )
 
@@ -772,8 +782,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
+            worker_id=self.service_id,
         )
-        self.execute_async(self.return_dealer_client.send(credit_return))
+        self.execute_async(self.credit_return_push_client.send(credit_return))
         credit_context.returned = True
 
         # Explicitly clear references to help refcounting (GC is disabled on workers)
@@ -831,11 +842,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
+                worker_id=self.service_id,
             )
             with self.event_loop_monitor.activity(
                 f"credit id={credit_id} sending CreditReturn"
             ):
-                await self.return_dealer_client.send(credit_return)
+                await self.credit_return_push_client.send(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
@@ -906,8 +918,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if parsed is None or parsed.data is None:
                 return False  # Keep looking for meaningful content
 
-            # Meaningful content found - send FirstToken to router
-            await self.return_dealer_client.send(
+            # Meaningful content found - send FirstToken to router on the
+            # dedicated PUSH return channel (same fan-in as CreditReturn).
+            await self.credit_return_push_client.send(
                 FirstToken(
                     credit_id=credit.id,
                     phase=credit.phase,

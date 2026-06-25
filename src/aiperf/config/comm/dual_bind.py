@@ -201,6 +201,7 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
             ("records_push_pull", ipc_filename("records_push_pull.ipc")),
             ("credit_router", ipc_filename("credit_router.ipc")),
             ("credit_return_router", ipc_filename("credit_return_router.ipc")),
+            ("credit_return_push_pull", ipc_filename("credit_return_push_pull.ipc")),
             ("control", ipc_filename("control.ipc")),
             ("group_lifecycle", ipc_filename("group_lifecycle.ipc")),
         ]
@@ -255,6 +256,12 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         ge=1,
         le=65535,
         description="TCP port for credit return router communication with remote workers.",
+    )
+    credit_return_push_pull_tcp_port: int = Field(
+        default=5669,
+        ge=1,
+        le=65535,
+        description="TCP port for the credit-return PUSH/PULL fan-in channel.",
     )
     control_tcp_port: int = Field(
         default=5667,
@@ -322,6 +329,15 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         return self._socket_addr("credit_return_router")
 
     @property
+    def credit_return_push_pull_address(self) -> str:
+        """Get credit-return PUSH/PULL address based on deployment mode."""
+        if self.controller_host:
+            return (
+                f"tcp://{self.controller_host}:{self.credit_return_push_pull_tcp_port}"
+            )
+        return self._socket_addr("credit_return_push_pull")
+
+    @property
     def control_address(self) -> str:
         """Get control channel address based on deployment mode."""
         if self.controller_host:
@@ -356,6 +372,11 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
     def records_push_pull_tcp_bind_address(self) -> str:
         """Get TCP bind address for records push/pull dual binding (controller-side)."""
         return f"tcp://{self.tcp_host}:{self.records_push_pull_tcp_port}"
+
+    @property
+    def credit_return_push_pull_tcp_bind_address(self) -> str:
+        """Get TCP bind address for credit-return push/pull dual binding (controller-side)."""
+        return f"tcp://{self.tcp_host}:{self.credit_return_push_pull_tcp_port}"
 
     @property
     def _remote_host(self) -> str | None:

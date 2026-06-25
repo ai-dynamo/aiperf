@@ -28,7 +28,10 @@ from aiperf.common.enums import CommAddress
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
 from aiperf.common.mixins import CommunicationMixin
-from aiperf.common.protocols import StreamingRouterClientProtocol
+from aiperf.common.protocols import (
+    StreamingPullClientProtocol,
+    StreamingRouterClientProtocol,
+)
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.zmq import ZMQDualBindConfig
 from aiperf.credit._router_reconciliation import _ReconciliationMixin
@@ -108,6 +111,57 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
         - credit cancellation is O(n × k) where n = number of workers, k = average in-flight credits per worker
     """
 
+    def _init_credit_channels(self, comm_config) -> None:
+        """Bind the credit dispatch ROUTER and the dedicated credit-return PULL.
+
+        Dispatch (Credit/CancelCredits) goes router->worker over CREDIT_ROUTER;
+        CreditReturn/FirstToken fan in worker->router over a separate PUSH/PULL
+        channel (CREDIT_RETURN), so neither socket is bidirectional. In dual-bind
+        (k8s controller) mode each also binds its TCP address so remote worker
+        pods can connect; controller-side services otherwise use IPC.
+        """
+        dual_bind = (
+            isinstance(comm_config, ZMQDualBindConfig)
+            and not comm_config.controller_host
+        )
+
+        dispatch_bind = (
+            comm_config.credit_router_tcp_bind_address if dual_bind else None
+        )
+        if dispatch_bind:
+            self.info(
+                f"Dual-bind mode: credit router will also bind to {dispatch_bind}"
+            )
+        # Dispatch ROUTER: sends Credit/CancelCredits/TimePong to workers and
+        # receives worker control messages (WorkerConnected/Dispatchable/
+        # Undispatchable/Shutdown/TimePing/InFlightReport) — the DEALER side
+        # gives the ROUTER each worker's identity. CreditReturn/FirstToken do NOT
+        # arrive here; they fan in on the return PULL below.
+        self._credit_router_client: StreamingRouterClientProtocol = (
+            self.comms.create_streaming_router_client(
+                address=CommAddress.CREDIT_ROUTER,
+                bind=True,
+                additional_bind_address=dispatch_bind,
+            )
+        )
+        self._credit_router_client.register_receiver(self._handle_router_message)
+
+        return_bind = (
+            comm_config.credit_return_push_pull_tcp_bind_address if dual_bind else None
+        )
+        if return_bind:
+            self.info(
+                f"Dual-bind mode: credit return PULL will also bind to {return_bind}"
+            )
+        self._return_pull_client: StreamingPullClientProtocol = (
+            self.comms.create_streaming_pull_client(
+                CommAddress.CREDIT_RETURN,
+                bind=True,
+                additional_bind_address=return_bind,
+            )
+        )
+        self._return_pull_client.register_receiver(self._handle_return_pull_message)
+
     def __init__(
         self,
         run: BenchmarkRun,
@@ -115,55 +169,11 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
         **kwargs,
     ) -> None:
         super().__init__(run=run, service_id=service_id, **kwargs)
-        self._init_router_clients()
+        self._init_credit_channels(
+            self.run.resolved.comm_config or self.run.cfg.comm_config
+        )
         self._init_router_state()
         self._init_reconciliation_state()
-
-    def _init_router_clients(self) -> None:
-        """Build both router clients and register the return-channel receiver."""
-        # For dual-bind mode (Kubernetes), also bind to TCP for remote workers.
-        # Controller services use IPC (fast, same-pod) but workers connect via TCP.
-        # Only bind to TCP if we're in controller mode (controller_host not set).
-        additional_bind_address: str | None = None
-        additional_return_bind_address: str | None = None
-        comm_config = self.run.resolved.comm_config or self.run.cfg.comm_config
-        if (
-            isinstance(comm_config, ZMQDualBindConfig)
-            and not comm_config.controller_host
-        ):
-            additional_bind_address = comm_config.credit_router_tcp_bind_address
-            additional_return_bind_address = (
-                comm_config.credit_return_router_tcp_bind_address
-            )
-            self.info(
-                f"Dual-bind mode: credit router will also bind to {additional_bind_address}"
-            )
-            self.info(
-                f"Dual-bind mode: credit return router will also bind to {additional_return_bind_address}"
-            )
-
-        # Credit channel: Router -> Worker only (Credit, CancelCredits).
-        # Send-only from the router's perspective. Workers connect DEALERs
-        # to receive credits but never send on this channel.
-        self._credit_router_client: StreamingRouterClientProtocol = (
-            self.comms.create_streaming_router_client(
-                address=CommAddress.CREDIT_ROUTER,
-                bind=True,
-                additional_bind_address=additional_bind_address,
-            )
-        )
-
-        # Return channel: Worker -> Router (CreditReturn, FirstToken,
-        # WorkerConnected, WorkerDispatchable, WorkerUndispatchable,
-        # WorkerShutdown, TimePing). Router replies with CreditAck / TimePong.
-        self._return_router_client: StreamingRouterClientProtocol = (
-            self.comms.create_streaming_router_client(
-                address=CommAddress.CREDIT_RETURN_ROUTER,
-                bind=True,
-                additional_bind_address=additional_return_bind_address,
-            )
-        )
-        self._return_router_client.register_receiver(self._handle_return_router_message)
 
     def _init_router_state(self) -> None:
         """Initialize routing tables, sticky-session maps, and load indexes."""
@@ -355,13 +365,37 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
     # Return-channel dispatch
     # =============================================================================
 
-    async def _handle_return_router_message(
+    async def _handle_return_pull_message(self, message: WorkerToRouterMessage) -> None:
+        """Adapt the identity-less PULL fan-in to the shared handler.
+
+        The PUSH/PULL return channel has no ZMQ envelope identity, so the worker
+        id rides inside CreditReturn (FirstToken does not need it). Unpack it and
+        delegate to the common handler.
+
+        Ordering note: CreditReturn/FirstToken now arrive on this PULL channel while
+        the worker's lifecycle messages (WorkerConnected/Dispatchable/Undispatchable/
+        Shutdown) stay on the dispatch DEALER, so a worker's returns and its lifecycle
+        messages are no longer mutually ordered (on the single bidirectional DEALER
+        they were). That is safe because a worker only emits WorkerShutdown after all
+        its returns have been sent, and the timing manager's phase / cancellation
+        barrier drains outstanding returns before workers are torn down; a return
+        therefore cannot legitimately land after its worker's unregister outside the
+        teardown window, where ``_cancellation_pending`` / ``_credits_complete``
+        already suppress the ``_warn_missing_worker`` path.
+        """
+        worker_id = getattr(message, "worker_id", None) or ""
+        await self._handle_router_message(worker_id, message)
+
+    async def _handle_router_message(
         self, worker_id: str, message: WorkerToRouterMessage
     ) -> None:
-        """Dispatch all worker -> router messages on the return channel.
+        """Dispatch all worker -> router messages from both credit channels.
 
-        TimePong is sent back on the credit channel so both channels stay
-        truly unidirectional.
+        Control/lifecycle messages (WorkerConnected/Dispatchable/Undispatchable/
+        Shutdown/TimePing/InFlightReport) arrive on the dispatch ROUTER, where
+        worker_id comes from the ZMQ envelope. CreditReturn/FirstToken arrive on
+        the return PULL via ``_handle_return_pull_message``, where worker_id rides
+        in the CreditReturn. TimePong is replied on the dispatch ROUTER.
         """
         match message:
             case CreditReturn():
@@ -448,9 +482,12 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
             await self._on_first_token_callback(message)
 
     async def _handle_time_ping(self, worker_id: str, message: TimePing) -> None:
-        """Reply to a TimePing on the credit channel so channels stay unidirectional."""
+        """Reply to a TimePing with a TimePong on the dispatch credit channel.
+
+        TimePing now arrives on the dispatch ROUTER (the worker's credit DEALER),
+        so the RTT round-trip stays on a single socket.
+        """
         self._initializing_workers.add(worker_id)
-        # RTT measurement spans both sockets, which is fine for clock offset.
         await self._credit_router_client.send_to(
             worker_id,
             TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
