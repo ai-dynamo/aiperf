@@ -252,6 +252,20 @@ class TestParquetExporterBasics:
         with pytest.raises(DataExporterDisabled, match="format not selected"):
             ServerMetricsParquetExporter(mock_accumulator, time_filter)
 
+    def test_parquet_disabled_when_pyarrow_missing(self, mock_cfg, monkeypatch):
+        """On platforms with no pyarrow wheel (e.g. Windows-on-ARM), the exporter
+        self-disables with an actionable message instead of crashing the run."""
+        import aiperf.server_metrics.parquet_exporter as pe
+
+        monkeypatch.setattr(pe, "pa", None)
+        monkeypatch.setattr(pe, "pq", None)
+        hierarchy = build_hierarchy({})
+        mock_accumulator = create_mock_accumulator(mock_cfg, hierarchy)
+        time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=2_000_000_000)
+
+        with pytest.raises(DataExporterDisabled, match="pyarrow"):
+            ServerMetricsParquetExporter(mock_accumulator, time_filter)
+
     async def test_parquet_file_created(self, mock_cfg, gauge_hierarchy):
         """Parquet file is created with valid schema."""
         mock_accumulator = create_mock_accumulator(mock_cfg, gauge_hierarchy)

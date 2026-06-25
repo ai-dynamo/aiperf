@@ -7,8 +7,16 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
+
+try:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except ImportError:  # pragma: no cover - platform-dependent
+    # pyarrow has no Windows-on-ARM wheel (apache/arrow#47195) and source-builds
+    # fail there. Import lazily-tolerant so AIPerf still installs and runs without
+    # it; the exporter self-disables in __init__ when pyarrow is unavailable.
+    pa = None
+    pq = None
 
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
@@ -85,6 +93,17 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         if ServerMetricsFormat.PARQUET not in self.run.cfg.server_metrics.formats:
             raise DataExporterDisabled(
                 "Server metrics Parquet export disabled: format not selected"
+            )
+
+        # pyarrow is optional on platforms without a wheel (Windows-on-ARM). If
+        # parquet was explicitly requested but pyarrow isn't installed, disable
+        # this exporter with an actionable message rather than crashing.
+        if pa is None or pq is None:
+            raise DataExporterDisabled(
+                "Server metrics Parquet export requires pyarrow, which is not "
+                "installed (no Windows-on-ARM wheel is published; see "
+                "apache/arrow#47195). Install pyarrow, or drop 'parquet' from "
+                "the server-metrics export formats."
             )
 
         super().__init__(**kwargs)
