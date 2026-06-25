@@ -27,7 +27,11 @@ dependencies = [
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
-  "datasets>=3.0",
+  # datasets pulls pyarrow (its Arrow core), which has no Windows-on-ARM wheel
+  # (apache/arrow#47195). Excluded on win_arm64 so the base install works there;
+  # HF-backed --public-dataset is gated on that platform, but synthetic /
+  # --input-file datasets (incl. SPEED-Bench) don't need it.
+  "datasets>=3.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
   "huggingface-hub>=0.34.0,<2.0",
   "jinja2~=3.1.5", # NOTE: Versions prior to 3.1.5 have vuln exploits
   "jmespath~=1.0.1",
