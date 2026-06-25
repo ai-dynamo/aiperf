@@ -36,6 +36,27 @@ SUPPORTED_BIT_DEPTHS = {
 }
 
 
+def _import_soundfile():
+    """Import soundfile lazily with a clear error when libsndfile is unavailable.
+
+    soundfile bundles libsndfile, which has no prebuilt Windows-on-ARM binary,
+    so importing it (or loading its native library) fails on WoA. Audio/video
+    synthesis is the only path that needs it, so the import is deferred to call
+    time and the platform failure is surfaced as an actionable ConfigurationError
+    instead of a raw OSError.
+    """
+    try:
+        import soundfile as sf
+    except (ImportError, OSError) as e:
+        raise ConfigurationError(
+            "Audio synthesis requires the soundfile/libsndfile native library, "
+            "which has no prebuilt Windows-on-ARM binary. Run audio or video "
+            "synthesis on Linux or WSL, or build libsndfile for ARM64 and "
+            "reinstall soundfile with: pip install --no-binary soundfile soundfile"
+        ) from e
+    return sf
+
+
 class AudioGenerator(BaseGenerator):
     """
     A class for generating synthetic audio data.
@@ -154,10 +175,7 @@ class AudioGenerator(BaseGenerator):
         elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
 
-        # Lazy import: soundfile's bundled libsndfile has no Windows-on-ARM
-        # build, so importing it at module load breaks WoA even for text-only
-        # runs. Only audio generation actually needs it.
-        import soundfile as sf
+        sf = _import_soundfile()
 
         sf.write(
             output_buffer,
