@@ -15,7 +15,7 @@
  */
 
 import { html } from 'htm/preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useCallback, useRef } from 'preact/hooks';
 import { timeseries } from '../lib/state.js';
 import { pluck } from '../lib/timeseries.js';
 
@@ -203,39 +203,50 @@ function buildDatasets(ts) {
 
 export function ThroughputLatencyChart() {
   const ts = timeseries.value;
-  const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const datasetsRef = useRef([]);
 
   const { datasets, hasData } = buildDatasets(ts);
+  // Keep the latest datasets reachable from the canvas ref-callback, which
+  // runs at DOM-commit time (before the render body's closure for this pass
+  // is otherwise observable to it).
+  datasetsRef.current = datasets;
 
-  // Chart lifecycle. Must run AFTER the canvas element actually exists in
-  // the DOM — since we conditionally render null before data arrives, keep
-  // the creation effect keyed on ``hasData`` so it fires the first time
-  // the canvas mounts.
-  useEffect(() => {
-    if (!hasData) return undefined;
-    if (!canvasRef.current) return undefined;
-    if (!globalThis.Chart) {
-      console.warn('ThroughputLatencyChart: Chart.js not loaded');
-      return undefined;
-    }
-    if (chartRef.current) return undefined;  // already created
-    chartRef.current = new globalThis.Chart(canvasRef.current, buildChartConfig());
-    return () => {
-      if (chartRef.current) {
-        chartRef.current.destroy();
-        chartRef.current = null;
+  // Create / destroy the Chart.js instance via a ref callback rather than a
+  // useEffect. Preact flushes ``useEffect`` through ``afterNextFrame``
+  // (requestAnimationFrame with a setTimeout fallback); under headless
+  // Chromium / Playwright rAF can be starved long enough that the
+  // creation effect never runs within a test's wait window, leaving a
+  // mounted <canvas> with no registered Chart. A ref callback runs
+  // synchronously during the commit, so the chart registers the instant
+  // the canvas mounts — no deferred-frame dependency.
+  const canvasRef = useCallback((node) => {
+    if (node) {
+      if (!globalThis.Chart) {
+        console.warn('ThroughputLatencyChart: Chart.js not loaded');
+        return;
       }
-    };
-  }, [hasData]);
+      if (chartRef.current) return;  // already created
+      const chart = new globalThis.Chart(node, buildChartConfig());
+      chart.data.datasets = datasetsRef.current;
+      chart.update('none');
+      chartRef.current = chart;
+    } else if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+  }, []);
 
-  // Update datasets whenever they change.
-  useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    chart.data.datasets = datasets;
-    chart.update('none');
-  }, [JSON.stringify(datasets.map(d => ({ l: d.label, n: d.data.length, last: d.data.at(-1)?.y })))]);
+  // Push the latest datasets into an already-created chart synchronously
+  // during render. We deliberately do NOT use a useEffect here: Preact
+  // defers effects through requestAnimationFrame, which is unreliable under
+  // headless browsers, so a rAF-deferred update can lag behind the data by
+  // seconds. ``chart.update('none')`` is cheap (animations are disabled) and
+  // idempotent, so running it on render is safe.
+  if (chartRef.current) {
+    chartRef.current.data.datasets = datasets;
+    chartRef.current.update('none');
+  }
 
   if (!hasData) return null;
 
