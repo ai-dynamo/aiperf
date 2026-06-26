@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,6 +29,7 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
 from aiperf.plugin.enums import TimingMode
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
@@ -853,6 +855,7 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
+        manager.run.cfg.network_latency.enabled = False
 
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
@@ -934,6 +937,7 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
+        manager.run.cfg.network_latency.enabled = False
 
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
@@ -990,6 +994,7 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
+        manager.run.cfg.network_latency.enabled = False
 
         processor = MagicMock()
         processor.summarize = AsyncMock(return_value=[])
@@ -1052,3 +1057,35 @@ class TestRecordsManagerInitialization:
             "OTel metrics streamer is disabled and will not be used" in message
             for message in info_messages
         )
+
+
+class TestMidRunCacheReportingHint:
+    """RecordsManager warns once, mid-run, when token usage is reported but no
+    prompt-cache read tokens appear in the streamed records (detection logic
+    itself is covered in tests/unit/metrics/test_cache_reporting_hint.py)."""
+
+    def _manager(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.warning = MagicMock()
+        return manager
+
+    def test_warns_once_on_first_qualifying_record(self):
+        manager = self._manager()
+        record_data = SimpleNamespace(metrics={"usage_prompt_tokens": 1024})
+        manager._maybe_hint_missing_cache_reporting(record_data)
+        manager._maybe_hint_missing_cache_reporting(record_data)  # a later record
+        manager.warning.assert_called_once_with(CACHE_REPORTING_HINT)
+
+    def test_no_warning_when_cache_reported(self):
+        manager = self._manager()
+        record_data = SimpleNamespace(
+            metrics={"usage_prompt_tokens": 1024, "usage_prompt_cache_read_tokens": 0}
+        )
+        manager._maybe_hint_missing_cache_reporting(record_data)
+        manager.warning.assert_not_called()
+
+    def test_no_warning_when_usage_absent(self):
+        manager = self._manager()
+        record_data = SimpleNamespace(metrics={"output_sequence_length": 32})
+        manager._maybe_hint_missing_cache_reporting(record_data)
+        manager.warning.assert_not_called()

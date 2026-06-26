@@ -2222,6 +2222,47 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    wandb_project: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases project name. Setting this enables wandb export.",
+        ),
+        CLIParameter(name=("--wandb-project",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_entity: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases entity (team or user). Defaults to the API key's default entity.",
+        ),
+        CLIParameter(name=("--wandb-entity",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_run_name: Annotated[
+        str | None,
+        Field(default=None, description="Weights & Biases run name."),
+        CLIParameter(name=("--wandb-run-name",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_tags: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Additional Weights & Biases run tags to attach on upload. "
+                "Can be specified multiple times or as a comma-separated list."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--wandb-tag",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
     ##############################################################################
     # HTTP Trace
     ##############################################################################
@@ -2300,6 +2341,59 @@ class CLIConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = _DEFAULT_SERVER_METRICS_FORMATS
+
+    ##############################################################################
+    # Network Latency
+    ##############################################################################
+    network_latency_automatic: Annotated[
+        bool,
+        Field(
+            description=(
+                "Automatically measure network latency (DISABLED BY DEFAULT). "
+                "Opens a fresh TCP connection to the endpoint throughout the run, "
+                "measures the handshake RTT, and subtracts the mean from request-start-anchored "
+                "latency metrics (request_latency, time_to_first_token, "
+                "time_to_first_output_token). Raw metrics are preserved; adjusted values are "
+                "emitted as separate network_adjusted_* metrics plus a network_rtt summary. "
+                "Mutually exclusive with --network-latency-mean."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-automatic",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = False
+
+    network_latency_mean: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            description=(
+                "Set a fixed mean network RTT in milliseconds to subtract, bypassing active "
+                "probing. Implicitly enables network latency adjustment. Mutually exclusive "
+                "with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-mean",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
+
+    network_latency_ping_interval: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Seconds between TCP-handshake RTT probes during profiling "
+                "(default: 1.0s). Only applies with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-ping-interval",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
 
     ##############################################################################
     # GPU Telemetry
@@ -2899,6 +2993,28 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--search-sla",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_sla_tier: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Multi-tier SLO grouping flag. Each invocation defines one tier "
+                "of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or "
+                "'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). "
+                "Requires 2-10 invocations. Example: --search-sla-tier "
+                "'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' "
+                "--search-sla-tier "
+                "'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. "
+                "When used, all --search-sla filters are still parsed and compose "
+                "with tier definitions."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-sla-tier",),
             group=Groups.MULTI_RUN,
         ),
     ] = None

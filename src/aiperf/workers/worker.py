@@ -8,11 +8,12 @@ import uuid
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.constants import BYTES_PER_MIB, WARMUP_SYSTEM_MESSAGE_PREFIX
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationBranchMode,
+    CreditPhase,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -51,6 +52,7 @@ from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
     StreamingDealerClientProtocol,
+    StreamingPushClientProtocol,
 )
 from aiperf.credit.messages import (
     CancelCredits,
@@ -184,6 +186,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
         self.credit_dealer_client.register_receiver(self._on_credit_message)
+
+        # Dual-channel returns: CreditReturn/FirstToken go out a dedicated typed
+        # PUSH -> router PULL fan-in instead of back on the bidirectional credit
+        # DEALER, so the dispatch DEALER is receive-only (no shared-FD send/recv
+        # contention). WorkerReady/WorkerShutdown still go on the DEALER so the
+        # ROUTER registers/tracks identity. Returns carry worker_id in-message
+        # since PUSH/PULL has no ZMQ envelope identity.
+        self.credit_return_push_client: StreamingPushClientProtocol = (
+            self.comms.create_streaming_push_client(
+                CommAddress.CREDIT_RETURN,
+                bind=False,
+            )
+        )
 
         self.memory_usage_before_profiling: float | None = None
 
@@ -347,8 +362,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
+            worker_id=self.service_id,
         )
-        self.execute_async(self.credit_dealer_client.send(credit_return))
+        self.execute_async(self.credit_return_push_client.send(credit_return))
         credit_context.returned = True
 
         # Explicitly clear references to help refcounting (GC is disabled on workers)
@@ -402,8 +418,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
+                worker_id=self.service_id,
             )
-            await self.credit_dealer_client.send(credit_return)
+            await self.credit_return_push_client.send(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
@@ -446,7 +463,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     return False  # Keep looking for meaningful content
 
                 # Meaningful content found - send FirstToken to router
-                await self.credit_dealer_client.send(
+                await self.credit_return_push_client.send(
                     FirstToken(
                         credit_id=credit.id,
                         phase=credit.phase,
@@ -481,7 +498,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 session=session,
                 credit_context=credit_context,
                 x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
+                system_message=self._system_message_for_phase(
+                    system_message=session.conversation.system_message,
+                    phase=credit.phase,
+                ),
                 user_context_message=session.conversation.user_context_message,
             )
             record: RequestRecord = await self.inference_client.send_request(
@@ -627,6 +647,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )
+
+    @staticmethod
+    def _system_message_for_phase(
+        *, system_message: str | None, phase: CreditPhase
+    ) -> str | None:
+        if phase != CreditPhase.WARMUP:
+            return system_message
+        if not system_message:
+            return WARMUP_SYSTEM_MESSAGE_PREFIX
+        return f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{system_message}"
 
     async def _retrieve_conversation(
         self,

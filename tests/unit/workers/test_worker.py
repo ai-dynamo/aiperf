@@ -145,6 +145,35 @@ class TestWorkerFirstTokenCallback:
         assert results == [False, False, True]
 
 
+class TestWarmupSystemMessage:
+    def test_profiling_preserves_system_message(self):
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.PROFILING,
+            )
+            == "existing system"
+        )
+
+    def test_warmup_sets_system_message_when_missing(self):
+        assert (
+            Worker._system_message_for_phase(
+                system_message=None,
+                phase=CreditPhase.WARMUP,
+            )
+            == "warmup"
+        )
+
+    def test_warmup_prefixes_existing_system_message(self):
+        assert (
+            Worker._system_message_for_phase(
+                system_message="existing system",
+                phase=CreditPhase.WARMUP,
+            )
+            == "warmup\nexisting system"
+        )
+
+
 # --- Fixture for CreditContext ---
 
 

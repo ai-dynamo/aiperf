@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 import platform
 import shlex
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from multiprocessing.context import ForkProcess, SpawnProcess
+from multiprocessing import Process
 from pathlib import Path
 from typing import Any, TypeAlias
 
 import pytest
 
-from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.constants import IS_WINDOWS, NANOS_PER_SECOND
 from aiperf.common.models import (
     InputsFile,
     JsonExportData,
@@ -42,7 +43,7 @@ class AIPerfMockServer:
     host: str
     port: int
     url: str
-    process: SpawnProcess | ForkProcess
+    process: Process
 
     @property
     def dcgm_urls(self) -> list[str]:
@@ -133,22 +134,29 @@ class AIPerfResults:
         return next(self.artifacts_dir.glob(pattern), None)
 
     def _load_text_file(self, pattern: str) -> str:
-        """Load text file content or return empty string."""
+        """Load text file content or return empty string.
+
+        encoding="utf-8" is explicit because aiperf always writes UTF-8 but
+        Path.read_text() defaults to the locale encoding (cp1252 on Windows),
+        which mojibakes non-ASCII chars like `°` -> `Â°`.
+        """
         file_path = self._find_file(pattern)
-        return file_path.read_text() if file_path else ""
+        return file_path.read_text(encoding="utf-8") if file_path else ""
 
     def _load_json_export(self) -> JsonExportData | None:
         """Load JSON export as Pydantic model."""
         file_path = self._find_file("**/*aiperf.json")
         if not file_path:
             return None
-        return JsonExportData.model_validate_json(file_path.read_text())
+        return JsonExportData.model_validate_json(file_path.read_bytes())
 
     def _load_inputs(self) -> InputsFile | None:
         """Load inputs file as Pydantic model."""
         file_path = self._find_file("**/inputs.json")
         return (
-            InputsFile.model_validate_json(file_path.read_text()) if file_path else None
+            InputsFile.model_validate_json(file_path.read_bytes())
+            if file_path
+            else None
         )
 
     def _load_jsonl_records(self) -> list[MetricRecordInfo] | None:
@@ -182,7 +190,7 @@ class AIPerfResults:
         file_path = self._find_file("**/*server_metrics_export.json")
         if not file_path:
             return None
-        return ServerMetricsExportData.model_validate_json(file_path.read_text())
+        return ServerMetricsExportData.model_validate_json(file_path.read_bytes())
 
     def _load_server_metrics_jsonl(self) -> list[SlimRecord] | None:
         """Load server metrics JSONL records as Pydantic models."""
@@ -524,7 +532,7 @@ class AIPerfCLI:
     def run_sync(
         self,
         command: str,
-        timeout: float = 200.0,
+        timeout: float = 900.0,  # accommodates slow Windows Py 3.13 multiprocessing.spawn + streaming
         assert_success: bool = True,
     ) -> AIPerfResults:
         """Run aiperf command and return results."""
@@ -540,7 +548,7 @@ class AIPerfCLI:
     async def run(
         self,
         command: str,
-        timeout: float = 200.0,
+        timeout: float = 900.0,  # accommodates slow Windows Py 3.13 multiprocessing.spawn + streaming
         assert_success: bool = True,
     ) -> AIPerfResults:
         """Run aiperf command and return results.
@@ -557,6 +565,13 @@ class AIPerfCLI:
             AssertionError: If assert_success is True and the command fails
         """
         args = self._parse_command(command)
+        # Windows multiprocessing.spawn is ~3x slower than Linux fork for
+        # aiperf process bring-up. Search-recipe / sweep tests run many
+        # iterative spawns, so per-test timeouts calibrated for Linux/macOS
+        # fall short on Windows. Apply a blanket multiplier rather than
+        # editing every test individually. POSIX runs unchanged.
+        if IS_WINDOWS:
+            timeout *= 3.0
         result = await self._runner(args, timeout)
         perf_results = AIPerfResults(result)
 
@@ -606,5 +621,21 @@ class AIPerfCLI:
             List of command arguments
         """
         cmd = cmd.strip().replace("\\\n", " ")
-        args = shlex.split(cmd)
+        # On Windows we need two things that POSIX shlex doesn't give together:
+        #   1) preserve backslashes in interpolated paths (C:\Users\... must
+        #      survive parsing, but POSIX shlex treats `\` as an escape char
+        #      and strips it)
+        #   2) strip surrounding quotes from quoted values (so tests like
+        #      `--sequence-distribution "64|10,32|8:70..."` pass the unquoted
+        #      value to aiperf — non-POSIX shlex keeps the literal `"`)
+        # Use shlex.shlex configured for POSIX-style quote handling but with
+        # backslash escaping disabled. On non-Windows, plain POSIX shlex.split
+        # is fine.
+        if sys.platform == "win32":
+            lex = shlex.shlex(cmd, posix=True)
+            lex.whitespace_split = True
+            lex.escape = ""  # don't treat backslash as an escape character
+            args = list(lex)
+        else:
+            args = shlex.split(cmd, posix=True)
         return args[1:] if args and args[0] == "aiperf" else args

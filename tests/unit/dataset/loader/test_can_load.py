@@ -358,15 +358,18 @@ class TestCustomDatasetComposerInferType:
     def test_infer_with_filename_parameter(self, create_cfg_and_composer):
         """Test inference with filename parameter for file path."""
         _, composer = create_cfg_and_composer()
+        # Close the NamedTemporaryFile *before* unlink — Windows holds a lock
+        # on the file while it's open, so unlinking inside the ``with`` block
+        # raises PermissionError [WinError 32].
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as temp_file:
             temp_path = Path(temp_file.name)
-            try:
-                data = {"text": "Hello"}
-                result = composer._infer_type(data, filename=temp_path)
-                # Should infer SingleTurn (file, not directory)
-                assert result == CustomDatasetType.SINGLE_TURN
-            finally:
-                temp_path.unlink()
+        try:
+            data = {"text": "Hello"}
+            result = composer._infer_type(data, filename=temp_path)
+            # Should infer SingleTurn (file, not directory)
+            assert result == CustomDatasetType.SINGLE_TURN
+        finally:
+            temp_path.unlink()
 
 
 class TestCustomDatasetComposerInferDatasetType:

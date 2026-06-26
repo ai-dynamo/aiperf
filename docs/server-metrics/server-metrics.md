@@ -70,6 +70,18 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `sglang:prompt_tokens` | counter | Prefill throughput (`stats.rate`) |
 | `sglang:generation_tokens` | counter | Decode throughput (`stats.rate`) |
 
+> [!IMPORTANT]
+> **SGLang server-side setup is required.** SGLang does not expose Prometheus exposition format at `/metrics` by default. Launch the server with `--enable-metrics`:
+>
+> ```bash
+> python -m sglang.launch_server \
+>   --model-path <model> \
+>   --enable-metrics \
+>   --host 0.0.0.0 --port 8000
+> ```
+>
+> Without this flag, `GET /metrics` returns 404 and AIPerf's auto-discovery silently falls back to no server-metrics collection (`server_metrics_export.*` files will not be produced).
+
 </Accordion>
 
 <Accordion title="TRT-LLM">
@@ -91,7 +103,7 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `trtllm_kv_cache_hit_rate` | gauge | KV cache reuse efficiency (`stats.avg`) |
 
 > [!IMPORTANT]
-> **TRT-LLM server-side setup is required.** Unlike vLLM and SGLang, `trtllm-serve` does not expose Prometheus exposition format at `/metrics` by default — the default `/metrics` returns an iteration-stats JSON array (`application/json`), which is not parseable as Prometheus. Two consequences:
+> **TRT-LLM server-side setup is required.** Unlike vLLM, `trtllm-serve` does not expose Prometheus exposition format at `/metrics` by default — the default `/metrics` returns an iteration-stats JSON array (`application/json`), which is not parseable as Prometheus. Two consequences:
 >
 > 1. **Enable Prometheus on the server.** Pass `return_perf_metrics: true` in your `extra_llm_api_options.yaml`. This mounts the proper Prometheus exposition at `/prometheus/metrics` (a non-standard path). Add `enable_iter_perf_stats: true` when you want iteration-derived queue/KV/memory metrics from the PyTorch backend.
 > 2. **AIPerf auto-detects and falls back.** When AIPerf hits `/metrics` and gets `application/json`, it automatically probes `<base>/prometheus/metrics` once. If the alt path serves Prometheus, AIPerf swaps the URL and continues — no manual override needed. If the alt path also fails (e.g. `return_perf_metrics` was not set), the collector auto-disables for the remainder of the run with a single warning.

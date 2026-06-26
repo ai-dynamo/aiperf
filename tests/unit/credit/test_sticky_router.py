@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -856,3 +857,54 @@ class TestStickyCreditRouterStickySessionReassignment:
 
         # New sticky session should be created
         assert router._sticky_sessions["session-X"] == "worker-2"
+
+
+class TestStickyCreditRouterWorkerReadiness:
+    """Tests for the worker-readiness barrier that prevents the startup race
+    where the first credit is issued before any worker has registered."""
+
+    async def test_wait_for_workers_returns_when_worker_already_present(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-1")
+
+        # Worker already present -> the fast-path returns synchronously. timeout=0
+        # also guards the fast-path itself: without it, asyncio.wait_for(..., 0)
+        # would raise even though the event is set.
+        await router.wait_for_workers(timeout=0)
+
+    async def test_wait_for_workers_blocks_until_first_worker_registers(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+
+        wait_task = asyncio.create_task(router.wait_for_workers(timeout=5.0))
+        await asyncio.sleep(0)
+        assert not wait_task.done(), "wait_for_workers must block when no workers"
+
+        router._register_worker("worker-1")
+        await wait_task
+
+    async def test_wait_for_workers_raises_when_no_worker_before_timeout(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+
+        with pytest.raises(RuntimeError, match="No workers registered"):
+            await router.wait_for_workers(timeout=0)
+
+    async def test_wait_for_workers_blocks_again_after_last_worker_leaves(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-1")
+        await router.wait_for_workers(timeout=5.0)
+
+        router._unregister_worker("worker-1")
+        wait_task = asyncio.create_task(router.wait_for_workers(timeout=5.0))
+        await asyncio.sleep(0)
+        assert not wait_task.done(), "barrier must re-arm after last worker leaves"
+
+        router._register_worker("worker-2")
+        await wait_task

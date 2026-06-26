@@ -4103,7 +4103,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
     def hide_plot_close_modal(n_clicks):
         """Hide plot - close modal after state update."""
         if n_clicks:
-            print("🚪 Closing modal after hide")
+            print("Closing modal after hide")
             return False
         raise PreventUpdate
 

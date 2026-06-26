@@ -268,7 +268,10 @@ class TestVideoGenerator:
             # Verify output destination
             output_call = mock_input.output.call_args
             if video_format == VideoFormat.MP4:
-                assert output_call[0][0] == f"{temp_dir}/output.mp4"
+                # Match production's ``str(Path(temp_dir) / "output.mp4")`` —
+                # on Windows ``WindowsPath`` normalizes ``/`` to ``\\`` for
+                # the entire path, not just the joined separator.
+                assert output_call[0][0] == str(Path(temp_dir) / "output.mp4")
             else:
                 assert output_call[0][0] == "pipe:"
 

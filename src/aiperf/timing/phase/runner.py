@@ -362,6 +362,13 @@ class PhaseRunner(TaskManagerMixin):
 
         await strategy.setup_phase()
 
+        # Gate credit issuance on worker readiness: on fast startup the first
+        # credit can otherwise be issued before any worker registers, which
+        # deadlocks the phase (see StickyCreditRouter.wait_for_workers).
+        await self._credit_router.wait_for_workers(
+            timeout=Environment.SERVICE.START_TIMEOUT
+        )
+
         self._create_rampers(strategy)
 
         self._lifecycle.start()

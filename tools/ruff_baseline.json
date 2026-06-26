@@ -1,4 +1,16 @@
 {
+  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations \u2014 prefer fixing the underlying code over extending the list.",
+  "rules": [
+    "PLR0915",
+    "PLR0912",
+    "C901",
+    "TID251",
+    "BLE001",
+    "S110",
+    "S112",
+    "ANN201",
+    "D103"
+  ],
   "violations": [
     [
       "ANN201",
@@ -14,11 +26,6 @@
       "ANN201",
       "src/aiperf/common/random_generator.py",
       "RandomGenerator.choices"
-    ],
-    [
-      "ANN201",
-      "src/aiperf/common/random_generator.py",
-      "RandomGenerator.integers"
     ],
     [
       "ANN201",
@@ -322,11 +329,6 @@
     ],
     [
       "BLE001",
-      "src/aiperf/common/tokenizer_validator.py",
-      "validate_tokenizer_early"
-    ],
-    [
-      "BLE001",
       "src/aiperf/controller/system_controller.py",
       "SystemController._cancel_profiling"
     ],
@@ -354,11 +356,6 @@
       "BLE001",
       "src/aiperf/endpoints/huggingface_generate.py",
       "HuggingFaceGenerateEndpoint._parse_streaming"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/exporters/aggregate/aggregate_confidence_json_exporter.py",
-      "AggregateConfidenceJsonExporter._aggregate_to_export_data"
     ],
     [
       "BLE001",
@@ -403,11 +400,6 @@
     [
       "BLE001",
       "src/aiperf/gpu_telemetry/manager.py",
-      "GPUTelemetryManager._configure_dcgm_collectors"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/gpu_telemetry/manager.py",
       "GPUTelemetryManager._handle_profile_complete_command"
     ],
     [
@@ -433,27 +425,12 @@
     [
       "BLE001",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
-      "PyNVMLTelemetryCollector._collect_and_process_metrics"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector._shutdown_nvml_sync"
     ],
     [
       "BLE001",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector.is_url_reachable"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/orchestrator/orchestrator.py",
-      "MultiRunOrchestrator._extract_summary_metrics"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/orchestrator/subprocess_runner.py",
-      "main"
     ],
     [
       "BLE001",
@@ -584,11 +561,6 @@
       "BLE001",
       "src/aiperf/post_processors/record_export_results_processor.py",
       "RecordExportResultsProcessor.process_result"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/post_processors/strategies/genai_semconv.py",
-      "_extract_host"
     ],
     [
       "BLE001",
@@ -802,11 +774,6 @@
     ],
     [
       "C901",
-      "src/aiperf/cli_runner/__init__.py",
-      "_run_multi_benchmark"
-    ],
-    [
-      "C901",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
     ],
@@ -858,32 +825,7 @@
     [
       "C901",
       "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint._set_message_content"
-    ],
-    [
-      "C901",
-      "src/aiperf/endpoints/openai_chat.py",
       "ChatEndpoint.extract_chat_response_data"
-    ],
-    [
-      "C901",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._extract_response_content"
-    ],
-    [
-      "C901",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._set_item_content"
-    ],
-    [
-      "C901",
-      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
-      "AggregateSweepCsvExporter._generate_content"
-    ],
-    [
-      "C901",
-      "src/aiperf/exporters/mlflow_data_exporter.py",
-      "MLflowDataExporter._export_sync"
     ],
     [
       "C901",
@@ -892,33 +834,13 @@
     ],
     [
       "C901",
-      "src/aiperf/orchestrator/aggregation/confidence.py",
-      "ConfidenceAggregation._aggregate_metrics"
-    ],
-    [
-      "C901",
-      "src/aiperf/orchestrator/aggregation/sweep.py",
-      "identify_pareto_optimal"
-    ],
-    [
-      "C901",
       "src/aiperf/orchestrator/jsonl_loader.py",
       "iter_profiling_records"
     ],
     [
       "C901",
-      "src/aiperf/orchestrator/strategies.py",
-      "SweepConfidenceStrategy.aggregate"
-    ],
-    [
-      "C901",
       "src/aiperf/plot/config.py",
       "PlotConfig._preset_to_plot_spec"
-    ],
-    [
-      "C901",
-      "src/aiperf/plot/core/data_loader.py",
-      "DataLoader._extract_metadata"
     ],
     [
       "C901",
@@ -1117,16 +1039,6 @@
     ],
     [
       "C901",
-      "src/aiperf/server_metrics/parquet_exporter.py",
-      "ServerMetricsParquetExporter._build_parquet_metadata"
-    ],
-    [
-      "C901",
-      "src/aiperf/timing/phase/runner.py",
-      "PhaseRunner.run"
-    ],
-    [
-      "C901",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
     ],
@@ -1222,11 +1134,6 @@
     ],
     [
       "PLR0912",
-      "src/aiperf/cli_runner/__init__.py",
-      "_run_multi_benchmark"
-    ],
-    [
-      "PLR0912",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
     ],
@@ -1249,26 +1156,6 @@
       "PLR0912",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint._set_message_content"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/endpoints/openai_responses.py",
-      "ResponsesEndpoint._extract_response_content"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
-      "AggregateSweepCsvExporter._generate_content"
-    ],
-    [
-      "PLR0912",
-      "src/aiperf/orchestrator/aggregation/sweep.py",
-      "identify_pareto_optimal"
     ],
     [
       "PLR0912",
@@ -1402,11 +1289,6 @@
     ],
     [
       "PLR0915",
-      "src/aiperf/cli_runner/__init__.py",
-      "_run_multi_benchmark"
-    ],
-    [
-      "PLR0915",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
     ],
@@ -1424,21 +1306,6 @@
       "PLR0915",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
-      "AggregateSweepCsvExporter._generate_content"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/exporters/mlflow_data_exporter.py",
-      "MLflowDataExporter._export_sync"
-    ],
-    [
-      "PLR0915",
-      "src/aiperf/orchestrator/strategies.py",
-      "SweepConfidenceStrategy.aggregate"
     ],
     [
       "PLR0915",

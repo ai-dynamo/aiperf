@@ -78,7 +78,19 @@ class ZMQPubClient(BaseZMQClient):
 
             # Publish message
             self.trace(lambda: f"Publishing message {topic=} {message_json_bytes=}")
-            await self.socket.send_multipart([topic.encode(), message_json_bytes])
+            # Sync NOBLOCK multipart send skips zmq.asyncio's await/Future
+            # machinery. PUB is send-only (no recv driver) so there is no FD
+            # edge-trigger to contend with; framed manually since send_multipart
+            # delegates to the async self.send. SNDHWM=0 means it never blocks.
+            zmq.Socket.send(
+                self.socket,
+                topic.encode(),
+                flags=zmq.NOBLOCK | zmq.SNDMORE,
+                copy=False,
+            )
+            zmq.Socket.send(
+                self.socket, message_json_bytes, flags=zmq.NOBLOCK, copy=False
+            )
 
         except (asyncio.CancelledError, zmq.ContextTerminated):
             self.debug(
