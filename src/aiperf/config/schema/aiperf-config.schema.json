@@ -2528,6 +2528,20 @@
                   "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
                   "title": "Interturndelaycapseconds"
                 },
+                "maxIdleGapCapSeconds": {
+                  "anyOf": [
+                    {
+                      "minimum": 0.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Collapse global idle gaps in a trace replay schedule to at most this many seconds. After whole-session sampling a sparse trace otherwise replays across the original wall-clock span with long dead-air stretches that stall fixed-schedule replay; this caps any gap between consecutive requests (across all sessions). ``None`` disables the cap. Used by the Baseten trace loader.",
+                  "title": "Maxidlegapcapseconds"
+                },
                 "osl": {
                   "anyOf": [
                     {
@@ -6434,6 +6448,31 @@
           "default": null,
           "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
           "title": "Interturndelaycapseconds",
+          "x-jinja2-supported": true
+        },
+        "maxIdleGapCapSeconds": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Collapse global idle gaps in a trace replay schedule to at most this many seconds. After whole-session sampling a sparse trace otherwise replays across the original wall-clock span with long dead-air stretches that stall fixed-schedule replay; this caps any gap between consecutive requests (across all sessions). ``None`` disables the cap. Used by the Baseten trace loader.",
+          "title": "Maxidlegapcapseconds",
           "x-jinja2-supported": true
         },
         "osl": {

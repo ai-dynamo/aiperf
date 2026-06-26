@@ -124,6 +124,7 @@ class TestBasetenTraceDatasetLoader:
         assert dataset["42"][0].request_canceled == 1
         assert dataset["42"][0].request_body == {
             "min_tokens": 5,
+            "prompt": "first prompt",
             "hash_ids": [1, 2],
             "block_size": 64,
         }
@@ -159,6 +160,7 @@ class TestBasetenTraceDatasetLoader:
         assert turn.max_tokens == 12
         assert turn.extra_body == {
             "min_tokens": 12,
+            "prompt": "literal prompt",
             "hash_ids": [11, 12],
             "block_size": 64,
         }
@@ -494,7 +496,7 @@ class TestBasetenTraceDatasetLoader:
         trace = next(iter(next(iter(dataset.values()))))
 
         assert trace.output_length == 3
-        assert trace.request_body == {"min_tokens": 3}
+        assert trace.request_body == {"min_tokens": 3, "prompt": "cap me"}
 
 
 class TestBasetenTraceModel:

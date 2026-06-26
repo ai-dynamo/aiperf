@@ -73,9 +73,13 @@ class TestBasetenTraceReplay:
         assert len(result.raw_records) == 2
 
         payloads = [record.payload for record in result.raw_records]
+        # The Baseten loader coerces each single prompt to a bare string (via
+        # extra_body) for the serverless /v1/completions gateway, which rejects
+        # the list[str] form. The endpoint itself is left byte-identical to
+        # upstream; the override happens at dispatch.
         assert [payload["prompt"] for payload in payloads] == [
-            ["first prompt"],
-            ["second prompt"],
+            "first prompt",
+            "second prompt",
         ]
         assert payloads[0]["max_tokens"] == 6
         assert payloads[0]["min_tokens"] == 6

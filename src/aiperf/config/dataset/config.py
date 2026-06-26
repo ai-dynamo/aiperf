@@ -400,6 +400,20 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    max_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Collapse global idle gaps in a trace replay schedule to "
+            "at most this many seconds. After whole-session sampling a sparse "
+            "trace otherwise replays across the original wall-clock span with "
+            "long dead-air stretches that stall fixed-schedule replay; this caps "
+            "any gap between consecutive requests (across all sessions). ``None`` "
+            "disables the cap. Used by the Baseten trace loader.",
+        ),
+    ]
+
     osl: Annotated[
         SamplingDistribution | None,
         Field(

@@ -845,6 +845,24 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    max_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Collapse global idle gaps in a trace replay schedule to "
+            "at most this many seconds. After whole-session sampling a sparse "
+            "trace otherwise replays across the original wall-clock span with "
+            "long dead-air stretches that stall fixed-schedule replay. ``None`` "
+            "disables the cap. Routes onto the active FileDataset's "
+            "``max_idle_gap_cap_seconds`` field at config-resolution time.",
+        ),
+        CLIParameter(
+            name=("--max-idle-gap-cap-seconds",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
     ##############################################################################
     # Prompt
     ##############################################################################

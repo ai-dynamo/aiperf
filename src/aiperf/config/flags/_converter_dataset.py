@@ -247,6 +247,11 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         and cli.trace_session_sample_ratio is not None
     ):
         out["trace_session_sample_ratio"] = cli.trace_session_sample_ratio
+    if (
+        _set(cli, "max_idle_gap_cap_seconds")
+        and cli.max_idle_gap_cap_seconds is not None
+    ):
+        out["max_idle_gap_cap_seconds"] = cli.max_idle_gap_cap_seconds
     return out
 
 

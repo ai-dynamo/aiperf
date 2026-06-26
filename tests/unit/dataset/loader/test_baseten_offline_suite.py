@@ -52,26 +52,93 @@ def _fixture_rows() -> list[dict]:
     and the recorded-outcome columns."""
     return [
         # session A: 3 turns, growing shared prefix [10,11] -> [10,11,12] -> [10,11,12,13]
-        dict(timestamp_start_unix_ms=1_000, prompt="A-1 reconstructed prompt text", input_tokens=128, output_tokens=50,
-             total_hashes=[10, 11], provided_session_id="A", poor_man_session_id=1, block_size=BLOCK_SIZE,
-             request_canceled=0, duration_e2e_ms=800, duration_ttft_ms=120, cached_tokens_reference=0),
-        dict(timestamp_start_unix_ms=3_000, prompt="A-2 reconstructed prompt text", input_tokens=192, output_tokens=40,
-             total_hashes=[10, 11, 12], provided_session_id="A", poor_man_session_id=1, block_size=BLOCK_SIZE,
-             request_canceled=0, duration_e2e_ms=700, duration_ttft_ms=110, cached_tokens_reference=128),
-        dict(timestamp_start_unix_ms=6_000, prompt="A-3 reconstructed prompt text", input_tokens=256, output_tokens=60,
-             total_hashes=[10, 11, 12, 13], provided_session_id="A", poor_man_session_id=1, block_size=BLOCK_SIZE,
-             request_canceled=0, duration_e2e_ms=900, duration_ttft_ms=130, cached_tokens_reference=192),
+        dict(
+            timestamp_start_unix_ms=1_000,
+            prompt="A-1 reconstructed prompt text",
+            input_tokens=128,
+            output_tokens=50,
+            total_hashes=[10, 11],
+            provided_session_id="A",
+            poor_man_session_id=1,
+            block_size=BLOCK_SIZE,
+            request_canceled=0,
+            duration_e2e_ms=800,
+            duration_ttft_ms=120,
+            cached_tokens_reference=0,
+        ),
+        dict(
+            timestamp_start_unix_ms=3_000,
+            prompt="A-2 reconstructed prompt text",
+            input_tokens=192,
+            output_tokens=40,
+            total_hashes=[10, 11, 12],
+            provided_session_id="A",
+            poor_man_session_id=1,
+            block_size=BLOCK_SIZE,
+            request_canceled=0,
+            duration_e2e_ms=700,
+            duration_ttft_ms=110,
+            cached_tokens_reference=128,
+        ),
+        dict(
+            timestamp_start_unix_ms=6_000,
+            prompt="A-3 reconstructed prompt text",
+            input_tokens=256,
+            output_tokens=60,
+            total_hashes=[10, 11, 12, 13],
+            provided_session_id="A",
+            poor_man_session_id=1,
+            block_size=BLOCK_SIZE,
+            request_canceled=0,
+            duration_e2e_ms=900,
+            duration_ttft_ms=130,
+            cached_tokens_reference=192,
+        ),
         # session B: 2 turns with a deliberate 7.5s idle gap (> GAP_CAP_MS)
-        dict(timestamp_start_unix_ms=1_500, prompt="B-1 reconstructed prompt text", input_tokens=128, output_tokens=30,
-             total_hashes=[20, 21], provided_session_id="B", poor_man_session_id=2, block_size=BLOCK_SIZE,
-             request_canceled=0, duration_e2e_ms=600, duration_ttft_ms=100, cached_tokens_reference=0),
-        dict(timestamp_start_unix_ms=9_000, prompt="B-2 reconstructed prompt text", input_tokens=192, output_tokens=45,
-             total_hashes=[20, 21, 22], provided_session_id="B", poor_man_session_id=2, block_size=BLOCK_SIZE,
-             request_canceled=0, duration_e2e_ms=750, duration_ttft_ms=115, cached_tokens_reference=128),
-        # session C: single-turn, canceled
-        dict(timestamp_start_unix_ms=12_000, prompt="C-1 reconstructed prompt text", input_tokens=64, output_tokens=20,
-             total_hashes=[30], provided_session_id="C", poor_man_session_id=3, block_size=BLOCK_SIZE,
-             request_canceled=1, duration_e2e_ms=300, duration_ttft_ms=90, cached_tokens_reference=0),
+        dict(
+            timestamp_start_unix_ms=1_500,
+            prompt="B-1 reconstructed prompt text",
+            input_tokens=128,
+            output_tokens=30,
+            total_hashes=[20, 21],
+            provided_session_id="B",
+            poor_man_session_id=2,
+            block_size=BLOCK_SIZE,
+            request_canceled=0,
+            duration_e2e_ms=600,
+            duration_ttft_ms=100,
+            cached_tokens_reference=0,
+        ),
+        dict(
+            timestamp_start_unix_ms=9_000,
+            prompt="B-2 reconstructed prompt text",
+            input_tokens=192,
+            output_tokens=45,
+            total_hashes=[20, 21, 22],
+            provided_session_id="B",
+            poor_man_session_id=2,
+            block_size=BLOCK_SIZE,
+            request_canceled=0,
+            duration_e2e_ms=750,
+            duration_ttft_ms=115,
+            cached_tokens_reference=128,
+        ),
+        # session C: single-turn, canceled, far in the future (creates an 11s
+        # global dead-air gap after B-2 to exercise the idle-gap cap)
+        dict(
+            timestamp_start_unix_ms=20_000,
+            prompt="C-1 reconstructed prompt text",
+            input_tokens=64,
+            output_tokens=20,
+            total_hashes=[30],
+            provided_session_id="C",
+            poor_man_session_id=3,
+            block_size=BLOCK_SIZE,
+            request_canceled=1,
+            duration_e2e_ms=300,
+            duration_ttft_ms=90,
+            cached_tokens_reference=0,
+        ),
     ]
 
 
@@ -90,7 +157,9 @@ def _make_run(input_file: Path, **cli):
 
 def _load(path: Path, **cli):
     loader = BasetenTraceDatasetLoader(
-        filename=str(path), run=_make_run(path, **cli), prompt_generator=_mock_prompt_generator()
+        filename=str(path),
+        run=_make_run(path, **cli),
+        prompt_generator=_mock_prompt_generator(),
     )
     return loader, loader.load_dataset()
 
@@ -153,7 +222,9 @@ class TestRequestBodyContract:
                 payload = endpoint.format_payload(
                     create_request_info(model_endpoint=model_endpoint, turns=[turn])
                 )
-                assert isinstance(payload["prompt"], str), f"prompt not a str: {payload['prompt']!r}"
+                assert isinstance(payload["prompt"], str), (
+                    f"prompt not a str: {payload['prompt']!r}"
+                )
 
     def test_completions_payload_carries_replay_metadata(self, fixture_path):
         loader, data = _load(fixture_path)
@@ -183,15 +254,35 @@ class TestTimingNoHang:
         for conv in loader.convert_to_conversations(data):
             assert conv.turns[0].timestamp is not None
 
-    @pytest.mark.xfail(reason="P1.2 max-idle-gap-cap not implemented (session B has a 7.5s gap)", strict=False)
-    def test_no_idle_gap_exceeds_cap(self, fixture_path):
-        _, data = _load(fixture_path)
-        for sid, traces in data.items():
-            ts = sorted(t.timestamp for t in traces)
-            gaps = [b - a for a, b in zip(ts, ts[1:])]
-            assert all(g <= GAP_CAP_MS for g in gaps), f"session {sid}: gaps {gaps} exceed cap {GAP_CAP_MS}"
+    def test_global_idle_gap_capped(self, fixture_path):
+        # With the cap, no gap between consecutive requests (across all sessions)
+        # exceeds the cap, so fixed-schedule replay never idles longer than that.
+        _, data = _load(fixture_path, max_idle_gap_cap_seconds=GAP_CAP_MS / 1000)
+        ts = sorted(t.timestamp for traces in data.values() for t in traces)
+        gaps = [b - a for a, b in zip(ts, ts[1:], strict=False)]
+        assert gaps, "fixture should have multiple events"
+        assert max(gaps) <= GAP_CAP_MS, f"global gaps exceed cap: {gaps}"
 
-    @pytest.mark.xfail(reason="P2 back-pressure not wired: turns>0 should carry delay, not absolute timestamp", strict=False)
+    def test_gap_cap_is_opt_in(self, fixture_path):
+        # Default (no cap): the large dead-air gap is preserved verbatim.
+        _, data = _load(fixture_path)
+        ts = sorted(t.timestamp for traces in data.values() for t in traces)
+        gaps = [b - a for a, b in zip(ts, ts[1:], strict=False)]
+        assert max(gaps) > GAP_CAP_MS
+
+    def test_gap_cap_only_collapses_oversized_gap(self, fixture_path):
+        # The cap collapses ONLY the one oversized gap; smaller structure is intact.
+        _, capped = _load(fixture_path, max_idle_gap_cap_seconds=GAP_CAP_MS / 1000)
+        _, uncapped = _load(fixture_path)
+        cap_ts = sorted(t.timestamp for tr in capped.values() for t in tr)
+        unc_ts = sorted(t.timestamp for tr in uncapped.values() for t in tr)
+        assert cap_ts[-1] == unc_ts[-1] - (11_000 - GAP_CAP_MS)
+        assert cap_ts[:5] == unc_ts[:5]
+
+    @pytest.mark.xfail(
+        reason="P2 back-pressure not wired: turns>0 should carry delay, not absolute timestamp",
+        strict=False,
+    )
     def test_continuation_turns_use_delay(self, fixture_path):
         loader, data = _load(fixture_path)
         for conv in loader.convert_to_conversations(data):
@@ -217,7 +308,9 @@ class TestHashIntegrity:
 
 
 class TestRepresentativenessTier2:
-    @pytest.mark.skip(reason="Tier 2: runs against a real dataset slice; not part of the fast suite")
+    @pytest.mark.skip(
+        reason="Tier 2: runs against a real dataset slice; not part of the fast suite"
+    )
     def test_sample_matches_full_distribution(self):
         """Placeholder: load a real contiguous multi-session slice and assert the
         sampled ISL/OSL/session distributions + recomputed KV-hit track the full trace."""

@@ -16,6 +16,7 @@ from pydantic import Field, field_validator
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.dataset.loader._baseten_replay_timemodel import reflow_idle_gaps
 from aiperf.dataset.loader.base_trace_loader import (
     BaseTraceDatasetLoader,
     _has_meaningful_synthesis,
@@ -210,6 +211,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._session_sample_ratio = getattr(
             dataset, "trace_session_sample_ratio", None
         )
+        gap_cap_s = getattr(dataset, "max_idle_gap_cap_seconds", None)
+        self._max_idle_gap_cap_ms = (
+            int(gap_cap_s * 1000) if gap_cap_s is not None else None
+        )
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
 
     @classmethod
@@ -243,6 +248,13 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if trace.hash_ids is None:
             trace.hash_ids = list(trace.total_hashes or [])
         trace.request_body = {"min_tokens": trace.output_length}
+        # Baseten's serverless /v1/completions gateway rejects a list[str] prompt
+        # (it accepts only a string or list[int]), but the shared upstream
+        # completions endpoint always emits a list. Override the prompt to a bare
+        # string here via extra_body so the endpoint stays byte-identical to
+        # upstream (extra_body is merged last at dispatch).
+        if trace.text_input is not None:
+            trace.request_body["prompt"] = trace.text_input
         if trace.hash_ids:
             trace.request_body["hash_ids"] = trace.hash_ids
         if trace.block_size is not None:
@@ -422,6 +434,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
             items.append(trace)
 
+        if self._max_idle_gap_cap_ms is not None:
+            self._apply_idle_gap_cap(items)
+
         data = self._group_traces(items)
         self.debug(
             lambda: (
@@ -440,6 +455,21 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         self._log_filtering_summary()
         return data
+
+    def _apply_idle_gap_cap(self, items: list[BasetenTrace]) -> None:
+        """Collapse global idle gaps so a sparse (sampled) trace does not idle
+        through long dead-air stretches under fixed-schedule replay.
+
+        Operates on the normalized per-row timestamps across ALL sessions, before
+        grouping, so the global schedule stays monotonic. Pure timing rewrite —
+        does not touch hash_ids/prompt, so KV-cache fidelity is preserved.
+        """
+        if not items:
+            return
+        original = [int(trace.timestamp or 0) for trace in items]
+        reflowed = reflow_idle_gaps(original, self._max_idle_gap_cap_ms)
+        for trace, new_ts in zip(items, reflowed, strict=True):
+            trace.timestamp = new_ts
 
     def _choose_session_key(self, items: list[BasetenTrace]) -> str | None:
         return choose_baseten_session_key(
