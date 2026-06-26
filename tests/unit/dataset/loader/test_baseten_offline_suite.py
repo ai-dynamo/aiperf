@@ -315,6 +315,21 @@ class TestFidelityCarryThrough:
         assert a1.cached_tokens_reference is not None
 
 
+class TestTimeCompression:
+    def test_speedup_compresses_timestamps_not_hashes(self, fixture_path):
+        # replay_speedup shrinks the wall-clock by the factor; hash_ids untouched.
+        _, base = _load(fixture_path)
+        _, fast = _load(fixture_path, replay_speedup=10.0)
+        b = max(t.timestamp for tr in base.values() for t in tr)
+        f = max(t.timestamp for tr in fast.values() for t in tr)
+        assert f == b / 10
+        assert (
+            fast["A"][2].request_body["hash_ids"]
+            == base["A"][2].request_body["hash_ids"]
+            == [10, 11, 12, 13]
+        )
+
+
 class TestHashIntegrity:
     def test_hash_ids_not_rewritten(self, fixture_path):
         _, data = _load(fixture_path)

@@ -414,6 +414,19 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    replay_speedup: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Wall-clock compression factor for trace replay (e.g. 10 = "
+            "replay 10x faster than recorded). Divides all normalized timestamps and "
+            "inter-turn delays, so a ~2h trace replays in minutes. ``None`` = 1.0 "
+            "(real time). Unlike synthesis speedup_ratio this does NOT touch hash_ids, "
+            "so KV-cache fidelity is preserved. Used by the Baseten trace loader.",
+        ),
+    ]
+
     osl: Annotated[
         SamplingDistribution | None,
         Field(

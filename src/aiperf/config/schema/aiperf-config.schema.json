@@ -2542,6 +2542,20 @@
                   "description": "Collapse global idle gaps in a trace replay schedule to at most this many seconds. After whole-session sampling a sparse trace otherwise replays across the original wall-clock span with long dead-air stretches that stall fixed-schedule replay; this caps any gap between consecutive requests (across all sessions). ``None`` disables the cap. Used by the Baseten trace loader.",
                   "title": "Maxidlegapcapseconds"
                 },
+                "replaySpeedup": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Wall-clock compression factor for trace replay (e.g. 10 = replay 10x faster than recorded). Divides all normalized timestamps and inter-turn delays, so a ~2h trace replays in minutes. ``None`` = 1.0 (real time). Unlike synthesis speedup_ratio this does NOT touch hash_ids, so KV-cache fidelity is preserved. Used by the Baseten trace loader.",
+                  "title": "Replayspeedup"
+                },
                 "osl": {
                   "anyOf": [
                     {
@@ -6473,6 +6487,31 @@
           "default": null,
           "description": "Collapse global idle gaps in a trace replay schedule to at most this many seconds. After whole-session sampling a sparse trace otherwise replays across the original wall-clock span with long dead-air stretches that stall fixed-schedule replay; this caps any gap between consecutive requests (across all sessions). ``None`` disables the cap. Used by the Baseten trace loader.",
           "title": "Maxidlegapcapseconds",
+          "x-jinja2-supported": true
+        },
+        "replaySpeedup": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Wall-clock compression factor for trace replay (e.g. 10 = replay 10x faster than recorded). Divides all normalized timestamps and inter-turn delays, so a ~2h trace replays in minutes. ``None`` = 1.0 (real time). Unlike synthesis speedup_ratio this does NOT touch hash_ids, so KV-cache fidelity is preserved. Used by the Baseten trace loader.",
+          "title": "Replayspeedup",
           "x-jinja2-supported": true
         },
         "osl": {

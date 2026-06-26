@@ -224,6 +224,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._delay_cap = DelayCapTracker(
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
+        self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
 
     @classmethod
@@ -437,6 +438,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             self._preprocess_trace(trace)
             if min_timestamp is not None and trace.timestamp is not None:
                 trace.timestamp = int(trace.timestamp) - int(min_timestamp)
+                if self._speedup != 1.0:
+                    # Compress wall-clock once here; gap-cap + back-pressure delays
+                    # downstream inherit the compressed times. Never touches hash_ids.
+                    trace.timestamp = trace.timestamp / self._speedup
 
             if not self._filter_and_cap_trace(trace):
                 continue

@@ -863,6 +863,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    replay_speedup: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Wall-clock compression factor for trace replay (e.g. 10 = "
+            "replay 10x faster than recorded). Divides all normalized timestamps and "
+            "inter-turn delays so a ~2h trace replays in minutes. ``None`` = real "
+            "time. Does NOT touch hash_ids (unlike synthesis speedup_ratio). Routes "
+            "onto the active FileDataset's ``replay_speedup`` at config-resolution time.",
+        ),
+        CLIParameter(
+            name=("--replay-speedup",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
     ##############################################################################
     # Prompt
     ##############################################################################

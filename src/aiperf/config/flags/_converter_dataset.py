@@ -252,6 +252,8 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         and cli.max_idle_gap_cap_seconds is not None
     ):
         out["max_idle_gap_cap_seconds"] = cli.max_idle_gap_cap_seconds
+    if _set(cli, "replay_speedup") and cli.replay_speedup is not None:
+        out["replay_speedup"] = cli.replay_speedup
     return out
 
 
