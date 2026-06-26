@@ -122,6 +122,27 @@ class TestDataLoaderLoadRun:
         assert "request_latency" in available["display_names"]
         assert available["units"]["request_throughput"] == "req/s"
 
+    def test_load_aggregate_only_run_reads_zst_export(self, tmp_path: Path) -> None:
+        """Compressed aggregate JSON uses the same zst-aware reader as other files."""
+        run_dir = tmp_path / "aggregate" / "concurrency_00010"
+        run_dir.mkdir(parents=True)
+        aggregate = {
+            "schema_version": "1.0",
+            "was_cancelled": False,
+            "metadata": {"variation_values": {"loadgen.concurrency": 10}},
+            "metrics": {
+                "request_latency_avg": {"mean": 123.4, "unit": "ms"},
+            },
+        }
+        compressed = zstandard.ZstdCompressor().compress(orjson.dumps(aggregate))
+        (run_dir / "profile_export_aiperf_aggregate.json.zst").write_bytes(compressed)
+
+        loader = DataLoader()
+        run = loader.load_run(run_dir, load_per_request_data=False)
+
+        assert run.metadata.concurrency == 10
+        assert run.aggregated["request_latency"] == {"unit": "ms", "avg": 123.4}
+
     def test_timestamp_columns_remain_as_integers(self, single_run_dir: Path) -> None:
         """Test that timestamp columns remain as integer nanoseconds."""
         loader = DataLoader()

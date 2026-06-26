@@ -12,7 +12,12 @@ from pathlib import Path
 
 from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.plot.constants import PROFILE_EXPORT_AIPERF_JSON, PROFILE_EXPORT_JSONL
+from aiperf.plot.constants import (
+    PROFILE_EXPORT_AIPERF_AGGREGATE_JSON,
+    PROFILE_EXPORT_AIPERF_JSON,
+    PROFILE_EXPORT_JSONL,
+    TRIAL_RUNS_SUBDIR,
+)
 from aiperf.plot.exceptions import ModeDetectionError
 
 
@@ -142,41 +147,89 @@ class ModeDetector(AIPerfLoggerMixin):
         """
         Check if a path is a valid run directory.
 
-        A valid run directory must:
-        - Be a directory
-        - Contain the required profile export files (profile_export.jsonl, profile_export_aiperf.json)
-          in either raw or .zst compressed form
+        A valid run directory matches one of two layouts:
 
-        Note: This function follows symlinks. If a marker file or its .zst variant is a broken
-        symlink, the directory is not considered a valid run directory.
+        - **Single-run / per-trial layout**: contains both
+          ``profile_export.jsonl`` (per-request events) and
+          ``profile_export_aiperf.json`` (per-run aggregate). Emitted at the
+          artifact root, at every ``<cell>/`` for trials==1 sweeps, and at
+          every ``profile_runs/trial_NNNN/``.
+        - **Per-cell confidence-aggregate layout**: contains
+          ``profile_export_aiperf_aggregate.json`` (no JSONL — aggregates
+          carry no per-request events). Emitted by the sweep orchestrator at
+          ``<base>/aggregate/<cell>/`` (REPEATED) or ``<base>/<cell>/aggregate/``
+          (INDEPENDENT) for trials>1 sweeps. Redundant shadows that duplicate a
+          sibling single-run cell (trials==1) are rejected so each cell is
+          enrolled exactly once — see :meth:`_is_redundant_aggregate_shadow`.
+
+        Matches both raw and ``.zst``-compressed marker files. Follows symlinks;
+        a broken-symlink marker counts as "file not present".
 
         Args:
             path: Path to check.
 
         Returns:
-            True if path is a valid run directory, False otherwise.
+            True if path is a valid run directory of either shape, False otherwise.
         """
         if not path.is_dir():
             return False
 
-        def _has_file(name: str) -> bool:
-            raw = path / name
-            zst = path / f"{name}.zst"
-            try:
-                if raw.is_symlink() and not raw.exists():
-                    self.warning(f"Directory {path} contains broken symlink for {raw}")
-                    return False
-                if raw.exists():
-                    return True
-                if zst.is_symlink() and not zst.exists():
-                    self.warning(f"Directory {path} contains broken symlink for {zst}")
-                    return False
-                return zst.exists()
-            except (PermissionError, OSError) as e:
-                self.warning(f"Cannot check file status for {name} in {path}: {e}")
-                return False
+        try:
+            if self._has_single_run_markers(path):
+                return True
 
-        return _has_file(PROFILE_EXPORT_JSONL) and _has_file(PROFILE_EXPORT_AIPERF_JSON)
+            if self._has_valid_aggregate_marker(path):
+                return True
+        except (PermissionError, OSError) as e:
+            self.warning(f"Cannot check file status under {path}: {e}")
+            return False
+
+        return False
+
+    def _has_marker(self, path: Path, name: str) -> bool:
+        """Return True iff ``name`` (raw or ``.zst``) exists under ``path`` and
+        is not a broken symlink."""
+        raw = path / name
+        zst = path / f"{name}.zst"
+        if raw.is_symlink() and not raw.exists():
+            self.warning(f"Directory {path} contains broken symlink for {raw}")
+            return False
+        if raw.exists():
+            return True
+        if zst.is_symlink() and not zst.exists():
+            self.warning(f"Directory {path} contains broken symlink for {zst}")
+            return False
+        return zst.exists()
+
+    def _has_single_run_markers(self, path: Path) -> bool:
+        """Return True when ``path`` has the complete single-run marker pair."""
+        return self._has_marker(path, PROFILE_EXPORT_JSONL) and self._has_marker(
+            path, PROFILE_EXPORT_AIPERF_JSON
+        )
+
+    def _has_valid_aggregate_marker(self, path: Path) -> bool:
+        """Return True when ``path`` carries a non-redundant aggregate marker."""
+        return self._has_marker(
+            path, PROFILE_EXPORT_AIPERF_AGGREGATE_JSON
+        ) and not self._is_redundant_aggregate_shadow(path)
+
+    def _is_redundant_aggregate_shadow(self, path: Path) -> bool:
+        """Detect aggregate dirs that duplicate a single-run sibling cell.
+
+        For trials==1 sweeps the orchestrator writes BOTH the canonical
+        single-run cell and a per-cell confidence-aggregate shadow:
+        - INDEPENDENT: ``<base>/<cell>/aggregate/`` shadows ``<base>/<cell>/``.
+        - REPEATED: ``<base>/aggregate/<cell>/`` shadows ``<base>/<cell>/``.
+
+        Without this check each cell would be enrolled twice (once per layout).
+        Returns True iff the complete canonical single-run marker pair exists at
+        either natural shadow location.
+        """
+        if path.name == "aggregate" and self._has_single_run_markers(path.parent):
+            return True
+        return path.parent.name == "aggregate" and self._has_single_run_markers(
+            path.parent.parent / path.name
+        )
 
     def _find_all_run_directories_recursive(
         self, path: Path, visited: set[Path] | None = None
@@ -218,12 +271,28 @@ class ModeDetector(AIPerfLoggerMixin):
         if self._is_run_directory(path):
             run_dirs.append(path)
 
+        # The per-trial ``profile_runs/`` subtree is redundant ONLY when an
+        # ``aggregate/`` sibling carries the canonical per-cell view (trials>1
+        # REPEATED / INDEPENDENT sweeps). Skipping it there collapses the cells
+        # to one aggregate per variation instead of one entry per trial run.
+        # When there is no aggregate sibling (adaptive BO, recipe convergence
+        # loops, non-sweep multi-trial runs) ``profile_runs/`` is the only place
+        # data lives, so it is still traversed. Passing ``.../profile_runs/``
+        # explicitly as the top-level path opts back into the per-trial view.
         try:
+            has_aggregate_sibling = self._has_valid_aggregate_marker(path / "aggregate")
             for subdir in path.iterdir():
-                if subdir.is_dir():
-                    run_dirs.extend(
-                        self._find_all_run_directories_recursive(subdir, visited)
+                if not subdir.is_dir():
+                    continue
+                if subdir.name == TRIAL_RUNS_SUBDIR and has_aggregate_sibling:
+                    self.debug(
+                        f"Skipping per-trial subtree {subdir} (sibling aggregate/ "
+                        "carries the canonical per-cell view)"
                     )
+                    continue
+                run_dirs.extend(
+                    self._find_all_run_directories_recursive(subdir, visited)
+                )
         except PermissionError:
             self.warning(f"Permission denied accessing directory: {path}")
         except OSError as e:

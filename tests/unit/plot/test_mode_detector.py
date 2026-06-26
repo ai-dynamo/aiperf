@@ -132,6 +132,38 @@ class TestFindRunDirectories:
         for run in runs:
             assert run.is_relative_to(parent_dir_with_runs)
 
+    def test_profile_runs_discovered_when_aggregate_sibling_is_invalid(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Empty aggregate siblings do not hide valid per-trial runs."""
+        cell_dir = tmp_path / "concurrency_00010"
+        trial_dir = cell_dir / "profile_runs" / "trial_0001"
+        trial_dir.mkdir(parents=True)
+        (trial_dir / "profile_export.jsonl").write_text('{"test": "trial"}\n')
+        (trial_dir / "profile_export_aiperf.json").write_text('{"test": "trial"}')
+        (cell_dir / "aggregate").mkdir()
+
+        runs = mode_detector.find_run_directories([cell_dir])
+
+        assert runs == [trial_dir]
+
+    def test_aggregate_shadow_kept_when_sibling_run_is_incomplete(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Partial single-run siblings do not suppress valid aggregate cells."""
+        sibling_cell = tmp_path / "concurrency_00010"
+        sibling_cell.mkdir()
+        (sibling_cell / "profile_export.jsonl").write_text('{"test": "partial"}\n')
+        aggregate_cell = tmp_path / "aggregate" / "concurrency_00010"
+        aggregate_cell.mkdir(parents=True)
+        (aggregate_cell / "profile_export_aiperf_aggregate.json").write_text(
+            '{"metrics": {}}'
+        )
+
+        runs = mode_detector.find_run_directories([tmp_path])
+
+        assert runs == [aggregate_cell]
+
     def test_find_runs_sorted(
         self, mode_detector: ModeDetector, parent_dir_with_runs: Path
     ) -> None:

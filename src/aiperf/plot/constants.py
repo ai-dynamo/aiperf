@@ -16,6 +16,14 @@ from aiperf.config.defaults import OutputDefaults
 # File patterns for AIPerf profiling output files. These reference the canonical definitions from OutputDefaults
 PROFILE_EXPORT_JSONL = OutputDefaults.PROFILE_EXPORT_JSONL_FILE.name
 PROFILE_EXPORT_AIPERF_JSON = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE.name
+# Per-cell confidence-aggregate JSON emitted by the sweep orchestrator for
+# trials>1 cells (no JSONL, since aggregates have no per-request events). Lets
+# the plot mode-detector enroll one aggregate cell per concurrency instead of
+# every individual trial run.
+PROFILE_EXPORT_AIPERF_AGGREGATE_JSON = "profile_export_aiperf_aggregate.json"
+# Per-trial subtree name under a sweep cell. Skipped during run discovery when
+# an ``aggregate/`` sibling carries the canonical per-cell view (trials>1).
+TRIAL_RUNS_SUBDIR = "profile_runs"
 PROFILE_EXPORT_TIMESLICES_CSV = (
     OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_CSV_FILE.name
 )

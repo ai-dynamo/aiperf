@@ -360,8 +360,7 @@ class DataLoader(
     def _read_aggregate_json(self, aggregate_path: Path) -> dict[str, Any]:
         """Read+parse a confidence-aggregate JSON, raising DataLoadError on failure."""
         try:
-            with open(aggregate_path, "rb") as f:
-                return orjson.loads(f.read())
+            return orjson.loads(self._read_bytes(aggregate_path))
         except orjson.JSONDecodeError as e:
             raise DataLoadError(
                 f"Failed to parse aggregate JSON: {e}", path=str(aggregate_path)
