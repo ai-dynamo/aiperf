@@ -82,6 +82,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "image_batch_size",
         "image_format",
         "image_source",
+        "image_source_sampling",
         # ----- audio modality -----
         "audio_batch_size",
         "audio_length_mean",
