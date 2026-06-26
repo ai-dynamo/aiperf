@@ -77,6 +77,14 @@ class MetricsJsonExporter(MetricsBaseExporter):
             telemetry_data=self._telemetry_results,
         )
 
+        # DAG branch-orchestration counters, when present. Non-DAG runs leave
+        # ``branch_stats`` unset on ProfileResults, so the section is omitted
+        # entirely (model_dump_json with exclude_none=True drops it). getattr
+        # because test doubles may not declare the attribute.
+        branch_stats = getattr(self._results, "branch_stats", None)
+        if branch_stats is not None:
+            export_data.branch_stats = branch_stats
+
         # Add all prepared metrics dynamically
         for metric_tag, json_result in prepared_json_metrics.items():
             setattr(export_data, metric_tag, json_result)

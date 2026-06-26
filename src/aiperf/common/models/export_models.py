@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from pydantic import ConfigDict, Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.config import BenchmarkConfig
 
@@ -451,6 +452,14 @@ class JsonExportData(AIPerfBaseModel):
     )
     error_summary: list[ErrorDetailsCount] | None = Field(
         default=None, description="Aggregated count of errors grouped by root cause."
+    )
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description=(
+            "DAG branch orchestration counters (children spawned/completed/"
+            "errored/truncated, parents suspended/resumed). Present only on "
+            "DAG-shaped runs; absent for non-DAG benchmarks."
+        ),
     )
     start_time: datetime | None = Field(
         default=None, description="Wall-clock benchmark start time."
