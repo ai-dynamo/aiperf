@@ -760,6 +760,54 @@ class _ServerMetricsSettings(BaseSettings):
     )
 
 
+class _NetworkLatencySettings(BaseSettings):
+    """Network latency calibration configuration.
+
+    Controls the TCP-handshake RTT probes used to estimate the client-to-endpoint
+    network round-trip time so it can be subtracted from latency metrics. Probes run
+    throughout the profiling phase. Enable with `--network-latency-automatic`.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_NETWORK_LATENCY_",
+        env_parse_enums=True,
+    )
+
+    DEFAULT_PROBE_INTERVAL: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=1.0,
+        description="Default seconds between RTT probes when --network-latency-ping-interval is unset (default: 1.0s, ~1Hz)",
+    )
+    MIN_SAMPLES: int = Field(
+        ge=1,
+        le=100000,
+        default=5,
+        description="Minimum number of successful RTT samples to collect; extra probes are issued at "
+        "profile completion if a short run did not reach this floor",
+    )
+    CONNECT_TIMEOUT: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=5.0,
+        description="Timeout in seconds for a single TCP-handshake RTT probe",
+    )
+    COMPLETE_TOPUP_TIMEOUT: float = Field(
+        ge=0.0,
+        le=30.0,
+        default=3.0,
+        description="Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes "
+        "at PROFILE_COMPLETE, kept well under the command-response budget so a slow "
+        "endpoint cannot stall completion",
+    )
+    EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=100,
+        description="Batch size for the network latency jsonl writer export results processor",
+    )
+
+
 class _TimingSettings(BaseSettings):
     """Timing manager configuration.
 
@@ -1380,6 +1428,10 @@ class _Environment(BaseSettings):
     SEARCH_PLANNER: _SearchPlannerSettings = Field(
         default_factory=_SearchPlannerSettings,
         description="Adaptive-search planner tunables",
+    )
+    NETWORK_LATENCY: _NetworkLatencySettings = Field(
+        default_factory=_NetworkLatencySettings,
+        description="Network latency calibration settings",
     )
     SERVER_METRICS: _ServerMetricsSettings = Field(
         default_factory=_ServerMetricsSettings,

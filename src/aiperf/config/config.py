@@ -70,6 +70,9 @@ from aiperf.config.mlflow import (
 from aiperf.config.models import (
     ModelsAdvanced,
 )
+from aiperf.config.network_latency import (
+    NetworkLatencyConfig,
+)
 from aiperf.config.otel import (
     OTelConfig,
 )
@@ -315,6 +318,16 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             "Collects operational metrics (queue depth, KV cache, batch sizes) "
             "from inference server Prometheus endpoints. "
             "Enabled by default. Set enabled: false to disable.",
+        ),
+    ]
+
+    network_latency: Annotated[
+        NetworkLatencyConfig,
+        Field(
+            default_factory=NetworkLatencyConfig,
+            description="Network latency calibration configuration. Probes the endpoint "
+            "RTT during profiling and subtracts the mean from latency metrics, emitted as "
+            "separate network_adjusted_* metrics. Disabled by default.",
         ),
     ]
 

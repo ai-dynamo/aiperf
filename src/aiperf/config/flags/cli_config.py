@@ -2327,6 +2327,59 @@ class CLIConfig(BaseConfig):
     ] = _DEFAULT_SERVER_METRICS_FORMATS
 
     ##############################################################################
+    # Network Latency
+    ##############################################################################
+    network_latency_automatic: Annotated[
+        bool,
+        Field(
+            description=(
+                "Automatically measure network latency (DISABLED BY DEFAULT). "
+                "Opens a fresh TCP connection to the endpoint throughout the run, "
+                "measures the handshake RTT, and subtracts the mean from request-start-anchored "
+                "latency metrics (request_latency, time_to_first_token, "
+                "time_to_first_output_token). Raw metrics are preserved; adjusted values are "
+                "emitted as separate network_adjusted_* metrics plus a network_rtt summary. "
+                "Mutually exclusive with --network-latency-mean."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-automatic",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = False
+
+    network_latency_mean: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            description=(
+                "Set a fixed mean network RTT in milliseconds to subtract, bypassing active "
+                "probing. Implicitly enables network latency adjustment. Mutually exclusive "
+                "with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-mean",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
+
+    network_latency_ping_interval: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Seconds between TCP-handshake RTT probes during profiling "
+                "(default: 1.0s). Only applies with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-ping-interval",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
+
+    ##############################################################################
     # GPU Telemetry
     ##############################################################################
     gpu_telemetry: Annotated[

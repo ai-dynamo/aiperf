@@ -198,6 +198,50 @@ def build_server_metrics(cli: CLIConfig) -> dict[str, Any]:
     return server_metrics
 
 
+def build_network_latency(cli: CLIConfig) -> dict[str, Any]:
+    """Translate the network-latency CLI flags into the network-latency dict.
+
+    ``--network-latency-automatic`` actively probes the endpoint RTT;
+    ``--network-latency-mean`` supplies a fixed mean RTT and implicitly enables
+    adjustment without probing. The two are mutually exclusive (automatic means
+    measure it, mean means set it). The ``--network-latency-ping-interval`` flag
+    only applies to automatic mode. When neither is requested the section stays
+    disabled and no adjusted metrics are emitted.
+    """
+    cli_set = cli.model_fields_set
+    mean_set = (
+        "network_latency_mean" in cli_set and cli.network_latency_mean is not None
+    )
+    interval_set = "network_latency_ping_interval" in cli_set
+
+    if mean_set and cli.network_latency_automatic:
+        raise ValueError(
+            "Cannot use both --network-latency-automatic and --network-latency-mean together. "
+            "Automatic measures the RTT; mean sets it directly."
+        )
+
+    if mean_set:
+        if interval_set:
+            raise ValueError(
+                "--network-latency-ping-interval only applies with --network-latency-automatic, "
+                "not with --network-latency-mean."
+            )
+        return {"enabled": True, "mean_ms": cli.network_latency_mean}
+
+    if not cli.network_latency_automatic:
+        if interval_set:
+            raise ValueError(
+                "--network-latency-ping-interval only applies when --network-latency-automatic "
+                "is set (or --network-latency-mean is provided)."
+            )
+        return {"enabled": False}
+
+    network_latency: dict[str, Any] = {"enabled": True}
+    if interval_set and cli.network_latency_ping_interval is not None:
+        network_latency["ping_interval"] = cli.network_latency_ping_interval
+    return network_latency
+
+
 def _normalize_otel_metrics_url(url: str) -> str:
     """Normalize OTel collector URL to an OTLP/HTTP metrics endpoint.
 
