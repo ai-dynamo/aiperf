@@ -142,10 +142,13 @@ class TestRecordProcessorCreateMetricRecordMetadata:
 
         assert metadata.request_num == 7
 
-    def test_create_metadata_populates_session_num_from_request_info(
+    def test_create_metadata_populates_session_num_from_credit_num(
         self, mock_record_processor, sample_request_record
     ):
-        """session_num should come from request_info.session_num when present."""
+        """session_num is the per-credit index (credit_num), NOT the per-session
+        request_info.session_num. The numpy metrics column store keys on
+        session_num, so it must be unique per record/turn — using the
+        per-session value collapses multi-turn records onto one slot."""
         sample_request_record.request_info.credit_num = 10
         sample_request_record.request_info.session_num = 5
         sample_request_record.end_perf_ns = (
@@ -156,7 +159,7 @@ class TestRecordProcessorCreateMetricRecordMetadata:
             mock_record_processor, sample_request_record, "worker-1"
         )
 
-        assert metadata.session_num == 5
+        assert metadata.session_num == 10
 
     def test_create_metadata_session_num_falls_back_to_credit_num(
         self, mock_record_processor, sample_request_record

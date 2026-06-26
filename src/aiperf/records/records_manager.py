@@ -390,9 +390,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         # Capture DAG branch-orchestration counters for the PROFILING phase so
         # they reach ProfileResults.branch_stats / the JSON export. None on
-        # non-DAG runs.
+        # non-DAG runs. ``getattr`` guards minimal test doubles that omit the
+        # field; real CreditPhaseCompleteMessage always carries it (default None).
         if (
-            message.branch_stats is not None
+            getattr(message, "branch_stats", None) is not None
             and message.stats.phase == CreditPhase.PROFILING
         ):
             self._latest_branch_stats = message.branch_stats
