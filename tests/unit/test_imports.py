@@ -13,10 +13,19 @@ from pathlib import Path
 
 import pytest
 
+from tests.harness.optional_deps import unsupported_import_sweep_modules
+
 # Root directories
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC_DIR = REPO_ROOT / "src"
 TESTS_DIR = REPO_ROOT / "tests"
+
+# Modules requiring native deps with no Windows-on-ARM build (datasets,
+# soundfile/libsndfile, ...). They cannot be imported where the dep is absent,
+# and attempting the import can hard-crash the interpreter on a wrong-arch
+# native library, so they are filtered out of the sweep entirely. Empty on
+# platforms where every dep is present.
+_UNSUPPORTED_MODULES = unsupported_import_sweep_modules()
 
 
 def discover_modules(
@@ -132,8 +141,16 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
     exclude_dirs={"ci"},
 )
 
-AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
-TEST_MODULES = sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
+AIPERF_MODULES = [
+    m
+    for m in sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
+    if m not in _UNSUPPORTED_MODULES
+]
+TEST_MODULES = [
+    m
+    for m in sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
+    if m not in _UNSUPPORTED_MODULES
+]
 
 
 # =============================================================================

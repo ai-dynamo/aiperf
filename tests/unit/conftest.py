@@ -38,52 +38,16 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.plugins import _PluginRegistry as PluginRegistry
 from tests.harness.fake_tokenizer import FakeTokenizer
-from tests.harness.optional_deps import (
-    HAS_DATASETS,
-    HAS_PYARROW,
-    HAS_SOUNDFILE,
-    HAS_TRUSTME,
-)
+from tests.harness.optional_deps import unsupported_unit_test_relpaths
 from tests.harness.time_traveler import TimeTraveler
 
 # Skip (at collection time) the unit-test modules whose top-level import chains
-# hard-depend on native libraries that have no Windows-on-ARM build. Without
-# this, collection itself crashes on win-arm before any test runs. On every
-# other platform these libs are present, so nothing is skipped. The base
-# package and the bulk of the suite remain fully covered on win-arm.
-collect_ignore: list[str] = []
-if not HAS_PYARROW:
-    collect_ignore.append("server_metrics/test_parquet_exporter.py")
-if not HAS_DATASETS:
-    # Accuracy benchmarks import the HF `datasets` library at module top.
-    collect_ignore += [
-        "accuracy/test_lcb_codegeneration_benchmark.py",
-        "accuracy/test_aime_benchmark.py",
-        "accuracy/test_aime24_benchmark.py",
-        "accuracy/test_aime25_benchmark.py",
-        "accuracy/test_bigbench_benchmark.py",
-        "accuracy/test_gpqa_diamond_benchmark.py",
-        "accuracy/test_gsm8k_benchmark.py",
-        "accuracy/test_math_500_benchmark.py",
-    ]
-if not HAS_DATASETS or not HAS_SOUNDFILE:
-    # These import HF/public loaders whose module chain (base_hf_dataset,
-    # hf_asr) eagerly imports both `datasets` and `soundfile`.
-    collect_ignore += [
-        "dataset/loader/test_hf_image_feature_schemas.py",
-        "dataset/loader/test_hf_asr_loader.py",
-        "dataset/loader/test_hf_conversation_loader.py",
-        "dataset/loader/test_hf_dataset_loader.py",
-        "dataset/loader/test_mmvu_loader.py",
-        "dataset/loader/test_mt_bench.py",
-        "dataset/composer/test_public_composer.py",
-    ]
-if not HAS_SOUNDFILE:
-    collect_ignore.append("dataset/generator/test_audio_generator.py")
-    collect_ignore.append("dataset/generator/test_video_generator.py")
-if not HAS_TRUSTME:
-    # trustme (TLS test certs) pulls cryptography, no Windows-on-ARM wheel.
-    collect_ignore.append("transports/test_tcp_connector.py")
+# hard-depend on native libraries that have no Windows-on-ARM build (pyarrow,
+# datasets, soundfile/libsndfile, trustme->cryptography). Without this,
+# collection itself crashes on win-arm before any test runs. On every other
+# platform these libs are present, so nothing is skipped. The canonical list
+# lives in tests/harness/optional_deps.py.
+collect_ignore: list[str] = unsupported_unit_test_relpaths()
 
 # Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
