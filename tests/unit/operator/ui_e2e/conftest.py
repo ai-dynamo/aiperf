@@ -3,7 +3,8 @@
 """Shared Playwright + uvicorn harness for operator-UI end-to-end tests.
 
 Goals:
-  * One Chromium browser per pytest session (cold-start cost amortised).
+  * One Chromium browser per test, so sync Playwright's private event loop
+    closes before the worker picks up unrelated pytest-asyncio tests.
   * One uvicorn process serving the operator results-server against a
     per-session tmpdir, with kubernetes_asyncio bypassed.
   * Per-test isolation through unique namespaces — tests seed their data at
@@ -362,11 +363,12 @@ def _operator_server(
 
 
 # ---------------------------------------------------------------------------
-# Browser fixture: session-scoped (same caveats as test_dashboard_js).
+# Browser fixture: function-scoped so sync Playwright does not leave a
+# running event loop active for unrelated async tests on the same xdist worker.
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def _browser() -> Iterator[Browser]:
     if not _PLAYWRIGHT_AVAILABLE:
         pytest.skip(_PLAYWRIGHT_REASON)

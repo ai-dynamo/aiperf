@@ -23,8 +23,10 @@ if TYPE_CHECKING:
 _PLAYWRIGHT_AVAILABLE, _PLAYWRIGHT_REASON = playwright_ready()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def _browser() -> Iterator[Browser]:
+    # sync_playwright keeps a running event loop while open; scope it to one
+    # test so later pytest-asyncio tests on the same xdist worker can run.
     if not _PLAYWRIGHT_AVAILABLE:
         pytest.skip(_PLAYWRIGHT_REASON)
     from playwright.sync_api import sync_playwright
