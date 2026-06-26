@@ -17,6 +17,14 @@ modules to skip. It is consumed by:
 """
 
 import importlib.util
+import platform
+
+from aiperf.common.constants import IS_WINDOWS
+
+# Windows-on-ARM: native render/codec backends (kaleido's browser engine, etc.)
+# have no working ARM build and hard-crash (access violation) rather than
+# raising, so affected tests must be skipped by platform rather than probed.
+IS_WINDOWS_ARM = IS_WINDOWS and platform.machine() == "ARM64"
 
 
 def is_installed(module: str) -> bool:
@@ -82,6 +90,9 @@ _SOUNDFILE_TEST_RELPATHS = (
     "dataset/generator/test_audio_generator.py",
     "dataset/generator/test_video_generator.py",
 )
+# PNG export renders via kaleido's browser engine, which has no working
+# Windows-on-ARM build and hard-crashes the interpreter (access violation).
+_KALEIDO_TEST_RELPATHS = ("plot/test_png_exporter.py",)
 
 # src/aiperf modules whose top-level import chain hard-depends on absent natives.
 _DATASETS_AIPERF_MODULES = (
@@ -119,6 +130,8 @@ def unsupported_unit_test_relpaths() -> list[str]:
         relpaths += _HF_LOADER_TEST_RELPATHS
     if not HAS_SOUNDFILE:
         relpaths += _SOUNDFILE_TEST_RELPATHS
+    if IS_WINDOWS_ARM:
+        relpaths += _KALEIDO_TEST_RELPATHS
     return relpaths
 
 
