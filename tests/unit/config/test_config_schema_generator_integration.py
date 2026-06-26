@@ -120,6 +120,47 @@ def test_generated_schema_rejects_benchmark_missing_dataset_like_runtime() -> No
     assert _schema_error_messages(schema, config) != []
 
 
+def test_generated_schema_rejects_noise_image_sampling_like_runtime() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        datasets=[
+            {
+                "name": "main",
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 512, "osl": 128},
+                "images": {"sourceSampling": "shuffle-cycle"},
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
+def test_generated_schema_accepts_finite_image_source_sampling_like_runtime() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        datasets=[
+            {
+                "name": "main",
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 512, "osl": 128},
+                "images": {
+                    "source": "assets",
+                    "sourceSampling": "shuffle-cycle",
+                },
+            }
+        ]
+    )
+
+    AIPerfConfig.model_validate(copy.deepcopy(config))
+    _assert_schema_accepts(schema, config)
+
+
 def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None:
     schema = _generated_schema()
     config = _minimal_benchmark_config(
