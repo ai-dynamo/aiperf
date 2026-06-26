@@ -781,6 +781,32 @@ class TestGPUTelemetryJSONLWriterLifecycle:
         assert len(lines) == num_records
 
     @pytest.mark.asyncio
+    async def test_finalize_flushes_buffer_before_stop(
+        self,
+        telemetry_export_config: AIPerfConfig,
+        sample_telemetry_record: TelemetryRecord,
+        mock_metric_registry: Mock,
+    ):
+        """Finalize flushes telemetry JSONL before service shutdown."""
+        processor = GPUTelemetryJSONLWriter(
+            service_id="records-manager",
+            run=_make_run(telemetry_export_config),
+        )
+        await processor.initialize()
+        await processor.start()
+
+        try:
+            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.finalize()
+
+            assert processor.output_file.exists()
+            lines = processor.output_file.read_text().splitlines()
+            assert len(lines) == 1
+            assert TelemetryRecord.model_validate(orjson.loads(lines[0]))
+        finally:
+            await processor.stop()
+
+    @pytest.mark.asyncio
     async def test_wait_for_async_tasks(
         self,
         telemetry_export_config: AIPerfConfig,

@@ -69,3 +69,7 @@ class GPUTelemetryJSONLWriter(
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results. For this processor, we don't need to summarize anything."""
         return []
+
+    async def finalize(self) -> None:
+        """Flush telemetry JSONL before results are published."""
+        await self._close_file()
