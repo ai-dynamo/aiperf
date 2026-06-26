@@ -40,42 +40,53 @@ def dataset_client(dataset_router: DatasetRouter) -> TestClient:
 
 
 @pytest.fixture
-async def dataset_async_client(
+def dataset_async_client(
     dataset_router: DatasetRouter,
 ) -> AsyncClient:
     transport = ASGITransport(app=_make_app(dataset_router))
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+    return AsyncClient(transport=transport, base_url="http://test")
 
 
 class TestDatasetEndpoints:
     """Test the /api/dataset/* endpoints."""
 
-    @pytest.mark.asyncio
-    async def test_dataset_data_timeout_returns_503(
+    def test_dataset_data_timeout_returns_503(
         self,
-        dataset_async_client: AsyncClient,
+        dataset_client: TestClient,
         dataset_router: DatasetRouter,
-        time_traveler,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from aiperf.api.routers import dataset as dataset_module
+
+        monkeypatch.setattr(
+            dataset_module.Environment.DATASET,
+            "CONFIGURATION_TIMEOUT",
+            0.001,
+        )
         dataset_router._dataset_configured = asyncio.Event()
         dataset_router._dataset_client_metadata = None
 
-        response = await dataset_async_client.get("/api/dataset/data")
+        response = dataset_client.get("/api/dataset/data")
         assert response.status_code == 503
         assert "not yet configured" in response.json()["detail"].lower()
 
-    @pytest.mark.asyncio
-    async def test_dataset_index_timeout_returns_503(
+    def test_dataset_index_timeout_returns_503(
         self,
-        dataset_async_client: AsyncClient,
+        dataset_client: TestClient,
         dataset_router: DatasetRouter,
-        time_traveler,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from aiperf.api.routers import dataset as dataset_module
+
+        monkeypatch.setattr(
+            dataset_module.Environment.DATASET,
+            "CONFIGURATION_TIMEOUT",
+            0.001,
+        )
         dataset_router._dataset_configured = asyncio.Event()
         dataset_router._dataset_client_metadata = None
 
-        response = await dataset_async_client.get("/api/dataset/index")
+        response = dataset_client.get("/api/dataset/index")
         assert response.status_code == 503
 
     @pytest.mark.asyncio

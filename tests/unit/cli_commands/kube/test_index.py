@@ -23,6 +23,9 @@ import orjson
 import pytest
 
 
+_API_URL = "http://operator"
+
+
 class _FakeAsyncClient:
     """Minimal stand-in for ``httpx.AsyncClient`` that records calls."""
 
@@ -185,7 +188,7 @@ class TestIndexStats:
         }
         client = _FakeAsyncClient(get_payload=payload)
         with _patch_httpx(client):
-            await stats()
+            await stats(api_url=_API_URL)
 
         out = capsys.readouterr().out
         assert client.get_calls == ["/admin/index/stats"]
@@ -210,7 +213,7 @@ class TestIndexStats:
         }
         client = _FakeAsyncClient(get_payload=payload)
         with _patch_httpx(client):
-            await stats(output="json")
+            await stats(output="json", api_url=_API_URL)
 
         out = capsys.readouterr().out
         # orjson with OPT_INDENT_2 emits a 2-space indented dump
@@ -247,7 +250,7 @@ class TestIndexStats:
             )
         )
         with _patch_httpx(client), pytest.raises(httpx.HTTPStatusError):
-            await stats()
+            await stats(api_url=_API_URL)
 
     @pytest.mark.asyncio
     async def test_json_mode_restores_logger_level_on_error(self) -> None:
@@ -259,7 +262,7 @@ class TestIndexStats:
 
         client = _FakeAsyncClient(get_exc=RuntimeError("boom"))
         with _patch_httpx(client), pytest.raises(RuntimeError):
-            await stats(output="json")
+            await stats(output="json", api_url=_API_URL)
 
         assert kube_logger.level == logging.ERROR
 
@@ -280,7 +283,7 @@ class TestIndexRebuild:
         }
         client = _FakeAsyncClient(post_payload=payload)
         with _patch_httpx(client):
-            await rebuild()
+            await rebuild(api_url=_API_URL)
 
         out = capsys.readouterr().out
         assert client.post_calls == ["/admin/index/rebuild"]
@@ -304,7 +307,7 @@ class TestIndexRebuild:
             }
         )
         with _patch_httpx(client):
-            await rebuild()
+            await rebuild(api_url=_API_URL)
 
         assert client.post_headers == [{"Authorization": "Bearer secret-token"}]
 
@@ -321,7 +324,7 @@ class TestIndexRebuild:
         }
         client = _FakeAsyncClient(post_payload=payload)
         with _patch_httpx(client):
-            await rebuild(output="json")
+            await rebuild(output="json", api_url=_API_URL)
 
         out = capsys.readouterr().out
         assert orjson.loads(out) == payload
@@ -339,7 +342,7 @@ class TestIndexRebuild:
             }
         )
         with _patch_httpx(client):
-            await rebuild()
+            await rebuild(api_url=_API_URL)
 
         assert client.timeout == 300.0
 
@@ -349,7 +352,7 @@ class TestIndexRebuild:
 
         client = _FakeAsyncClient(post_exc=httpx.ConnectError("refused"))
         with _patch_httpx(client), pytest.raises(httpx.ConnectError):
-            await rebuild()
+            await rebuild(api_url=_API_URL)
 
     @pytest.mark.asyncio
     async def test_rebuild_403_has_actionable_token_error(self) -> None:
@@ -357,7 +360,7 @@ class TestIndexRebuild:
 
         client = _FakeAsyncClient(post_status_code=403)
         with _patch_httpx(client), pytest.raises(RuntimeError) as exc_info:
-            await rebuild()
+            await rebuild(api_url=_API_URL)
 
         message = str(exc_info.value)
         assert "mutating-route auth" in message
@@ -373,7 +376,7 @@ class TestIndexRebuild:
         monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "wrong-secret")
         client = _FakeAsyncClient(post_status_code=401)
         with _patch_httpx(client), pytest.raises(RuntimeError) as exc_info:
-            await rebuild()
+            await rebuild(api_url=_API_URL)
 
         assert client.post_headers == [{"Authorization": "Bearer wrong-secret"}]
         message = str(exc_info.value)
@@ -410,7 +413,7 @@ class TestIndexRebuild:
         client.post = _spy_post  # type: ignore[method-assign]
 
         with _patch_httpx(client):
-            await rebuild(output="json")
+            await rebuild(output="json", api_url=_API_URL)
 
         # During the request the logger was suppressed
         assert captured_levels == [logging.WARNING]

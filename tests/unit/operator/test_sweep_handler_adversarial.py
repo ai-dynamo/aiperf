@@ -160,6 +160,7 @@ async def test_on_child_phase_transition_does_not_clobber_terminal_parent_phase(
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
     monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(child_rollup, "_append_run_entry", AsyncMock())
     monkeypatch.setattr(
         child_rollup,
         "_count_owned_children",
@@ -226,6 +227,7 @@ async def test_on_child_phase_transition_writes_aggregating_when_parent_non_term
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
     monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(child_rollup, "_append_run_entry", AsyncMock())
     monkeypatch.setattr(
         child_rollup,
         "_count_owned_children",
@@ -319,6 +321,7 @@ async def test_patch_parent_status_uses_merge_patch_content_type(monkeypatch):
 async def test_on_child_phase_transition_accepts_kopf_extra_kwargs(monkeypatch):
     """Kopf passes a fixed kwarg set; handler must absorb extras via ``**_: Any``."""
     monkeypatch.setattr(child_rollup, "_patch_parent_status", AsyncMock())
+    monkeypatch.setattr(child_rollup, "_append_run_entry", AsyncMock())
     monkeypatch.setattr(
         child_rollup,
         "_count_owned_children",

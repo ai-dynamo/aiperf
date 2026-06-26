@@ -89,6 +89,7 @@ async def test_child_rollup_increments_counts_and_transitions_phase(monkeypatch)
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
     monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(child_rollup, "_append_run_entry", AsyncMock())
     monkeypatch.setattr(
         child_rollup,
         "_read_parent_status",
@@ -152,6 +153,7 @@ async def test_child_rollup_does_not_aggregate_mid_run(monkeypatch):
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
     monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(child_rollup, "_append_run_entry", AsyncMock())
     monkeypatch.setattr(
         child_rollup,
         "_read_parent_status",
@@ -205,6 +207,7 @@ async def test_child_rollup_aggregates_when_all_runs_accounted_for(monkeypatch):
 
     monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
     monkeypatch.setattr(child_rollup, "_conditional_phase_set", fake_phase_set)
+    monkeypatch.setattr(child_rollup, "_append_run_entry", AsyncMock())
     monkeypatch.setattr(
         child_rollup,
         "_read_parent_status",
