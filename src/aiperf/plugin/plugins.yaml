@@ -804,6 +804,12 @@ results_processor:
       aggregates results from all record processors. Final stage of metrics
       pipeline. Always loaded.
 
+  record_export_csv:
+    class: aiperf.post_processors.record_export_csv_processor:RecordExportCSVProcessor
+    description: |
+      Record export processor that writes per-record metrics to CSV files with
+      flat column layout. Self-disables unless 'csv' is in artifacts.records.
+
   otel_metrics_streamer:
     class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
     description: |

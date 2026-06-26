@@ -184,6 +184,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._metric_record_stream_exporters: list[StreamExporterProtocol] = (
             stream_exporters_for_record_type(self._stream_exporters, "metric_records")
         )
+        # GPU telemetry records arrive on a side channel (TELEMETRY_RECORDS) and
+        # must be fanned out to the gpu_telemetry stream exporters
+        # (GPUTelemetryJSONLWriter writes gpu_telemetry_export.jsonl). On
+        # origin/main this was the GPUTelemetryProcessorProtocol fan-out; the
+        # stream-exporter rewrite kept the accumulator wiring but dropped the
+        # writer dispatch, so the JSONL file was never produced.
+        self._gpu_telemetry_stream_exporters: list[StreamExporterProtocol] = (
+            stream_exporters_for_record_type(self._stream_exporters, "gpu_telemetry")
+        )
 
         self._last_checkpoint_records: int = 0
 
@@ -269,14 +278,30 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self._telemetry_state.error_counts[message.error] += 1
             return
         accumulator = self._gpu_telemetry_accumulator
-        if accumulator is None:
+        # The accumulator powers the summary export; the stream exporters
+        # (GPUTelemetryJSONLWriter) write the per-sample gpu_telemetry_export.jsonl.
+        # Both consume process_telemetry_record(record); feeding only the
+        # accumulator (as the stream-exporter rewrite did) silently drops the
+        # JSONL file.
+        targets = self._gpu_telemetry_stream_exporters
+        if accumulator is None and not targets:
             return
         for record in message.records:
-            try:
-                await accumulator.process_telemetry_record(record)
-            except Exception as e:  # noqa: BLE001 - one bad record must not abort the batch
-                self._telemetry_state.error_counts[ErrorDetails.from_exception(e)] += 1
-                self.debug(lambda e=e: f"Failed to process telemetry record: {e!r}")
+            if accumulator is not None:
+                try:
+                    await accumulator.process_telemetry_record(record)
+                except Exception as e:  # noqa: BLE001 - one bad record must not abort the batch
+                    self._telemetry_state.error_counts[
+                        ErrorDetails.from_exception(e)
+                    ] += 1
+                    self.debug(lambda e=e: f"Failed to process telemetry record: {e!r}")
+            for exporter in targets:
+                try:
+                    await exporter.process_telemetry_record(record)
+                except Exception as e:  # noqa: BLE001 - one bad exporter must not abort the batch
+                    self.debug(
+                        lambda e=e, exporter=exporter: f"Telemetry stream exporter {exporter.__class__.__name__} failed: {e!r}"
+                    )
 
     @property
     def _gpu_telemetry_accumulator(self) -> Any | None:
@@ -591,6 +616,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         results, multi_turn_ttft_trend = await self._summarize_all_processors()
         await self._finalize_all_processors()
+        # Flush per-record stream exporters (JSONL / CSV writers) BEFORE
+        # publishing ProcessRecordsResultMessage. The publish triggers the
+        # SystemController's shutdown + readiness-marker write, which races
+        # the exporters' own ``@on_stop`` close — when records arrive late
+        # (all after CREDIT_PHASE_COMPLETE) the on_stop hook is cancelled
+        # mid-shutdown and the buffered records are lost, leaving no
+        # profile_export.jsonl on disk. Flushing here mirrors the legacy
+        # results-processor path in ``_finalize_all_processors`` (which is
+        # also pre-publish) so the per-record files are durable before the
+        # controller is told results are ready.
+        await self._finalize_stream_exporters()
 
         result = self._build_records_result(
             results, cancelled=cancelled, multi_turn_ttft_trend=multi_turn_ttft_trend
@@ -608,13 +644,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # written to the JSON export.
         await self._publish_telemetry_results()
 
-        # Parallel accumulator pipeline: finalize stream exporters, run
-        # analyzers, and publish ProcessAllResultsMessage so the
+        # Run analyzers and publish ProcessAllResultsMessage so the
         # SystemController's `_on_process_all_results_message` handler picks
         # up steady-state / energy-efficiency summaries for ExporterManager.
         # Failures here must not break the legacy path above — the
         # PROCESS_RECORDS_RESULT message has already been published.
-        await self._finalize_stream_exporters()
         analyzer_outputs = await self._run_analyzers(
             result=result,
             cancelled=cancelled,

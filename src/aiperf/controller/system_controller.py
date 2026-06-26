@@ -547,6 +547,11 @@ class SystemController(
     async def _configure_all_services_and_start_profiling(self) -> None:
         """Drive configure -> pod-health -> worker-ready -> profile-start sequence."""
         await self._set_system_state(SystemState.CONFIGURING)
+        # User-facing lifecycle milestone (also matched by tooling/tests that
+        # wait on stdout). The SystemState transition above drives the K8s
+        # subPhase; this log preserves the human-readable line origin/main
+        # emitted before the system-state feature replaced the inline logs.
+        self.info("AIPerf System is CONFIGURING")
         async with self.try_operation_or_stop("Configure Services"):
             await self._wait_for_all_configured(
                 timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
@@ -573,6 +578,10 @@ class SystemController(
         self.info("Post-configure startup flow: sending PROFILE_START to all services")
         await self._start_profiling_all_services()
         await self._set_system_state(SystemState.PROFILING)
+        # User-facing lifecycle milestone (also matched by tooling/tests that
+        # wait on stdout, e.g. the Ctrl+C cancellation harness). Preserved from
+        # origin/main, which logged this before the system-state feature.
+        self.info("AIPerf System is PROFILING")
 
         # Watch for pod failure threshold breach during profiling
         self._pod_failure_watcher_task = asyncio.create_task(
@@ -1087,8 +1096,18 @@ class SystemController(
             target_ids.extend(s.service_id for s in ServiceRegistry.get_services(stype))
 
         if target_ids:
+            # Forward the original PROFILE_COMPLETE payload (the
+            # {"start_ns", "end_ns"} results time window computed by
+            # RecordsManager). Without this the server-metrics / GPU-telemetry
+            # managers receive an empty payload, fall back to time.time_ns()
+            # for their export window, and the resulting near-zero-width window
+            # filters out every collected sample (no Parquet, dropped counter
+            # deltas). See ServerMetricsManager._parse_profile_complete_window.
             await self._send_control_command_to_all(
-                CommandType.PROFILE_COMPLETE, target_ids, timeout=10.0
+                CommandType.PROFILE_COMPLETE,
+                target_ids,
+                payload=message.payload,
+                timeout=10.0,
             )
 
     @on_message(MessageType.PROCESS_ALL_RESULTS)

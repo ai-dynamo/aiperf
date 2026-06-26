@@ -264,14 +264,19 @@ class AIPerfResults:
 
     @property
     def has_all_outputs(self) -> bool:
-        """Check if all outputs exist."""
+        """Check if all outputs exist.
+
+        The per-record CSV export (``profile_export_records.csv``) is opt-in via
+        ``--record-export-formats csv`` / ``artifacts.records: [jsonl, csv]`` and
+        is NOT produced by the default (jsonl-only) config, so it is intentionally
+        excluded from the default all-outputs check.
+        """
         return all(
             (
                 self.json is not None,
                 bool(self.csv),
                 self.inputs is not None,
                 self.jsonl is not None,
-                self.csv_records is not None,
             )
         )
 
