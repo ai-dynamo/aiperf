@@ -196,6 +196,8 @@ def build_inference_results_wire_message(
             credit_issued_ns=request_info.credit_issued_ns,
             credit_received_ns=request_info.credit_received_ns,
             requested_max_tokens=requested_max_tokens,
+            agent_depth=request_info.agent_depth,
+            parent_correlation_id=request_info.parent_correlation_id,
         ),
         prompt=prompt,
         model_name=record.model_name,
@@ -261,6 +263,8 @@ def wire_record_to_request_record(
         user_context_message=prompt.user_context_message if prompt else None,
         credit_issued_ns=wire_record.metadata.credit_issued_ns,
         credit_received_ns=wire_record.metadata.credit_received_ns,
+        agent_depth=wire_record.metadata.agent_depth,
+        parent_correlation_id=wire_record.metadata.parent_correlation_id,
     )
 
     request_record = RequestRecord(

@@ -1040,6 +1040,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             is_final_turn=credit.is_final_turn,
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
+            # DAG fork/spawn lineage: carried from the credit so the per-record
+            # metadata can attribute child requests to their parent
+            # conversation. Dropped in the wholesale port; restored from
+            # origin/main (RawRecordInfo.metadata.parent_correlation_id is
+            # asserted by the DAG topology/spawn integration tests).
+            agent_depth=credit.agent_depth,
+            parent_correlation_id=credit.parent_correlation_id,
         )
 
     @staticmethod
@@ -1114,6 +1121,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         x_request_id=str(uuid.uuid4()),
                         x_correlation_id=credit_context.credit.x_correlation_id,
                         drop_perf_ns=credit_context.drop_perf_ns,
+                        agent_depth=credit_context.credit.agent_depth,
+                        parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.run.cfg.get_model_names()[0],
                     start_perf_ns=time.perf_counter_ns(),

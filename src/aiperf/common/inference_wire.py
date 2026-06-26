@@ -93,6 +93,14 @@ class WireRequestMetadata(Struct, frozen=True, kw_only=True, omit_defaults=True)
     requested_max_tokens: int | None = None
     """Maximum tokens requested for the final turn's completion."""
 
+    agent_depth: int = 0
+    """DAG agent nesting depth (0 = root). Carried so per-record metadata can
+    reconstruct fork/spawn lineage on the record-processor side."""
+
+    parent_correlation_id: str | None = None
+    """X-Correlation-ID of the parent request when this is a DAG branch child;
+    None for root sessions. Required for DAG topology/spawn attribution."""
+
 
 class WireSSEField(Struct, frozen=True, kw_only=True, omit_defaults=True):
     """Wire-format SSE field name/value pair."""
