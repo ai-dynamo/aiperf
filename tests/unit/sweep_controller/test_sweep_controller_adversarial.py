@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
@@ -440,12 +441,13 @@ def test_load_aggregate_for_cr_malformed_parent_and_confidence_keeps_children(
     )
     (aggregate_dir / "profile_export_aiperf_aggregate.json").write_bytes(b"not-json")
 
-    bundle = _load_aggregate_for_cr(
-        tmp_path,
-        "aiperf-benchmarks",
-        "ajc-sweep-x",
-        "1778027124",
-    )
+    with caplog.at_level(logging.WARNING, logger="aiperf.sweep_controller.main"):
+        bundle = _load_aggregate_for_cr(
+            tmp_path,
+            "aiperf-benchmarks",
+            "ajc-sweep-x",
+            "1778027124",
+        )
 
     assert bundle == {
         "children": {"children": [{"name": "ajc-sweep-x-v00", "status": "Succeeded"}]}
