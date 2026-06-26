@@ -621,8 +621,20 @@ Image file format for generated images. Choose `png` for lossless compression (l
 
 #### `--image-source` `<str>`
 
-Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
+Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and lazily loads them at the requested dimensions. A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
 <br/>_Default: `noise`_
+
+#### `--image-source-sampling` `<str>`
+
+How source images are selected from finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random-with-replacement` draws each source image independently; repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `random-with-replacement` | _default_ | Draw each source image independently; repeats may occur immediately. |
+| `shuffle-cycle` |  | Draw every source image once per shuffled cycle; reshuffle after exhaustion. |
+| `sequential-cycle` |  | Walk source images in sorted load order; wrap after exhaustion. |
 
 ### Video Input
 
@@ -1983,8 +1995,20 @@ Image file format for generated images. Choose `png` for lossless compression (l
 
 #### `--image-source` `<str>`
 
-Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
+Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and lazily loads them at the requested dimensions. A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
 <br/>_Default: `noise`_
+
+#### `--image-source-sampling` `<str>`
+
+How source images are selected from finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random-with-replacement` draws each source image independently; repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `random-with-replacement` | _default_ | Draw each source image independently; repeats may occur immediately. |
+| `shuffle-cycle` |  | Draw every source image once per shuffled cycle; reshuffle after exhaustion. |
+| `sequential-cycle` |  | Walk source images in sorted load order; wrap after exhaustion. |
 
 ### Video Input
 
