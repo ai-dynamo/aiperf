@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.config.mlflow import MLflowDefaults
 from aiperf.plot.cli_runner import run_plot_controller
 from aiperf.plot.constants import PlotMode, PlotTheme
 
@@ -324,3 +325,68 @@ class TestRunPlotController:
                 output=str(tmp_path / "output"),
                 theme="invalid_theme",
             )
+
+    @patch("aiperf.plot.cli_runner.MLflowDataExporter.upload_artifacts_to_run")
+    @patch("aiperf.plot.cli_runner.PlotController")
+    def test_mlflow_upload_explicit_target_supports_multiple_paths(
+        self,
+        mock_controller_class: MagicMock,
+        mock_upload: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Explicit MLflow targets allow comparison plots from multiple inputs."""
+        output_dir = tmp_path / "output"
+        plot_file = output_dir / "comparison.png"
+        mock_controller = MagicMock()
+        mock_controller.run.return_value = [plot_file]
+        mock_controller_class.return_value = mock_controller
+        mock_upload.return_value = [plot_file]
+
+        run_plot_controller(
+            paths=[str(tmp_path / "run-a"), str(tmp_path / "run-b")],
+            output=str(output_dir),
+            mlflow_upload=True,
+            mlflow_tracking_uri="http://mlflow.example",
+            mlflow_run_id="run-123",
+        )
+
+        mock_upload.assert_called_once_with(
+            tracking_uri="http://mlflow.example",
+            run_id="run-123",
+            artifact_directory=output_dir,
+            artifact_files=[plot_file],
+        )
+
+    @patch("aiperf.plot.cli_runner.MLflowDataExporter.upload_artifacts_to_run")
+    @patch("aiperf.plot.cli_runner.PlotController")
+    def test_mlflow_upload_explicit_target_ignores_corrupt_metadata(
+        self,
+        mock_controller_class: MagicMock,
+        mock_upload: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Fully explicit MLflow targets do not parse stale metadata files."""
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / MLflowDefaults.EXPORT_METADATA_FILE).write_text("not json")
+        output_dir = tmp_path / "output"
+        plot_file = output_dir / "plot.png"
+        mock_controller = MagicMock()
+        mock_controller.run.return_value = [plot_file]
+        mock_controller_class.return_value = mock_controller
+        mock_upload.return_value = [plot_file]
+
+        run_plot_controller(
+            paths=[str(run_dir)],
+            output=str(output_dir),
+            mlflow_upload=True,
+            mlflow_tracking_uri="http://mlflow.example",
+            mlflow_run_id="run-123",
+        )
+
+        mock_upload.assert_called_once_with(
+            tracking_uri="http://mlflow.example",
+            run_id="run-123",
+            artifact_directory=output_dir,
+            artifact_files=[plot_file],
+        )
