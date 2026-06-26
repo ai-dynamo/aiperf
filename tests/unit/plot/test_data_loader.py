@@ -81,6 +81,47 @@ class TestDataLoaderLoadRun:
         assert run.metadata.request_count == 64
         assert run.metadata.endpoint_type == "chat"
 
+    def test_load_aggregate_only_run_exposes_metrics_for_plotting(
+        self, tmp_path: Path
+    ) -> None:
+        """Test confidence aggregate JSON is reshaped into plot-visible metrics."""
+        run_dir = tmp_path / "aggregate" / "concurrency_00010"
+        run_dir.mkdir(parents=True)
+        aggregate = {
+            "schema_version": "1.0",
+            "start_time": "2026-06-26T00:00:00Z",
+            "end_time": "2026-06-26T00:01:00Z",
+            "was_cancelled": None,
+            "input_config": None,
+            "metadata": {"variation_values": {"loadgen.concurrency": 10}},
+            "metrics": {
+                "request_latency_avg": {"mean": 123.4, "unit": "ms"},
+                "request_latency_p99": {"mean": 456.7, "unit": "ms"},
+                "request_throughput_avg": {"mean": 20.0, "unit": "req/s"},
+            },
+        }
+        (run_dir / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(aggregate)
+        )
+
+        loader = DataLoader()
+        run = loader.load_run(run_dir, load_per_request_data=False)
+        available = loader.get_available_metrics(run)
+
+        assert run.metadata.concurrency == 10
+        assert run.metadata.was_cancelled is False
+        assert run.aggregated["request_latency"] == {
+            "unit": "ms",
+            "avg": 123.4,
+            "p99": 456.7,
+        }
+        assert run.aggregated["request_throughput"] == {
+            "unit": "req/s",
+            "avg": 20.0,
+        }
+        assert "request_latency" in available["display_names"]
+        assert available["units"]["request_throughput"] == "req/s"
+
     def test_timestamp_columns_remain_as_integers(self, single_run_dir: Path) -> None:
         """Test that timestamp columns remain as integer nanoseconds."""
         loader = DataLoader()

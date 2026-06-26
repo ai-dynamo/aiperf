@@ -11,14 +11,19 @@ metrics parsing lives in ``server_metrics_loader.py``; Pydantic models live in
 Those symbols are re-exported here so the existing import path continues to work.
 """
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import orjson
 import pandas as pd
+from pydantic import ValidationError
 
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.plot.constants import (
     NON_METRIC_KEYS,
+    PROFILE_EXPORT_AIPERF_AGGREGATE_JSON,
     PROFILE_EXPORT_AIPERF_JSON,
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL,
     PROFILE_EXPORT_JSONL,
@@ -48,6 +53,32 @@ __all__ = [
     "RunData",
     "RunMetadata",
 ]
+
+
+# Stat-key suffixes the confidence-aggregate exporter flattens onto metric names
+# (one entry per ``(metric, stat)`` pair, e.g. ``request_latency_p99``).
+# ``DataLoader._unflatten_confidence_metrics`` rpartitions each flat key on the
+# last underscore and groups by the head when the tail is in this set; tails not
+# in the set are treated as a metric name with no stat suffix (bucketed to avg).
+_KNOWN_STAT_SUFFIXES: frozenset[str] = frozenset(
+    (
+        "avg",
+        "p1",
+        "p5",
+        "p10",
+        "p25",
+        "p50",
+        "p75",
+        "p90",
+        "p95",
+        "p99",
+        "min",
+        "max",
+        "std",
+        "count",
+        "sum",
+    )
+)
 
 
 class DataLoader(
@@ -94,6 +125,17 @@ class DataLoader(
         """
         self._validate_run_path(run_path)
         self.info(f"Loading run from: {run_path}")
+
+        # Per-cell confidence-aggregate cells (trials>1 sweep cells) carry
+        # ``profile_export_aiperf_aggregate.json`` and no JSONL/single-run JSON.
+        # Route them through the aggregate-only loader, which re-shapes the
+        # confidence metrics into the single-run shape the pipeline expects.
+        if self._resolve_file(run_path, PROFILE_EXPORT_JSONL) is None:
+            aggregate_path = self._resolve_file(
+                run_path, PROFILE_EXPORT_AIPERF_AGGREGATE_JSON
+            )
+            if aggregate_path is not None:
+                return self._load_aggregate_only(run_path, aggregate_path)
 
         requests_df = self._load_requests(run_path, load_per_request_data)
         aggregated = self._load_aggregated(run_path)
@@ -289,6 +331,149 @@ class DataLoader(
         """Reload a single run with full per-request data (for interactive drill-down)."""
         return self.load_run(run_path, load_per_request_data=True)
 
+    def _load_aggregate_only(self, run_path: Path, aggregate_path: Path) -> RunData:
+        """Load a per-cell confidence-aggregate dir as a pseudo-run.
+
+        Reads ``profile_export_aiperf_aggregate.json`` (no JSONL exists for
+        aggregate cells) and re-shapes the confidence-aggregate metrics into the
+        single-run format so the rest of the plot pipeline operates uniformly.
+        Returns ``RunData`` with ``requests=None`` and only ``metadata`` +
+        ``aggregated`` populated.
+        """
+        raw = self._read_aggregate_json(aggregate_path)
+        unflattened = self._unflatten_confidence_metrics(raw.get("metrics", {}) or {})
+
+        aggregated: dict[str, Any] = dict(raw)
+        aggregated["metrics"] = unflattened
+        aggregated.setdefault("aggregation_type", "confidence")
+
+        self._mirror_metrics_to_top_level(aggregated, unflattened)
+        self._plumb_variation_values_into_input_config(aggregated, raw)
+
+        self._add_all_derived_metrics(aggregated)
+        metadata = self._extract_metadata(
+            run_path, requests_df=None, aggregated=aggregated
+        )
+        self.info(f"Loaded aggregate-only run from {run_path}")
+        return RunData(metadata=metadata, requests=None, aggregated=aggregated)
+
+    def _read_aggregate_json(self, aggregate_path: Path) -> dict[str, Any]:
+        """Read+parse a confidence-aggregate JSON, raising DataLoadError on failure."""
+        try:
+            with open(aggregate_path, "rb") as f:
+                return orjson.loads(f.read())
+        except orjson.JSONDecodeError as e:
+            raise DataLoadError(
+                f"Failed to parse aggregate JSON: {e}", path=str(aggregate_path)
+            ) from e
+        except OSError as e:
+            raise DataLoadError(
+                f"Failed to read aggregate JSON: {e}", path=str(aggregate_path)
+            ) from e
+
+    def _mirror_metrics_to_top_level(
+        self,
+        aggregated: dict[str, Any],
+        unflattened: dict[str, JsonMetricResult | dict[str, Any]],
+    ) -> None:
+        """Copy un-flattened metrics to top-level keys for plot discovery.
+
+        Single-run metrics live as TOP-LEVEL fields in the export JSON (one per
+        metric tag), and ``get_available_metrics`` iterates the top level while
+        skipping the nested ``metrics`` key. Mirroring keeps aggregate cells
+        discoverable the same way. Reserved keys already present are not clobbered.
+        """
+        for metric_name, parsed in unflattened.items():
+            if metric_name in aggregated:
+                continue
+            if hasattr(parsed, "model_dump"):
+                aggregated[metric_name] = parsed.model_dump(
+                    mode="json", exclude_none=True
+                )
+            elif isinstance(parsed, JsonMetricResult):
+                aggregated[metric_name] = {
+                    key: value
+                    for key, value in asdict(parsed).items()
+                    if value is not None
+                }
+            elif isinstance(parsed, dict):
+                aggregated[metric_name] = parsed
+
+    def _plumb_variation_values_into_input_config(
+        self, aggregated: dict[str, Any], raw: dict[str, Any]
+    ) -> None:
+        """Surface swept ``concurrency`` from the aggregate metadata into
+        ``input_config.loadgen`` so per-cell concurrency labels resolve.
+
+        The aggregate file carries ``variation_values`` in its metadata block but
+        no ``input_config``; without this plumb ``RunMetadata.concurrency`` is
+        None. Only leaf ``concurrency`` dims are handled.
+        """
+        meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        variation_values = (
+            meta.get("variation_values")
+            if isinstance(meta.get("variation_values"), dict)
+            else {}
+        )
+        if not variation_values:
+            return
+        for key, value in variation_values.items():
+            leaf = key.rsplit(".", 1)[-1]
+            if leaf == "concurrency" and isinstance(value, int) and value >= 1:
+                # The aggregate JSON may carry ``input_config: null``; coalesce to
+                # a fresh dict before plumbing rather than crashing on None.
+                input_config = aggregated.get("input_config")
+                if not isinstance(input_config, dict):
+                    input_config = {}
+                    aggregated["input_config"] = input_config
+                loadgen = input_config.get("loadgen")
+                if not isinstance(loadgen, dict):
+                    loadgen = {}
+                    input_config["loadgen"] = loadgen
+                loadgen["concurrency"] = value
+                return
+
+    def _unflatten_confidence_metrics(
+        self, flat: dict[str, Any]
+    ) -> dict[str, JsonMetricResult | dict[str, Any]]:
+        """Reverse the ``f"{metric_name}_{stat_key}"`` flattening into one
+        ``JsonMetricResult`` per metric.
+
+        Confidence aggregate JSON stores one entry per ``(metric, stat)`` pair
+        (e.g. ``request_latency_p99``) carrying ``{mean, std, ..., unit}``. We map
+        ``payload["mean"]`` onto the matching stat slot and drop CI/cv/se fields
+        (``JsonMetricResult`` has no place for them). Keys whose suffix is not a
+        known stat are bucketed under ``avg``.
+        """
+        nested: dict[str, dict[str, Any]] = {}
+        for flat_key, payload in flat.items():
+            if not isinstance(payload, dict):
+                continue
+            head, _, tail = flat_key.rpartition("_")
+            if tail in _KNOWN_STAT_SUFFIXES and head:
+                metric_name, stat_key = head, tail
+            else:
+                metric_name, stat_key = flat_key, "avg"
+
+            bucket = nested.setdefault(metric_name, {"unit": ""})
+            unit = payload.get("unit")
+            if unit and not bucket["unit"]:
+                bucket["unit"] = unit
+            mean_value = payload.get("mean")
+            if mean_value is not None:
+                bucket[stat_key] = mean_value
+
+        parsed: dict[str, JsonMetricResult | dict[str, Any]] = {}
+        for name, fields in nested.items():
+            try:
+                parsed[name] = JsonMetricResult(**fields)
+            except (ValidationError, TypeError, ValueError) as e:
+                self.warning(
+                    f"Failed to parse aggregate metric {name} as JsonMetricResult: {e}"
+                )
+                parsed[name] = fields
+        return parsed
+
     def _add_all_derived_metrics(self, aggregated: dict[str, Any]) -> None:
         """Apply every calculator in DERIVED_METRICS_REGISTRY; mutates ``aggregated``."""
         gpu_count = self.calculate_gpu_count_from_telemetry(aggregated)
@@ -449,7 +634,9 @@ class DataLoader(
         return {
             "start_time": aggregated.get("start_time"),
             "end_time": aggregated.get("end_time"),
-            "was_cancelled": aggregated.get("was_cancelled", False),
+            # Coalesce explicit null (present in confidence-aggregate JSON) to
+            # False; RunMetadata.was_cancelled is a non-nullable bool.
+            "was_cancelled": bool(aggregated.get("was_cancelled") or False),
         }
 
     @staticmethod
