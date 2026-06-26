@@ -58,13 +58,17 @@ HAS_DATASETS = is_installed("datasets")
 HAS_TRUSTME = is_installed("trustme")
 HAS_SOUNDFILE = soundfile_usable()
 
-# --- Canonical lists of modules gated on the deps above -----------------------
+# --- Unit-test modules that must be skipped when a native dep is absent -------
 #
-# Unit-test modules (paths relative to tests/unit) whose top-level import chain
-# hard-depends on a native lib with no Windows-on-ARM build.
+# Only test modules that DIRECTLY import the dep at module top are listed: src
+# modules import these deps lazily (so importing a loader no longer requires
+# them), and the import-sweep test (test_imports.py) treats marker-gated
+# ImportErrors as expected skips. The plot subtree is handled separately in
+# tests/unit/plot/conftest.py (its visualization stack hard-crashes on win-arm).
 _PYARROW_TEST_RELPATHS = ("server_metrics/test_parquet_exporter.py",)
 _TRUSTME_TEST_RELPATHS = ("transports/test_tcp_connector.py",)
-# Accuracy benchmarks import the HF ``datasets`` library at module top.
+# Accuracy benchmark tests import their (datasets-backed) benchmark module, and
+# test_hf_image_feature_schemas imports ``datasets`` directly.
 _DATASETS_TEST_RELPATHS = (
     "accuracy/test_lcb_codegeneration_benchmark.py",
     "accuracy/test_aime_benchmark.py",
@@ -74,51 +78,22 @@ _DATASETS_TEST_RELPATHS = (
     "accuracy/test_gpqa_diamond_benchmark.py",
     "accuracy/test_gsm8k_benchmark.py",
     "accuracy/test_math_500_benchmark.py",
-)
-# HF/public loaders whose module chain (base_hf_dataset, hf_asr) eagerly imports
-# both ``datasets`` and ``soundfile``.
-_HF_LOADER_TEST_RELPATHS = (
     "dataset/loader/test_hf_image_feature_schemas.py",
-    "dataset/loader/test_hf_asr_loader.py",
-    "dataset/loader/test_hf_conversation_loader.py",
-    "dataset/loader/test_hf_dataset_loader.py",
-    "dataset/loader/test_mmvu_loader.py",
-    "dataset/loader/test_mt_bench.py",
-    "dataset/composer/test_public_composer.py",
 )
+# These import ``soundfile`` directly at module top.
 _SOUNDFILE_TEST_RELPATHS = (
     "dataset/generator/test_audio_generator.py",
     "dataset/generator/test_video_generator.py",
-)
-# PNG export renders via kaleido's browser engine, which has no working
-# Windows-on-ARM build and hard-crashes the interpreter (access violation).
-_KALEIDO_TEST_RELPATHS = ("plot/test_png_exporter.py",)
-
-# src/aiperf modules whose top-level import chain hard-depends on absent natives.
-_DATASETS_AIPERF_MODULES = (
-    "aiperf.accuracy.benchmarks.aime",
-    "aiperf.accuracy.benchmarks.aime24",
-    "aiperf.accuracy.benchmarks.aime25",
-    "aiperf.accuracy.benchmarks.bigbench",
-    "aiperf.accuracy.benchmarks.gpqa_diamond",
-    "aiperf.accuracy.benchmarks.gsm8k",
-    "aiperf.accuracy.benchmarks.hellaswag",
-    "aiperf.accuracy.benchmarks.lcb_codegeneration",
-    "aiperf.accuracy.benchmarks.math_500",
-    "aiperf.accuracy.benchmarks.mmlu",
-)
-_HF_LOADER_AIPERF_MODULES = (
-    "aiperf.dataset.loader.base_hf_dataset",
-    "aiperf.dataset.loader.hf_asr",
-    "aiperf.dataset.loader.hf_conversation",
-    "aiperf.dataset.loader.hf_instruction_response",
-    "aiperf.dataset.loader.mmvu",
-    "aiperf.dataset.loader.mt_bench",
+    "dataset/loader/test_hf_asr_loader.py",
 )
 
 
 def unsupported_unit_test_relpaths() -> list[str]:
-    """Test modules (relative to tests/unit) to skip given the absent deps."""
+    """Unit-test modules (relative to tests/unit) to skip given absent deps.
+
+    Each directly imports, at module top, a native dependency with no
+    Windows-on-ARM build, so it crashes at collection there.
+    """
     relpaths: list[str] = []
     if not HAS_PYARROW:
         relpaths += _PYARROW_TEST_RELPATHS
@@ -126,28 +101,6 @@ def unsupported_unit_test_relpaths() -> list[str]:
         relpaths += _TRUSTME_TEST_RELPATHS
     if not HAS_DATASETS:
         relpaths += _DATASETS_TEST_RELPATHS
-    if not HAS_DATASETS or not HAS_SOUNDFILE:
-        relpaths += _HF_LOADER_TEST_RELPATHS
     if not HAS_SOUNDFILE:
         relpaths += _SOUNDFILE_TEST_RELPATHS
-    if IS_WINDOWS_ARM:
-        relpaths += _KALEIDO_TEST_RELPATHS
     return relpaths
-
-
-def unsupported_import_sweep_modules() -> set[str]:
-    """Module paths the all-modules import sweep must skip given absent deps.
-
-    Includes both src/aiperf modules and the ``tests.unit.*`` modules above
-    (the sweep imports test modules directly, bypassing ``collect_ignore``).
-    Attempting these imports risks a hard interpreter crash from loading a
-    wrong-architecture native library, so they are filtered, not caught.
-    """
-    modules: set[str] = set()
-    if not HAS_DATASETS:
-        modules.update(_DATASETS_AIPERF_MODULES)
-    if not HAS_DATASETS or not HAS_SOUNDFILE:
-        modules.update(_HF_LOADER_AIPERF_MODULES)
-    for relpath in unsupported_unit_test_relpaths():
-        modules.add("tests.unit." + relpath[: -len(".py")].replace("/", "."))
-    return modules

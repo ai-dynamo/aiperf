@@ -51,8 +51,9 @@ def _import_soundfile():
         raise ConfigurationError(
             "Audio synthesis requires the soundfile/libsndfile native library, "
             "which has no prebuilt Windows-on-ARM binary. Run audio or video "
-            "synthesis on Linux or WSL, or build libsndfile for ARM64 and "
-            "reinstall soundfile with: pip install --no-binary soundfile soundfile"
+            "synthesis on Linux or WSL. (Native ARM64 support requires building "
+            "libsndfile from source and rebuilding soundfile against it; the "
+            "pip wheel alone does not provide it.)"
         ) from e
     return sf
 

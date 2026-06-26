@@ -13,19 +13,20 @@ from pathlib import Path
 
 import pytest
 
-from tests.harness.optional_deps import unsupported_import_sweep_modules
-
 # Root directories
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC_DIR = REPO_ROOT / "src"
 TESTS_DIR = REPO_ROOT / "tests"
 
-# Modules requiring native deps with no Windows-on-ARM build (datasets,
-# soundfile/libsndfile, ...). They cannot be imported where the dep is absent,
-# and attempting the import can hard-crash the interpreter on a wrong-arch
-# native library, so they are filtered out of the sweep entirely. Empty on
-# platforms where every dep is present.
-_UNSUPPORTED_MODULES = unsupported_import_sweep_modules()
+# Dependencies declared in pyproject with an environment marker, hence
+# intentionally absent on some platforms (no Windows-on-ARM wheel for pyarrow
+# or datasets). A module that fails to import *only* because one of these is
+# missing is an expected environmental skip, not a code defect, so the sweep
+# treats it as a skip rather than a failure. Modules needing the non-importable
+# soundfile/plotly native stacks self-skip via ``pytest.importorskip`` /
+# module-level ``pytest.skip`` and are caught by the ``pytest.skip.Exception``
+# branch below.
+_MARKER_GATED_DEPS = {"datasets", "pyarrow"}
 
 
 def discover_modules(
@@ -123,6 +124,12 @@ def import_modules(modules: list[str]) -> dict[str, Exception]:
             importlib.import_module(module_path)
         except pytest.skip.Exception:
             continue
+        except ModuleNotFoundError as e:
+            # Expected when an environment-marker-gated optional dep is absent
+            # on this platform (e.g. datasets/pyarrow on Windows-on-ARM).
+            if (e.name or "").split(".")[0] in _MARKER_GATED_DEPS:
+                continue
+            failures[module_path] = e
         except Exception as e:
             failures[module_path] = e
     return failures
@@ -141,16 +148,8 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
     exclude_dirs={"ci"},
 )
 
-AIPERF_MODULES = [
-    m
-    for m in sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
-    if m not in _UNSUPPORTED_MODULES
-]
-TEST_MODULES = [
-    m
-    for m in sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
-    if m not in _UNSUPPORTED_MODULES
-]
+AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
+TEST_MODULES = sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
 
 
 # =============================================================================

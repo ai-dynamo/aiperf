@@ -10,8 +10,6 @@ import mimetypes
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
-import soundfile as sf
-from datasets import load_dataset as hf_load_dataset
 from PIL import Image as PILImage
 
 from aiperf.common.exceptions import DatasetLoaderError
@@ -61,6 +59,10 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         return {"dataset": dataset}
 
     def _load_hf_dataset(self) -> Any:
+        # Lazy import: datasets has no Windows-on-ARM wheel, so importing it at
+        # module load would break importing this loader on that platform.
+        from datasets import load_dataset as hf_load_dataset
+
         return hf_load_dataset(
             self.hf_dataset_name,
             name=self.hf_subset,
@@ -152,6 +154,11 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         if array is None or sr is None:
             return []
         try:
+            # Lazy import: soundfile bundles libsndfile, which has no
+            # Windows-on-ARM build; importing at module load would break this
+            # loader's import there even though audio is rarely used.
+            import soundfile as sf
+
             buf = io.BytesIO()
             sf.write(buf, array, sr, format="WAV")
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")

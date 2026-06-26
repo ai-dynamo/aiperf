@@ -7,9 +7,6 @@ import base64
 import io
 from typing import TYPE_CHECKING, Any, TypedDict
 
-import soundfile as sf
-from datasets import Audio as HFAudio
-
 from aiperf.common.models import Audio, Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
@@ -68,6 +65,8 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
         if not raw_bytes:
             return []
         try:
+            import soundfile as sf
+
             array, sr = sf.read(io.BytesIO(raw_bytes))
             buf = io.BytesIO()
             sf.write(buf, array, sr, format="WAV")
@@ -85,6 +84,8 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
         if not raw_bytes:
             return None
         try:
+            import soundfile as sf
+
             info = sf.info(io.BytesIO(raw_bytes))
             return info.duration
         except (OSError, ValueError, RuntimeError) as e:
@@ -101,6 +102,8 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
         # Disable HF audio decoding so we handle it ourselves with soundfile,
         # avoiding the torchcodec dependency.
         if hasattr(dataset, "cast_column"):
+            from datasets import Audio as HFAudio
+
             dataset = dataset.cast_column(self.audio_column, HFAudio(decode=False))
         conversations = []
         skipped = 0
