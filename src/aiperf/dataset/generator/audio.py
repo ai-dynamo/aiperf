@@ -3,6 +3,7 @@
 
 import base64
 import io
+from types import ModuleType
 
 import numpy as np
 
@@ -36,7 +37,7 @@ SUPPORTED_BIT_DEPTHS = {
 }
 
 
-def _import_soundfile():
+def _import_soundfile() -> ModuleType:
     """Import soundfile lazily with a clear error when libsndfile is unavailable.
 
     soundfile bundles libsndfile, which has no prebuilt Windows-on-ARM binary,

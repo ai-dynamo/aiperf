@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image as PILImage
 
-from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.common.exceptions import ConfigurationError, DatasetLoaderError
 from aiperf.common.models import Audio, Conversation, Image, Video
 from aiperf.dataset import utils
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
@@ -50,6 +50,8 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             dataset = await asyncio.get_running_loop().run_in_executor(
                 None, self._load_hf_dataset
             )
+        except ConfigurationError:
+            raise
         except Exception as e:
             raise DatasetLoaderError(
                 f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}. "
@@ -61,7 +63,14 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
     def _load_hf_dataset(self) -> Any:
         # Lazy import: datasets has no Windows-on-ARM wheel, so importing it at
         # module load would break importing this loader on that platform.
-        from datasets import load_dataset as hf_load_dataset
+        try:
+            from datasets import load_dataset as hf_load_dataset
+        except ImportError as e:
+            raise ConfigurationError(
+                "HuggingFace --public-dataset support requires the 'datasets' "
+                "package, which has no prebuilt Windows-on-ARM wheel. Use Linux "
+                "or WSL, or switch to a synthetic or --input-file dataset."
+            ) from e
 
         return hf_load_dataset(
             self.hf_dataset_name,

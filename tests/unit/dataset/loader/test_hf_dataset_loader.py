@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image as PILImage
 
-from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.common.exceptions import ConfigurationError, DatasetLoaderError
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.public import PublicDatasetComposer
@@ -78,6 +78,18 @@ class TestBaseHFDatasetLoader:
         with patch.object(loader, "_load_hf_dataset", return_value=fake_dataset):
             result = await loader.load_dataset()
         assert result == {"dataset": fake_dataset}
+
+    async def test_missing_datasets_raises_clear_configuration_error(
+        self, loader, monkeypatch
+    ):
+        """When ``datasets`` can't be imported (e.g. Windows-on-ARM has no wheel),
+        the loader raises an actionable ConfigurationError rather than a generic
+        DatasetLoaderError suggesting a gated-dataset auth issue."""
+        import sys
+
+        monkeypatch.setitem(sys.modules, "datasets", None)
+        with pytest.raises(ConfigurationError, match="datasets"):
+            await loader.load_dataset()
 
     @pytest.mark.skipif(not HAS_DATASETS, reason="datasets has no Windows-on-ARM wheel")
     async def test_load_hf_dataset_calls_load_dataset_with_correct_args(
