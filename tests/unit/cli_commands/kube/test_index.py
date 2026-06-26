@@ -22,7 +22,6 @@ import httpx
 import orjson
 import pytest
 
-
 _API_URL = "http://operator"
 
 
