@@ -489,6 +489,10 @@ class SystemController(
             self.info("Server metrics disabled via --no-server-metrics")
             self._should_wait_for_server_metrics = False
 
+        if self.run.cfg.network_latency.should_probe:
+            self.debug("Starting optional NetworkLatencyManager service")
+            optional_services.append(ServiceType.NETWORK_LATENCY_MANAGER)
+
         api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
         api_host = self.run.cfg.runtime.api_host or Environment.API_SERVER.HOST
         if api_port is not None and api_host is not None:

@@ -363,6 +363,16 @@ def mock_user_config() -> AIPerfConfig:
 
 
 @pytest.fixture
+def mock_run(mock_user_config: AIPerfConfig) -> BenchmarkRun:
+    """BenchmarkRun wrapping ``mock_user_config`` for post-processor tests.
+
+    Tests mutate ``mock_run.cfg`` directly — the cfg is the native object the
+    runtime uses.
+    """
+    return _make_run(mock_user_config)
+
+
+@pytest.fixture
 def user_config_raw(tmp_artifact_dir: Path) -> AIPerfConfig:
     """Create an AIPerfConfig for raw record testing."""
     return AIPerfConfig(

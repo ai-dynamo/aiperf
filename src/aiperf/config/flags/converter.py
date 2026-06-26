@@ -37,6 +37,7 @@ from aiperf.config.flags._converter_runtime import (
 from aiperf.config.flags._converter_telemetry import (
     build_gpu_telemetry,
     build_mlflow,
+    build_network_latency,
     build_otel,
     build_server_metrics,
     build_wandb,
@@ -520,6 +521,7 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     artifacts = build_artifacts(cli)
     gpu_telemetry = build_gpu_telemetry(cli)
     server_metrics = build_server_metrics(cli)
+    network_latency = build_network_latency(cli)
     otel = build_otel(cli)
     mlflow = build_mlflow(cli)
     wandb = build_wandb(cli)
@@ -538,6 +540,7 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
         "artifacts": artifacts,
         "gpu_telemetry": gpu_telemetry,
         "server_metrics": server_metrics,
+        "network_latency": network_latency,
         "otel": otel,
         "mlflow": mlflow,
         "wandb": wandb,

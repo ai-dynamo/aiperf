@@ -33,6 +33,8 @@ if TYPE_CHECKING:
     )
     from aiperf.common.models import BranchStats
     from aiperf.config import BenchmarkRun
+    from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
+    from aiperf.network_latency.protocols import NetworkLatencyProcessorProtocol
     from aiperf.post_processors.protocols import ResultsProcessorProtocol
     from aiperf.records.error_tracker import ErrorTracker
     from aiperf.records.records_tracker import RecordsTracker
@@ -88,6 +90,61 @@ def load_results_processors(host: _LoaderHost) -> list[ResultsProcessorProtocol]
             )
         except Exception as e:  # noqa: BLE001 - one bad results processor must not abort the whole records manager; error is surfaced via host.error
             host.error(f"Failed to create results processor {entry.name}: {e}")
+    return processors
+
+
+def make_network_latency_accumulator(
+    host: _LoaderHost,
+) -> NetworkLatencyAccumulator | None:
+    """Build the in-process RTT-sample accumulator, or None when probing is off.
+
+    Returns None unless ``network_latency.should_probe`` is set, mirroring the
+    other run-dependent loaders so RecordsManager.__init__ never touches
+    ``host.run`` directly (keeps __init__ patchable in unit tests).
+    """
+    from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
+
+    if not host.run.cfg.network_latency.should_probe:
+        return None
+    return NetworkLatencyAccumulator(benchmark_id=host.run.benchmark_id)
+
+
+def load_network_latency_processors(
+    host: _LoaderHost,
+) -> list[NetworkLatencyProcessorProtocol]:
+    """Instantiate enabled ``RESULTS_PROCESSOR`` plugins that consume RTT samples.
+
+    Network latency processors (e.g. ``NetworkLatencyJSONLWriter``) implement
+    ``process_network_latency_sample`` rather than the metric-record
+    ``process_result`` contract, so ``load_results_processors`` skips them. They
+    self-disable via ``PostProcessorDisabled`` unless network latency probing is
+    active, so on a normal run this returns an empty list. One bad processor must
+    not abort the whole records manager.
+    """
+    from aiperf.network_latency.protocols import NetworkLatencyProcessorProtocol
+
+    processors: list[NetworkLatencyProcessorProtocol] = []
+    for entry in plugins.iter_entries(PluginType.RESULTS_PROCESSOR):
+        try:
+            ProcessorClass = plugins.get_class(PluginType.RESULTS_PROCESSOR, entry.name)
+            results_processor = ProcessorClass(
+                service_id=host.service_id,
+                run=host.run,
+                pub_client=host.pub_client,
+            )
+            if not isinstance(results_processor, NetworkLatencyProcessorProtocol):
+                continue
+            host.attach_child_lifecycle(results_processor)
+            processors.append(results_processor)
+            host.debug(
+                f"Created network latency processor: {entry.name}: {results_processor.__class__.__name__}"
+            )
+        except PostProcessorDisabled:
+            host.debug(
+                f"Network latency processor {entry.name} is disabled and will not be used"
+            )
+        except Exception as e:  # noqa: BLE001 - one bad results processor must not abort the whole records manager; error is surfaced via host.error
+            host.error(f"Failed to create network latency processor {entry.name}: {e}")
     return processors
 
 

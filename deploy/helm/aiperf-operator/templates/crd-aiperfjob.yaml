@@ -499,6 +499,10 @@ spec:
                     description: 'Server metrics configuration for Prometheus scraping. Collects operational metrics (queue
                       depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled:
                       false to disable.'
+                  networkLatency:
+                    x-kubernetes-preserve-unknown-fields: true
+                    description: Network latency calibration configuration. Probes the endpoint RTT during profiling and subtracts
+                      the mean from latency metrics, emitted as separate network_adjusted_* metrics. Disabled by default.
                   otel:
                     type: object
                     description: OpenTelemetry metrics streaming configuration.

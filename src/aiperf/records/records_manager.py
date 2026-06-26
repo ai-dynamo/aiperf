@@ -39,6 +39,7 @@ from aiperf.common.hooks import (
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     DatasetConfiguredNotification,
+    NetworkLatencyRecordMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessTelemetryResultMessage,
@@ -60,6 +61,7 @@ from aiperf.common.models import (
     ErrorDetailsCount,
     ErrorTrackingState,
     MetricResult,
+    NetworkLatencySample,
     PhaseRecordsStats,
     ProcessRecordsResult,
     ProcessTelemetryResult,
@@ -72,6 +74,8 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
+from aiperf.network_latency.protocols import NetworkLatencyProcessorProtocol
 from aiperf.plugin.enums import (
     AccumulatorType,
     AnalyzerType,
@@ -94,8 +98,10 @@ from aiperf.records.records_manager_processing import (
     generate_realtime_metrics,
     load_accumulators,
     load_analyzers,
+    load_network_latency_processors,
     load_results_processors,
     load_stream_exporters,
+    make_network_latency_accumulator,
     stream_exporters_for_record_type,
 )
 from aiperf.records.records_tracker import RecordsTracker
@@ -120,23 +126,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         service_id: str | None = None,
         **kwargs,
     ) -> None:
-        # For dual-bind mode (Kubernetes), also bind to TCP for remote record processors.
-        # Controller binds to IPC + TCP; workers connect via TCP.
-        additional_bind_address: str | None = None
-        comm_config = run.resolved.comm_config or run.cfg.comm_config
-        if (
-            isinstance(comm_config, ZMQDualBindConfig)
-            and not comm_config.controller_host
-        ):
-            additional_bind_address = comm_config.records_push_pull_tcp_bind_address
-
         super().__init__(
             run=run,
             service_id=service_id,
             pull_client_address=CommAddress.RECORDS,
             pull_client_bind=True,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
-            pull_client_additional_bind_address=additional_bind_address,
+            pull_client_additional_bind_address=self._resolve_additional_bind_address(
+                run
+            ),
             pull_client_codec=RECORDS_CODEC,
             **kwargs,
         )
@@ -162,6 +160,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._metric_results_processors: list[ResultsProcessorProtocol] = (
             load_results_processors(self)
         )
+        self._init_network_latency()
         # Parallel accumulator pipeline (metrics-accumulator branch). The
         # legacy ``_metric_results_processors`` path stays live — both
         # consume the same record stream so analyzers (steady-state, energy
@@ -195,6 +194,40 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
         self._last_checkpoint_records: int = 0
+
+    @staticmethod
+    def _resolve_additional_bind_address(run: BenchmarkRun) -> str | None:
+        """Resolve the extra TCP bind for dual-bind (Kubernetes) mode.
+
+        When ZMQDualBindConfig has no controller_host, this manager process is
+        the dual-bind controller and must add a TCP bind on top of IPC so remote
+        record processors can reach it. Workers (controller_host set) need none.
+        """
+        comm_config = run.resolved.comm_config or run.cfg.comm_config
+        if (
+            isinstance(comm_config, ZMQDualBindConfig)
+            and not comm_config.controller_host
+        ):
+            return comm_config.records_push_pull_tcp_bind_address
+        return None
+
+    def _init_network_latency(self) -> None:
+        """Wire the network-latency RTT-probe pipeline.
+
+        Network latency processors (e.g. NetworkLatencyJSONLWriter) consume RTT
+        samples via process_network_latency_sample, not the metric-record
+        protocol, so they load through their own loader. The in-process
+        accumulator computes the run-level mean RTT delivered to each
+        MetricResultsProcessor via set_network_rtt_ns before summarize(); it is
+        None unless network latency probing is active.
+        """
+        self._network_latency_processors: list[NetworkLatencyProcessorProtocol] = (
+            load_network_latency_processors(self)
+        )
+        self._network_latency_accumulator: NetworkLatencyAccumulator | None = (
+            make_network_latency_accumulator(self)
+        )
+        self._network_latency_state = ErrorTrackingState()
 
     async def _process_metric_record_data(self, record_data: MetricRecordsData) -> None:
         """Process one metric record payload."""
@@ -300,13 +333,55 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     await exporter.process_telemetry_record(record)
                 except Exception as e:  # noqa: BLE001 - one bad exporter must not abort the batch
                     self.debug(
-                        lambda e=e, exporter=exporter: f"Telemetry stream exporter {exporter.__class__.__name__} failed: {e!r}"
+                        lambda e=e,
+                        exporter=exporter: f"Telemetry stream exporter {exporter.__class__.__name__} failed: {e!r}"
                     )
 
     @property
     def _gpu_telemetry_accumulator(self) -> Any | None:
         """The loaded GPU telemetry accumulator, or None when telemetry is off."""
         return self._accumulators.get(AccumulatorType.GPU_TELEMETRY)
+
+    @on_pull_message(MessageType.NETWORK_LATENCY_RECORD)
+    async def _on_network_latency_records(
+        self, message: NetworkLatencyRecordMessage
+    ) -> None:
+        """Handle a network latency RTT probe sample from the NetworkLatencyManager.
+
+        Accumulates the sample for the run-level mean RTT (delivered to the
+        metric processors before summarize) and forwards it to the JSONL writer.
+        A transport-level delivery error is tracked separately.
+
+        Args:
+            message: Network latency probe sample from a probe collector
+        """
+        if message.valid:
+            if self._network_latency_accumulator is not None:
+                self._network_latency_accumulator.add_sample(message.sample)
+            await self._send_network_latency_to_results_processors(message.sample)
+        else:
+            if message.error:
+                self._network_latency_state.error_counts[message.error] += 1
+
+    async def _send_network_latency_to_results_processors(
+        self, sample: NetworkLatencySample
+    ) -> None:
+        """Forward a probe sample to the network latency results processors."""
+        if not self._network_latency_processors:
+            return
+        errors = await asyncio.gather(
+            *[
+                processor.process_network_latency_sample(sample)
+                for processor in self._network_latency_processors
+            ],
+            return_exceptions=True,
+        )
+        for error in errors:
+            if isinstance(error, BaseException):
+                self.exception(f"Failed to process network latency sample: {error!r}")
+                self._network_latency_state.error_counts[
+                    ErrorDetails.from_exception(error)
+                ] += 1
 
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
         """Handle the case where all records have been received for a phase."""
@@ -609,10 +684,71 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 lambda: f"Wrote partial checkpoint to {self.run.cfg.artifacts.profile_export_partial_json_file}"
             )
 
+    def _deliver_network_rtt_to_processors(self) -> None:
+        """Set the run-level mean network RTT (ns) on each metric results processor.
+
+        Two cases, resolved here just before MetricResultsProcessor.summarize():
+
+        1. Manual mean (``--network-latency-mean``): if ``network_latency.mean_ms``
+           is set, the NetworkLatencyManager service is never spawned; convert the
+           mean ms to ns and deliver it directly.
+        2. Automatic (``--network-latency-automatic``): the accumulator computed a
+           mean over successful probe samples. If zero successful samples were
+           collected, log a warning and apply no adjustment.
+
+        A resolved RTT of 0 (or no RTT) is a no-op: the adjustment would emit
+        network_adjusted_* metrics identical to the raw ones, so it is skipped.
+        Also a no-op when network latency calibration is disabled entirely.
+        """
+        network_cfg = self.run.cfg.network_latency
+        if not network_cfg.enabled:
+            return
+
+        if network_cfg.mean_ms is not None:
+            rtt_ns: float | None = network_cfg.mean_ms * 1e6
+        else:
+            rtt_ns = (
+                self._network_latency_accumulator.mean_rtt_ns
+                if self._network_latency_accumulator is not None
+                else None
+            )
+            if rtt_ns is None:
+                self.warning(
+                    "Network latency calibration enabled but no successful RTT "
+                    "probes were collected; skipping network_adjusted_* metrics."
+                )
+
+        # A resolved RTT of 0/None is a no-op (adjusted == raw): skip injection so we
+        # don't emit duplicate network_adjusted_* metrics. The None case already warned.
+        if not rtt_ns:
+            return
+
+        if network_cfg.mean_ms is not None:
+            self.notice(
+                f"Network latency calibration: subtracting a fixed mean RTT of "
+                f"{rtt_ns / 1e6:.3f} ms from latency metrics (network_adjusted_* metrics)."
+            )
+        else:
+            sample_count = self._network_latency_accumulator.successful_sample_count
+            self.notice(
+                f"Network latency calibration: subtracting measured mean RTT of "
+                f"{rtt_ns / 1e6:.3f} ms (over {sample_count} TCP-handshake probes) "
+                "from latency metrics (network_adjusted_* metrics)."
+            )
+
+        for processor in self._metric_results_processors:
+            set_rtt = getattr(processor, "set_network_rtt_ns", None)
+            if callable(set_rtt):
+                set_rtt(rtt_ns)
+
     async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
         """Process the results across all non-excluded phases."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
         self.info("Processing records results...")
+
+        # Deliver the run-level mean network RTT to each metric results processor
+        # BEFORE summarize() so network_adjusted_* metrics can be injected.
+        self._deliver_network_rtt_to_processors()
 
         results, multi_turn_ttft_trend = await self._summarize_all_processors()
         await self._finalize_all_processors()

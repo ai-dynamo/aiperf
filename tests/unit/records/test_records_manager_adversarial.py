@@ -1146,6 +1146,14 @@ class TestRecordsManagerInitDualBind:
                 return_value=[],
             ),
             patch(
+                "aiperf.records.records_manager.load_network_latency_processors",
+                return_value=[],
+            ),
+            patch(
+                "aiperf.records.records_manager.make_network_latency_accumulator",
+                return_value=None,
+            ),
+            patch(
                 "aiperf.records.records_manager.load_accumulators",
                 return_value={},
             ),
@@ -1197,6 +1205,14 @@ class TestRecordsManagerInitDualBind:
             patch(
                 "aiperf.records.records_manager.load_results_processors",
                 return_value=[],
+            ),
+            patch(
+                "aiperf.records.records_manager.load_network_latency_processors",
+                return_value=[],
+            ),
+            patch(
+                "aiperf.records.records_manager.make_network_latency_accumulator",
+                return_value=None,
             ),
             patch(
                 "aiperf.records.records_manager.load_accumulators",

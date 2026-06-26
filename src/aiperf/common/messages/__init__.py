@@ -41,6 +41,9 @@ from aiperf.common.messages.inference_messages import (
     MetricRecordsMessage,
     RealtimeMetricsMessage,
 )
+from aiperf.common.messages.network_latency_messages import (
+    NetworkLatencyRecordMessage,
+)
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
     BenchmarkCompleteMessage,
@@ -108,6 +111,7 @@ __all__ = [
     "Message",
     "MetricRecordsData",
     "MetricRecordsMessage",
+    "NetworkLatencyRecordMessage",
     "ProcessAllResultsMessage",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",

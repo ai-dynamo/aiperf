@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from aiperf.common.enums import (
     MetricDictValueTypeT,
     MetricFlags,
@@ -22,6 +24,10 @@ from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.metric_dicts import MetricAggregator, MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.metrics.types.network_adjusted_metrics import (
+    NETWORK_ADJUSTED_SOURCES,
+    NetworkRttMetric,
+)
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
@@ -51,6 +57,11 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Create the results dict, which will be used to store the results of non-derived metrics,
         # and then be updated with the derived metrics.
         self._results: MetricResultsDict = MetricResultsDict()
+
+        # Run-level mean network RTT (ns) to subtract from request-start-anchored
+        # latency metrics. Set by the RecordsManager before summarize() when network
+        # latency calibration is enabled; None means no adjustment is applied.
+        self._network_rtt_ns: float | None = None
 
         # Get all of the metric classes.
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
@@ -142,6 +153,49 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         """
         return self._results
 
+    def set_network_rtt_ns(self, rtt_ns: float | None) -> None:
+        """Set the run-level mean network RTT (ns) to subtract from latency metrics.
+
+        Called by the RecordsManager before summarize() when network latency
+        calibration is enabled (or a manual override was provided). None disables
+        the adjustment.
+        """
+        self._network_rtt_ns = rtt_ns
+
+    def _inject_network_adjusted_metrics(self) -> None:
+        """Inject network_adjusted_* distributions and the network_rtt summary.
+
+        Subtracting a constant RTT from every record shifts the mean and every
+        percentile by that constant and leaves the standard deviation unchanged, so the
+        adjustment is applied to each source metric's aggregated array (clamped at 0).
+        Values flow through the normal _create_metric_result / to_display_unit path
+        because the network_adjusted_* and network_rtt metrics are registered.
+        """
+        rtt_ns = self._network_rtt_ns
+        if rtt_ns is None:
+            return
+
+        self._results[NetworkRttMetric.tag] = float(rtt_ns)
+
+        clamped_tags: list[str] = []
+        for adjusted_tag, source_tag in NETWORK_ADJUSTED_SOURCES.items():
+            source = self._results.get(source_tag)
+            if not isinstance(source, MetricArray) or len(source) == 0:
+                continue
+            data = source.data
+            if np.any(data < rtt_ns):
+                clamped_tags.append(adjusted_tag)
+            adjusted = MetricArray()
+            adjusted.extend(np.maximum(data - rtt_ns, 0.0))
+            self._results[adjusted_tag] = adjusted
+
+        if clamped_tags:
+            self.warning(
+                lambda tags=clamped_tags: f"Network RTT ({rtt_ns / 1e6:.3f} ms) exceeded "
+                f"some measured latencies; clamped to 0 for: {', '.join(tags)}. "
+                "The subtracted RTT may be larger than the true network leg."
+            )
+
     async def update_derived_metrics(self) -> None:
         """Computes the values for the derived metrics, and stores them in the results dict."""
         for tag, derive_func in self.derive_funcs.items():
@@ -183,6 +237,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         but filtered from output unless dev mode flags are enabled.
         """
         await self.update_derived_metrics()
+        self._inject_network_adjusted_metrics()
 
         # Compute metric results, filter internal/experimental, and convert to display units
         results = [

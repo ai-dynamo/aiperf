@@ -45,6 +45,7 @@ from aiperf.common.enums import (
     GPUTelemetryMode,
     ImageFormat,
     ImageSource,
+    ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     RequestContentType,
     ServerMetricsFormat,
@@ -1252,9 +1253,9 @@ class CLIConfig(BaseConfig):
             description="Source image generation mode (default `noise`). "
             "`noise` generates random noise images on the fly at the requested dimensions — no files on disk required, "
             "and the pool is effectively unbounded so servers cannot dedupe on identical inputs. "
-            "`assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
-            "and resizes them to the requested dimensions. "
-            "A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). "
+            "`assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
+            "and lazily loads them at the requested dimensions. "
+            "A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). "
             "Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
         ),
         CLIParameter(
@@ -1262,6 +1263,21 @@ class CLIConfig(BaseConfig):
             group=Groups.IMAGE_INPUT,
         ),
     ]
+
+    image_source_sampling: Annotated[
+        ImageSourceSamplingStrategy,
+        Field(
+            description="How source images are selected from finite image sources selected by `--image-source assets` "
+            "or `--image-source <directory>`. `random-with-replacement` draws each source image independently; "
+            "repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, "
+            "reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps "
+            "after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.",
+        ),
+        CLIParameter(
+            name=("--image-source-sampling",),
+            group=Groups.IMAGE_INPUT,
+        ),
+    ] = ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
 
     ##############################################################################
     # Video Input
@@ -2325,6 +2341,59 @@ class CLIConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = _DEFAULT_SERVER_METRICS_FORMATS
+
+    ##############################################################################
+    # Network Latency
+    ##############################################################################
+    network_latency_automatic: Annotated[
+        bool,
+        Field(
+            description=(
+                "Automatically measure network latency (DISABLED BY DEFAULT). "
+                "Opens a fresh TCP connection to the endpoint throughout the run, "
+                "measures the handshake RTT, and subtracts the mean from request-start-anchored "
+                "latency metrics (request_latency, time_to_first_token, "
+                "time_to_first_output_token). Raw metrics are preserved; adjusted values are "
+                "emitted as separate network_adjusted_* metrics plus a network_rtt summary. "
+                "Mutually exclusive with --network-latency-mean."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-automatic",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = False
+
+    network_latency_mean: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            description=(
+                "Set a fixed mean network RTT in milliseconds to subtract, bypassing active "
+                "probing. Implicitly enables network latency adjustment. Mutually exclusive "
+                "with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-mean",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
+
+    network_latency_ping_interval: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Seconds between TCP-handshake RTT probes during profiling "
+                "(default: 1.0s). Only applies with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-ping-interval",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
 
     ##############################################################################
     # GPU Telemetry
