@@ -267,6 +267,26 @@ def reset_singleton_factories():
 
 
 @pytest.fixture(autouse=True)
+def _reset_service_registry():
+    """Reset the process-global ServiceRegistry around every test.
+
+    ``ServiceRegistry`` is a module-level instance (NOT a Singleton-metaclass
+    instance), so the ``reset_singleton_factories`` fixture above does not clear
+    it. Each full-system component test registers managers + workers via
+    ``FakeServiceManager`` -> ``ServiceRegistry.expect_service``; a test that
+    fails before clean shutdown leaves those entries behind, so the next test
+    sees 2x the expected services and its configuration wait times out
+    (ServiceRegistrationTimeoutError). Resetting before and after each test
+    isolates them. Mirrors tests/unit/controller/conftest.py.
+    """
+    from aiperf.common.service_registry import ServiceRegistry
+
+    ServiceRegistry.reset()
+    yield
+    ServiceRegistry.reset()
+
+
+@pytest.fixture(autouse=True)
 def reset_random_generator() -> Generator[None, None, None]:
     """Reset and seed the global random generator for each test.
 

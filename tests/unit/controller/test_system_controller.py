@@ -28,7 +28,6 @@ from aiperf.config.accuracy import AccuracyConfig
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import (
     AccuracyBenchmarkType,
-    EndpointType,
     ServiceRunType,
     ServiceType,
 )
@@ -374,6 +373,7 @@ class TestKubernetesMode:
         mock_ui = AsyncMock()
         mock_comm = AsyncMock()
         mock_comm.create_reply_client = MagicMock(return_value=AsyncMock())
+        mock_comm.create_streaming_router_client = MagicMock(return_value=AsyncMock())
 
         def mock_get_class(protocol, name):
             if protocol == "service_manager":
@@ -390,10 +390,6 @@ class TestKubernetesMode:
                 side_effect=mock_get_class,
             ),
             patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
-            patch(
-                "aiperf.controller.system_controller.ZMQStreamingRouterClient",
-                return_value=AsyncMock(),
-            ),
             patch(
                 "aiperf.common.mixins.communication_mixin.plugins.get_class",
                 side_effect=mock_get_class,

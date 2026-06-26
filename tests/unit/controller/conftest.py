@@ -51,6 +51,10 @@ def system_controller(
     # get_address is synchronous — return a plain string so the
     # ZMQRouterReplyClient constructor doesn't receive a coroutine.
     mock_comm.get_address = MagicMock(return_value="ipc:///tmp/test-health-check")
+    # create_streaming_router_client is a SYNC factory returning a client; on a
+    # bare AsyncMock it would return a coroutine. The control ROUTER is now built
+    # via this factory (attach_lifecycle=False), so return a client-shaped mock.
+    mock_comm.create_streaming_router_client = MagicMock(return_value=AsyncMock())
 
     def mock_get_class(protocol, name):
         if protocol == "service_manager":
@@ -67,10 +71,6 @@ def system_controller(
             side_effect=mock_get_class,
         ),
         patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
-        patch(
-            "aiperf.controller.system_controller.ZMQStreamingRouterClient",
-            return_value=AsyncMock(),
-        ),
         patch(
             "aiperf.common.mixins.communication_mixin.plugins.get_class",
             side_effect=mock_get_class,

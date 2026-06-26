@@ -13,6 +13,7 @@ address for fast, isolated testing without network or IPC overhead.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from collections import defaultdict
@@ -175,6 +176,10 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
             address, identity, bus, additional_bind_address=additional_bind_address
         )
         self.handler: Callable[[str, Any], Awaitable[None]] | None = None
+        # Mirrors ZMQStreamingRouterClient: request_to() registers a future keyed
+        # by the request's cid; a reply carrying that cid resolves it instead of
+        # going to the streaming handler.
+        self._pending_requests: dict[str, asyncio.Future[Any]] = {}
 
     def register_receiver(
         self, handler: Callable[[str, Any], Coroutine[Any, Any, None]]
@@ -197,6 +202,59 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
                     self.warning(f"No handler registered for dealer client {identity}")
                 return
 
+    def _try_resolve_pending_request(self, message: Any) -> bool:
+        """Resolve a pending request future if message.cid matches one. Mirrors
+        ZMQStreamingRouterClient._try_resolve_pending_request."""
+        cid = getattr(message, "cid", None)
+        if not cid or cid not in self._pending_requests:
+            return False
+        future = self._pending_requests.pop(cid)
+        if not future.done():
+            future.set_result(message)
+        return True
+
+    async def _receive_from_dealer(self, identity: str, message: Any) -> None:
+        """Inbound path for a dealer->router send: resolve a pending request by
+        cid, otherwise dispatch to the handler and route any returned response
+        back to the originating dealer.
+
+        Mirrors ZMQStreamingRouterClient._dispatch_message: when the handler
+        returns a Struct (e.g. RegistrationAck from _on_registration), the real
+        ROUTER sends it back to the originating DEALER. The fake must do the same
+        or fire-and-forget request/ack flows (service registration) never see
+        their ack and time out.
+        """
+        self.capture_received_payload(message, sender_identity=identity)
+        if self._try_resolve_pending_request(message):
+            return
+        if self.handler is None:
+            return
+        response = await self.handler(identity, message)
+        if response is not None:
+            await self.send_to(identity, response)
+
+    async def request_to(
+        self, identity: str, message: Any, timeout: float = 30.0
+    ) -> Any:
+        """Send a request to a specific dealer and await the reply matched by cid.
+
+        Mirrors ZMQStreamingRouterClient.request_to: the dealer processes the
+        command and sends its response back on its DEALER, which routes here via
+        _receive_from_dealer and resolves the future by cid. In the in-process
+        fake bus this typically resolves synchronously during send_to.
+        """
+        cid = getattr(message, "cid", None)
+        if cid is None:
+            await self.send_to(identity, message)
+            return None
+        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+        self._pending_requests[cid] = future
+        try:
+            await self.send_to(identity, message)
+            return await asyncio.wait_for(future, timeout)
+        finally:
+            self._pending_requests.pop(cid, None)
+
 
 class FakeStreamingDealerClient(FakeCommunicationClient):
     """Fake DEALER - sends to router, receives from router."""
@@ -215,15 +273,16 @@ class FakeStreamingDealerClient(FakeCommunicationClient):
         self.handler = handler
 
     async def send(self, message: Any) -> None:
-        """Send to router - dynamically looks up routers at this address."""
+        """Send to router - dynamically looks up routers at this address.
+
+        Routes through the router's _receive_from_dealer so a reply carrying a
+        pending request's cid resolves that request_to() future instead of going
+        to the streaming handler.
+        """
         self.capture_sent_payload(message)
         for comm in self.bus.communications:
             for router_client in comm.router_clients.get(self.address, []):
-                if router_client.handler:
-                    router_client.capture_received_payload(
-                        message, sender_identity=self.identity
-                    )
-                    await router_client.handler(self.identity, message)
+                await router_client._receive_from_dealer(self.identity, message)
 
     async def request(self, message: Any, timeout: float = 30.0) -> Any:  # noqa: ARG002
         """Send and synchronously return the handler's reply (if any)."""
@@ -642,6 +701,7 @@ class FakeCommunication(BaseCommunication):
         bind: bool = False,
         socket_ops: dict | None = None,  # noqa: ARG002
         max_pull_concurrency: int | None = None,  # noqa: ARG002
+        attach_lifecycle: bool = True,  # noqa: ARG002 - fake never attaches lifecycle
         **kwargs,
     ) -> FakeCommunicationClient:
         """Create fake client and auto-wire to counterparts."""

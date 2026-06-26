@@ -318,7 +318,20 @@ class WorkerGroupManagerBase(BaseComponentService):
         self.info("Tokenizer prefetch task starting")
         api_base_full = self.run.cfg.runtime.dataset_api_base_url
         if not api_base_full:
-            raise RuntimeError("dataset_api_base_url required for tokenizer download")
+            # No operator API available (in-process / component-integration mode,
+            # or any non-k8s run). There is nothing to prefetch from — workers load
+            # their tokenizers directly — so emit an empty ready (the same signal
+            # used for the no-tokenizers case) instead of failing the WGM lifecycle.
+            # In production k8s the operator always templates this URL, so this
+            # branch never fires there.
+            self.info(
+                "No dataset_api_base_url; skipping tokenizer prefetch "
+                "(workers load tokenizers directly)"
+            )
+            await self._publish_group_message(
+                GroupTokenizerReady(service_id=self.service_id, bundles={})
+            )
+            return
         # ``runtime.dataset_api_base_url`` ends in ``/api/dataset``; strip
         # that suffix so ``download_tokenizer`` can append
         # ``/api/tokenizer/{name}/bundle`` to the same host:port without

@@ -94,7 +94,6 @@ from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol
-from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
 
 if TYPE_CHECKING:
     from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
@@ -209,12 +208,19 @@ class SystemController(
         )
         import zmq as _zmq
 
-        self.control_router = ZMQStreamingRouterClient(
-            address=control_address,
+        # Build via comms.create_* (not direct instantiation) so the
+        # FakeCommunication harness can substitute a fake client in
+        # component-integration tests. attach_lifecycle=False keeps SystemController
+        # the sole owner of the control router's lifecycle (it must be initialized
+        # and started ahead of the comms layer), so in production comms does not
+        # also manage it (which would double-bind the control socket).
+        self.control_router = self.comms.create_streaming_router_client(
+            address=CommAddress.CONTROL,
             bind=True,
             additional_bind_address=additional_bind,
             decode_type=ControllerBoundMessage,
             socket_ops={_zmq.ROUTER_MANDATORY: 1},
+            attach_lifecycle=False,
         )
 
     def _init_service_manager_and_ui(self) -> None:

@@ -48,6 +48,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         socket_ops: dict | None = None,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        attach_lifecycle: bool = True,
         **kwargs: Any,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
@@ -168,6 +169,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
         decode_type: Any = None,
+        attach_lifecycle: bool = True,
     ) -> StreamingRouterClientProtocol:
         return cast(
             StreamingRouterClientProtocol,
@@ -178,6 +180,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 socket_ops=socket_ops,
                 additional_bind_address=additional_bind_address,
                 decode_type=decode_type,
+                attach_lifecycle=attach_lifecycle,
             ),
         )
 

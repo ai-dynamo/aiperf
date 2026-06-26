@@ -96,6 +96,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
         *,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        attach_lifecycle: bool = True,
         **kwargs,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
@@ -142,7 +143,13 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
         )
 
         self._clients_cache[cache_key] = client
-        self.attach_child_lifecycle(client)
+        # attach_lifecycle=False lets a caller own the client's lifecycle itself
+        # (e.g. SystemController's control ROUTER, which must be initialized/started
+        # ahead of the comms layer). Such a client is still the correct concrete
+        # type for this comms impl, so the FakeCommunication harness can substitute
+        # a fake in component tests.
+        if attach_lifecycle:
+            self.attach_child_lifecycle(client)
         return client
 
 
