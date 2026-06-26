@@ -69,7 +69,17 @@ def build_inference_wire_message(
     """Build the msgspec worker->record-processor wire payload."""
     raw_payload = None
     if include_raw_export_fields and record.request_info is not None:
-        raw_payload = inference_client.endpoint.format_payload(record.request_info)
+        # Mirror the verbatim raw_payload fast path used when sending: if the
+        # turn carried a pre-built body (raw_payload / inputs_json modes),
+        # record it byte-for-byte rather than re-deriving via format_payload
+        # (which would drop non-native fields and emit empty content).
+        turns = record.request_info.turns
+        verbatim = turns[-1].raw_payload if turns else None
+        raw_payload = (
+            verbatim
+            if verbatim is not None
+            else inference_client.endpoint.format_payload(record.request_info)
+        )
     return build_inference_results_wire_message(
         service_id=service_id,
         record=record,

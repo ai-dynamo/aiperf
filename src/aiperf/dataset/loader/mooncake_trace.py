@@ -76,22 +76,47 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _infer_context_mode(
         self, traces: list[MooncakeTrace]
     ) -> ConversationContextMode | None:
-        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces use pre-built messages."""
-        raw_msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
-        if raw_msg_trace_count == len(traces):
-            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-        if raw_msg_trace_count > 0:
+        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces are self-contained.
+
+        Self-contained traces (pre-built `messages` or verbatim `payload`) bypass
+        endpoint formatting and need to be replayed verbatim. Mixed sessions that
+        combine self-contained traces with synthesized prompts, or mix `messages`
+        and `payload` modes, are rejected.
+        """
+        msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
+        payload_trace_count = sum(1 for trace in traces if trace.payload is not None)
+        self_contained_count = msg_trace_count + payload_trace_count
+
+        if msg_trace_count > 0 and payload_trace_count > 0:
             raise ValueError(
-                "Mixed Mooncake sessions with both raw `messages` and synthesized prompts are unsupported."
+                f"mooncake trace: mixed session contains {msg_trace_count} "
+                f"`messages` trace(s) and {payload_trace_count} `payload` "
+                f"trace(s); each session must use exactly one mode. Split "
+                f"the offending sessions or convert all entries to a single "
+                f"self-contained mode."
+            )
+        if self_contained_count == len(traces) and self_contained_count > 0:
+            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        if self_contained_count > 0:
+            raise ValueError(
+                "Mixed Mooncake sessions with both raw `messages`/`payload` and synthesized prompts are unsupported."
             )
         return None
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
-        if trace.messages is not None:
+        if trace.messages is not None or trace.payload is not None:
             return ""
         return trace.text_input
 
     def _build_turn(self, trace: MooncakeTrace, prompt: str) -> Turn:
+        if trace.payload is not None:
+            return Turn(
+                timestamp=trace.timestamp,
+                delay=trace.delay,
+                max_tokens=trace.output_length,
+                raw_payload=trace.payload,
+                extra_body=trace.extra,
+            )
         if trace.messages is not None:
             return Turn(
                 timestamp=trace.timestamp,
@@ -99,8 +124,12 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 max_tokens=trace.output_length,
                 raw_messages=trace.messages,
                 raw_tools=trace.tools,
+                extra_body=trace.extra,
             )
-        return super()._build_turn(trace, prompt)
+        turn = super()._build_turn(trace, prompt)
+        if trace.extra is not None:
+            turn.extra_body = trace.extra
+        return turn
 
     # ------------------------------------------------------------------
     # Synthesis hooks

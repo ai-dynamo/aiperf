@@ -1653,3 +1653,97 @@ class TestMooncakeTraceSynthesisIntegration:
         trace = result["session-1"][0]
         assert trace.messages == messages
         assert trace.timestamp == 250
+
+
+class TestMooncakeTracePayloadMode:
+    """Verbatim ``payload`` replay support for mooncake_trace.
+
+    A trace carrying a pre-built ``payload`` dict must become a Turn whose
+    ``raw_payload`` is the verbatim body (bypassing endpoint formatting),
+    mirroring the ``raw_payload`` / ``inputs_json`` dataset modes.
+    """
+
+    @pytest.fixture
+    def mock_prompt_generator(self):
+        generator = Mock()
+        generator.generate.return_value = "Generated prompt text"
+        generator._decoded_cache = {}
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        return generator
+
+    @pytest.fixture
+    def default_config(self):
+        return _make_file_config()
+
+    def test_payload_field_accepted_by_model(self):
+        trace = MooncakeTrace(
+            payload={"prompt": "Hello", "max_tokens": 50}, timestamp=1000
+        )
+        assert trace.payload == {"prompt": "Hello", "max_tokens": 50}
+
+    def test_payload_mutually_exclusive_with_messages(self):
+        with pytest.raises(ValidationError):
+            MooncakeTrace(
+                payload={"prompt": "Hello"},
+                messages=[{"role": "user", "content": "x"}],
+            )
+
+    def test_empty_payload_rejected(self):
+        with pytest.raises(ValidationError):
+            MooncakeTrace(payload={})
+
+    def test_payload_traces_produce_raw_payload_turns(
+        self, create_jsonl_file, mock_prompt_generator, default_config
+    ):
+        content = [
+            '{"timestamp": 0, "payload": {"prompt": "prompt-0", "max_tokens": 40}}',
+            '{"timestamp": 100, "payload": {"prompt": "prompt-1", "max_tokens": 40}}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=_make_run(default_config),
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+        assert len(conversations) >= 1
+        for conv in conversations:
+            for turn in conv.turns:
+                assert turn.raw_payload is not None
+                assert turn.raw_payload["prompt"].startswith("prompt-")
+                assert turn.raw_payload["max_tokens"] == 40
+
+    def test_extra_propagates_to_turn_in_payload_mode(
+        self, create_jsonl_file, mock_prompt_generator, default_config
+    ):
+        content = [
+            '{"timestamp": 0, "payload": {"prompt": "p", "max_tokens": 40}, "extra": {"vendor_x": 1, "stream": false}}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=_make_run(default_config),
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+        turn = conversations[0].turns[0]
+        assert turn.extra_body == {"vendor_x": 1, "stream": False}
+
+    def test_mixed_payload_and_messages_in_session_rejected(
+        self, create_jsonl_file, mock_prompt_generator, default_config
+    ):
+        content = [
+            '{"session_id": "s1", "payload": {"prompt": "p"}}',
+            '{"session_id": "s1", "messages": [{"role": "user", "content": "m"}]}',
+        ]
+        filename = create_jsonl_file(content)
+
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=_make_run(default_config),
+            prompt_generator=mock_prompt_generator,
+        )
+        with pytest.raises(ValueError, match="payload.*messages|messages.*payload"):
+            loader.convert_to_conversations(loader.load_dataset())

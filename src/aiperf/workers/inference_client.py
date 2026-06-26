@@ -105,10 +105,21 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        formatted_payload = self.endpoint.format_payload(request_info)
+        # Verbatim raw_payload fast path: when the loader (raw_payload /
+        # inputs_json modes) populated the turn's raw_payload, send that dict
+        # to the transport byte-for-byte instead of letting the endpoint
+        # rebuild the body. Without this bypass the chat endpoint reformats
+        # the request (dropping max_tokens/temperature/vendor fields and
+        # emitting empty content), so verbatim replay is lost.
+        raw_payload = request_info.turns[-1].raw_payload if request_info.turns else None
+        payload = (
+            raw_payload
+            if raw_payload is not None
+            else self.endpoint.format_payload(request_info)
+        )
         return await self.transport.send_request(
             request_info,
-            payload=formatted_payload,
+            payload=payload,
             first_token_callback=first_token_callback,
         )
 
