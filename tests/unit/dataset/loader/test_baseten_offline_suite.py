@@ -279,15 +279,30 @@ class TestTimingNoHang:
         assert cap_ts[-1] == unc_ts[-1] - (11_000 - GAP_CAP_MS)
         assert cap_ts[:5] == unc_ts[:5]
 
-    @pytest.mark.xfail(
-        reason="P2 back-pressure not wired: turns>0 should carry delay, not absolute timestamp",
-        strict=False,
-    )
-    def test_continuation_turns_use_delay(self, fixture_path):
+    def test_back_pressure_turn0_absolute_continuation_delay(self, fixture_path):
+        # Multi-turn replay is closed-loop: turn 0 keeps an absolute timestamp
+        # (session start); continuation turns fire on completion via a delay.
         loader, data = _load(fixture_path)
-        for conv in loader.convert_to_conversations(data):
+        multi = [c for c in loader.convert_to_conversations(data) if len(c.turns) > 1]
+        assert multi, "fixture should have a multi-turn session"
+        for conv in multi:
+            assert conv.turns[0].timestamp is not None
+            assert conv.turns[0].delay is None
             for turn in conv.turns[1:]:
                 assert turn.delay is not None
+                assert turn.timestamp is None
+
+    def test_inter_turn_delay_cap_clamps_continuation_delays(self, fixture_path):
+        # The existing inter_turn_delay_cap_seconds knob clamps think-time so a
+        # session with long gaps stays runnable.
+        loader, data = _load(fixture_path, inter_turn_delay_cap_seconds=1.0)
+        capped = [
+            turn
+            for conv in loader.convert_to_conversations(data)
+            for turn in conv.turns[1:]
+        ]
+        assert capped, "fixture should have continuation turns"
+        assert all(t.delay is not None and t.delay <= 1000 for t in capped)
 
 
 class TestFidelityCarryThrough:

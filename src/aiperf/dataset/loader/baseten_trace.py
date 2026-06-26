@@ -15,8 +15,9 @@ from pydantic import Field, field_validator
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode
-from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.models import AIPerfBaseModel, Conversation
 from aiperf.dataset.loader._baseten_replay_timemodel import reflow_idle_gaps
+from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_trace_loader import (
     BaseTraceDatasetLoader,
     _has_meaningful_synthesis,
@@ -119,6 +120,11 @@ class BasetenTrace(AIPerfBaseModel):
         default=None,
         description="Normalized timestamp in milliseconds since the first event.",
     )
+    delay: NonNegativeFloat | None = Field(
+        default=None,
+        description="Per-turn replay delay in ms, set on continuation turns under "
+        "back-pressure: turn N+1 fires this long after turn N completes.",
+    )
     input_length: NonNegativeInt | None = Field(
         default=None,
         description="Alias field used by shared trace filtering logic.",
@@ -214,6 +220,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         gap_cap_s = getattr(dataset, "max_idle_gap_cap_seconds", None)
         self._max_idle_gap_cap_ms = (
             int(gap_cap_s * 1000) if gap_cap_s is not None else None
+        )
+        self._delay_cap = DelayCapTracker(
+            cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
 
@@ -470,6 +479,38 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         reflowed = reflow_idle_gaps(original, self._max_idle_gap_cap_ms)
         for trace, new_ts in zip(items, reflowed, strict=True):
             trace.timestamp = new_ts
+
+    def convert_to_conversations(
+        self, data: dict[str, list[BasetenTrace]]
+    ) -> list[Conversation]:
+        """Apply session back-pressure, then build conversations.
+
+        For multi-turn sessions, continuation turns (index > 0) replay
+        closed-loop — turn N+1 fires only after turn N completes — rather than at
+        an absolute pre-recorded time. This keeps each session's prefix cached in
+        order (faithful KV reuse) and is the correct model for this trace (~93%
+        multi-turn). Turn 0 keeps its absolute arrival time (session start).
+        """
+        self._apply_back_pressure(data)
+        conversations = super().convert_to_conversations(data)
+        self._delay_cap.log_summary(logger_name=__name__)
+        return conversations
+
+    def _apply_back_pressure(self, data: dict[str, list[BasetenTrace]]) -> None:
+        """Convert continuation turns from absolute timestamps to inter-turn
+        delays (clamped by ``inter_turn_delay_cap_seconds``). Clearing the
+        absolute timestamp makes the timing strategy take its delay branch."""
+        for traces in data.values():
+            ordered = sorted(traces, key=lambda t: int(t.timestamp or 0))
+            prev_ts: int | None = None
+            for i, trace in enumerate(ordered):
+                ts = int(trace.timestamp or 0)
+                if i == 0:
+                    prev_ts = ts
+                    continue
+                trace.delay = self._delay_cap.clamp(float(max(0, ts - prev_ts)))
+                trace.timestamp = None
+                prev_ts = ts
 
     def _choose_session_key(self, items: list[BasetenTrace]) -> str | None:
         return choose_baseten_session_key(
