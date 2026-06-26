@@ -3,6 +3,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,8 +11,9 @@ import pytest
 from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.models import RequestInfo, RequestRecord
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import TransportType
+from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.transports.aiohttp_transport import (
     AioHttpTransport,
     ConnectionLeaseManager,
@@ -47,6 +49,31 @@ def create_request_info(
         cancel_after_ns=cancel_after_ns,
         is_final_turn=is_final_turn,
     )
+
+
+def make_image_edit_run() -> BenchmarkRun:
+    """Build a form-data endpoint run for multipart transport tests."""
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={
+            "type": EndpointType.IMAGE_EDIT,
+            "urls": ["http://localhost:8000"],
+            "path": "/v1/images/edits",
+            "streaming": False,
+        },
+        datasets=[
+            {
+                "name": "default",
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
+        phases=[
+            {"name": "default", "type": "concurrency", "requests": 1, "concurrency": 1}
+        ],
+    )
+    return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
 
 
 class TestAioHttpTransport:
@@ -147,6 +174,44 @@ class TestAioHttpTransport:
 
         assert headers["Content-Type"] == "application/json"
         assert headers["Accept"] == expected_accept
+
+    def test_build_headers_removes_user_content_type_for_multipart(self):
+        """Multipart requests must not preserve stale endpoint Content-Type."""
+        run = make_image_edit_run()
+        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(run))
+        request_info = create_request_info(
+            run.cfg,
+            endpoint_headers={"Content-Type": "application/json"},
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert "Content-Type" not in headers
+        assert headers["Accept"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_send_request_multipart_body_is_bytes_with_boundary_header(self):
+        """Multipart requests are serialized before reaching AioHttpClient."""
+        run = make_image_edit_run()
+        transport = AioHttpTransport(model_endpoint=ModelEndpointInfo.from_run(run))
+        await transport.initialize()
+        mock_record = RequestRecord(responses=[], error=None)
+        transport.aiohttp_client.post_request = AsyncMock(return_value=mock_record)
+        request_info = create_request_info(
+            run.cfg,
+            endpoint_headers={"Content-Type": "application/json"},
+            cancel_after_ns=1,
+        )
+
+        await transport.send_request(request_info, {"prompt": "edit", "n": 1})
+
+        _url, body, headers = transport.aiohttp_client.post_request.call_args.args[:3]
+        assert isinstance(body, bytes)
+        assert b'name="prompt"' in body
+        assert not body.startswith(b"{")
+        assert headers["Content-Type"].startswith("multipart/form-data; boundary=")
+        transport.aiohttp_client.post_request.assert_awaited_once()
+        await transport.stop()
 
     @pytest.mark.parametrize(
         "cfg_base_url,custom_endpoint,expected_url",

@@ -72,6 +72,21 @@ def _append_path_deduped(base_url: str, path: str) -> str:
     return urlunparse(parsed._replace(path=new_path, query=query, fragment=fragment))
 
 
+class _MultipartBytesWriter:
+    """Collect aiohttp multipart payload bytes for clients that send bytes."""
+
+    def __init__(self) -> None:
+        self._chunks: list[bytes] = []
+
+    async def write(self, chunk: bytes) -> None:
+        """Collect a serialized multipart chunk."""
+        self._chunks.append(bytes(chunk))
+
+    def to_bytes(self) -> bytes:
+        """Return the collected multipart body."""
+        return b"".join(self._chunks)
+
+
 class BaseHTTPTransport(BaseTransport):
     """Base class for HTTP-based transports (HTTP/1.1 and HTTP/2).
 
@@ -84,6 +99,51 @@ class BaseHTTPTransport(BaseTransport):
     def http_client(self) -> HTTPClientProtocol | None:
         """Return the underlying HTTP client instance, or None if not initialized."""
         ...
+
+    def _is_multipart_request(self) -> bool:
+        """Return True when the endpoint requires multipart/form-data serialization."""
+        return (
+            self.run.cfg.endpoint.request_content_type
+            == RequestContentType.MULTIPART_FORM_DATA
+        )
+
+    @staticmethod
+    def _drop_content_type_headers(headers: dict[str, str]) -> None:
+        """Remove any caller-supplied Content-Type header, case-insensitively."""
+        for header_name in list(headers):
+            if header_name.lower() == "content-type":
+                headers.pop(header_name, None)
+
+    def build_headers(self, request_info: RequestInfo) -> dict[str, str]:
+        """Build HTTP headers, omitting stale Content-Type for multipart bodies."""
+        headers = super().build_headers(request_info)
+        if self._is_multipart_request():
+            self._drop_content_type_headers(headers)
+        return headers
+
+    async def _build_multipart_body(
+        self, payload: dict[str, Any], headers: dict[str, str]
+    ) -> bytes:
+        """Serialize multipart form-data and attach its boundary Content-Type."""
+        form_payload = self._build_form_data(payload)()
+        writer = _MultipartBytesWriter()
+        await form_payload.write(writer)
+        content_type = form_payload.headers.get("Content-Type")
+        if not content_type:
+            raise ValueError(
+                "multipart form payload did not produce a Content-Type header"
+            )
+        self._drop_content_type_headers(headers)
+        headers["Content-Type"] = content_type
+        return writer.to_bytes()
+
+    async def _build_request_body(
+        self, payload: dict[str, Any], headers: dict[str, str]
+    ) -> bytes:
+        """Serialize the request payload for the configured endpoint content type."""
+        if self._is_multipart_request():
+            return await self._build_multipart_body(payload, headers)
+        return orjson.dumps(payload)
 
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Build HTTP-specific headers based on streaming mode.
@@ -252,8 +312,10 @@ class BaseHTTPTransport(BaseTransport):
         """
         if self.http_client is None:
             raise NotInitializedError("HTTP client not initialized")
-        body: bytes | aiohttp.FormData = (
-            self._build_form_data(payload) if use_form_data else orjson.dumps(payload)
+        body = (
+            await self._build_multipart_body(payload, headers)
+            if use_form_data
+            else orjson.dumps(payload)
         )
         record = await self.http_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
@@ -381,7 +443,7 @@ class BaseHTTPTransport(BaseTransport):
         )
 
         result = await self._submit_video_job(
-            submit_url, payload, headers, use_form_data=use_form_data
+            submit_url, payload, dict(headers), use_form_data=use_form_data
         )
         if isinstance(result, ErrorDetails):
             return result

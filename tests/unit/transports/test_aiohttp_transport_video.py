@@ -442,6 +442,45 @@ class TestVideoRequestWorkflow:
                 mock_download.assert_not_called()
                 assert len(record.responses) >= 2  # at least submit and poll
 
+    @pytest.mark.asyncio
+    async def test_video_polling_does_not_reuse_multipart_content_type(
+        self, transport, video_request_info
+    ):
+        """Polling GETs must not inherit the multipart submit Content-Type."""
+        observed: dict[str, Any] = {}
+
+        async def post_request(
+            url: str, body: bytes, headers: dict[str, str]
+        ) -> RequestRecord:
+            observed["post_headers"] = dict(headers)
+            observed["post_body"] = body
+            return create_request_record(
+                status=201,
+                body=orjson.dumps({"id": "video-123", "status": "queued"}).decode(),
+            )
+
+        async def get_request(url: str, headers: dict[str, str]) -> RequestRecord:
+            observed["poll_headers"] = dict(headers)
+            return create_request_record(
+                status=200,
+                body=orjson.dumps({"id": "video-123", "status": "completed"}).decode(),
+            )
+
+        transport.aiohttp_client.post_request.side_effect = post_request
+        transport.aiohttp_client.get_request.side_effect = get_request
+        video_request_info.endpoint_headers = {"Content-Type": "application/json"}
+
+        record = await transport._send_video_request_with_polling(
+            video_request_info, {"prompt": "A cat playing piano"}
+        )
+
+        assert record.error is None
+        assert isinstance(observed["post_body"], bytes)
+        assert observed["post_headers"]["Content-Type"].startswith(
+            "multipart/form-data; boundary="
+        )
+        assert "Content-Type" not in observed["poll_headers"]
+
 
 class TestVideoRequestRouting:
     """Tests for video request routing in main send_request method."""

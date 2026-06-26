@@ -7,8 +7,6 @@ import asyncio
 import time
 from typing import Any
 
-import orjson
-
 from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
@@ -135,7 +133,7 @@ class HttpCoreTransport(BaseHTTPTransport):
         lease_manager: HttpCoreLeaseManager | None,
         request_info: RequestInfo,
         url: str,
-        json_bytes: bytes,
+        body: bytes,
         headers: dict[str, str],
         first_token_callback: FirstTokenCallback | None,
     ) -> RequestRecord:
@@ -147,7 +145,7 @@ class HttpCoreTransport(BaseHTTPTransport):
             try:
                 return await client.post_request(
                     url,
-                    json_bytes,
+                    body,
                     headers,
                     cancel_after_ns=request_info.cancel_after_ns,
                     first_token_callback=first_token_callback,
@@ -163,7 +161,7 @@ class HttpCoreTransport(BaseHTTPTransport):
             session_client = lease_manager.get_client(request_info.x_correlation_id)
             return await session_client.post_request(
                 url,
-                json_bytes,
+                body,
                 headers,
                 cancel_after_ns=request_info.cancel_after_ns,
                 first_token_callback=first_token_callback,
@@ -172,7 +170,7 @@ class HttpCoreTransport(BaseHTTPTransport):
         assert self.httpcore_client is not None
         return await self.httpcore_client.post_request(
             url,
-            json_bytes,
+            body,
             headers,
             cancel_after_ns=request_info.cancel_after_ns,
             first_token_callback=first_token_callback,
@@ -243,14 +241,14 @@ class HttpCoreTransport(BaseHTTPTransport):
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
-            json_bytes = orjson.dumps(payload)
+            body = await self._build_request_body(payload, headers)
 
             record = await self._dispatch_post(
                 reuse_strategy=reuse_strategy,
                 lease_manager=lease_manager,
                 request_info=request_info,
                 url=url,
-                json_bytes=json_bytes,
+                body=body,
                 headers=headers,
                 first_token_callback=first_token_callback,
             )

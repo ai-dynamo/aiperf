@@ -1022,6 +1022,32 @@ def _make_transport_run(
     return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
 
 
+def _make_multipart_transport_run() -> BenchmarkRun:
+    """Build a minimal multipart endpoint BenchmarkRun."""
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={
+            "type": EndpointType.IMAGE_EDIT,
+            "urls": ["http://localhost:8000"],
+            "path": "/v1/images/edits",
+            "streaming": False,
+            "connection_reuse": ConnectionReuseStrategy.POOLED,
+        },
+        datasets=[
+            {
+                "name": "default",
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        ],
+        phases=[
+            {"name": "default", "type": "concurrency", "requests": 1, "concurrency": 1}
+        ],
+    )
+    return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
+
+
 def _make_transport(run: BenchmarkRun) -> HttpCoreTransport:
     """Instantiate HttpCoreTransport with a mocked httpcore_client."""
     with patch("httpcore.AsyncConnectionPool"):
@@ -1064,6 +1090,30 @@ class TestHttpCoreTransportConnectionReuse:
             await transport.send_request(ri, {"messages": []})
 
         transport.httpcore_client.post_request.assert_awaited_once()
+
+    async def test_pooled_strategy_serializes_multipart_payload(self) -> None:
+        """HTTP/2 multipart endpoints send form bytes, not JSON bytes."""
+        run = _make_multipart_transport_run()
+        transport = _make_transport(run)
+
+        record_mock = MagicMock()
+        record_mock.request_headers = {}
+        transport.httpcore_client.post_request = AsyncMock(return_value=record_mock)
+
+        ri = _make_request_info(run)
+        ri.endpoint_headers = {"Content-Type": "application/json"}
+        with patch.object(
+            transport,
+            "build_url",
+            return_value="http://localhost:8000/v1/images/edits",
+        ):
+            await transport.send_request(ri, {"prompt": "edit", "n": 1})
+
+        _url, body, headers = transport.httpcore_client.post_request.call_args.args[:3]
+        assert isinstance(body, bytes)
+        assert b'name="prompt"' in body
+        assert not body.startswith(b"{")
+        assert headers["Content-Type"].startswith("multipart/form-data; boundary=")
 
     async def test_never_strategy_creates_and_closes_ephemeral_client(self) -> None:
         """NEVER strategy creates an ephemeral client and closes it after the request."""

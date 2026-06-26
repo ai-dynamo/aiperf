@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# TODO(branch-port): re-add main's multipart-form / image-edit support here.
-# main HEAD had ~700 LOC with `_build_form_data`, `use_form_data` plumbing for the
-# FLUX.2 image-edit endpoint, and multi-vendor `Content-Type: multipart/form-data`
-# omission logic. Branch's version (~305 LOC) is a different rewrite that lacks
-# those additions. Re-port from origin/main:src/aiperf/transports/aiohttp_transport.py.
-
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +9,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import aiohttp
-import orjson
 
 from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.exceptions import NotInitializedError
@@ -278,13 +271,16 @@ class AioHttpTransport(BaseHTTPTransport):
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
-            json_bytes = orjson.dumps(payload)
+            # Multipart endpoints carry form fields plus base64 file descriptors.
+            # Serializing to bytes here gives aiohttp the exact boundary header and
+            # lets cancellation track request-sent progress by byte count.
+            body = await self._build_request_body(payload, headers)
             connector, connector_owner = self._resolve_connector(
                 reuse_strategy, lease_manager, request_info
             )
             record = await self.aiohttp_client.post_request(
                 url,
-                json_bytes,
+                body,
                 headers,
                 cancel_after_ns=request_info.cancel_after_ns,
                 first_token_callback=first_token_callback,
