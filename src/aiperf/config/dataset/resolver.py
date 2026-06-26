@@ -107,7 +107,11 @@ class DatasetResolver:
         fields_set = getattr(ds, "model_fields_set", set())
         first_record = None
         explicit_format = "format" in fields_set
-        dataset_type = format_map.get(str(fmt)) if explicit_format and fmt else None
+        dataset_type = (
+            self._explicit_format_to_type(fmt, format_map)
+            if explicit_format and fmt
+            else None
+        )
         if dataset_type is None:
             dataset_type, first_record = self._detect_type(str(resolved))
 
@@ -203,6 +207,28 @@ class DatasetResolver:
         ):
             return loader_sampling
         return ds_sampling
+
+    @staticmethod
+    def _explicit_format_to_type(fmt: object, format_map: dict[str, object]) -> object:
+        """Resolve an explicitly-set ``--custom-dataset-type`` to a CustomDatasetType.
+
+        ``format_map`` special-cases the formats whose DatasetFormat name differs
+        from the loader registry name. Every other DatasetFormat mirrors a
+        CustomDatasetType 1:1 (raw_payload, inputs_json, sharegpt, hf_*, ...), so
+        an explicit format the static map omits is resolved by name — honoring
+        the user's choice instead of falling through to ambiguous structural
+        detection (mooncake_trace and raw_payload both match a bare messages
+        payload).
+        """
+        mapped = format_map.get(str(fmt))
+        if mapped is not None:
+            return mapped
+        from aiperf.plugin.enums import CustomDatasetType
+
+        try:
+            return CustomDatasetType(str(fmt))
+        except ValueError:
+            return None
 
     @staticmethod
     def _build_format_map() -> dict[str, object]:

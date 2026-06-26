@@ -169,6 +169,12 @@ def _make_manager_mock(
     )
     mgr._run_analyzers = RecordsManager._run_analyzers.__get__(mgr)
 
+    # Telemetry publish runs inside _process_results. These tests exercise the
+    # inference/analyzer path, so stub the GPU-telemetry side: no accumulator
+    # means the real publisher emits a results=None message harmlessly, but the
+    # tests don't assert on it, so an AsyncMock keeps them focused.
+    mgr._publish_telemetry_results = AsyncMock()
+
     return mgr
 
 

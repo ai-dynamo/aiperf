@@ -59,7 +59,9 @@ from aiperf.common.messages import (
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
     ResultsExportedMessage,
+    ServerMetricsStatusMessage,
     SystemStateChangedMessage,
+    TelemetryStatusMessage,
     WorkerPodStateMessage,
     WorkerStatusSummaryMessage,
 )
@@ -1153,6 +1155,60 @@ class SystemController(
 
         self._profile_results_received = True
         # Coordinate with telemetry results before shutdown
+        await self._check_and_trigger_shutdown()
+
+    @on_message(MessageType.TELEMETRY_STATUS)
+    async def _on_telemetry_status_message(
+        self, message: TelemetryStatusMessage
+    ) -> None:
+        """Handle telemetry status from the GPU telemetry manager.
+
+        The status message tells the controller whether telemetry results will
+        be published, so ``_check_and_trigger_shutdown`` knows whether to wait
+        for ``ProcessTelemetryResultMessage`` before exporting. Without it the
+        controller would shut down before telemetry is published and the
+        ``telemetry_data`` section would be missing from the JSON export.
+        """
+        self._telemetry_endpoints_configured = message.endpoints_configured
+        self._telemetry_endpoints_reachable = message.endpoints_reachable
+        self._should_wait_for_telemetry = message.enabled
+
+        if not message.enabled:
+            reason_msg = f": {message.reason}" if message.reason else ""
+            self.info(f"DCGM telemetry skipped{reason_msg}")
+        else:
+            self.info(
+                f"DCGM telemetry enabled - {len(message.endpoints_reachable)}/"
+                f"{len(message.endpoints_configured)} endpoint(s) reachable"
+            )
+
+        # Re-check shutdown readiness in case results arrived before status.
+        await self._check_and_trigger_shutdown()
+
+    @on_message(MessageType.SERVER_METRICS_STATUS)
+    async def _on_server_metrics_status_message(
+        self, message: ServerMetricsStatusMessage
+    ) -> None:
+        """Handle server metrics status from the server metrics manager.
+
+        Mirror of :meth:`_on_telemetry_status_message`: gates
+        ``_should_wait_for_server_metrics`` so the controller waits for
+        ``ProcessServerMetricsResultMessage`` before exporting.
+        """
+        self._server_metrics_endpoints_configured = message.endpoints_configured
+        self._server_metrics_endpoints_reachable = message.endpoints_reachable
+        self._should_wait_for_server_metrics = message.enabled
+
+        if not message.enabled:
+            reason_msg = f" - {message.reason}" if message.reason else ""
+            self.info(f"Server metrics disabled{reason_msg}")
+        else:
+            self.info(
+                f"Server metrics enabled - {len(message.endpoints_reachable)}/"
+                f"{len(message.endpoints_configured)} endpoint(s) reachable."
+            )
+
+        # Re-check shutdown readiness in case results arrived before status.
         await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_TELEMETRY_RESULT)

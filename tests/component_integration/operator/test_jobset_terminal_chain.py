@@ -21,8 +21,9 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.constants import AIPerfLabels, Annotations
 from aiperf.kubernetes.cr_refs import (
+    AIPERF_JOB_API_VERSION,
     AIPERF_PLURAL,
 )
 from aiperf.operator.handlers.jobset_terminal import handle_jobset_conditions
@@ -40,11 +41,38 @@ def _ajob_body(name: str, annotations: dict[str, str] | None = None) -> dict[str
         "metadata": {
             "name": name,
             "namespace": NS,
+            "uid": f"uid-{name}",
             "generation": 1,
             "annotations": dict(annotations or {}),
         },
         "spec": {},
         "status": {"phase": "Running", "jobId": name, "jobSetName": f"aiperf-{name}"},
+    }
+
+
+def _jobset_body(name: str) -> dict[str, Any]:
+    """Build a JobSet body that proves AIPerfJob ownership.
+
+    The handler's ``_is_trusted_aiperf_jobset`` gate requires the JobSet to
+    carry the AIPerf app labels, the parent ``job-id`` label, and an
+    ownerReference back to the parent AIPerfJob (matching name + uid).
+    """
+    return {
+        "metadata": {
+            "name": f"aiperf-{name}",
+            "labels": {
+                AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+                AIPerfLabels.JOB_ID: name,
+            },
+            "ownerReferences": [
+                {
+                    "apiVersion": AIPERF_JOB_API_VERSION,
+                    "kind": "AIPerfJob",
+                    "name": name,
+                    "uid": f"uid-{name}",
+                }
+            ],
+        }
     }
 
 
@@ -57,7 +85,11 @@ async def test_happy_path_completion_annotates_aiperfjob() -> None:
 
     with fake.context():
         await handle_jobset_conditions(
-            old=[], new=COMPLETED_TRUE, namespace=NS, jobset_name="aiperf-alpha"
+            old=[],
+            new=COMPLETED_TRUE,
+            namespace=NS,
+            jobset_name="aiperf-alpha",
+            jobset_body=_jobset_body("alpha"),
         )
 
     assert fake.get_call_count("alpha") == 1, "exactly one CR lookup expected"
@@ -82,7 +114,11 @@ async def test_race_with_controller_pod_skips_redundant_patch() -> None:
 
     with fake.context():
         await handle_jobset_conditions(
-            old=[], new=COMPLETED_TRUE, namespace=NS, jobset_name="aiperf-beta"
+            old=[],
+            new=COMPLETED_TRUE,
+            namespace=NS,
+            jobset_name="aiperf-beta",
+            jobset_body=_jobset_body("beta"),
         )
 
     assert fake.get_call_count("beta") == 1
@@ -109,7 +145,11 @@ async def test_aiperfjob_deleted_mid_chain_silently_returns(
     with fake.context(), caplog.at_level(logging.WARNING):
         # Must not raise.
         await handle_jobset_conditions(
-            old=[], new=COMPLETED_TRUE, namespace=NS, jobset_name="aiperf-gamma"
+            old=[],
+            new=COMPLETED_TRUE,
+            namespace=NS,
+            jobset_name="aiperf-gamma",
+            jobset_body=_jobset_body("gamma"),
         )
 
     assert fake.patch_call_count("gamma") == 1
@@ -130,10 +170,18 @@ async def test_concurrent_sibling_jobsets_no_cross_contamination() -> None:
     with fake.context():
         await asyncio.gather(
             handle_jobset_conditions(
-                old=[], new=COMPLETED_TRUE, namespace=NS, jobset_name="aiperf-left"
+                old=[],
+                new=COMPLETED_TRUE,
+                namespace=NS,
+                jobset_name="aiperf-left",
+                jobset_body=_jobset_body("left"),
             ),
             handle_jobset_conditions(
-                old=[], new=COMPLETED_TRUE, namespace=NS, jobset_name="aiperf-right"
+                old=[],
+                new=COMPLETED_TRUE,
+                namespace=NS,
+                jobset_name="aiperf-right",
+                jobset_body=_jobset_body("right"),
             ),
         )
 
@@ -167,7 +215,11 @@ async def test_completion_annotation_dispatches_on_benchmark_complete() -> None:
     # Step 1: drive the watch handler to flip the annotation in-store.
     with fake.context():
         await handle_jobset_conditions(
-            old=[], new=COMPLETED_TRUE, namespace=NS, jobset_name="aiperf-delta"
+            old=[],
+            new=COMPLETED_TRUE,
+            namespace=NS,
+            jobset_name="aiperf-delta",
+            jobset_body=_jobset_body("delta"),
         )
     assert fake.patch_call_count("delta") == 1
     # Patched body now reflects the merged annotation.

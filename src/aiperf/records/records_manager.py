@@ -41,8 +41,10 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
+    ProcessTelemetryResultMessage,
     RealtimeMetricsMessage,
     RecordsProcessingStatsMessage,
+    TelemetryRecordsMessage,
 )
 from aiperf.common.metric_records_wire import (
     MetricRecordsBatchWireMessage,
@@ -55,10 +57,12 @@ from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     BranchStats,
     ErrorDetails,
+    ErrorDetailsCount,
     ErrorTrackingState,
     MetricResult,
     PhaseRecordsStats,
     ProcessRecordsResult,
+    ProcessTelemetryResult,
     WorkerProcessingStats,
 )
 from aiperf.common.utils import yield_to_event_loop
@@ -148,6 +152,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._previous_realtime_records: int | None = None
 
         self._metric_state = ErrorTrackingState()
+        # GPU telemetry records arrive on a side channel (CommAddress.RECORDS)
+        # pushed by the gpu_telemetry_manager. RecordsManager is the central
+        # hub: it feeds them to the gpu_telemetry accumulator and publishes the
+        # final ProcessTelemetryResultMessage the SystemController exports.
+        self._telemetry_state = ErrorTrackingState()
+        self._telemetry_result_published = False
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = (
             load_results_processors(self)
@@ -245,6 +255,33 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return
 
         await self._process_metric_record_data(wire_message_to_record_data(message))
+
+    @on_pull_message(MessageType.TELEMETRY_RECORDS)
+    async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
+        """Handle a GPU telemetry records batch from the gpu_telemetry_manager.
+
+        The gpu_telemetry_manager pushes raw DCGM samples to CommAddress.RECORDS;
+        RecordsManager is the central hub that feeds them to the gpu_telemetry
+        accumulator. Error batches (empty records + error) only bump the
+        telemetry error counts so the export carries an accurate error summary.
+        """
+        if message.error is not None and not message.records:
+            self._telemetry_state.error_counts[message.error] += 1
+            return
+        accumulator = self._gpu_telemetry_accumulator
+        if accumulator is None:
+            return
+        for record in message.records:
+            try:
+                await accumulator.process_telemetry_record(record)
+            except Exception as e:  # noqa: BLE001 - one bad record must not abort the batch
+                self._telemetry_state.error_counts[ErrorDetails.from_exception(e)] += 1
+                self.debug(lambda e=e: f"Failed to process telemetry record: {e!r}")
+
+    @property
+    def _gpu_telemetry_accumulator(self) -> Any | None:
+        """The loaded GPU telemetry accumulator, or None when telemetry is off."""
+        return self._accumulators.get(AccumulatorType.GPU_TELEMETRY)
 
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
         """Handle the case where all records have been received for a phase."""
@@ -565,6 +602,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         )
 
+        # GPU telemetry is published independently of inference results so the
+        # SystemController's shutdown coordination (which waits for telemetry
+        # when it was enabled) is satisfied and the telemetry_data section is
+        # written to the JSON export.
+        await self._publish_telemetry_results()
+
         # Parallel accumulator pipeline: finalize stream exporters, run
         # analyzers, and publish ProcessAllResultsMessage so the
         # SystemController's `_on_process_all_results_message` handler picks
@@ -578,6 +621,51 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         await self._publish_all_results(result, analyzer_outputs)
         return result
+
+    def _process_telemetry_results(self) -> ProcessTelemetryResult:
+        """Export accumulated GPU telemetry into a ProcessTelemetryResult.
+
+        ``end_ns`` is intentionally left unset so the final telemetry scrape
+        taken after PROFILE_COMPLETE (but before this export) is included in
+        the stats. If no profiling phase ran, all collected data is included.
+        """
+        accumulator = self._gpu_telemetry_accumulator
+        if accumulator is None:
+            return ProcessTelemetryResult(results=None)
+
+        error_summary = [
+            ErrorDetailsCount(error_details=error_details, count=count)
+            for error_details, count in self._telemetry_state.error_counts.items()
+        ]
+        phase_stats = self._records_tracker.create_stats_for_phase(
+            CreditPhase.PROFILING
+        )
+        telemetry_export_data = accumulator.export_results(
+            start_ns=phase_stats.start_ns,
+            error_summary=error_summary,
+        )
+        return ProcessTelemetryResult(results=telemetry_export_data)
+
+    async def _publish_telemetry_results(self) -> None:
+        """Publish GPU telemetry results via ProcessTelemetryResultMessage.
+
+        Idempotent: only the first call publishes. Telemetry is published even
+        when no accumulator is loaded (results=None) so the SystemController's
+        wait-for-telemetry coordination always resolves.
+        """
+        if self._telemetry_result_published:
+            return
+        self._telemetry_result_published = True
+        try:
+            telemetry_result = self._process_telemetry_results()
+            await self.publish(
+                ProcessTelemetryResultMessage(
+                    service_id=self.service_id,
+                    telemetry_result=telemetry_result,
+                )
+            )
+        except Exception as e:  # noqa: BLE001 - publish failure must not abort the result path
+            self.error(f"Failed to publish telemetry results: {e!r}")
 
     async def _summarize_all_processors(
         self,

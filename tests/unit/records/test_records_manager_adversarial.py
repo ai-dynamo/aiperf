@@ -208,6 +208,11 @@ def _make_manager(
         "_run_analyzers": RecordsManager._run_analyzers,
         "_write_partial_checkpoint_task": RecordsManager._write_partial_checkpoint_task,
     }
+    # _process_results calls _publish_telemetry_results (GPU telemetry side).
+    # Default it to an AsyncMock so the inference-focused tests don't have to
+    # wire the telemetry accumulator; tests that care can bind/override it.
+    mgr._publish_telemetry_results = AsyncMock()
+
     for name in bind_methods or []:
         # Strip the @background_task / @on_command decorator wrapping by
         # accessing __wrapped__ or just calling .__func__ underlying.

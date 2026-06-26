@@ -158,13 +158,17 @@ async def test_cluster_search_e2e_via_build_plan_from_sweep(tmp_path: Path):
     # results-driven, not derived from plan.variations (which is a length-1
     # placeholder for adaptive search).
     spec = AIPerfSweepSpec.model_validate(cr["spec"])
+    # write_sweep_latest validates the epoch against EPOCH_RE (9-20 decimal
+    # digits) before advancing latest.txt, so the run epoch must be a realistic
+    # epoch-seconds value, not a bare "1".
+    sweep_run_epoch = "1714069323"
     _write_sweep_parent_aggregate(
         base_dir=tmp_path,
         sweep_cr=cr,
         spec=spec,
         results=results,
         plan=plan,
-        sweep_run_epoch="1",
+        sweep_run_epoch=sweep_run_epoch,
         with_trial_suffix=False,
     )
     children_path = (
@@ -172,7 +176,7 @@ async def test_cluster_search_e2e_via_build_plan_from_sweep(tmp_path: Path):
         / cr["metadata"]["namespace"]
         / "sweeps"
         / cr["metadata"]["name"]
-        / "1"
+        / sweep_run_epoch
         / "children.json"
     )
     assert children_path.exists(), "children.json must be written"
