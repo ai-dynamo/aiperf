@@ -328,9 +328,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             benchmark_phase=record.request_info.credit_phase,
             x_request_id=record.request_info.x_request_id,
             x_correlation_id=record.request_info.x_correlation_id,
-            session_num=record.request_info.session_num
-            if record.request_info.session_num is not None
-            else record.request_info.credit_num,
+            session_num=record.request_info.credit_num,
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,

@@ -210,10 +210,17 @@ def mock_tokenizer_from_pretrained():
 
 
 def _mock_tokenize(text: str) -> tuple[str, ...]:
-    """Tokenize using FakeTokenizer logic."""
+    """Tokenize using FakeTokenizer logic.
+
+    Any non-empty text yields at least one token: ``round(len/TOKEN_LEN)``
+    floors very short prompts (e.g. ``"r0"`` -> ``round(0.5)`` == 0) to zero,
+    which makes the mock server emit no content (only usage) and the client
+    raise ``InvalidInferenceResultError``. DAG fixtures use terse 2-char
+    prompts, so clamp to ``max(1, ...)`` to keep them generating content.
+    """
     if not text:
         return ()
-    return (TOKEN,) * round(len(text) / TOKEN_LEN)
+    return (TOKEN,) * max(1, round(len(text) / TOKEN_LEN))
 
 
 @pytest.fixture(autouse=True, scope="package")

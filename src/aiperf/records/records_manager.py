@@ -53,6 +53,7 @@ from aiperf.common.metric_records_wire import (
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    BranchStats,
     ErrorDetails,
     ErrorTrackingState,
     MetricResult,
@@ -138,6 +139,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._records_tracker = RecordsTracker()
         self._error_tracker = ErrorTracker()
+
+        # Latest DAG branch-orchestration counters, captured from the
+        # PROFILING phase's CreditPhaseCompleteMessage and threaded into
+        # ProfileResults.branch_stats for the JSON export. None on non-DAG runs.
+        self._latest_branch_stats: BranchStats | None = None
 
         self._previous_realtime_records: int | None = None
 
@@ -382,6 +388,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseCompleteMessage
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
+        # Capture DAG branch-orchestration counters for the PROFILING phase so
+        # they reach ProfileResults.branch_stats / the JSON export. None on
+        # non-DAG runs.
+        if (
+            message.branch_stats is not None
+            and message.stats.phase == CreditPhase.PROFILING
+        ):
+            self._latest_branch_stats = message.branch_stats
         self._records_tracker.update_phase_info(message.stats)
         phase_stats = self._records_tracker.create_stats_for_phase(message.stats.phase)
         self.info(
@@ -654,6 +668,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             error_tracker=self._error_tracker,
             cancelled=cancelled,
             multi_turn_ttft_trend=multi_turn_ttft_trend,
+            branch_stats=self._latest_branch_stats,
         )
 
     async def _publish_all_results(

@@ -20,6 +20,7 @@ from aiperf.common.mixins import TaskManagerMixin
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
+from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.phase.event_timeout import wait_for_event_with_timeout
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.log_formatters import (
@@ -34,7 +35,7 @@ from aiperf.timing.ramping import Ramper
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
-    from aiperf.common.models import CreditPhaseStats
+    from aiperf.common.models import BranchStats, CreditPhaseStats, DatasetMetadata
     from aiperf.credit.callback_handler import CreditCallbackHandler
     from aiperf.credit.sticky_router import CreditRouterProtocol
     from aiperf.timing.concurrency import ConcurrencyManager
@@ -134,7 +135,59 @@ class PhaseRunner(TaskManagerMixin):
         # DAG orchestrator (None on non-DAG runs). When set, completion is
         # gated on ``has_pending_branch_work`` so the runner doesn't freeze
         # sent counts while children are still in flight.
-        self._branch_orchestrator: object | None = None
+        self._branch_orchestrator: BranchOrchestrator | None = None
+        self._maybe_construct_branch_orchestrator(self._conversation_source)
+
+    @staticmethod
+    def _is_dag_dataset(dataset_metadata: DatasetMetadata | None) -> bool:
+        """True iff the dataset declares any DAG fan-out.
+
+        A DAG-shaped dataset has at least one conversation with branches
+        attached, or at least one non-root conversation
+        (``agent_depth > 0``). Non-DAG runs return False so the
+        orchestrator is not constructed (saves the per-conv prereq-index
+        build and keeps the callback path orchestrator-free).
+        """
+        if dataset_metadata is None:
+            return False
+        for conv in getattr(dataset_metadata, "conversations", None) or []:
+            if getattr(conv, "branches", None):
+                return True
+            if getattr(conv, "agent_depth", 0) > 0:
+                return True
+        return False
+
+    def _maybe_construct_branch_orchestrator(
+        self, conversation_source: ConversationSource
+    ) -> None:
+        """Construct ``BranchOrchestrator`` for DAG-shaped datasets.
+
+        A "DAG-shaped" dataset is one whose metadata declares any branches
+        OR contains any non-root conversations (``agent_depth > 0``).
+        Non-DAG runs leave ``self._branch_orchestrator`` as None and the
+        callback / strategy paths skip orchestrator hooks.
+        """
+        if self._branch_orchestrator is not None:
+            return
+        if not self._is_dag_dataset(conversation_source.dataset_metadata):
+            return
+        sticky_router = getattr(self._credit_router, "sticky_router", None)
+        self._branch_orchestrator = BranchOrchestrator(
+            conversation_source=conversation_source,
+            credit_issuer=self._credit_issuer,
+            sticky_router=sticky_router,
+        )
+
+    def _snapshot_branch_stats(self) -> BranchStats | None:
+        """Snapshot the BranchOrchestrator counters for publication.
+
+        Returns None on non-DAG runs (no orchestrator wired). DAG runs
+        return a copy of the counters so the published snapshot stays
+        stable even if the orchestrator keeps mutating after we publish.
+        """
+        if self._branch_orchestrator is None:
+            return None
+        return self._branch_orchestrator.snapshot_branch_stats()
 
     def _is_phase_complete(self) -> bool:
         """Return True if ``--request-count`` is met AND no DAG children pend.
@@ -197,8 +250,22 @@ class PhaseRunner(TaskManagerMixin):
         if self._progress_task:
             self._progress_task.cancel()
 
+        self._detach_orchestrator_and_cleanup()
+
         if self._on_phase_complete:
             self._on_phase_complete()
+
+    def _detach_orchestrator_and_cleanup(self) -> None:
+        """Detach the DAG orchestrator from the shared callback handler and
+        release its tracking state. Idempotent and a no-op on non-DAG runs.
+
+        Branch stats are snapshotted at ``publish_phase_complete`` before this
+        runs, so teardown here doesn't lose the published counters.
+        """
+        if self._branch_orchestrator is None:
+            return
+        self._callback_handler.set_branch_orchestrator(None)
+        self._branch_orchestrator.cleanup()
 
     async def run(
         self,
@@ -237,6 +304,12 @@ class PhaseRunner(TaskManagerMixin):
         except Exception as e:
             await self._handle_execution_error(e)
             raise e
+        finally:
+            # Seamless non-final phases own teardown via the background
+            # return-wait task's ``_on_return_wait_complete`` callback; detach
+            # here for every other path. Idempotent + no-op on non-DAG runs.
+            if not (self._config.seamless and not is_final_phase):
+                self._detach_orchestrator_and_cleanup()
 
     def _build_strategy(self) -> TimingStrategyProtocol:
         """Instantiate the timing strategy for this phase."""
@@ -250,6 +323,7 @@ class PhaseRunner(TaskManagerMixin):
             stop_checker=self._stop_checker,
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
+            branch_orchestrator=self._branch_orchestrator,
         )
 
     async def _prepare_phase(self, strategy: TimingStrategyProtocol) -> None:
@@ -263,6 +337,11 @@ class PhaseRunner(TaskManagerMixin):
             strategy=strategy,
             conversation_source=self._conversation_source,
         )
+        # Wire the DAG orchestrator into the shared callback handler so root
+        # credit returns spawn children and gated parent turns suspend. No-op
+        # for non-DAG runs (orchestrator is None).
+        if self._branch_orchestrator is not None:
+            self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
         self._concurrency_manager.configure_for_phase(
             self._config.phase,
             self._config.concurrency,
@@ -293,6 +372,12 @@ class PhaseRunner(TaskManagerMixin):
         # before the ramper sets the initial (lower) limit.
         for ramper in self._rampers:
             ramper.start()
+
+        # Pre-dispatch DAG SPAWN branches marked dispatch_timing='pre' before
+        # the strategy begins issuing root turn-0 credits. No-op for non-DAG
+        # runs (orchestrator is None).
+        if self._branch_orchestrator is not None:
+            await self._branch_orchestrator.dispatch_pre_session_branches()
 
         self._execution_task = self.execute_async(strategy.execute_phase())
 
@@ -345,7 +430,9 @@ class PhaseRunner(TaskManagerMixin):
             self._progress.freeze_completed_counts()
             self._progress.all_credits_returned_event.set()
             stats = self._progress.create_stats(self._lifecycle)
-            await self._phase_publisher.publish_phase_complete(stats)
+            await self._phase_publisher.publish_phase_complete(
+                stats, branch_stats=self._snapshot_branch_stats()
+            )
 
     def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
         """Create rampers for concurrency and rate if ramp durations are configured."""
@@ -467,7 +554,9 @@ class PhaseRunner(TaskManagerMixin):
             stats = self._progress.create_stats(self._lifecycle)
             self.notice(format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
-            await self._phase_publisher.publish_phase_complete(stats)
+            await self._phase_publisher.publish_phase_complete(
+                stats, branch_stats=self._snapshot_branch_stats()
+            )
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""

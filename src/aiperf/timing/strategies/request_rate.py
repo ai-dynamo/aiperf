@@ -268,8 +268,16 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         if credit.agent_depth > 0:
             # DAG child: route continuation directly through the issuer's DAG
-            # path (bypasses the rate-loop continuation queue).
-            await self._issue_child_continuation_or_release(turn, credit)
+            # path (bypasses the rate-loop continuation queue). Honor think-time
+            # delay so a delayed child turn waits on the scheduler instead of
+            # dispatching immediately.
+            if meta.delay_ms is not None:
+                self._scheduler.schedule_later(
+                    meta.delay_ms / MILLIS_PER_SECOND,
+                    self._issue_child_continuation_or_release(turn, credit),
+                )
+            else:
+                await self._issue_child_continuation_or_release(turn, credit)
             return
 
         # Honor think-time delay from dataset metadata before queuing

@@ -320,6 +320,11 @@ def bootstrap_and_run_service(
         # the container alive as a zombie. SystemExit runs atexit handlers
         # that can re-hit the same hang; os._exit skips all of that.
         os._exit(1)
+        # Unreachable in production (os._exit terminated the process). The
+        # component-integration harness mocks os._exit to a no-op, so propagate
+        # the failure as a SystemExit the runner's `except SystemExit` captures
+        # as a non-zero exit code. Mirrors cli_runner._single_run.
+        sys.exit(1)
 
 
 def _configure_event_loop_policy_for_platform() -> None:

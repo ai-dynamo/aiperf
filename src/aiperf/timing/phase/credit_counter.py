@@ -28,6 +28,7 @@ class CreditCounter:
 
         # Progress counters
         self._requests_sent: int = 0
+        self._root_requests_sent: int = 0
         self._requests_completed: int = 0
         self._requests_cancelled: int = 0
         self._request_errors: int = 0
@@ -52,8 +53,20 @@ class CreditCounter:
 
     @property
     def requests_sent(self) -> int:
-        """Total requests sent."""
+        """Total requests sent (root + DAG children)."""
         return self._requests_sent
+
+    @property
+    def root_requests_sent(self) -> int:
+        """Wire requests sent from root sessions only.
+
+        Diverges from ``requests_sent`` only for DAG runs: children with
+        ``agent_depth > 0`` bump ``requests_sent`` (real wire activity) but
+        not ``root_requests_sent``. Used by the session-completion predicate
+        so BG-fork parents are not frozen the moment the first child wire
+        lands.
+        """
+        return self._root_requests_sent
 
     @property
     def requests_completed(self) -> int:
@@ -183,28 +196,49 @@ class CreditCounter:
         """
         credit_index = self._requests_sent
         is_dag_child = turn_to_send.agent_depth > 0
-
         new_sent_count = self._requests_sent + 1
+
+        if is_dag_child:
+            # Children: bump the wire-request counter only (the session slot is
+            # inherited and sampler-plan counters stay root-only). is_final_credit
+            # flips only when the request-count cap is crossed, so a child
+            # crossing the cap still unblocks the strategy loop and phase runner.
+            self._requests_sent = new_sent_count
+            session_index = self._sent_sessions - 1
+            is_final_credit = (
+                self._config.total_expected_requests is not None
+                and new_sent_count >= self._config.total_expected_requests
+            )
+            return credit_index, session_index, is_final_credit
+
         new_sent_sessions_count = self._sent_sessions
         new_total_session_turns = self._total_session_turns
+        new_root_sent = self._root_requests_sent + 1
 
-        if turn_to_send.turn_index == 0 and not is_dag_child:
+        if turn_to_send.turn_index == 0:
             new_sent_sessions_count += 1
             new_total_session_turns += turn_to_send.num_turns
 
         # session_index is 0-based: current session count minus 1
         session_index = new_sent_sessions_count - 1
 
+        # Use the root-only wire count (not the global ``new_sent_count``) for
+        # the session-completion predicate: BG-fork parents continue running
+        # turns AFTER children begin firing, so the global counter would
+        # spuriously satisfy the predicate the moment the first child wire
+        # lands and the strategy loop would exit before the parent's remaining
+        # turns could dispatch.
         is_final_credit = (
             self._config.total_expected_requests is not None
             and new_sent_count >= self._config.total_expected_requests
         ) or (
             self._config.expected_num_sessions is not None
             and new_sent_sessions_count >= self._config.expected_num_sessions
-            and new_sent_count >= new_total_session_turns
+            and new_root_sent >= new_total_session_turns
         )
 
         self._requests_sent = new_sent_count
+        self._root_requests_sent = new_root_sent
         self._sent_sessions = new_sent_sessions_count
         self._total_session_turns = new_total_session_turns
 

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         StreamExporterProtocol,
         SummaryContext,
     )
+    from aiperf.common.models import BranchStats
     from aiperf.config import BenchmarkRun
     from aiperf.post_processors.protocols import ResultsProcessorProtocol
     from aiperf.records.error_tracker import ErrorTracker
@@ -175,6 +176,7 @@ def build_process_records_result(
     error_tracker: ErrorTracker,
     cancelled: bool,
     multi_turn_ttft_trend: dict[int, MetricResult] | None = None,
+    branch_stats: BranchStats | None = None,
 ) -> ProcessRecordsResult:
     """Assemble the final ``ProcessRecordsResult`` from bucketed summarize output."""
     start_ns, end_ns = tracker.get_results_time_window()
@@ -191,6 +193,7 @@ def build_process_records_result(
             end_ns=end_ns or time.time_ns(),
             error_summary=error_summary,
             was_cancelled=cancelled,
+            branch_stats=branch_stats,
         ),
         errors=error_results,
     )

@@ -19,7 +19,7 @@ from aiperf.credit.messages import (
 )
 
 if TYPE_CHECKING:
-    from aiperf.common.models import CreditPhaseStats
+    from aiperf.common.models import BranchStats, CreditPhaseStats
     from aiperf.common.protocols import PubClientProtocol
     from aiperf.timing.config import CreditPhaseConfig
 
@@ -70,11 +70,22 @@ class PhasePublisher:
         )
         await self._pub_client.publish(msg)
 
-    async def publish_phase_complete(self, phase_stats: CreditPhaseStats) -> None:
-        """Publish phase complete event."""
+    async def publish_phase_complete(
+        self,
+        phase_stats: CreditPhaseStats,
+        branch_stats: BranchStats | None = None,
+    ) -> None:
+        """Publish phase complete event.
+
+        Args:
+            phase_stats: Phase counters at completion.
+            branch_stats: Optional DAG branch orchestration counters
+                (BranchOrchestrator snapshot). None for non-DAG runs.
+        """
         msg = CreditPhaseCompleteMessage(
             service_id=self._service_id,
             stats=phase_stats,
+            branch_stats=branch_stats,
         )
         await self._pub_client.publish(msg)
 

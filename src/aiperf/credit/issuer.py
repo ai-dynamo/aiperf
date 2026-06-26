@@ -22,6 +22,7 @@ from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol
+    from aiperf.timing._branch_orchestrator_state import PendingBranchJoin
     from aiperf.timing.concurrency import ConcurrencyManager
     from aiperf.timing.conversation_source import SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -269,6 +270,43 @@ class CreditIssuer:
         "stop-blocked / refused at gate").
         """
         return await self._dispatch_dag_turn(turn)
+
+    async def dispatch_join_turn(self, pending: PendingBranchJoin) -> bool:
+        """Dispatch a parent's gated turn after all children drained.
+
+        Builds a ``TurnToSend`` from the ``PendingBranchJoin`` and sends it via
+        the standard DAG dispatch path. Used by
+        ``BranchOrchestrator._release_blocked_join``.
+
+        Returns:
+            True if the credit was sent on the wire, False if the cap blocked
+            it (orchestrator tallies as ``joins_suppressed``).
+        """
+        if pending.gated_turn_index is None:
+            return False
+        turn = TurnToSend(
+            conversation_id=pending.parent_conversation_id,
+            x_correlation_id=pending.parent_x_correlation_id,
+            turn_index=pending.gated_turn_index,
+            num_turns=pending.parent_num_turns,
+            agent_depth=pending.parent_agent_depth,
+            parent_correlation_id=pending.parent_parent_correlation_id,
+            has_forks=pending.parent_has_forks_on_gated_turn,
+            branch_mode=pending.parent_branch_mode,
+        )
+        return await self._dispatch_dag_turn(turn)
+
+    async def abort_session(self, x_correlation_id: str) -> None:
+        """Abort an in-flight session (FORK/SPAWN parent or orphan).
+
+        Currently a no-op: the credit-return slot-release path covers every
+        reachable case under the v1 orchestrator. This method exists so the
+        orchestrator's ``hasattr(self._issuer, "abort_session")`` guard
+        resolves; under ``AIPERF_DAG_FAIL_FAST=true`` the orchestrator calls
+        this when a child errors and the parent / orphan siblings must be torn
+        down.
+        """
+        return None
 
     async def _dispatch_dag_turn(self, turn: TurnToSend) -> bool:
         """Send a DAG turn (child first/continuation, or parent join) on the wire.

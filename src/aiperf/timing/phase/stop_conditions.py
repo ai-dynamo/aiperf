@@ -79,7 +79,16 @@ class LifecycleStopCondition(StopCondition):
     """Lifecycle based stop condition. Checks if the phase is cancelled or has completed sending.
 
     NOTE: This is always used and is the first in the list of stop conditions.
+
+    DAG-children behavior: this condition opts out of the DAG-child gating
+    pathway because ``is_sending_complete`` flips when the strategy's own
+    loop exits (e.g. ``--num-conversations`` reached), but the orchestrator
+    still needs to fan out children when those root credits return AFTER
+    sending-complete fires. ``DagLifecycleStopCondition`` covers
+    cancellation for DAG dispatch.
     """
+
+    applies_to_dag_children: bool = False
 
     @classmethod
     def should_use(cls, config: CreditPhaseConfig) -> bool:
@@ -92,6 +101,32 @@ class LifecycleStopCondition(StopCondition):
             not self._lifecycle.was_cancelled
             and not self._lifecycle.is_sending_complete
         )
+
+
+class DagLifecycleStopCondition(StopCondition):
+    """Cancellation gate for DAG-child dispatch.
+
+    The default ``LifecycleStopCondition`` opts out of DAG child gating so
+    orchestrator-driven fan-out still works after the strategy's own loop
+    has exited (sending-complete). Cancellation must still gate DAG
+    dispatch — this condition supplies that piece, with ``can_send_any_turn``
+    always True for the strategy path (this condition is only meaningful
+    on the DAG-child gate).
+    """
+
+    applies_to_dag_children: bool = True
+
+    @classmethod
+    def should_use(cls, config: CreditPhaseConfig) -> bool:
+        """Always used (lifecycle is always present)."""
+        return True
+
+    def can_send_any_turn(self) -> bool:
+        """For DAG-child gating: gate on cancellation only (sending-complete
+        is intentionally NOT gated for DAG fan-out — see
+        ``LifecycleStopCondition`` docstring).
+        """
+        return not self._lifecycle.was_cancelled
 
 
 class RequestCountStopCondition(StopCondition):
@@ -124,10 +159,16 @@ class SessionCountStopCondition(StopCondition):
 
         True when either: session limit not reached (can start new sessions),
         OR already-started sessions still have unsent turns remaining.
+
+        Uses the ROOT-only wire count (not the global ``requests_sent``):
+        BG-fork child wires arrive in parallel with the parent's later turns
+        and would inflate the global counter beyond the root's planned wire
+        count, prematurely returning False and truncating the parent's
+        remaining turns.
         """
         return (
             self._counter.sent_sessions < self._config.expected_num_sessions
-            or self._counter.requests_sent < self._counter.total_session_turns
+            or self._counter.root_requests_sent < self._counter.total_session_turns
         )
 
     def can_start_new_session(self) -> bool:
@@ -156,6 +197,7 @@ class DurationStopCondition(StopCondition):
 # NOTE: The order of these classes will determine the order that the stop conditions are checked in.
 _STOP_CONDITION_CLASSES = [
     LifecycleStopCondition,  # Always used first
+    DagLifecycleStopCondition,  # Cancellation gate for DAG-child dispatch
     RequestCountStopCondition,
     SessionCountStopCondition,
     DurationStopCondition,
