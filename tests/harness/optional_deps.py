@@ -104,3 +104,16 @@ def unsupported_unit_test_relpaths() -> list[str]:
     if not HAS_SOUNDFILE:
         relpaths += _SOUNDFILE_TEST_RELPATHS
     return relpaths
+
+
+def unsupported_test_module_names() -> set[str]:
+    """``tests.unit.*`` dotted names for ``unsupported_unit_test_relpaths()``.
+
+    The import-sweep test (test_imports.py) imports test modules directly,
+    bypassing ``collect_ignore``; the soundfile importers raise an OSError that
+    is not a ``ModuleNotFoundError``, so they must be filtered from the sweep.
+    """
+    return {
+        "tests.unit." + rp[: -len(".py")].replace("/", ".")
+        for rp in unsupported_unit_test_relpaths()
+    }

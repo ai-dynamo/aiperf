@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.harness.optional_deps import unsupported_test_module_names
+
 # Root directories
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC_DIR = REPO_ROOT / "src"
@@ -149,7 +151,15 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
 )
 
 AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
-TEST_MODULES = sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
+# Test modules that directly import a no-Windows-on-ARM-wheel native dep are
+# excluded from the sweep: the soundfile importers raise OSError (not caught by
+# the ModuleNotFoundError rule above), and the rest are already known-skipped.
+_UNSUPPORTED_TEST_MODULES = unsupported_test_module_names()
+TEST_MODULES = [
+    m
+    for m in sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
+    if m not in _UNSUPPORTED_TEST_MODULES
+]
 
 
 # =============================================================================
