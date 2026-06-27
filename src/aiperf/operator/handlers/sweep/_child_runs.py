@@ -53,11 +53,13 @@ def extract_summary_metrics(child_status: dict[str, Any]) -> dict[str, Any]:
         "output_token_throughput",
         "request_throughput",
         "request_count",
-        "error_count",
+        "error_request_count",
+        "error_rate",
+        "total_requests",
     ):
         if key in summary:
             out[key] = summary[key]
-    for stat_key in ("ttft", "itl"):
+    for stat_key in ("time_to_first_token", "inter_token_latency"):
         if stat_key in summary and isinstance(summary[stat_key], dict):
             out[stat_key] = {
                 p: summary[stat_key][p]

@@ -9,6 +9,7 @@ job-index and per-job config lookups.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from collections.abc import Callable
 from copy import deepcopy
@@ -31,6 +32,8 @@ from aiperf.operator.routers.results_schemas import (
     LeaderboardEntry,
     LeaderboardResponse,
 )
+
+logger = logging.getLogger("aiperf.operator.ui")
 
 
 def _compare_response_key(
@@ -353,8 +356,17 @@ def _register_index_routes(
             if spec_file.exists():
                 import orjson
 
-                data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
-                return {"source": "file", "spec": _redact_exposed_spec(data)}
+                try:
+                    data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
+                    return {"source": "file", "spec": _redact_exposed_spec(data)}
+                except (orjson.JSONDecodeError, OSError) as exc:
+                    logger.warning(
+                        "Ignoring corrupt job_spec.json for %s/%s at %s: %s",
+                        namespace,
+                        job_id,
+                        spec_file,
+                        exc,
+                    )
 
         result = await get_db().summary(namespace, job_id, epoch=epoch)
         if result and result.get("input_config"):

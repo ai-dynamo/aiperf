@@ -253,9 +253,6 @@ class HttpCoreTransport(BaseHTTPTransport):
                 first_token_callback=first_token_callback,
             )
             record.request_headers = redact_headers(headers)
-            await self._maybe_release_sticky_lease(
-                reuse_strategy, lease_manager, request_info, record
-            )
 
         except asyncio.CancelledError:
             await self._maybe_release_sticky_lease(
@@ -275,5 +272,15 @@ class HttpCoreTransport(BaseHTTPTransport):
             await self._maybe_release_sticky_lease(
                 reuse_strategy, lease_manager, request_info, record=None
             )
+            return record
+
+        # Release outside the result-bearing try so a teardown failure cannot
+        # overwrite the good record with an error one.
+        try:
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, record
+            )
+        except Exception as e:  # noqa: BLE001 - lease release is best-effort post-success
+            self.exception(f"HTTP/2 sticky-lease release failed: {e!r}")
 
         return record

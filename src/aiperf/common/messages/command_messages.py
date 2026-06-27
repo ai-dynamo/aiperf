@@ -71,18 +71,29 @@ class CommandResponse(
 
     ``status`` picks success/failure/ack/unhandled; ``command`` echoes the
     triggering CommandType so callers can correlate by (command_id, command).
+
+    All response variants share the ``MessageType.COMMAND_RESPONSE`` tag, so the
+    tagged-union decoder collapses them onto this single base branch (see
+    ``Message._all_tagged_subclasses``). The subclass-only payload fields
+    (``error``, ``data``) and a default ``status`` are therefore declared here
+    so the deduped base branch round-trips every variant losslessly — without
+    them, decoding a ``CommandErrorResponse``/``CommandSuccessResponse`` over
+    the wire silently dropped ``error``/``data`` (and crashed on the missing
+    required ``status``). Downstream dispatches on ``status`` / presence of
+    ``error`` rather than ``isinstance`` on the decoded type.
     """
 
     command: str
     command_id: str
-    status: CommandResponseStatus
+    status: CommandResponseStatus = CommandResponseStatus.SUCCESS
+    error: ErrorDetails | None = None
+    data: Any | None = None
 
 
 class CommandErrorResponse(
     CommandResponse, kw_only=True, tag=MessageType.COMMAND_RESPONSE.value
 ):
     error: ErrorDetails
-    status: CommandResponseStatus = CommandResponseStatus.FAILURE
 
     @classmethod
     def from_command_message(
@@ -93,6 +104,7 @@ class CommandErrorResponse(
             target_service_id=command_message.service_id,
             command=command_message.command,
             command_id=command_message.command_id,
+            status=CommandResponseStatus.FAILURE,
             error=error,
         )
 
@@ -102,9 +114,6 @@ class CommandSuccessResponse(
 ):
     """Generic success response. Specialized subclasses (e.g. ProcessRecordsResponse)
     refine ``data`` for specific commands."""
-
-    data: Any | None = None
-    status: CommandResponseStatus = CommandResponseStatus.SUCCESS
 
     @classmethod
     def from_command_message(
@@ -118,6 +127,7 @@ class CommandSuccessResponse(
             target_service_id=command_message.service_id,
             command=command_message.command,
             command_id=command_message.command_id,
+            status=CommandResponseStatus.SUCCESS,
             data=data,
         )
 
@@ -125,8 +135,6 @@ class CommandSuccessResponse(
 class CommandAcknowledgedResponse(
     CommandResponse, kw_only=True, tag=MessageType.COMMAND_RESPONSE.value
 ):
-    status: CommandResponseStatus = CommandResponseStatus.ACKNOWLEDGED
-
     @classmethod
     def from_command_message(
         cls, command_message: "CommandMessage", service_id: str
@@ -140,14 +148,13 @@ class CommandAcknowledgedResponse(
             command_id=getattr(
                 command_message, "command_id", getattr(command_message, "cid", "")
             ),
+            status=CommandResponseStatus.ACKNOWLEDGED,
         )
 
 
 class CommandUnhandledResponse(
     CommandResponse, kw_only=True, tag=MessageType.COMMAND_RESPONSE.value
 ):
-    status: CommandResponseStatus = CommandResponseStatus.UNHANDLED
-
     @classmethod
     def from_command_message(
         cls, command_message: "CommandMessage", service_id: str
@@ -157,6 +164,7 @@ class CommandUnhandledResponse(
             target_service_id=command_message.service_id,
             command=command_message.command,
             command_id=command_message.command_id,
+            status=CommandResponseStatus.UNHANDLED,
         )
 
 

@@ -81,20 +81,38 @@ def _validate_epoch(epoch: str) -> None:
         raise ValueError(f"epoch must be 9-20 decimal digits, got {epoch!r}")
 
 
+def _epoch_wall_seconds(epoch: str) -> int:
+    """Extract the leading whole-seconds component shared by every key format.
+
+    ``epoch_key_from_body`` emits keys of differing total widths — a 16-digit
+    fractional-second key (``f"{seconds}{microsecond:06d}"``) versus a 19-digit
+    whole-second key carrying a 9-digit uid-derived collision suffix — but both
+    forms prefix the same 10-digit epoch-seconds. Comparing whole keys as plain
+    integers therefore sorts by digit-width, not wall-clock, so a genuinely
+    later fractional run (~1.7e15) looks "older" than an earlier uid-suffixed
+    run (~1.7e18). Comparing only this leading component restores wall-clock
+    ordering across both formats.
+    """
+    return int(epoch[:10])
+
+
 def _existing_pointer_is_newer(pointer: Path, epoch: str) -> bool:
-    """Return True if ``pointer`` already names a numerically newer epoch.
+    """Return True if ``pointer`` already names a wall-clock-newer epoch.
 
     A delayed older completion must not roll ``latest.txt`` backward from a
-    newer run. Both the stored and candidate epochs are validated decimal
-    strings here, so an integer compare is exact. A missing or corrupt pointer
-    is treated as "not newer" so the candidate wins.
+    newer run. The comparison is on the leading whole-seconds component
+    (:func:`_epoch_wall_seconds`) rather than the full collision-suffixed key,
+    so a later fractional-second run is never mistaken for older than an
+    earlier uid-suffixed one. Both the stored and candidate epochs are
+    validated decimal strings here. A missing or corrupt pointer is treated as
+    "not newer" so the candidate wins.
     """
     if not pointer.is_file():
         return False
     current = pointer.read_text().strip()
     if not EPOCH_RE.match(current):
         return False
-    return int(current) > int(epoch)
+    return _epoch_wall_seconds(current) > _epoch_wall_seconds(epoch)
 
 
 @dataclass(slots=True)
@@ -141,13 +159,20 @@ def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
     for p in parent.iterdir():
         if not p.is_dir() or not EPOCH_RE.match(p.name):
             continue
-        files = [f for f in p.iterdir() if f.is_file() and f.name != _READY_MARKER_NAME]
+        try:
+            mtime = int(p.stat().st_mtime)
+            files = [
+                f for f in p.iterdir() if f.is_file() and f.name != _READY_MARKER_NAME
+            ]
+            total_size_bytes = sum(f.stat().st_size for f in files)
+        except OSError:
+            continue
         runs.append(
             RunEntry(
                 epoch=p.name,
-                mtime_epoch=int(p.stat().st_mtime),
+                mtime_epoch=mtime,
                 file_count=len(files),
-                total_size_bytes=sum(f.stat().st_size for f in files),
+                total_size_bytes=total_size_bytes,
                 is_latest=(p.name == latest),
             )
         )

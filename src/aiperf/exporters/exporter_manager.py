@@ -68,11 +68,14 @@ class ExporterManager(AIPerfLoggerMixin):
 
     def _task_done_callback(self, task: asyncio.Task) -> None:
         self.debug(lambda: f"Task done: {task}")
-        if task.exception():
+        self._tasks.discard(task)
+        # Must check cancelled() first - calling exception() on a cancelled task raises CancelledError
+        if task.cancelled():
+            return
+        if task.exception() is not None:
             self.error(f"Error exporting records: {task.exception()}")
         else:
             self.debug(f"Exported records: {task.result()}")
-        self._tasks.discard(task)
 
     async def export_data(self) -> None:
         """Export data files using all registered data exporters.

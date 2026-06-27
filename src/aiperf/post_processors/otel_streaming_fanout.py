@@ -270,6 +270,14 @@ def run_otel_streaming_fanout(
         if mlflow_state is None:
             return
         mlflow_state.buffer.append((f"live.{metric_name}", float(metric_value)))
+        # Bound the buffer even while a flush backoff is active (the flush
+        # early-returns during backoff, so growth would otherwise be unbounded
+        # for up to _MAX_FLUSH_BACKOFF seconds). Mirrors the failure-path cap.
+        max_buffer = max_batch_records * 5
+        if len(mlflow_state.buffer) > max_buffer:
+            dropped = len(mlflow_state.buffer) - max_batch_records
+            mlflow_state.buffer = mlflow_state.buffer[-max_batch_records:]
+            mlflow_state.step += dropped
         if len(mlflow_state.buffer) >= max_batch_records:
             _flush_mlflow_metrics()
 

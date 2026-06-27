@@ -125,13 +125,13 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
 
         self.request_callbacks[message.request_id] = callback
 
-        request_json_bytes = message.to_json_bytes()
-        self.trace(lambda msg=request_json_bytes: f"Sending request: {msg}")
-
         try:
+            request_json_bytes = message.to_json_bytes()
+            self.trace(lambda msg=request_json_bytes: f"Sending request: {msg}")
             await self.socket.send(request_json_bytes)
 
         except Exception as e:
+            self.request_callbacks.pop(message.request_id, None)
             raise CommunicationError(
                 f"Exception sending request: {e.__class__.__qualname__} {e}",
             ) from e

@@ -124,9 +124,13 @@ async def on_child_phase_transition(
         current = _find_current_child(children)
         if current is not None:
             labels = (current.get("metadata") or {}).get("labels") or {}
+            try:
+                idx = int(labels.get("aiperf.nvidia.com/variation-index", "-1"))
+            except (TypeError, ValueError):
+                idx = -1
             body_patch["status"]["currentChildRef"] = {
                 "name": current["metadata"]["name"],
-                "index": int(labels.get("aiperf.nvidia.com/variation-index", "-1")),
+                "index": idx,
                 "label": labels.get("aiperf.nvidia.com/variation-label", ""),
             }
         else:
@@ -302,8 +306,20 @@ async def _read_parent_status(
     (the operator-create-handler-set total target the rollup compares
     completed+failed against before flipping phase to ``Aggregating``).
     A single read avoids two GETs against the apiserver.
+
+    Returning ``None`` means "the CR genuinely has no status yet" (404 →
+    initial create) — the caller treats that as a safe unconditional set.
+    A transient read failure must NOT collapse into that same ``None`` or
+    it would defeat both the TOCTOU ``test``-op guard and the
+    ``maxTotalRuns`` guard, regressing a freshly-written terminal phase
+    back to ``Aggregating``. So transient errors raise
+    ``kopf.TemporaryError`` (mirroring ``_patch_parent_status``) and the
+    tick retries instead of clobbering.
     """
+    import aiohttp
+    import kopf
     from kubernetes_asyncio import client as k8s
+    from kubernetes_asyncio.client import ApiException
 
     try:
         async with _api_or_new(api) as client:
@@ -315,8 +331,16 @@ async def _read_parent_status(
                 plural="aiperfsweeps",
                 name=name,
             )
-    except Exception:  # noqa: BLE001 - best-effort read; worst case we re-set Aggregating once
-        return None
+    except ApiException as e:
+        if e.status == 404:
+            return None
+        raise kopf.TemporaryError(
+            f"apiserver rejected status read ({e.status}): {e.reason}", delay=15
+        ) from e
+    except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+        raise kopf.TemporaryError(
+            f"apiserver unreachable during status read: {e}", delay=15
+        ) from e
     return (cr.get("status") or {}) or None
 
 

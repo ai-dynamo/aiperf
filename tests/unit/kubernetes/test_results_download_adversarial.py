@@ -129,18 +129,17 @@ class TestOperatorDownloadPathTraversal:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "display_name,expected_name",
+        "display_name",
         [
-            param("../metrics.json", "metrics.json", id="parent-traversal"),
-            param(
-                "../../tenant-b/secret.json",
-                "secret.json",
-                id="multi-parent-traversal",
-            ),
+            param("../metrics.json", id="parent-traversal"),
+            param("../../tenant-b/secret.json", id="multi-parent-traversal"),
+            param("checkpoints/../../secret.json", id="nested-parent-traversal"),
+            param("/etc/passwd", id="absolute-path"),
+            param("checkpoints/.hidden.parquet", id="hidden-nested-leaf"),
         ],
     )  # fmt: skip
-    async def test_download_operator_file_traversal_display_name_collapses_to_basename(
-        self, tmp_path: Path, display_name: str, expected_name: str
+    async def test_download_operator_file_traversal_display_name_refuses_request(
+        self, tmp_path: Path, display_name: str
     ) -> None:
         output_dir = tmp_path / "downloads"
         output_dir.mkdir()
@@ -156,9 +155,33 @@ class TestOperatorDownloadPathTraversal:
             run="1770000000",
         )
 
-        assert result == (expected_name, 2)
-        assert (output_dir / expected_name).read_bytes() == b"{}"
-        assert (tmp_path / expected_name).exists() is False
+        assert result is None
+        assert session.urls == []
+        assert list(output_dir.rglob("*")) == []
+
+    @pytest.mark.asyncio
+    async def test_download_operator_file_nested_checkpoint_writes_under_output_dir(
+        self, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "downloads"
+        output_dir.mkdir()
+        session = _RecordingSession(_FakeResponse(body=b"{}"))
+
+        result = await _download_operator_file(
+            session,
+            api_base="http://localhost:31081",
+            namespace="bench-prod",
+            job_id="latency-bench-7f2a",
+            file_info={"name": "checkpoints/records-0.parquet"},
+            output_dir=output_dir,
+            run="1770000000",
+        )
+
+        assert result == ("checkpoints/records-0.parquet", 2)
+        assert (output_dir / "checkpoints" / "records-0.parquet").read_bytes() == b"{}"
+        assert session.urls == [
+            "http://localhost:31081/api/v1/results/bench-prod/latency-bench-7f2a/runs/1770000000/checkpoints/records-0.parquet"
+        ]
 
     @pytest.mark.asyncio
     async def test_download_operator_file_ready_marker_name_refuses_write(

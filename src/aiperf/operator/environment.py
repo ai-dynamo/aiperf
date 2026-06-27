@@ -175,6 +175,16 @@ class _SweepControllerSettings(BaseSettings):
         description="Poll interval (seconds) while waiting for a deleting same-named "
         "AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS.",
     )
+    CANCEL_GRACE_SECONDS: float = Field(
+        default=120.0,
+        gt=0,
+        le=3600,
+        description="Max seconds the sweep-controller will keep polling a child "
+        "AIPerfJob for a terminal phase after requesting cancel before giving up "
+        "and advancing the sweep. Bounds the post-cancel wait so a stuck child "
+        "(stalled operator cancel path, wedged pod, repeatedly-failing JobSet "
+        "delete) cannot wedge the whole sweep indefinitely.",
+    )
 
 
 class _OperatorServiceSettings(BaseSettings):

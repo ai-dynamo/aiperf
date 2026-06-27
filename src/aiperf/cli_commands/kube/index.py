@@ -61,6 +61,7 @@ def _raise_mutating_route_error(exc: httpx.HTTPStatusError) -> None:
 async def _operator_api_base(
     api_url: str | None,
     options: KubeManageOptions | None,
+    operator_namespace: str | None = None,
 ):
     """Yield a base URL for the operator's HTTP API.
 
@@ -70,6 +71,10 @@ async def _operator_api_base(
     - ``api_url`` None → resolve operator pod via cluster-wide label search
       and port-forward to the results-server container. Mirrors the pattern
       used by ``aiperf kube results list-runs``.
+
+    The benchmark ``--namespace`` does not influence operator-pod lookup;
+    pass ``operator_namespace`` (``--operator-namespace``) to pin it, else
+    cluster-wide auto-detect + ``DEFAULT_OPERATOR_NAMESPACE`` fallback runs.
 
     Raises:
         RuntimeError: When auto-resolve cannot find an operator pod (no
@@ -90,7 +95,7 @@ async def _operator_api_base(
     opts = options or KubeManageOptions()
 
     async with k8s_client(kubeconfig=opts.kubeconfig, context=opts.kube_context) as api:
-        op_ns = await resolve_operator_namespace(api, explicit=opts.namespace)
+        op_ns = await resolve_operator_namespace(api, explicit=operator_namespace)
         pod_info = await find_operator_pod(api, namespace=op_ns)
         if not pod_info:
             raise RuntimeError(
@@ -125,6 +130,14 @@ async def rebuild(
             "label-selector + port-forward to the results-server container."
         ),
     ] = None,
+    operator_namespace: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--operator-namespace",
+            help="Namespace where the operator is deployed. Auto-detected "
+            "(cluster-wide pod search) when omitted.",
+        ),
+    ] = None,
     options: KubeManageOptions | None = None,
 ) -> None:
     """Rebuild the operator's runs index from the PVC."""
@@ -135,7 +148,7 @@ async def rebuild(
 
     try:
         async with (
-            _operator_api_base(api_url, options) as base_url,
+            _operator_api_base(api_url, options, operator_namespace) as base_url,
             httpx.AsyncClient(base_url=base_url, timeout=300.0) as client,
         ):
             resp = await client.post(
@@ -175,6 +188,14 @@ async def stats(
             "label-selector + port-forward to the results-server container."
         ),
     ] = None,
+    operator_namespace: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--operator-namespace",
+            help="Namespace where the operator is deployed. Auto-detected "
+            "(cluster-wide pod search) when omitted.",
+        ),
+    ] = None,
     options: KubeManageOptions | None = None,
 ) -> None:
     """Show runs index statistics."""
@@ -184,7 +205,7 @@ async def stats(
         kube_logger.setLevel(logging.WARNING)
     try:
         async with (
-            _operator_api_base(api_url, options) as base_url,
+            _operator_api_base(api_url, options, operator_namespace) as base_url,
             httpx.AsyncClient(base_url=base_url) as client,
         ):
             resp = await client.get("/admin/index/stats")

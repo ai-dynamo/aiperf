@@ -6,6 +6,16 @@ from collections import defaultdict
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ErrorDetails, ErrorDetailsCount
 
+# Cap distinct error keys per phase. ``ErrorDetails.__hash__`` includes the full
+# message, so backends echoing a per-request-unique body (request id, timestamp,
+# prompt) under a sustained error storm would otherwise grow ``_error_counts``
+# without bound. Past the cap, further new (code, type) message variants fold
+# into a single "(other)" bucket keyed by (code, type) so memory and the
+# materialized error_summary stay bounded while identical-message dedup is
+# unaffected for everything seen before the cap.
+MAX_DISTINCT_ERROR_KEYS = 4096
+_OTHER_MESSAGE = "(other errors with this code/type)"
+
 
 class PhaseErrorTracker:
     """Phase Error Tracker. This is used to track the errors encountered during a credit phase.
@@ -30,8 +40,20 @@ class PhaseErrorTracker:
         ]
 
     def increment_error_count(self, error: ErrorDetails) -> None:
-        """Increment the count for a specific error."""
-        self._error_counts[error] += 1
+        """Increment the count for a specific error.
+
+        Identical errors dedup by ``(code, type, message)``. Once the number of
+        distinct keys reaches ``MAX_DISTINCT_ERROR_KEYS``, an otherwise-new error
+        is folded into a per-(code, type) "(other)" bucket rather than adding an
+        unbounded number of keys for per-request-unique messages.
+        """
+        if error in self._error_counts or len(self._error_counts) < (
+            MAX_DISTINCT_ERROR_KEYS
+        ):
+            self._error_counts[error] += 1
+            return
+        other = ErrorDetails(message=_OTHER_MESSAGE, code=error.code, type=error.type)
+        self._error_counts[other] += 1
 
 
 class ErrorTracker:

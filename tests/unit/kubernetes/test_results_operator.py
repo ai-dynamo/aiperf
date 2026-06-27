@@ -150,11 +150,30 @@ class TestDownloadOperatorFileUnsafe:
         assert session.get_calls == []
 
     @pytest.mark.asyncio
-    async def test_traversal_reduces_to_basename(self, tmp_path: Path) -> None:
-        # ``Path("../../etc/passwd").name`` is ``passwd``; downloaded safely.
+    async def test_traversal_refuses_without_network(self, tmp_path: Path) -> None:
+        # A traversal name must be rejected, never collapsed to its basename.
+        session = FakeSession({})
+        result = await _download_operator_file(
+            session,  # type: ignore[arg-type]
+            api_base="http://localhost",
+            namespace="ns",
+            job_id="job-1",
+            file_info={"name": "../../etc/passwd"},
+            output_dir=tmp_path,
+        )
+        assert result is None
+        assert session.get_calls == []
+        assert list(tmp_path.rglob("*")) == []
+
+    @pytest.mark.asyncio
+    async def test_nested_checkpoint_preserves_relative_path(
+        self, tmp_path: Path
+    ) -> None:
+        # Checkpoint files arrive with nested names and must be requested and
+        # written with the full API-visible relative path preserved.
         session = FakeSession(
             {
-                "http://localhost/api/v1/results/ns/job-1/passwd": [
+                "http://localhost/api/v1/results/ns/job-1/checkpoints/records-0.parquet": [
                     FakeResponse(
                         body=b"data",
                         chunks=[b"data"],
@@ -168,13 +187,11 @@ class TestDownloadOperatorFileUnsafe:
             api_base="http://localhost",
             namespace="ns",
             job_id="job-1",
-            file_info={"name": "../../etc/passwd"},
+            file_info={"name": "checkpoints/records-0.parquet"},
             output_dir=tmp_path,
         )
-        assert result == ("passwd", 4)
-        assert (tmp_path / "passwd").read_bytes() == b"data"
-        # Never attempted traversal URL
-        assert all(".." not in u for u in session.get_calls)
+        assert result == ("checkpoints/records-0.parquet", 4)
+        assert (tmp_path / "checkpoints" / "records-0.parquet").read_bytes() == b"data"
 
 
 # ============================================================

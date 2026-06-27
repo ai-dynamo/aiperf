@@ -288,9 +288,6 @@ class AioHttpTransport(BaseHTTPTransport):
                 connector_owner=connector_owner,
             )
             record.request_headers = redact_headers(headers)
-            await self._maybe_release_sticky_lease(
-                reuse_strategy, lease_manager, request_info, force=False, record=record
-            )
         except asyncio.CancelledError:
             # External cancellation (e.g., credit cancellation); connection now dirty.
             await self._maybe_release_sticky_lease(
@@ -302,6 +299,18 @@ class AioHttpTransport(BaseHTTPTransport):
             self.exception(f"HTTP request failed: {e!r}")
             await self._maybe_release_sticky_lease(
                 reuse_strategy, lease_manager, request_info, force=True
+            )
+            return record
+
+        # Post-success lease release runs outside the request try: the request
+        # already completed, so a teardown failure must not discard the record.
+        try:
+            await self._maybe_release_sticky_lease(
+                reuse_strategy, lease_manager, request_info, force=False, record=record
+            )
+        except Exception as e:  # noqa: BLE001 - cleanup failure must not fail the completed request
+            self.exception(
+                f"Sticky-lease release failed after successful request: {e!r}"
             )
 
         return record

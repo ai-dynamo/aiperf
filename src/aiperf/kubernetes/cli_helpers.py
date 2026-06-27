@@ -188,38 +188,42 @@ async def resolve_job(
 
     api = await _open_api_client(kubeconfig=kubeconfig, kube_context=kube_context)
 
-    # Try AIPerfJob CR first
-    job_info = await find_aiperf_job(api, job_id, namespace)
-    if job_info:
+    try:
+        # Try AIPerfJob CR first
+        job_info = await find_aiperf_job(api, job_id, namespace)
+        if job_info:
+            return ResolvedJob(name=job_id, job_info=job_info, api=api)
+
+        # Fallback to JobSet lookup
+        jobset_info = await find_jobset(api, job_id, namespace)
+        if not jobset_info:
+            if not quiet:
+                print_error(f"No AIPerf job found with ID: {job_id}")
+                if namespace:
+                    print_info(f"Searched namespace: {namespace}")
+                else:
+                    print_info("Searched all namespaces")
+                print_action("Run 'aiperf kube list' to see available jobs")
+            await api.close()
+            return None
+
+        # Wrap JobSetInfo as a minimal AIPerfJobInfo
+        from aiperf.kubernetes.models import AIPerfJobInfo
+
+        job_info = AIPerfJobInfo(
+            name=jobset_info.name,
+            namespace=jobset_info.namespace,
+            phase=jobset_info.status,
+            job_id=jobset_info.job_id,
+            jobset_name=jobset_info.name,
+            created=jobset_info.created,
+            model=jobset_info.model,
+            endpoint=jobset_info.endpoint,
+        )
         return ResolvedJob(name=job_id, job_info=job_info, api=api)
-
-    # Fallback to JobSet lookup
-    jobset_info = await find_jobset(api, job_id, namespace)
-    if not jobset_info:
-        if not quiet:
-            print_error(f"No AIPerf job found with ID: {job_id}")
-            if namespace:
-                print_info(f"Searched namespace: {namespace}")
-            else:
-                print_info("Searched all namespaces")
-            print_action("Run 'aiperf kube list' to see available jobs")
+    except BaseException:
         await api.close()
-        return None
-
-    # Wrap JobSetInfo as a minimal AIPerfJobInfo
-    from aiperf.kubernetes.models import AIPerfJobInfo
-
-    job_info = AIPerfJobInfo(
-        name=jobset_info.name,
-        namespace=jobset_info.namespace,
-        phase=jobset_info.status,
-        job_id=jobset_info.job_id,
-        jobset_name=jobset_info.name,
-        created=jobset_info.created,
-        model=jobset_info.model,
-        endpoint=jobset_info.endpoint,
-    )
-    return ResolvedJob(name=job_id, job_info=job_info, api=api)
+        raise
 
 
 class ResolvedSweep:
@@ -303,47 +307,51 @@ async def resolve_target(
 
     api = await _open_api_client(kubeconfig=kubeconfig, kube_context=kube_context)
 
-    # 1. AIPerfJob CR — same job-first behaviour as resolve_job.
-    job_info = await find_aiperf_job(api, target_name, namespace)
-    if job_info:
-        return ResolvedJob(name=target_name, job_info=job_info, api=api)
+    try:
+        # 1. AIPerfJob CR — same job-first behaviour as resolve_job.
+        job_info = await find_aiperf_job(api, target_name, namespace)
+        if job_info:
+            return ResolvedJob(name=target_name, job_info=job_info, api=api)
 
-    # 2. AIPerfSweep CR.
-    sweep_info = await find_aiperf_sweep(api, target_name, namespace)
-    if sweep_info:
-        return ResolvedSweep(name=target_name, sweep_info=sweep_info, api=api)
+        # 2. AIPerfSweep CR.
+        sweep_info = await find_aiperf_sweep(api, target_name, namespace)
+        if sweep_info:
+            return ResolvedSweep(name=target_name, sweep_info=sweep_info, api=api)
 
-    # 3. JobSet fallback — wrap as a minimal AIPerfJobInfo for callers that
-    # only know how to consume ResolvedJob.
-    jobset_info = await find_jobset(api, target_name, namespace)
-    if jobset_info:
-        from aiperf.kubernetes.models import AIPerfJobInfo
+        # 3. JobSet fallback — wrap as a minimal AIPerfJobInfo for callers that
+        # only know how to consume ResolvedJob.
+        jobset_info = await find_jobset(api, target_name, namespace)
+        if jobset_info:
+            from aiperf.kubernetes.models import AIPerfJobInfo
 
-        job_info = AIPerfJobInfo(
-            name=jobset_info.name,
-            namespace=jobset_info.namespace,
-            phase=jobset_info.status,
-            job_id=jobset_info.job_id,
-            jobset_name=jobset_info.name,
-            created=jobset_info.created,
-            model=jobset_info.model,
-            endpoint=jobset_info.endpoint,
+            job_info = AIPerfJobInfo(
+                name=jobset_info.name,
+                namespace=jobset_info.namespace,
+                phase=jobset_info.status,
+                job_id=jobset_info.job_id,
+                jobset_name=jobset_info.name,
+                created=jobset_info.created,
+                model=jobset_info.model,
+                endpoint=jobset_info.endpoint,
+            )
+            return ResolvedJob(name=target_name, job_info=job_info, api=api)
+
+        # 4. Nothing found — name both candidate kinds in the error so the user
+        # can pick the right follow-up command.
+        print_error(f"No AIPerfJob or AIPerfSweep found with name: {target_name}")
+        if namespace:
+            print_info(f"Searched namespace: {namespace}")
+        else:
+            print_info("Searched all namespaces")
+        print_action(
+            "Run 'aiperf kube list' to see available jobs "
+            "(or 'aiperf kube sweeps list' once available) for sweeps"
         )
-        return ResolvedJob(name=target_name, job_info=job_info, api=api)
-
-    # 4. Nothing found — name both candidate kinds in the error so the user
-    # can pick the right follow-up command.
-    print_error(f"No AIPerfJob or AIPerfSweep found with name: {target_name}")
-    if namespace:
-        print_info(f"Searched namespace: {namespace}")
-    else:
-        print_info("Searched all namespaces")
-    print_action(
-        "Run 'aiperf kube list' to see available jobs "
-        "(or 'aiperf kube sweeps list' once available) for sweeps"
-    )
-    await api.close()
-    return None
+        await api.close()
+        return None
+    except BaseException:
+        await api.close()
+        raise
 
 
 async def confirm_action(msg: str) -> bool:

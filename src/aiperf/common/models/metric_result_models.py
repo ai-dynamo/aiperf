@@ -173,12 +173,13 @@ class ProfileResults:
         """
         import msgspec
 
+        from aiperf.common.models.base_models import _msgspec_enc_hook
         from aiperf.common.models.branch_stats import BranchStats
 
         def _enc(obj: Any) -> Any:
             if isinstance(obj, BranchStats):
                 return obj.model_dump()
-            raise TypeError(f"Cannot encode object of type {type(obj).__name__}")
+            return _msgspec_enc_hook(obj)
 
         return msgspec.json.encode(self, enc_hook=_enc).decode("utf-8")
 
@@ -228,12 +229,13 @@ class ProcessRecordsResult:
         """
         import msgspec
 
+        from aiperf.common.models.base_models import _msgspec_enc_hook
         from aiperf.common.models.branch_stats import BranchStats
 
         def _enc(obj: Any) -> Any:
             if isinstance(obj, BranchStats):
                 return obj.model_dump()
-            raise TypeError(f"Cannot encode object of type {type(obj).__name__}")
+            return _msgspec_enc_hook(obj)
 
         return msgspec.json.encode(self, enc_hook=_enc).decode("utf-8")
 

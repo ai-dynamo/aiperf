@@ -38,6 +38,11 @@ class RunResult(AIPerfBaseModel):
     trial_index: int = Field(
         default=0, description="Zero-based trial index within the variation."
     )
+    variation_index: int = Field(
+        default=0,
+        ge=0,
+        description="Zero-based variation index (mirror of BenchmarkVariation.index); identifies the sweep cell that produced this run.",
+    )
     child_run_epoch: str = Field(
         default="",
         description="Kubernetes child AIPerfJob run epoch for sweep result fan-out.",

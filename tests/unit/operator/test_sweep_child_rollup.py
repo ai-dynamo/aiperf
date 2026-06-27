@@ -976,23 +976,40 @@ class TestReadParentStatus:
         assert await child_rollup._read_parent_status("ns", "s") is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_apiexception(
+    async def test_returns_none_on_404(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """404 → genuine not-found → None (safe unconditional set downstream)."""
+        from kubernetes_asyncio.client import ApiException
+
+        _install_fake_k8s(
+            monkeypatch, get_side_effect=ApiException(status=404, reason="NotFound")
+        )
+        assert await child_rollup._read_parent_status("ns", "s") is None
+
+    @pytest.mark.asyncio
+    async def test_non_404_apiexception_raises_temporary_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Defensive: any exception during GET → None (best-effort read)."""
+        """A transient read failure must NOT collapse into None — it would
+        defeat the TOCTOU/maxTotalRuns guards and regress a terminal phase.
+        It raises TemporaryError so the tick retries instead."""
+        import kopf
         from kubernetes_asyncio.client import ApiException
 
         _install_fake_k8s(
             monkeypatch, get_side_effect=ApiException(status=500, reason="boom")
         )
-        assert await child_rollup._read_parent_status("ns", "s") is None
+        with pytest.raises(kopf.TemporaryError):
+            await child_rollup._read_parent_status("ns", "s")
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_network_error(
+    async def test_network_error_raises_temporary_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        import kopf
+
         _install_fake_k8s(monkeypatch, get_side_effect=ConnectionError("refused"))
-        assert await child_rollup._read_parent_status("ns", "s") is None
+        with pytest.raises(kopf.TemporaryError):
+            await child_rollup._read_parent_status("ns", "s")
 
 
 # ============================================================
@@ -1314,7 +1331,9 @@ class TestExtractSummaryMetrics:
                     "output_token_throughput": 42.0,
                     "request_throughput": 7.5,
                     "request_count": 100,
-                    "error_count": 2,
+                    "error_request_count": 2,
+                    "error_rate": 0.02,
+                    "total_requests": 100,
                     "ignored_extra": "drop me",
                 }
             }
@@ -1323,21 +1342,28 @@ class TestExtractSummaryMetrics:
             "output_token_throughput": 42.0,
             "request_throughput": 7.5,
             "request_count": 100,
-            "error_count": 2,
+            "error_request_count": 2,
+            "error_rate": 0.02,
+            "total_requests": 100,
         }
 
     def test_pulls_p50_p95_p99_from_ttft_and_itl(self) -> None:
         out = _child_runs.extract_summary_metrics(
             {
                 "summary": {
-                    "ttft": {"p50": 1.0, "p95": 2.0, "p99": 3.0, "p999": 4.0},
-                    "itl": {"p50": 10.0, "p95": 20.0, "p99": 30.0},
+                    "time_to_first_token": {
+                        "p50": 1.0,
+                        "p95": 2.0,
+                        "p99": 3.0,
+                        "p999": 4.0,
+                    },
+                    "inter_token_latency": {"p50": 10.0, "p95": 20.0, "p99": 30.0},
                 }
             }
         )
         assert out == {
-            "ttft": {"p50": 1.0, "p95": 2.0, "p99": 3.0},
-            "itl": {"p50": 10.0, "p95": 20.0, "p99": 30.0},
+            "time_to_first_token": {"p50": 1.0, "p95": 2.0, "p99": 3.0},
+            "inter_token_latency": {"p50": 10.0, "p95": 20.0, "p99": 30.0},
         }
 
     def test_falls_back_to_liveSummary(self) -> None:
@@ -1374,7 +1400,7 @@ class TestBuildRunEntry:
             "phase": "Succeeded",
             "startTime": "2026-05-03T12:00:00Z",
             "completionTime": "2026-05-03T12:05:00Z",
-            "summary": {"request_count": 100, "error_count": 0},
+            "summary": {"request_count": 100, "error_request_count": 0},
         }
         entry = _child_runs.build_run_entry(body=body, status=status, name="child-7")
         assert entry["index"] == 3
@@ -1384,7 +1410,7 @@ class TestBuildRunEntry:
         assert entry["childName"] == "child-7"
         assert entry["startedAt"] == "2026-05-03T12:00:00Z"
         assert entry["completedAt"] == "2026-05-03T12:05:00Z"
-        assert entry["metrics"] == {"request_count": 100, "error_count": 0}
+        assert entry["metrics"] == {"request_count": 100, "error_request_count": 0}
 
     def test_missing_labels_fall_back_to_index_minus_one(self) -> None:
         entry = _child_runs.build_run_entry(

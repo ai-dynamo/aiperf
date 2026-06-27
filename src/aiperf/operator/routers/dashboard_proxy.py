@@ -18,7 +18,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -71,36 +71,42 @@ def create_dashboard_proxy_router() -> APIRouter:
         }
         body = await request.body()
 
+        client = httpx.AsyncClient(timeout=30.0)
         try:
-            client = httpx.AsyncClient(timeout=30.0)
-            try:
-                async with client.stream(
-                    request.method,
-                    upstream_url,
-                    headers=forward_headers,
-                    content=body,
-                ) as upstream:
-                    response_headers = {
-                        k: v
-                        for k, v in upstream.headers.items()
-                        if k.lower() not in _FORWARD_RESPONSE_HEADER_DROP
-                    }
-                    content = b""
-                    async for chunk in upstream.aiter_raw():
-                        content += chunk
-                    return Response(
-                        content=content,
-                        status_code=upstream.status_code,
-                        headers=response_headers,
-                    )
-            finally:
-                await client.aclose()
+            stream_ctx = client.stream(
+                request.method,
+                upstream_url,
+                headers=forward_headers,
+                content=body,
+            )
+            upstream = await stream_ctx.__aenter__()
         except httpx.HTTPError as exc:
+            await client.aclose()
             logger.warning("dashboard upstream unreachable: %s", exc)
             return Response(
                 content=b"Dashboard sidecar is unreachable.",
                 status_code=503,
                 media_type="text/plain; charset=utf-8",
             )
+
+        response_headers = {
+            k: v
+            for k, v in upstream.headers.items()
+            if k.lower() not in _FORWARD_RESPONSE_HEADER_DROP
+        }
+
+        async def _iter_upstream():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await stream_ctx.__aexit__(None, None, None)
+                await client.aclose()
+
+        return StreamingResponse(
+            _iter_upstream(),
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
 
     return router

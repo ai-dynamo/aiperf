@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import math
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -1671,8 +1670,12 @@ class TestDerivedLatencyMetrics:
 
 class TestErrorAdjustedPercentiles:
     """Issue #688: per-record latency percentiles where errored requests are
-    modeled as ``+inf`` so the band correctly flips to ``inf`` once it crosses
-    into the failure region.
+    modeled as ``+inf`` so the band correctly crosses into the failure region.
+
+    Because ``+inf`` cannot survive the JSON serialization boundary (every
+    exporter coerces it to ``null``), non-finite stats are clamped to ``None``
+    at build-time: the unbounded tail emits as explicit ``null`` while the
+    finite lower percentiles are preserved.
 
     The implementation uses ``np.percentile(..., method="nearest")`` because
     the default linear interpolation produces ``nan`` at boundaries that
@@ -1760,26 +1763,28 @@ class TestErrorAdjustedPercentiles:
         assert "(error-adjusted)" in adj.header
         # Full distribution shape: 9 percentiles + count/sum/avg/min/max.
         assert adj.count == 10  # 9 success + 1 error
-        assert math.isinf(adj.sum), "sum is inf with one inf-inflated sample"
-        assert math.isinf(adj.avg), "avg is inf with one inf-inflated sample"
+        # ``inf`` cannot survive the JSON serialization boundary (every
+        # exporter coerces it to ``null``), so non-finite stats are clamped to
+        # ``None`` at build-time. sum/avg/max are unbounded under failure and
+        # therefore emit as ``None``; ``std`` is mathematically undefined.
+        assert adj.sum is None, "sum is unbounded with an inf-inflated sample"
+        assert adj.avg is None, "avg is unbounded with an inf-inflated sample"
         assert adj.min == pytest.approx(100.0)  # finite — least value
-        assert math.isinf(adj.max), "max is inf when any error present"
+        assert adj.max is None, "max is unbounded when any error present"
         assert adj.std is None  # std mathematically undefined with inf
         # 10 samples, 1 inf: method="nearest" rounds the rank to the closest
         # integer index. At 10% error rate the boundary lands as follows
         # (rank = q/100 × 9):
-        #   p50  rank=4.5 → idx 4 → 100 (finite)
+        #   p50  rank=4.5 → idx 4 → 100 (finite, survives)
         #   p90  rank=8.1 → idx 8 → 100 (finite — still in success band)
-        #   p95  rank=8.55 → idx 9 → inf (crosses into failure)
-        #   p99  rank=8.91 → idx 9 → inf
-        # This matches issue #688's worked-example table exactly.
+        #   p95  rank=8.55 → idx 9 → inf → clamped to None (crosses failure)
+        #   p99  rank=8.91 → idx 9 → inf → clamped to None
+        # The surviving lower percentiles are preserved; only the unbounded
+        # tail is encoded as an explicit ``null``.
         assert adj.p50 == pytest.approx(100.0)
         assert adj.p90 == pytest.approx(100.0)
-        assert math.isinf(adj.p95), f"adj p95 should be inf, got {adj.p95!r}"
-        assert math.isinf(adj.p99), f"adj p99 should be inf, got {adj.p99!r}"
-        # Critically — NOT NaN. method="nearest" avoids the linear-interp bug.
-        assert not math.isnan(adj.p95), "adj p95 must not be nan (linear-interp bug)"
-        assert not math.isnan(adj.p99), "adj p99 must not be nan"
+        assert adj.p95 is None, f"adj p95 is unbounded, got {adj.p95!r}"
+        assert adj.p99 is None, f"adj p99 is unbounded, got {adj.p99!r}"
         # adj_p* sidecar fields removed — request_latency carries no adj fields.
         assert not hasattr(rl, "adj_p50") or rl.adj_p50 is None
         assert not hasattr(rl, "adj_p95") or rl.adj_p95 is None

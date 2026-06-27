@@ -99,8 +99,9 @@ def test_write_sweep_parent_aggregate_uses_child_run_epoch(tmp_path: Path) -> No
         label="cell-0",
         success=True,
         error=None,
-        variation_values={"index": 0},
+        variation_values={},
         variation_label="search_iter_0000",
+        variation_index=0,
         trial_index=0,
         child_run_epoch="1714000042",
     )

@@ -121,6 +121,19 @@ def _is_checkpoint_path(base_dir: Path, path: Path) -> bool:
     return bool(relative.parts) and relative.parts[0] == CHECKPOINTS_DIR_NAME
 
 
+def _safe_size(entry: Path) -> int | None:
+    """Return the file size, or ``None`` if the file vanished mid-listing.
+
+    A checkpoint parquet can be rotated/unlinked by the writer between
+    ``rglob`` enumeration and ``stat``; treat the race as "skip this entry"
+    rather than 500-ing the whole listing.
+    """
+    try:
+        return entry.stat().st_size
+    except OSError:
+        return None
+
+
 def _collect_result_files(base_dir: Path) -> list[ResultFileInfo]:
     """Enumerate every artifact under ``base_dir`` once the ready marker is set.
 
@@ -140,26 +153,34 @@ def _collect_result_files(base_dir: Path) -> list[ResultFileInfo]:
     cp_dir = checkpoints_dir(base_dir)
 
     if ready:
-        files.extend(
-            ResultFileInfo(
-                name=entry.relative_to(base_dir).as_posix(),
-                size=entry.stat().st_size,
-            )
-            for entry in base_dir.rglob("*")
-            if entry.is_file()
-            and entry.name != READY_MARKER_NAME
-            and cp_dir not in entry.parents
-        )
+        for entry in base_dir.rglob("*"):
+            if (
+                not entry.is_file()
+                or entry.name == READY_MARKER_NAME
+                or cp_dir in entry.parents
+            ):
+                continue
+            size = _safe_size(entry)
+            if size is not None:
+                files.append(
+                    ResultFileInfo(
+                        name=entry.relative_to(base_dir).as_posix(),
+                        size=size,
+                    )
+                )
 
     if cp_dir.is_dir():
-        files.extend(
-            ResultFileInfo(
-                name=entry.relative_to(base_dir).as_posix(),
-                size=entry.stat().st_size,
-            )
-            for entry in cp_dir.rglob("*")
-            if entry.is_file()
-        )
+        for entry in cp_dir.rglob("*"):
+            if not entry.is_file():
+                continue
+            size = _safe_size(entry)
+            if size is not None:
+                files.append(
+                    ResultFileInfo(
+                        name=entry.relative_to(base_dir).as_posix(),
+                        size=size,
+                    )
+                )
 
     return sorted(files, key=lambda item: item.name)
 

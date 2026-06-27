@@ -28,6 +28,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from aiperf.common.enums import MetricFlags
+from aiperf.common.finite import is_finite_value
 from aiperf.common.models import MetricResult
 
 if TYPE_CHECKING:
@@ -257,29 +258,36 @@ def _build_adjusted_metric_result(
     )
     n = int(inflated.size)
     pcts = np.percentile(inflated, _ADJ_FULL_PERCENTILE_QS, method="nearest")
-    # ``avg`` and ``sum`` correctly become ``inf`` when any failure is
-    # present — that's the user-perceived-latency-under-failure reading
-    # the metric is meant to surface. ``std`` is mathematically undefined
-    # in a distribution containing ``inf`` (yields NaN through the
-    # variance computation), so we clamp it to ``None`` to avoid emitting
-    # a NaN that the JSON encoder may render as ``null`` or reject.
+
+    # The failure inflation pushes ``sum``/``avg``/``max`` and the upper
+    # percentiles to ``+inf``; ``std`` is mathematically undefined in a
+    # distribution containing ``inf`` (NaN through the variance computation).
+    # ``inf``/``NaN`` cannot survive the JSON boundary — every exporter
+    # silently coerces them to ``null``, which would destroy the
+    # error-adjusted distribution this metric exists to report. Clamp every
+    # non-finite stat to ``None`` (mirroring the existing ``std`` treatment)
+    # so the surviving lower percentiles remain intact and the unbounded
+    # tail is encoded as an explicit ``null`` rather than a phantom number.
+    def _finite_or_none(x: float) -> float | None:
+        return float(x) if is_finite_value(x) else None
+
     return MetricResult(
         tag=f"adj_{tag}",
         header=f"{metric_cls.header} (error-adjusted)",
         unit=str(metric_cls.unit),
         count=n,
-        sum=float(np.sum(inflated)),
-        avg=float(np.mean(inflated)),
-        min=float(np.min(inflated)),
-        max=float(np.max(inflated)),
+        sum=_finite_or_none(np.sum(inflated)),
+        avg=_finite_or_none(np.mean(inflated)),
+        min=_finite_or_none(np.min(inflated)),
+        max=_finite_or_none(np.max(inflated)),
         std=None,
-        p1=float(pcts[0]),
-        p5=float(pcts[1]),
-        p10=float(pcts[2]),
-        p25=float(pcts[3]),
-        p50=float(pcts[4]),
-        p75=float(pcts[5]),
-        p90=float(pcts[6]),
-        p95=float(pcts[7]),
-        p99=float(pcts[8]),
+        p1=_finite_or_none(pcts[0]),
+        p5=_finite_or_none(pcts[1]),
+        p10=_finite_or_none(pcts[2]),
+        p25=_finite_or_none(pcts[3]),
+        p50=_finite_or_none(pcts[4]),
+        p75=_finite_or_none(pcts[5]),
+        p90=_finite_or_none(pcts[6]),
+        p95=_finite_or_none(pcts[7]),
+        p99=_finite_or_none(pcts[8]),
     )

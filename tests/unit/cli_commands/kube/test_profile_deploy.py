@@ -8,7 +8,7 @@
     - `profile._try_load_aiperfjob_cr`   — CR-vs-plain-config detection
     - `profile.generate_benchmark_name`  — deterministic DNS-safe name
     - `profile_deploy._build_cr`         — CR envelope construction
-    - `profile_deploy.operator_available`— CRD probe (404 vs other)
+    - `profile_deploy.operator_available`— CRD probe (404 -> direct; 403/5xx -> raise)
     - `profile_deploy.wait_or_detach`    — interactive/detach split
     - `profile_deploy_direct._apply_manifest` — kind-dispatch table
 """
@@ -207,9 +207,15 @@ class TestOperatorAvailable:
 
         assert "no operator" in capsys.readouterr().out
 
-    async def test_returns_false_on_unexpected_exception(self, capsys) -> None:
-        """Any unrecognised error falls back to direct mode with a labeled message."""
+    async def test_raises_on_403_rbac_denial(self) -> None:
+        """403 (CRD unreadable) must NOT silently downgrade to direct mode.
+
+        The operator may be installed but the user lacks CRD-read RBAC; we
+        surface the RBAC error instead of guessing "no operator".
+        """
         from contextlib import asynccontextmanager
+
+        from kubernetes_asyncio.client.exceptions import ApiException
 
         api = MagicMock()
 
@@ -219,7 +225,7 @@ class TestOperatorAvailable:
 
         fake_apiext = MagicMock()
         fake_apiext.read_custom_resource_definition = AsyncMock(
-            side_effect=RuntimeError("network down")
+            side_effect=ApiException(status=403, reason="Forbidden")
         )
         with (
             patch(
@@ -230,12 +236,38 @@ class TestOperatorAvailable:
                 "kubernetes_asyncio.client.ApiextensionsV1Api",
                 return_value=fake_apiext,
             ),
+            pytest.raises(SystemExit, match="--no-operator"),
         ):
-            assert await operator_available(_StubKubeOpts()) is False
+            await operator_available(_StubKubeOpts())
 
-        out = capsys.readouterr().out
-        assert "RuntimeError" in out
-        assert "network down" in out
+    async def test_raises_on_transient_5xx(self) -> None:
+        """A transient apiserver 5xx must raise, not silently change mode."""
+        from contextlib import asynccontextmanager
+
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        api = MagicMock()
+
+        @asynccontextmanager
+        async def _fake_client(**_kw):
+            yield api
+
+        fake_apiext = MagicMock()
+        fake_apiext.read_custom_resource_definition = AsyncMock(
+            side_effect=ApiException(status=500, reason="ServerError")
+        )
+        with (
+            patch(
+                "aiperf.kubernetes.client.k8s_client",
+                new=_fake_client,
+            ),
+            patch(
+                "kubernetes_asyncio.client.ApiextensionsV1Api",
+                return_value=fake_apiext,
+            ),
+            pytest.raises(SystemExit, match="HTTP 500"),
+        ):
+            await operator_available(_StubKubeOpts())
 
 
 # =============================================================================

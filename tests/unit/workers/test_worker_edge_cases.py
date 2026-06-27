@@ -36,7 +36,7 @@ import pytest
 import zmq
 from pytest import param
 
-from aiperf.common.enums import CommandType, WorkerStartupState
+from aiperf.common.enums import CommandType, CreditPhase, WorkerStartupState
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.messages import ErrorMessage, WorkerStartupStateMessage
 from aiperf.common.messages.dataset_messages import ConversationResponseMessage
@@ -302,8 +302,8 @@ class TestWorkerCancellation:
         task_a = asyncio.create_task(waiter(cancelled_a))
         task_b = asyncio.create_task(waiter(cancelled_b))
         await asyncio.sleep(0)  # let waiters start awaiting the future
-        mock_worker.credit_tasks[1] = task_a
-        mock_worker.credit_tasks[2] = task_b
+        mock_worker.credit_tasks[(CreditPhase.PROFILING, 1)] = task_a
+        mock_worker.credit_tasks[(CreditPhase.PROFILING, 2)] = task_b
 
         await mock_worker._on_cancel_credits_message(CancelCredits(credit_ids={1, 99}))
 
@@ -337,7 +337,7 @@ class TestCreditDoneCallback:
             raise AssertionError("should not execute")
 
         task = asyncio.create_task(never_runs())
-        mock_worker.credit_tasks[42] = task
+        mock_worker.credit_tasks[(CreditPhase.PROFILING, 42)] = task
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -346,7 +346,7 @@ class TestCreditDoneCallback:
 
         # Done callback schedules an async send — let it run.
         await asyncio.sleep(0)
-        assert 42 not in mock_worker.credit_tasks
+        assert (CreditPhase.PROFILING, 42) not in mock_worker.credit_tasks
         assert ctx.returned is True
         assert ctx.cancelled is True
         sent = mock_worker.credit_return_push_client.send.await_args.args[0]
@@ -364,14 +364,14 @@ class TestCreditDoneCallback:
             return None
 
         task = asyncio.create_task(noop())
-        mock_worker.credit_tasks[7] = task
+        mock_worker.credit_tasks[(CreditPhase.PROFILING, 7)] = task
         await task
 
         mock_worker._on_credit_drop_message_task_done(task, ctx)
 
         # No additional send; tracking dict still cleaned up.
         await asyncio.sleep(0)
-        assert 7 not in mock_worker.credit_tasks
+        assert (CreditPhase.PROFILING, 7) not in mock_worker.credit_tasks
         assert mock_worker.credit_return_push_client.send.await_count == 0
 
 
@@ -420,8 +420,8 @@ class TestOnCreditMessageDispatch:
     ) -> None:
         """`InFlightReconciliation` triggers an `InFlightReport` covering live credit ids."""
         sentinel_task = asyncio.create_task(asyncio.sleep(0))
-        mock_worker.credit_tasks[5] = sentinel_task
-        mock_worker.credit_tasks[6] = sentinel_task
+        mock_worker.credit_tasks[(CreditPhase.PROFILING, 5)] = sentinel_task
+        mock_worker.credit_tasks[(CreditPhase.WARMUP, 6)] = sentinel_task
 
         await mock_worker._on_credit_message(
             InFlightReconciliation(credit_ids=frozenset({5, 6}))
@@ -883,9 +883,9 @@ class TestScheduleCreditDropTask:
 
         mock_worker._schedule_credit_drop_task(ctx.credit)
 
-        assert 77 in mock_worker.credit_tasks
-        task = mock_worker.credit_tasks[77]
+        assert (CreditPhase.PROFILING, 77) in mock_worker.credit_tasks
+        task = mock_worker.credit_tasks[(CreditPhase.PROFILING, 77)]
         await task
         # Done callback runs synchronously after await; pop happens inside it.
         await asyncio.sleep(0)
-        assert 77 not in mock_worker.credit_tasks
+        assert (CreditPhase.PROFILING, 77) not in mock_worker.credit_tasks

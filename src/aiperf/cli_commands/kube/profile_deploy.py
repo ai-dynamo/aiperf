@@ -105,20 +105,25 @@ async def operator_available(kube_options: KubeOptions) -> bool:
         kube_console.print_info("AIPerfJob CRD detected, using operator mode")
         return True
     except ApiException as e:
-        if e.status != 404:
+        if e.status == 404:
             kube_console.print_info(
-                f"AIPerfJob CRD not found, deploying directly (no operator) [ApiException: {e}]"
+                "AIPerfJob CRD not found, deploying directly (no operator)"
             )
             return False
-        kube_console.print_info(
-            "AIPerfJob CRD not found, deploying directly (no operator)"
-        )
-        return False
-    except Exception as e:  # noqa: BLE001 - any unrecognized error falls back to direct-deploy mode with a user-facing message
-        kube_console.print_info(
-            f"AIPerfJob CRD not found, deploying directly (no operator) [{type(e).__name__}: {e}]"
-        )
-        return False
+        if e.status == 403:
+            raise SystemExit(
+                f"Cannot determine operator presence: reading the AIPerfJob CRD "
+                f"({crd_name}) was denied (HTTP 403). The operator may be installed "
+                f"but your RBAC lacks 'customresourcedefinitions get'. Re-run with "
+                f"--no-operator to force direct deploy, or grant CRD-read access."
+            ) from e
+        # Transient/server-side failures (5xx, timeouts) must not silently
+        # downgrade the execution mode; surface them so the user can retry.
+        raise SystemExit(
+            f"Cannot determine operator presence: reading the AIPerfJob CRD "
+            f"({crd_name}) failed (HTTP {e.status}). Re-run with --no-operator to "
+            f"force direct deploy, or retry once the apiserver is healthy."
+        ) from e
 
 
 def _print_manifests_yaml(manifests: list[dict[str, Any]]) -> None:

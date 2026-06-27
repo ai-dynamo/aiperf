@@ -38,6 +38,9 @@ async def cleanup_old_results(
         return
 
     ttl_days = status.get("resultsTtlDays", OperatorEnvironment.RESULTS.TTL_DAYS)
+    if ttl_days <= 0:
+        return  # 0 = never clean per RESULTS.TTL_DAYS contract
+
     job_id = status.get("jobId", name)
     results_path = status.get("resultsPath")
 

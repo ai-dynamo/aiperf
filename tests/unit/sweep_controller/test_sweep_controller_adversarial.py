@@ -58,6 +58,7 @@ def _result(
     label: str,
     variation_label: str,
     trial_index: int,
+    variation_index: int = 0,
     success: bool = True,
     variation_values: dict[str, object] | None = None,
     child_run_epoch: str = "1778027130",
@@ -68,6 +69,7 @@ def _result(
         error=None if success else "worker pod cancelled",
         variation_values=variation_values or {},
         variation_label=variation_label,
+        variation_index=variation_index,
         trial_index=trial_index,
         child_run_epoch=child_run_epoch,
     )
@@ -345,13 +347,32 @@ async def test_main_adaptive_planner_failure_cancels_poll_task_before_exit(
 # ===========================================================================
 
 
-def test_write_sweep_parent_aggregate_adaptive_results_group_labels_into_indices(
+def test_write_sweep_parent_aggregate_adaptive_results_use_true_variation_index(
     tmp_path: Path,
 ) -> None:
+    # The child manifest must reflect each result's real variation_index
+    # (stamped from BenchmarkVariation.index), not a label-appearance counter.
+    # A BO planner can re-propose the same config under a fresh index, so two
+    # results sharing a variation_label can still belong to distinct cells.
     results = [
-        _result(label="trial-a0", variation_label="search_iter_0000", trial_index=0),
-        _result(label="trial-b0", variation_label="search_iter_0001", trial_index=0),
-        _result(label="trial-a1", variation_label="search_iter_0000", trial_index=1),
+        _result(
+            label="trial-a0",
+            variation_label="search_iter_0000",
+            variation_index=0,
+            trial_index=0,
+        ),
+        _result(
+            label="trial-b0",
+            variation_label="search_iter_0001",
+            variation_index=1,
+            trial_index=0,
+        ),
+        _result(
+            label="trial-a1",
+            variation_label="search_iter_0000",
+            variation_index=0,
+            trial_index=1,
+        ),
     ]
 
     _write_sweep_parent_aggregate(
@@ -392,7 +413,8 @@ def test_write_sweep_parent_aggregate_single_trial_omits_trial_suffix_and_field(
             label="grid-c128",
             variation_label="concurrency=128",
             trial_index=0,
-            variation_values={"index": 7, "phases.profiling.concurrency": 128},
+            variation_index=7,
+            variation_values={"phases.profiling.concurrency": 128},
         )
     ]
 

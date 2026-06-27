@@ -332,7 +332,7 @@ class TestKubeIndexRebuildCli:
         monkeypatch.setattr(
             index,
             "_operator_api_base",
-            lambda api_url, options: _fixed_operator_api_base(
+            lambda api_url, options, operator_namespace=None: _fixed_operator_api_base(
                 api_url or "http://localhost:39081"
             ),
         )
@@ -367,7 +367,7 @@ class TestKubeIndexRebuildCli:
         monkeypatch.setattr(
             index,
             "_operator_api_base",
-            lambda api_url, options: _fixed_operator_api_base(
+            lambda api_url, options, operator_namespace=None: _fixed_operator_api_base(
                 api_url or "http://localhost:39081"
             ),
         )
@@ -390,7 +390,7 @@ class TestKubeIndexRebuildCli:
         monkeypatch.setattr(
             index,
             "_operator_api_base",
-            lambda api_url, options: _fixed_operator_api_base(
+            lambda api_url, options, operator_namespace=None: _fixed_operator_api_base(
                 api_url or "http://localhost:39081"
             ),
         )
@@ -414,7 +414,7 @@ class TestKubeIndexRebuildCli:
         monkeypatch.setattr(
             index,
             "_operator_api_base",
-            lambda api_url, options: _fixed_operator_api_base(
+            lambda api_url, options, operator_namespace=None: _fixed_operator_api_base(
                 api_url or "http://localhost:39081"
             ),
         )
@@ -461,7 +461,6 @@ class TestKubeIndexRebuildCli:
         monkeypatch.setattr(kube_client, "find_operator_pod", fake_find_operator_pod)
 
         options = KubeManageOptions(
-            namespace="bench-operator",
             kubeconfig="/home/bench/.kube/prod.yaml",
             kube_context="kind-aiperf-prod",
         )
@@ -470,5 +469,7 @@ class TestKubeIndexRebuildCli:
             RuntimeError,
             match=r"Operator pod not found in namespace 'bench-operator'.*Pass --api-url",
         ):
-            async with index._operator_api_base(None, options):
+            async with index._operator_api_base(
+                None, options, operator_namespace="bench-operator"
+            ):
                 raise AssertionError("missing operator pod must fail before yielding")

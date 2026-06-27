@@ -299,7 +299,12 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
             command, service_ids, timeout
         ):
             responses.append(response)
-            if isinstance(response, CommandErrorResponse):
+            # The tagged-union decoder collapses every COMMAND_RESPONSE variant
+            # onto the base CommandResponse branch, so an error arrives over the
+            # wire as a CommandResponse carrying ``error`` (never the
+            # CommandErrorResponse subclass). Detect by payload, not isinstance.
+            # Raw ErrorDetails (timeout fill-ins) intentionally do not abort here.
+            if isinstance(response, CommandResponse) and response.error is not None:
                 self.debug(
                     f"Received error from {service_id}, aborting wait for "
                     f"remaining {len(service_ids) - len(responses)} service(s)"

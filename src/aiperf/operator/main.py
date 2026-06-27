@@ -185,6 +185,38 @@ async def on_aiperfsweep_cancel(
     )
 
 
+async def _delete_sweep_jobset(namespace: str, jobset_name: str) -> None:
+    """Delete a sweep-controller's backing JobSet; tolerate a missing one.
+
+    Idempotent across reconciles: a 404 (already deleted on a prior tick or by
+    CR-TTL cascade) is not an error. Non-404 failures are logged but not
+    re-raised — the harvest already succeeded, so a transient delete failure
+    must not flip the handler to a retry that re-harvests pointlessly; the next
+    reconcile (or CR TTL) reaps the pod.
+    """
+    from kubernetes_asyncio import client
+    from kubernetes_asyncio.client import ApiException
+
+    from aiperf.kubernetes.client import k8s_client
+
+    try:
+        async with k8s_client() as api:
+            await client.CustomObjectsApi(api).delete_namespaced_custom_object(
+                group=JOBSET_GROUP,
+                version=JOBSET_VERSION,
+                plural=JOBSET_PLURAL,
+                namespace=namespace,
+                name=jobset_name,
+            )
+        logger.info(f"Deleted sweep JobSet {namespace}/{jobset_name} after harvest")
+    except ApiException as e:
+        if e.status != 404:
+            logger.warning(
+                f"Failed to delete sweep JobSet {namespace}/{jobset_name} "
+                f"after harvest: {e}"
+            )
+
+
 @kopf.on.field(
     AIPERF_GROUP,
     AIPERF_VERSION,
@@ -221,17 +253,43 @@ async def on_aiperfsweep_aggregation_complete(
             f"status.runEpoch; skipping disk persistence"
         )
         return
+    base_dir = OperatorEnvironment.RESULTS.DIR
     fetched_count = await _aggregate_fetch.fetch_sweep_aggregate_to_disk(
         sweep_name=name,
         namespace=namespace,
         epoch=str(epoch),
-        base_dir=OperatorEnvironment.RESULTS.DIR,
+        base_dir=base_dir,
     )
     if fetched_count == 0:
+        # A re-fire AFTER we deleted the JobSet (below) hits a dead sidecar
+        # and gets 0 files — but the harvest already happened on the tick
+        # that did the delete. Treat an already-populated dest-dir as success
+        # so the handler does not loop forever on TemporaryError once the pod
+        # is gone. Only retry when the artifacts are genuinely absent.
+        sweep_epoch_dir = (
+            base_dir / namespace / "sweeps" / name / str(epoch) / "aggregate.json"
+        )
+        if sweep_epoch_dir.exists():
+            logger.info(
+                f"AIPerfSweep {namespace}/{name} aggregate already on disk "
+                f"(epoch={epoch}); sidecar gone after JobSet reap, treating as done"
+            )
+            await _delete_sweep_jobset(namespace, f"aiperf-{name}")
+            return
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} aggregate sidecar returned no files; retrying",
             delay=30,
         )
+
+    # The aggregate is now on the operator's PVC, so the sweep-controller pod
+    # has nothing left to serve. Delete its JobSet to reap the pod promptly —
+    # otherwise the pod lingers until the CR's `ttlSecondsAfterFinished`
+    # reaper fires, because the controller container exits 0 but the
+    # results-sidecar runs uvicorn forever and a Job pod only reaches
+    # `Succeeded` once ALL containers terminate. Mirrors the AIPerfJob
+    # harvest's `_maybe_delete_jobset_after_success` (delete only after a
+    # successful fetch, so we never tear the sidecar down before harvesting).
+    await _delete_sweep_jobset(namespace, f"aiperf-{name}")
 
 
 @kopf.on.field(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="status.phase")

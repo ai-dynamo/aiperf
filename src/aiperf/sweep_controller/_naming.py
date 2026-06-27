@@ -35,9 +35,17 @@ def _validate_child_name_indexes(
     variation_index: int,
     trial_index: int | None,
 ) -> None:
-    if not 0 <= variation_index <= 99:
+    # Upper bound tracks the adaptive-search budget: BO/SLA planners stamp
+    # ``SweepVariation.index`` with the monotonic iteration counter (0-based),
+    # which runs up to ``AdaptiveSearchSweep.max_iterations`` (Field le=200, so
+    # indices 0..199). A 0..99 cap crashed adaptive sweeps mid-run at iteration
+    # 100 even though far fewer cells ran concurrently. ``f"{var_idx:02d}"``
+    # renders 3-digit indices unambiguously (``v100``), and the child-name
+    # length budget already reserves a multi-digit suffix (see
+    # ``_name_from_config_file`` and ``build_child_name``).
+    if not 0 <= variation_index <= 199:
         raise ValueError(
-            f"variation index {variation_index} is outside the supported 0..99 range"
+            f"variation index {variation_index} is outside the supported 0..199 range"
         )
     if trial_index is not None and not 0 <= trial_index <= 9:
         raise ValueError(
@@ -71,9 +79,10 @@ def build_child_name(
     """Deterministic child AIPerfJob name from (sweep, variation, trial).
 
     Format: ``<sweep>-v<vari:02d>-t<trial:01d>`` (or no -t suffix if
-    ``trial_index is None``). Variation budget is 100 (00..99), trial budget
-    is 10 (0..9). Bounded by the 35-char ``job_id`` cap (KubernetesDeployment
-    validator), so sweep CR name must be <=29 chars.
+    ``trial_index is None``). Variation budget is 200 (00..199, matching
+    ``AdaptiveSearchSweep.max_iterations`` le=200), trial budget is 10 (0..9).
+    Bounded by the 35-char ``job_id`` cap (KubernetesDeployment validator), so
+    sweep CR name must be <=29 chars.
 
     The sweep-run epoch is **not** in the name; it lives on the
     ``aiperf.nvidia.com/sweep-run-epoch`` label and on ``status.runEpoch``

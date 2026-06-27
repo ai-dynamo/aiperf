@@ -309,19 +309,28 @@ async def kubectl_copy_results(
         True if copy succeeded, False otherwise.
     """
     kube_args = _kubectl_kube_args(kubeconfig, kube_context)
-    cp_result = await run_command(
-        [
-            "kubectl",
-            "cp",
-            "-n",
-            namespace,
-            "-c",
-            container,
-            f"{pod_name}:/results/.",
-            str(output_dir),
-            *kube_args,
-        ]
-    )
+    try:
+        cp_result = await run_command(
+            [
+                "kubectl",
+                "cp",
+                "-n",
+                namespace,
+                "-c",
+                container,
+                f"{pod_name}:/results/.",
+                str(output_dir),
+                *kube_args,
+            ],
+            timeout=1800.0,
+        )
+    except asyncio.TimeoutError:
+        print_error(
+            f"Timed out copying results from {pod_name}:/results after 1800s. "
+            "The artifact tree may be very large; retry with the API path "
+            "(omit --from-pods) or copy a smaller subset manually."
+        )
+        return False
 
     if cp_result.ok:
         if cp_result.stdout:

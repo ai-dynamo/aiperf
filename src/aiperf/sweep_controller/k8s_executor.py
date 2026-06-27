@@ -173,6 +173,14 @@ class K8sChildJobExecutor(RunExecutor):
         # the executor (one per sweep) so survives the orchestrator's
         # variation/trial loop without external state.
         self._terminal_children: list[dict[str, Any]] = []
+        # The child object ``_pull_summary_metrics`` last resolved — possibly a
+        # refreshed read whose ``status.runEpoch`` was stamped AFTER the
+        # terminal-phase read in ``execute``. Both the RunResult's
+        # ``child_run_epoch`` and the children-manifest back-link must derive
+        # the epoch from THIS object, not the stale terminal read, or the
+        # variation silently drops out of the runs index (the result dir is
+        # written under the child's real epoch).
+        self._last_resolved_child: dict[str, Any] | None = None
 
     def derive_id(self, plan: BenchmarkPlan | None, var_idx: int, trial: int) -> str:
         return derive_child_name(
@@ -293,7 +301,17 @@ class K8sChildJobExecutor(RunExecutor):
     async def execute(self, run: BenchmarkRun) -> RunResult:
         """Get-or-create the child, await terminal phase, then collect a RunResult."""
         var_idx = run.variation.index if run.variation else 0
-        child_name = self.derive_id(plan=None, var_idx=var_idx, trial=run.trial)
+        # Honor the orchestrator's authoritative child name rather than
+        # re-deriving here: ``BenchmarkRun.benchmark_id`` is set by
+        # ``orchestrator.derive_id(plan, var_idx, trial)`` at construction and
+        # is the single source of truth for the child AIPerfJob name. Re-running
+        # ``derive_id`` from ``run.variation.index`` is equivalent today but
+        # would silently diverge if the orchestrator ever maps variation index
+        # to a dense child slot (e.g. to fit the 0..199 child-name budget under
+        # adaptive search where ``variation.index`` is the iteration counter).
+        child_name = run.benchmark_id or self.derive_id(
+            plan=None, var_idx=var_idx, trial=run.trial
+        )
         if self._cancel_check is not None and self._cancel_check():
             logger.info(f"cancel requested before starting child {child_name}")
             return RunResult(
@@ -312,7 +330,11 @@ class K8sChildJobExecutor(RunExecutor):
             except Exception as e:  # noqa: BLE001 - status update is best-effort
                 logger.warning(f"current_cell status write failed: {e}")
         await self._get_or_create(child_name, run)
-        await self._wait_until_terminal(child_name, cancel_check=self._cancel_check)
+        cancelled = await self._wait_until_terminal(
+            child_name, run, cancel_check=self._cancel_check
+        )
+        if cancelled is not None:
+            return cancelled
         terminal = await self._try_read_child(child_name)
         if terminal is None:
             return RunResult(
@@ -321,8 +343,14 @@ class K8sChildJobExecutor(RunExecutor):
                 error=f"child {child_name} disappeared before terminal phase",
                 artifacts_path=run.artifact_dir,
             )
+        self._last_resolved_child = None
         result = await self._collect_run_result(terminal, run)
-        await self._record_terminal_child(child_name, run, terminal)
+        # Record against the child object ``_collect_run_result`` actually
+        # resolved (a race-grace refresh may have stamped runEpoch after the
+        # terminal read), falling back to ``terminal`` when no refresh ran.
+        await self._record_terminal_child(
+            child_name, run, self._last_resolved_child or terminal
+        )
         return result
 
     async def _record_terminal_child(
@@ -451,9 +479,14 @@ class K8sChildJobExecutor(RunExecutor):
                     variation_label=run.variation.label,
                     trial_index=run.trial if self.with_trial_suffix else None,
                     sweep_run_epoch=self.sweep_run_epoch,
-                    # Fresh child: child epoch == sweep epoch. On a child rerun
-                    # (Task 6+), the controller derives a new child epoch and
-                    # passes it here so the back-link points at the right run.
+                    # Provisional back-link written at create time, before the
+                    # operator stamps the child's own ``status.runEpoch`` (which
+                    # it derives from the child AIPerfJob's creationTimestamp/uid
+                    # via epoch_key_from_body — NOT equal to the sweep epoch).
+                    # The authoritative epoch flows into children.json from
+                    # ``_record_terminal_child`` once the child reaches terminal
+                    # phase; this marker is the best-effort value available pre-
+                    # terminal for job_union's archived-child back-link.
                     child_run_epoch=self.sweep_run_epoch,
                 )
             except OSError as e:
@@ -473,25 +506,58 @@ class K8sChildJobExecutor(RunExecutor):
     async def _wait_until_terminal(
         self,
         child_name: str,
+        run: BenchmarkRun,
         *,
         poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
         cancel_check: Callable[[], bool] | None = None,
-    ) -> None:
+    ) -> RunResult | None:
         """Poll the child until status.phase reaches a terminal value.
 
         Periodic list-fallback rather than long-lived Watch: simpler under
         partial network failures, and AIPerfJob phase transitions are rare
         enough that a 5s poll is fine.
+
+        Returns ``None`` once the child reaches a terminal phase (caller
+        proceeds to collect the result). On cancellation, the cancel
+        merge-patch is issued exactly once, then the wait is bounded by
+        ``CANCEL_GRACE_SECONDS``: if the child has not reached a terminal
+        phase by the deadline (operator cancel path stalled, wedged pod,
+        repeatedly-failing JobSet delete), a cancelled ``RunResult`` is
+        returned so the orchestrator advances instead of blocking forever.
         """
+        cancel_patched = False
+        cancel_deadline: float | None = None
         while True:
             child = await self._try_read_child(child_name)
             phase = (child or {}).get("status", {}).get("phase")
             if phase in TERMINAL_PHASES:
-                return
+                return None
             if cancel_check is not None and cancel_check():
-                logger.info(f"cancel requested while waiting on {child_name}")
-                await self._patch_child_cancel(child_name)
-                # Continue polling; the operator will eventually mark Cancelled.
+                if not cancel_patched:
+                    logger.info(f"cancel requested while waiting on {child_name}")
+                    await self._patch_child_cancel(child_name)
+                    cancel_patched = True
+                    cancel_deadline = (
+                        asyncio.get_event_loop().time()
+                        + OperatorEnvironment.SWEEP_CONTROLLER.CANCEL_GRACE_SECONDS
+                    )
+                elif (
+                    cancel_deadline is not None
+                    and asyncio.get_event_loop().time() > cancel_deadline
+                ):
+                    logger.warning(
+                        f"child {child_name} did not reach terminal phase within "
+                        f"{OperatorEnvironment.SWEEP_CONTROLLER.CANCEL_GRACE_SECONDS}s "
+                        f"cancel grace; advancing sweep"
+                    )
+                    return RunResult(
+                        label=run.label,
+                        success=False,
+                        error=f"child {child_name} did not reach terminal phase "
+                        f"within cancel grace",
+                        artifacts_path=run.artifact_dir,
+                    )
+                # Otherwise keep polling; the operator will eventually mark Cancelled.
             await asyncio.sleep(poll_interval)
 
     async def _patch_child_cancel(self, child_name: str) -> None:
@@ -527,12 +593,20 @@ class K8sChildJobExecutor(RunExecutor):
         # status.summary yet (or wrote an empty one). Surface this as success
         # with empty metrics so failure_policy doesn't trip on a write race;
         # the warning is logged inside _pull_summary_metrics.
+        #
+        # Re-derive status from the child _pull_summary_metrics last resolved:
+        # the race-grace refresh may have stamped runEpoch AFTER the terminal
+        # read that produced ``child`` here. Using the stale epoch back-links
+        # the manifest at the wrong (empty) epoch and drops the variation from
+        # the runs index, even though the metrics themselves were recovered.
+        resolved = self._last_resolved_child or child
+        resolved_status = resolved.get("status") or status
         return RunResult(
             label=run.label,
             success=True,
             summary_metrics=metrics,
             artifacts_path=run.artifact_dir,
-            child_run_epoch=str(status.get("runEpoch") or ""),
+            child_run_epoch=str(resolved_status.get("runEpoch") or ""),
         )
 
     async def _pull_summary_metrics(self, child: dict[str, Any]) -> dict[str, Any]:
@@ -568,6 +642,10 @@ class K8sChildJobExecutor(RunExecutor):
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
+        # Track the child this method last resolved so the caller derives
+        # ``child_run_epoch`` from the (possibly refreshed) object below,
+        # not the stale terminal read. Updated on every rebind of ``child``.
+        self._last_resolved_child = child
         status = child.get("status") or {}
         summary = status.get("summary") or {}
         name = child["metadata"]["name"]
@@ -587,6 +665,7 @@ class K8sChildJobExecutor(RunExecutor):
                 if refreshed is None:
                     break
                 child = refreshed
+                self._last_resolved_child = child
                 status = refreshed.get("status") or {}
                 summary = status.get("summary") or {}
                 if summary:

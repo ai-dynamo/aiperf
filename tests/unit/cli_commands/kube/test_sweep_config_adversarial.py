@@ -541,8 +541,8 @@ class TestChildNameCardinality:
     @pytest.mark.parametrize(
         "variation_index,trial_index,match",
         [
-            param(100, 0, r"variation.*100.*0\.\.99", id="variation-index-over-budget"),
-            param(-1, 0, r"variation.*-1.*0\.\.99", id="variation-index-negative"),
+            param(200, 0, r"variation.*200.*0\.\.199", id="variation-index-over-budget"),
+            param(-1, 0, r"variation.*-1.*0\.\.199", id="variation-index-negative"),
             param(0, 10, r"trial.*10.*0\.\.9", id="trial-index-over-budget"),
             param(0, -1, r"trial.*-1.*0\.\.9", id="trial-index-negative"),
         ],

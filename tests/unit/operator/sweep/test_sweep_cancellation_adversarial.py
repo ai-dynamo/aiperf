@@ -177,6 +177,7 @@ def _run_result(*, label: str, success: bool) -> SimpleNamespace:
         error=None if success else "child terminal phase=Cancelled",
         variation_values={"index": 0},
         variation_label="search_iter_0000",
+        variation_index=0,
         trial_index=0,
         child_run_epoch="1778027130",
     )

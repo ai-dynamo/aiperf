@@ -319,7 +319,7 @@ async def test_wait_until_terminal_patches_child_cancel_when_signaled_mid_wait(
         cancel_check=cancel_check,
     )
     await executor._wait_until_terminal(
-        "child", poll_interval=0.0, cancel_check=cancel_check
+        "child", _benchmark_run(), poll_interval=0.0, cancel_check=cancel_check
     )
     custom.patch_namespaced_custom_object.assert_awaited()
     kwargs = custom.patch_namespaced_custom_object.call_args.kwargs

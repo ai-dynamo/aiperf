@@ -65,6 +65,7 @@ def _one_successful_child_result() -> SimpleNamespace:
         success=True,
         error=None,
         variation_values={"index": 0},
+        variation_index=0,
         variation_label="concurrency=64",
         trial_index=0,
         child_run_epoch="1778027999",

@@ -31,8 +31,20 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         """
         task = asyncio.create_task(coro)
         self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
+        task.add_done_callback(self._on_task_done)
         return task
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Remove completed task from tracking; log any unhandled exception.
+
+        Without retrieving ``task.exception()``, fire-and-forget failures are
+        silently dropped from the service's own logging and only surface as an
+        asyncio GC-time warning.
+        """
+        self.tasks.discard(task)
+        # Must check cancelled() first - calling exception() on a cancelled task raises CancelledError
+        if not task.cancelled() and task.exception() is not None:
+            self.exception(f"Unhandled error in background task: {task.exception()!r}")
 
     async def wait_for_tasks(self) -> list[BaseException | None]:
         """Wait for all current tasks to complete."""

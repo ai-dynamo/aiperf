@@ -111,13 +111,24 @@ async def _download_artifact(
 ) -> tuple[str, int] | None:
     """Download one artifact by name with retries.
 
+    ``filename`` may carry nested subdirs (e.g. ``aggregate/...`` or
+    ``checkpoints/...``) as emitted by the results sidecar; the relative
+    layout is preserved on disk so two artifacts sharing a basename do not
+    overwrite each other.
+
     Returns ``(dest_name, size_bytes)`` on success, ``None`` on skip/error.
     """
-    safe_filename = Path(filename).name
-    if not safe_filename or safe_filename.startswith("."):
+    parts = [p for p in filename.replace("\\", "/").split("/") if p]
+    if (
+        not parts
+        or any(p in ("", ".", "..") for p in parts)
+        or parts[-1].startswith(".")
+    ):
         print_warning(f"Refusing unsafe filename: {filename!r}")
         return None
-    quoted = quote(safe_filename, safe="")
+    safe_filename = "/".join(parts)
+    quoted = quote(safe_filename, safe="/")
+    rel_path = Path(safe_filename)
 
     for attempt in range(1 + max_retries):
         try:
@@ -129,7 +140,7 @@ async def _download_artifact(
                     return None
                 resp.raise_for_status()
 
-                dest_name = _response_destination(resp, safe_filename)
+                dest_name = _response_destination(resp, rel_path.name)
                 if dest_name is None:
                     return None
                 content = await resp.read()
@@ -145,10 +156,15 @@ async def _download_artifact(
                 if action == "skip":
                     return None
 
-                await asyncio.to_thread((output_dir / dest_name).write_bytes, content)
+                dest_rel = (rel_path.parent / dest_name).as_posix()
+                dest_path = output_dir / rel_path.parent / dest_name
+                await asyncio.to_thread(
+                    dest_path.parent.mkdir, parents=True, exist_ok=True
+                )
+                await asyncio.to_thread(dest_path.write_bytes, content)
                 file_size = len(content)
-                print_success(f"Downloaded: {dest_name} ({_human_size(file_size)})")
-                return (dest_name, file_size)
+                print_success(f"Downloaded: {dest_rel} ({_human_size(file_size)})")
+                return (dest_rel, file_size)
         except aiohttp.ClientConnectionError:
             if attempt < max_retries:
                 continue

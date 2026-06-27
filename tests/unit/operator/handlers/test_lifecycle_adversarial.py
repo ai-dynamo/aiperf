@@ -343,6 +343,46 @@ class TestOnBenchmarkCompleteAdversarial:
         assert "observedGeneration" not in patch.status
 
     @pytest.mark.asyncio
+    async def test_on_benchmark_complete_mid_completion_cancel_does_not_stamp_observed_generation(
+        self,
+    ) -> None:
+        """A cancellation that lands between the claim and handle_completion's
+        own guards leaves sb without a phase; absence of COMPLETED must not be
+        read as success and stamp generation."""
+        progress_client = AsyncMock(name="ProgressClient")
+        patch = _patch()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.handle_completion",
+                new_callable=AsyncMock,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                new_callable=AsyncMock,
+                return_value=progress_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.close_progress_client",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await on_benchmark_complete(
+                body=_body(generation=58),
+                status=_running_status(),
+                name="aiperf-bench-7f2a",
+                namespace="perf-lab",
+                patch=patch,
+            )
+
+        assert "observedGeneration" not in patch.status
+
+    @pytest.mark.asyncio
     async def test_on_benchmark_complete_permanent_error_does_not_send_shutdown(
         self,
     ) -> None:
@@ -387,6 +427,9 @@ class TestOnBenchmarkCompleteAdversarial:
         progress_client = AsyncMock(name="ProgressClient")
         patch = _patch()
 
+        async def _complete(*_args: Any, sb: Any, **_kwargs: Any) -> None:
+            sb.set_phase(Phase.COMPLETED)
+
         with (
             mock_patch(
                 "aiperf.operator.handlers.lifecycle.try_claim_completion",
@@ -396,6 +439,7 @@ class TestOnBenchmarkCompleteAdversarial:
             mock_patch(
                 "aiperf.operator.handlers.lifecycle.handle_completion",
                 new_callable=AsyncMock,
+                side_effect=_complete,
             ) as mock_handle,
             mock_patch(
                 "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",

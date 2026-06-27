@@ -191,7 +191,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             artifact_dir=self.run.cfg.output.artifact_directory,
         )
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
-        self.credit_tasks: dict[int, asyncio.Task] = {}
+        # Keyed by (phase, id) — not bare id — because each phase's CreditCounter
+        # restarts requests_sent at 0, so credit.id repeats across phases. Under
+        # seamless phase overlap a profiling credit and an in-flight warmup credit
+        # can share an id; keying by bare id would let one overwrite the other and
+        # drop a live task's tracking entry. Mirrors the router's _credit_id_key.
+        self.credit_tasks: dict[tuple[CreditPhase, int], asyncio.Task] = {}
 
         self._init_inference_clients()
         self._init_credit_channels()
@@ -715,9 +720,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     )
 
     async def _on_reconciliation(self, message: InFlightReconciliation) -> None:
-        """Respond to router's reconciliation request with current in-flight credits."""
+        """Respond to router's reconciliation request with current in-flight credits.
+
+        credit_tasks is keyed by (phase, id) locally, but the wire contract
+        carries bare ids (the router's per-worker active_credit_ids are bare
+        ids too), so project to ids here.
+        """
         await self.credit_dealer_client.send(
-            InFlightReport(credit_ids=frozenset(self.credit_tasks.keys()))
+            InFlightReport(
+                credit_ids=frozenset(
+                    credit_id for (_phase, credit_id) in self.credit_tasks
+                )
+            )
         )
 
     def _schedule_credit_drop_task(self, credit: Credit) -> None:
@@ -737,7 +751,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
 
         task = self.execute_async(self._on_credit_drop_message_task(credit_context))
-        self.credit_tasks[credit.id] = task
+        self.credit_tasks[(credit.phase, credit.id)] = task
         task.add_done_callback(
             lambda t, ctx=credit_context: self._on_credit_drop_message_task_done(t, ctx)
         )
@@ -751,10 +765,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         was cancelled, or errored. For cancelled tasks that never started executing,
         the finally block never runs, so we must return the credit here.
         """
-        credit_id = credit_context.credit.id
+        credit = credit_context.credit
+        credit_id = credit.id
 
-        # Always remove from tracking dict when task completes
-        self.credit_tasks.pop(credit_id, None)
+        # Always remove from tracking dict when task completes. Keyed by
+        # (phase, id) so a same-id credit from an overlapping seamless phase
+        # keeps its own tracking entry.
+        self.credit_tasks.pop((credit.phase, credit_id), None)
 
         # The finally block handles normal/error returns. This callback only needs
         # to return credits for tasks that were cancelled before they started executing.
@@ -796,15 +813,22 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug(
             lambda: f"Received cancel credits message: credit_ids={message.credit_ids}"
         )
-        for credit_id in message.credit_ids:
-            if task := self.credit_tasks.get(credit_id):
-                task.cancel()
-            else:
-                self.debug(
-                    lambda id=credit_id: (
-                        f"Task for credit {id} not found (already completed?)"
-                    )
+        # The wire carries bare ids, but credit_tasks is keyed by (phase, id).
+        # Cancel every live task whose id matches: under seamless phase overlap
+        # the same id can name a task in more than one phase, and cancellation
+        # only fires at phase-timeout/shutdown where cancelling both is correct.
+        wanted = message.credit_ids
+        matched = [
+            (key, task) for key, task in self.credit_tasks.items() if key[1] in wanted
+        ]
+        for _key, task in matched:
+            task.cancel()
+        for credit_id in wanted - {key[1] for key, _task in matched}:
+            self.debug(
+                lambda id=credit_id: (
+                    f"Task for credit {id} not found (already completed?)"
                 )
+            )
 
     async def _on_credit_drop_message_task(self, credit_context: CreditContext) -> None:
         """Handle incoming credit from TimingManager via StickyCreditRouter.

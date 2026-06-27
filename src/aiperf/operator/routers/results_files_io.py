@@ -379,11 +379,15 @@ def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
             latest_dir = resolve_run_dir(base_dir, ns_dir.name, name_dir.name)
             if latest_dir is None:
                 continue
-            files = [
-                f
-                for f in latest_dir.iterdir()
-                if f.is_file() and f.name != READY_MARKER_NAME
-            ]
+            try:
+                files = [
+                    f
+                    for f in latest_dir.iterdir()
+                    if f.is_file() and f.name != READY_MARKER_NAME
+                ]
+                total_size_bytes = sum(f.stat().st_size for f in files)
+            except OSError:
+                continue
             if not files:
                 continue
             model, endpoint = _extract_model_endpoint(latest_dir)
@@ -392,7 +396,7 @@ def _scan_job_dirs(base_dir: Path) -> list[JobEntry]:
                     namespace=ns_dir.name,
                     job_id=name_dir.name,
                     file_count=len(files),
-                    total_size_bytes=sum(f.stat().st_size for f in files),
+                    total_size_bytes=total_size_bytes,
                     model=model,
                     endpoint=endpoint,
                 )

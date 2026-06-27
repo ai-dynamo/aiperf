@@ -144,10 +144,12 @@ async def _serve_dashboard(
     no_browser: bool,
 ) -> None:
     import asyncio
+    import contextlib
     import webbrowser
 
     from aiperf.kubernetes.console import print_info, print_success, print_warning
     from aiperf.kubernetes.port_forward import (
+        _drain_stream,
         cleanup_port_forward,
         start_port_forward,
     )
@@ -195,9 +197,18 @@ async def _serve_dashboard(
                 print_success(f"Reconnected on localhost:{bound_port}")
             backoff = initial_backoff
 
+            drain_tasks = [
+                asyncio.create_task(_drain_stream(proc.stdout)),
+                asyncio.create_task(_drain_stream(proc.stderr)),
+            ]
             try:
                 await proc.wait()
             finally:
+                for task in drain_tasks:
+                    task.cancel()
+                for task in drain_tasks:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
                 await cleanup_port_forward(proc)
             print_warning(
                 f"Port-forward disconnected (kubectl exit {proc.returncode}); "

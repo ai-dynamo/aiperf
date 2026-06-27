@@ -255,16 +255,21 @@ def _merge(live: list[SweepRecord], archived: list[SweepRecord]) -> list[SweepRe
         if existing is None:
             by_key[key] = live_rec
             continue
-        # Both sources present: live wins on live fields, archived backfills.
+        # Both sources present: the live CR is authoritative for the
+        # currently-tracked run, so its numeric counters and run-state map
+        # are taken unconditionally — a re-running sweep reports 0 completed
+        # and must NOT fall back to a previous archived run's counts (that
+        # produced impossible completedRuns > totalVariations). Archived only
+        # backfills None-able identity/string fields the live half omits.
         merged = SweepRecord(
             namespace=live_rec.namespace,
             name=live_rec.name,
             source="both",
             phase=live_rec.phase or existing.phase,
-            total_variations=live_rec.total_variations or existing.total_variations,
-            completed_runs=live_rec.completed_runs or existing.completed_runs,
-            failed_runs=live_rec.failed_runs or existing.failed_runs,
-            cancelled_runs=live_rec.cancelled_runs or existing.cancelled_runs,
+            total_variations=live_rec.total_variations,
+            completed_runs=live_rec.completed_runs,
+            failed_runs=live_rec.failed_runs,
+            cancelled_runs=live_rec.cancelled_runs,
             age_seconds=live_rec.age_seconds or existing.age_seconds,
             model=live_rec.model or existing.model,
             aggregate_path=existing.aggregate_path,
@@ -276,7 +281,7 @@ def _merge(live: list[SweepRecord], archived: list[SweepRecord]) -> list[SweepRe
             completed_at=live_rec.completed_at or existing.completed_at,
             api_url=live_rec.api_url or existing.api_url,
             results_available=live_rec.results_available or existing.results_available,
-            run_states=live_rec.run_states or existing.run_states,
+            run_states=live_rec.run_states,
         )
         by_key[key] = merged
     return sorted(by_key.values(), key=lambda r: r.age_seconds)

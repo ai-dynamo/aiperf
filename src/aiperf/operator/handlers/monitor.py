@@ -20,6 +20,7 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.common.finite import scrub_non_finite
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import Annotations, Containers, JobSetLabels
 from aiperf.kubernetes.cr_refs import (
@@ -32,6 +33,7 @@ from aiperf.kubernetes.cr_refs import (
 )
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
+from aiperf.kubernetes.results_sidecar import write_ready_marker
 from aiperf.operator import events
 from aiperf.operator.client_cache import (
     _shutdown_sent,
@@ -1305,9 +1307,21 @@ async def monitor_progress(
                 key=key,
                 sb=sb,
             )
-        generation = body.get("metadata", {}).get("generation")
-        if generation is not None:
-            sb.set_observed_generation(int(generation))
+        # observedGeneration is a success-path-only stamp: a tick that
+        # terminally FAILED/CANCELLED the job must not signal spec acceptance.
+        # sb.get_phase() returns the phase the failure helpers just wrote (None
+        # on a non-terminal tick, which legitimately acknowledges the spec).
+        # A mid-completion cancellation short-circuit ALSO leaves get_phase()
+        # None (handle_completion returns before copying its staged phase into
+        # sb), and is indistinguishable from a non-terminal tick by phase
+        # alone -- re-check the sticky cancellation flag to exclude it.
+        if sb.get_phase() not in (
+            str(Phase.FAILED),
+            str(Phase.CANCELLED),
+        ) and not is_cancellation_requested(key):
+            generation = body.get("metadata", {}).get("generation")
+            if generation is not None:
+                sb.set_observed_generation(int(generation))
     except (
         ApiException,
         aiohttp.ClientError,
@@ -1482,6 +1496,12 @@ async def _recover_from_partial_checkpoints(
     )
 
     sb.set_phase(Phase.FAILED).set_error(error).set_completion_time()
+    # Write the readiness marker so the operator results-server actually serves
+    # the salvaged checkpoint artifacts; without it ``_require_run_ready`` 404s
+    # the bundle / profile-export routes forever even though resultsPath points
+    # at on-disk files. ``was_cancelled=False`` — this is a salvaged failure,
+    # not a user cancellation.
+    write_ready_marker(dest_dir, was_cancelled=False)
     sb.set_results_path(str(dest_dir))
     # Stamp runEpoch so the operator-API metrics fallback in
     # ``K8sChildJobExecutor._fetch_summary_from_operator`` can resolve the
@@ -1660,6 +1680,10 @@ async def _fetch_live_metrics(
         return
 
     if isinstance(metrics, dict) and metrics.get("metrics"):
+        # Scrub non-finite floats before stamping: a NaN/Inf metric stat is an
+        # invalid JSON number that would reject the whole apiserver status patch
+        # for this tick, freezing status updates. Mirrors completion.py:431.
+        metrics = scrub_non_finite(metrics)
         patch.status["liveMetrics"] = metrics
 
         summary = MetricsSummary.from_metrics(metrics)

@@ -188,9 +188,16 @@ async def on_benchmark_complete(
 
     sb = StatusBuilder(patch, status)
     await handle_completion(body, namespace, jobset_name, job_id, status=status, sb=sb)
-    generation = body.get("metadata", {}).get("generation")
-    if generation is not None:
-        sb.set_observed_generation(int(generation))
+    # observedGeneration is a success-path-only stamp: stamp ONLY when
+    # handle_completion finalized the CR as COMPLETED. Absence of a phase
+    # (handle_completion short-circuited on a mid-completion cancellation
+    # before copying its staged patch into sb, so get_phase() is None) or a
+    # FAILED/CANCELLED phase must not signal spec acceptance. Mirrors
+    # monitor.monitor_progress.
+    if sb.get_phase() == str(Phase.COMPLETED):
+        generation = body.get("metadata", {}).get("generation")
+        if generation is not None:
+            sb.set_observed_generation(int(generation))
 
     host = controller_dns_name(jobset_name, namespace)
     try:

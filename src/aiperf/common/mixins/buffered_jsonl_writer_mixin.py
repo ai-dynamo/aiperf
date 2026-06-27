@@ -57,6 +57,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self.output_file = output_file
         self.lines_written = 0
         self._file_handle = None
+        self._closed = False
         self._file_lock = asyncio.Lock()
         self._buffer: list[bytes] = []  # Store bytes for binary mode
         self._batch_size = batch_size
@@ -139,6 +140,15 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             return
         async with self._file_lock:
             if self._file_handle is None:
+                if self._closed:
+                    # A late buffered_write (or the periodic flush task) arrived
+                    # after _close_file finalized us. Reopening with mode="wb"
+                    # would truncate everything finalize already flushed —
+                    # silent benchmark export data loss. Drop and log instead.
+                    self.error(
+                        f"Tried to flush JSONL buffer, but writer is finalized: {self.output_file}"
+                    )
+                    return
                 try:
                     # Lazy open on first flush so empty writers leave no
                     # 0-byte artifact behind. Binary mode for orjson speed.
@@ -156,7 +166,12 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 await self._file_handle.flush()
                 self._last_flush_monotonic = time.monotonic()
             except OSError as e:
-                self.exception(f"Failed to flush buffer: {e!r}")
+                # Re-queue the failed batch ahead of newer records so a later
+                # flush / _close_file retries it. Without this the just-swapped
+                # buffer (the caller already cleared self._buffer) is lost for
+                # good on ENOSPC/EIO — silent benchmark export data loss.
+                self._buffer[:0] = buffer_to_flush
+                self.exception(f"Failed to flush buffer, re-queued for retry: {e!r}")
 
     @background_task(interval=lambda self: self._flush_interval, immediate=False)
     async def _flush_buffer_periodically(self) -> None:
@@ -204,6 +219,10 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                     self.error(f"Failed to flush remaining buffer during shutdown: {e}")
 
         async with self._file_lock:
+            # Mark finalized so any late flush (from a buffered_write or the
+            # periodic task that races past shutdown) drops instead of
+            # reopening mode="wb" and truncating the finalized file.
+            self._closed = True
             if self._file_handle is not None:
                 try:
                     await self._file_handle.close()

@@ -11,7 +11,7 @@ from typing import Any, cast
 import orjson
 
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.finite import scrub_non_finite
+from aiperf.common.finite import is_finite_value, scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.optional_dependencies import mlflow_dependency_message
 from aiperf.common.redact import redact_cli_command, redact_url
@@ -337,6 +337,8 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             for field in self._STAT_FIELDS:
                 value = getattr(metric, field, None)
                 if value is None:
+                    continue
+                if not is_finite_value(value):
                     continue
                 try:
                     key = metric.tag if field == "avg" else f"{metric.tag}.{field}"

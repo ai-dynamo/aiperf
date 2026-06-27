@@ -453,8 +453,11 @@ class ResultsDB:
             return None
         zst = run_dir / "profile_export_aiperf.json.zst"
         raw = run_dir / "profile_export_aiperf.json"
-        if zst.exists():
-            return orjson.loads(runs_index.zstd_decompress(zst.read_bytes()))
-        if raw.exists():
-            return orjson.loads(raw.read_bytes())
+        try:
+            if zst.exists():
+                return orjson.loads(runs_index.zstd_decompress(zst.read_bytes()))
+            if raw.exists():
+                return orjson.loads(raw.read_bytes())
+        except (OSError, orjson.JSONDecodeError, zstandard.ZstdError) as exc:
+            logger.warning("cannot read summary at %s: %s", run_dir, exc)
         return None

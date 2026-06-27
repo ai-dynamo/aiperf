@@ -132,10 +132,11 @@ class TestDownloadArtifactUnsafeFilename:
         assert session.get_calls == []  # no HTTP attempt
 
     @pytest.mark.asyncio
-    async def test_traversal_filename_downloads_basename_only(
+    async def test_traversal_filename_rejected_without_network(
         self, tmp_path: Path
     ) -> None:
-        # ``Path("../../etc/passwd").name`` is ``passwd``; downloads as ``passwd``.
+        # A ``..`` segment in the listing name must be rejected outright (no
+        # silent collapse to basename), mirroring ``_build_result_file_url``.
         session = FakeSession(
             {
                 "http://localhost/api/passwd": [FakeResponse(body=b"stripped")],
@@ -147,10 +148,36 @@ class TestDownloadArtifactUnsafeFilename:
             "../../etc/passwd",
             tmp_path,
         )
-        assert result == ("passwd", len(b"stripped"))
-        assert (tmp_path / "passwd").read_bytes() == b"stripped"
-        # Never attempted any path-traversal URL
-        assert all("../" not in u for u in session.get_calls)
+        assert result is None
+        assert session.get_calls == []  # no HTTP attempt
+        assert not (tmp_path / "passwd").exists()
+
+    @pytest.mark.asyncio
+    async def test_nested_filename_preserves_relative_layout(
+        self, tmp_path: Path
+    ) -> None:
+        # Sidecar lists nested names (e.g. ``aggregate/...``); the URL must
+        # carry the full relative path and the file land under those subdirs.
+        session = FakeSession(
+            {
+                "http://localhost/api/aggregate/profile_export_aiperf_aggregate.json": [
+                    FakeResponse(body=b"{}")
+                ],
+            }
+        )
+        result = await _download_artifact(
+            session,  # type: ignore[arg-type]
+            "http://localhost/api",
+            "aggregate/profile_export_aiperf_aggregate.json",
+            tmp_path,
+        )
+        assert result == (
+            "aggregate/profile_export_aiperf_aggregate.json",
+            len(b"{}"),
+        )
+        assert (
+            tmp_path / "aggregate" / "profile_export_aiperf_aggregate.json"
+        ).read_bytes() == b"{}"
 
 
 # ============================================================

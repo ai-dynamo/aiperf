@@ -120,11 +120,17 @@ async def _download_operator_file(
 ) -> tuple[str, int] | None:
     """Download a single file from the operator results server."""
     display_name = file_info["name"]
-    safe_name = Path(display_name).name
-    if not safe_name or safe_name.startswith("."):
+    leaf = Path(display_name).name
+    normalized = Path(display_name)
+    if (
+        not leaf
+        or leaf.startswith(".")
+        or normalized.is_absolute()
+        or ".." in normalized.parts
+    ):
         print_warning(f"Refusing unsafe filename: {display_name!r}")
         return None
-    quoted_name = quote(safe_name, safe="")
+    quoted_name = quote(display_name, safe="/")
     base_url = _result_base_url(api_base, namespace, job_id, run)
     download_url = f"{base_url}/{quoted_name}"
     headers = {"Accept-Encoding": "zstd, gzip, identity"}
@@ -132,23 +138,24 @@ async def _download_operator_file(
     try:
         async with _get_no_redirects(session, download_url, headers=headers) as resp:
             if resp.status == 404:
-                print_warning(f"File not found: {safe_name}")
+                print_warning(f"File not found: {display_name}")
                 return None
             if resp.status in _REDIRECT_STATUSES:
-                print_warning(f"Refusing redirected download for {safe_name}")
+                print_warning(f"Refusing redirected download for {display_name}")
                 return None
             resp.raise_for_status()
 
-            dest_path = output_dir / safe_name
+            dest_path = output_dir / display_name
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
             content_encoding = resp.headers.get("Content-Encoding", "identity")
 
             await _download_and_decompress(resp, dest_path, content_encoding)
 
             file_size = dest_path.stat().st_size
-            print_success(f"Downloaded: {safe_name} ({_human_size(file_size)})")
-            return (safe_name, file_size)
+            print_success(f"Downloaded: {display_name} ({_human_size(file_size)})")
+            return (display_name, file_size)
     except aiohttp.ClientError as e:
-        print_warning(f"Failed to download {safe_name}: {e}")
+        print_warning(f"Failed to download {display_name}: {e}")
         return None
 
 

@@ -22,6 +22,16 @@ from aiperf.operator.status import format_timestamp
 
 logger = logging.getLogger(__name__)
 
+# Child AIPerfJob names are `<sweep>-v<NN>[-t<N>]` (see
+# `aiperf.sweep_controller._naming._validate_child_name_indexes`): the
+# variation index spans 0..199 (matching `AdaptiveSearchSweep.max_iterations`
+# le=200) and the trial index spans 0..9. A sweep whose cardinality exceeds
+# these budgets is accepted at create time but crashes the controller mid-run
+# when it derives the child name for index 200 / trial 10, after up to 200
+# children have already run. Reject it at admission instead.
+_MAX_VARIATIONS = 200
+_MAX_TRIALS = 10
+
 
 async def handle(
     *,
@@ -127,13 +137,26 @@ def _compute_cardinality(
 
     multi_run = validated.multi_run
     max_trials = multi_run.num_runs if multi_run is not None else 1
+    if max_trials > _MAX_TRIALS:
+        raise kopf.PermanentError(
+            f"AIPerfSweep multi_run.num_runs ({max_trials}) exceeds the "
+            f"{_MAX_TRIALS}-trial child-name budget (trial index 0..{_MAX_TRIALS - 1}); "
+            "reduce num_runs."
+        )
 
     sweep = validated.sweep
     if isinstance(sweep, AdaptiveSearchSweep):
-        return sweep.max_iterations, sweep.max_iterations * max_trials
+        n_variations = sweep.max_iterations
+    else:
+        n_variations = len(expand_sweep(sweep_input))
 
-    expanded = expand_sweep(sweep_input)
-    n_variations = len(expanded)
+    if n_variations > _MAX_VARIATIONS:
+        raise kopf.PermanentError(
+            f"AIPerfSweep expands to {n_variations} variations, exceeding the "
+            f"{_MAX_VARIATIONS}-variation child-name budget (variation index "
+            f"0..{_MAX_VARIATIONS - 1}); reduce the sweep cardinality."
+        )
+
     return n_variations, n_variations * max_trials
 
 

@@ -36,6 +36,24 @@ AGGREGATE_SUBDIR = "aggregate"
 # ``sweep_controller.k8s_executor.SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT``.
 SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT = 19090
 CANCEL_POLL_INTERVAL_SECONDS = 10.0
+# Suffix of ``RunResult.error`` for a child whose terminal phase was
+# ``Cancelled``. Produced by ``K8sChildJobExecutor._collect_run_result``
+# (``f"child terminal phase={phase}"``) when the operator wrote no
+# top-level ``status.message`` — which it never does on the cancel path
+# (``operator.handlers.sweep`` / ``operator.handlers.lifecycle`` stamp only
+# ``status.phase`` and ``status.error``). A child cancelled out of band
+# (user cancels the individual AIPerfJob, parent ``spec.cancel`` never set)
+# returns ``success=False`` and must NOT be counted as a failure against
+# ``max_failures``; see ``resolve_terminal_phase``.
+_CANCELLED_CHILD_ERROR_SUFFIX = "phase=Cancelled"
+
+
+def _is_cancelled_result(result: Any) -> bool:
+    """True if ``result`` is a child whose terminal phase was ``Cancelled``."""
+    error = result.error or ""
+    return not result.success and error.endswith(_CANCELLED_CHILD_ERROR_SUFFIX)
+
+
 # K8s rejects CR patches > ~1 MiB with HTTP 413. Bound the in-CR aggregate
 # mirror so big sweeps (many cells x metrics x percentiles) don't strand the
 # parent at `Aggregating`. The disk-backed results sidecar still serves the
@@ -52,15 +70,21 @@ def aggregate_marker_exists(base_dir: Path) -> bool:
 
 
 def resolve_terminal_phase(
-    *, completed: int, failed: int, max_failures: int, cancel_requested: bool = False
+    *,
+    completed: int,
+    failed: int,
+    max_failures: int,
+    cancel_requested: bool = False,
+    cancelled: int = 0,
 ) -> str:
     """Resolve the AIPerfSweep terminal ``status.phase`` from child outcomes.
 
     Three-way classification keeps a single bad trial in a 6-trial sweep from
     masquerading as a total run-failure:
 
-    * ``Cancelled`` — the parent CR requested cancellation; partial child
-      results still feed aggregate artifacts.
+    * ``Cancelled`` — the parent CR requested cancellation, OR no genuine
+      failures occurred but at least one child was cancelled and none
+      succeeded; partial child results still feed aggregate artifacts.
     * ``Succeeded`` — no failures.
     * ``Failed`` — every result failed (no successful trial), OR
       ``max_failures > 0`` and ``failed >= max_failures`` (explicit budget).
@@ -72,16 +96,26 @@ def resolve_terminal_phase(
     "any failure" → ``Failed``. ``aiperf kube watch`` and ``list`` already
     accept the enum verbatim because the CRD declared it.
 
+    Cancelled children (a user cancelling individual child AIPerfJobs out of
+    band, so the parent's ``spec.cancel`` never flips) are NOT failures: they
+    are counted separately via ``cancelled`` and excluded from ``failed`` by
+    the caller, mirroring the operator rollup's distinct ``cancelled`` bucket
+    (``child_rollup``). Folding them into ``failed`` let an externally
+    cancelled sweep trip ``failed >= max_failures`` and resolve ``Failed``.
+
     Args:
         completed: Count of successful child results across all (variation,
             trial) cells. Sourced from ``RunResult.success`` truthiness.
-        failed: Count of failed child results across all cells. Includes
-            both child Job ``Failed`` and child ``Cancelled``.
+        failed: Count of genuinely failed child results across all cells
+            (child Job ``Failed``). Cancelled children are excluded — they
+            are passed via ``cancelled`` instead.
         max_failures: ``spec.failurePolicy.maxFailures`` from the CR.
             ``0`` = unbounded (no explicit threshold; use the all-failed
             rule). ``>0`` = treat ``failed >= max_failures`` as
             non-recoverable.
         cancel_requested: Whether ``spec.cancel`` was observed during the run.
+        cancelled: Count of child results whose terminal phase was
+            ``Cancelled`` (out-of-band per-child cancellation).
 
     Returns:
         One of ``"Cancelled"``, ``"Succeeded"``, ``"PartiallyFailed"``,
@@ -99,10 +133,14 @@ def resolve_terminal_phase(
         'Failed'
         >>> resolve_terminal_phase(completed=1, failed=0, max_failures=0, cancel_requested=True)
         'Cancelled'
+        >>> resolve_terminal_phase(completed=0, failed=0, max_failures=2, cancelled=4)
+        'Cancelled'
     """
     if cancel_requested:
         return "Cancelled"
     if failed <= 0:
+        if cancelled > 0 and completed <= 0:
+            return "Cancelled"
         return "Succeeded"
     if max_failures > 0 and failed >= max_failures:
         return "Failed"
@@ -245,20 +283,40 @@ def _write_sweep_parent_aggregate(
     metadata = sweep_cr.get("metadata") or {}
     namespace = metadata["namespace"]
     name = metadata["name"]
-    completed = sum(1 for r in results if r.success)
-    failed = sum(1 for r in results if not r.success)
+    # Externally-cancelled children are their own bucket — they must not roll
+    # into ``failedRuns`` here, mirroring the live CR rollup
+    # (``child_rollup._tally_children``) and the archived read in
+    # ``sweep_union`` (``runStates.cancelled``). Use the same
+    # ``_is_cancelled_result`` discriminator so live and archived views agree.
+    cancelled = sum(1 for r in results if _is_cancelled_result(r))
+    failed = sum(1 for r in results if not r.success and not _is_cancelled_result(r))
+    completed = len(results) - failed - cancelled
     doc: dict[str, Any] = {
         "phase": terminal_phase or ("Succeeded" if failed == 0 else "Failed"),
         "totalVariations": len(plan.configs),
         "completedRuns": completed,
         "failedRuns": failed,
+        "cancelledRuns": cancelled,
+        "runStates": {
+            "pending": 0,
+            "running": 0,
+            "completed": completed,
+            "failed": failed,
+            "cancelled": cancelled,
+        },
         "specSnapshot": spec.model_dump(mode="json")
         if hasattr(spec, "model_dump")
         else {},
         "childRuns": [
             {
                 "label": r.label,
-                "status": "Succeeded" if r.success else "Failed",
+                "status": (
+                    "Succeeded"
+                    if r.success
+                    else "Cancelled"
+                    if _is_cancelled_result(r)
+                    else "Failed"
+                ),
                 "error": r.error or "",
             }
             for r in results
@@ -276,23 +334,17 @@ def _write_sweep_parent_aggregate(
     # Build children manifest by walking the actual results stream, not
     # plan.variations. For adaptive search plan.variations is a length-1
     # placeholder and the real variation set lives in `results` — each
-    # RunResult carries its `trial_index` directly and its variation cell
-    # is identified by `variation_label`. For grid/repeated mode the
-    # results stream still preserves the same (var, trial) ordering, so
-    # this single results-driven path handles both.
+    # RunResult carries its `variation_index` and `trial_index` directly
+    # (stamped from the originating BenchmarkVariation.index). For grid/
+    # repeated mode the results stream still preserves the same (var, trial)
+    # ordering, so this single results-driven path handles both. Reading
+    # `variation_index` straight from the result keeps the child name and
+    # index aligned with the true variation that created the child AIPerfJob
+    # even when the stream order is non-dense or labels collide (e.g. a BO
+    # planner re-proposing the same config under a fresh index).
     children: list[dict[str, Any]] = []
-    label_to_var_idx: dict[str, int] = {}
-    next_var_idx = 0
     for r in results:
-        explicit_idx = r.variation_values.get("index") if r.variation_values else None
-        if isinstance(explicit_idx, int):
-            var_idx = explicit_idx
-        else:
-            cell_key = r.variation_label or ""
-            if cell_key not in label_to_var_idx:
-                label_to_var_idx[cell_key] = next_var_idx
-                next_var_idx += 1
-            var_idx = label_to_var_idx[cell_key]
+        var_idx = int(r.variation_index)
         trial_idx = int(r.trial_index)
         trial_for_name = trial_idx if with_trial_suffix else None
         child_name = build_child_name(
@@ -310,7 +362,13 @@ def _write_sweep_parent_aggregate(
                 "trial_index": trial_idx if with_trial_suffix else None,
                 "child_run_epoch": getattr(r, "child_run_epoch", "") or sweep_run_epoch,
                 "label": r.label,
-                "status": "Succeeded" if r.success else "Failed",
+                "status": (
+                    "Succeeded"
+                    if r.success
+                    else "Cancelled"
+                    if _is_cancelled_result(r)
+                    else "Failed"
+                ),
             }
         )
     write_children_manifest(
@@ -561,13 +619,17 @@ async def main() -> int:
             with contextlib.suppress(asyncio.CancelledError):
                 await cancel_task
 
-        failed_count = sum(1 for r in all_results if not r.success)
-        completed_count = len(all_results) - failed_count
+        cancelled_count = sum(1 for r in all_results if _is_cancelled_result(r))
+        failed_count = sum(
+            1 for r in all_results if not r.success and not _is_cancelled_result(r)
+        )
+        completed_count = len(all_results) - failed_count - cancelled_count
         terminal_phase = resolve_terminal_phase(
             completed=completed_count,
             failed=failed_count,
             max_failures=spec.failure_policy.max_failures,
             cancel_requested=cancel_flag["requested"],
+            cancelled=cancelled_count,
         )
 
         if not aggregate_marker_exists(RESULTS_DIR):
@@ -655,10 +717,13 @@ async def main() -> int:
             logger.exception("CR aggregate patch failed; exiting non-zero for restart")
             return 1
 
-    # Clean exit so the JobSet (`completions=1`, `restartPolicy: OnFailure`)
-    # marks the controller Job complete; the parent CR's
-    # `ttlSecondsAfterFinished` reaper can now run without the pod hanging
-    # around on `while True: sleep(3600)`.
+    # The controller container exits 0, but the pod's results-sidecar runs
+    # uvicorn forever — so this Job never reaches `Succeeded` on its own and
+    # the pod would linger until the parent CR's `ttlSecondsAfterFinished`
+    # reaper deletes the CR (and the JobSet with it). The operator tears the
+    # JobSet down promptly after harvesting the aggregate
+    # (`on_aiperfsweep_aggregation_complete`), which stops the sidecar and
+    # reaps this pod without waiting for CR TTL.
     return 0
 
 

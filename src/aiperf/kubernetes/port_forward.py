@@ -28,6 +28,26 @@ _API_MAX_RETRIES = K8sEnvironment.PORT_FORWARD.API_MAX_RETRIES
 _PROCESS_CLEANUP_TIMEOUT = K8sEnvironment.PORT_FORWARD.PROCESS_CLEANUP_TIMEOUT_SECONDS
 
 
+async def _drain_stream(stream: asyncio.StreamReader | None) -> None:
+    """Continuously discard lines from a subprocess stream until EOF.
+
+    kubectl port-forward writes a "Handling connection for <port>" line to
+    stdout for every forwarded connection. Once readiness is parsed, nothing
+    reads ``proc.stdout`` again, so on a busy/long-lived tunnel the OS pipe
+    buffer (~64KB) fills, kubectl blocks on the write, and the tunnel stalls.
+    Draining for the lifetime of the forward keeps the pipe empty.
+    """
+    if stream is None:
+        return
+    try:
+        while True:
+            line = await stream.readline()
+            if not line:
+                return
+    except asyncio.CancelledError:
+        pass
+
+
 async def _monitor_pod_liveness(
     namespace: str,
     pod_name: str,
@@ -54,6 +74,13 @@ async def _monitor_pod_liveness(
                 # throttled apiserver) cannot pin the liveness monitor.
                 check_result = await run_command(cmd_base, timeout=check_interval)
                 if check_result.returncode != 0:
+                    # Only tear down on a genuine "pod gone" signal. A nonzero
+                    # exit from a transient apiserver 5xx, throttling, token
+                    # refresh, or network blip would otherwise kill a healthy
+                    # tunnel, so treat anything that is not NotFound like the
+                    # TimeoutError/OSError branches and retry next interval.
+                    if "not found" not in check_result.stderr.lower():
+                        continue
                     print_warning(
                         f"Pod {pod_name} no longer exists, closing port-forward"
                     )
@@ -114,12 +141,24 @@ async def port_forward_to_controller(
             kube_context=kube_context,
         )
     )
+    # Drain kubectl's per-connection stdout/stderr chatter for the lifetime of
+    # the forward; otherwise the pipe buffer fills and kubectl blocks (see
+    # _drain_stream). Readiness parsing is already done, so it is safe to start.
+    drain_tasks = [
+        asyncio.create_task(_drain_stream(proc.stdout)),
+        asyncio.create_task(_drain_stream(proc.stderr)),
+    ]
     try:
         yield actual_port
     finally:
         monitor_task.cancel()
+        for task in drain_tasks:
+            task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await monitor_task
+        for task in drain_tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
         await cleanup_port_forward(proc)
 
 

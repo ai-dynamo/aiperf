@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import quote
 
 import aiohttp
+import zstandard as zstd
 from pydantic import ValidationError
 
 from aiperf.common.enums import CreditPhase, SystemState, WorkerStartupState
@@ -608,7 +609,8 @@ class ProgressClient:
 
         Returns:
             ``True`` on successful download, ``False`` on HTTP 404, unsafe
-            filename, or any transport error (partial files are removed).
+            filename, or any transport, disk (``OSError``), or zstd-decode
+            (``ZstdError``) error (partial files are removed in every case).
 
         Raises:
             RuntimeError: If called outside ``async with ProgressClient() as c:``.
@@ -631,7 +633,10 @@ class ProgressClient:
 
         try:
             return await self._stream_result_file(url, filename, dest_path)
-        except aiohttp.ClientError as e:
+        except (aiohttp.ClientError, OSError, zstd.ZstdError) as e:
+            # Transport failures (ClientError), disk failures (OSError, e.g.
+            # PVC full), and corrupt-stream decode failures (ZstdError) can all
+            # leave a half-written file behind.
             logger.warning(f"Failed to download {filename}: {e}")
             # Remove partial file so retries don't consume corrupted data.
             # With COMPRESS_ON_DISK the writers in progress_download.save_*
