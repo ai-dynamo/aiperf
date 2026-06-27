@@ -23,8 +23,8 @@ from aiperf.operator.routers.results_schemas import FileListResponse
 
 SWEEP_AGGREGATE_DIRS = ("sweep_aggregate",)
 SWEEP_PROFILE_EXPORT_FILENAMES = {
-    "json": "profile_export_aiperf.json",
-    "csv": "profile_export_aiperf.csv",
+    "json": "profile_export_aiperf_aggregate.json",
+    "csv": "profile_export_aiperf_aggregate.csv",
 }
 
 
@@ -80,10 +80,12 @@ async def _sweep_profile_export_response(
 ) -> Response:
     sweep_dir = _resolve_sweep_epoch_dir(base_dir, namespace, name, epoch)
     filename = SWEEP_PROFILE_EXPORT_FILENAMES[format]
-    aggregate_dir = sweep_dir / "sweep_aggregate"
     try:
         if format == "json":
-            payload = await asyncio.to_thread(_read_profile_export_bytes, aggregate_dir)
+            aggregate_dir = sweep_dir / "sweep_aggregate"
+            payload = await asyncio.to_thread(
+                _read_profile_export_bytes, aggregate_dir, filename
+            )
         else:
             relative_filename = f"sweep_aggregate/{filename}"
             scoped_target = _safe_resolve(sweep_dir, relative_filename)

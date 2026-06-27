@@ -15,7 +15,6 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
-from aiperf.common.utils import yield_to_event_loop
 
 _MSGSPEC_JSON_ENCODER = msgspec.json.Encoder()
 
@@ -205,9 +204,15 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                         f"Timeout waiting for {len(self.tasks)} pending flush tasks during shutdown. "
                         "Cancelling tasks and proceeding with cleanup."
                     )
-                    # Cancel any remaining tasks to prevent resource leaks
+                    # Cancel any remaining tasks to prevent resource leaks.
+                    # cancel_all_tasks() only requests cancellation; it does not
+                    # await the tasks. We must drain them here so an executor
+                    # write/flush still suspended inside the cancelled flush task
+                    # completes (or its CancelledError propagates) before the file
+                    # handle is closed below — otherwise close() races a task
+                    # mid-await on self._file_handle.
                     await self.cancel_all_tasks()
-                    await yield_to_event_loop()
+                    await asyncio.gather(*list(self.tasks), return_exceptions=True)
                     break
 
             buffer_to_flush = self._buffer

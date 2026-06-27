@@ -76,6 +76,7 @@ def resolve_terminal_phase(
     max_failures: int,
     cancel_requested: bool = False,
     cancelled: int = 0,
+    on_child_failure: str = "continue",
 ) -> str:
     """Resolve the AIPerfSweep terminal ``status.phase`` from child outcomes.
 
@@ -87,9 +88,11 @@ def resolve_terminal_phase(
       succeeded; partial child results still feed aggregate artifacts.
     * ``Succeeded`` — no failures.
     * ``Failed`` — every result failed (no successful trial), OR
-      ``max_failures > 0`` and ``failed >= max_failures`` (explicit budget).
-    * ``PartiallyFailed`` — some failed, some succeeded, and the explicit
-      budget (if any) was not exceeded.
+      ``max_failures > 0`` and ``failed >= max_failures`` (explicit budget),
+      OR ``on_child_failure == "abort"`` and any genuine failure occurred
+      (the abort policy is terminal-fatal even when a prior child succeeded).
+    * ``PartiallyFailed`` — some failed, some succeeded, and neither the
+      explicit budget nor the abort policy was tripped.
 
     The CRD enum (``crd-aiperfsweep.yaml``) has carried ``PartiallyFailed``
     since the schema was first written, but every prior call site collapsed
@@ -116,6 +119,12 @@ def resolve_terminal_phase(
         cancel_requested: Whether ``spec.cancel`` was observed during the run.
         cancelled: Count of child results whose terminal phase was
             ``Cancelled`` (out-of-band per-child cancellation).
+        on_child_failure: ``spec.failurePolicy.onChildFailure`` from the CR.
+            ``"abort"`` makes the first genuine failure terminal-fatal — the
+            orchestrator stops issuing further children, so the sweep is
+            ``Failed`` even with a prior success and the default
+            ``max_failures=0``. ``"continue"`` (default) leaves resolution to
+            the all-failed / budget rules above.
 
     Returns:
         One of ``"Cancelled"``, ``"Succeeded"``, ``"PartiallyFailed"``,
@@ -145,6 +154,13 @@ def resolve_terminal_phase(
     if max_failures > 0 and failed >= max_failures:
         return "Failed"
     if completed <= 0:
+        return "Failed"
+    if on_child_failure == "abort":
+        # Abort policy stops the sweep on the first genuine failure, so the
+        # run never reaches a recoverable partial state even when an earlier
+        # child succeeded. The orchestrator already halted (see
+        # MultiRunOrchestrator._sweep_failure_threshold_exceeded); resolving
+        # PartiallyFailed here would contradict the documented terminal phase.
         return "Failed"
     return "PartiallyFailed"
 
@@ -273,7 +289,7 @@ def _write_sweep_parent_aggregate(
     Conditions are owned by the operator and not yet collected here, so we
     pass ``conditions=None`` and the ``conditions.json`` sibling is omitted.
     """
-    from aiperf.operator.results_layout import write_sweep_latest
+    from aiperf.operator.results_layout import list_run_epochs, write_sweep_latest
     from aiperf.sweep_controller.aggregator import (
         write_children_manifest,
         write_sweep_aggregate,
@@ -353,6 +369,17 @@ def _write_sweep_parent_aggregate(
             variation_index=var_idx,
             trial_index=trial_for_name,
         )
+        # The child's results dir is named by the child's OWN epoch (derived
+        # from its creationTimestamp), never the sweep epoch. If the RunResult
+        # epoch was never stamped (slow operator reconcile lost the race grace),
+        # recover the true epoch from disk by the child's own job dir; falling
+        # back to ``sweep_run_epoch`` would point runs_index at a guaranteed-
+        # wrong directory and silently drop the variation. An empty string is
+        # honest — ``_parse_child_sweep_manifest`` skips unknown-location rows.
+        child_run_epoch = getattr(r, "child_run_epoch", "")
+        if not child_run_epoch:
+            disk_epochs = list_run_epochs(Path(base_dir), namespace, child_name)
+            child_run_epoch = disk_epochs[-1] if disk_epochs else ""
         children.append(
             {
                 "namespace": namespace,
@@ -360,7 +387,7 @@ def _write_sweep_parent_aggregate(
                 "variation_index": var_idx,
                 "variation_label": r.variation_label,
                 "trial_index": trial_idx if with_trial_suffix else None,
-                "child_run_epoch": getattr(r, "child_run_epoch", "") or sweep_run_epoch,
+                "child_run_epoch": child_run_epoch,
                 "label": r.label,
                 "status": (
                     "Succeeded"
@@ -630,6 +657,7 @@ async def main() -> int:
             max_failures=spec.failure_policy.max_failures,
             cancel_requested=cancel_flag["requested"],
             cancelled=cancelled_count,
+            on_child_failure=spec.failure_policy.on_child_failure,
         )
 
         if not aggregate_marker_exists(RESULTS_DIR):

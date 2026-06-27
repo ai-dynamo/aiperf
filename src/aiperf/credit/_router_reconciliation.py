@@ -58,6 +58,13 @@ class _ReconciliationMixin:
         """Send InFlightReconciliation to each worker with in-flight credits."""
         if self._credits_complete or self._cancellation_pending:
             await self._reclaim_expired_detached_workers()
+            # The timing manager's phase / cancellation barrier has already
+            # drained outstanding returns by the time credits are complete or
+            # cancellation is pending, so the late-return dedup guard
+            # (``_reclaimed_credit_ids``) has served its purpose. Clearing it
+            # here bounds the set per phase / benchmark instead of letting
+            # reclaimed terminal credit ids accumulate for the router lifetime.
+            self._reclaimed_credit_ids.clear()
             return
 
         sent_count = 0
@@ -87,6 +94,35 @@ class _ReconciliationMixin:
                 await yield_to_event_loop()
 
         await self._reclaim_expired_detached_workers()
+        self._prune_drained_reclaimed_credit_ids()
+
+    def _prune_drained_reclaimed_credit_ids(self) -> None:
+        """Drop late-return dedup entries for phases that have fully drained.
+
+        The dedup guard (``_reclaimed_credit_ids``) only needs to outlive late
+        returns of credits still in flight. A reclaimed credit's late return can
+        only arrive from a worker that still holds (or, while detached, recently
+        held) a credit for that phase, so once no live or detached worker has any
+        in-flight credit for a phase, that phase's reclaimed ids can no longer be
+        matched and are safe to evict. Without this, the set grows monotonically
+        across a long RUNNING phase (every stranded credit on a lost worker adds
+        an entry) since the only other clear is gated on credits-complete /
+        cancellation-pending.
+        """
+        if not self._reclaimed_credit_ids:
+            return
+
+        active_phases: set[str] = set()
+        for worker_load in self._workers.values():
+            for credit in worker_load.active_credits.values():
+                active_phases.add(str(credit.phase))
+        for worker_load in self._detached_workers.values():
+            for credit in worker_load.active_credits.values():
+                active_phases.add(str(credit.phase))
+
+        self._reclaimed_credit_ids = {
+            key for key in self._reclaimed_credit_ids if key[0] in active_phases
+        }
 
     async def _handle_missed_reconciliation(
         self, worker_id: str, worker_load: WorkerLoad

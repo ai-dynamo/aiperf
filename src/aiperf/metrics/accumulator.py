@@ -298,7 +298,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
         backend = self._column_store.ragged(tag)
         if getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
             filtered = (
-                backend.values if full_dataset else backend.get_values_for_mask(mask)
+                backend.values.copy()
+                if full_dataset
+                else backend.get_values_for_mask(mask)
             )
             if len(filtered) == 0:
                 return

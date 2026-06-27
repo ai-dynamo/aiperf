@@ -10,6 +10,7 @@ import signal
 from datetime import datetime, timezone
 from typing import Protocol
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.kubernetes import cli_helpers
 from aiperf.kubernetes.watch_models import WatchSnapshot
 from aiperf.operator.status import Phase
@@ -174,8 +175,23 @@ class WatchOrchestrator:
         # ``get_event_loop()`` is deprecated in this context and raises in newer
         # Python.
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, self._stop)
+        # Windows ProactorEventLoop does not implement add_signal_handler and
+        # raises NotImplementedError, which would abort ``aiperf kube watch``
+        # before any polling starts. Fall back to signal.signal() (supported on
+        # Windows for SIGINT/SIGBREAK), mirroring
+        # aiperf.controller.system_mixins.SignalHandlerMixin.
+        if IS_WINDOWS:
+
+            def windows_signal_handler(_sig: int, _frame: object) -> None:
+                self._stop()
+
+            signal.signal(signal.SIGINT, windows_signal_handler)
+            sigbreak = getattr(signal, "SIGBREAK", None)
+            if sigbreak is not None:
+                signal.signal(sigbreak, windows_signal_handler)
+        else:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, self._stop)
 
     async def _poll_loop(
         self,

@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 _MAX_VARIATIONS = 200
 _MAX_TRIALS = 10
 
+# Child AIPerfJob names become the `job_id`, capped at 35 chars by
+# `KubernetesDeployment.validate_job_id` (pod names are
+# `aiperf-{job_id}-controller-0-0-xxxxx` = 28 + job_id, which must fit the
+# 63-char DNS label limit). The child name is `<sweep>-v<NN>[-t<N>]`, so the
+# sweep CR name plus its worst-case index suffix must stay within this cap.
+_MAX_CHILD_NAME = 35
+
 
 async def handle(
     *,
@@ -64,6 +71,8 @@ async def handle(
         sweep_input = dict(base_benchmark)
 
     n_variations, max_total_runs = _compute_cardinality(validated, sweep_input)
+
+    _reject_overlong_child_names(name, n_variations, max_total_runs)
 
     sweep_uid = body["metadata"]["uid"]
     creation_ts = body["metadata"].get("creationTimestamp", "")
@@ -158,6 +167,42 @@ def _compute_cardinality(
         )
 
     return n_variations, n_variations * max_trials
+
+
+def _reject_overlong_child_names(
+    name: str,
+    n_variations: int,
+    max_total_runs: int,
+) -> None:
+    """Reject sweep names whose derived child `job_id` would overflow 35 chars.
+
+    Child AIPerfJob names are `<sweep>-v<NN>[-t<N>]` (see
+    `aiperf.sweep_controller._naming.build_child_name`). The child name becomes
+    the `job_id`, capped at `_MAX_CHILD_NAME` by `KubernetesDeployment.
+    validate_job_id` so that `aiperf-{job_id}-controller-0-0-xxxxx` pod and
+    headless-Service names fit the 63-char DNS label limit. A long-but-valid
+    sweep CR name (an RFC1123 subdomain may be up to 253 chars) is accepted at
+    admission yet crashes child creation mid-sweep once the suffix is appended.
+    Reject it up front instead.
+
+    The worst-case suffix is computed from the actual cardinality: the variation
+    index is rendered with at least two digits (`-v00`), three once it reaches
+    100 (`-v100`), and a `-t<N>` trial suffix is appended only when more than one
+    trial runs.
+    """
+    max_var_idx = max(n_variations - 1, 0)
+    var_digits = max(2, len(str(max_var_idx)))
+    trials = max_total_runs // n_variations if n_variations else 1
+    suffix_len = 2 + var_digits + (3 if trials > 1 else 0)
+    max_name_len = _MAX_CHILD_NAME - suffix_len
+    if len(name) > max_name_len:
+        raise kopf.PermanentError(
+            f"AIPerfSweep name '{name}' ({len(name)} chars) leaves no room for the "
+            f"child job_id suffix (worst case '-v{max_var_idx}"
+            f"{'-t0' if trials > 1 else ''}', {suffix_len} chars); the derived child "
+            f"name would exceed the {_MAX_CHILD_NAME}-char job_id cap. Max sweep name "
+            f"is {max_name_len} chars for this cardinality."
+        )
 
 
 def _epoch_from_creation_ts(ts: str) -> str:
@@ -440,6 +485,12 @@ async def _create_sweep_controller_jobset(
             ],
         },
         "spec": {
+            # enableDNSHostnames provisions the headless service so the
+            # operator can harvest the emptyDir-only aggregate from the
+            # controller pod's stable DNS name (controller_dns_name(...)).
+            "network": {
+                "enableDNSHostnames": True,
+            },
             "replicatedJobs": [
                 {
                     "name": "controller",

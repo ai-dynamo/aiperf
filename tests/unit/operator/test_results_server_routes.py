@@ -89,29 +89,36 @@ async def test_mutating_route_rejects_missing_or_wrong_token(
 async def test_mutating_route_allows_configured_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The configured bearer token authorizes mutable admin recovery endpoints."""
+    """A valid token passes auth, but the read-only sidecar still disables rebuild.
+
+    The results-server sidecar mounts the admin router with ``allow_rebuild=False``
+    because it opens the runs index read-only (the kopf operator process is the
+    single SQLite writer). So even an authenticated rebuild is denied with 503
+    before ``runs_index.bootstrap`` (a ``DELETE``-issuing writer call) runs — the
+    same contract enforced by ``admin.py``'s 503 message and the adversarial
+    ``test_rebuild_on_explicit_read_only_admin_router_returns_503_json``.
+    """
     from aiperf.operator.results_server import create_app
 
     monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "true")
     monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "correct-token")
     app = create_app(results_dir=tmp_path)
-    bootstrap_result = SimpleNamespace(
-        runs_indexed=1,
-        sweep_variations_indexed=2,
-        duration_seconds=0.5,
-    )
 
-    with patch(
-        "aiperf.operator.runs_index.bootstrap", AsyncMock(return_value=bootstrap_result)
-    ):
+    bootstrap_calls: list[Path] = []
+
+    async def fake_bootstrap(base_dir: Path, *, force: bool = False) -> SimpleNamespace:
+        del force
+        bootstrap_calls.append(base_dir)
+        return SimpleNamespace(
+            runs_indexed=1, sweep_variations_indexed=2, duration_seconds=0.5
+        )
+
+    with patch("aiperf.operator.runs_index.bootstrap", fake_bootstrap):
         response = await _post(app, "/admin/index/rebuild", token="correct-token")
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "runs_indexed": 1,
-        "sweep_variations_indexed": 2,
-        "duration_seconds": 0.5,
-    }
+    assert response.status_code == 503
+    assert "disabled" in response.json()["detail"]
+    assert bootstrap_calls == []
 
 
 @pytest.mark.asyncio

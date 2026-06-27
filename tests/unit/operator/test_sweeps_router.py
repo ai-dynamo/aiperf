@@ -549,10 +549,10 @@ def test_sweep_profile_export_quick_route_supports_json_and_csv(tmp_path: Path) 
     sweep_dir = _seed_sweep_epoch(tmp_path, "bench", "s1", epoch)
     aggregate_dir = sweep_dir / "sweep_aggregate"
     aggregate_dir.mkdir()
-    (aggregate_dir / "profile_export_aiperf.json").write_bytes(
+    (aggregate_dir / "profile_export_aiperf_aggregate.json").write_bytes(
         orjson.dumps({"sweep": True})
     )
-    (aggregate_dir / "profile_export_aiperf.csv").write_bytes(
+    (aggregate_dir / "profile_export_aiperf_aggregate.csv").write_bytes(
         b"metric,value\nthroughput,10\n"
     )
 
@@ -582,7 +582,7 @@ def test_sweep_profile_export_quick_route_rejects_csv_symlink_escape(
     aggregate_dir.mkdir()
     outside_file = tmp_path / "outside-profile.csv"
     outside_file.write_bytes(b"secret,value\nleaked,1\n")
-    (aggregate_dir / "profile_export_aiperf.csv").symlink_to(outside_file)
+    (aggregate_dir / "profile_export_aiperf_aggregate.csv").symlink_to(outside_file)
 
     c = _client_with(api, tmp_path)
     response = c.get(

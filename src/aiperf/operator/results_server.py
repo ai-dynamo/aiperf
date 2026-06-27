@@ -197,7 +197,10 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     app.include_router(create_config_router())
     app.include_router(
         create_admin_router(
-            base_dir, base_dir / ".aiperf_index.sqlite", mutating_dependencies
+            base_dir,
+            base_dir / ".aiperf_index.sqlite",
+            mutating_dependencies,
+            allow_rebuild=False,
         )
     )
 

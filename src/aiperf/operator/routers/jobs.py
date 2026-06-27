@@ -39,6 +39,7 @@ from aiperf.operator.job_union import (
 from aiperf.operator.results_layout import (
     EPOCH_RE,
     RunEntry,
+    job_dir,
     list_runs_async,
     resolve_run_dir,
 )
@@ -516,7 +517,20 @@ async def _list_job_epochs_impl(
         for run in runs
     }
 
+    # Mirror the disk guard from list_runs_async: a runs-index row whose epoch
+    # dir was reaped from disk (retention rmtree) but whose index DELETE lagged
+    # (fire-and-forget create_task, or a stale read on the read-only
+    # results-server) must NOT surface as a phantom run — a follow-up file
+    # fetch for it would 404. The live in-flight epoch is exempt because its
+    # dir may not be on disk yet.
+    parent = job_dir(base_dir, namespace, name)
     for row in rich_rows:
+        if (
+            row.epoch not in by_epoch
+            and row.epoch != live_running_epoch
+            and not (parent / row.epoch).is_dir()
+        ):
+            continue
         by_epoch[row.epoch] = _indexed_epoch_summary(
             row,
             by_epoch.get(row.epoch),

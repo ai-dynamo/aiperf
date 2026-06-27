@@ -326,7 +326,7 @@ async def _reconcile_missing_jobset(
         )
         return True
 
-    sb.set_phase(Phase.FAILED).set_error("JobSet not found")
+    sb.set_phase(Phase.FAILED).set_error("JobSet not found").set_completion_time()
     sb.finalize()
     return False
 
@@ -410,6 +410,24 @@ async def _check_job_timeout(
     if elapsed is None or elapsed <= timeout_sec:
         return False
 
+    # Do not fail a run that has already succeeded but is still draining.
+    # The completion-claim annotation is the authoritative cross-tick signal
+    # that the success branch owns the CR (mirrors ``_reconcile_missing_jobset``);
+    # ``currentPhase == "processing"`` means the controller reported
+    # ``is_complete`` and the operator is fetching/aggregating results.
+    # Either signal means a subsequent ``_reconcile_and_handle_jobset`` tick
+    # will claim completion and harvest results — stamping FAILED here would
+    # discard a succeeded run and delete its JobSet mid-drain.
+    if is_completion_claimed(body) or status.get("currentPhase") == "processing":
+        logger.debug(
+            "Job timeout reached for %s but run is draining/claimed "
+            "(currentPhase=%s, claimed=%s); deferring to completion handler",
+            jobset_name,
+            status.get("currentPhase"),
+            is_completion_claimed(body),
+        )
+        return False
+
     if jobset_name:
         await _delete_jobset_or_retry(custom, namespace, jobset_name, context="timeout")
     sb.set_phase(Phase.FAILED).set_error(
@@ -485,6 +503,7 @@ async def _handle_jobset_failed_condition(
     if is_fatal:
         sb.set_phase(Phase.FAILED)
         sb.set_error(condition.get("message", "JobSet failed"))
+        sb.set_completion_time()
         sb.finalize()
         events.failed(body, job_id, condition.get("message", "JobSet failed"))
         await close_progress_client(key)
@@ -519,6 +538,7 @@ async def _handle_jobset_failed_condition(
         )
         sb.set_phase(Phase.FAILED)
         sb.set_error(error_msg)
+        sb.set_completion_time()
         sb.finalize()
         events.failed(body, job_id, error_msg)
         await close_progress_client(key)
@@ -706,8 +726,27 @@ async def _poll_controller_progress(
     )
     host = controller_dns_name(jobset_name, namespace)
     await handle_completion(body, namespace, jobset_name, job_id, status=status, sb=sb)
-    # Shutdown controller after results are fetched
-    await progress_client.send_shutdown(host)
+    # Shutdown controller after results are fetched. handle_completion has
+    # already deleted the JobSet and staged phase=Completed into the patch;
+    # the shutdown signal is best-effort and must not re-raise, or the
+    # terminal status patch would be discarded for this tick.
+    try:
+        await progress_client.send_shutdown(host)
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        logger.debug(
+            "send_shutdown after completion for %s/%s failed "
+            "(expected if controller pod already gone): %s",
+            namespace,
+            name,
+            e,
+        )
+    except Exception as e:  # noqa: BLE001 - completion already finalized; shutdown signal is best-effort and must not re-raise
+        logger.debug(
+            "send_shutdown after completion for %s/%s failed: %s",
+            namespace,
+            name,
+            e,
+        )
     await close_progress_client(key)
     return True
 
@@ -1613,6 +1652,7 @@ async def _maybe_recover_terminated_controller(
         # above is a fast path, but a peer operator pod (HA) has its own
         # set, so only the CR annotation patch is authoritative.
         if not await try_claim_completion(namespace, name, body):
+            await close_progress_client(key)
             return False
         await handle_completion(
             body,
@@ -1624,6 +1664,14 @@ async def _maybe_recover_terminated_controller(
             result=result,
         )
         return True
+
+    # Gate the partial-checkpoint / live-status / unrecoverable salvage branches
+    # behind the same atomic claim the downloaded branch uses, so a peer operator
+    # replica (or a racing benchmark-complete/sidecar-export path) cannot
+    # double-delete the JobSet, double-emit events, or stomp a COMPLETED terminal
+    # phase with FAILED.
+    if not await try_claim_completion(namespace, name, body):
+        return False
 
     custom = client.CustomObjectsApi(api)
     if result.checkpoints:
@@ -1715,7 +1763,10 @@ async def _fetch_server_metrics(
         return
 
     if isinstance(server_metrics, dict) and server_metrics.get("endpoint_summaries"):
-        patch.status["serverMetrics"] = server_metrics
+        # Scrub non-finite floats before stamping: a NaN/Inf gauge is an invalid
+        # JSON number that would reject the whole apiserver status patch for this
+        # tick, freezing status updates. Mirrors _fetch_live_metrics above.
+        patch.status["serverMetrics"] = scrub_non_finite(server_metrics)
 
 
 async def _fetch_progress(

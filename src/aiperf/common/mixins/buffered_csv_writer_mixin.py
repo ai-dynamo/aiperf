@@ -36,6 +36,7 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
         super().__init__(**kwargs)
         self.output_file = output_file
         self.rows_written = 0
+        self._csv_flushed_rows = 0
         self._csv_file_handle = None
         self._csv_file_lock = asyncio.Lock()
         self._csv_buffer: list[bytes] = []
@@ -114,17 +115,32 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
                 self.debug(lambda: f"Flushing {len(buffer_to_flush)} CSV rows to file")
                 parts: list[bytes] = []
 
-                if not self._csv_header_written and self._csv_columns is not None:
+                emit_header = (
+                    not self._csv_header_written and self._csv_columns is not None
+                )
+                if emit_header:
                     header_bytes = self._csv_encode_row(self._csv_columns)
                     parts.append(header_bytes)
-                    self._csv_header_written = True
 
                 parts.extend(buffer_to_flush)
                 bulk_data = b"\n".join(parts) + b"\n"
                 await self._csv_file_handle.write(bulk_data)
                 await self._csv_file_handle.flush()
+                # Only mark header/rows committed after the write succeeds, so a
+                # re-queued batch (below) re-emits the header and the flushed
+                # counter reflects bytes actually on disk.
+                if emit_header:
+                    self._csv_header_written = True
+                self._csv_flushed_rows += len(buffer_to_flush)
             except OSError as e:
-                self.exception(f"Failed to flush CSV buffer: {e!r}")
+                # Re-queue the failed batch ahead of newer rows so a later flush
+                # / _csv_close_file retries it. Without this the just-swapped
+                # buffer (the caller already cleared self._csv_buffer) is lost
+                # for good on ENOSPC/EIO — silent benchmark export data loss.
+                self._csv_buffer[:0] = buffer_to_flush
+                self.exception(
+                    f"Failed to flush CSV buffer, re-queued for retry: {e!r}"
+                )
 
     @on_stop
     async def _csv_close_file(self) -> None:
@@ -178,8 +194,8 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
             lambda: f"{self.__class__.__name__}: {self.rows_written} CSV rows written to {self.output_file}"
         )
 
-        if self.rows_written == 0:
+        if self._csv_flushed_rows == 0:
             self.debug(
-                lambda: f"No rows written, deleting output file: {self.output_file}"
+                lambda: f"No rows flushed to disk, deleting output file: {self.output_file}"
             )
             self.output_file.unlink(missing_ok=True)

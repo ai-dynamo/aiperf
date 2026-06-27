@@ -132,14 +132,20 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         elif path.is_file():
             # if path is a file, validate the first non-empty line against the RandomPool model
             # if the line is valid, increment the valid count and break the loop,
-            # otherwise a ValidationError will be raised and the function will exit early
-            with open(path) as f:
-                for line in f:
-                    if not (line := line.strip()):
-                        continue
-                    RandomPool.model_validate_json(line)
-                    valid_count += 1
-                    break
+            # otherwise a ValidationError will be raised and the function will exit early.
+            # A stray binary/unreadable file in a directory (image, .parquet, .gz) raises
+            # UnicodeDecodeError/OSError during read; treat it as "not a RandomPool file"
+            # (contributes 0) so structural auto-detection skips it instead of crashing.
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        if not (line := line.strip()):
+                            continue
+                        RandomPool.model_validate_json(line)
+                        valid_count += 1
+                        break
+            except (UnicodeDecodeError, OSError):
+                return 0
 
         return valid_count
 

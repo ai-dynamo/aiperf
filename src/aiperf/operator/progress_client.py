@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 import aiohttp
 import zstandard as zstd
+from kubernetes_asyncio.client.exceptions import ApiException
 from pydantic import ValidationError
 
 from aiperf.common.enums import CreditPhase, SystemState, WorkerStartupState
@@ -561,7 +562,12 @@ class ProgressClient:
             if data:
                 return data.get("files", [])
             return None
-        except aiohttp.ClientError as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ApiException) as e:
+            # retry_with_backoff re-raises any of these after exhausting retries;
+            # download_all_results and the completion/sweep handlers rely on the
+            # "None/[] when unreachable" contract, so swallow them all here rather
+            # than letting a bare OSError/TimeoutError escape into kopf handlers
+            # (which retry generic exceptions forever).
             logger.warning(f"Failed to fetch results list from {url}: {e}")
             return None
 

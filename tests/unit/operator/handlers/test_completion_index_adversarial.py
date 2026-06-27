@@ -302,8 +302,12 @@ class TestCompletionIndexSummaryBlobBoundaries:
             _FIXTURE_NAMESPACE, _FIXTURE_JOB_ID, _FIXTURE_EPOCH
         )
         assert row is not None
+        # A csv-authoritative run that succeeded must be recorded as Succeeded
+        # with no error, mirroring the CR's Succeeded/ResultsAvailable verdict
+        # and the disk-fallback path (results_db._index_from_disk). The summary
+        # blob stays unusable (no readable JSON), but that is not a failure.
         assert row.phase == "Succeeded"
-        assert row.error == "unknown"
+        assert row.error is None
         assert (
             await runs_index.get_summary_blob(
                 _FIXTURE_NAMESPACE, _FIXTURE_JOB_ID, _FIXTURE_EPOCH
@@ -345,7 +349,9 @@ class TestCompletionIndexSummaryBlobBoundaries:
             _FIXTURE_NAMESPACE, _FIXTURE_JOB_ID, _FIXTURE_EPOCH
         )
         assert row is not None
-        assert row.error == "unknown"
+        # Success verdict, no readable summary blob: completed row, no error.
+        assert row.phase == "Succeeded"
+        assert row.error is None
         assert (
             await runs_index.get_summary_blob(
                 _FIXTURE_NAMESPACE, _FIXTURE_JOB_ID, _FIXTURE_EPOCH

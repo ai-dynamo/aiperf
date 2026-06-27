@@ -96,14 +96,17 @@ async def find_operator_namespace(
     if not pod_list.items:
         return None
     namespaces = {p.metadata.namespace for p in pod_list.items if p.metadata}
+    if not namespaces:
+        return None
+    chosen = sorted(namespaces)[0]
     if len(namespaces) > 1:
         logger.warning(
             "Multiple aiperf-operator installs detected across namespaces %s; "
             "picking '%s'. Pass --operator-namespace to override.",
             sorted(namespaces),
-            pod_list.items[0].metadata.namespace,
+            chosen,
         )
-    return pod_list.items[0].metadata.namespace
+    return chosen
 
 
 async def resolve_operator_namespace(
@@ -204,6 +207,12 @@ async def wait_for_controller_pod_ready(
             pod_name, phase = result
             if phase == PodPhase.RUNNING:
                 return pod_name
+            if phase in (PodPhase.FAILED, PodPhase.SUCCEEDED):
+                raise RuntimeError(
+                    f"Controller pod {pod_name} reached terminal phase {phase} "
+                    f"before Running; check: kubectl logs/describe -n {namespace} "
+                    f"{pod_name}"
+                )
             if elapsed - last_log >= 10:
                 logger.info("Controller pod %s: %s (%.0fs)", pod_name, phase, elapsed)
                 last_log = elapsed

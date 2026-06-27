@@ -421,9 +421,13 @@ def _list_job_files(job_dir: Path) -> list[FileEntry]:
     return [FileEntry.model_validate(file_info) for file_info in files]
 
 
-def _read_profile_export_bytes(job_dir: Path) -> bytes:
-    """Return the raw JSON bytes of ``profile_export_aiperf.json`` in ``job_dir``.
+def _read_profile_export_bytes(
+    job_dir: Path, filename: str = PROFILE_EXPORT_FILENAME
+) -> bytes:
+    """Return the raw JSON bytes of ``filename`` in ``job_dir``.
 
+    Defaults to the per-run ``profile_export_aiperf.json``; sweep callers pass
+    the mirrored aggregate name (``profile_export_aiperf_aggregate.json``).
     Prefers the uncompressed file when present, then falls back to the
     ``.zst`` companion (decompressed in-memory). Raises ``FileNotFoundError``
     if neither exists so the caller can map it to a 404. The whole file is
@@ -431,17 +435,17 @@ def _read_profile_export_bytes(job_dir: Path) -> bytes:
     are small (sub-MB) and callers (the dashboard quick-export button)
     expect a single ``application/json`` payload, not a streaming download.
     """
-    raw_path = _safe_resolve(job_dir, PROFILE_EXPORT_FILENAME)
+    raw_path = _safe_resolve(job_dir, filename)
     if raw_path is not None and raw_path.is_file():
         return raw_path.read_bytes()
-    zst_path = _safe_resolve(job_dir, PROFILE_EXPORT_FILENAME + ".zst")
+    zst_path = _safe_resolve(job_dir, filename + ".zst")
     if zst_path is not None and zst_path.is_file():
         import zstandard
 
         dctx = zstandard.ZstdDecompressor()
         with zst_path.open("rb") as fh, dctx.stream_reader(fh) as reader:
             return reader.read()
-    raise FileNotFoundError(PROFILE_EXPORT_FILENAME)
+    raise FileNotFoundError(filename)
 
 
 def _serve_artifact_file(

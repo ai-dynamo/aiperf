@@ -185,6 +185,7 @@ class TestCreditReturnBasicFlow:
             False,  # cancelled=False
             session_ended=credit.is_final_turn,
             session_cancelled=False,
+            errored=False,
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -201,6 +202,7 @@ class TestCreditReturnBasicFlow:
             True,  # cancelled=True
             session_ended=credit.is_final_turn,
             session_cancelled=True,
+            errored=False,
         )
 
     async def test_on_credit_return_releases_session_slot_on_final_turn(
@@ -393,6 +395,7 @@ class TestNextTurnDispatch:
             False,
             session_ended=True,
             session_cancelled=True,
+            errored=False,
         )
         mock_concurrency.release_session_slot.assert_called_once_with("profiling")
         mock_strategy.handle_credit_return.assert_not_called()
@@ -513,6 +516,7 @@ class TestEdgeCases:
             cancelled,
             session_ended=credit.is_final_turn,
             session_cancelled=cancelled,
+            errored=False,
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()

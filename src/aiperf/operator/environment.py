@@ -185,6 +185,17 @@ class _SweepControllerSettings(BaseSettings):
         "(stalled operator cancel path, wedged pod, repeatedly-failing JobSet "
         "delete) cannot wedge the whole sweep indefinitely.",
     )
+    CHILD_MISSING_TIMEOUT_SECONDS: float = Field(
+        default=300.0,
+        gt=0,
+        le=3600,
+        description="Max seconds the sweep-controller will keep polling for a "
+        "child AIPerfJob that has gone missing (404) before its terminal phase, "
+        "with no cancel requested, before giving up and advancing the sweep. Hit "
+        "when a user (or the kube garbage collector) deletes a child AIPerfJob "
+        "out-of-band mid-run; without this bound the sequential sweep wedges "
+        "forever on the deleted variation.",
+    )
 
 
 class _OperatorServiceSettings(BaseSettings):

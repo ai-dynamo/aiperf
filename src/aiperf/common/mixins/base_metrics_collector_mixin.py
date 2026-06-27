@@ -149,6 +149,11 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         # (see IncompatibleMetricsEndpointError). Subsequent collection cycles
         # short-circuit so we don't spam parse failures at the scrape interval.
         self._endpoint_disabled: bool = False
+        # Guards against unbounded scrape pile-up: when a scrape takes longer
+        # than collection_interval, the loop must not launch another one on
+        # top of the in-flight scrape (each scrape holds an aiohttp request
+        # plus a _trace_timing entry).
+        self._scrape_in_flight: bool = False
         super().__init__(**kwargs)
 
     @property
@@ -182,6 +187,10 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         timeout = aiohttp.ClientTimeout(
             total=None,  # No total timeout for ongoing scrapes
             connect=self._reachability_timeout,  # Fast connection timeout only
+            # Bound a stalled body read so a hung /metrics endpoint cannot pin a
+            # socket + _trace_timing entry forever (which, with the
+            # at-most-one-in-flight guard, would wedge the whole scrape loop).
+            sock_read=self._reachability_timeout,
         )
         trace_config = self._create_trace_config()
         self._connector = _resolve_create_tcp_connector()()
@@ -345,18 +354,31 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         collection every collection_interval seconds. The @background_task decorator
         handles automatic lifecycle management and cancellation on stop.
 
-        Uses execute_async (fire-and-forget) rather than await so the next
-        scrape starts on schedule rather than after the previous one
-        completes; a slow scrape doesn't delay subsequent ones. When
-        ``collection_interval`` is shorter than scrape latency, multiple
-        scrapes can be in flight simultaneously — see the
-        ``IncompatibleMetricsEndpointError`` handler for the dedup +
-        last-response-hash invariant that keeps that case correct.
+        Uses execute_async (fire-and-forget) rather than await so a scrape that
+        finishes within the interval does not push the next tick out by its own
+        latency; scrape timing jitter would otherwise introduce rate-measurement
+        error on fast-changing metrics.
 
-        This pattern is critical for accurate rate measurements on fast-changing
-        metrics where scrape timing jitter would introduce measurement error.
+        At most one scrape runs at a time: ``_scrape_in_flight`` skips a new
+        launch while the prior scrape is still running. Without this guard a
+        ``/metrics`` endpoint slower than ``collection_interval`` (e.g. a
+        heavily-loaded vLLM/TRT under high concurrency) lets scrape coroutines
+        accumulate without bound, each pinning an aiohttp request and a
+        ``_trace_timing`` entry.
         """
-        self.execute_async(self.collect_and_process_metrics())
+        if self._scrape_in_flight:
+            return
+        self._scrape_in_flight = True
+        task = self.execute_async(self.collect_and_process_metrics())
+        task.add_done_callback(self._on_scrape_done)
+
+    def _on_scrape_done(self, _task: asyncio.Task) -> None:
+        """Clear the in-flight guard so the next interval can launch a scrape.
+
+        Runs from the task's done-callback (after success, error, or
+        cancellation) so the flag is released even when the scrape raises.
+        """
+        self._scrape_in_flight = False
 
     async def collect_and_process_metrics(self) -> None:
         """Collect metrics from endpoint with error handling.

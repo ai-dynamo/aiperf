@@ -75,6 +75,9 @@ class SubprocessManager:
         # spawn_service calls (e.g. BaseServiceManager.start_services gathers
         # run_service coroutines for multiple service types in parallel).
         self._local_wgm_lock = asyncio.Lock()
+        # Strong refs to detached reaper tasks so the event loop does not GC
+        # them mid-flight (asyncio only holds weak references to tasks).
+        self._spawn_reapers: set[asyncio.Task[None]] = set()
 
     @property
     def local_worker_group_runtime_adapter(
@@ -148,14 +151,14 @@ class SubprocessManager:
             daemon=not _spawns_children,
         )
 
+        # Keep a handle to the in-flight start() so that on timeout we can hand
+        # it to a detached reaper instead of killing a process whose _popen may
+        # not exist yet (Process.kill() before start raises ValueError).
+        start_task = asyncio.ensure_future(asyncio.to_thread(process.start))
         try:
-            await asyncio.wait_for(
-                asyncio.to_thread(process.start),
-                timeout=_SPAWN_TIMEOUT,
-            )
+            await asyncio.wait_for(asyncio.shield(start_task), timeout=_SPAWN_TIMEOUT)
         except asyncio.TimeoutError:
-            with contextlib.suppress(Exception):
-                process.kill()
+            self._reap_timed_out_spawn(process, service_type, service_id, start_task)
             raise RuntimeError(
                 f"Timed out spawning {service_type} subprocess "
                 f"(id: {service_id}) after {_SPAWN_TIMEOUT}s"
@@ -174,6 +177,40 @@ class SubprocessManager:
         )
         self.subprocesses.append(info)
         return info
+
+    def _reap_timed_out_spawn(
+        self,
+        process: object,
+        service_type: ServiceTypeT,
+        service_id: str,
+        start_task: asyncio.Future[None],
+    ) -> None:
+        """Detach a reaper for a spawn that exceeded ``_SPAWN_TIMEOUT``.
+
+        The in-flight ``start()`` may still complete after the timeout, leaving
+        a live, untracked child that ``stop_all``/``kill_all`` cannot reap. The
+        reaper waits for ``start()`` to settle (so ``_popen``/``pid`` exists),
+        then kills and joins the child off the event loop.
+        """
+
+        async def _reaper() -> None:
+            with contextlib.suppress(Exception):
+                await start_task
+            # Only kill if start() actually produced a live process; killing a
+            # never-started Process raises ValueError.
+            if getattr(process, "pid", None) is not None:
+                with contextlib.suppress(Exception):
+                    process.kill()  # type: ignore[attr-defined]
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(
+                        process.join,  # type: ignore[attr-defined]
+                        Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+                    )
+            self._warning(f"Reaped timed-out {service_type} spawn (id: {service_id})")
+
+        reaper = asyncio.ensure_future(_reaper())
+        self._spawn_reapers.add(reaper)
+        reaper.add_done_callback(self._spawn_reapers.discard)
 
     async def _ensure_local_worker_group_manager(
         self,

@@ -204,7 +204,14 @@ class CreditCounter:
             # flips only when the request-count cap is crossed, so a child
             # crossing the cap still unblocks the strategy loop and phase runner.
             self._requests_sent = new_sent_count
-            session_index = self._sent_sessions - 1
+            # A pre-session SPAWN child can fire before any root session is
+            # counted (PhaseRunner dispatches pre-session branches before
+            # strategy.execute_phase). Clamp to slot 0 so a parentless child
+            # maps to the first slot rather than -1, which Python modulo would
+            # wrap to N-1 and mis-attribute its per-session metadata. Post-
+            # session children (``_sent_sessions >= 1``) still inherit the
+            # parent's slot.
+            session_index = max(0, self._sent_sessions - 1)
             is_final_credit = (
                 self._config.total_expected_requests is not None
                 and new_sent_count >= self._config.total_expected_requests
@@ -251,6 +258,7 @@ class CreditCounter:
         *,
         session_ended: bool | None = None,
         session_cancelled: bool | None = None,
+        errored: bool = False,
     ) -> bool:
         """Atomically increment returned count and check phase completion.
 
@@ -263,6 +271,10 @@ class CreditCounter:
                 is_final_turn.
             session_cancelled: Whether the ended session should count as cancelled.
                 Defaults to the request's cancelled status when session_ended=True.
+            errored: Whether the request returned with a non-None error. Errored
+                requests still count as "returned" for the all-returned invariant
+                (they are not cancellations), but also bump ``_request_errors``
+                so the phase-complete log line reflects fault-injected runs.
 
         Returns:
             True if ALL sent credits have now been returned or cancelled
@@ -277,6 +289,8 @@ class CreditCounter:
             self._requests_cancelled += 1
         else:
             self._requests_completed += 1
+            if errored:
+                self._request_errors += 1
 
         if session_ended:
             if session_cancelled:

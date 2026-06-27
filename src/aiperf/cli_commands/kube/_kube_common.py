@@ -27,7 +27,7 @@ def resolve_child_name(
 
     Args:
         parent: AIPerfSweep name (e.g. ``"my-sweep"``).
-        variation: Variation index (00..99). ``None`` -> caller picks a
+        variation: Variation index (00..199). ``None`` -> caller picks a
             fallback such as ``AIPerfSweep.status.currentChildRef.name``.
         trial: Trial index (0..9) when the sweep includes ``multi_run.trials``
             or convergence. ``None`` omits the ``-tN`` suffix.
@@ -54,10 +54,10 @@ def resolve_child_name(
         )
     if variation is None:
         return None
-    if not 0 <= variation <= 99:
+    if not 0 <= variation <= 199:
         raise ValueError(
             f"Invalid sweep child selector: variation {variation} is outside "
-            "the supported range 0..99."
+            "the supported range 0..199."
         )
     if trial is not None and not 0 <= trial <= 9:
         raise ValueError(
@@ -91,7 +91,7 @@ def generate_benchmark_name(config: Any, *, suffix: str = "") -> str:
     if suffix:
         parts.append(suffix)
     raw = "-".join(parts)
-    return re.sub(r"[^a-z0-9-]", "-", raw).strip("-")[:40]
+    return re.sub(r"[^a-z0-9-]", "-", raw)[:40].strip("-")
 
 
 def print_memory_estimate(

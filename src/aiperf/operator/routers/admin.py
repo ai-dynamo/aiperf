@@ -135,6 +135,8 @@ def create_admin_router(
     @router.get("/stats", response_model=IndexStatsResponse)
     async def stats(request: Request) -> IndexStatsResponse:
         await _reject_request_body(request)
+        if not runs_index.is_open():
+            raise HTTPException(503, "Runs index not available yet")
         s = await runs_index.stats(db_path)
         return IndexStatsResponse(**s)
 

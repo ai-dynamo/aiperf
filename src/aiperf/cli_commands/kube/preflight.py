@@ -89,7 +89,6 @@ async def _run_preflight(
 
     import orjson
 
-    from aiperf.kubernetes.console import console
     from aiperf.kubernetes.preflight import CLIPreflightChecker
 
     # Suppress text output in JSON mode so only clean JSON goes to stdout
@@ -116,7 +115,7 @@ async def _run_preflight(
         json_output = orjson.dumps(
             results.to_dict(), option=orjson.OPT_INDENT_2
         ).decode()
-        console.print(json_output, highlight=False)
+        print(json_output)
 
     if not results.passed:
         raise SystemExit(1)

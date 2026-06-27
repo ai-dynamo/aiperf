@@ -568,7 +568,18 @@ class WorkerGroupManagerBase(BaseComponentService):
             record_processors_per_pod=self.record_processors_per_pod,
             peer_types=self._pod_peer_types,
         )
-        await self._dataset_download_event.wait()
+        try:
+            await asyncio.wait_for(
+                self._dataset_download_event.wait(),
+                timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
+            )
+        except asyncio.TimeoutError as e:
+            raise RuntimeError(
+                f"Dataset download did not complete within "
+                f"{Environment.DATASET.CONFIGURATION_TIMEOUT}s; aborting "
+                f"profile configuration for pod {self.service_id}. The dataset "
+                f"download likely failed (see prior _run_dataset_download logs)."
+            ) from e
         await configure_local_peers(
             router=self.pod_lifecycle_router,
             sender_service_id=self.service_id,

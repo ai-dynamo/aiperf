@@ -41,7 +41,13 @@ _READY_MARKER_NAME = ".aiperf_results_ready.json"
 # 9-20 digits covers legacy epoch-seconds directories, fractional-second
 # run keys, and whole-second Kubernetes keys with a uid-derived suffix.
 EPOCH_RE = re.compile(r"^\d{9,20}$")
-_UID_SUFFIX_MODULUS = 1_000_000_000
+# Six digits keeps the whole-second key the same 16-digit width as the
+# fractional-second key (``f"{seconds}{microsecond:06d}"``), so every emitted
+# run key stays <= JS Number.MAX_SAFE_INTEGER (9_007_199_254_740_991). A wider
+# suffix produced 19-digit keys (~1.7e18) that the operator UI silently rounded
+# when it round-tripped ``status.runEpoch`` through a JSON number, building a
+# ``/runs/<epoch>`` URL that never matched the on-disk directory.
+_UID_SUFFIX_MODULUS = 1_000_000
 
 __all__ = [
     "EPOCH_RE",
@@ -85,13 +91,14 @@ def _epoch_wall_seconds(epoch: str) -> int:
     """Extract the leading whole-seconds component shared by every key format.
 
     ``epoch_key_from_body`` emits keys of differing total widths — a 16-digit
-    fractional-second key (``f"{seconds}{microsecond:06d}"``) versus a 19-digit
-    whole-second key carrying a 9-digit uid-derived collision suffix — but both
-    forms prefix the same 10-digit epoch-seconds. Comparing whole keys as plain
-    integers therefore sorts by digit-width, not wall-clock, so a genuinely
-    later fractional run (~1.7e15) looks "older" than an earlier uid-suffixed
-    run (~1.7e18). Comparing only this leading component restores wall-clock
-    ordering across both formats.
+    fractional-second key (``f"{seconds}{microsecond:06d}"``) and a 16-digit
+    whole-second key carrying a 6-digit uid-derived collision suffix — but both
+    forms prefix the same 10-digit epoch-seconds. The two suffix spaces overlap,
+    so comparing whole keys as plain integers sorts by suffix value, not
+    wall-clock: a genuinely later fractional run can look "older" than an
+    earlier uid-suffixed run that happens to carry a larger suffix. Comparing
+    only this leading component restores wall-clock ordering across both
+    formats.
     """
     return int(epoch[:10])
 
@@ -151,6 +158,21 @@ def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
         [RunEntry(epoch='1714150923', mtime_epoch=1714150925, file_count=7,
                   total_size_bytes=4823912, is_latest=True)]
     """
+    runs = _walk_runs(base, namespace, name)
+    _schedule_lazy_backfill_runs(base, namespace, name, runs)
+    return runs
+
+
+def _walk_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
+    """Pure recursive PVC walk producing newest-first :class:`RunEntry` rows.
+
+    Split out from :func:`list_runs` so :func:`list_runs_async` can run the
+    blocking ``iterdir``/``stat`` storm under ``asyncio.to_thread`` without the
+    fire-and-forget ``_schedule_lazy_backfill_runs`` call — which needs a
+    running loop and therefore must stay on the main event loop, not a worker
+    thread. Sync callers go through :func:`list_runs`, which schedules backfill
+    on the loop when one is running.
+    """
     parent = job_dir(base, namespace, name)
     if not parent.is_dir():
         return []
@@ -177,7 +199,6 @@ def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
             )
         )
     runs.sort(key=lambda r: r.mtime_epoch, reverse=True)
-    _schedule_lazy_backfill_runs(base, namespace, name, runs)
     return runs
 
 
@@ -210,7 +231,8 @@ async def list_runs_async(base: Path, namespace: str, name: str) -> list[RunEntr
     if not parent.is_dir():
         return []
 
-    disk_runs = list_runs(base, namespace, name)
+    disk_runs = await asyncio.to_thread(_walk_runs, base, namespace, name)
+    _schedule_lazy_backfill_runs(base, namespace, name, disk_runs)
     if not rows:
         return disk_runs
 
@@ -694,4 +716,4 @@ def epoch_key_from_body(body: dict) -> str:
     if not uid:
         return str(seconds)
     suffix = zlib.crc32(str(uid).encode("utf-8")) % _UID_SUFFIX_MODULUS
-    return f"{seconds}{suffix:09d}"
+    return f"{seconds}{suffix:06d}"

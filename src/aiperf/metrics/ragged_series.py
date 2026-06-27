@@ -62,7 +62,12 @@ class RaggedSeries:
             return
         if idx >= self._offsets_capacity:
             self._grow_offsets(idx)
-        self._offsets[idx] = len(self._values)
+        # First-wins: a re-delivered/late record for an already-seen session_num
+        # appends more values but must keep its original start offset, or values
+        # from the first append would resolve to the second append's start and
+        # corrupt the per-request cumsum reset in grouped_cumsum / ICL sweeps.
+        if self._offsets[idx] < 0:
+            self._offsets[idx] = len(self._values)
         val_arr = np.asarray(values, dtype=np.float64)
         idx_arr = np.full(n, idx, dtype=np.int32)
         self._values.extend(val_arr)

@@ -524,14 +524,44 @@ class K8sChildJobExecutor(RunExecutor):
         phase by the deadline (operator cancel path stalled, wedged pod,
         repeatedly-failing JobSet delete), a cancelled ``RunResult`` is
         returned so the orchestrator advances instead of blocking forever.
+
+        Independently of cancel, a child that goes missing (404) before its
+        terminal phase — deleted out-of-band by a user or the kube garbage
+        collector — arms a ``CHILD_MISSING_TIMEOUT_SECONDS`` deadline. Once
+        the child has been continuously absent past that bound, a cancelled
+        ``RunResult`` is returned so the sequential sweep advances instead of
+        polling a deleted variation forever. A reappearing child (the missing
+        read was transient) clears the deadline.
         """
         cancel_patched = False
         cancel_deadline: float | None = None
+        missing_deadline: float | None = None
         while True:
             child = await self._try_read_child(child_name)
             phase = (child or {}).get("status", {}).get("phase")
             if phase in TERMINAL_PHASES:
                 return None
+            if child is None:
+                if missing_deadline is None:
+                    missing_deadline = (
+                        asyncio.get_event_loop().time()
+                        + OperatorEnvironment.SWEEP_CONTROLLER.CHILD_MISSING_TIMEOUT_SECONDS
+                    )
+                elif asyncio.get_event_loop().time() > missing_deadline:
+                    logger.warning(
+                        f"child {child_name} missing (404) for more than "
+                        f"{OperatorEnvironment.SWEEP_CONTROLLER.CHILD_MISSING_TIMEOUT_SECONDS}s "
+                        f"before reaching a terminal phase; advancing sweep"
+                    )
+                    return RunResult(
+                        label=run.label,
+                        success=False,
+                        error=f"child {child_name} disappeared before terminal "
+                        f"phase; phase=Cancelled",
+                        artifacts_path=run.artifact_dir,
+                    )
+            else:
+                missing_deadline = None
             if cancel_check is not None and cancel_check():
                 if not cancel_patched:
                     logger.info(f"cancel requested while waiting on {child_name}")
@@ -554,7 +584,7 @@ class K8sChildJobExecutor(RunExecutor):
                         label=run.label,
                         success=False,
                         error=f"child {child_name} did not reach terminal phase "
-                        f"within cancel grace",
+                        f"within cancel grace; phase=Cancelled",
                         artifacts_path=run.artifact_dir,
                     )
                 # Otherwise keep polling; the operator will eventually mark Cancelled.
@@ -580,10 +610,25 @@ class K8sChildJobExecutor(RunExecutor):
         status = child.get("status") or {}
         phase = status.get("phase")
         if phase not in {"Completed", "Succeeded"}:
+            # A child cancelled out of band keeps phase=Cancelled, but the
+            # operator's on_cancel does NOT clear a stale status.error stamped
+            # by an earlier monitor tick. Anchor the error on the terminal
+            # phase so ``main._is_cancelled_result`` (which discriminates on the
+            # ``phase=Cancelled`` suffix) buckets it as cancelled, not failed —
+            # otherwise the leftover error trips ``failed >= max_failures`` and
+            # mis-resolves an externally cancelled sweep to Failed.
+            if phase == "Cancelled":
+                error = f"child terminal phase={phase}"
+            else:
+                error = (
+                    status.get("error")
+                    or status.get("message")
+                    or f"child terminal phase={phase}"
+                )
             return RunResult(
                 label=run.label,
                 success=False,
-                error=status.get("message") or f"child terminal phase={phase}",
+                error=error,
                 artifacts_path=run.artifact_dir,
                 child_run_epoch=str(status.get("runEpoch") or ""),
             )

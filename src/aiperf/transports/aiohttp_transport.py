@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from typing import Any
 
@@ -29,6 +30,15 @@ from aiperf.transports.base_transports import (
     TransportMetadata,
 )
 
+# Mirror the worker's UserSessionManager bound (workers/session_manager.py
+# DEFAULT_MAX_SESSIONS): a sticky session whose conversation is abandoned before
+# its final turn (e.g. --request-count dataset recycling, or a worker reassigned
+# mid-conversation) never reaches the is_final_turn/cancel release path, so its
+# connector would otherwise live in _leases until on_stop. Capping retention with
+# the same LRU ceiling the session manager enforces ties connector teardown to the
+# same authoritative bound and reclaims abandoned leases instead of leaking them.
+DEFAULT_MAX_LEASES = 100_000
+
 
 class ConnectionLeaseManager(AIPerfLoggerMixin):
     """Manages connection leases for sticky-user-sessions connection strategy.
@@ -37,19 +47,36 @@ class ConnectionLeaseManager(AIPerfLoggerMixin):
     that persists across all turns. The connector is closed when the final turn
     completes, enabling sticky load balancing where all turns of a user session
     hit the same backend server.
+
+    Retention is LRU-bounded by ``max_leases`` so sessions abandoned before their
+    final turn (never hitting the release path) cannot accumulate connectors
+    unboundedly; the least-recently-used lease is closed when the bound is exceeded.
     """
 
-    def __init__(self, tcp_kwargs: Mapping[str, Any] | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        tcp_kwargs: Mapping[str, Any] | None = None,
+        max_leases: int = DEFAULT_MAX_LEASES,
+        **kwargs,
+    ) -> None:
         """Initialize the lease manager.
 
         Args:
             tcp_kwargs: TCP connector configuration passed to new connectors
+            max_leases: Maximum number of concurrent leases retained before the
+                least-recently-used connector is closed and evicted
             **kwargs: Additional arguments passed to parent
         """
         super().__init__(**kwargs)
+        if max_leases < 1:
+            raise ValueError(f"max_leases ({max_leases}) must be >= 1")
         self._tcp_kwargs = dict(tcp_kwargs) if tcp_kwargs else {}
-        # Map session_id (x_correlation_id) -> TCPConnector
-        self._leases: dict[str, aiohttp.TCPConnector] = {}
+        self._max_leases = max_leases
+        # Map session_id (x_correlation_id) -> TCPConnector, ordered by recency of use
+        self._leases: OrderedDict[str, aiohttp.TCPConnector] = OrderedDict()
+        # Connectors evicted by the LRU bound are closed off the request path;
+        # close_all() drains any still-pending eviction closes.
+        self._eviction_tasks: set[asyncio.Task[None]] = set()
 
     def get_connector(self, session_id: str) -> aiohttp.TCPConnector:
         """Get or create a connector for a user session.
@@ -60,13 +87,28 @@ class ConnectionLeaseManager(AIPerfLoggerMixin):
         Returns:
             TCP connector dedicated to this user session
         """
-        if session_id not in self._leases:
+        connector = self._leases.get(session_id)
+        if connector is None:
             # Create a new connector with limit=1 for single connection
             # This ensures all requests for this session use the same TCP connection
             connector = create_tcp_connector(limit=1, **self._tcp_kwargs)
             self._leases[session_id] = connector
             self.debug(lambda: f"Created connection lease for session {session_id}")
-        return self._leases[session_id]
+            self._evict_overflow()
+        else:
+            self._leases.move_to_end(session_id)
+        return connector
+
+    def _evict_overflow(self) -> None:
+        """Close and drop least-recently-used leases beyond the retention bound."""
+        while len(self._leases) > self._max_leases:
+            evicted_id, evicted = self._leases.popitem(last=False)
+            self.debug(
+                lambda eid=evicted_id: f"Evicting LRU connection lease for session {eid}"
+            )
+            task = asyncio.ensure_future(evicted.close())
+            self._eviction_tasks.add(task)
+            task.add_done_callback(self._eviction_tasks.discard)
 
     async def release_lease(self, session_id: str) -> None:
         """Release and close the connector for a session.
@@ -83,11 +125,15 @@ class ConnectionLeaseManager(AIPerfLoggerMixin):
             self.debug(lambda: f"Released connection lease for session {session_id}")
 
     async def close_all(self) -> None:
-        """Close all active connection leases."""
+        """Close all active connection leases and drain pending LRU-eviction closes."""
         leases = list(self._leases.values())
         self._leases.clear()
         for lease in leases:
             await lease.close()
+        if self._eviction_tasks:
+            pending = list(self._eviction_tasks)
+            self._eviction_tasks.clear()
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 class AioHttpTransport(BaseHTTPTransport):

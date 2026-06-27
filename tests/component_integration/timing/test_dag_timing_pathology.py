@@ -480,7 +480,13 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
 @pytest.mark.asyncio
 async def test_request_rate_dag_child_with_delay_uses_scheduler() -> None:
     """If the child's next-turn metadata has delay_ms, the rate strategy
-    routes via scheduler.schedule_later, NOT via the rate-limited queue."""
+    routes the delayed continuation through a tracked running task
+    (scheduler.execute_async), NOT via the rate-limited queue.
+
+    A running task is required (not a pending ``schedule_later`` timer) so the
+    delayed child continuation survives ``cancel_all_pending`` at sending-complete
+    and still dispatches-or-releases during the return-wait window; a pending
+    timer would be close()-dropped, stranding the parent's join gate."""
     turns = [TurnMetadata(), TurnMetadata(delay_ms=500.0)]
     conv = ConversationMetadata(conversation_id="child", turns=turns)
     ds = DatasetMetadata(
@@ -517,9 +523,13 @@ async def test_request_rate_dag_child_with_delay_uses_scheduler() -> None:
     )
     await strategy.handle_credit_return(child_credit)
 
-    scheduler.schedule_later.assert_called_once()
-    delay_sec, _coro = scheduler.schedule_later.call_args.args
-    assert delay_sec == pytest.approx(0.5)
+    # Delayed DAG-child continuation is scheduled as a running task so it
+    # survives the sending-complete cull; not enqueued on the rate-loop queue.
+    scheduler.execute_async.assert_called_once()
+    scheduler.schedule_later.assert_not_called()
+    (coro,) = scheduler.execute_async.call_args.args
+    assert asyncio.iscoroutine(coro)
+    coro.close()  # the MagicMock scheduler never runs it; avoid an un-awaited warning
     assert strategy._continuation_turns.empty()
 
 

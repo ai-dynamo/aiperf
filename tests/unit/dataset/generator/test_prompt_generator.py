@@ -404,7 +404,9 @@ class TestPromptGeneratorComprehensive:
         # Should log a warning
         mock_warning.assert_called_once()
         assert "longer than the corpus" in str(mock_warning.call_args)
-        assert len(tokens) == corpus_size * 2
+        # Oversized requests are clamped to the corpus size, matching the warning
+        # text ("Returning a prompt of length {corpus_size}").
+        assert len(tokens) == corpus_size
 
     def test_sample_tokens_empty_corpus(self, basic_config):
         """Test _sample_tokens with empty corpus."""

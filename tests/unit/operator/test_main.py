@@ -2884,6 +2884,11 @@ class TestRecoverTerminatedController:
             ),
             mock_patch("aiperf.operator.events.failed") as mock_failed_event,
             mock_patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=mock_custom,
             ),
@@ -3045,6 +3050,11 @@ class TestRecoverTerminatedController:
             mock_patch.object(OperatorEnvironment.RESULTS, "DIR", temp_results_dir),
             mock_patch("aiperf.operator.events.results_stored") as mock_results_stored,
             mock_patch("aiperf.operator.events.failed") as mock_failed_event,
+            mock_patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=mock_custom,

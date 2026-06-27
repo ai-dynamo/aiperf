@@ -110,6 +110,7 @@ class PhaseProgressTracker:
         *,
         session_ended: bool | None = None,
         session_cancelled: bool | None = None,
+        errored: bool = False,
     ) -> bool:
         """Atomically increment returned count.
 
@@ -120,6 +121,7 @@ class PhaseProgressTracker:
                 is_final_turn.
             session_cancelled: Whether the ended session should count as cancelled.
                 Defaults to the request's cancelled status when session_ended=True.
+            errored: Whether the request returned with a non-None error.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -136,6 +138,7 @@ class PhaseProgressTracker:
             cancelled,
             session_ended=session_ended,
             session_cancelled=session_cancelled,
+            errored=errored,
         )
 
     def increment_prefill_released(self) -> None:

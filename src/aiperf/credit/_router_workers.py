@@ -215,6 +215,10 @@ class _WorkersMixin:
                 update_load_index=False,
             )
         else:
+            # The worker is gone from both pools, so _apply_credit_return (which
+            # owns the first-token discard) never runs for this return. Evict the
+            # key here so it does not leak for the lifetime of the router process.
+            self._first_token_received.discard(self._credit_id_key(phase, credit_id))  # type: ignore[attr-defined]
             self._warn_missing_worker(worker_id, "returned")
 
     def _apply_credit_return(

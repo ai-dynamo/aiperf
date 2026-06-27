@@ -263,6 +263,26 @@ class TestCreditCounter:
         assert sa0 == 0 and sa1 == 1  # session increments on each turn_index==0
         assert sb0 == 1 and sb1 == 1  # B's child turn keeps B's session_index
 
+    def test_pre_session_dag_child_session_index_is_zero_not_negative(self) -> None:
+        """A pre-session SPAWN child fired before any root session maps to slot 0.
+
+        PhaseRunner dispatches pre-session branches before strategy.execute_phase,
+        so increment_sent runs while _sent_sessions == 0. The is_dag_child branch
+        must clamp to 0 rather than returning -1 (which Python modulo wraps to N-1
+        and mis-attributes the child's per-session metadata).
+        """
+        c = CreditCounter(cfg())
+        child = TurnToSend(
+            conversation_id="c1",
+            turn_index=0,
+            num_turns=1,
+            x_correlation_id="x1",
+            agent_depth=1,
+        )
+        _, session_index, _ = c.increment_sent(child)
+        assert session_index == 0
+        assert c.sent_sessions == 0  # children never bump the session counter
+
     def test_credit_index_vs_session_index_diverge_multi_turn(self) -> None:
         """credit_index is always sequential; session_index only increments on first turn."""
         c = CreditCounter(cfg())

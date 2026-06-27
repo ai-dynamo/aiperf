@@ -7705,6 +7705,10 @@ Output format.
 
 Operator HTTP API base URL. Default: auto-resolve via label-selector + port-forward to the results-server container.
 
+#### `--operator-namespace` `<str>`
+
+Namespace where the operator is deployed. Auto-detected (cluster-wide pod search) when omitted.
+
 ### Kubernetes
 
 #### `--kubeconfig` `<str>`
@@ -7735,6 +7739,10 @@ Output format.
 #### `--api-url` `<str>`
 
 Operator HTTP API base URL. Default: auto-resolve via label-selector + port-forward to the results-server container.
+
+#### `--operator-namespace` `<str>`
+
+Namespace where the operator is deployed. Auto-detected (cluster-wide pod search) when omitted.
 
 ### Kubernetes
 

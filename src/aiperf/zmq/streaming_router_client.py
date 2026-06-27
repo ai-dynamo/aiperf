@@ -306,6 +306,15 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     "Failed to recreate streaming ROUTER socket after send "
                     f"failure to {identity}: {recreate_error!r}"
                 )
+            return
+
+        # _recreate_socket() swapped self.socket for a fresh object with a new FD;
+        # the FD reader is still registered against the old (now closed) FD and
+        # pumping the old socket. Rebuild it against the new socket so the ROUTER
+        # keeps receiving and we don't leak an add_reader on the recycled FD.
+        if self._fd_reader is not None and not self.stop_requested:
+            self._fd_reader.stop()
+            self._start_fd_reader()
 
     def _try_resolve_pending_request(self, message: Any) -> bool:
         """Resolve the pending-request future if ``message.cid`` matches a pending one.
@@ -328,7 +337,16 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         on recv, sync NOBLOCK on send (the driver owns both directions).
         """
         self.debug("Streaming ROUTER receiver task started")
+        self._start_fd_reader()
 
+    def _start_fd_reader(self) -> None:
+        """Build and start the FD reader against the current ``self.socket``.
+
+        Called once by the receiver task at startup, and again after
+        ``_recreate_socket`` swaps in a new socket so the reader binds to the new
+        FD. The recv/send callables read ``self.socket`` dynamically, so only the
+        reader's captured socket and registered FD need re-pointing.
+        """
         self._fd_reader = FdEdgeReader(
             socket=self.socket,
             recv_one=self._recv_one_router,

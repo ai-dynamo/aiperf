@@ -106,6 +106,11 @@ from aiperf.records.records_manager_processing import (
 )
 from aiperf.records.records_tracker import RecordsTracker
 
+# Safety ceiling for the pre-finalize telemetry side-channel drain. Each pass
+# yields once; the drain exits as soon as the pull client reports no in-flight
+# callbacks, so this bound only caps the pathological wedged-callback case.
+_TELEMETRY_DRAIN_MAX_YIELDS = 64
+
 
 class RecordsManager(PullClientMixin, BaseComponentService):
     """Collects and processes benchmark results from workers.
@@ -475,6 +480,30 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"Waiting {sleep_dur_sec:.1f}s for server metrics flush period..."
             )
             await asyncio.sleep(sleep_dur_sec)
+
+        # Drain the telemetry side-channel before _process_results runs
+        # _finalize_stream_exporters (which closes the GPU telemetry JSONL
+        # writer). The PROFILE_COMPLETE relay above returns on the control
+        # channel, but the final GPU scrape it triggers is PUSHed on the
+        # separate RECORDS pull channel. Those in-flight TelemetryRecordsMessages
+        # are dispatched to _on_telemetry_records by the pull client's FD reader
+        # as execute_async tasks counted by pull_client._inflight; if finalize()
+        # (which sets _closed=True on the writer) wins the race, the final-scrape
+        # samples are dropped and never reach gpu_telemetry_export.jsonl. Yield
+        # while callbacks remain so an already-delivered batch is processed first.
+        #
+        # _inflight is read defensively: it is an int only on the real FD-reader
+        # pull client, so this is a safe no-op when pull_client is a stand-in
+        # (e.g. a unit-test mock). The ceiling only guards a wedged callback that
+        # never returns _inflight to zero, so finalization can never stall
+        # indefinitely (mirrors the bounded drain in
+        # BufferedJSONLWriterMixin._close_file).
+        pull_client = getattr(self, "pull_client", None)
+        if isinstance(getattr(pull_client, "_inflight", None), int):
+            for _ in range(_TELEMETRY_DRAIN_MAX_YIELDS):
+                if getattr(pull_client, "_inflight", 0) <= 0:
+                    break
+                await yield_to_event_loop()
 
         await self._process_results(cancelled=cancelled)
 

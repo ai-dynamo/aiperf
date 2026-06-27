@@ -46,6 +46,10 @@ class WireTurn(Struct, frozen=True, kw_only=True, omit_defaults=True):
     image_count: int = 0
     """Number of images referenced in this turn (flattened from Image objects)."""
 
+    audio_duration_seconds: float | None = None
+    """Duration of the audio content in seconds. Carried so ASR metrics
+    (RTFx, audio_duration) resolve on the record-processor side."""
+
 
 class WirePromptProjection(Struct, frozen=True, kw_only=True, omit_defaults=True):
     """Wire-format prompt projection containing turns and system/context messages."""

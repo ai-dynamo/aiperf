@@ -196,7 +196,9 @@ class SSEMessage(
             # JSON value. Append this line as a continuation. This can happen when
             # ignore_eos=True and the model emits weird tokens.
             if (
-                prev_value
+                message.packets
+                and message.packets[-1].name == SSEFieldType.DATA
+                and prev_value
                 and prev_value.startswith("{")
                 and not prev_value.endswith("}")
                 and not line.startswith("data:")

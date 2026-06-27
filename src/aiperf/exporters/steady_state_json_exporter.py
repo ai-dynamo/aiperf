@@ -9,6 +9,7 @@ from typing import Any
 import orjson
 
 from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
 from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
@@ -49,4 +50,6 @@ class SteadyStateJsonExporter(MetricsBaseExporter):
                     metric_data[attr] = val
             data["metrics"][tag] = metric_data
 
-        return orjson.dumps(data, option=orjson.OPT_INDENT_2, default=str).decode()
+        return orjson.dumps(
+            scrub_non_finite(data), option=orjson.OPT_INDENT_2, default=str
+        ).decode()

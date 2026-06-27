@@ -9,8 +9,12 @@ deployment and the completion-claim mechanic in ``client_cache.py``. If the
 operator is ever scaled up, only the kopf-owning process must call write APIs.
 
 The DB lives at ``<RESULTS.DIR>/.aiperf_index.sqlite`` in WAL mode. WAL mode
-gives us non-blocking readers across processes; ``BEGIN IMMEDIATE`` plus
-``busy_timeout=5000`` serializes writes without explicit locks.
+gives us non-blocking readers across processes. All write APIs share the single
+module connection, so concurrent in-process writers (kopf runs per-object
+handlers concurrently) are serialized through ``_write_lock``: ``BEGIN
+IMMEDIATE`` cannot be entered twice on one connection, and an autocommit write
+must never be absorbed into another coroutine's open transaction. ``busy_timeout
+=5000`` only covers cross-process contention on the WAL.
 
 The index is a cache, never a source of truth. Every read site falls back to
 a filesystem scan on miss and lazy-backfills the row in the background, so a
@@ -19,6 +23,7 @@ corrupt or stale index degrades to slower, never wrong.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import math
@@ -52,6 +57,23 @@ SCHEMA_VERSION = 1
 _DB: aiosqlite.Connection | None = None
 _DB_PATH: Path | None = None
 _READ_ONLY = False
+
+# Serializes every write API on the single shared connection. The lock is
+# bound to the running loop the first time a writer acquires it, so unit tests
+# that spin a fresh event loop per test never inherit a lock from a dead loop.
+_write_lock: asyncio.Lock | None = None
+_write_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _writer_lock() -> asyncio.Lock:
+    """Return the write lock, (re)binding it to the current running loop."""
+    global _write_lock, _write_lock_loop
+    loop = asyncio.get_running_loop()
+    if _write_lock is None or _write_lock_loop is not loop:
+        _write_lock = asyncio.Lock()
+        _write_lock_loop = loop
+    return _write_lock
+
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -244,12 +266,14 @@ async def open_readonly(path: Path) -> None:
 
 async def close() -> None:
     """Close the DB. Safe to call when never opened."""
-    global _DB, _DB_PATH, _READ_ONLY
+    global _DB, _DB_PATH, _READ_ONLY, _write_lock, _write_lock_loop
     if _DB is not None:
         await _DB.close()
     _DB = None
     _DB_PATH = None
     _READ_ONLY = False
+    _write_lock = None
+    _write_lock_loop = None
 
 
 def is_open() -> bool:
@@ -278,11 +302,12 @@ async def get_meta(key: str) -> str | None:
 
 async def set_meta(key: str, value: str) -> None:
     """Upsert a single ``meta`` row."""
-    await _conn().execute(
-        "INSERT INTO meta(key, value) VALUES(?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (key, value),
-    )
+    async with _writer_lock():
+        await _conn().execute(
+            "INSERT INTO meta(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
 
 
 async def stats(db_path: Path) -> dict[str, Any]:
@@ -458,20 +483,21 @@ async def upsert_run_created(
     model, endpoint = _extract_model_endpoint(spec)
     spec_blob = _zstd_compress(spec)
     now = int(time.time())
-    await _conn().execute(
-        """
-        INSERT INTO runs (
-            namespace, job_id, epoch, phase, is_latest, created_unix,
-            model, endpoint, spec_json
+    async with _writer_lock():
+        await _conn().execute(
+            """
+            INSERT INTO runs (
+                namespace, job_id, epoch, phase, is_latest, created_unix,
+                model, endpoint, spec_json
+            )
+            VALUES (?, ?, ?, 'Pending', 0, ?, ?, ?, ?)
+            ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET
+                model      = COALESCE(runs.model, excluded.model),
+                endpoint   = COALESCE(runs.endpoint, excluded.endpoint),
+                spec_json  = COALESCE(runs.spec_json, excluded.spec_json)
+            """,
+            (namespace, job_id, epoch, now, model, endpoint, spec_blob),
         )
-        VALUES (?, ?, ?, 'Pending', 0, ?, ?, ?, ?)
-        ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET
-            model      = COALESCE(runs.model, excluded.model),
-            endpoint   = COALESCE(runs.endpoint, excluded.endpoint),
-            spec_json  = COALESCE(runs.spec_json, excluded.spec_json)
-        """,
-        (namespace, job_id, epoch, now, model, endpoint, spec_blob),
-    )
 
 
 async def upsert_run_phase(
@@ -483,14 +509,15 @@ async def upsert_run_phase(
     the job before the operator did).
     """
     now = int(time.time())
-    await _conn().execute(
-        """
-        INSERT INTO runs (namespace, job_id, epoch, phase, created_unix)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET phase = excluded.phase
-        """,
-        (namespace, job_id, epoch, phase, now),
-    )
+    async with _writer_lock():
+        await _conn().execute(
+            """
+            INSERT INTO runs (namespace, job_id, epoch, phase, created_unix)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET phase = excluded.phase
+            """,
+            (namespace, job_id, epoch, phase, now),
+        )
 
 
 async def upsert_run_completed(
@@ -566,7 +593,8 @@ async def upsert_run_completed(
         f"INSERT INTO runs ({', '.join(cols)}) VALUES ({placeholders}) "
         f"ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET {update_assignments}"
     )
-    await _conn().execute(sql, vals)
+    async with _writer_lock():
+        await _conn().execute(sql, vals)
 
 
 async def upsert_run_failed(
@@ -574,17 +602,18 @@ async def upsert_run_failed(
 ) -> None:
     """Record a failure — phase + error string, end_time stamped now."""
     now = int(time.time())
-    await _conn().execute(
-        """
-        INSERT INTO runs (namespace, job_id, epoch, phase, error, created_unix, end_time)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET
-            phase    = excluded.phase,
-            error    = excluded.error,
-            end_time = excluded.end_time
-        """,
-        (namespace, job_id, epoch, phase, error, now),
-    )
+    async with _writer_lock():
+        await _conn().execute(
+            """
+            INSERT INTO runs (namespace, job_id, epoch, phase, error, created_unix, end_time)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(namespace, job_id, epoch) DO UPDATE SET
+                phase    = excluded.phase,
+                error    = excluded.error,
+                end_time = excluded.end_time
+            """,
+            (namespace, job_id, epoch, phase, error, now),
+        )
 
 
 async def set_latest(namespace: str, job_id: str, epoch: str) -> None:
@@ -595,28 +624,30 @@ async def set_latest(namespace: str, job_id: str, epoch: str) -> None:
     into a hard error rather than silent dual-latest.
     """
     db = _conn()
-    await db.execute("BEGIN IMMEDIATE")
-    try:
-        await db.execute(
-            "UPDATE runs SET is_latest = 0 WHERE namespace = ? AND job_id = ? AND is_latest = 1",
-            (namespace, job_id),
-        )
-        await db.execute(
-            "UPDATE runs SET is_latest = 1 WHERE namespace = ? AND job_id = ? AND epoch = ?",
-            (namespace, job_id, epoch),
-        )
-        await db.execute("COMMIT")
-    except Exception:
-        await db.execute("ROLLBACK")
-        raise
+    async with _writer_lock():
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await db.execute(
+                "UPDATE runs SET is_latest = 0 WHERE namespace = ? AND job_id = ? AND is_latest = 1",
+                (namespace, job_id),
+            )
+            await db.execute(
+                "UPDATE runs SET is_latest = 1 WHERE namespace = ? AND job_id = ? AND epoch = ?",
+                (namespace, job_id, epoch),
+            )
+            await db.execute("COMMIT")
+        except Exception:
+            await db.execute("ROLLBACK")
+            raise
 
 
 async def delete_run(namespace: str, job_id: str, epoch: str) -> None:
     """Remove one run row. Used by retention and on_delete handlers."""
-    await _conn().execute(
-        "DELETE FROM runs WHERE namespace = ? AND job_id = ? AND epoch = ?",
-        (namespace, job_id, epoch),
-    )
+    async with _writer_lock():
+        await _conn().execute(
+            "DELETE FROM runs WHERE namespace = ? AND job_id = ? AND epoch = ?",
+            (namespace, job_id, epoch),
+        )
 
 
 _RUN_ROW_COLS = (
@@ -788,7 +819,8 @@ async def upsert_sweep_variation(
         f"ON CONFLICT(namespace, sweep_name, sweep_epoch, variation_idx) "
         f"DO UPDATE SET {update_assignments}"
     )
-    await _conn().execute(sql, vals)
+    async with _writer_lock():
+        await _conn().execute(sql, vals)
 
 
 async def mark_sweep_pareto(
@@ -800,19 +832,20 @@ async def mark_sweep_pareto(
 ) -> None:
     """Apply ``[(variation_idx, pareto_rank, is_best), ...]`` in one transaction."""
     db = _conn()
-    await db.execute("BEGIN IMMEDIATE")
-    try:
-        for idx, rank, best in rankings:
-            await db.execute(
-                "UPDATE sweep_variations SET pareto_rank = ?, is_best = ? "
-                "WHERE namespace = ? AND sweep_name = ? AND sweep_epoch = ? "
-                "AND variation_idx = ?",
-                (rank, 1 if best else 0, namespace, sweep_name, sweep_epoch, idx),
-            )
-        await db.execute("COMMIT")
-    except Exception:
-        await db.execute("ROLLBACK")
-        raise
+    async with _writer_lock():
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            for idx, rank, best in rankings:
+                await db.execute(
+                    "UPDATE sweep_variations SET pareto_rank = ?, is_best = ? "
+                    "WHERE namespace = ? AND sweep_name = ? AND sweep_epoch = ? "
+                    "AND variation_idx = ?",
+                    (rank, 1 if best else 0, namespace, sweep_name, sweep_epoch, idx),
+                )
+            await db.execute("COMMIT")
+        except Exception:
+            await db.execute("ROLLBACK")
+            raise
 
 
 async def list_sweep_variations(
@@ -924,9 +957,10 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
     "no completed summary" guard.
     """
     if force:
-        db = _conn()
-        await db.execute("DELETE FROM runs")
-        await db.execute("DELETE FROM sweep_variations")
+        async with _writer_lock():
+            db = _conn()
+            await db.execute("DELETE FROM runs")
+            await db.execute("DELETE FROM sweep_variations")
 
     started = time.monotonic()
     runs_count = 0

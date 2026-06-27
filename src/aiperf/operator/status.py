@@ -227,9 +227,15 @@ class ConditionManager:
         for cond in status.get("conditions") or []:
             try:
                 cond_type = ConditionType(cond["type"])
-                manager._conditions[cond_type] = cond
             except (KeyError, ValueError):
                 continue
+            # Externally-authored conditions (GitOps tools, kubectl edits,
+            # third-party controllers) may carry a valid `type` but omit
+            # `status`. set_condition/is_condition_true assume every stored
+            # dict carries a string status, so normalize absent status to
+            # "Unknown" rather than letting a later KeyError crash reconcile.
+            cond.setdefault("status", "Unknown")
+            manager._conditions[cond_type] = cond
         return manager
 
 

@@ -110,34 +110,55 @@ class CreditCallbackHandler:
         """
         self._concurrency_manager = concurrency_manager
         self._phase_handlers: dict[CreditPhase, PhaseCallbackContext] = {}
-        self._branch_orchestrator: BranchOrchestrator | None = None
+        # Keyed by phase so a still-draining seamless phase keeps routing its
+        # own child returns even after the next phase registers its own
+        # orchestrator. A single shared slot would detach the previous phase's
+        # drain/abort observers and misroute its in-flight child returns
+        # (seamless warmup → profiling overlap).
+        self._branch_orchestrators: dict[CreditPhase, BranchOrchestrator] = {}
+        # Authoritative record of credits whose FirstToken already released the
+        # prefill slot via ``on_first_token``. The worker stamps
+        # ``CreditReturn.first_token_sent`` only AFTER awaiting the FirstToken
+        # send (worker.py), so a credit-task cancellation at that await can put
+        # the FirstToken on the wire while the subsequent CreditReturn still
+        # carries ``first_token_sent=False``. Trusting that stale flag would
+        # release the prefill slot a second time and over-grant prefill permits.
+        # Keyed by (phase, credit_id) to mirror the router's own set.
+        self._first_token_received: set[tuple[CreditPhase, int]] = set()
 
-    def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
-        """Inject (or detach) the DAG branch orchestrator.
+    def set_branch_orchestrator(
+        self, phase: CreditPhase, orchestrator: BranchOrchestrator | None
+    ) -> None:
+        """Inject (or detach) the DAG branch orchestrator for ``phase``.
 
         Called by ``PhaseRunner`` before phase start when the dataset is
         DAG-shaped, and again with ``None`` after the phase finalizes so a
         subsequent non-DAG phase / cleanup doesn't dispatch into a torn-down
         orchestrator.
 
-        Also registers a drain observer on the orchestrator so the deferred
-        completion check fires when the orchestrator's last drain step
-        lands AFTER the final ``on_credit_return`` callback (concurrency
-        race: under N>1, ``has_pending_branch_work()`` can flip False
-        between credit returns, with no further return arriving to
-        re-trigger the check).
+        Orchestrators are keyed by phase: a seamless non-final phase defers
+        its detach to a background return-wait task, so the next phase's
+        registration must NOT clobber the previous phase's orchestrator or
+        its in-flight child returns would misroute. Each phase's orchestrator
+        keeps its own drain/abort observers attached for the lifetime of that
+        phase's handler.
+
+        The drain observer fires the deferred completion check when the
+        orchestrator's last drain step lands AFTER the final
+        ``on_credit_return`` callback (concurrency race: under N>1,
+        ``has_pending_branch_work()`` can flip False between credit returns,
+        with no further return arriving to re-trigger the check).
         """
-        # Detach observer from any previously attached orchestrator.
-        if (
-            self._branch_orchestrator is not None
-            and self._branch_orchestrator is not orchestrator
-        ):
-            self._branch_orchestrator.set_drain_observer(None)
-            self._branch_orchestrator.set_abort_observer(None)
-        self._branch_orchestrator = orchestrator
-        if orchestrator is not None:
-            orchestrator.set_drain_observer(self._on_orchestrator_drain)
-            orchestrator.set_abort_observer(self._on_orchestrator_abort)
+        previous = self._branch_orchestrators.get(phase)
+        if previous is not None and previous is not orchestrator:
+            previous.set_drain_observer(None)
+            previous.set_abort_observer(None)
+        if orchestrator is None:
+            self._branch_orchestrators.pop(phase, None)
+            return
+        self._branch_orchestrators[phase] = orchestrator
+        orchestrator.set_drain_observer(self._on_orchestrator_drain)
+        orchestrator.set_abort_observer(self._on_orchestrator_abort)
 
     def _on_orchestrator_drain(self) -> None:
         """Re-evaluate completion across every active phase handler.
@@ -147,10 +168,10 @@ class CreditCallbackHandler:
         the event is already set or the predicate disagrees, the per-handler
         check no-ops.
         """
-        for handler in self._phase_handlers.values():
+        for phase, handler in self._phase_handlers.items():
             if handler.lifecycle.is_complete:
                 continue
-            self._maybe_signal_dag_completion(handler)
+            self._maybe_signal_dag_completion(phase, handler)
 
     def _on_orchestrator_abort(self) -> None:
         """Cancel every active phase on FAIL_FAST.
@@ -210,6 +231,12 @@ class CreditCallbackHandler:
         """
         if phase in self._phase_handlers:
             del self._phase_handlers[phase]
+            # Drop any first-token keys for this phase whose CreditReturn never
+            # reached the reconcile path (e.g. returns dropped as late/reclaimed),
+            # so the set can't grow unbounded across long-lived handlers.
+            self._first_token_received = {
+                key for key in self._first_token_received if key[0] != phase
+            }
             _logger.debug(lambda: f"Unregistered callback handler for phase {phase}")
 
     async def on_credit_return(
@@ -249,23 +276,36 @@ class CreditCallbackHandler:
 
         disposition = self._get_return_disposition(credit_return, handler)
 
+        # Reconcile against the authoritative first-token record. ``on_first_token``
+        # already released the prefill slot for any credit in this set, so treat
+        # first-token as sent even when the worker's CreditReturn flag is a stale
+        # False (cancellation between FirstToken-send and the flag write). Discard
+        # the key so a future late return can't re-consult it.
+        first_token_key = (phase, credit.id)
+        first_token_already_released = first_token_key in self._first_token_received
+        self._first_token_received.discard(first_token_key)
+        first_token_sent = (
+            credit_return.first_token_sent or first_token_already_released
+        )
+
         # 1. ATOMIC COUNTING (no await before this!)
         is_final_returned = handler.progress.increment_returned(
             credit.is_final_turn,
             credit_return.cancelled,
             session_ended=disposition.session_ended,
             session_cancelled=disposition.session_cancelled,
+            errored=credit_return.error is not None,
         )
 
         # 2. Track prefill release if TTFT never arrived
-        if not credit_return.first_token_sent:
+        if not first_token_sent:
             handler.progress.increment_prefill_released()
 
         # 3. Release concurrency slots
         self._release_slots_for_return(
             phase,
             credit=credit,
-            credit_return=credit_return,
+            first_token_sent=first_token_sent,
             is_final_returned=is_final_returned,
             session_ended=disposition.session_ended,
             handler=handler,
@@ -315,7 +355,7 @@ class CreditCallbackHandler:
         # the DAG synchronously inside ``intercept`` (e.g. cap=1: every spawned
         # child refused at the gate). If we skipped this, the event would
         # never fire because no future credit return is coming.
-        self._maybe_signal_dag_completion(handler)
+        self._maybe_signal_dag_completion(phase, handler)
 
     def _dag_work_pending(self, credit: Credit) -> bool:
         """True iff the orchestrator has work in flight or will spawn on this
@@ -325,27 +365,31 @@ class CreditCallbackHandler:
         ``intercept`` runs at every ``agent_depth`` (nested DAGs are
         supported), so the branch-id lookup must run at every depth too.
         """
-        if self._branch_orchestrator is None:
+        orchestrator = self._branch_orchestrators.get(credit.phase)
+        if orchestrator is None:
             return False
-        if self._branch_orchestrator.has_pending_branch_work():
+        if orchestrator.has_pending_branch_work():
             return True
         try:
-            if self._branch_orchestrator.get_branch_ids(credit):
+            if orchestrator.get_branch_ids(credit):
                 return True
         except Exception:  # noqa: BLE001 - probe must never break the return path
             return False
         return False
 
-    def _maybe_signal_dag_completion(self, handler: PhaseCallbackContext) -> None:
+    def _maybe_signal_dag_completion(
+        self, phase: CreditPhase, handler: PhaseCallbackContext
+    ) -> None:
         """Set the all-credits-returned event when the orchestrator drained the
         DAG synchronously inside ``intercept``.
         """
-        if self._branch_orchestrator is None:
+        orchestrator = self._branch_orchestrators.get(phase)
+        if orchestrator is None:
             return
         if (
             not handler.progress.all_credits_returned_event.is_set()
             and handler.progress.check_all_returned_or_cancelled()
-            and not self._branch_orchestrator.has_pending_branch_work()
+            and not orchestrator.has_pending_branch_work()
         ):
             handler.progress.all_credits_returned_event.set()
 
@@ -353,21 +397,14 @@ class CreditCallbackHandler:
         self, credit: Credit, credit_return: CreditReturn
     ) -> None:
         """Fire the orchestrator's child-completion hook on a child final return."""
-        if (
-            not credit.is_final_turn
-            or credit.agent_depth == 0
-            or self._branch_orchestrator is None
-        ):
+        orchestrator = self._branch_orchestrators.get(credit.phase)
+        if not credit.is_final_turn or credit.agent_depth == 0 or orchestrator is None:
             return
         try:
             if credit_return.error is not None:
-                await self._branch_orchestrator.on_child_errored(
-                    credit.x_correlation_id
-                )
+                await orchestrator.on_child_errored(credit.x_correlation_id)
             else:
-                await self._branch_orchestrator.on_child_leaf_reached(
-                    credit.x_correlation_id
-                )
+                await orchestrator.on_child_leaf_reached(credit.x_correlation_id)
         except Exception as exc:  # noqa: BLE001 - orchestrator hook boundary
             _logger.warning(
                 lambda exc=exc: f"BranchOrchestrator child-completion hook "
@@ -381,10 +418,11 @@ class CreditCallbackHandler:
         dispatch (parent suspended on a gated turn). Non-DAG runs return
         False unconditionally.
         """
-        if self._branch_orchestrator is None:
+        orchestrator = self._branch_orchestrators.get(credit.phase)
+        if orchestrator is None:
             return False
         try:
-            return await self._branch_orchestrator.intercept(credit)
+            return await orchestrator.intercept(credit)
         except Exception as exc:  # noqa: BLE001 - orchestrator hook boundary
             _logger.warning(
                 lambda exc=exc: f"BranchOrchestrator intercept failed for "
@@ -406,11 +444,21 @@ class CreditCallbackHandler:
         """
         credit = credit_return.credit
         if credit.is_final_turn:
-            return ReturnDisposition(
-                should_continue=False,
-                session_ended=True,
-                session_cancelled=credit_return.cancelled,
-            )
+            # Only root credits (agent_depth == 0) end a session here. DAG
+            # children inherit the parent's session slot and never bump
+            # ``_sent_sessions`` in ``increment_sent``; counting their final
+            # return as a session-end would over-count completed/cancelled
+            # sessions and drive ``in_flight_sessions`` negative. A child's
+            # final turn just stops continuation (no session counting, no
+            # slot release); the orchestrator child-completion hook handles
+            # the DAG-side bookkeeping independently.
+            if credit.agent_depth == 0:
+                return ReturnDisposition(
+                    should_continue=False,
+                    session_ended=True,
+                    session_cancelled=credit_return.cancelled,
+                )
+            return ReturnDisposition(should_continue=False, session_ended=False)
 
         if not self._requires_worker_migration(credit_return):
             return ReturnDisposition(should_continue=True, session_ended=False)
@@ -418,11 +466,19 @@ class CreditCallbackHandler:
         if credit.allow_worker_migration:
             return ReturnDisposition(should_continue=True, session_ended=False)
 
-        return ReturnDisposition(
-            should_continue=False,
-            session_ended=True,
-            session_cancelled=True,
-        )
+        # Migration is refused, so the session cannot continue. Only root
+        # credits (agent_depth == 0) release the session slot and count as a
+        # cancelled session here. DAG children inherit the parent's slot and
+        # never acquired one, so forcing their cancellation must not bump
+        # ``_cancelled_sessions`` or release a slot the child never held; the
+        # orchestrator child-completion hook owns DAG-side bookkeeping.
+        if credit.agent_depth == 0:
+            return ReturnDisposition(
+                should_continue=False,
+                session_ended=True,
+                session_cancelled=True,
+            )
+        return ReturnDisposition(should_continue=False, session_ended=False)
 
     @staticmethod
     def _requires_worker_migration(credit_return: CreditReturn) -> bool:
@@ -438,7 +494,7 @@ class CreditCallbackHandler:
         phase: CreditPhase,
         *,
         credit: Credit,
-        credit_return: CreditReturn,
+        first_token_sent: bool,
         is_final_returned: bool,
         session_ended: bool,
         handler: PhaseCallbackContext,
@@ -453,7 +509,9 @@ class CreditCallbackHandler:
         Args:
             phase: Credit phase.
             credit: The returned credit.
-            credit_return: Return details.
+            first_token_sent: Authoritative first-token state (worker flag OR-ed
+                with the handler's ``on_first_token`` record) so the prefill slot
+                is never released twice.
             is_final_returned: True if this is the last credit of the phase.
             handler: Phase callback context.
         """
@@ -479,7 +537,7 @@ class CreditCallbackHandler:
 
         # Prefill slot is normally released on TTFT. If the request failed or was
         # cancelled before first token, we release here to prevent slot leaks.
-        if not credit_return.first_token_sent:
+        if not first_token_sent:
             concurrency.release_prefill_slot(phase)
 
     async def on_first_token(self, first_token: FirstToken) -> None:
@@ -500,6 +558,12 @@ class CreditCallbackHandler:
                 f"credit_id={first_token.credit_id}"
             )
             return
+
+        # Record that this credit's prefill slot was released here so a later
+        # CreditReturn carrying a stale ``first_token_sent=False`` (cancellation
+        # between FirstToken-send and the worker's flag write) cannot release it
+        # a second time and over-grant prefill permits.
+        self._first_token_received.add((phase, first_token.credit_id))
 
         # Track the release
         handler.progress.increment_prefill_released()

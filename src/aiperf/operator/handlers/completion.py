@@ -262,6 +262,17 @@ async def _apply_completion_results(
         namespace, job_id, epoch
     )
     phase = "Succeeded" if flags.success else "Failed"
+    # On the file-metrics path (API metrics empty but key exports present), feed
+    # the index the same metrics ``_record_results_on_status`` stamped on the CR
+    # so the narrow compare columns match status.summary / the on-disk JSON.
+    # Without this, sub-second / CompletedBeforeMonitor jobs write all-NULL
+    # narrow columns because result.metrics is None.
+    if not flags.has_metrics and flags.has_files:
+        index_metrics = _parse_metrics_from_files(
+            result.downloaded, namespace, job_id, epoch=epoch
+        )
+    else:
+        index_metrics = result.metrics
     await _update_job_index_safe(
         namespace=namespace,
         job_id=job_id,
@@ -270,7 +281,7 @@ async def _apply_completion_results(
         sb=sb,
         phase=phase,
         summary_blob=summary_blob,
-        metrics=scrub_non_finite(result.metrics),
+        metrics=scrub_non_finite(index_metrics),
         downloaded_files=result.downloaded,
         error=result.error or None,
         mtime_epoch=mtime_epoch,
@@ -575,12 +586,19 @@ async def _update_job_index_safe(
     so the in-DB latest pointer matches latest.txt on disk.
     """
     try:
-        if phase in ("Succeeded", "PartiallyFailed") and summary_blob is not None:
+        if phase in ("Succeeded", "PartiallyFailed"):
+            # Completion is keyed on JSON-OR-CSV (``_KEY_RESULT_FILES``), so a
+            # csv-authoritative run can succeed with no readable JSON summary
+            # blob. Record it as completed anyway: routing a success verdict to
+            # ``upsert_run_failed`` would stamp ``error="unknown"`` and zero
+            # metrics, contradicting the CR's Succeeded/ResultsAvailable status
+            # and the disk-fallback path (``results_db._index_from_disk``,
+            # which records the same run as Succeeded/error=None).
             await runs_index.upsert_run_completed(
                 namespace,
                 job_id,
                 epoch,
-                summary_blob=summary_blob,
+                summary_blob=summary_blob if summary_blob is not None else b"",
                 metrics=metrics or {},
                 files=downloaded_files,
                 mtime_epoch=mtime_epoch,

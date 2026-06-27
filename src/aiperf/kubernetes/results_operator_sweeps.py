@@ -149,6 +149,9 @@ async def _list_sweep_operator_files(
         print_warning(f"Failed to list sweep aggregate artifacts: {e}")
         return None
 
+    if not isinstance(list_data, dict):
+        print_warning("Operator sweep artifacts listing had invalid JSON shape")
+        return None
     available = list_data.get("files", [])
     if not available:
         print_warning("No sweep aggregate artifact files found")

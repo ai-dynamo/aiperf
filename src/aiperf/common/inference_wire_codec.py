@@ -84,6 +84,7 @@ def _turn_to_wire(turn: Turn) -> WireTurn:
         max_tokens=turn.max_tokens,
         texts=tuple(WireText(contents=tuple(text.contents)) for text in turn.texts),
         image_count=sum(len(image.contents) for image in turn.images),
+        audio_duration_seconds=turn.audio_duration_seconds,
     )
 
 
@@ -97,6 +98,7 @@ def _wire_to_turn(turn: WireTurn) -> Turn:
         max_tokens=turn.max_tokens,
         texts=[Text(contents=list(text.contents)) for text in turn.texts],
         images=images,
+        audio_duration_seconds=turn.audio_duration_seconds,
     )
 
 

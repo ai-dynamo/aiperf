@@ -269,12 +269,20 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         if credit.agent_depth > 0:
             # DAG child: route continuation directly through the issuer's DAG
             # path (bypasses the rate-loop continuation queue). Honor think-time
-            # delay so a delayed child turn waits on the scheduler instead of
-            # dispatching immediately.
+            # delay so a delayed child turn waits before dispatching.
             if meta.delay_ms is not None:
-                self._scheduler.schedule_later(
-                    meta.delay_ms / MILLIS_PER_SECOND,
-                    self._issue_child_continuation_or_release(turn, credit),
+                # Run the delay inside a tracked *running* task rather than a
+                # pending rate-loop timer. A pending timer is close()-dropped by
+                # ``LoopScheduler.cancel_all_pending()`` when the phase reaches
+                # sending-complete, which would silently lose this child turn:
+                # neither the dispatch nor the on_child_stopped release would
+                # run, so the parent's SPAWN_JOIN gate would never drain. A
+                # running task survives that cull and instead fires (or releases
+                # the child on cancellation) during the return-wait window.
+                self._scheduler.execute_async(
+                    self._delayed_child_continuation(
+                        meta.delay_ms / MILLIS_PER_SECOND, turn, credit
+                    )
                 )
             else:
                 await self._issue_child_continuation_or_release(turn, credit)
@@ -322,6 +330,41 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         except Exception as exc:  # noqa: BLE001 - orchestrator error boundary; never propagate to the rate loop
             self.error(
                 f"BranchOrchestrator.on_child_stopped raised for "
+                f"x_correlation_id={credit.x_correlation_id}: {exc!r}"
+            )
+
+    async def _delayed_child_continuation(
+        self, delay_sec: float, turn: TurnToSend, credit: Credit
+    ) -> None:
+        """Wait out a DAG child's think-time delay, then dispatch-or-release it.
+
+        Runs as a tracked *running* task (via ``scheduler.execute_async``) so it
+        is not close()-dropped by ``cancel_all_pending`` at sending-complete. If
+        the phase force-cancels this task before the delay elapses, the child is
+        still released through ``branch_orchestrator.on_child_stopped`` so the
+        parent's join gate drains instead of hanging.
+        """
+        try:
+            await asyncio.sleep(delay_sec)
+        except asyncio.CancelledError:
+            await self._release_child_on_cancel(credit)
+            raise
+        await self._issue_child_continuation_or_release(turn, credit)
+
+    async def _release_child_on_cancel(self, credit: Credit) -> None:
+        """Release a DAG child whose delayed continuation was cancelled.
+
+        Mirrors the cap-refusal release in ``_issue_child_continuation_or_release``
+        so a cancelled delay still drains the parent's join gate. Swallows
+        orchestrator errors; never re-raises (the caller re-raises CancelledError).
+        """
+        if self._branch_orchestrator is None:
+            return
+        try:
+            await self._branch_orchestrator.on_child_stopped(credit.x_correlation_id)
+        except Exception as exc:  # noqa: BLE001 - orchestrator error boundary; never mask the cancellation
+            self.error(
+                f"BranchOrchestrator.on_child_stopped raised during cancel for "
                 f"x_correlation_id={credit.x_correlation_id}: {exc!r}"
             )
 

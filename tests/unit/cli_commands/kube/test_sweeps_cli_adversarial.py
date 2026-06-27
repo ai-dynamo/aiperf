@@ -147,8 +147,8 @@ class TestSweepSelectorValidation:
         ("variation", "trial", "match"),
         [
             param(None, 0, r"trial.*requires.*variation", id="trial-without-variation"),
-            param(-1, None, r"variation.*0.*99", id="negative-variation"),
-            param(100, None, r"variation.*0.*99", id="variation-above-max"),
+            param(-1, None, r"variation.*0.*199", id="negative-variation"),
+            param(200, None, r"variation.*0.*199", id="variation-above-max"),
             param(7, -1, r"trial.*0.*9", id="negative-trial"),
             param(7, 10, r"trial.*0.*9", id="trial-above-max"),
         ],

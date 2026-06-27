@@ -3,10 +3,25 @@
 
 """User session management for multi-turn conversation optimization."""
 
+from collections import OrderedDict
+
 import msgspec
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models.dataset_models import Conversation, Turn
+
+DEFAULT_MAX_SESSIONS = 100_000
+"""Default per-worker cap on cached multi-turn sessions.
+
+Sessions are normally evicted by the worker on the final turn or on
+cancellation. Abandoned sessions — e.g. a non-final ``CreditReturn`` reclaimed
+sticky-router side on worker reconnect/detach, or a ``WITH_RESPONSES`` session
+migrated to a new worker leaving the original entry stranded — never receive a
+final-turn or cancelled credit on the originating worker, so they would
+otherwise accrue in ``_cache`` for the process lifetime. The LRU bound caps that
+leak; the limit is high enough that legitimate concurrent multi-turn sessions
+on a single worker stay resident.
+"""
 
 
 class UserSession(msgspec.Struct, kw_only=True, omit_defaults=True):
@@ -75,8 +90,11 @@ class UserSessionManager:
     Manages user sessions for multi-turn processing.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[str, UserSession] = {}
+    def __init__(self, max_sessions: int = DEFAULT_MAX_SESSIONS) -> None:
+        if max_sessions < 1:
+            raise ValueError(f"max_sessions ({max_sessions}) must be >= 1")
+        self._max_sessions = max_sessions
+        self._cache: OrderedDict[str, UserSession] = OrderedDict()
         self._default_context_mode: ConversationContextMode | None = None
 
     def set_default_context_mode(self, mode: ConversationContextMode | None) -> None:
@@ -133,6 +151,12 @@ class UserSessionManager:
             user_session: User session
         """
         self._cache[x_correlation_id] = user_session
+        self._cache.move_to_end(x_correlation_id)
+        # Bound the cache: sessions abandoned without a final-turn or cancelled
+        # credit are never evicted by the worker, so cap retention by dropping the
+        # least-recently-accessed entry once the limit is exceeded.
+        while len(self._cache) > self._max_sessions:
+            self._cache.popitem(last=False)
 
     def get(self, x_correlation_id: str) -> UserSession | None:
         """
@@ -141,7 +165,10 @@ class UserSessionManager:
         Args:
             x_correlation_id: X-Correlation-ID header value
         """
-        return self._cache.get(x_correlation_id)
+        session = self._cache.get(x_correlation_id)
+        if session is not None:
+            self._cache.move_to_end(x_correlation_id)
+        return session
 
     def evict(self, x_correlation_id: str) -> None:
         """

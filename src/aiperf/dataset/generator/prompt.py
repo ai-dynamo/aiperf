@@ -334,6 +334,7 @@ class PromptGenerator(BaseGenerator):
                 f"Requested prompt length {num_tokens} is longer than the corpus. "
                 f"Returning a prompt of length {self._corpus_size}."
             )
+            num_tokens = self._corpus_size
 
         start_idx = self._corpus_rng.randrange(self._corpus_size)
 

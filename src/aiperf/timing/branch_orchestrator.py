@@ -469,7 +469,7 @@ class BranchOrchestrator(
                 await self._issuer.abort_session(orphan)
 
         self._descendant_counts.pop(parent, None)
-        self._parent_locks.pop(parent, None)
+        self._release_slot(parent)
         self._notify_drain()
         # Honor the docs' "abort the whole run on first DAG child error"
         # contract: tell the phase-side handler to cancel every active
@@ -480,8 +480,18 @@ class BranchOrchestrator(
         self._notify_abort()
 
     def _release_slot(self, parent_x_correlation_id: str) -> None:
-        """Release per-parent orchestration state once the DAG has drained."""
-        self._parent_locks.pop(parent_x_correlation_id, None)
+        """Release per-parent orchestration state once the DAG has drained.
+
+        Never pop a lock that is currently held: ``_release_slot`` can run
+        from inside ``intercept`` (via ``_drain_vestigial_gates``) while that
+        same intercept still holds ``_parent_locks[parent_x_correlation_id]``.
+        Popping it there would hand a concurrent same-parent intercept a fresh
+        ``defaultdict`` Lock, losing mutual exclusion against the in-progress
+        one. A still-held lock is reclaimed by ``cleanup()`` instead.
+        """
+        lock = self._parent_locks.get(parent_x_correlation_id)
+        if lock is not None and not lock.locked():
+            self._parent_locks.pop(parent_x_correlation_id, None)
 
     def has_pending_branch_work(self) -> bool:
         """Return True if any DAG-dispatched children are still outstanding."""

@@ -264,7 +264,7 @@ class PhaseRunner(TaskManagerMixin):
         """
         if self._branch_orchestrator is None:
             return
-        self._callback_handler.set_branch_orchestrator(None)
+        self._callback_handler.set_branch_orchestrator(self._config.phase, None)
         self._branch_orchestrator.cleanup()
 
     async def run(
@@ -341,7 +341,9 @@ class PhaseRunner(TaskManagerMixin):
         # credit returns spawn children and gated parent turns suspend. No-op
         # for non-DAG runs (orchestrator is None).
         if self._branch_orchestrator is not None:
-            self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
+            self._callback_handler.set_branch_orchestrator(
+                self._config.phase, self._branch_orchestrator
+            )
         self._concurrency_manager.configure_for_phase(
             self._config.phase,
             self._config.concurrency,

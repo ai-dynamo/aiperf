@@ -473,6 +473,16 @@ async def test_create_sweep_controller_jobset_lifts_pod_security_context(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_create_sweep_controller_jobset_enables_dns_hostnames(monkeypatch):
+    """The sweep-controller JobSet must set spec.network.enableDNSHostnames so the
+    headless service exists and the operator can harvest the emptyDir-only aggregate
+    from the controller pod's stable DNS name (controller_dns_name(...))."""
+    workload_spec = _valid_workload_spec()
+    body = await _capture_jobset_body(monkeypatch, workload_spec)
+    assert body["spec"]["network"]["enableDNSHostnames"] is True
+
+
+@pytest.mark.asyncio
 async def test_create_sweep_controller_jobset_merges_user_env_reserved_wins(
     monkeypatch,
 ):
