@@ -174,7 +174,7 @@ def _make_branch(
         branch_id=branch_id,
         child_conversation_ids=children,
         mode=mode,
-        is_background=is_background,
+        background=is_background,
         dispatch_timing=dispatch_timing,
     )
 

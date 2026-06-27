@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
@@ -374,8 +375,15 @@ def test_dataset_metadata_json_roundtrip_through_validator_twice_idempotent(
     )
     md = _load_metadata(path)
 
-    blob = md.model_dump_json()
-    restored = DatasetMetadata.model_validate_json(blob)
+    from aiperf.common.models.base_models import (
+        _msgspec_dec_hook,
+        _msgspec_enc_hook,
+    )
+
+    blob = msgspec.json.encode(md, enc_hook=_msgspec_enc_hook)
+    restored = msgspec.json.decode(
+        blob, type=DatasetMetadata, dec_hook=_msgspec_dec_hook
+    )
 
     # First validation.
     validate_for_orchestrator_v1(restored)

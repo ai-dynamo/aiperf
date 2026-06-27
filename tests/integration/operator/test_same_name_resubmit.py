@@ -28,6 +28,7 @@ import orjson
 import pytest
 from fastapi.testclient import TestClient
 
+from aiperf.kubernetes.results_sidecar import write_ready_marker
 from aiperf.operator.results_layout import (
     enforce_retention,
     epoch_key_from_body,
@@ -91,6 +92,9 @@ def _complete_run(
     dest = run_dir(results_dir, namespace, name, epoch)
     dest.mkdir(parents=True, exist_ok=True)
     (dest / filename).write_bytes(payload)
+    # Real completion handler gates root-file listing on this marker
+    # (completion.py::_apply_results_to_status -> write_ready_marker).
+    write_ready_marker(dest)
 
     write_latest(results_dir, namespace, name, epoch)
     enforce_retention(
