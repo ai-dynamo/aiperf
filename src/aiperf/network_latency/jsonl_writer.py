@@ -59,3 +59,7 @@ class NetworkLatencyJSONLWriter(
     async def summarize(self) -> list[MetricResult]:
         """Summarize result. Not used for this processor."""
         return []
+
+    async def finalize(self) -> None:
+        """Flush network latency JSONL before results are published."""
+        await self._close_file()

@@ -28,3 +28,14 @@ class NetworkLatencyProcessorProtocol(Protocol):
         ...
 
     async def summarize(self) -> list[MetricResult]: ...
+
+    async def finalize(self) -> None:
+        """Flush any buffered samples to disk before results are published.
+
+        Called once by the records-manager BEFORE publishing
+        ``ProcessRecordsResultMessage`` so the per-sample JSONL artifact is
+        fully flushed before the controller writes the readiness marker.
+        Default implementation is a no-op; processors that buffer to disk
+        override to flush + close.
+        """
+        ...

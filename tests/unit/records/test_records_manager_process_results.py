@@ -134,6 +134,7 @@ def _make_manager_mock(
     mgr._metric_results_processors = legacy_processors or []
     mgr._accumulators = accumulators or {}
     mgr._stream_exporters = stream_exporters or {}
+    mgr._network_latency_processors = []
     mgr._analyzers = analyzers or {}
 
     # Records tracker — drives the time window in build_process_records_result.
@@ -166,6 +167,9 @@ def _make_manager_mock(
     mgr._publish_all_results = RecordsManager._publish_all_results.__get__(mgr)
     mgr._finalize_stream_exporters = RecordsManager._finalize_stream_exporters.__get__(
         mgr
+    )
+    mgr._finalize_network_latency_processors = (
+        RecordsManager._finalize_network_latency_processors.__get__(mgr)
     )
     mgr._run_analyzers = RecordsManager._run_analyzers.__get__(mgr)
 

@@ -437,8 +437,6 @@ class BaseComponentService(BaseService):
         """Serialize a command handler result to bytes for CommandOk payload."""
         if isinstance(result, bytes):
             return result
-        from pydantic import BaseModel
-
-        if isinstance(result, BaseModel):
+        if hasattr(result, "model_dump_json"):
             return result.model_dump_json().encode()
         return orjson.dumps(result)

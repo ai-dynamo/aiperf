@@ -763,6 +763,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # also pre-publish) so the per-record files are durable before the
         # controller is told results are ready.
         await self._finalize_stream_exporters()
+        await self._finalize_network_latency_processors()
 
         result = self._build_records_result(
             results, cancelled=cancelled, multi_turn_ttft_trend=multi_turn_ttft_trend
@@ -969,6 +970,29 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ):
             if isinstance(result, BaseException):
                 self.error(f"Stream exporter {exp_type} finalize failed: {result!r}")
+
+    async def _finalize_network_latency_processors(self) -> None:
+        """Flush all network latency processors concurrently; log per-processor errors.
+
+        Mirrors ``_finalize_stream_exporters``. The network latency JSONL writer
+        is not in ``_metric_results_processors`` or ``_stream_exporters``, so its
+        buffered samples need an explicit pre-publish flush to avoid the same
+        late-records race ``_process_results`` documents.
+        """
+        if not self._network_latency_processors:
+            return
+        results = await asyncio.gather(
+            *[processor.finalize() for processor in self._network_latency_processors],
+            return_exceptions=True,
+        )
+        for processor, result in zip(
+            self._network_latency_processors, results, strict=True
+        ):
+            if isinstance(result, BaseException):
+                self.error(
+                    f"Network latency processor {type(processor).__name__} "
+                    f"finalize failed: {result!r}"
+                )
 
     async def _run_analyzers(
         self,

@@ -218,6 +218,25 @@ class ProcessRecordsResult:
         """Get a metric result by tag, if it exists."""
         return self.results.get(tag)
 
+    def model_dump_json(self) -> str:
+        """Pydantic-compat JSON serializer (msgspec ``json.encode`` under the hood).
+
+        Mirrors ``ProfileResults.model_dump_json``: nested Pydantic
+        ``BranchStats`` (inside ``results``) is bridged via a local ``enc_hook``
+        so the producer encode path stays symmetric with
+        ``model_validate_json``'s ``dec_hook``.
+        """
+        import msgspec
+
+        from aiperf.common.models.branch_stats import BranchStats
+
+        def _enc(obj: Any) -> Any:
+            if isinstance(obj, BranchStats):
+                return obj.model_dump()
+            raise TypeError(f"Cannot encode object of type {type(obj).__name__}")
+
+        return msgspec.json.encode(self, enc_hook=_enc).decode("utf-8")
+
     @classmethod
     def model_validate_json(cls, value: str | bytes) -> ProcessRecordsResult:
         """Pydantic-compat constructor from a JSON string / bytes.

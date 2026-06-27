@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from aiperf.config import BenchmarkRun
 
@@ -37,16 +38,35 @@ def build_auto_plot_callback(
         A callable accepting a finished ``BenchmarkRun`` that triggers the
         plot run against its artifact directory.
     """
-    from aiperf.plot.cli_runner import run_plot_for_artifacts
+    from aiperf.plot.cli_runner import run_plot_controller
 
     def _callback(run: BenchmarkRun) -> None:
         try:
-            run_plot_for_artifacts(
-                artifact_dir=run.artifact_dir,
-                plot_envelope=plot_envelope,
-            )
+            config_path: str | None = None
+            if plot_envelope is not None:
+                config_path = str(
+                    _materialize_envelope(run.artifact_dir, plot_envelope)
+                )
+            run_plot_controller(paths=[str(run.artifact_dir)], config=config_path)
         except Exception:  # noqa: BLE001 - plot error boundary
             if plot_required:
                 raise
 
     return _callback
+
+
+def _materialize_envelope(artifact_dir: Path, plot_envelope: Any) -> Path:
+    """Write the envelope plot config to ``<artifact_dir>/.aiperf-plot-config.yaml``.
+
+    ``run_plot_controller`` consumes the envelope only as a YAML file path, so the
+    resolved ``PlotEnvelopeConfig`` is dumped to disk (camelCase, mirroring
+    ``default_plot_config.yaml``) and the path is threaded back through ``config=``.
+    The materialized file also lets ``aiperf plot <dir>`` reproduce the run.
+    """
+    from ruamel.yaml import YAML
+
+    target = artifact_dir / ".aiperf-plot-config.yaml"
+    yaml = YAML()
+    with target.open("w") as f:
+        yaml.dump(plot_envelope.model_dump(by_alias=True, mode="json"), f)
+    return target

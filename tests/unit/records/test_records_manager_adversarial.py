@@ -139,6 +139,7 @@ def _make_manager(
     mgr._metric_results_processors = legacy_processors or []
     mgr._accumulators = accumulators or {}
     mgr._stream_exporters = stream_exporters or {}
+    mgr._network_latency_processors = []
     mgr._analyzers = analyzers or {}
     mgr._metric_record_accumulators = metric_record_accumulators or []
     mgr._metric_record_stream_exporters = metric_record_stream_exporters or []
@@ -205,6 +206,7 @@ def _make_manager(
         "_build_records_result": RecordsManager._build_records_result,
         "_publish_all_results": RecordsManager._publish_all_results,
         "_finalize_stream_exporters": RecordsManager._finalize_stream_exporters,
+        "_finalize_network_latency_processors": RecordsManager._finalize_network_latency_processors,
         "_run_analyzers": RecordsManager._run_analyzers,
         "_write_partial_checkpoint_task": RecordsManager._write_partial_checkpoint_task,
     }
@@ -1328,6 +1330,7 @@ class TestProcessResultsOrdering:
                 "_build_records_result",
                 "_publish_all_results",
                 "_finalize_stream_exporters",
+                "_finalize_network_latency_processors",
                 "_run_analyzers",
             ],
         )
@@ -1354,6 +1357,7 @@ class TestProcessResultsOrdering:
                 "_build_records_result",
                 "_publish_all_results",
                 "_finalize_stream_exporters",
+                "_finalize_network_latency_processors",
                 "_run_analyzers",
             ],
             legacy_processors=[legacy_processor],
