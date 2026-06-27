@@ -506,6 +506,7 @@ def measure_record_processor() -> None:
     import gc
     import os
 
+    import msgspec
     import orjson
 
     print()
@@ -570,7 +571,10 @@ def measure_record_processor() -> None:
         batch: list[bytes] = []
         for _ in range(10):
             rec = _make_request_record(isl, osl, streaming)
-            json_bytes = orjson.dumps(rec.model_dump(exclude_none=True, mode="json"))
+            # RequestRecord is a msgspec.Struct; mirror the production JSONL
+            # writer's msgspec path (buffered_jsonl_writer_mixin._serialize_record)
+            # rather than the Pydantic model_dump(...) path its shim rejects.
+            json_bytes = msgspec.json.encode(rec)
             batch.append(json_bytes)
         buffer_size = sum(len(b) for b in batch)
         mode = "SSE" if streaming else "text"
