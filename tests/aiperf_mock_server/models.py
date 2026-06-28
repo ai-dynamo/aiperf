@@ -202,6 +202,17 @@ class ImageGenerationRequest(BaseModel):
     style: str | None = None
 
 
+class SpeechRequest(BaseModel):
+    """Request model for the OpenAI /v1/audio/speech (text-to-speech) endpoint."""
+
+    input: str
+    model: str = "tts-1"
+    voice: str = "alloy"
+    response_format: str = "mp3"
+    speed: float = 1.0
+    stream_format: Literal["audio", "sse"] | None = None
+
+
 class ImageRetrievalInput(BaseModel):
     """Single image input for NIM image retrieval."""
 

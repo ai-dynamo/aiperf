@@ -372,6 +372,7 @@ class AioHttpTransport(BaseTransport):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                stream=self.model_endpoint.endpoint.streaming,
             )
             record.request_headers = redact_headers(headers)
 

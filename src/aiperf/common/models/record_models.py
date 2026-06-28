@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import sys
 import time
 from dataclasses import dataclass, field
@@ -11,11 +12,14 @@ from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
 
 import orjson
 from pydantic import (
+    BeforeValidator,
     ConfigDict,
     Field,
     PlainSerializer,
     RootModel,
     SerializeAsAny,
+    TypeAdapter,
+    field_serializer,
     field_validator,
 )
 from pydantic.functional_validators import AfterValidator
@@ -349,6 +353,28 @@ class TextResponse:
             return None
 
 
+def _decode_base64_if_str(value: Any) -> Any:
+    """Accept base64 text (from a JSON round-trip) or raw bytes interchangeably."""
+    if isinstance(value, str):
+        return base64.b64decode(value)
+    return value
+
+
+#: Bytes that survive the JSON-encoded ZMQ message bus and raw exports. Pydantic's
+#: default ``bytes`` JSON serialization is utf8, which raises on non-text payloads
+#: like audio/video; this base64-encodes on dump and decodes on load, while raw
+#: bytes still pass through validation unchanged (no double-encoding in memory).
+Base64Bytes = Annotated[
+    bytes,
+    BeforeValidator(_decode_base64_if_str),
+    PlainSerializer(
+        lambda b: base64.b64encode(b).decode("ascii"),
+        return_type=str,
+        when_used="json",
+    ),
+]
+
+
 @dataclass(slots=True)
 class BinaryResponse:
     """Raw binary response from an inference client for non-text content types."""
@@ -360,7 +386,7 @@ class BinaryResponse:
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
 
-    raw_bytes: bytes
+    raw_bytes: Base64Bytes
     """The raw binary body of the response."""
 
     content_type: str | None = None
@@ -492,6 +518,17 @@ class SSEMessage:
             return load_json_str(data_content)
         except orjson.JSONDecodeError:
             return None
+
+
+#: Serializes the raw ``responses`` list through the concrete union so each
+#: member's field annotations apply (notably ``BinaryResponse``'s base64 bytes
+#: encoding). The field type carries ``SerializeAsAny`` for forward-compat
+#: subclass support, but ``SerializeAsAny``'s duck-typed path ignores those
+#: annotations and would utf8-decode raw audio/video bytes; the field_serializer
+#: below routes around it.
+_RAW_RESPONSES_ADAPTER: TypeAdapter = TypeAdapter(
+    list[SSEMessage | TextResponse | BinaryResponse]
+)
 
 
 class RecordContext(AIPerfBaseModel):
@@ -710,6 +747,14 @@ class RequestRecord(AIPerfBaseModel):
         default_factory=list,
         description="The raw responses received from the request.",
     )
+
+    @field_serializer("responses", when_used="json")
+    def _serialize_responses(self, responses: list[Any]) -> list[Any]:
+        """Serialize raw responses via the concrete union so BinaryResponse bytes
+        are base64-encoded for the JSON ZMQ bus and raw exports (see
+        ``_RAW_RESPONSES_ADAPTER``)."""
+        return _RAW_RESPONSES_ADAPTER.dump_python(responses, mode="json")
+
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
@@ -985,6 +1030,28 @@ class VideoResponseData(BaseResponseData):
     """Error details if job failed."""
 
 
+@dataclass(slots=True)
+class AudioResponseData(BaseResponseData):
+    """Parsed text-to-speech audio response.
+
+    Carries the decoded audio for one response unit - either a full clip
+    (non-streaming binary body) or a single stream chunk (an SSE
+    ``speech.audio.delta`` or one network chunk of a streamed audio body).
+    Audio metrics concatenate the ``audio_bytes`` of a record's chunks and
+    decode the result with soundfile to recover the output duration, while
+    the per-chunk ``perf_ns`` on the enclosing ``ParsedResponse`` provides
+    time-to-first-audio. Has no text, so it contributes nothing to OSL.
+    """
+
+    audio_bytes: Base64Bytes | None = None
+    """The decoded audio bytes for this response unit (clip or chunk). Uses
+    Base64Bytes (like BinaryResponse.raw_bytes) so a JSON dump base64-encodes
+    rather than utf8-decoding, which would raise on non-text audio payloads."""
+
+    format: str | None = None
+    """The audio container/codec, e.g. 'mp3', 'wav', 'flac', 'opus', 'pcm'."""
+
+
 def find_last_non_empty_usage(responses: list[ParsedResponse]) -> Usage | None:
     """Return the last response chunk's usage that has any data, walking
     the list backwards.
@@ -1031,6 +1098,7 @@ class ParsedResponse:
         | ImageRetrievalResponseData
         | ImageResponseData
         | VideoResponseData
+        | AudioResponseData
         | BaseResponseData
         | None
     ] = None
@@ -1237,6 +1305,13 @@ class RawRecordInfo(AIPerfBaseModel):
         ...,
         description="The raw responses received from the request.",
     )
+
+    @field_serializer("responses", when_used="json")
+    def _serialize_responses(self, responses: list[Any]) -> list[Any]:
+        """Serialize raw responses via the concrete union so BinaryResponse bytes
+        are base64-encoded for JSON raw exports (see ``_RAW_RESPONSES_ADAPTER``)."""
+        return _RAW_RESPONSES_ADAPTER.dump_python(responses, mode="json")
+
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",

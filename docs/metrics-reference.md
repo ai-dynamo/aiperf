@@ -43,6 +43,10 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [Audio Metrics](#audio-metrics)
     - [Audio Duration](#audio-duration)
     - [Inverse Real-Time Factor (RTFx)](#inverse-real-time-factor-rtfx)
+    - [Time to First Audio (TTFA)](#time-to-first-audio-ttfa)
+    - [Output Audio Duration](#output-audio-duration)
+    - [Real-Time Factor (RTF)](#real-time-factor-rtf)
+    - [Audio Throughput](#audio-throughput)
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
@@ -621,6 +625,58 @@ rtfx = audio_duration_seconds / request_latency_seconds
 - Higher is better. A value of 10 means the server transcribed audio 10× faster than real-time playback.
 - RTFx < 1 means the server is slower than real-time and not suitable for live transcription.
 - Requires `audio_duration` and `request_latency` metrics to be computed first.
+
+> [!NOTE]
+> The metrics below apply to text-to-speech (TTS) endpoints that **produce** audio (`--endpoint-type speech`). The audio is decoded with `soundfile` to recover the output duration; a headerless `pcm` response cannot be measured.
+
+### Time to First Audio (TTFA)
+
+**Type:** [Record Metric](#record-metrics)
+
+Latency from request start to the first audio chunk for streaming TTS responses - the audio analog of [Time to First Token](#time-to-first-token-ttft).
+
+**Formula:**
+```python
+ttfa = first_audio_chunk_timestamp - request_start_timestamp
+```
+
+**Notes:**
+- Streaming only; not computed for non-streaming (whole-clip) responses.
+
+### Output Audio Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Seconds of audio synthesized per request, decoded from the returned clip (the chunks of a streamed response are concatenated before decoding).
+
+### Real-Time Factor (RTF)
+
+**Type:** [Record Metric](#record-metrics)
+
+The ratio of request latency to output audio duration. The standard TTS quality-of-service metric (the inverse of the ASR RTFx convention).
+
+**Formula:**
+```python
+rtf = request_latency_seconds / output_audio_duration_seconds
+```
+
+**Notes:**
+- Lower is better. RTF < 1.0 means the server synthesizes audio faster than real-time playback.
+- Requires `output_audio_duration` and `request_latency` metrics to be computed first.
+
+### Audio Throughput
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Seconds of audio synthesized per wall-clock second across the whole benchmark.
+
+**Formula:**
+```python
+audio_throughput = total_output_audio_duration_seconds / benchmark_duration_seconds
+```
+
+**Notes:**
+- Higher is better. Under concurrency it can far exceed 1.0 (e.g. 50 means the fleet produces 50s of audio every wall-second).
 
 ---
 

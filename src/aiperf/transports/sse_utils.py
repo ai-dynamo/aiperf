@@ -8,9 +8,43 @@ from collections.abc import AsyncIterator
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import SSEEventType, SSEFieldType
 from aiperf.common.exceptions import SSEResponseError
-from aiperf.common.models import SSEMessage
+from aiperf.common.models import BaseTraceData, BinaryResponse, SSEMessage
 
 _logger = AIPerfLogger(__name__)
+
+
+async def collect_streamed_binary(
+    content: AsyncIterator[bytes],
+    trace: BaseTraceData,
+    content_type: str,
+    collect_chunks: bool,
+) -> list[BinaryResponse]:
+    """Consume a chunked binary response body, one BinaryResponse per network chunk.
+
+    Records each chunk's arrival time (perf_counter_ns) so streamed audio/video
+    bodies yield time-to-first-chunk; downstream parsing concatenates the chunks
+    to reconstruct the full payload. Mirrors the SSE path's chunk-timing trace
+    bookkeeping. The caller passes ``response.content.iter_any()`` so bytes
+    surface as they arrive.
+    """
+    responses: list[BinaryResponse] = []
+    chunks_append = trace.response_chunks.append if collect_chunks else None
+    awaiting_first_chunk = True
+    async for chunk in content:
+        chunk_ns = time.perf_counter_ns()
+        chunk_len = len(chunk)
+        trace.response_chunks_count += 1
+        trace.response_bytes_total += chunk_len
+        if chunks_append is not None:
+            chunks_append((chunk_ns, chunk_len))
+        if awaiting_first_chunk:
+            trace.response_receive_start_perf_ns = chunk_ns
+            awaiting_first_chunk = False
+        trace.response_receive_end_perf_ns = chunk_ns
+        responses.append(
+            BinaryResponse(perf_ns=chunk_ns, content_type=content_type, raw_bytes=chunk)
+        )
+    return responses
 
 
 class AsyncSSEStreamReader:

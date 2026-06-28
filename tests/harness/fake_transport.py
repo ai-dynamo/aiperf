@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 import orjson
 from aiperf_mock_server.app import (
+    _TTS_STREAM_CHUNKS,
     _build_chat_response_data,
     _build_cohere_ranking_response_data,
     _build_completion_response_data,
@@ -30,6 +31,8 @@ from aiperf_mock_server.app import (
     _build_tgi_response_data,
     _compute_ranked_scores,
     _wait_for_processing,
+    generate_mock_wav,
+    iter_speech_audio_sse,
 )
 from aiperf_mock_server.config import MockServerConfig
 from aiperf_mock_server.models import (
@@ -42,6 +45,7 @@ from aiperf_mock_server.models import (
     ImageRetrievalRequest,
     RankingRequest,
     SolidoRAGRequest,
+    SpeechRequest,
     TGIGenerateRequest,
 )
 from aiperf_mock_server.utils import (
@@ -55,6 +59,7 @@ from pydantic import BaseModel
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import (
+    BinaryResponse,
     ErrorDetails,
     RequestInfo,
     RequestRecord,
@@ -383,6 +388,14 @@ class FakeTransport(BaseTransport):
                     self._do_simple,
                     build_response=_build_solido_rag_response_data,
                 )
+            case EndpointType.SPEECH:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    SpeechRequest,
+                    self._do_speech,
+                    first_token_callback=first_token_callback,
+                )
             case _:
                 raise ValueError(f"Unsupported endpoint type: {endpoint_type}")
 
@@ -445,6 +458,56 @@ class FakeTransport(BaseTransport):
             inp.start_perf_ns,
             inp.start_timestamp_ns,
             inp.build_response(inp.ctx, ranked_scores),
+        )
+
+    def _make_binary_record(
+        self,
+        start_perf_ns: int,
+        start_timestamp_ns: int,
+        raw_bytes: bytes,
+        content_type: str,
+    ) -> RequestRecord:
+        """Create a RequestRecord with a single binary response (e.g. audio)."""
+        end_perf_ns = time.perf_counter_ns()
+        return RequestRecord(
+            start_perf_ns=start_perf_ns,
+            end_perf_ns=end_perf_ns,
+            timestamp_ns=start_timestamp_ns,
+            status=200,
+            responses=[
+                BinaryResponse(
+                    perf_ns=end_perf_ns,
+                    content_type=content_type,
+                    raw_bytes=raw_bytes,
+                )
+            ],
+        )
+
+    async def _do_speech(self, inp: HandlerInput) -> RequestRecord:
+        """Handle text-to-speech requests (binary clip or streamed SSE audio)."""
+        audio_bytes = generate_mock_wav(inp.req.input)
+
+        if self.model_endpoint.endpoint.streaming:
+
+            async def _speech_stream() -> AsyncGenerator[bytes, None]:
+                tokens_per_chunk = max(1, len(inp.ctx.tokens) // _TTS_STREAM_CHUNKS)
+                for frame in iter_speech_audio_sse(audio_bytes, inp.ctx.usage):
+                    await inp.ctx.latency_sim.wait_for_tokens(tokens_per_chunk)
+                    yield frame
+
+            return await self._stream_to_record(
+                _speech_stream(),
+                inp.start_perf_ns,
+                inp.start_timestamp_ns,
+                inp.first_token_callback,
+            )
+
+        await inp.ctx.latency_sim.wait_for_tokens(len(inp.ctx.tokens))
+        return self._make_binary_record(
+            inp.start_perf_ns,
+            inp.start_timestamp_ns,
+            audio_bytes,
+            "audio/wav",
         )
 
     async def _do_image_retrieval(self, payload: RequestInputT) -> RequestRecord:

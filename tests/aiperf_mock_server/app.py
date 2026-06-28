@@ -4,9 +4,13 @@
 import asyncio
 import base64
 import hashlib
+import io
 import logging
+import math
 import random
+import struct
 import time
+import wave
 from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Any
@@ -48,6 +52,7 @@ from aiperf_mock_server.models import (
     ImageRetrievalRequest,
     RankingRequest,
     SolidoRAGRequest,
+    SpeechRequest,
     TGIGenerateRequest,
 )
 from aiperf_mock_server.node_exporter_faker import (
@@ -990,6 +995,102 @@ async def image_generation(
     with track_llm_request(ctx, req.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         return ORJSONResponse(_build_image_response_data(ctx, req))
+
+
+# ============================================================================
+# Text-to-Speech (Audio Speech)
+# ============================================================================
+
+_TTS_SAMPLE_RATE = 16000
+_TTS_SECONDS_PER_CHAR = 0.05
+_TTS_STREAM_CHUNKS = 5
+
+
+def generate_mock_wav(text: str) -> bytes:
+    """Generate a deterministic mono 16-bit WAV clip for a TTS input.
+
+    Duration scales with the input length so longer text yields longer
+    audio, mirroring real TTS. The samples are a quiet sine wave (not
+    silence) so the payload is non-trivial; any standard decoder
+    (soundfile/libsndfile) recovers the duration from the WAV header.
+    """
+    duration_s = max(0.2, round(len(text) * _TTS_SECONDS_PER_CHAR, 3))
+    num_samples = int(duration_s * _TTS_SAMPLE_RATE)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(_TTS_SAMPLE_RATE)
+        frames = bytearray()
+        for n in range(num_samples):
+            sample = int(8000 * math.sin(2 * math.pi * 220 * n / _TTS_SAMPLE_RATE))
+            frames += struct.pack("<h", sample)
+        wav.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+def iter_speech_audio_sse(
+    audio_bytes: bytes, usage: dict[str, Any], num_chunks: int = _TTS_STREAM_CHUNKS
+) -> list[bytes]:
+    """Build the SSE frames for a streamed speech response.
+
+    Splits the audio into ``num_chunks`` ``speech.audio.delta`` events (each
+    a base64 slice) followed by a ``speech.audio.done`` event carrying usage.
+    Returned as a list of ``data: {...}\\n\\n`` frames so callers can pace
+    them with their own latency model.
+    """
+    frames: list[bytes] = []
+    chunk_size = max(1, math.ceil(len(audio_bytes) / num_chunks))
+    for offset in range(0, len(audio_bytes), chunk_size):
+        delta = {
+            "type": "speech.audio.delta",
+            "audio": base64.b64encode(audio_bytes[offset : offset + chunk_size]).decode(
+                "utf-8"
+            ),
+        }
+        frames.append(b"data: " + orjson.dumps(delta) + b"\n\n")
+    done = {"type": "speech.audio.done", "usage": usage}
+    frames.append(b"data: " + orjson.dumps(done) + b"\n\n")
+    return frames
+
+
+@app.post("/v1/audio/speech", response_model=None)
+@with_error_injection
+async def audio_speech(
+    req: SpeechRequest, request: Request
+) -> Response | StreamingResponse:
+    """Mock OpenAI text-to-speech endpoint (/v1/audio/speech).
+
+    Returns a deterministic WAV clip whose duration scales with the input
+    length. Honors ``stream_format: sse`` by emitting ``speech.audio.delta``
+    events (base64 audio chunks) followed by a ``speech.audio.done`` event
+    with usage; otherwise returns the whole clip as a binary ``audio/wav``
+    body. Always returns WAV regardless of the requested ``response_format``
+    (the mock has no real codec), which every decoder handles.
+    """
+    endpoint = "/v1/audio/speech"
+    start_time = request.state.start_time
+    mock_req = ChatCompletionRequest(
+        model=req.model, messages=[{"role": "user", "content": req.input}]
+    )
+    ctx = make_ctx(mock_req, endpoint, start_time)
+    audio_bytes = generate_mock_wav(req.input)
+
+    if req.stream_format == "sse":
+        STREAMING_REQUESTS_TOTAL.labels(endpoint=endpoint, model=req.model).inc()
+
+        async def speech_stream():
+            async with async_track_llm_request(ctx, req.model, endpoint):
+                tokens_per_chunk = max(1, len(ctx.tokens) // _TTS_STREAM_CHUNKS)
+                for frame in iter_speech_audio_sse(audio_bytes, ctx.usage):
+                    await ctx.latency_sim.wait_for_tokens(tokens_per_chunk)
+                    yield frame
+
+        return StreamingResponse(speech_stream(), media_type="text/event-stream")
+
+    with track_llm_request(ctx, req.model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        return Response(content=audio_bytes, media_type="audio/wav")
 
 
 # Each parameter calls Form/File fresh so FastAPI builds an independent

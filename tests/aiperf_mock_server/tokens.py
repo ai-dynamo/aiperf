@@ -17,6 +17,7 @@ from aiperf_mock_server.models import (
     RankingRequest,
     RequestT,
     SolidoRAGRequest,
+    SpeechRequest,
     TGIGenerateRequest,
     flatten_completion_prompt_token_ids,
 )
@@ -208,6 +209,7 @@ def tokenize_request(request: RequestT) -> TokenizedText:
             HFTEIRerankRequest,
             CohereRerankRequest,
             ImageGenerationRequest,
+            SpeechRequest,
         ),
     ):
         return TokenizedText(
@@ -331,6 +333,8 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return text, None
     elif isinstance(request, ImageGenerationRequest):
         return request.prompt, None
+    elif isinstance(request, SpeechRequest):
+        return request.input, None
     elif isinstance(request, SolidoRAGRequest):
         return " ".join(request.query), None
     else:

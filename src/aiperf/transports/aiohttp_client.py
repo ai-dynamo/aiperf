@@ -21,7 +21,7 @@ from aiperf.common.models import (
 )
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
-from aiperf.transports.sse_utils import AsyncSSEStreamReader
+from aiperf.transports.sse_utils import AsyncSSEStreamReader, collect_streamed_binary
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -85,6 +85,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         trace_data: AioHttpTraceData | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        stream: bool = False,
         **kwargs: Any,
     ) -> RequestRecord:
         """Generic request method that handles common logic for all HTTP methods.
@@ -243,7 +244,22 @@ class AioHttpClient(AIPerfLoggerMixin):
                             or content_type == "application/octet-stream"
                         )
 
-                        if is_binary:
+                        if is_binary and stream:
+                            # Streamed binary body (e.g. chunked text-to-speech audio):
+                            # one BinaryResponse per network chunk with per-chunk arrival
+                            # timing so time-to-first-audio is measurable post-hoc from the
+                            # first chunk's perf_ns. first_token_callback is not fired here
+                            # (it is typed for SSEMessage, not binary chunks).
+                            record.responses.extend(
+                                await collect_streamed_binary(
+                                    response.content.iter_any(),
+                                    record.trace_data,
+                                    content_type,
+                                    collect_chunks,
+                                )
+                            )
+                            record.end_perf_ns = time.perf_counter_ns()
+                        elif is_binary:
                             raw_bytes = await response.read()
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -269,10 +285,13 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 response_start_ns
                             )
                         # Note: response.text()/read() should trigger aiohttp trace callbacks,
-                        # but we set response_receive_end_perf_ns explicitly for consistency
-                        record.trace_data.response_receive_end_perf_ns = (
-                            record.end_perf_ns
-                        )
+                        # but we set response_receive_end_perf_ns explicitly for consistency.
+                        # Guard with `is None` so the streamed-binary path's per-chunk
+                        # last-chunk timestamp (set by collect_streamed_binary) is preserved.
+                        if record.trace_data.response_receive_end_perf_ns is None:
+                            record.trace_data.response_receive_end_perf_ns = (
+                                record.end_perf_ns
+                            )
 
                     self.debug(
                         lambda: (
@@ -312,6 +331,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        stream: bool = False,
         **kwargs: Any,
     ) -> RequestRecord:
         """Send a POST request to the specified URL.
@@ -339,6 +359,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                stream=stream,
                 **kwargs,
             )
         return await self._request_with_cancellation(
@@ -349,6 +370,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             first_token_callback=first_token_callback,
             connector=connector,
             connector_owner=connector_owner,
+            stream=stream,
         )
 
     async def _request_with_cancellation(
@@ -361,6 +383,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        stream: bool = False,
     ) -> RequestRecord:
         """Send POST request with cancellation after specified delay.
 
@@ -392,6 +415,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 trace_data=trace_data,
                 connector=connector,
                 connector_owner=connector_owner,
+                stream=stream,
             )
         )
 

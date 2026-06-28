@@ -186,6 +186,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Rankings](docs/tutorials/rankings.md) - Profile ranking models
 - [OpenAI Responses API](docs/tutorials/openai-responses.md) - Profile OpenAI Responses API endpoints
 - [Audio](docs/tutorials/audio.md) - Profile audio language models
+- [Text-to-Speech (TTS)](docs/tutorials/tts.md) - Profile text-to-speech models (/v1/audio/speech) with TTFA, RTF, and audio throughput
 - [NIM Image Retrieval](docs/tutorials/nim-image-retrieval.md) - Profile NIM image retrieval models
 - [Vision](docs/tutorials/vision.md) - Profile vision language models
 - [Image Generation](docs/tutorials/image-generation.md) - Benchmark any OpenAI-compatible image generation API

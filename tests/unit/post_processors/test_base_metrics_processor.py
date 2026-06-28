@@ -60,6 +60,12 @@ class TestBaseMetricsProcessor:
                     MetricFlags.SUPPORTS_IMAGE_ONLY,
                 ],
             ),
+            # Speech (TTS) endpoint with streaming - produces audio output, no tokens
+            (
+                EndpointType.SPEECH,
+                True,
+                [MetricFlags.PRODUCES_AUDIO_ONLY, MetricFlags.STREAMING_ONLY],
+            ),
         ],
     )
     def test_get_filters(
@@ -83,6 +89,24 @@ class TestBaseMetricsProcessor:
             assert not (disallowed_flags & supported_flag), (
                 f"Expected supported flag {supported_flag} should not be disallowed"
             )
+
+    def test_speech_endpoint_enables_audio_disables_token_metrics(
+        self, mock_run
+    ) -> None:
+        """TTS (speech) produces audio output but no tokens: audio-output metrics
+        must be enabled and token metrics disabled. Guards against a future
+        plugins.yaml flip silently dropping all TTS metrics."""
+        mock_run.cfg.endpoint.type = EndpointType.SPEECH
+        mock_run.cfg.endpoint.streaming = True
+
+        _, disallowed_flags = BaseMetricsProcessor(mock_run).get_filters()
+
+        # produces_audio=True -> audio-output metrics retained
+        assert not (disallowed_flags & MetricFlags.PRODUCES_AUDIO_ONLY)
+        # produces_tokens=False -> token metrics gated off
+        assert disallowed_flags & MetricFlags.PRODUCES_TOKENS_ONLY
+        # speech does not accept audio INPUT -> ASR audio-input metrics gated off
+        assert disallowed_flags & MetricFlags.SUPPORTS_AUDIO_ONLY
 
     def test_setup_metrics_basic(
         self,
@@ -108,6 +132,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.SUPPORTS_IMAGE_ONLY
             | MetricFlags.SUPPORTS_VIDEO_ONLY
             | MetricFlags.PRODUCES_VIDEO_ONLY
+            | MetricFlags.PRODUCES_AUDIO_ONLY
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.GOODPUT
             | MetricFlags.EXPERIMENTAL
@@ -136,6 +161,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
+                | MetricFlags.PRODUCES_AUDIO_ONLY
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.GOODPUT,
             ),
@@ -148,6 +174,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
+                | MetricFlags.PRODUCES_AUDIO_ONLY
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.ERROR_ONLY
                 | MetricFlags.GOODPUT,
@@ -161,6 +188,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
+                | MetricFlags.PRODUCES_AUDIO_ONLY
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.GOODPUT,
             ),
@@ -236,6 +264,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.SUPPORTS_IMAGE_ONLY
             | MetricFlags.SUPPORTS_VIDEO_ONLY
             | MetricFlags.PRODUCES_VIDEO_ONLY
+            | MetricFlags.PRODUCES_AUDIO_ONLY
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.GOODPUT
             | MetricFlags.EXPERIMENTAL,

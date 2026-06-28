@@ -33,6 +33,8 @@ navigation:
       path: tutorials/audio.md
     - page: Profile ASR Models with AIPerf
       path: tutorials/asr.md
+    - page: Profile Text-to-Speech (TTS) Models with AIPerf
+      path: tutorials/tts.md
     - page: Profile Embedding Models with AIPerf
       path: tutorials/embeddings.md
     - page: Profile Ranking Models with AIPerf

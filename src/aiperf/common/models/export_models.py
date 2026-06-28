@@ -297,6 +297,11 @@ class JsonExportData(AIPerfBaseModel):
     min_request_timestamp: JsonMetricResult | None = None
     max_response_timestamp: JsonMetricResult | None = None
     inter_chunk_latency: JsonMetricResult | None = None
+    time_to_first_audio: JsonMetricResult | None = None
+    output_audio_duration: JsonMetricResult | None = None
+    total_output_audio_duration: JsonMetricResult | None = None
+    output_rtf: JsonMetricResult | None = None
+    audio_throughput: JsonMetricResult | None = None
     total_output_tokens: JsonMetricResult | None = None
     total_reasoning_tokens: JsonMetricResult | None = None
     benchmark_duration: JsonMetricResult | None = None

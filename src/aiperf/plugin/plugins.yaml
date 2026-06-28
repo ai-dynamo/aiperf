@@ -326,6 +326,22 @@ endpoint:
       requires_form_data: true
       metrics_title: Video Generation Metrics
 
+  speech:
+    class: aiperf.endpoints.openai_speech:OpenAISpeechEndpoint
+    description: |
+      OpenAI-compatible text-to-speech (TTS) endpoint. Synthesizes audio from
+      a text input using models like tts-1 or gpt-4o-mini-tts. Supports
+      non-streaming (binary audio body) and streaming (SSE audio deltas, which
+      enable time-to-first-audio). Pass voice / response_format / speed via
+      --extra-inputs. Uses /v1/audio/speech path.
+    metadata:
+      endpoint_path: /v1/audio/speech
+      supports_streaming: true
+      produces_tokens: false
+      produces_audio: true
+      tokenizes_input: true
+      metrics_title: TTS Metrics
+
   image_retrieval:
     class: aiperf.endpoints.nim_image_retrieval:ImageRetrievalEndpoint
     description: |

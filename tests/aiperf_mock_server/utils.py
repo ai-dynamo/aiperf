@@ -36,6 +36,7 @@ from aiperf_mock_server.models import (
     RankingRequest,
     RequestT,
     SolidoRAGRequest,
+    SpeechRequest,
     TGIGenerateRequest,
 )
 from aiperf_mock_server.request_recorder import get_global_recorder
@@ -466,6 +467,8 @@ def _create_request_id(request: RequestT) -> str:
             return f"rank-{uuid.uuid4()}"
         case ImageGenerationRequest():
             return f"img-{uuid.uuid4()}"
+        case SpeechRequest():
+            return f"speech-{uuid.uuid4()}"
         case SolidoRAGRequest():
             return f"rag-{uuid.uuid4()}"
         case _:

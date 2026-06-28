@@ -58,6 +58,7 @@ from aiperf.common.models.model_endpoint_info import (
 from aiperf.common.models.prerequisites import TurnPrerequisite
 from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
 from aiperf.common.models.record_models import (
+    AudioResponseData,
     BaseResponseData,
     BinaryResponse,
     EmbeddingResponseData,
@@ -146,6 +147,7 @@ __all__ = [
     "AioHttpTraceData",
     "AioHttpTraceDataExport",
     "Audio",
+    "AudioResponseData",
     "AutoRoutedModel",
     "BasePhaseStats",
     "BaseResponseData",

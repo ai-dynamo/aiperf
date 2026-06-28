@@ -186,6 +186,7 @@ def _unit(tag: str) -> BaseMetricUnitInfo:
 class GenericMetricUnit(BaseMetricUnit):
     """Defines generic units for metrics. These dont have any extra information other than the tag, which is used for display purposes."""
 
+    AUDIO_SECONDS = _unit("audio_sec")
     BLOCKS = _unit("blocks")
     COUNT = _unit("count")
     ERRORS = _unit("errors")
@@ -371,6 +372,10 @@ class MetricOverTimeUnit(BaseMetricUnit):
     )
     VIDEOS_PER_SECOND = MetricOverTimeUnitInfo(
         primary_unit=GenericMetricUnit.VIDEOS,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
+    AUDIO_SECONDS_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.AUDIO_SECONDS,
         time_unit=MetricTimeUnit.SECONDS,
     )
     MS_PER_VIDEO = MetricOverTimeUnitInfo(
@@ -756,6 +761,9 @@ class MetricFlags(Flag):
 
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
+
+    PRODUCES_AUDIO_ONLY = 1 << 17
+    """Metrics that are only applicable when profiling an endpoint that produces audio output (e.g. text-to-speech)."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
