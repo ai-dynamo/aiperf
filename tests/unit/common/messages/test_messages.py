@@ -8,9 +8,9 @@ import pytest
 
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.messages import (
+    ConnectionProbeMessage,
     ErrorMessage,
     HeartbeatMessage,
-    ShutdownCommand,
     StatusMessage,
 )
 from aiperf.common.models import ErrorDetails
@@ -114,7 +114,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_returns_bytes(self):
         """Test that to_json_bytes() returns bytes type."""
-        message = ShutdownCommand(
+        message = ConnectionProbeMessage(
             service_id="test-service",
             request_id="test-request",
         )
@@ -182,7 +182,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_equivalent_to_model_dump_json(self):
         """Test that to_json_bytes() produces equivalent output to model_dump_json(exclude_none=True)."""
-        message = ShutdownCommand(
+        message = ConnectionProbeMessage(
             service_id="controller",
             request_id="shutdown-001",
         )
@@ -260,7 +260,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_multiple_messages_independence(self):
         """Test that to_json_bytes() calls don't interfere with each other."""
-        msg1 = ShutdownCommand(service_id="service-1", request_id="req-1")
+        msg1 = ConnectionProbeMessage(service_id="service-1", request_id="req-1")
         msg2 = HeartbeatMessage(
             service_id="service-2",
             service_type=ServiceType.WORKER,
@@ -275,7 +275,7 @@ class TestMessageToJsonBytes:
         assert bytes1 != bytes2
 
         # Each should deserialize to correct type
-        restored1 = ShutdownCommand.from_json(bytes1)
+        restored1 = ConnectionProbeMessage.from_json(bytes1)
         restored2 = HeartbeatMessage.from_json(bytes2)
 
         assert restored1.service_id == "service-1"
@@ -299,7 +299,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_empty_optional_fields(self):
         """Test to_json_bytes() with minimal required fields only."""
-        message = ShutdownCommand(
+        message = ConnectionProbeMessage(
             service_id="minimal",
             # request_id omitted (None by default)
         )
@@ -315,7 +315,7 @@ class TestMessageToJsonBytes:
     @pytest.mark.parametrize(
         "message_type,kwargs",
         [
-            (ShutdownCommand, {"service_id": "test"}),
+            (ConnectionProbeMessage, {"service_id": "test"}),
             (
                 StatusMessage,
                 {

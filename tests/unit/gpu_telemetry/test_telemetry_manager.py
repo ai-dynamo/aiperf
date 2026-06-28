@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
-    ProfileConfigureCommand,
-    ProfileStartCommand,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
@@ -406,9 +406,7 @@ class TestStatusMessaging:
             mock_collector.start.side_effect = Exception("Failed to start")
             manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
-            start_msg = ProfileStartCommand(
-                command_id="test", service_id="system_controller"
-            )
+            start_msg = Command(cid="test", cmd=CommandType.PROFILE_START)
             await manager._on_start_profiling(start_msg)
 
             # Should have published disabled status
@@ -657,9 +655,7 @@ class TestProfileConfigureCommand:
         with patch.object(
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status
@@ -693,9 +689,7 @@ class TestProfileConfigureCommand:
                 new_callable=AsyncMock,
             ),
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent enabled status
@@ -748,9 +742,7 @@ class TestProfileStartCommand:
             manager.publish = AsyncMock()
             manager._collectors = {}  # No collectors
 
-            start_msg = ProfileStartCommand(
-                command_id="test", service_id="system_controller"
-            )
+            start_msg = Command(cid="test", cmd=CommandType.PROFILE_START)
             await manager._on_start_profiling(start_msg)
 
             # Verify shutdown was scheduled
@@ -767,9 +759,7 @@ class TestProfileStartCommand:
         mock_collector = AsyncMock(spec=DCGMTelemetryCollector)
         manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
-        start_msg = ProfileStartCommand(
-            command_id="test", service_id="system_controller"
-        )
+        start_msg = Command(cid="test", cmd=CommandType.PROFILE_START)
         await manager._on_start_profiling(start_msg)
 
         # Verify start() was called without re-checking reachability or re-initializing
@@ -844,9 +834,7 @@ class TestSmartDefaultVisibility:
         with patch.object(
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should report custom URLs only (no reachable defaults to add)
@@ -898,9 +886,7 @@ class TestSmartDefaultVisibility:
         with patch.object(
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should report empty list (no user endpoints, defaults hidden)
@@ -948,9 +934,7 @@ class TestPynvmlCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent enabled status
@@ -985,9 +969,7 @@ class TestPynvmlCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status
@@ -1017,9 +999,7 @@ class TestPynvmlCollectorIntegration:
                 "pynvml package not installed. Install with: pip install nvidia-ml-py"
             ),
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status with RuntimeError message
@@ -1045,9 +1025,7 @@ class TestPynvmlCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             side_effect=ValueError("Unexpected initialization error"),
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status with general error message
@@ -1127,9 +1105,7 @@ class TestGenericLocalCollectorIntegration:
                     return_value=MockCollectorClass,
                 ):
                     await manager._profile_configure_command(
-                        ProfileConfigureCommand(
-                            command_id="test", service_id="system_controller"
-                        )
+                        Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
                     )
 
                 mock_collector.initialize.assert_awaited_once()
@@ -1173,9 +1149,7 @@ class TestGenericLocalCollectorIntegration:
                     return_value=MockCollectorClass,
                 ):
                     await manager._profile_configure_command(
-                        ProfileConfigureCommand(
-                            command_id="test", service_id="system_controller"
-                        )
+                        Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
                     )
 
                 manager.publish.assert_called_once()
@@ -1227,9 +1201,7 @@ class TestAmdsmiCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         manager.publish.assert_called_once()
@@ -1276,9 +1248,7 @@ class TestAmdsmiCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         manager.publish.assert_called_once()
@@ -1314,9 +1284,7 @@ class TestAmdsmiCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller"
-            )
+            configure_msg = Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             # Must NOT propagate CancelledError out of configure.
             await manager._profile_configure_command(configure_msg)
 
@@ -1345,9 +1313,7 @@ class TestAmdsmiCollectorIntegration:
             return_value=MockCollectorClass,
         ):
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller"
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
         call_args = manager.publish.call_args[0][0]
@@ -1369,9 +1335,7 @@ class TestAmdsmiCollectorIntegration:
             ),
         ):
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller"
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
         call_args = manager.publish.call_args[0][0]
@@ -1389,9 +1353,7 @@ class TestAmdsmiCollectorIntegration:
             side_effect=ValueError("Unexpected initialization error"),
         ):
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller"
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
         call_args = manager.publish.call_args[0][0]

@@ -10,11 +10,10 @@ from abc import ABC
 from typing import TYPE_CHECKING
 
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.hooks import on_command
-from aiperf.common.messages import CommandMessage
-from aiperf.common.messages.command_messages import CommandAcknowledgedResponse
 from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.mixins import CommandHandlerMixin
 from aiperf.common.mixins.health_server_mixin import HealthServerMixin
@@ -130,20 +129,11 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
         )
 
     @on_command(CommandType.SHUTDOWN)
-    async def _on_shutdown_command(self, message: CommandMessage) -> None:
-        # ``message`` may be either the bus-envelope CommandMessage (has
-        # ``service_id``) or a bare ``Command`` struct from a unit test;
-        # fall back to ``cid`` so the log line stays useful in both.
-        sender = (
-            getattr(message, "service_id", None)
-            or getattr(message, "cid", None)
-            or "<unknown>"
-        )
-        self.debug(f"Received shutdown command from {sender}")
-        # Send an acknowledged response back to the sender, because we won't be able to send it after we stop.
-        await self.publish(
-            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
-        )
+    async def _on_shutdown_command(self, message: Command) -> None:
+        # The control-channel dispatcher (_execute_control_command) sends the
+        # CommandAck automatically once this handler returns, so we must not
+        # publish an ack ourselves.
+        self.debug("Received shutdown command")
 
         try:
             await self.stop()

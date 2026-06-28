@@ -51,12 +51,12 @@ class Message(
         intermediaries out by keeping only classes whose tag matches a valid
         ``MessageType`` value.
 
-        When multiple subclasses share the same tag (e.g. all Command*Command
-        subclasses share ``MessageType.COMMAND``; the concrete dispatch happens
-        on the inner ``command`` field), keep only the highest-up class in the
-        MRO — a msgspec tagged union must have unique tag values per branch.
-        Decoding into that base class is sufficient since the subclass adds
-        only fields, and downstream code dispatches on the inner discriminator.
+        When multiple subclasses share the same tag (a base message plus
+        field-only refinements that reuse its ``MessageType``), keep only the
+        highest-up class in the MRO — a msgspec tagged union must have unique
+        tag values per branch. Decoding into that base class is sufficient since
+        the subclass adds only fields, and downstream code dispatches on the
+        inner discriminator.
         """
         seen: set[type] = set()
         stack: list[type] = list(cls.__subclasses__())

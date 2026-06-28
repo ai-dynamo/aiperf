@@ -115,13 +115,6 @@ class CommandType(CaseInsensitiveStrEnum):
     and leave the pod permanently half-dead at 1/13 Ready."""
 
 
-class CommandResponseStatus(CaseInsensitiveStrEnum):
-    ACKNOWLEDGED = "acknowledged"
-    FAILURE = "failure"
-    SUCCESS = "success"
-    UNHANDLED = "unhandled"  # The command was received but not handled by any hook
-
-
 class ConversationBranchMode(CaseInsensitiveStrEnum):
     """Mode discriminator for ``ConversationBranchInfo``.
 
@@ -364,8 +357,6 @@ class MessageType(CaseInsensitiveStrEnum):
     ALL_RECORDS_RECEIVED = "all_records_received"
     BENCHMARK_COMPLETE = "benchmark_complete"
     CANCEL_CREDITS = "cancel_credits"
-    COMMAND = "command"
-    COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"

@@ -394,7 +394,7 @@ def test_update_service_does_not_promote_pre_expected(registry):
     """Test that update_service on a pre-expected service updates timestamps but stays UNREGISTERED.
 
     This prevents premature registration from heartbeats/status messages
-    arriving before the formal RegisterServiceCommand.
+    arriving before the formal registration command.
     """
     registry.expect_service("worker_001", ServiceType.WORKER)
     assert (

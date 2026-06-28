@@ -8,15 +8,12 @@ import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
     RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
 )
@@ -133,9 +130,7 @@ class ServerMetricsManager(BaseComponentService):
         self._shutdown_task: asyncio.Task[None] | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the server metrics collectors but don't start them yet.
 
         Creates ServerMetricsDataCollector instances for each configured endpoint,
@@ -241,7 +236,7 @@ class ServerMetricsManager(BaseComponentService):
                 )
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Start all server metrics collectors for profiling phase.
 
         Initializes and starts background collection tasks for each configured
@@ -291,9 +286,7 @@ class ServerMetricsManager(BaseComponentService):
             )
 
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         Performs one final metrics collection from all endpoints to capture
@@ -342,7 +335,7 @@ class ServerMetricsManager(BaseComponentService):
 
     def _parse_profile_complete_window(
         self,
-        message: ProfileCompleteCommand,
+        message: Command,
     ) -> tuple[int | None, int | None]:
         """Parse PROFILE_COMPLETE timing window from the optional command payload."""
         import orjson
@@ -398,9 +391,7 @@ class ServerMetricsManager(BaseComponentService):
         self._result_published = True
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all server metrics collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.

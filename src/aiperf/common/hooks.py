@@ -471,15 +471,19 @@ def on_request(
 def on_command(
     *command_types: CommandTypeT | Callable[[SelfT], Iterable[CommandTypeT]],
 ) -> Callable:
-    """Decorator to specify that the function is a hook that should be called when a CommandMessage with the given
-    command type(s) is received from the message bus.
+    """Decorator to specify that the function is a hook that should be called when a Command with the given
+    command type(s) is received over the DEALER/ROUTER control channel.
     See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+
+    The handler receives the raw ``Command`` struct. Returning ``None`` makes the
+    control dispatcher emit a ``CommandAck``; returning a value emits a
+    ``CommandOk`` carrying the serialized result; raising emits a ``CommandErr``.
 
     Example:
     ```python
     class MyService(BaseComponentService):
         @on_command(CommandType.PROFILE_START)
-        def _on_profile_start(self, message: ProfileStartCommand) -> CommandResponse:
+        async def _on_profile_start(self, message: Command) -> None:
             pass
     ```
 

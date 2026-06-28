@@ -8,13 +8,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
@@ -167,9 +165,7 @@ class GPUTelemetryManager(BaseComponentService):
         pass
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the telemetry collectors but don't start them yet.
 
         Creates collector instances based on the configured collector type,
@@ -365,9 +361,7 @@ class GPUTelemetryManager(BaseComponentService):
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all telemetry collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
@@ -379,9 +373,7 @@ class GPUTelemetryManager(BaseComponentService):
         await self._stop_all_collectors()
 
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         Ensures GPU telemetry captures final state for accurate counter deltas.

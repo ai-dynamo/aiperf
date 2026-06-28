@@ -86,9 +86,10 @@ class DatasetConfigurationFailedNotification(
 
     Lets peer services (notably TimingManager, which awaits
     ``DatasetConfiguredNotification``) abort their wait immediately instead of
-    blocking on the dataset configuration timeout. The ``CommandErrorResponse``
-    path remains the authoritative failure signal for the SystemController;
-    this notification is the broadcast equivalent for fan-out wakeups.
+    blocking on the dataset configuration timeout. The control-channel
+    ``CommandErr`` response remains the authoritative failure signal for the
+    SystemController; this notification is the broadcast equivalent for fan-out
+    wakeups.
     """
 
     error: ErrorDetails

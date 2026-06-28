@@ -62,9 +62,8 @@ class ConnectionProbeMessage(
 ):
     """ZMQ slow-joiner self-echo probe.
 
-    Optional targeting fields kept for back-compat with older
-    ``TargetedServiceMessage``-based probe call-sites; default to ``None``
-    when broadcasting.
+    Optional targeting fields default to ``None`` when broadcasting and are set
+    when probing a specific service id/type.
     """
 
     target_service_id: str | None = None

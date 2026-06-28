@@ -22,7 +22,8 @@ from aiperf.plugin.enums import ServiceType, TransportType
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from aiperf.common.messages import CommandMessage, Message
+    from aiperf.common.control_structs import Command
+    from aiperf.common.messages import Message
     from aiperf.common.mixins import AIPerfLifecycleMixin, HooksMixin
     from aiperf.common.models import AIPerfBaseModel, Media, ModelEndpointInfo
     from aiperf.common.protocols import ServiceProtocol
@@ -36,7 +37,7 @@ ClassEnumT = TypeVar("ClassEnumT", bound="CaseInsensitiveStrEnum")
 ClassProtocolT = TypeVar("ClassProtocolT", bound=Any)
 CommAddressType: TypeAlias = Union["CommAddress", str]
 CommandCallbackMapT: TypeAlias = dict[
-    "CommandType", Callable[["CommandMessage"], Awaitable[Any]]
+    "CommandType", Callable[["Command"], Awaitable[Any]]
 ]
 CommandTypeT: TypeAlias = CommandType | str
 ConfigT = TypeVar("ConfigT", bound=Any, covariant=True)
