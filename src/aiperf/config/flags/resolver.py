@@ -15,6 +15,7 @@ works the way users intuit instead of throwing
 from __future__ import annotations
 
 import copy
+import logging
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import DatasetType
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
     from aiperf.config import AIPerfConfig
     from aiperf.config.config import BenchmarkConfig
     from aiperf.config.flags import CLIConfig
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_config(
@@ -363,6 +366,11 @@ def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> N
         datasets = benchmark.get("datasets")
         if not isinstance(datasets, list) or not datasets:
             raise ValueError("--dataset-filter requires a public dataset")
+        if len(datasets) > 1:
+            logger.warning(
+                "--dataset-filter with multiple YAML datasets applies only to "
+                "the first dataset"
+            )
         dataset = datasets[0]
     if not isinstance(dataset, dict):
         raise ValueError("--dataset-filter requires a public dataset")
