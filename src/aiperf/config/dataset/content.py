@@ -27,6 +27,7 @@ from aiperf.common.enums import (
     AudioFormat,
     ImageFormat,
     ImageSource,
+    ImageSourceSamplingStrategy,
 )
 from aiperf.config.base import BaseConfig
 from aiperf.config.types import (
@@ -221,7 +222,21 @@ class ImageConfig(BaseConfig):
     resizing source images to specified dimensions.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {"properties": {"source": {"const": "noise"}}},
+                    "then": {
+                        "properties": {
+                            "sourceSampling": {"const": "random-with-replacement"}
+                        }
+                    },
+                }
+            ]
+        },
+    )
 
     batch_size: Annotated[
         int,
@@ -276,13 +291,41 @@ class ImageConfig(BaseConfig):
             description="Source image generation mode (default: noise). "
             "noise: generate random noise images on the fly — no files on disk, "
             "effectively unbounded variety so servers cannot dedupe identical inputs. "
-            "assets: load images from the bundled assets/source_images directory and "
-            "resize them to the requested dimensions. "
-            "A path string loads images from the given directory (e.g. ./source_images). "
+            "assets: index images from the bundled assets/source_images directory and "
+            "lazily load them at the requested dimensions. "
+            "A path string indexes images from the given directory (e.g. ./source_images). "
             "Random-noise images are roughly incompressible, so payload bytes are larger "
             "than equivalent natural images.",
         ),
     ]
+
+    source_sampling: Annotated[
+        ImageSourceSamplingStrategy,
+        Field(
+            default=ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT,
+            description="How source images are selected from finite image sources "
+            "selected by source='assets' or a directory path. "
+            "random-with-replacement: draw each source image independently; repeats "
+            "may occur immediately. "
+            "shuffle-cycle: draw every source image once per shuffled cycle, "
+            "reshuffling after exhaustion. "
+            "sequential-cycle: walk source images in sorted load order and wrap "
+            "after exhaustion. For noise mode, only random-with-replacement is "
+            "valid because there is no finite source pool.",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _validate_source_sampling_source(self) -> Self:
+        if (
+            self.source_sampling != ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
+            and self.source == ImageSource.NOISE
+        ):
+            raise ValueError(
+                "images.source_sampling requires image source 'assets' or a directory "
+                "path unless it is 'random-with-replacement'; noise has no finite source pool"
+            )
+        return self
 
     def images_enabled(self) -> bool:
         """Whether image generation is configured to produce images.

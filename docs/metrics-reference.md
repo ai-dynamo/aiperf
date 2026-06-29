@@ -97,6 +97,9 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
+  - [Network Latency Calibration Metrics](#network-latency-calibration-metrics)
+    - [Network RTT](#network-rtt)
+    - [Network-Adjusted Latency Metrics](#network-adjusted-latency-metrics)
   - [HTTP Trace Metrics](#http-trace-metrics)
     - [HTTP Blocked](#http-blocked)
     - [HTTP DNS Lookup](#http-dns-lookup)
@@ -1481,6 +1484,67 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 **Notes:**
 - Uses wall-clock timestamps representing real calendar time.
 - Used as the denominator for throughput calculations; represents the effective measurement window.
+
+---
+
+## Network Latency Calibration Metrics
+
+These metrics appear only when network latency calibration is enabled (with
+`--network-latency-automatic` or `--network-latency-mean`). They make benchmark runs
+taken from different client network locations comparable by removing the client-to-endpoint
+network round-trip from the reported latencies.
+
+With `--network-latency-automatic`, AIPerf opens a fresh TCP connection to the endpoint
+host:port on an interval throughout profiling (`--network-latency-ping-interval`, default 1s)
+and records the handshake RTT. The handshake is one network round-trip with no server compute,
+so it isolates the network leg and is immune to server load. Each probe is written to
+`profile_export_network_latency.jsonl`. The **mean** RTT over successful probes is then
+subtracted from the request-start-anchored latency metrics. Alternatively, a fixed mean RTT
+can be supplied with `--network-latency-mean <ms>` to skip probing (the two flags are
+mutually exclusive). The chosen RTT is logged at run completion.
+
+Subtracting a constant from a distribution shifts the mean and every percentile by that
+constant and leaves the standard deviation unchanged, so the adjustment is applied to the
+aggregated results (clamped at 0). The raw metrics are always preserved.
+
+### Network RTT
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The mean network RTT that was subtracted from the adjusted latency metrics (single value).
+
+**Notes:**
+- Measured via TCP handshakes throughout the run, or supplied directly via `--network-latency-mean`.
+- Full per-probe samples and per-target statistics are written to `profile_export_network_latency.jsonl`.
+
+---
+
+### Network-Adjusted Latency Metrics
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Non-destructive, RTT-corrected variants of the request-start-anchored latency metrics:
+
+| Metric | Tag | Source metric |
+|---|---|---|
+| Network-Adjusted Request Latency | `network_adjusted_request_latency` | Request Latency |
+| Network-Adjusted Time to First Token | `network_adjusted_time_to_first_token` | Time to First Token (TTFT) |
+| Network-Adjusted Time to First Output Token | `network_adjusted_time_to_first_output_token` | Time to First Output Token (TTFO) |
+
+**Formula:**
+```python
+# nanoseconds, applied to every aggregated statistic (avg, min, max, p1..p99)
+network_adjusted_ns = max(0, source_metric_ns - mean_network_rtt_ns)
+```
+
+**Notes:**
+- Only metrics whose interval starts at the client request-send timestamp are adjusted.
+  Time to Second Token (second_response - first_response), Inter Token Latency (ITL), and
+  Inter Chunk Latency (ICL) are intentionally **not** adjusted: they are intra-stream gaps
+  that do not include the connection RTT (and for ITL the RTT cancels in
+  `(request_latency - ttft)`), so they are already network-invariant.
+- Values are clamped at 0; if the subtracted RTT exceeds some measured latencies a warning
+  is logged (the RTT may be larger than the true network leg).
 
 ---
 

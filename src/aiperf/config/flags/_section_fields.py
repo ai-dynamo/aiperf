@@ -42,6 +42,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
     {
         # ----- top-level input flat fields -----
         "custom_dataset_type",
+        "dataset_filters",
         "dataset_sampling_strategy",
         "extra_inputs",
         "input_file",
@@ -82,6 +83,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "image_batch_size",
         "image_format",
         "image_source",
+        "image_source_sampling",
         # ----- audio modality -----
         "audio_batch_size",
         "audio_length_mean",
