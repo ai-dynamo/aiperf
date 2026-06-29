@@ -22,6 +22,9 @@ from aiperf.common.enums import DatasetType
 from aiperf.config.flags._resolver_adaptive import (
     apply_basic_adaptive_scale_overrides,
 )
+from aiperf.config.flags._resolver_server_metrics import (
+    build_server_metrics_override,
+)
 from aiperf.config.flags._section_fields import (
     ENDPOINT_FIELDS,
     INPUT_FIELDS,
@@ -166,6 +169,7 @@ def build_cli_overrides(
     _apply_input_overrides(out, cli)
     _apply_recipe_and_multirun(out, cli, benchmark_config=benchmark_config)
     _apply_artifacts_overrides(out, cli)
+    _apply_optional_section(out, "server_metrics", build_server_metrics_override(cli))
     _apply_optional_section(out, "tokenizer", build_tokenizer(cli))
     _apply_optional_section(out, "accuracy", build_accuracy(cli))
     wandb_base_enabled = benchmark_config is not None and benchmark_config.wandb.enabled
