@@ -288,6 +288,19 @@ class ImageSource(CaseInsensitiveStrEnum):
     without requiring files on disk."""
 
 
+class ImageSourceSamplingStrategy(CaseInsensitiveStrEnum):
+    """How source images are selected from a finite source-image pool."""
+
+    RANDOM_WITH_REPLACEMENT = "random-with-replacement"
+    """Draw each source image independently; repeats may occur immediately."""
+
+    SHUFFLE_CYCLE = "shuffle-cycle"
+    """Draw every source image once per shuffled cycle; reshuffle after exhaustion."""
+
+    SEQUENTIAL_CYCLE = "sequential-cycle"
+    """Walk source images in sorted load order; wrap after exhaustion."""
+
+
 class IPVersion(CaseInsensitiveStrEnum):
     """IP version for HTTP socket connections."""
 
@@ -368,6 +381,7 @@ class MessageType(CaseInsensitiveStrEnum):
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_RECORD = "server_metrics_record"
     SERVER_METRICS_STATUS = "server_metrics_status"
+    NETWORK_LATENCY_RECORD = "network_latency_record"
     WORKER_HEALTH = "worker_health"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
 

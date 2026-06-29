@@ -52,6 +52,17 @@ service:
       required: false
       auto_start: true
 
+  network_latency_manager:
+    class: aiperf.network_latency.manager:NetworkLatencyManager
+    description: |
+      Network latency calibration service. Probes the endpoint's TCP-handshake
+      RTT throughout the profiling phase so the mean network round-trip can be
+      subtracted from latency metrics. Only spawned when network latency
+      calibration is enabled with active probing (no mean_ms).
+    metadata:
+      required: false
+      auto_start: true
+
   record_processor:
     class: aiperf.records.record_processor_service:RecordProcessor
     description: |
@@ -986,6 +997,13 @@ results_processor:
       Results processor that computes metrics from MetricType.DERIVED and
       aggregates results from all record processors. Final stage of metrics
       pipeline. Always loaded.
+
+  network_latency_jsonl_writer:
+    class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter
+    description: |
+      Network latency JSONL writer that exports per-sample TCP-handshake RTT
+      probes to a JSONL file. Enabled when network latency calibration is
+      actively probing (no mean_ms).
 
   otel_metrics_streamer:
     class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
