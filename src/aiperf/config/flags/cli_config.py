@@ -1845,7 +1845,9 @@ class CLIConfig(BaseConfig):
             default=None,
             description=(
                 "SLA filter for adaptive scale. Format: "
-                "'metric_tag:stat:op:threshold'. Stat in {avg, p50, p90, p95, p99}; "
+                "'metric_tag:stat:op:threshold'. For request_latency, stat is one of "
+                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
+                "request throughput and goodput_ratio support {avg, min, max}. "
                 "op in {lt, le, gt, ge}; threshold is a float. Repeatable. "
                 "Example: --adaptive-scale-sla 'request_latency:p95:le:30000'."
             ),
@@ -3045,7 +3047,8 @@ class CLIConfig(BaseConfig):
             description=(
                 "SLA filter to attach to the adaptive-search or grid path. "
                 "Format: 'metric_tag:stat:op:threshold'. Stat in "
-                "{avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is "
+                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
+                "op in {lt, le, gt, ge}; threshold is "
                 "a float. Repeatable. Example: --search-sla "
                 "'time_to_first_token:p95:lt:200' --search-sla "
                 "'request_error_rate:p99:lt:0.05'. Composes with recipe-named "
