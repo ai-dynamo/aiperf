@@ -19,8 +19,11 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.enums import ServerMetricsFormat
+from aiperf.config import BenchmarkRun
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
+from aiperf.server_metrics.jsonl_writer import ServerMetricsJSONLWriter
 
 _YAML_STREAMING_OFF = textwrap.dedent("""\
 benchmark:
@@ -107,6 +110,69 @@ def test_yaml_cli_dataset_magic_list_targets_existing_dataset(tmp_path: Path) ->
     assert config.sweep is not None
     assert config.sweep.parameters["datasets.default.prompts.isl.mean"] == [128, 256]
     assert "datasets.main.prompts.isl.mean" not in config.sweep.parameters
+
+
+_YAML_SERVER_METRICS_JSON_CSV = textwrap.dedent("""\
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    urls:
+      - http://localhost:8000/v1/chat/completions
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 128
+        osl: 64
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: 10
+      concurrency: 1
+  server_metrics:
+    enabled: true
+    urls:
+      - http://worker:9090/metrics
+    formats:
+      - json
+      - csv
+""")
+
+
+def test_server_metrics_formats_cli_override_preserves_yaml_urls(
+    tmp_path: Path,
+) -> None:
+    cfg_file = tmp_path / "server-metrics.yaml"
+    cfg_file.write_text(_YAML_SERVER_METRICS_JSON_CSV)
+    artifact_dir = tmp_path / "artifacts"
+    user = CLIConfig(
+        artifact_directory=artifact_dir,
+        server_metrics_formats=["json", "csv", "jsonl"],
+    )
+
+    config = resolve_config(user, cfg_file)
+    server_metrics = config.benchmark.server_metrics
+
+    assert server_metrics.urls == ["http://worker:9090/metrics"]
+    assert server_metrics.formats == [
+        ServerMetricsFormat.JSON,
+        ServerMetricsFormat.CSV,
+        ServerMetricsFormat.JSONL,
+    ]
+
+    run = BenchmarkRun(
+        benchmark_id="server-metrics-jsonl-regression",
+        cfg=config.benchmark,
+        artifact_dir=config.benchmark.artifacts.dir,
+        random_seed=config.random_seed,
+        variables=dict(config.variables),
+        cli_command=None,
+    )
+    writer = ServerMetricsJSONLWriter(run=run)
+
+    assert writer.output_file == artifact_dir / "server_metrics_export.jsonl"
 
 
 _YAML_ADVANCED_ADAPTIVE = textwrap.dedent("""\
