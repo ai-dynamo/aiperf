@@ -326,7 +326,6 @@ class TestServerMetrics:
         jsonl_lines = [line for line in jsonl_content.splitlines() if line]
         assert len(jsonl_lines) >= len(result.server_metrics_jsonl)
 
-
     async def test_server_metrics_jsonl_records(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
