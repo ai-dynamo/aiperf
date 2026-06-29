@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -96,8 +98,6 @@ def _apply_adaptive_scale_sla(prof: dict[str, Any], cli: CLIConfig) -> None:
         return
     if "adaptive_scale_sla" not in cli.model_fields_set or not cli.adaptive_scale_sla:
         return
-
-    from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
 
     prof["sla"] = [
         parse_sla_filter(value).model_dump(mode="json")
