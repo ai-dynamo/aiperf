@@ -1689,6 +1689,19 @@ communication_client:
 # local file. Selected via --public-dataset configuration option.
 # =============================================================================
 public_dataset_loader:
+  exgentic:
+    class: aiperf.dataset.loader.exgentic:ExgenticDatasetLoader
+    description: |
+      Exgentic agent LLM traces from HuggingFace. Replays complete recorded
+      message and tool snapshots with recorded output limits. Fixed-schedule
+      mode preserves call timestamps and overlaps; other modes replay sessions
+      closed-loop with recorded inter-turn delays.
+    metadata:
+      hf_dataset_name: Exgentic/agent-llm-traces
+      hf_split: train
+      streaming: true
+      has_timing_data: true
+
   sharegpt:
     class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
     description: |

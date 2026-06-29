@@ -119,4 +119,11 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.streaming:
             kwargs["streaming"] = loader_metadata.streaming
 
+        if self._public_dataset.filters:
+            if not self._loader_accepts_kwarg(loader_class, "filters"):
+                raise ValueError(
+                    f"Public dataset {dataset_type!r} does not support --dataset-filter"
+                )
+            kwargs["filters"] = self._public_dataset.filters
+
         return kwargs

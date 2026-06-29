@@ -519,6 +519,20 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    dataset_filters: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Dataset-specific filter in key=value form. Repeat for multiple "
+            "filters. Only supported by public datasets that declare filter support.",
+        ),
+        CLIParameter(
+            name=("--dataset-filter",),
+            consume_multiple=True,
+            group=Groups.INPUT,
+        ),
+    ]
+
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
         Field(
