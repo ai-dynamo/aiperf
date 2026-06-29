@@ -1808,6 +1808,56 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    adaptive_scale: Annotated[
+        bool,
+        Field(
+            description="Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.",
+        ),
+        CLIParameter(name=("--adaptive-scale",), group=Groups.LOAD_GENERATOR),
+    ] = False
+
+    adaptive_sustain_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+        ),
+        CLIParameter(
+            name=("--adaptive-sustain-duration",), group=Groups.LOAD_GENERATOR
+        ),
+    ] = None
+
+    adaptive_assessment_period: Annotated[
+        float | None,
+        Field(
+            ge=1.0,
+            description="Duration in seconds for each adaptive scale SLA assessment window.",
+        ),
+        CLIParameter(
+            name=("--adaptive-assessment-period", "--adaptive-scale-assessment-period"),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    adaptive_scale_sla: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "SLA filter for adaptive scale. Format: "
+                "'metric_tag:stat:op:threshold'. For request_latency, stat is one of "
+                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
+                "request throughput and goodput_ratio support {avg, min, max}. "
+                "op in {lt, le, gt, ge}; threshold is a float. Repeatable. "
+                "Example: --adaptive-scale-sla 'request_latency:p95:le:30000'."
+            ),
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-sla",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     ##############################################################################
     # Warmup
     ##############################################################################
@@ -2997,7 +3047,8 @@ class CLIConfig(BaseConfig):
             description=(
                 "SLA filter to attach to the adaptive-search or grid path. "
                 "Format: 'metric_tag:stat:op:threshold'. Stat in "
-                "{avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is "
+                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
+                "op in {lt, le, gt, ge}; threshold is "
                 "a float. Repeatable. Example: --search-sla "
                 "'time_to_first_token:p95:lt:200' --search-sla "
                 "'request_error_rate:p99:lt:0.05'. Composes with recipe-named "

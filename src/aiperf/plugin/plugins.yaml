@@ -872,6 +872,11 @@ timing_strategy:
       A mode where the TimingManager will send requests using a request rate generator based on various modes.
       Optionally, a max concurrency limit can be specified as well.
 
+  adaptive_scale:
+    class: aiperf.timing.strategies.adaptive_scale:AdaptiveScaleStrategy
+    description: |
+      Single-run adaptive scale controller that discovers and sustains an SLA boundary.
+
   user_centric_rate:
     class: aiperf.timing.strategies.user_centric_rate:UserCentricStrategy
     description: |

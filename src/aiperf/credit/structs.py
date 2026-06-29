@@ -87,6 +87,8 @@ class CreditContext(
         returned: True if the credit was returned after completion.
         first_token_sent: True if the first token was sent before this return.
         error: The error message if the request failed (None on success).
+        request_latency_ns: Request latency in nanoseconds using records-pipeline
+            semantics.
     """
 
     credit: Credit
@@ -95,6 +97,7 @@ class CreditContext(
     returned: bool = False
     first_token_sent: bool = False
     error: str | None = None
+    request_latency_ns: int | None = None
 
 
 # =============================================================================

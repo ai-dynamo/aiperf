@@ -19,6 +19,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import DatasetType
+from aiperf.config.flags._resolver_adaptive import (
+    apply_basic_adaptive_scale_overrides,
+)
 from aiperf.config.flags._section_fields import (
     ENDPOINT_FIELDS,
     INPUT_FIELDS,
@@ -393,6 +396,8 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
+    ("adaptive_sustain_duration", "adaptive_sustain_duration"),
+    ("adaptive_assessment_period", "adaptive_assessment_period"),
 )
 
 
@@ -425,6 +430,7 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         return
 
     _reject_loadgen_target_collisions(fields_set)
+    apply_basic_adaptive_scale_overrides(target, cli)
 
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr not in fields_set:

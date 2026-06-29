@@ -3,18 +3,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
+from typing_extensions import Self
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.config.dataset.defaults import InputDefaults
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
     TimingMode,
     URLSelectionStrategy,
+)
+from aiperf.timing.adaptive_config import (
+    ADAPTIVE_TIMING_FIELDS,
+    AdaptiveTimingConfig,
 )
 from aiperf.timing.request_cancellation import RequestCancellationConfig
 
@@ -37,11 +44,13 @@ _PHASE_TYPE_TO_ARRIVAL_PATTERN: dict[PhaseType, ArrivalPattern] = {
 }
 
 
-def _phase_timing_mode(phase_type: PhaseType) -> TimingMode:
-    """Map a phase type to the timing strategy used for credit issuance."""
-    if phase_type == PhaseType.FIXED_SCHEDULE:
+def _phase_timing_mode(phase: PhaseConfig) -> TimingMode:
+    """Map a phase to the timing strategy used for credit issuance."""
+    if getattr(phase, "adaptive_scale", False):
+        return TimingMode.ADAPTIVE_SCALE
+    if phase.type == PhaseType.FIXED_SCHEDULE:
         return TimingMode.FIXED_SCHEDULE
-    if phase_type == PhaseType.USER_CENTRIC:
+    if phase.type == PhaseType.USER_CENTRIC:
         return TimingMode.USER_CENTRIC_RATE
     return TimingMode.REQUEST_RATE
 
@@ -86,11 +95,13 @@ class TimingConfig(AIPerfBaseModel):
         """
         cfg = run.cfg
 
+        artifact_dir = cfg.artifacts.dir
+
         configs: list[CreditPhaseConfig] = []
         for phase in cfg.get_warmup_phases():
-            configs.append(_build_warmup_config(phase))
+            configs.append(_build_warmup_config(phase, artifact_dir=artifact_dir))
         for phase in cfg.get_profiling_phases():
-            configs.append(_build_profiling_config(phase))
+            configs.append(_build_profiling_config(phase, artifact_dir=artifact_dir))
 
         cancellation_config: RequestCancellationConfig = RequestCancellationConfig()
         for phase in cfg.get_profiling_phases():
@@ -221,6 +232,91 @@ class CreditPhaseConfig(AIPerfBaseModel):
         description="The fixed schedule end offset of the timing manager.",
     )
 
+    artifact_dir: Path | None = Field(
+        default=None,
+        description="Directory for phase-owned timing artifacts.",
+    )
+    adaptive: AdaptiveTimingConfig = Field(
+        default_factory=AdaptiveTimingConfig,
+        description="Adaptive scale timing settings.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_adaptive_timing_fields(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        folded = dict(data)
+        adaptive = dict(folded.get("adaptive") or {})
+        for field in ADAPTIVE_TIMING_FIELDS:
+            if field in folded:
+                adaptive[field] = folded.pop(field)
+        if adaptive:
+            folded["adaptive"] = adaptive
+        return folded
+
+    def model_copy(
+        self, *, update: dict[str, Any] | None = None, deep: bool = False
+    ) -> Self:
+        if update:
+            update = self._fold_adaptive_update(update)
+        return super().model_copy(update=update, deep=deep)
+
+    def _fold_adaptive_update(self, update: dict[str, Any]) -> dict[str, Any]:
+        folded = dict(update)
+        adaptive_update = {
+            field: folded.pop(field)
+            for field in list(folded)
+            if field in ADAPTIVE_TIMING_FIELDS
+        }
+        if adaptive_update:
+            folded["adaptive"] = self.adaptive.model_copy(update=adaptive_update)
+        return folded
+
+    @property
+    def adaptive_sustain_duration_sec(self) -> float | None:
+        return self.adaptive.adaptive_sustain_duration_sec
+
+    @property
+    def adaptive_assessment_period_sec(self) -> float:
+        return self.adaptive.adaptive_assessment_period_sec
+
+    @property
+    def adaptive_control_variable(self) -> Literal["concurrency"]:
+        return self.adaptive.adaptive_control_variable
+
+    @property
+    def adaptive_scale_min_concurrency(self) -> int:
+        return self.adaptive.adaptive_scale_min_concurrency
+
+    @property
+    def adaptive_scale_strategy_type(self) -> Literal["ramp_until_fail"]:
+        return self.adaptive.adaptive_scale_strategy_type
+
+    @property
+    def adaptive_scale_step_policy(self) -> Literal["sla_margin", "fixed_percent_step"]:
+        return self.adaptive.adaptive_scale_step_policy
+
+    @property
+    def adaptive_scale_base_step(self) -> int:
+        return self.adaptive.adaptive_scale_base_step
+
+    @property
+    def adaptive_scale_max_step_multiplier(self) -> int:
+        return self.adaptive.adaptive_scale_max_step_multiplier
+
+    @property
+    def adaptive_scale_step_percent(self) -> float:
+        return self.adaptive.adaptive_scale_step_percent
+
+    @property
+    def adaptive_min_completed_requests(self) -> int:
+        return self.adaptive.adaptive_min_completed_requests
+
+    @property
+    def adaptive_sla_filters(self) -> tuple[SLAFilter, ...]:
+        return self.adaptive.adaptive_sla_filters
+
 
 def _ramp_duration(ramp: object | None) -> float | None:
     """Extract the ramp duration in seconds from a ``RamperConfig`` (or None)."""
@@ -239,7 +335,9 @@ def _phase_arrival_pattern(phase: PhaseConfig) -> ArrivalPattern:
     return _PHASE_TYPE_TO_ARRIVAL_PATTERN.get(phase.type, ArrivalPattern.POISSON)
 
 
-def _build_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig:
+def _build_warmup_config(
+    phase: PhaseConfig, *, artifact_dir: Path | None = None
+) -> CreditPhaseConfig:
     """Build a warmup CreditPhaseConfig from a warmup PhaseConfig.
 
     Warmup triggers JIT compilation, memory allocation, and connection pool
@@ -273,10 +371,13 @@ def _build_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig:
         request_rate_ramp_duration_sec=_ramp_duration(
             getattr(phase, "rate_ramp", None)
         ),
+        artifact_dir=artifact_dir,
     )
 
 
-def _build_profiling_config(phase: PhaseConfig) -> CreditPhaseConfig:
+def _build_profiling_config(
+    phase: PhaseConfig, *, artifact_dir: Path | None = None
+) -> CreditPhaseConfig:
     """Build a profiling CreditPhaseConfig from a profiling PhaseConfig.
 
     Main benchmark phase where all performance metrics are collected.
@@ -285,7 +386,7 @@ def _build_profiling_config(phase: PhaseConfig) -> CreditPhaseConfig:
     """
     return CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
-        timing_mode=_phase_timing_mode(phase.type),
+        timing_mode=_phase_timing_mode(phase),
         expected_duration_sec=phase.duration,
         total_expected_requests=phase.requests,
         expected_num_sessions=phase.sessions,
@@ -308,4 +409,31 @@ def _build_profiling_config(phase: PhaseConfig) -> CreditPhaseConfig:
         ),
         fixed_schedule_start_offset=getattr(phase, "start_offset", None),
         fixed_schedule_end_offset=getattr(phase, "end_offset", None),
+        artifact_dir=artifact_dir,
+        adaptive_sustain_duration_sec=getattr(phase, "adaptive_sustain_duration", None),
+        adaptive_assessment_period_sec=getattr(
+            phase, "adaptive_assessment_period", None
+        )
+        or 30.0,
+        adaptive_control_variable=getattr(
+            phase, "adaptive_control_variable", "concurrency"
+        ),
+        adaptive_scale_min_concurrency=getattr(
+            phase, "adaptive_scale_min_concurrency", 1
+        ),
+        adaptive_scale_strategy_type=getattr(
+            phase, "adaptive_scale_strategy_type", "ramp_until_fail"
+        ),
+        adaptive_scale_step_policy=getattr(
+            phase, "adaptive_scale_step_policy", "sla_margin"
+        ),
+        adaptive_scale_base_step=getattr(phase, "adaptive_scale_base_step", 10),
+        adaptive_scale_max_step_multiplier=getattr(
+            phase, "adaptive_scale_max_step_multiplier", 4
+        ),
+        adaptive_scale_step_percent=getattr(phase, "adaptive_scale_step_percent", 25.0),
+        adaptive_min_completed_requests=getattr(
+            phase, "adaptive_min_completed_requests", 1
+        ),
+        adaptive_sla_filters=tuple(getattr(phase, "sla", ()) or ()),
     )
