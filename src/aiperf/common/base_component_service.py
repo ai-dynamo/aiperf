@@ -67,7 +67,9 @@ class BaseComponentService(BaseService):
     async def _register_service_on_start(self) -> None:
         """Register the service with the system controller on startup."""
         self.debug(
-            lambda: f"Attempting to register service {self} ({self.service_id}) with system controller"
+            lambda: (
+                f"Attempting to register service {self} ({self.service_id}) with system controller"
+            )
         )
         result = None
         command_message = RegisterServiceCommand(
@@ -97,7 +99,9 @@ class BaseComponentService(BaseService):
                     )
                 else:
                     self.debug(
-                        lambda: f"Service {self.service_id} registered with system controller"
+                        lambda: (
+                            f"Service {self.service_id} registered with system controller"
+                        )
                     )
                 break
 

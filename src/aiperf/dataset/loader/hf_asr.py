@@ -75,7 +75,9 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             return [Audio(name="", contents=[f"wav,{b64}"])]
         except (OSError, ValueError, RuntimeError) as e:
             self.debug(
-                lambda exc=e: f"Failed to decode audio bytes: {exc.__class__.__name__}: {exc}"
+                lambda exc=e: (
+                    f"Failed to decode audio bytes: {exc.__class__.__name__}: {exc}"
+                )
             )
             return []
 
@@ -89,7 +91,9 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             return info.duration
         except (OSError, ValueError, RuntimeError) as e:
             self.debug(
-                lambda exc=e: f"Failed to estimate audio duration: {exc.__class__.__name__}: {exc}"
+                lambda exc=e: (
+                    f"Failed to estimate audio duration: {exc.__class__.__name__}: {exc}"
+                )
             )
             return None
 
@@ -147,6 +151,8 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
                 f"Check that '{self.audio_column}' contains valid audio data."
             )
         self.debug(
-            lambda: f"Converted {len(conversations)} rows (skipped {skipped} empty/long)"
+            lambda: (
+                f"Converted {len(conversations)} rows (skipped {skipped} empty/long)"
+            )
         )
         return conversations

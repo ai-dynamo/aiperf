@@ -28,7 +28,9 @@ class MetricsCsvExporter(MetricsBaseExporter):
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
         self.trace_or_debug(
             lambda: f"Initializing MetricsCsvExporter with config: {exporter_config}",
-            lambda: f"Initializing MetricsCsvExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing MetricsCsvExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:

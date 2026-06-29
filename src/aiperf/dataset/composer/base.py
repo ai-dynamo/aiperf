@@ -330,7 +330,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             if shared_system_prompt:
                 conversation.system_message = shared_system_prompt
                 self.trace(
-                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
+                    lambda conv=conversation: (
+                        f"Set system_message on conversation {conv.session_id}"
+                    )
                 )
 
             # Set user context prompt (unique per session)
@@ -340,9 +342,10 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 )
                 conversation.user_context_message = user_context
                 self.trace(
-                    lambda idx=session_index,
-                    conv=conversation: f"Set user_context_message for session {idx} "
-                    f"(conversation {conv.session_id})"
+                    lambda idx=session_index, conv=conversation: (
+                        f"Set user_context_message for session {idx} "
+                        f"(conversation {conv.session_id})"
+                    )
                 )
 
     @staticmethod

@@ -162,7 +162,9 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             return [Audio(name="", contents=[f"wav,{b64}"])]
         except (OSError, ValueError, RuntimeError) as e:
             self.debug(
-                lambda exc=e: f"Failed to encode WAV from column '{audio_column}': {exc.__class__.__name__}: {exc}"
+                lambda exc=e: (
+                    f"Failed to encode WAV from column '{audio_column}': {exc.__class__.__name__}: {exc}"
+                )
             )
             return []
 

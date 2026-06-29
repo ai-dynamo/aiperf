@@ -98,8 +98,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
             )
 
         self.debug(
-            lambda service_id=service_id,
-            type=message_type: f"Registering request handler for {service_id} with message type {type}"
+            lambda service_id=service_id, type=message_type: (
+                f"Registering request handler for {service_id} with message type {type}"
+            )
         )
         self._request_handlers[message_type] = (service_id, handler)
 
@@ -145,7 +146,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
             if response is None:
                 self.warning(
-                    lambda req_id=request_id: f"Got None as response for request {req_id}"
+                    lambda req_id=request_id: (
+                        f"Got None as response for request {req_id}"
+                    )
                 )
                 response = ErrorMessage(
                     request_id=request_id,

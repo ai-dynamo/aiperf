@@ -191,9 +191,11 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
         if clamped_tags:
             self.warning(
-                lambda tags=clamped_tags: f"Network RTT ({rtt_ns / 1e6:.3f} ms) exceeded "
-                f"some measured latencies; clamped to 0 for: {', '.join(tags)}. "
-                "The subtracted RTT may be larger than the true network leg."
+                lambda tags=clamped_tags: (
+                    f"Network RTT ({rtt_ns / 1e6:.3f} ms) exceeded "
+                    f"some measured latencies; clamped to 0 for: {', '.join(tags)}. "
+                    "The subtracted RTT may be larger than the true network leg."
+                )
             )
 
     async def update_derived_metrics(self) -> None:

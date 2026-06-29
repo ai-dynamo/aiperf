@@ -95,8 +95,9 @@ class MultiProcessServiceManager(BaseServiceManager):
             process.start()
 
             self.debug(
-                lambda pid=process.pid,
-                type=service_type: f"Service {type} started as process (pid: {pid})"
+                lambda pid=process.pid, type=service_type: (
+                    f"Service {type} started as process (pid: {pid})"
+                )
             )
 
             self.multi_process_info.append(
@@ -269,7 +270,9 @@ class MultiProcessServiceManager(BaseServiceManager):
             info.process.kill()
         else:
             self.debug(
-                lambda: f"Service {info.service_type} process stopped (pid: {info.process.pid})"
+                lambda: (
+                    f"Service {info.service_type} process stopped (pid: {info.process.pid})"
+                )
             )
 
     async def wait_for_all_services_start(
