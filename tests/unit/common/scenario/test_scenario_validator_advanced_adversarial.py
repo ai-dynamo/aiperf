@@ -40,7 +40,7 @@ def _user_config(
     loader: str | None = "semianalysis_cc_traces_weka_with_subagents",
     benchmark_duration: float | None = 900.0,
     inter_turn_delay_cap_seconds: float | None = None,
-    trace_idle_gap_cap_seconds: float | None = 60.0,
+    trace_idle_gap_cap_seconds: float | None = 10.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
     cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
@@ -137,13 +137,13 @@ def test_trace_idle_gap_cap_explicit_matching_no_violation() -> None:
     fires and no auto-fill log line is emitted."""
     cfg = _user_config(
         extra_inputs={"ignore_eos": True},
-        trace_idle_gap_cap_seconds=60.0,
+        trace_idle_gap_cap_seconds=10.0,
     )
     cfg.loadgen._trace_idle_gap_cap_explicitly_set = True
     outcome = validate_scenario(cfg)
     assert outcome.violations == []
     assert outcome.submission_valid is True
-    assert cfg.loadgen.trace_idle_gap_cap_seconds == 60.0
+    assert cfg.loadgen.trace_idle_gap_cap_seconds == 10.0
 
 
 # ---------------------------------------------------------------------------

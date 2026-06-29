@@ -738,6 +738,8 @@ class PhaseRunner(TaskManagerMixin):
                     f"Waiting for all cancelled credits to be returned for "
                     f"phase {self._config.phase}. Need {need} more credits."
                 )
+                if need <= 0:
+                    self._progress.all_credits_returned_event.set()
                 # Wait with timeout to avoid hanging indefinitely
                 drain_timeout = Environment.TIMING.CANCEL_DRAIN_TIMEOUT
                 try:

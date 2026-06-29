@@ -131,3 +131,18 @@ class TestBufferedJSONLWriterMixin:
 
         assert writer.lines_written == 1
         assert temp_output_file.exists(), "File with content should be preserved"
+
+    @pytest.mark.asyncio
+    async def test_close_waits_only_for_flush_tasks(self, temp_output_file):
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=10,
+        )
+        await writer.initialize()
+        unrelated_task = writer.execute_async(asyncio.Event().wait())
+
+        await asyncio.wait_for(writer._close_file(), timeout=0.1)
+
+        assert not unrelated_task.done()
+        await writer.cancel_all_tasks()
+        await asyncio.gather(unrelated_task, return_exceptions=True)

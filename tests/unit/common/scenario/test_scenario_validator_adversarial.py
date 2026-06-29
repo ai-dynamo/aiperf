@@ -31,7 +31,7 @@ def _user_config(
     loader: str | None = "semianalysis_cc_traces_weka_with_subagents",
     benchmark_duration: float | None = 900.0,
     inter_turn_delay_cap_seconds: float | None = None,
-    trace_idle_gap_cap_seconds: float | None = 60.0,
+    trace_idle_gap_cap_seconds: float | None = 10.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
     cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,

@@ -91,6 +91,28 @@ def compute_time_weighted_stats(
     )
 
 
+def _build_active_window_grid(
+    rate_ts: FloatArray,
+    mask_ts: FloatArray,
+    window_start: float,
+    window_end: float,
+) -> FloatArray:
+    rate_lo = int(np.searchsorted(rate_ts, window_start, side="right"))
+    rate_hi = int(np.searchsorted(rate_ts, window_end, side="left"))
+    mask_lo = int(np.searchsorted(mask_ts, window_start, side="right"))
+    mask_hi = int(np.searchsorted(mask_ts, window_end, side="left"))
+
+    return np.unique(
+        np.concatenate(
+            [
+                np.array([window_start, window_end], dtype=np.float64),
+                rate_ts[rate_lo:rate_hi],
+                mask_ts[mask_lo:mask_hi],
+            ]
+        )
+    )
+
+
 def compute_active_weighted_stats(
     rate_ts: FloatArray,
     rate_vals: FloatArray,
@@ -125,17 +147,9 @@ def compute_active_weighted_stats(
     if total_dur <= 0 or len(rate_ts) == 0:
         return ZERO_SWEEP_LINE_STATS
 
-    # Unified timestamp grid covering both curves' events plus the window edges.
-    grid = np.unique(
-        np.concatenate(
-            [
-                np.array([window_start, window_end], dtype=np.float64),
-                rate_ts,
-                mask_ts,
-            ]
-        )
-    )
-    grid = grid[(grid >= window_start) & (grid <= window_end)]
+    # Window edges cover exact-boundary events; _step_lookup resolves the value
+    # held from any predecessor outside the window.
+    grid = _build_active_window_grid(rate_ts, mask_ts, window_start, window_end)
     if len(grid) < 2:
         return ZERO_SWEEP_LINE_STATS
 

@@ -1164,6 +1164,45 @@ class TestComputeActiveWeightedStats:
         assert stats.avg == pytest.approx(200.0)
         assert stats.min == pytest.approx(200.0)
 
+    def test_window_boundaries_preserve_step_state(self) -> None:
+        rate_ts = np.array([0.0, 10.0, 20.0])
+        rate_vals = np.array([5.0, 10.0, 999.0])
+        mask_ts = np.array([0.0, 15.0, 20.0])
+        mask_vals = np.array([1.0, 0.0, 1.0])
+
+        stats = compute_active_weighted_stats(
+            rate_ts, rate_vals, mask_ts, mask_vals, 10.0, 20.0
+        )
+
+        assert stats.avg == pytest.approx(10.0)
+        assert stats.min == pytest.approx(10.0)
+        assert stats.max == pytest.approx(10.0)
+
+    def test_unique_receives_only_events_inside_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rate_ts = np.arange(10_000, dtype=np.float64)
+        rate_vals = np.full(10_000, 100.0)
+        mask_ts = np.arange(10_000, dtype=np.float64)
+        mask_vals = np.ones(10_000)
+        unique_input_sizes: list[int] = []
+        original_unique = np.unique
+
+        def tracking_unique(values: np.ndarray) -> np.ndarray:
+            unique_input_sizes.append(values.size)
+            return original_unique(values)
+
+        monkeypatch.setattr(
+            "aiperf.analysis.sweepline_stats.np.unique", tracking_unique
+        )
+
+        stats = compute_active_weighted_stats(
+            rate_ts, rate_vals, mask_ts, mask_vals, 5000.25, 5001.25
+        )
+
+        assert stats.avg == pytest.approx(100.0)
+        assert unique_input_sizes == [4]
+
 
 # ---------------------------------------------------------------------------
 # Brute-force reference comparison

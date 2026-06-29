@@ -759,6 +759,49 @@ class TestPhaseTypes:
 
 
 class TestEdgeCases:
+    async def test_timeout_skips_cancel_drain_when_all_credits_returned(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(dur=1.0), conv_src, pub, router, conc, cancel, cb)
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = False
+        stats = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            start_ns=1,
+            sent_end_ns=2,
+            requests_end_ns=3,
+            final_requests_sent=94,
+            requests_sent=94,
+            requests_completed=94,
+            requests_cancelled=0,
+            final_requests_completed=94,
+            final_requests_cancelled=0,
+            final_request_errors=0,
+            final_sent_sessions=1,
+            final_completed_sessions=1,
+            final_cancelled_sessions=0,
+        )
+        r._progress.create_stats = MagicMock(return_value=stats)
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+
+        with patch.object(
+            r,
+            "_wait_for_event_with_timeout",
+            new=AsyncMock(return_value=True),
+        ):
+            await r._wait_for_returning_complete(strategy)
+
+        router.cancel_all_credits.assert_awaited_once()
+        assert r._progress.all_credits_returned_event.is_set()
+        r._concurrency_manager.release_stuck_slots.assert_not_called()
+
     async def test_cache_warmup_handoff_ignores_paused_dag_work(
         self,
         conv_src: MagicMock,

@@ -56,6 +56,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._file_handle = None
         self._file_lock = asyncio.Lock()
         self._buffer: list[bytes] = []  # Store bytes for binary mode
+        self._flush_tasks: set[asyncio.Task] = set()
         self._batch_size = batch_size
         self._flush_interval = flush_interval
         self._last_flush_monotonic = time.monotonic()
@@ -108,7 +109,9 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 self._buffer = []
 
             if buffer_to_flush:
-                self.execute_async(self._flush_buffer(buffer_to_flush))
+                task = self.execute_async(self._flush_buffer(buffer_to_flush))
+                self._flush_tasks.add(task)
+                task.add_done_callback(self._flush_tasks.discard)
 
         except Exception as e:
             self.error(f"Failed to write record: {e!r}")
@@ -171,19 +174,19 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     async def _close_file(self) -> None:
         """Flush remaining buffer and close the file handle (called automatically on shutdown)."""
         # Wait for any pending flush tasks to complete
-        if self.tasks:
+        if self._flush_tasks:
             try:
                 await asyncio.wait_for(
-                    self.wait_for_tasks(),
+                    asyncio.gather(*list(self._flush_tasks)),
                     timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
                 )
             except asyncio.TimeoutError:
                 self.warning(
-                    f"Timeout waiting for {len(self.tasks)} pending flush tasks during shutdown. "
+                    f"Timeout waiting for {len(self._flush_tasks)} pending flush tasks during shutdown. "
                     "Cancelling tasks and proceeding with cleanup."
                 )
-                # Cancel any remaining tasks to prevent resource leaks
-                await self.cancel_all_tasks()
+                for task in self._flush_tasks:
+                    task.cancel()
                 await yield_to_event_loop()
 
         buffer_to_flush = self._buffer

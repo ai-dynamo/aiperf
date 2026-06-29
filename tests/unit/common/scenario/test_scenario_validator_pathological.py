@@ -98,14 +98,14 @@ def _user_config(
     cfg.input.hf_weka_dataset = None
     cfg.loadgen.benchmark_duration = benchmark_duration
     cfg.loadgen.inter_turn_delay_cap_seconds = None
-    cfg.loadgen.trace_idle_gap_cap_seconds = 60.0
+    cfg.loadgen.trace_idle_gap_cap_seconds = 10.0
     cfg.loadgen.concurrency = 10
     cfg.input.prompt.cache_bust.target = CacheBustTarget.FIRST_TURN_PREFIX
     cfg.input._use_think_time_only_explicitly_set = False
     cfg.loadgen._inter_turn_delay_cap_explicitly_set = False
     cfg.loadgen._trace_idle_gap_cap_explicitly_set = False
-    cfg.loadgen.trajectory_start_min_ratio = 0.25
-    cfg.loadgen.trajectory_start_max_ratio = 0.75
+    cfg.loadgen.trajectory_start_min_ratio = 0.0
+    cfg.loadgen.trajectory_start_max_ratio = 1.0
     cfg.loadgen._trajectory_start_min_ratio_explicitly_set = False
     cfg.loadgen._trajectory_start_max_ratio_explicitly_set = False
     cfg.input.prompt.cache_bust._target_explicitly_set = False

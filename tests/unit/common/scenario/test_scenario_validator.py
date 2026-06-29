@@ -26,7 +26,7 @@ def _user_config(
     hf_weka_dataset: str | None = None,
     benchmark_duration: float | None = 900.0,
     inter_turn_delay_cap_seconds: float | None = None,
-    trace_idle_gap_cap_seconds: float | None = 60.0,
+    trace_idle_gap_cap_seconds: float | None = 10.0,
     random_seed: int | None = 42,
     unsafe_override: bool = False,
     cache_bust_target: CacheBustTarget = CacheBustTarget.FIRST_TURN_PREFIX,
@@ -310,7 +310,7 @@ def test_trace_idle_gap_cap_unset_auto_filled(
     with caplog.at_level("INFO"):
         outcome = validate_scenario(cfg)
     assert outcome.violations == []
-    assert cfg.loadgen.trace_idle_gap_cap_seconds == 60.0
+    assert cfg.loadgen.trace_idle_gap_cap_seconds == 10.0
 
 
 def test_unsafe_override_converts_errors_to_warnings(
@@ -413,7 +413,7 @@ class _ReadOnlyTimingModeConfig:
         self.loadgen.benchmark_duration = 900.0
         self.loadgen.inter_turn_delay_cap_seconds = None
         self.loadgen._inter_turn_delay_cap_explicitly_set = False
-        self.loadgen.trace_idle_gap_cap_seconds = 60.0
+        self.loadgen.trace_idle_gap_cap_seconds = 10.0
         self.loadgen._trace_idle_gap_cap_explicitly_set = False
         self.endpoint = MagicMock()
         self.endpoint.streaming = True
@@ -573,7 +573,7 @@ def test_forbid_input_truncation_against_real_user_config() -> None:
 # =============================================================================
 #
 # The agentx MVP scenario auto-fills --benchmark-duration=1800 when unset and
-# pins the trajectory start ratios to [0.25, 0.75] unless the user explicitly
+# pins the trajectory start ratios to [0.0, 1.0] unless the user explicitly
 # overrides them. Explicit user values are honored without violations.
 
 
@@ -599,15 +599,15 @@ def test_trajectory_start_ratios_auto_filled_when_unset(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     cfg = _user_config(extra_inputs={"ignore_eos": True})
-    cfg.loadgen.trajectory_start_min_ratio = 0.0
+    cfg.loadgen.trajectory_start_min_ratio = 0.2
     cfg.loadgen.trajectory_start_max_ratio = 0.7
     cfg.loadgen._trajectory_start_min_ratio_explicitly_set = False
     cfg.loadgen._trajectory_start_max_ratio_explicitly_set = False
     with caplog.at_level("INFO"):
         outcome = validate_scenario(cfg)
     assert outcome.violations == []
-    assert cfg.loadgen.trajectory_start_min_ratio == 0.25
-    assert cfg.loadgen.trajectory_start_max_ratio == 0.75
+    assert cfg.loadgen.trajectory_start_min_ratio == 0.0
+    assert cfg.loadgen.trajectory_start_max_ratio == 1.0
     assert any("--trajectory-start-min-ratio" in r.message for r in caplog.records)
     assert any("--trajectory-start-max-ratio" in r.message for r in caplog.records)
 
@@ -638,9 +638,9 @@ def test_scenario_defaults_apply_to_real_loadgen_config() -> None:
 
     assert outcome.violations == []
     assert cfg.loadgen.benchmark_duration == 1800.0
-    assert cfg.loadgen.trajectory_start_min_ratio == 0.25
-    assert cfg.loadgen.trajectory_start_max_ratio == 0.75
-    assert cfg.loadgen.trace_idle_gap_cap_seconds == 60.0
+    assert cfg.loadgen.trajectory_start_min_ratio == 0.0
+    assert cfg.loadgen.trajectory_start_max_ratio == 1.0
+    assert cfg.loadgen.trace_idle_gap_cap_seconds == 10.0
 
 
 def test_real_loadgen_config_records_explicit_ratio_flags() -> None:
