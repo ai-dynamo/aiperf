@@ -46,12 +46,17 @@ class DatasetResolver:
         ``fixed_schedule`` validation, and counts records/sessions. Raises
         ``FileNotFoundError`` when a file dataset path does not exist.
         """
-        from aiperf.config.dataset import FileDataset
+        from aiperf.config.dataset import FileDataset, PublicDataset
+        from aiperf.plugin import plugins
 
         acc = _DatasetResolution()
         format_map = self._build_format_map()
 
         for ds in run.cfg.datasets:
+            if isinstance(ds, PublicDataset):
+                metadata = plugins.get_public_dataset_loader_metadata(ds.dataset)
+                acc.has_timing[ds.name] = metadata.has_timing_data
+                continue
             if not isinstance(ds, FileDataset):
                 continue
             self._resolve_one(name=ds.name, ds=ds, format_map=format_map, acc=acc)
@@ -65,6 +70,7 @@ class DatasetResolver:
         if acc.types:
             run.resolved.dataset_types = acc.types
             run.resolved.dataset_sampling_strategies = acc.sampling
+        if acc.has_timing:
             run.resolved.dataset_has_timing_data = acc.has_timing
         if acc.total_records:
             run.resolved.dataset_total_records = acc.total_records

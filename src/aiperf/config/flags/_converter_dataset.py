@@ -227,6 +227,21 @@ def _build_video(cli: CLIConfig) -> dict[str, Any]:
 # --- top-level dataset assembly -------------------------------------------
 
 
+def _parse_dataset_filters(values: list[str]) -> dict[str, str]:
+    filters: dict[str, str] = {}
+    for item in values:
+        key, separator, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not separator or not key or not value:
+            raise ValueError(
+                f"Invalid --dataset-filter {item!r}; expected non-empty key=value"
+            )
+        if key in filters:
+            raise ValueError(f"Duplicate --dataset-filter key {key!r}")
+        filters[key] = value
+    return filters
+
+
 def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
     """Top-level fields that move through verbatim."""
     out: dict[str, Any] = {}
@@ -236,6 +251,8 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         out["dataset"] = cli.public_dataset
     if _set(cli, "hf_dataset_subset") and cli.hf_dataset_subset is not None:
         out["hf_subset"] = cli.hf_dataset_subset
+    if _set(cli, "dataset_filters"):
+        out["filters"] = _parse_dataset_filters(cli.dataset_filters)
     if _set(cli, "custom_dataset_type") and cli.custom_dataset_type is not None:
         out["format"] = cli.custom_dataset_type
     if (
@@ -655,6 +672,8 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     """
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
+    if cli.dataset_filters and not cli.public_dataset:
+        raise ValueError("--dataset-filter requires --public-dataset")
 
     d = _flat_dataset_fields(cli)
     _attach_subtables(d, cli)

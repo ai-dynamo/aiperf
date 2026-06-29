@@ -42,6 +42,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
     {
         # ----- top-level input flat fields -----
         "custom_dataset_type",
+        "dataset_filters",
         "dataset_sampling_strategy",
         "extra_inputs",
         "input_file",

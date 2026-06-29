@@ -817,6 +817,12 @@
               "title": "Streaming",
               "type": "boolean"
             },
+            "has_timing_data": {
+              "default": false,
+              "description": "Whether the loader emits timestamps suitable for fixed-schedule replay.",
+              "title": "Has Timing Data",
+              "type": "boolean"
+            },
             "prompt_template": {
               "anyOf": [
                 {

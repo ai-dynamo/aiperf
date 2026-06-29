@@ -691,6 +691,27 @@ class TestTimingResolver:
         with pytest.raises(ValueError, match="could not verify timing data"):
             TimingResolver().resolve(run)
 
+    def test_fixed_schedule_accepts_timed_public_dataset(self, tmp_path):
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "public",
+                    "dataset": "exgentic",
+                    "entries": 1,
+                }
+            ],
+            phases=[{"name": "profiling", "type": "fixed_schedule"}],
+        )
+        run = _make_run(config, artifact_dir=tmp_path)
+
+        DatasetResolver().resolve(run)
+        TimingResolver().resolve(run)
+
+        assert run.resolved.dataset_has_timing_data == {"main": True}
+
     def test_single_phase_with_duration(self, run_with_config):
         TimingResolver().resolve(run_with_config)
         assert run_with_config.resolved.total_expected_duration == 60.0

@@ -15,8 +15,10 @@ works the way users intuit instead of throwing
 from __future__ import annotations
 
 import copy
+import logging
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.enums import DatasetType
 from aiperf.config.flags._section_fields import (
     ENDPOINT_FIELDS,
     INPUT_FIELDS,
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
     from aiperf.config import AIPerfConfig
     from aiperf.config.config import BenchmarkConfig
     from aiperf.config.flags import CLIConfig
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_config(
@@ -89,9 +93,9 @@ def resolve_config(
     base_config = AIPerfConfig.model_validate(pre_merged)
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
-    if overrides:
-        overrides = _wrap_under_envelope(overrides)
+    overrides = _wrap_under_envelope(overrides) if overrides else overrides
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
+    _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
     benchmark = merged.get("benchmark")
     if isinstance(benchmark, dict):
@@ -346,6 +350,34 @@ def _apply_input_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
         endpoint["extra"] = dict(cli.extra_inputs)
     if not endpoint:
         out.pop("endpoint", None)
+
+
+def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    if "dataset_filters" not in cli.model_fields_set:
+        return
+
+    from aiperf.config.flags._converter_dataset import _parse_dataset_filters
+
+    benchmark = merged.get("benchmark")
+    if not isinstance(benchmark, dict):
+        raise ValueError("--dataset-filter requires a public dataset")
+    dataset = benchmark.get("dataset")
+    if not isinstance(dataset, dict):
+        datasets = benchmark.get("datasets")
+        if not isinstance(datasets, list) or not datasets:
+            raise ValueError("--dataset-filter requires a public dataset")
+        if len(datasets) > 1:
+            logger.warning(
+                "--dataset-filter with multiple YAML datasets applies only to "
+                "the first dataset"
+            )
+        dataset = datasets[0]
+    if not isinstance(dataset, dict):
+        raise ValueError("--dataset-filter requires a public dataset")
+    if dataset.get("type") != DatasetType.PUBLIC:
+        raise ValueError("--dataset-filter requires a public dataset")
+    filters = dataset.setdefault("filters", {})
+    filters.update(_parse_dataset_filters(cli.dataset_filters))
 
 
 # CLI loadgen flag -> phase field. Each entry is (loadgen_attr, phase_key).
