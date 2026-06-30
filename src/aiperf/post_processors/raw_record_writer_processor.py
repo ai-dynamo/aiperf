@@ -116,29 +116,14 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         ``payload=None, payload_bytes=None`` when the enriched
         ``RecordContext`` carries no ``payload_bytes``).
 
-        Validates ``payload_bytes`` round-trips as JSON before splicing —
-        ``orjson.Fragment`` would otherwise embed invalid bytes verbatim and
-        silently corrupt the output JSONL. Drop + count any record whose
-        payload won't parse or whose serialisation fails so operators see
-        the failure volume via ``dropped_record_count``.
+        ``payload_bytes`` is spliced verbatim with no per-record JSON
+        re-parse: the bytes are either produced by ``orjson.dumps`` upstream
+        (valid by construction) or loaded from a raw dataset that was already
+        parsed at dataset-load time, so re-validating every record here would
+        only reintroduce the decode cost the ``Fragment`` path exists to avoid.
         """
         if record.payload_bytes is None:
             await super().buffered_write(record)
-            return
-
-        try:
-            orjson.loads(record.payload_bytes)
-        except (orjson.JSONDecodeError, TypeError) as e:
-            size = (
-                len(record.payload_bytes)
-                if isinstance(record.payload_bytes, bytes | bytearray | memoryview)
-                else -1
-            )
-            self.warning(
-                f"Dropping raw record: payload_bytes does not parse as JSON "
-                f"(size={size}): {e!r}"
-            )
-            self.dropped_record_count += 1
             return
 
         try:
@@ -156,7 +141,14 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
                 buffer_to_flush = self._buffer
                 self._buffer = []
             if buffer_to_flush:
-                self.execute_async(self._flush_buffer(buffer_to_flush))
+                # Register the flush task in ``_flush_tasks`` (mirroring the
+                # parent mixin) so ``_close_file`` awaits it on shutdown.
+                # Without this the fire-and-forget task lives only in
+                # ``self.tasks``, which ``_stop_all_tasks`` cancels before the
+                # file is closed — losing the whole batch on stop.
+                task = self.execute_async(self._flush_buffer(buffer_to_flush))
+                self._flush_tasks.add(task)
+                task.add_done_callback(self._flush_tasks.discard)
         except Exception as e:
             self.error(f"Failed to write raw record: {e!r}")
             self.dropped_record_count += 1

@@ -128,18 +128,9 @@ class InferenceClient(AIPerfLifecycleMixin):
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
         if request_info.payload_bytes is not None:
             # PAYLOAD_BYTES fast path: bytes were validated at dataset-load time
-            # by the mmap loader / DatasetManager. Defensive guard against any
-            # invalid bytes that bypass upstream validation — round-trip
-            # through orjson.loads so a malformed payload turns into an error
-            # RequestRecord rather than reaching the wire. Body-mutating features
+            # by the mmap loader / DatasetManager, and body-mutating features
             # (cache-bust, Dynamo session_control) are refused against this
             # verbatim-bytes path at dataset load, so nothing is injected here.
-            try:
-                orjson.loads(request_info.payload_bytes)
-            except (orjson.JSONDecodeError, ValueError, TypeError) as e:
-                raise ValueError(
-                    f"invalid JSON in pre-serialised payload_bytes: {e}"
-                ) from e
             formatted_payload = request_info.payload_bytes
         else:
             current_turn = request_info.turns[-1] if request_info.turns else None

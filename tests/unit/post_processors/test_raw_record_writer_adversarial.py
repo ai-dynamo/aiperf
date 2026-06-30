@@ -164,13 +164,15 @@ class TestBufferedWritePayloadBytesFastPath:
         assert parsed["payload"] == {"k": "v"}
 
     @pytest.mark.asyncio
-    async def test_buffered_write_empty_bytes_payload_bytes_dropped_with_counter(
+    async def test_buffered_write_empty_bytes_payload_bytes_spliced_verbatim(
         self,
         user_config_raw: UserConfig,
     ):
-        """``payload_bytes=b""`` is not valid JSON — post-Wave-2 fix drops it
-        at the ingest check rather than splicing an empty Fragment and
-        emitting a ``"payload":`` with no value. Counter bumps.
+        """``payload_bytes=b""`` — the per-record JSON re-validation was removed,
+        so empty bytes splice verbatim (no drop, no counter). orjson emits
+        ``"payload":`` with no value, i.e. a deliberately corrupt line: the
+        accepted tradeoff of trusting dataset-load-time validation instead of
+        re-parsing every record on the export hot path.
         """
         record = _make_raw_record(payload_bytes=b"")
 
@@ -178,28 +180,23 @@ class TestBufferedWritePayloadBytesFastPath:
             "processor-empty", user_config_raw
         ) as processor:
             await processor.buffered_write(record)
-            assert processor.dropped_record_count == 1
-            assert processor.lines_written == 0
+            assert processor.dropped_record_count == 0
+            assert processor.lines_written == 1
 
-        raw = (
-            processor.output_file.read_bytes()
-            if processor.output_file.exists()
-            else b""
-        )
-        assert b'"payload":,' not in raw and b'"payload":}' not in raw
-        for line in raw.splitlines():
-            if line.strip():
-                orjson.loads(line)
+        line = processor.output_file.read_bytes().splitlines()[0]
+        # Spliced verbatim -> the line is no longer valid JSON.
+        with pytest.raises(orjson.JSONDecodeError):
+            orjson.loads(line)
 
     @pytest.mark.asyncio
-    async def test_buffered_write_invalid_json_payload_bytes_dropped_with_counter(
+    async def test_buffered_write_invalid_json_payload_bytes_spliced_verbatim(
         self,
         user_config_raw: UserConfig,
     ):
-        """``payload_bytes=b"}"`` — post-Wave-2 fix: invalid JSON bytes are
-        rejected at ingest via an ``orjson.loads`` round-trip check so the
-        Fragment splice never emits corrupt bytes. The record is dropped
-        and ``dropped_record_count`` increments.
+        """``payload_bytes=b"}"`` — with the per-record ``orjson.loads`` ingest
+        check removed, invalid bytes splice verbatim via ``orjson.Fragment``
+        (no drop, no counter). The emitted line is corrupt; this documents the
+        accepted tradeoff of trusting upstream/dataset-load validation.
         """
         record = _make_raw_record(payload_bytes=b"}")
 
@@ -207,29 +204,22 @@ class TestBufferedWritePayloadBytesFastPath:
             "processor-bad-json", user_config_raw
         ) as processor:
             await processor.buffered_write(record)
-            assert processor.dropped_record_count == 1
-            assert processor.lines_written == 0
+            assert processor.dropped_record_count == 0
+            assert processor.lines_written == 1
 
-        # Output must not contain the corrupt splice artefact.
-        raw = (
-            processor.output_file.read_bytes()
-            if processor.output_file.exists()
-            else b""
-        )
-        assert b'"payload":}' not in raw
-        # Every surviving line (if any) must parse cleanly.
-        for line in raw.splitlines():
-            if line.strip():
-                orjson.loads(line)
+        line = processor.output_file.read_bytes().splitlines()[0]
+        with pytest.raises(orjson.JSONDecodeError):
+            orjson.loads(line)
 
     @pytest.mark.asyncio
-    async def test_buffered_write_truncated_json_payload_bytes_dropped_with_counter(
+    async def test_buffered_write_truncated_json_payload_bytes_spliced_verbatim(
         self,
         user_config_raw: UserConfig,
     ):
-        """Truncated JSON ``b'{"a":1'`` — post-Wave-2 fix: the ingest-time
-        ``orjson.loads`` check rejects the partial bytes before the Fragment
-        splice, so no corrupt line is emitted and the drop counter bumps.
+        """Truncated JSON ``b'{"a":1'`` — with the ingest ``orjson.loads`` check
+        removed, the partial bytes splice verbatim (no drop, no counter) and the
+        emitted line is corrupt: the accepted tradeoff of skipping a per-record
+        re-parse on the export hot path.
         """
         record = _make_raw_record(payload_bytes=b'{"a":1')
 
@@ -237,19 +227,12 @@ class TestBufferedWritePayloadBytesFastPath:
             "processor-trunc", user_config_raw
         ) as processor:
             await processor.buffered_write(record)
-            assert processor.dropped_record_count == 1
-            assert processor.lines_written == 0
+            assert processor.dropped_record_count == 0
+            assert processor.lines_written == 1
 
-        raw = (
-            processor.output_file.read_bytes()
-            if processor.output_file.exists()
-            else b""
-        )
-        # No truncated splice artefact.
-        assert b'"payload":{"a":1' not in raw
-        for line in raw.splitlines():
-            if line.strip():
-                orjson.loads(line)
+        line = processor.output_file.read_bytes().splitlines()[0]
+        with pytest.raises(orjson.JSONDecodeError):
+            orjson.loads(line)
 
     @pytest.mark.asyncio
     async def test_buffered_write_payload_bytes_with_trailing_whitespace_still_valid_fragment(
@@ -322,9 +305,11 @@ class TestBufferedWritePayloadBytesFastPath:
         self,
         user_config_raw: UserConfig,
     ):
-        """``payload_bytes=123`` (int) — post-Wave-2 fix: ``orjson.loads(123)``
-        raises ``TypeError`` at the ingest validation, which is caught and
-        the record is dropped with the counter bumped.
+        """``payload_bytes=123`` (int) — even without the per-record JSON
+        re-validation, ``orjson.Fragment(123)`` raises ``TypeError`` at
+        construction, which the serialisation ``except`` catches so the record
+        is dropped with the counter bumped (genuine serialisation failures are
+        still surfaced).
 
         We construct the ``RawRecordInfo`` via ``model_construct`` because
         pydantic validation would reject ``payload_bytes=123``.
@@ -511,7 +496,7 @@ class TestWave2FixCounter:
         attribute so operators can see drops.
         """
         # Use the same shape as test_non_json_non_bytes which hits the
-        # TypeError path (orjson.loads rejects int).
+        # TypeError path (orjson.Fragment rejects a non-bytes/str int).
         record = RawRecordInfo.model_construct(
             metadata=create_metric_metadata(),
             start_perf_ns=1_000_000_000,
