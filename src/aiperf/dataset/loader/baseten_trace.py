@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -265,10 +266,15 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         # upstream (extra_body is merged last at dispatch).
         if trace.text_input is not None:
             trace.request_body["prompt"] = trace.text_input
-        if trace.hash_ids:
-            trace.request_body["hash_ids"] = trace.hash_ids
-        if trace.block_size is not None:
-            trace.request_body["block_size"] = trace.block_size
+        # KV-cache-aware routing hints. Inert at 1P1D (no routing choice); some
+        # strict frontends (Dynamo v1.2) 400 on these unknown params. Opt-out via
+        # AIPERF_BASETEN_OMIT_KV_HINTS=1 to keep request bodies identical across
+        # legs whose frontends differ in param tolerance.
+        if os.environ.get("AIPERF_BASETEN_OMIT_KV_HINTS") != "1":
+            if trace.hash_ids:
+                trace.request_body["hash_ids"] = trace.hash_ids
+            if trace.block_size is not None:
+                trace.request_body["block_size"] = trace.block_size
 
     def _infer_context_mode(
         self, traces: list[BasetenTrace]
