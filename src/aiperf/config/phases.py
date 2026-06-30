@@ -29,6 +29,7 @@ from aiperf.config.loader.duration import (
 )
 from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
 from aiperf.config.sweep.adaptive import SLAFilter
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "RampConfig",
     "RampSpec",
     "RampType",
+    "RateSeriesConfig",
     "RatePhaseConfig",
     "UserCentricPhase",
     "_normalize_duration",
@@ -309,10 +311,11 @@ class RatePhaseConfig(BasePhaseConfig):
     """Base for rate-controlled phases. Not instantiated directly."""
 
     rate: Annotated[
-        float,
+        float | None,
         Field(
+            default=None,
             gt=0,
-            description="Target request rate in requests per second (must be > 0).",
+            description="Target request rate in requests per second. Required unless rate_series is set.",
         ),
     ]
 
@@ -324,6 +327,21 @@ class RatePhaseConfig(BasePhaseConfig):
             "Can be number (seconds) or {duration, strategy}.",
         ),
     ]
+
+    rate_series: Annotated[
+        RateSeriesConfig | None,
+        Field(
+            default=None,
+            description="Piecewise-linear request-rate schedule.",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_rate_source(self) -> Self:
+        """Require either a scalar rate or a rate series."""
+        if self.rate is None and self.rate_series is None:
+            raise ValueError("rate-controlled phases require rate or rate_series")
+        return self
 
 
 class PoissonPhase(RatePhaseConfig):
@@ -387,6 +405,9 @@ class UserCentricPhase(RatePhaseConfig):
     @model_validator(mode="after")
     def validate_user_centric_constraints(self) -> UserCentricPhase:
         """Validate user-centric mode constraints."""
+        if self.rate_series is not None:
+            raise ValueError("user-centric phases do not support rate_series")
+
         if self.sessions is not None and self.sessions < self.users:
             raise ValueError(
                 f"Phase '{self.name}': --num-sessions ({self.sessions}) must be "

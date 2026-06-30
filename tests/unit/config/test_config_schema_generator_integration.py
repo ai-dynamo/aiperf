@@ -215,6 +215,64 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
     _assert_schema_accepts(schema, config)
 
 
+def test_generated_schema_rejects_rate_phase_without_rate_source() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[{"name": "profiling", "type": "poisson", "requests": 1}]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
+@pytest.mark.parametrize("rate_series", [{}, {"points": []}])
+def test_generated_schema_rejects_empty_rate_series(rate_series: dict) -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "poisson",
+                "requests": 1,
+                "rateSeries": rate_series,
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
+def test_generated_schema_rejects_user_centric_rate_series() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "user_centric",
+                "requests": 2,
+                "rate": 10,
+                "users": 2,
+                "rateSeries": {
+                    "points": [
+                        {"timeS": 0, "qps": 5},
+                        {"timeS": 10, "qps": 15},
+                    ]
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
 @pytest.mark.parametrize(
     "config",
     [

@@ -253,6 +253,12 @@ class ConfigSchemaGenerator(Generator):
         if self.verbose and jinja2_count > 0:
             print_step(f"Added Jinja2 template support to {jinja2_count} fields")
 
+        rate_series_count = self._tighten_rate_series_schema_contract(enhanced_schema)
+        if self.verbose and rate_series_count > 0:
+            print_step(
+                f"Tightened rate-series schema contract in {rate_series_count} places"
+            )
+
         # Serialize with proper formatting
         content = json.dumps(enhanced_schema, indent=2, ensure_ascii=False) + "\n"
 
@@ -1409,6 +1415,88 @@ class ConfigSchemaGenerator(Generator):
             process_properties(schema["properties"])
 
         return modified_count
+
+    def _tighten_rate_series_schema_contract(self, schema: dict) -> int:
+        """Align generated rate-series JSON schema with runtime validators."""
+
+        def add_all_of_constraint(target: dict, constraint: dict) -> bool:
+            all_of = target.setdefault("allOf", [])
+            if constraint in all_of:
+                return False
+            all_of.append(constraint)
+            return True
+
+        def require_non_null_property(prop_name: str) -> dict:
+            return {
+                "required": [prop_name],
+                "properties": {prop_name: {"not": {"type": "null"}}},
+            }
+
+        def require_rate_source() -> dict:
+            return {
+                "anyOf": [
+                    require_non_null_property("rate"),
+                    require_non_null_property("rateSeries"),
+                ]
+            }
+
+        def tighten_one(node: dict) -> int:
+            title = node.get("title")
+            properties = node.get("properties")
+            if not isinstance(properties, dict):
+                return 0
+
+            count = 0
+            if title == "RateSeriesConfig":
+                points = properties.get("points")
+                if isinstance(points, dict) and points.get("minItems") != 2:
+                    points["minItems"] = 2
+                    count += 1
+                if add_all_of_constraint(
+                    node,
+                    {
+                        "anyOf": [
+                            require_non_null_property("path"),
+                            {
+                                "required": ["points"],
+                                "properties": {"points": {"minItems": 2}},
+                            },
+                        ]
+                    },
+                ):
+                    count += 1
+
+            if title in {
+                "PoissonPhase",
+                "GammaPhase",
+                "ConstantPhase",
+            } and add_all_of_constraint(node, require_rate_source()):
+                count += 1
+
+            if title == "UserCentricPhase":
+                if properties.pop("rateSeries", None) is not None:
+                    count += 1
+                required = node.setdefault("required", [])
+                if isinstance(required, list) and "rate" not in required:
+                    required.append("rate")
+                    count += 1
+                if add_all_of_constraint(node, require_non_null_property("rate")):
+                    count += 1
+
+            return count
+
+        def walk(node: object) -> int:
+            count = 0
+            if isinstance(node, dict):
+                count += tighten_one(node)
+                for value in node.values():
+                    count += walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    count += walk(value)
+            return count
+
+        return walk(schema)
 
 
 # =============================================================================
