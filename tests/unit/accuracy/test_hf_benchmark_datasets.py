@@ -70,7 +70,7 @@ def test_hf_benchmark_dataset_is_accessible(
         raise
     except RuntimeError as e:
         if "Dataset scripts are no longer supported" in str(e):
-            # datasets>=3 dropped support for repo-level loading scripts; LCB still uses one.
+            # datasets>=4 dropped support for repo-level loading scripts; LCB still uses one.
             # TODO: fix LCB benchmark to load from the Parquet export instead.
             pytest.skip(
                 f"{dataset!r} uses a loading script not supported by this datasets version: {e}"
