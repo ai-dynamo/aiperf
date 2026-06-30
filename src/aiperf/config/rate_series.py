@@ -21,7 +21,10 @@ class RateSeriesPoint(BaseConfig):
 
     time_s: float = Field(
         ge=0.0,
-        description="Elapsed phase time in seconds for this request-rate point.",
+        description=(
+            "Elapsed time in seconds from the start of the request-rate series, "
+            "after any request-rate ramp completes."
+        ),
     )
     qps: float = Field(
         gt=0.0,

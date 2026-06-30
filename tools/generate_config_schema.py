@@ -1434,7 +1434,7 @@ class ConfigSchemaGenerator(Generator):
 
         def require_rate_source() -> dict:
             return {
-                "anyOf": [
+                "oneOf": [
                     require_non_null_property("rate"),
                     require_non_null_property("rateSeries"),
                 ]
@@ -1455,7 +1455,7 @@ class ConfigSchemaGenerator(Generator):
                 if add_all_of_constraint(
                     node,
                     {
-                        "anyOf": [
+                        "oneOf": [
                             require_non_null_property("path"),
                             {
                                 "required": ["points"],

@@ -12,6 +12,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.config.dataset.defaults import InputDefaults
 from aiperf.config.sweep.adaptive import SLAFilter
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
@@ -217,6 +218,10 @@ class CreditPhaseConfig(AIPerfBaseModel):
         description="Duration in seconds to ramp request rate from 1 QPS to target. "
         "If None, request rate starts at target immediately.",
     )
+    request_rate_series: RateSeriesConfig | None = Field(
+        default=None,
+        description="Piecewise-linear request-rate schedule, if enabled.",
+    )
     auto_offset_timestamps: bool = Field(
         default=InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET,
         description="The auto offset timestamps of the timing manager.",
@@ -381,6 +386,7 @@ def _build_warmup_config(
             getattr(phase, "rate_ramp", None)
         ),
         artifact_dir=artifact_dir,
+        request_rate_series=getattr(phase, "rate_series", None),
     )
 
 
@@ -412,6 +418,7 @@ def _build_profiling_config(
         request_rate_ramp_duration_sec=_ramp_duration(
             getattr(phase, "rate_ramp", None)
         ),
+        request_rate_series=getattr(phase, "rate_series", None),
         # Fixed schedule config
         auto_offset_timestamps=getattr(
             phase, "auto_offset", InputDefaults.FIXED_SCHEDULE_AUTO_OFFSET

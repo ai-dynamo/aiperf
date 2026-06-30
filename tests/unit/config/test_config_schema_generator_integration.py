@@ -227,6 +227,31 @@ def test_generated_schema_rejects_rate_phase_without_rate_source() -> None:
     assert _schema_error_messages(schema, config) != []
 
 
+def test_generated_schema_rejects_rate_phase_with_both_rate_sources() -> None:
+    schema = _generated_schema()
+    config = _minimal_benchmark_config(
+        phases=[
+            {
+                "name": "profiling",
+                "type": "poisson",
+                "requests": 1,
+                "rate": 100,
+                "rateSeries": {
+                    "points": [
+                        {"timeS": 0, "qps": 5},
+                        {"timeS": 10, "qps": 15},
+                    ]
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(ValidationError):
+        AIPerfConfig.model_validate(copy.deepcopy(config))
+
+    assert _schema_error_messages(schema, config) != []
+
+
 @pytest.mark.parametrize("rate_series", [{}, {"points": []}])
 def test_generated_schema_rejects_empty_rate_series(rate_series: dict) -> None:
     schema = _generated_schema()

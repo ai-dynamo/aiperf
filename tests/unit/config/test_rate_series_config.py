@@ -119,6 +119,19 @@ def test_rate_phase_allows_rate_series_without_scalar_rate() -> None:
     assert phase.rate_series.initial_qps == 5.0
 
 
+def test_rate_phase_rejects_scalar_rate_with_rate_series() -> None:
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        PoissonPhase(
+            name="profiling",
+            type=PhaseType.POISSON,
+            requests=10,
+            rate=100,
+            rate_series={
+                "points": [{"time_s": 0, "qps": 5}, {"time_s": 10, "qps": 15}]
+            },
+        )
+
+
 def test_rate_phase_allows_rate_ramp_with_rate_series() -> None:
     phase = PoissonPhase(
         name="profiling",

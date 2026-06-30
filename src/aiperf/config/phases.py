@@ -28,8 +28,8 @@ from aiperf.config.loader.duration import (
     _parse_duration,
 )
 from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
-from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.config.rate_series import RateSeriesConfig
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
 __all__ = [
@@ -338,9 +338,11 @@ class RatePhaseConfig(BasePhaseConfig):
 
     @model_validator(mode="after")
     def validate_rate_source(self) -> Self:
-        """Require either a scalar rate or a rate series."""
+        """Require exactly one of a scalar rate or a rate series."""
         if self.rate is None and self.rate_series is None:
             raise ValueError("rate-controlled phases require rate or rate_series")
+        if self.rate is not None and self.rate_series is not None:
+            raise ValueError("rate and rate_series are mutually exclusive")
         return self
 
 
@@ -498,4 +500,10 @@ def get_phase_rate(phase: BasePhaseConfig) -> float | None:
     Single accessor for the ``rate`` field so a future rename fails fast here
     instead of being silently swallowed by scattered ``getattr(..., None)`` reads.
     """
-    return phase.rate if isinstance(phase, RatePhaseConfig) else None
+    if not isinstance(phase, RatePhaseConfig):
+        return None
+    if phase.rate is not None:
+        return phase.rate
+    if phase.rate_series is not None:
+        return phase.rate_series.initial_qps
+    return None
