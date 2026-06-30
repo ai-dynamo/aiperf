@@ -250,6 +250,7 @@ def filter_display_metrics(raw_metrics: list[MetricResult]) -> list[MetricResult
 def build_process_records_result(
     *,
     records_results: list[MetricResult],
+    warmup_records_results: list[MetricResult] | None = None,
     timeslices: list[TimesliceResult],
     error_results: list[ErrorDetails],
     tracker: RecordsTracker,
@@ -268,6 +269,7 @@ def build_process_records_result(
     return ProcessRecordsResult(
         results=ProfileResults(
             records=records_results,
+            warmup_records=warmup_records_results or None,
             timeslices=timeslices or None,
             completed=len(records_results),
             start_ns=phase_stats.start_ns or time.time_ns(),

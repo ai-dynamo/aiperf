@@ -7,7 +7,7 @@ import orjson
 import pytest
 
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
+from aiperf.common.enums import CreditPhase, PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
     MetricSample,
@@ -52,6 +52,7 @@ def sample_server_metrics_record_for_export() -> ServerMetricsRecord:
                 ],
             ),
         },
+        benchmark_phase=CreditPhase.WARMUP,
     )
 
 
@@ -133,6 +134,7 @@ class TestServerMetricsRecordProcessing:
         assert data["endpoint_url"] == "http://localhost:8081/metrics"
         assert data["timestamp_ns"] == 1_000_000_000
         assert data["endpoint_latency_ns"] == 5_000_000
+        assert data["benchmark_phase"] == "warmup"
         assert "metrics" in data
 
     @pytest.mark.asyncio

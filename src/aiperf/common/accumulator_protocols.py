@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from aiperf.common.enums.metric_enums import MetricValueTypeVarT
 
 if TYPE_CHECKING:
+    from aiperf.common.enums import CreditPhase
     from aiperf.common.models.error_models import ErrorDetailsCount
     from aiperf.common.models.record_models import MetricResult
     from aiperf.common.types import MetricTagT
@@ -68,6 +69,9 @@ class ExportContext:
 
     end_ns: int | None = None
     """Exclusive end of the export time window (ns since epoch), or None for unbounded."""
+
+    phase: CreditPhase | None = None
+    """Credit phase represented by this export, or None when phase-agnostic."""
 
     error_summary: list[ErrorDetailsCount] | None = None
     """De-duplicated profile-run error counts to surface in the export, if any."""

@@ -5,9 +5,9 @@ import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.enums import CommAddress, CommandType, CreditPhase, MessageType
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import on_command, on_stop
+from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
     ProfileCancelCommand,
     ProfileCompleteCommand,
@@ -19,6 +19,10 @@ from aiperf.common.messages import (
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.credit.messages import (
+    CreditPhaseCompleteMessage,
+    CreditPhaseStartMessage,
+)
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 
@@ -84,6 +88,7 @@ class ServerMetricsManager(BaseComponentService):
 
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
+        self._active_phase: CreditPhase | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -217,6 +222,46 @@ class ServerMetricsManager(BaseComponentService):
                 f"Server Metrics: Started {started_count} collector(s) successfully"
             )
 
+    @on_message(MessageType.CREDIT_PHASE_START)
+    async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
+        """Track which benchmark phase subsequent server-metric scrapes belong to."""
+        self._active_phase = message.stats.phase
+        self.debug(f"Server Metrics: active phase is now {self._active_phase}")
+
+    @on_message(MessageType.CREDIT_PHASE_COMPLETE)
+    async def _on_credit_phase_complete(
+        self, message: CreditPhaseCompleteMessage
+    ) -> None:
+        """Capture an end-of-warmup scrape and retire non-profiling phases.
+
+        ``PROFILE_COMPLETE`` still owns the final profiling scrape. We do not
+        clear profiling here because the profile-complete command is delivered
+        after the profiling phase completes and should still tag the final
+        scrape as profiling.
+        """
+        if message.stats.phase == CreditPhase.WARMUP and self._collectors:
+            self.info(
+                "Server Metrics: Warmup complete, capturing final warmup metrics..."
+            )
+            previous_phase = self._active_phase
+            self._active_phase = CreditPhase.WARMUP
+            try:
+                for endpoint_url, collector in list(self._collectors.items()):
+                    try:
+                        await collector.collect_and_process_metrics()
+                        self.debug(
+                            lambda url=endpoint_url: f"Server Metrics: Captured warmup final state from {url}"
+                        )
+                    except Exception as e:
+                        self.warning(
+                            f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
+                        )
+            finally:
+                self._active_phase = previous_phase
+
+        if message.stats.phase != CreditPhase.PROFILING:
+            self._active_phase = None
+
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _handle_profile_complete_command(
         self, message: ProfileCompleteCommand
@@ -244,6 +289,7 @@ class ServerMetricsManager(BaseComponentService):
             return
 
         self.info("Server Metrics: Profiling complete, capturing final metrics...")
+        self._active_phase = CreditPhase.PROFILING
 
         # Trigger final scrape from all collectors
         for endpoint_url, collector in list(self._collectors.items()):
@@ -307,6 +353,7 @@ class ServerMetricsManager(BaseComponentService):
                 await collector.stop()
             except Exception as e:
                 self.error(f"Failed to stop collector for {endpoint_url}: {e}")
+        self._active_phase = None
 
     async def _delayed_shutdown(self) -> None:
         """Shutdown service after a delay to allow command response to be sent.
@@ -341,6 +388,9 @@ class ServerMetricsManager(BaseComponentService):
 
         for record in records:
             try:
+                record = record.model_copy(
+                    update={"benchmark_phase": self._active_phase}
+                )
                 message = ServerMetricsRecordMessage(
                     service_id=self.service_id,
                     collector_id=collector_id,

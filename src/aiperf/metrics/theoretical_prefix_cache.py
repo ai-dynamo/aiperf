@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from aiperf.common.enums import GenericMetricUnit
+from aiperf.common.accumulator_protocols import ExportContext
+from aiperf.common.enums import CreditPhase, GenericMetricUnit
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
@@ -36,8 +37,14 @@ class TheoreticalPrefixCacheAccumulator(BaseMetricsProcessor):
         self._turn_blocks_by_conversation: dict[
             str, tuple[tuple[int, int] | None, ...]
         ] = {}
-        self._hit_blocks = 0
-        self._total_blocks = 0
+        self._hit_blocks_by_phase: dict[CreditPhase, int] = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
+        self._total_blocks_by_phase: dict[CreditPhase, int] = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
         self._enabled = False
 
     def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
@@ -80,22 +87,41 @@ class TheoreticalPrefixCacheAccumulator(BaseMetricsProcessor):
         # Clamp the hit count into [0, total_blocks]: a loader miscount must not
         # drive the cumulative hit rate above 100% (or below 0%).
         hit_blocks = max(0, min(hit_blocks, total_blocks))
-        self._hit_blocks += hit_blocks
-        self._total_blocks += total_blocks
+        phase = metadata.benchmark_phase
+        self._hit_blocks_by_phase[phase] = (
+            self._hit_blocks_by_phase.get(phase, 0) + hit_blocks
+        )
+        self._total_blocks_by_phase[phase] = (
+            self._total_blocks_by_phase.get(phase, 0) + total_blocks
+        )
 
     async def summarize(self, ctx: SummaryContext | None = None) -> list[MetricResult]:
         """Return the current cumulative theoretical prefix-cache hit rate."""
-        if self._total_blocks <= 0:
+        return self._summarize_phase(None)
+
+    async def export_results(self, ctx: ExportContext) -> list[MetricResult]:
+        """Return prefix-cache hit rate for the requested export phase."""
+        return self._summarize_phase(ctx.phase)
+
+    def _summarize_phase(self, phase: CreditPhase | None) -> list[MetricResult]:
+        if phase is None:
+            hit_blocks = sum(self._hit_blocks_by_phase.values())
+            total_blocks = sum(self._total_blocks_by_phase.values())
+        else:
+            hit_blocks = self._hit_blocks_by_phase.get(phase, 0)
+            total_blocks = self._total_blocks_by_phase.get(phase, 0)
+
+        if total_blocks <= 0:
             return []
-        hit_rate_pct = 100.0 * self._hit_blocks / self._total_blocks
+        hit_rate_pct = 100.0 * hit_blocks / total_blocks
         return [
             MetricResult(
                 tag=THEORETICAL_PREFIX_CACHE_HIT_TAG,
                 header="Theoretical Prefix Cache Hit",
                 unit=str(GenericMetricUnit.PERCENT),
-                count=self._total_blocks,
+                count=total_blocks,
                 current=hit_rate_pct,
                 avg=hit_rate_pct,
-                sum=self._hit_blocks,
+                sum=hit_blocks,
             )
         ]

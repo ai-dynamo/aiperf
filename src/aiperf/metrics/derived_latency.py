@@ -85,7 +85,9 @@ def _delta_ms(
     return valid / _NS_PER_MS
 
 
-def compute_credit_to_start_latency(store: ColumnStore) -> MetricResult | None:
+def compute_credit_to_start_latency(
+    store: ColumnStore, mask: NDArray[np.bool_] | None = None
+) -> MetricResult | None:
     """Per-record credit-queue wait — ``request_start_ns - credit_issued_ns``.
 
     Returns ``None`` when no records have ``credit_issued_ns`` populated
@@ -97,7 +99,11 @@ def compute_credit_to_start_latency(store: ColumnStore) -> MetricResult | None:
     issued_col = store.metadata_numeric("credit_issued_ns")
     if issued_col.size == 0:
         return None
-    values_ms = _delta_ms(store.start_ns[:n], issued_col)
+    start_ns = store.start_ns[:n]
+    if mask is not None:
+        start_ns = start_ns[mask]
+        issued_col = issued_col[mask]
+    values_ms = _delta_ms(start_ns, issued_col)
     if values_ms.size == 0:
         return None
     return _array_to_metric_result(
@@ -109,7 +115,9 @@ def compute_credit_to_start_latency(store: ColumnStore) -> MetricResult | None:
     )
 
 
-def compute_effective_latency(store: ColumnStore) -> MetricResult | None:
+def compute_effective_latency(
+    store: ColumnStore, mask: NDArray[np.bool_] | None = None
+) -> MetricResult | None:
     """Coordinated-omission-aware latency — ``end_ns - credit_issued_ns``.
 
     Captures the latency a user perceives under a saturating load generator:
@@ -124,7 +132,11 @@ def compute_effective_latency(store: ColumnStore) -> MetricResult | None:
     issued_col = store.metadata_numeric("credit_issued_ns")
     if issued_col.size == 0:
         return None
-    values_ms = _delta_ms(store.end_ns[:n], issued_col)
+    end_ns = store.end_ns[:n]
+    if mask is not None:
+        end_ns = end_ns[mask]
+        issued_col = issued_col[mask]
+    values_ms = _delta_ms(end_ns, issued_col)
     if values_ms.size == 0:
         return None
     return _array_to_metric_result(
@@ -136,13 +148,15 @@ def compute_effective_latency(store: ColumnStore) -> MetricResult | None:
 
 
 def inject_derived_latency_metrics(
-    store: ColumnStore, results: dict[str, MetricResult]
+    store: ColumnStore,
+    results: dict[str, MetricResult],
+    mask: NDArray[np.bool_] | None = None,
 ) -> None:
     """Inject ``credit_to_start_latency`` and ``effective_latency`` into
     ``results`` if their prerequisite columns are populated. Pure side-effect."""
     for tag, result in (
-        ("credit_to_start_latency", compute_credit_to_start_latency(store)),
-        ("effective_latency", compute_effective_latency(store)),
+        ("credit_to_start_latency", compute_credit_to_start_latency(store, mask)),
+        ("effective_latency", compute_effective_latency(store, mask)),
     ):
         if result is not None:
             results[tag] = result

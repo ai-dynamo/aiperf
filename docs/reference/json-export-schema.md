@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -64,6 +64,7 @@ The current schema version is exported as the top-level `schema_version` field o
 |---|---|
 | `1.0` | Initial shape: `unit`, `avg`, `min`, `max`, `std`, `p1`–`p99`. |
 | `1.1` | Added `count` and `sum` to per-metric stats blocks. Backward-compatible for readers that ignore unknown fields; the new fields are present only on record-type metrics, omitted on derived/aggregate. |
+| `1.2` | Added optional top-level `warmup_metrics`, keyed by metric tag, containing metrics computed only from warmup-phase requests. Existing top-level metric fields remain profiling-only. |
 
 ### Other JSON exports use independent schema versions
 

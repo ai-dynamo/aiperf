@@ -542,6 +542,52 @@ vllm:generation_tokens_total{model_name="m"} 5000.0
         assert result.endpoint_summaries is not None
         assert len(result.endpoint_summaries) == 1
 
+    async def test_export_results_includes_warmup_endpoint_summaries(
+        self,
+        mock_user_config: UserConfig,
+    ) -> None:
+        """Test export_results computes separate profiling and warmup summaries."""
+        processor = ServerMetricsAccumulator(mock_user_config)
+
+        for timestamp_ns, value in (
+            (1_000_000_000, 0.1),
+            (1_500_000_000, 0.2),
+            (2_500_000_000, 0.8),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"cache_usage": gauge},
+            )
+            await processor.process_server_metrics_record(record)
+
+        result = await processor.export_results(
+            start_ns=2_000_000_000,
+            end_ns=3_000_000_000,
+            warmup_start_ns=1_000_000_000,
+            warmup_end_ns=2_000_000_000,
+        )
+
+        assert result is not None
+        assert result.endpoint_summaries is not None
+        assert result.warmup_endpoint_summaries is not None
+        assert result.warmup_start_ns == 1_000_000_000
+        assert result.warmup_end_ns == 2_000_000_000
+
+        endpoint_key = next(iter(result.endpoint_summaries))
+        profiling_summary = result.endpoint_summaries[endpoint_key]
+        warmup_summary = result.warmup_endpoint_summaries[endpoint_key]
+        profiling_avg = profiling_summary.metrics["cache_usage"].series[0].stats.avg
+        warmup_avg = warmup_summary.metrics["cache_usage"].series[0].stats.avg
+        assert profiling_avg == pytest.approx(0.8)
+        assert warmup_avg == pytest.approx(0.15)
+
     async def test_export_results_with_error_summary(
         self,
         mock_user_config: UserConfig,

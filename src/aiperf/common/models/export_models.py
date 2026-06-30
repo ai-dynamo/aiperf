@@ -178,7 +178,7 @@ class JsonExportData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.1"
+    SCHEMA_VERSION: ClassVar[str] = "1.2"
 
     schema_version: str | None = Field(
         default=None,
@@ -228,4 +228,9 @@ class JsonExportData(AIPerfBaseModel):
         description="Aggregate subagent orchestration counters for DAG-shaped runs "
         "(children spawned/completed/errored, parents suspended/resumed). "
         "None when the run did not spawn any subagents.",
+    )
+    warmup_metrics: dict[str, JsonMetricResult] | None = Field(
+        default=None,
+        description="Metrics computed from warmup-phase requests only. Profiling "
+        "metrics remain in the top-level metric fields.",
     )

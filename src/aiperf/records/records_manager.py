@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -418,6 +419,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._server_metrics_state = ErrorTrackingState()
         self._metric_state = ErrorTrackingState()
         self._skipped_context_overflow_count = 0
+        self._skipped_context_overflow_counts_by_phase: dict[CreditPhase, int] = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
 
         # Orchestrator-emitted DAG sub-agent stats, received via
         # CreditPhaseCompleteMessage. Keyed by phase so ProfileResults for the
@@ -485,14 +490,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
-        if message.metadata.benchmark_phase != CreditPhase.PROFILING:
-            self.debug(
-                lambda: (
-                    f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
-                )
-            )
-            return
-
         record_data = message.to_data()
 
         # Context-overflow records in AGENTIC_REPLAY scenarios bypass normal
@@ -500,8 +497,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # success counter so the completion barrier converges. Keep only a
         # narrow aggregate side-channel count for runtime submission validation.
         if getattr(record_data.metadata, "context_overflow_skip", False):
-            self._skipped_context_overflow_count += 1
             phase = record_data.metadata.benchmark_phase
+            if not hasattr(self, "_skipped_context_overflow_counts_by_phase"):
+                self._skipped_context_overflow_counts_by_phase = {}
+            self._skipped_context_overflow_counts_by_phase[phase] = (
+                self._skipped_context_overflow_counts_by_phase.get(phase, 0) + 1
+            )
+            if phase == CreditPhase.PROFILING:
+                self._skipped_context_overflow_count += 1
             phase_tracker = self._records_tracker._get_phase_tracker(phase)
             phase_tracker.increment_success_records()
             phase_tracker.increment_worker_success_records(
@@ -1076,10 +1079,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             timeslices,
             error_results,
         ) = await self._summarize_all_accumulators(phase=phase, cancelled=cancelled)
+        warmup_records_results: list[MetricResult] | None = None
+        summarize_warmup = getattr(self, "_summarize_warmup_metric_records", None)
+        if callable(summarize_warmup):
+            maybe_warmup_records_results = summarize_warmup()
+            if inspect.isawaitable(maybe_warmup_records_results):
+                warmup_records_results = await maybe_warmup_records_results
         await self._finalize_stream_exporters()
 
         result = build_process_records_result(
             records_results=records_results,
+            warmup_records_results=warmup_records_results,
             timeslices=timeslices,
             error_results=error_results,
             tracker=self._records_tracker,
@@ -1148,7 +1158,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         name = accumulator.__class__.__name__
         self.debug(f"Starting summarize for accumulator {acc_type}: {name}")
         try:
-            if hasattr(accumulator, "summarize"):
+            if accumulator.__class__.__name__ in {
+                "MetricsAccumulator",
+                "TheoreticalPrefixCacheAccumulator",
+            } and hasattr(accumulator, "export_results"):
+                res = await asyncio.wait_for(
+                    accumulator.export_results(ctx),
+                    timeout=Environment.RECORD.PROCESS_RECORDS_TIMEOUT,
+                )
+            elif hasattr(accumulator, "summarize"):
                 res = await asyncio.wait_for(
                     accumulator.summarize(),
                     timeout=Environment.RECORD.PROCESS_RECORDS_TIMEOUT,
@@ -1203,6 +1221,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         *,
         phase: CreditPhase,
         cancelled: bool,
+        accumulators: dict[AccumulatorType, AccumulatorProtocol] | None = None,
     ) -> tuple[
         list[MetricResult],
         list[TimesliceResult],
@@ -1221,7 +1240,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         timeslices: list[TimesliceResult] = []
         error_results: list[ErrorDetails] = []
 
-        if not self._accumulators:
+        selected_accumulators = (
+            accumulators if accumulators is not None else self._accumulators
+        )
+
+        if not selected_accumulators:
             self.debug("No accumulators configured, returning empty result")
             return (
                 records_results,
@@ -1233,6 +1256,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ctx = ExportContext(
             start_ns=phase_stats.start_ns,
             end_ns=phase_stats.requests_end_ns,
+            phase=phase,
             error_summary=self._error_tracker.get_error_summary_for_phase(phase),
             cancelled=cancelled,
         )
@@ -1240,7 +1264,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         summaries = await asyncio.gather(
             *[
                 self._summarize_one_accumulator(acc_type, accumulator, ctx)
-                for acc_type, accumulator in self._accumulators.items()
+                for acc_type, accumulator in selected_accumulators.items()
             ],
             return_exceptions=False,
         )
@@ -1257,6 +1281,56 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             timeslices,
             error_results,
         )
+
+    def _has_records_for_phase(self, phase: CreditPhase) -> bool:
+        phase_trackers = getattr(self._records_tracker, "_phase_trackers", {})
+        if not isinstance(phase_trackers, dict):
+            return False
+        tracker = phase_trackers.get(phase)
+        if tracker is None:
+            return False
+        return tracker.total_records > 0
+
+    def _metric_record_accumulator_map(
+        self,
+    ) -> dict[AccumulatorType, AccumulatorProtocol]:
+        metric_record_accumulators = {
+            id(acc) for acc in getattr(self, "_metric_record_accumulators", [])
+        }
+        return {
+            acc_type: accumulator
+            for acc_type, accumulator in self._accumulators.items()
+            if id(accumulator) in metric_record_accumulators
+        }
+
+    async def _summarize_warmup_metric_records(self) -> list[MetricResult] | None:
+        """Return warmup-only inference metrics, or None when no warmup records exist."""
+        if not self._has_records_for_phase(CreditPhase.WARMUP):
+            return None
+
+        records_results, _, error_results = await self._summarize_all_accumulators(
+            phase=CreditPhase.WARMUP,
+            cancelled=self._records_tracker.was_phase_cancelled(CreditPhase.WARMUP),
+            accumulators=self._metric_record_accumulator_map(),
+        )
+        if error_results:
+            for error in error_results:
+                self.error(f"Warmup metric summary error: {error}")
+
+        warmup_context_overflow_count = (
+            self._skipped_context_overflow_counts_by_phase.get(CreditPhase.WARMUP, 0)
+        )
+        if warmup_context_overflow_count:
+            records_results.append(
+                MetricResult(
+                    tag="context_overflow_count",
+                    header="Context Overflow Count",
+                    unit="requests",
+                    avg=float(warmup_context_overflow_count),
+                    count=1,
+                )
+            )
+        return records_results or None
 
     async def _finalize_stream_exporters(self) -> None:
         """Flush all stream exporters concurrently; log per-exporter errors.
@@ -1385,12 +1459,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         profiling_start_ns = phase_stats.start_ns or time.time_ns()
         profiling_end_ns = phase_stats.requests_end_ns or time.time_ns()
+        warmup_phase_stats = self._records_tracker.create_stats_for_phase(
+            CreditPhase.WARMUP
+        )
 
         server_metrics_export_data = (
             await self._server_metrics_accumulator.export_results(
                 start_ns=profiling_start_ns,
                 end_ns=profiling_end_ns,
                 error_summary=error_summary,
+                warmup_start_ns=warmup_phase_stats.start_ns,
+                warmup_end_ns=warmup_phase_stats.requests_end_ns,
             )
         )
 

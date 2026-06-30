@@ -170,7 +170,25 @@ def _build_throughput_curves(
     }
 
 
-def compute_sweep_curves(store: ColumnStore) -> _sweepline.SweepLineCurves:
+def _apply_record_mask(
+    values: FloatArray, mask: NDArray[np.bool_] | None
+) -> FloatArray:
+    """Return ``values`` with non-selected records replaced by NaN.
+
+    Keeping the original record-indexed shape lets ICL ragged arrays keep their
+    existing record indices while every excluded record naturally drops out of
+    the downstream sweep algorithms through NaN validity checks.
+    """
+    if mask is None:
+        return values
+    masked = values.copy()
+    masked[~mask] = np.nan
+    return masked
+
+
+def compute_sweep_curves(
+    store: ColumnStore, mask: NDArray[np.bool_] | None = None
+) -> _sweepline.SweepLineCurves:
     """Compute the full SweepLineCurves bundle for the records in ``store``.
 
     ICL-aware variants are used when the configured list backend exposes
@@ -178,11 +196,11 @@ def compute_sweep_curves(store: ColumnStore) -> _sweepline.SweepLineCurves:
     fallbacks fire — see ``_get_icl_data``.
     """
     n = store.count
-    start_ns = store.start_ns[:n]
-    end_ns = store.end_ns[:n]
-    generation_start_ns = store.generation_start_ns[:n]
-    output_tokens = store.numeric("output_sequence_length")
-    input_tokens = store.numeric("input_sequence_length")
+    start_ns = _apply_record_mask(store.start_ns[:n], mask)
+    end_ns = _apply_record_mask(store.end_ns[:n], mask)
+    generation_start_ns = _apply_record_mask(store.generation_start_ns[:n], mask)
+    output_tokens = _apply_record_mask(store.numeric("output_sequence_length"), mask)
+    input_tokens = _apply_record_mask(store.numeric("input_sequence_length"), mask)
 
     conc = _build_concurrency_curves(_sweepline, start_ns, end_ns, generation_start_ns)
     tput = _build_throughput_curves(

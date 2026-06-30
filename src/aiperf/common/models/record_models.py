@@ -276,6 +276,11 @@ class ProfileResults(AIPerfBaseModel):
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )
+    warmup_records: list[MetricResult] | None = Field(
+        default=None,
+        description="Metric results computed only from warmup-phase records. "
+        "Top-level records remain profiling-only.",
+    )
     timeslices: list[TimesliceResult] | None = Field(
         default=None,
         description="Per-timeslice results in chronological order. Each entry "

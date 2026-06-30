@@ -186,6 +186,39 @@ def server_metrics_results_with_summaries():
         },
     )
 
+    warmup_endpoint_summary = ServerMetricsEndpointSummary(
+        endpoint_url="http://localhost:8081/metrics",
+        info=ServerMetricsEndpointInfo(
+            total_fetches=10,
+            first_fetch_ns=900_000_000_000,
+            last_fetch_ns=999_000_000_000,
+            avg_fetch_latency_ms=9.0,
+            unique_updates=5,
+            first_update_ns=900_000_000_000,
+            last_update_ns=999_000_000_000,
+            duration_seconds=99.0,
+            avg_update_interval_ms=24_750.0,
+        ),
+        metrics={
+            "vllm:request_success_total": CounterMetricData(
+                description="Total successful requests",
+                series=[
+                    CounterSeries(
+                        labels=None,
+                        stats=CounterStats(
+                            total=25.0,
+                            rate=0.25,
+                            rate_avg=0.2,
+                            rate_min=0.1,
+                            rate_max=0.3,
+                            rate_std=0.05,
+                        ),
+                    ),
+                ],
+            ),
+        },
+    )
+
     return ServerMetricsResults(
         benchmark_id="test-benchmark-id",
         server_metrics_data=None,  # Not sent over ZMQ
@@ -193,8 +226,13 @@ def server_metrics_results_with_summaries():
             "localhost:8081": endpoint1_summary,
             "localhost:8082": endpoint2_summary,
         },
+        warmup_endpoint_summaries={
+            "localhost:8081": warmup_endpoint_summary,
+        },
         start_ns=1_000_000_000_000,
         end_ns=1_300_000_000_000,
+        warmup_start_ns=900_000_000_000,
+        warmup_end_ns=999_000_000_000,
         endpoints_configured=[
             "http://localhost:8081/metrics",
             "http://localhost:8082/metrics",
@@ -359,6 +397,44 @@ class TestServerMetricsJsonExporterGenerateContent:
         data = orjson.loads(content)
         assert "summary" in data
         assert "metrics" in data
+
+    def test_generate_content_has_phase_scoped_metrics(
+        self,
+        mock_user_config,
+        mock_profile_results,
+        server_metrics_results_with_summaries,
+    ):
+        """Test top-level metrics remain profiling while warmup metrics are separate."""
+        config = create_exporter_config(
+            profile_results=mock_profile_results,
+            user_config=mock_user_config,
+            server_metrics_results=server_metrics_results_with_summaries,
+        )
+        exporter = ServerMetricsJsonExporter(config)
+        content = exporter._generate_content()
+        data = orjson.loads(content)
+
+        assert data["metrics_phase"] == "profiling"
+        assert data["summary"]["phase_time_ranges"]["profiling"] == {
+            "start_ns": 1_000_000_000_000,
+            "end_ns": 1_300_000_000_000,
+        }
+        assert data["summary"]["phase_time_ranges"]["warmup"] == {
+            "start_ns": 900_000_000_000,
+            "end_ns": 999_000_000_000,
+        }
+        assert (
+            data["warmup_metrics"]["vllm:request_success_total"]["series"][0][
+                "endpoint_url"
+            ]
+            == "http://localhost:8081/metrics"
+        )
+        assert (
+            data["warmup_metrics"]["vllm:request_success_total"]["series"][0]["stats"][
+                "total"
+            ]
+            == 25.0
+        )
 
     def test_generate_content_has_schema_version(
         self,

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import ErrorDetails
@@ -366,6 +366,33 @@ class TestManagerCallbackFunctionality:
         call_args = manager.records_push_client.push.call_args[0][0]
         assert isinstance(call_args, ServerMetricsRecordMessage)
         assert call_args.record == test_record
+
+    @pytest.mark.asyncio
+    async def test_record_callback_tags_active_phase(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that server metric records are tagged with the active phase."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+        manager._active_phase = CreditPhase.WARMUP
+        manager.records_push_client.push = AsyncMock()
+
+        test_record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+
+        await manager._on_server_metrics_records([test_record], "test_collector")
+
+        call_args = manager.records_push_client.push.call_args[0][0]
+        assert call_args.record is not None
+        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
 
     @pytest.mark.asyncio
     async def test_error_callback_logs_error(

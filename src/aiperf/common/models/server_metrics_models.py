@@ -8,7 +8,7 @@ from typing import ClassVar
 from pydantic import Field, SerializeAsAny, model_validator
 from typing_extensions import Self
 
-from aiperf.common.enums import PrometheusMetricType
+from aiperf.common.enums import CreditPhase, PrometheusMetricType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetailsCount
 
@@ -197,6 +197,11 @@ class SlimRecord(AIPerfBaseModel):
         default=None,
         description="Wall-clock timestamp in nanoseconds when first response byte received from server",
     )
+    benchmark_phase: CreditPhase | None = Field(
+        default=None,
+        description="Benchmark phase active when this scrape was collected. "
+        "None for setup/baseline scrapes outside a timing phase.",
+    )
 
 
 class ServerMetricsRecord(AIPerfBaseModel):
@@ -237,6 +242,11 @@ class ServerMetricsRecord(AIPerfBaseModel):
         default=False,
         description="True if this record's metrics are identical to the previous fetch from this endpoint",
     )
+    benchmark_phase: CreditPhase | None = Field(
+        default=None,
+        description="Benchmark phase active when this scrape was collected. "
+        "None for setup/baseline scrapes outside a timing phase.",
+    )
 
     def to_slim(self) -> SlimRecord:
         """Convert to slim record.
@@ -260,6 +270,7 @@ class ServerMetricsRecord(AIPerfBaseModel):
             metrics=slim_metrics,
             request_sent_ns=self.request_sent_ns,
             first_byte_ns=self.first_byte_ns,
+            benchmark_phase=self.benchmark_phase,
         )
 
 
@@ -377,6 +388,10 @@ class ServerMetricsSummary(AIPerfBaseModel):
     endpoint_info: dict[str, ServerMetricsEndpointInfo] | None = Field(
         default=None,
         description="Per-endpoint collection metadata keyed by normalized endpoint identifier",
+    )
+    phase_time_ranges: dict[str, TimeRangeFilter] | None = Field(
+        default=None,
+        description="Nanosecond time ranges used for phase-scoped server metric aggregation.",
     )
 
 
@@ -597,7 +612,7 @@ class ServerMetricsExportData(AIPerfBaseModel):
     """
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.0"
+    SCHEMA_VERSION: ClassVar[str] = "1.1"
 
     schema_version: str = Field(
         default=SCHEMA_VERSION,
@@ -613,6 +628,11 @@ class ServerMetricsExportData(AIPerfBaseModel):
         "None for legacy exports.",
     )
     summary: ServerMetricsSummary
+    metrics_phase: CreditPhase = Field(
+        default=CreditPhase.PROFILING,
+        description="Benchmark phase represented by the top-level metrics field. "
+        "Kept as profiling for backward compatibility.",
+    )
     metrics: SerializeAsAny[
         dict[
             str,
@@ -621,6 +641,19 @@ class ServerMetricsExportData(AIPerfBaseModel):
     ] = Field(
         default_factory=dict,
         description="Metrics keyed by name, each with type-specific series stats",
+    )
+    warmup_metrics: (
+        SerializeAsAny[
+            dict[
+                str,
+                GaugeMetricData | CounterMetricData | HistogramMetricData,
+            ]
+        ]
+        | None
+    ) = Field(
+        default=None,
+        description="Server metrics aggregated only over the warmup phase. "
+        "Absent when no warmup phase ran or no warmup server metrics were collected.",
     )
     input_config: dict = Field(
         default_factory=dict,
@@ -668,6 +701,10 @@ class ServerMetricsResults(AIPerfBaseModel):
         default=None,
         description="Pre-computed endpoint summaries ready for export (sent over ZMQ)",
     )
+    warmup_endpoint_summaries: dict[str, ServerMetricsEndpointSummary] | None = Field(
+        default=None,
+        description="Pre-computed endpoint summaries for warmup-phase server metrics.",
+    )
     start_ns: int = Field(
         description="Start time of server metrics collection in nanoseconds"
     )
@@ -681,6 +718,14 @@ class ServerMetricsResults(AIPerfBaseModel):
     endpoints_successful: list[str] = Field(
         default_factory=list,
         description="List of server metrics endpoint URLs that successfully provided data",
+    )
+    warmup_start_ns: int | None = Field(
+        default=None,
+        description="Start of the warmup server-metrics aggregation window.",
+    )
+    warmup_end_ns: int | None = Field(
+        default=None,
+        description="End of the warmup server-metrics aggregation window.",
     )
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,

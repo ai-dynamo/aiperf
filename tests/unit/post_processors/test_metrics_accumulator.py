@@ -10,9 +10,10 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pytest
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.config import OutputConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import AggregationKind, MetricType
+from aiperf.common.enums import AggregationKind, CreditPhase, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult, TimesliceResult
 from aiperf.metrics.accumulator import (
@@ -167,6 +168,43 @@ class TestMetricsAccumulator:
         await processor.process_record(msg2.to_data())
 
         assert processor.record_count == 2
+
+    @pytest.mark.asyncio
+    async def test_export_results_separates_warmup_and_profiling_with_reused_session_num(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Warmup/profiling credit ids restart at 0; accumulator rows must not collide."""
+        processor = MetricsAccumulator(user_config=mock_user_config)
+        processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
+        processor._metric_classes = {RequestLatencyMetric.tag: RequestLatencyMetric}
+
+        warmup_msg = create_metric_records_message(
+            session_num=0,
+            benchmark_phase=CreditPhase.WARMUP,
+            request_start_ns=1_000_000_000,
+            request_end_ns=1_100_000_000,
+            results=[{RequestLatencyMetric.tag: 100_000_000.0}],
+        )
+        profiling_msg = create_metric_records_message(
+            session_num=0,
+            benchmark_phase=CreditPhase.PROFILING,
+            request_start_ns=2_000_000_000,
+            request_end_ns=2_200_000_000,
+            results=[{RequestLatencyMetric.tag: 200_000_000.0}],
+        )
+
+        await processor.process_record(warmup_msg.to_data())
+        await processor.process_record(profiling_msg.to_data())
+
+        assert processor.record_count == 2
+
+        warmup = await processor.export_results(ExportContext(phase=CreditPhase.WARMUP))
+        profiling = await processor.export_results(
+            ExportContext(phase=CreditPhase.PROFILING)
+        )
+
+        assert warmup.results[RequestLatencyMetric.tag].avg == pytest.approx(100.0)
+        assert profiling.results[RequestLatencyMetric.tag].avg == pytest.approx(200.0)
 
 
 class TestComputeResultsWindowBounds:

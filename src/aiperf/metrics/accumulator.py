@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import numpy as np
 from numpy.typing import NDArray
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
@@ -35,7 +36,7 @@ from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
-    from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
+    from aiperf.common.accumulator_protocols import SummaryContext
 
 
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -65,6 +66,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         super().__init__(user_config=user_config, **kwargs)
 
         self._column_store = ColumnStore(initial_capacity=1024)
+        # Credit/session numbers are scoped per phase and can restart at zero
+        # for warmup and profiling. Use an internal append-only row index for
+        # storage so warmup record 0 cannot be overwritten by profiling record 0.
+        self._next_record_idx = 0
 
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
@@ -113,7 +118,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a single ``MetricRecordsData`` into columnar storage."""
-        idx = record.metadata.session_num
+        idx = self._next_record_idx
+        self._next_record_idx += 1
         meta = record.metadata
 
         # Compute generation_start_ns from wall-clock start + TTFT duration
@@ -137,6 +143,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self._column_store.ingest_metadata(
             idx=idx,
             metadata_numeric={
+                "session_num": meta.session_num,
                 "credit_issued_ns": meta.credit_issued_ns,
                 "request_ack_ns": meta.request_ack_ns,
                 "cancellation_time_ns": meta.cancellation_time_ns,
@@ -163,6 +170,26 @@ class MetricsAccumulator(BaseMetricsProcessor):
             return np.array([], dtype=bool)
         ts = self._column_store.start_ns[:n]
         return ~np.isnan(ts) & (ts >= start_ns) & (ts < end_ns)
+
+    def _mask_for_export_context(self, ctx: ExportContext | None) -> BoolArray | None:
+        """Build a record mask for the requested export phase/window."""
+        if ctx is None:
+            return None
+        n = self._column_store.count
+        if n == 0:
+            return np.zeros(0, dtype=bool)
+
+        mask = ~np.isnan(self._column_store.start_ns[:n])
+        if ctx.phase is not None:
+            phase_value = str(ctx.phase)
+            mask &= self._column_store.mask_for_categorical(
+                "benchmark_phase", phase_value
+            )
+        if ctx.start_ns is not None:
+            mask &= self._column_store.start_ns[:n] >= ctx.start_ns
+        if ctx.end_ns is not None:
+            mask &= self._column_store.start_ns[:n] < ctx.end_ns
+        return mask
 
     def _aggregate_values(self, tag: MetricTagT, values: np.ndarray) -> float:
         """Apply the tag's aggregation function to an array of values."""
@@ -369,23 +396,52 @@ class MetricsAccumulator(BaseMetricsProcessor):
         ``credit_to_start_latency`` queue-wait metric from stored timestamps,
         plus a per-``turn_index`` TTFT trend that surfaces KV-cache effectiveness.
         """
-        overall_results = self._compute_results()
+        export_ctx: ExportContext | None = None
+        if ctx is not None and (ctx.start_ns or ctx.end_ns):
+            export_ctx = ExportContext(
+                start_ns=ctx.start_ns or None,
+                end_ns=ctx.end_ns or None,
+            )
+        return self._summarize_for_export_context(export_ctx)
+
+    def _summarize_for_export_context(
+        self, ctx: ExportContext | None = None
+    ) -> AccumulatorMetricsSummary:
+        mask = self._mask_for_export_context(ctx)
+
+        window_start_ns = ctx.start_ns if ctx is not None else None
+        window_end_ns = ctx.end_ns if ctx is not None else None
+        overall_results = self._compute_results(
+            mask,
+            window_start_ns=window_start_ns,
+            window_end_ns=window_end_ns,
+        )
 
         timeslices: list[TimesliceResult] | None = None
 
-        if self._column_store.count > 0:
+        has_records = self._column_store.count > 0 and (
+            mask is None or bool(mask.any())
+        )
+        if has_records:
             # Compute sweeps once for both overall and timeslice injection.
-            sweeps = compute_sweep_curves(self._column_store)
-            self._inject_sweep_metrics(overall_results, sweeps)
+            sweeps = compute_sweep_curves(self._column_store, mask=mask)
+            self._inject_sweep_metrics(
+                overall_results,
+                sweeps,
+                window_start_ns=window_start_ns,
+                window_end_ns=window_end_ns,
+            )
             if self._slice_duration_ns is not None:
-                timeslices = self._compute_timeslices(sweeps)
+                timeslices = self._compute_timeslices(sweeps, mask=mask)
 
         overall_results = self._convert_display_units(overall_results)
 
         # Derived latency metrics — already in display units (ms), so injected
         # after _convert_display_units to bypass the registry lookup.
-        if self._column_store.count > 0:
-            inject_derived_latency_metrics(self._column_store, overall_results)
+        if has_records:
+            inject_derived_latency_metrics(
+                self._column_store, overall_results, mask=mask
+            )
 
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return AccumulatorMetricsSummary(
@@ -394,13 +450,16 @@ class MetricsAccumulator(BaseMetricsProcessor):
         )
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
-        """Export final metrics results. Delegates to summarize()."""
-        return await self.summarize()
+        """Export final metrics results for the requested phase/window."""
+        return self._summarize_for_export_context(ctx)
 
     def _inject_sweep_metrics(
         self,
         results: dict[MetricTagT, MetricResult],
         sweeps: Any,
+        *,
+        window_start_ns: int | None = None,
+        window_end_ns: int | None = None,
     ) -> None:
         """Inject time-weighted sweep metrics into results.
 
@@ -409,13 +468,22 @@ class MetricsAccumulator(BaseMetricsProcessor):
         """
         if len(sweeps.concurrency_ts) == 0:
             return
-        window_start = float(sweeps.concurrency_ts[0])
-        window_end = float(sweeps.concurrency_ts[-1])
+        window_start = (
+            float(window_start_ns)
+            if window_start_ns is not None
+            else float(sweeps.concurrency_ts[0])
+        )
+        window_end = (
+            float(window_end_ns)
+            if window_end_ns is not None
+            else float(sweeps.concurrency_ts[-1])
+        )
         results.update(sweeps.compute_metrics(window_start, window_end))
 
     def _compute_timeslices(
         self,
         sweeps: Any,
+        mask: BoolArray | None = None,
     ) -> list[TimesliceResult]:
         """Compute per-timeslice results by partitioning the time range.
 
@@ -442,6 +510,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
         start_ns = store.start_ns[:n]
         end_ns = store.end_ns[:n]
         filled = ~np.isnan(start_ns)
+        if mask is not None:
+            filled &= mask
         filled_ts = start_ns[filled]
 
         if len(filled_ts) == 0:
