@@ -27,7 +27,16 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
+from aiperf.accuracy.benchmarks import HFSmokeSpec
+
 DATASET_NAME = "lighteval/mmlu"
+
+HF_SMOKE_SPEC = HFSmokeSpec(
+    dataset=DATASET_NAME,
+    config="abstract_algebra",
+    split="test",
+    required_fields=["question", "choices", "answer"],
+)
 
 CHOICES = [f" {c}" for c in ascii_uppercase[:4]]
 

@@ -45,8 +45,18 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
+from aiperf.accuracy.benchmarks import HFSmokeSpec
+
 DATASET_NAME = "livecodebench/code_generation_lite"
 TASK_NAME = "lcb_codegeneration"
+
+HF_SMOKE_SPEC = HFSmokeSpec(
+    dataset=DATASET_NAME,
+    config="v4_v5",
+    split="test",
+    required_fields=["question_id", "question_content"],
+    trust_remote_code=True,
+)
 
 # Lighteval's LCB tasks use the model's full reasoning budget;
 # generations can be hundreds of lines for hard problems.

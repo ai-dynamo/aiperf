@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasets import Dataset, load_dataset
 
+from aiperf.accuracy.benchmarks import HFSmokeSpec
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.mixins import AIPerfLoggerMixin
 
@@ -63,6 +64,13 @@ _MISSING_DEEPEVAL_HINT = (
 
 DATASET_NAME = "lukaemon/bbh"
 TASK_NAME = "bigbench"
+
+HF_SMOKE_SPEC = HFSmokeSpec(
+    dataset=DATASET_NAME,
+    config="boolean_expressions",
+    split="test",
+    required_fields=["input", "target"],
+)
 
 # DeepEval's BigBenchHard caps n_shots at 3 (the canonical CoT files
 # only contain 3 worked examples each). We mirror both bounds.

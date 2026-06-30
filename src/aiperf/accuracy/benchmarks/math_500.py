@@ -43,8 +43,16 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
+from aiperf.accuracy.benchmarks import HFSmokeSpec
+
 DATASET_NAME = "HuggingFaceH4/MATH-500"
 TASK_NAME = "math_500"
+
+HF_SMOKE_SPEC = HFSmokeSpec(
+    dataset=DATASET_NAME,
+    split="test",
+    required_fields=["problem", "solution", "subject"],
+)
 
 # lighteval's math_500 task config: ``generation_size=32768``.
 DEFAULT_GENERATION_SIZE = 32768
