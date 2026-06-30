@@ -53,7 +53,11 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RawRecordInfo, RequestInfo
+from aiperf.common.models.record_models import (
+    RawRecordInfo,
+    RequestInfo,
+    RequestRecord,
+)
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.dataset.loader.raw_payload import RawPayloadDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType, EndpointType, TransportType
@@ -372,14 +376,12 @@ def test_mixed_state_conversation_raises_during_generate_input_payloads_end_to_e
 
 
 @pytest.mark.asyncio
-async def test_inference_client_rejects_invalid_json_payload_bytes_end_to_end() -> None:
-    """Post-W2-E: InferenceClient validates pre-serialised payload_bytes by
-    round-tripping through ``orjson.loads`` before the transport call.
-    Invalid JSON must never hit the wire — the broad catch in
-    ``_send_request_internal`` turns the ValueError into an error
-    RequestRecord whose message mentions 'invalid JSON'."""
+async def test_inference_client_forwards_invalid_json_payload_bytes_verbatim() -> None:
+    """Per-request ``orjson.loads`` validation of pre-serialised
+    ``payload_bytes`` was removed — invalid-JSON detection happens at
+    dataset-load time, not on every send. Unparsable bytes are forwarded to
+    the transport verbatim rather than being turned into an error record."""
     client = _make_inference_client()
-    client.transport.send_request = AsyncMock()
 
     turn = Turn(texts=[Text(contents=["x"])], role="user", model="test-model")
     info = RequestInfo(
@@ -393,27 +395,30 @@ async def test_inference_client_rejects_invalid_json_payload_bytes_end_to_end() 
         conversation_id="conv",
         payload_bytes=b"}",
     )
+    client.transport.send_request = AsyncMock(
+        return_value=RequestRecord(request_info=info)
+    )
 
-    record = await client.send_request(info)
+    await client.send_request(info)
 
-    client.transport.send_request.assert_not_called()
-    assert record.error is not None
-    assert "invalid JSON" in record.error.message
+    client.transport.send_request.assert_called_once()
+    assert client.transport.send_request.call_args.kwargs["payload"] == b"}"
 
 
 # ---------------------------------------------------------------------------
-# 7: RawRecordWriter drops invalid fragment with counter
+# 7: RawRecordWriter splices payload_bytes verbatim (no per-record re-parse)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_raw_record_writer_drops_invalid_fragment_with_counter_end_to_end(
+async def test_raw_record_writer_splices_invalid_fragment_verbatim_end_to_end(
     tmp_path: Path,
 ) -> None:
-    """Post-W2-D: RawRecordWriterProcessor validates ``payload_bytes`` via
-    ``orjson.loads`` before the Fragment splice. Invalid JSON bytes are
-    dropped, ``dropped_record_count`` increments, and the output file
-    contains no corrupt lines."""
+    """The per-record ``orjson.loads`` re-validation was removed:
+    ``RawRecordWriterProcessor`` splices ``payload_bytes`` verbatim via
+    ``orjson.Fragment``. Invalid JSON bytes are written (no drop, no counter)
+    and the resulting line is corrupt — the accepted tradeoff of trusting
+    dataset-load-time validation instead of re-parsing every exported record."""
     user_config = _user_config_raw(tmp_path)
     processor = RawRecordWriterProcessor(service_id="rrw-ci", user_config=user_config)
     await processor.initialize()
@@ -432,18 +437,16 @@ async def test_raw_record_writer_drops_invalid_fragment_with_counter_end_to_end(
         )
         await processor.buffered_write(bad)
 
-        assert processor.dropped_record_count == 1
-        assert processor.lines_written == 0
+        assert processor.dropped_record_count == 0
+        assert processor.lines_written == 1
     finally:
         await processor.stop()
 
-    # Any lines that *did* make it to disk must parse cleanly; no corrupt splice.
-    if processor.output_file.exists():
-        raw = processor.output_file.read_bytes()
-        assert b'"payload":}' not in raw
-        for line in raw.splitlines():
-            if line.strip():
-                orjson.loads(line)
+    # The verbatim splice produced a line that no longer parses as JSON.
+    raw = processor.output_file.read_bytes()
+    line = next(line for line in raw.splitlines() if line.strip())
+    with pytest.raises(orjson.JSONDecodeError):
+        orjson.loads(line)
 
 
 def _metric_metadata():
