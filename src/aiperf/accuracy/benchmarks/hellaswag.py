@@ -56,7 +56,6 @@ from typing import TYPE_CHECKING, Any
 
 from datasets import DatasetDict, load_dataset
 
-from aiperf.accuracy.benchmarks import HFSmokeSpec
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.mixins import AIPerfLoggerMixin
 
@@ -92,12 +91,6 @@ _MISSING_DEEPEVAL_HINT = (
 
 DATASET_NAME = "Rowan/hellaswag"
 TASK_NAME = "hellaswag"
-
-HF_SMOKE_SPEC = HFSmokeSpec(
-    dataset=DATASET_NAME,
-    split="train",
-    required_fields=["activity_label", "label"],
-)
 
 # DeepEval's HellaSwag default is ``n_shots=10`` (capped at 15). We
 # mirror both bounds so the loader's defaults match the recipe.

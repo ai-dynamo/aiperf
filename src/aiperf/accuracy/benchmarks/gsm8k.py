@@ -54,18 +54,9 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-from aiperf.accuracy.benchmarks import HFSmokeSpec
-
 DATASET_NAME = "openai/gsm8k"
 DATASET_CONFIG = "main"
 TASK_NAME = "gsm8k"
-
-HF_SMOKE_SPEC = HFSmokeSpec(
-    dataset=DATASET_NAME,
-    config=DATASET_CONFIG,
-    split="test",
-    required_fields=["question", "answer"],
-)
 
 # lighteval's gsm8k_leaderboard task config: ``generation_size=256``.
 DEFAULT_GENERATION_SIZE = 256

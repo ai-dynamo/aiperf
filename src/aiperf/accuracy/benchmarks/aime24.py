@@ -41,16 +41,8 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-from aiperf.accuracy.benchmarks import HFSmokeSpec
-
 DATASET_NAME = "HuggingFaceH4/aime_2024"
 TASK_NAME = "aime24"
-
-HF_SMOKE_SPEC = HFSmokeSpec(
-    dataset=DATASET_NAME,
-    split="train",
-    required_fields=["problem", "answer"],
-)
 
 # lighteval's aime24 task config: ``generation_size=32768`` to give
 # reasoning models room to think before emitting the boxed answer.

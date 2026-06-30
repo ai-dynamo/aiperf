@@ -63,18 +63,9 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-from aiperf.accuracy.benchmarks import HFSmokeSpec
-
 DATASET_NAME = "Idavidrein/gpqa"
 DATASET_CONFIG = "gpqa_diamond"
 TASK_NAME = "gpqa_diamond"
-
-HF_SMOKE_SPEC = HFSmokeSpec(
-    dataset=DATASET_NAME,
-    config=DATASET_CONFIG,
-    split="train",
-    required_fields=["Question", "Correct Answer"],
-)
 
 # lighteval's gpqa_diamond task config: ``generation_size=32768``.
 DEFAULT_GENERATION_SIZE = 32768

@@ -9,15 +9,18 @@ These tests catch dataset renames / restructures (e.g. ``gsm8k`` ->
 ``openai/gsm8k``) before they reach production. They are excluded from the
 default test suite — run explicitly with ``pytest -m network``.
 
-New benchmarks are covered automatically: add an ``HF_SMOKE_SPEC`` constant
-(``HFSmokeSpec`` instance) to the benchmark module and this test picks it up
-on the next run — no changes needed here.
-
 ``streaming=True`` is used throughout so the test only fetches row metadata —
 no full dataset download.
 
 Gated datasets (e.g. GPQA) skip automatically when no HuggingFace token is
 present; they run in CI environments that provide ``HF_TOKEN``.
+
+Adding a new benchmark
+----------------------
+1. Add a ``param(...)`` entry to ``_BENCHMARK_DATASETS`` below.
+2. ``test_all_hf_benchmarks_have_smoke_entry`` will fail if you add a benchmark
+   module with a ``DATASET_NAME`` constant but forget step 1 — the test tells
+   you exactly which module is missing.
 """
 
 from __future__ import annotations
@@ -32,55 +35,133 @@ from datasets.exceptions import DatasetNotFoundError
 from pytest import param
 
 import aiperf.accuracy.benchmarks as _benchmarks_pkg
-from aiperf.accuracy.benchmarks import HFSmokeSpec
+
+_BENCHMARK_DATASETS = [
+    param("openai/gsm8k", "main", "test", ["question", "answer"], False, id="gsm8k"),
+    param(
+        "HuggingFaceH4/MATH-500",
+        None,
+        "test",
+        ["problem", "solution", "subject"],
+        False,
+        id="math_500",
+    ),
+    param(
+        "HuggingFaceH4/aime_2024",
+        None,
+        "train",
+        ["problem", "answer"],
+        False,
+        id="aime24",
+    ),
+    param(
+        "yentinglin/aime_2025", None, "train", ["problem", "answer"], False, id="aime25"
+    ),
+    param(
+        "Maxwell-Jia/AIME_2024", None, "train", ["Problem", "Answer"], False, id="aime"
+    ),
+    param(
+        "lighteval/mmlu",
+        "abstract_algebra",
+        "test",
+        ["question", "choices", "answer"],
+        False,
+        id="mmlu",
+    ),
+    param(
+        "Rowan/hellaswag",
+        None,
+        "train",
+        ["activity_label", "label"],
+        False,
+        id="hellaswag",
+    ),
+    param(
+        "lukaemon/bbh",
+        "boolean_expressions",
+        "test",
+        ["input", "target"],
+        False,
+        id="bigbench",
+    ),
+    param(
+        "Idavidrein/gpqa",
+        "gpqa_diamond",
+        "train",
+        ["Question", "Correct Answer"],
+        False,
+        id="gpqa_diamond",
+    ),
+    param(
+        "livecodebench/code_generation_lite",
+        "v4_v5",
+        "test",
+        ["question_id", "question_content"],
+        True,
+        id="lcb_codegeneration",
+    ),
+]
+
+# Module names of all benchmarks covered above (derived from param ids).
+_COVERED_MODULE_NAMES = {p.id for p in _BENCHMARK_DATASETS}
 
 
-def _discover_specs() -> list[tuple[str, HFSmokeSpec]]:
-    """Return (module_name, HFSmokeSpec) for every benchmark that declares one."""
+def test_all_hf_benchmarks_have_smoke_entry() -> None:
+    """Fail if a benchmark module defines DATASET_NAME but has no smoke entry.
+
+    When adding a new HuggingFace-backed benchmark, add a param() to
+    ``_BENCHMARK_DATASETS`` above with the same id as the module filename
+    (without .py). This test will fail loudly until you do.
+    """
     pkg_path = Path(_benchmarks_pkg.__file__).parent
-    specs = []
+    missing = []
     for info in pkgutil.iter_modules([str(pkg_path)]):
         mod = importlib.import_module(f"aiperf.accuracy.benchmarks.{info.name}")
-        spec = getattr(mod, "HF_SMOKE_SPEC", None)
-        if isinstance(spec, HFSmokeSpec):
-            specs.append((info.name, spec))
-    return specs
-
-
-_SPECS = _discover_specs()
+        if hasattr(mod, "DATASET_NAME") and info.name not in _COVERED_MODULE_NAMES:
+            missing.append(info.name)
+    assert not missing, (
+        f"Benchmark module(s) define DATASET_NAME but have no smoke test entry: {missing}. "
+        f"Add a param() to _BENCHMARK_DATASETS in {__file__} with id='{missing[0]}'."
+    )
 
 
 @pytest.mark.network
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    "benchmark,spec",
-    [param(name, spec, id=name) for name, spec in _SPECS],
+    "dataset,config,split,required_fields,trust_remote_code",
+    _BENCHMARK_DATASETS,
 )
-def test_hf_benchmark_dataset_is_accessible(benchmark: str, spec: HFSmokeSpec) -> None:
+def test_hf_benchmark_dataset_is_accessible(
+    dataset: str,
+    config: str | None,
+    split: str,
+    required_fields: list[str],
+    trust_remote_code: bool,
+) -> None:
     """Dataset loads and first row contains all fields the benchmark expects."""
-    args = (spec.dataset,) + ((spec.config,) if spec.config is not None else ())
+    args = (dataset,) + ((config,) if config is not None else ())
     try:
         ds = load_dataset(
             *args,
-            split=spec.split,
+            split=split,
             streaming=True,
-            trust_remote_code=spec.trust_remote_code,
+            trust_remote_code=trust_remote_code,
         )
     except DatasetNotFoundError as e:
         if "gated dataset" in str(e):
-            pytest.skip(f"{spec.dataset!r} is gated — set HF_TOKEN to run this test")
+            pytest.skip(f"{dataset!r} is gated — set HF_TOKEN to run this test")
         raise
     except RuntimeError as e:
         if "Dataset scripts are no longer supported" in str(e):
             # datasets>=4 dropped support for repo-level loading scripts; LCB still uses one.
             # TODO: fix LCB benchmark to load from the Parquet export instead.
             pytest.skip(
-                f"{spec.dataset!r} uses a loading script unsupported by datasets>=4: {e}"
+                f"{dataset!r} uses a loading script unsupported by datasets>=4: {e}"
             )
         raise
     row = next(iter(ds))
-    missing = [f for f in spec.required_fields if f not in row]
+    missing = [f for f in required_fields if f not in row]
     assert not missing, (
-        f"{spec.dataset!r} (config={spec.config!r}, split={spec.split!r}) is missing fields: {missing}. "
+        f"{dataset!r} (config={config!r}, split={split!r}) is missing fields: {missing}. "
         f"Available: {list(row.keys())}"
     )

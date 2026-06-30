@@ -27,16 +27,8 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-from aiperf.accuracy.benchmarks import HFSmokeSpec
-
 DATASET_NAME = "Maxwell-Jia/AIME_2024"
 TASK_NAME = "aime"
-
-HF_SMOKE_SPEC = HFSmokeSpec(
-    dataset=DATASET_NAME,
-    split="train",
-    required_fields=["Problem", "Answer"],
-)
 
 # Recipe defaults: ``n_shots=8`` (capped), ``enable_cot=True``,
 # ``n_problems=30``. We keep the cap available via the ``tasks``

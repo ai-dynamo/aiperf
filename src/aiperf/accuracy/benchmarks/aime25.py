@@ -25,16 +25,8 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-from aiperf.accuracy.benchmarks import HFSmokeSpec
-
 DATASET_NAME = "yentinglin/aime_2025"
 TASK_NAME = "aime25"
-
-HF_SMOKE_SPEC = HFSmokeSpec(
-    dataset=DATASET_NAME,
-    split="train",
-    required_fields=["problem", "answer"],
-)
 
 # lighteval's aime25 task config: ``generation_size=32768``.
 DEFAULT_GENERATION_SIZE = 32768
