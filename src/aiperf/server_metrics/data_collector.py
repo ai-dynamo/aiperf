@@ -412,6 +412,12 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         dropped_non_finite = 0
 
         for sample in family.samples:
+            # OpenMetrics nests a counter's `_created` timestamp as a sample
+            # sharing the `_total` labels; left in, it overwrites the real value
+            # in the de-dup below. (Classic exposition makes it its own family,
+            # already dropped by the family-name guard upstream.)
+            if sample.name.endswith("_created"):
+                continue
             if sample.value is None:
                 # Ordinary missing data — not a corruption signal, skip silently.
                 continue

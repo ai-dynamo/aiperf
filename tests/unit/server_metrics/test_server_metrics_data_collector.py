@@ -201,6 +201,26 @@ histogram_seconds_created 1704067200.0
         assert "histogram_seconds" in record.metrics
         assert "histogram_seconds_created" not in record.metrics
 
+    def test_openmetrics_counter_created_sample_does_not_overwrite_total(self):
+        """OpenMetrics keeps `foo_created` alongside `foo_total` under family
+        `foo` with the same labels, so without skipping it the creation
+        timestamp would win the last-value de-dup and replace the real value."""
+        metrics_text = """# TYPE foo counter
+# HELP foo Test counter
+foo_total{label="a"} 5.0
+foo_created{label="a"} 123.0
+# EOF
+"""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+        record = collector._parse_metrics_to_records(make_fetch_result(metrics_text))
+
+        assert record is not None
+        assert "foo" in record.metrics
+        assert record.metrics["foo"].type == PrometheusMetricType.COUNTER
+        samples = record.metrics["foo"].samples
+        assert len(samples) == 1
+        assert samples[0].value == 5.0
+
     def test_parse_metrics_with_labels(self):
         """Test parsing metrics with multiple label combinations."""
         metrics_text = """# HELP http_requests_total Total HTTP requests
