@@ -1709,6 +1709,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
         from aiperf.dataset.loader.weka_synth_buf import (
             ConversationReconstructor,
+            compute_asst_block_caps,
         )
 
         flat_plans_by_trace: dict[str, list[_FlatChainPlan]] = defaultdict(list)
@@ -1756,6 +1757,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             # First pass: emit turns from normal requests; track outer-index → turn-pos.
             outer_to_turn_pos: dict[int, int] = {}
             trace_metric_values = metric_values_by_trace[plan.trace_id]
+            asst_block_caps = compute_asst_block_caps(
+                [(r.hash_ids, r.input_length) for _, r in plan.normals],
+                plan.block_size,
+            )
             for k, (outer_idx, req) in enumerate(plan.normals):
                 seed = f"{plan.trace_id}:turn_{k}:partial_tail"
                 input_kind = _classify_turn_input(
@@ -1786,6 +1791,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_in_tokens=req.input_length,
                         seed=seed,
                         is_tool_result=is_tool_result,
+                        max_asst_blocks=asst_block_caps[k],
                     )
 
                 # Turn.timestamp/delay are in milliseconds; weka traces record seconds.
@@ -2094,6 +2100,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 ),
             )
             child_metric_values = metric_values_by_trace[cp.parent_trace_id]
+            child_asst_block_caps = compute_asst_block_caps(
+                [(r.hash_ids, r.input_length) for r in cp.requests],
+                cp.block_size,
+            )
             for k, creq in enumerate(cp.requests):
                 seed = f"{cp.session_id}:turn_{k}:partial_tail"
                 input_kind = _classify_turn_input(
@@ -2119,6 +2129,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         curr_in_tokens=creq.input_length,
                         seed=seed,
                         is_tool_result=is_tool_result,
+                        max_asst_blocks=child_asst_block_caps[k],
                     )
                 trace_idle_timing = trace_idle_timing_by_trace.get(cp.parent_trace_id)
                 if trace_idle_timing is not None:
@@ -2197,7 +2208,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             replay_scope_id=fp.parent_trace_id,
         )
         from aiperf.common.models import Turn
+        from aiperf.dataset.loader.weka_synth_buf import compute_asst_block_caps
 
+        asst_block_caps = compute_asst_block_caps(
+            [(r.hash_ids, r.input_length) for _, r in fp.requests],
+            fp.block_size,
+        )
         for k, (_outer_idx, req) in enumerate(fp.requests):
             seed = f"{fp.session_id}:turn_{k}:partial_tail"
             input_kind = _classify_turn_input(req, fp.requests[k - 1][1] if k else None)
@@ -2221,6 +2237,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     curr_in_tokens=req.input_length,
                     seed=seed,
                     is_tool_result=is_tool_result,
+                    max_asst_blocks=asst_block_caps[k],
                 )
             t_ms, delay_ms = self._flat_turn_timing(
                 fp=fp,

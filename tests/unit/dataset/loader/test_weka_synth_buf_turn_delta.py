@@ -813,54 +813,60 @@ def test_pure_growth_after_tail_only_segment_keeps_block_alignment():
     pure-growth cut lands on the assistant segment boundary with the
     tail-only segment past it."""
     r = _make_recon()
-    # Turn 0: [user 2b].
+    # Turn 0: [user 3b].
     r.init_turn_0(
-        hash_ids=[1, 2],
-        in_tokens=2 * BLOCK_SIZE,
+        hash_ids=[1, 2, 3],
+        in_tokens=3 * BLOCK_SIZE,
         tool_tokens=0,
         system_tokens=0,
         seed="s0",
     )
     r.turn_delta()
-    # Turn 1: new region exactly covers prev_out -> appends assistant only.
-    r.advance_turn(
-        prev_hash_ids=[1, 2],
-        prev_in_tokens=2 * BLOCK_SIZE,
-        prev_out_tokens=BLOCK_SIZE,
-        curr_hash_ids=[1, 2, 3],
-        curr_in_tokens=3 * BLOCK_SIZE,
-        seed="s1",
-    )
-    r.turn_delta()
-    # Turn 2: tail-only tool result (+12 tokens, no new hash block).
+    # Turn 1: grow by 2 tail-free blocks with a large prev_out. The assistant
+    # target would take both, but the final block is reserved for the user so
+    # the turn ends with a user segment: [user 3b, assistant(hash4), user(hash5)].
     r.advance_turn(
         prev_hash_ids=[1, 2, 3],
         prev_in_tokens=3 * BLOCK_SIZE,
+        prev_out_tokens=200,
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="s1",
+    )
+    r.turn_delta()
+    assert [s.role for s in r._segments] == ["user", "assistant", "user"]
+    # Turn 2: tail-only tool result (+12 tokens, no new hash block).
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3, 4, 5],
+        prev_in_tokens=5 * BLOCK_SIZE,
         prev_out_tokens=10,
-        curr_hash_ids=[1, 2, 3],
-        curr_in_tokens=3 * BLOCK_SIZE + 12,
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * BLOCK_SIZE + 12,
         seed="s2",
         is_tool_result=True,
     )
     r.turn_delta()
-    # Turn 3: pure growth ([1,2,3] -> [1,2,3,4]); LCP cut lands exactly on
-    # the assistant segment's boundary, with the tail-only segment past it.
+    # Turn 3: pure growth ([1,2,3,4,5] -> [1,2,3,4,99]); LCP=4 cut lands exactly
+    # on the assistant segment's boundary, deleting the trailing user(hash5)
+    # and the tail-only segment past it.
     r.advance_turn(
-        prev_hash_ids=[1, 2, 3],
-        prev_in_tokens=3 * BLOCK_SIZE + 12,
+        prev_hash_ids=[1, 2, 3, 4, 5],
+        prev_in_tokens=5 * BLOCK_SIZE + 12,
         prev_out_tokens=8,
-        curr_hash_ids=[1, 2, 3, 4],
-        curr_in_tokens=4 * BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 4, 99],
+        curr_in_tokens=5 * BLOCK_SIZE,
         seed="s3",
     )
     delta = r.turn_delta()
     # Replacing the already-sent tail-only segment is a context reset.
     assert delta.reset_context is True
     # Byte accounting must hold exactly.
-    assert sum(len(s.tokens) for s in r._segments) == 4 * BLOCK_SIZE
+    assert sum(len(s.tokens) for s in r._segments) == 5 * BLOCK_SIZE
     # The boundary assistant segment keeps its full hash-block content.
     assert r._segments[1].role == "assistant"
-    assert r._segments[1].tokens == _stub_decode_block_tokens([3])
+    assert r._segments[1].tokens == _stub_decode_block_tokens([4])
+    # The turn still ends with a user segment (the lone new block went to it).
+    assert r._segments[-1].role == "user"
     # Re-emitted messages mirror the (uncorrupted) segment contents 1:1.
     for msg, seg in zip(delta.delta_messages, r._segments, strict=True):
         assert msg["content"] == seg.content

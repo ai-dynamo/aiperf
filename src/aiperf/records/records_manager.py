@@ -1459,17 +1459,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         profiling_start_ns = phase_stats.start_ns or time.time_ns()
         profiling_end_ns = phase_stats.requests_end_ns or time.time_ns()
-        warmup_phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.WARMUP
-        )
 
         server_metrics_export_data = (
             await self._server_metrics_accumulator.export_results(
                 start_ns=profiling_start_ns,
                 end_ns=profiling_end_ns,
                 error_summary=error_summary,
-                warmup_start_ns=warmup_phase_stats.start_ns,
-                warmup_end_ns=warmup_phase_stats.requests_end_ns,
             )
         )
 

@@ -147,9 +147,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         start_ns: int,
         end_ns: int,
         error_summary: list[ErrorDetailsCount] | None = None,
-        *,
-        warmup_start_ns: int | None = None,
-        warmup_end_ns: int | None = None,
     ) -> ServerMetricsResults | None:
         """Export accumulated server metrics as results for final reporting.
 
@@ -174,32 +171,18 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             return None
 
         endpoint_summaries = self._compute_endpoint_summaries(
-            start_ns,
-            end_ns,
-            self._slice_duration,
-            include_final_collection=True,
+            start_ns, end_ns, self._slice_duration
         )
-        warmup_endpoint_summaries = None
-        if warmup_start_ns is not None and warmup_end_ns is not None:
-            warmup_endpoint_summaries = self._compute_endpoint_summaries(
-                warmup_start_ns,
-                warmup_end_ns,
-                self._slice_duration,
-                include_final_collection=False,
-            )
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
         results = ServerMetricsResults(
             benchmark_id=self.user_config.benchmark_id,
             endpoint_summaries=endpoint_summaries,
-            warmup_endpoint_summaries=warmup_endpoint_summaries or None,
             start_ns=start_ns,
             end_ns=end_ns,
             endpoints_configured=endpoint_list,
             endpoints_successful=endpoint_list,
             error_summary=error_summary or [],
-            warmup_start_ns=warmup_start_ns,
-            warmup_end_ns=warmup_end_ns,
         )
 
         # Export Parquet file directly from accumulator if format is enabled
@@ -221,8 +204,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         profiling_start_ns: int,
         profiling_end_ns: int,
         slice_duration: float | None = None,
-        *,
-        include_final_collection: bool,
     ) -> dict[str, ServerMetricsEndpointSummary]:
         """Compute all server metrics summaries with per-endpoint time filters.
 
@@ -256,15 +237,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
             # Construct per-endpoint TimeFilter
             # Use profiling_start_ns to exclude warmup period (reference point can be before start)
-            # Use max(profiling_end, last_update) for profiling to include the
-            # final collection. Phase-scoped warmup summaries must not extend
-            # past their own completed request window.
+            # Use max(profiling_end, last_update) as end to include final collection
+            # This ensures warmup metrics are excluded from aggregation
             endpoint_start_ns = profiling_start_ns
-            endpoint_end_ns = (
-                max(profiling_end_ns, time_series.last_update_ns)
-                if include_final_collection
-                else profiling_end_ns
-            )
+            endpoint_end_ns = max(profiling_end_ns, time_series.last_update_ns)
             time_filter = TimeRangeFilter(
                 start_ns=endpoint_start_ns,
                 end_ns=endpoint_end_ns,

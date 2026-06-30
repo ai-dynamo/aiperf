@@ -357,6 +357,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     assert _worker_state is not None
     from aiperf.dataset.loader.weka_synth_buf import (
         ConversationReconstructor,
+        compute_asst_block_caps,
     )
 
     state = _worker_state
@@ -382,6 +383,10 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
     parent_turns: list[_WekaParentTurnDict] = []
     outer_to_turn_pos: dict[int, int] = {}
     normals: list[tuple[int, _WekaNormalRequestPayload]] = parent["normals"]
+    parent_asst_block_caps = compute_asst_block_caps(
+        [(r["hash_ids"], r["input_length"]) for _, r in normals],
+        bs,
+    )
     for k, (outer_idx, req) in enumerate(normals):
         seed = f"{task.trace_id}:turn_{k}:partial_tail"
         is_tool_result = req.get("input_kind") == "tool_result"
@@ -404,6 +409,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 curr_in_tokens=req["input_length"],
                 seed=seed,
                 is_tool_result=is_tool_result,
+                max_asst_blocks=parent_asst_block_caps[k],
             )
 
         if "effective_t" in req:
@@ -617,6 +623,10 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
 
         child_turns: list[_WekaParentTurnDict] = []
         creqs: list[_WekaNormalRequestPayload] = cp["requests"]
+        child_asst_block_caps = compute_asst_block_caps(
+            [(r["hash_ids"], r["input_length"]) for r in creqs],
+            bs,
+        )
         for k, creq in enumerate(creqs):
             seed = f"{cp['session_id']}:turn_{k}:partial_tail"
             is_tool_result = creq.get("input_kind") == "tool_result"
@@ -639,6 +649,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     curr_in_tokens=creq["input_length"],
                     seed=seed,
                     is_tool_result=is_tool_result,
+                    max_asst_blocks=child_asst_block_caps[k],
                 )
             if "effective_t" in creq:
                 t_ms = creq["effective_t"] * 1000.0
