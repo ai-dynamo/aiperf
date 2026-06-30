@@ -16,6 +16,10 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
+### [`chat`](#aiperf-chat)
+
+Chat interactively with an endpoint, printing per-turn speed stats.
+
 ### [`config init`](#aiperf-config-init)
 
 Generate, list, or search bundled AIPerf config templates.
@@ -94,6 +98,57 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
+
+<hr/>
+
+## `aiperf chat`
+
+Chat interactively with an endpoint, printing per-turn speed stats.
+
+A lightweight sanity-check sibling of ``aiperf profile``: send one message at a time and see TTFT, TPS, generated tokens, and end-to-end latency for each reply. Multi-turn by default (history retained and resent each turn); pass ``--no-history`` for stateless turns, or ``--quick`` for a single request. For full benchmarking, use ``aiperf profile``.
+
+**Examples:**
+
+```bash
+# Interactive multi-turn chat
+aiperf chat --model Qwen/Qwen3-0.6B --url http://localhost:8000
+
+# Stateless turns (no history retained between messages)
+aiperf chat --model Qwen/Qwen3-0.6B --no-history
+
+# Single-shot sanity check
+aiperf chat --model Qwen/Qwen3-0.6B --quick "hello, who are you?"
+```
+
+#### `-m`, `--model` `<str>` _(Required)_
+
+Model name served by the endpoint.
+
+#### `-u`, `--url` `<str>`
+
+Base URL of the OpenAI-compatible server (e.g. http://localhost:8000), matching `aiperf profile`.
+<br/>_Default: `http://localhost:8000`_
+
+#### `--system-prompt` `<str>`
+
+Optional system prompt prepended to the conversation.
+
+#### `-q`, `--quick` `<str>`
+
+Send a single MESSAGE and print the response + stats, then exit.
+
+#### `--history`, `--no-history`
+
+Retain and resend conversation history each turn (default). Pass --no-history for stateless, completion-style turns. Ignored with --quick.
+<br/>_Default: `True`_
+
+#### `--api-key` `<str>`
+
+API key sent as a Bearer token. Defaults to the OPENAI_API_KEY environment variable.
+
+#### `--tokenizer` `<str>`
+
+Tokenizer for client-side token counts. Defaults to the model name.
 
 <hr/>
 
