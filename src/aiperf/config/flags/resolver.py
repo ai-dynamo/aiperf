@@ -24,6 +24,7 @@ from aiperf.config.flags._resolver_adaptive import (
 )
 from aiperf.config.flags._resolver_server_metrics import (
     build_server_metrics_override,
+    normalize_server_metrics_base_for_override,
 )
 from aiperf.config.flags._section_fields import (
     ENDPOINT_FIELDS,
@@ -100,6 +101,7 @@ def resolve_config(
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
+    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)

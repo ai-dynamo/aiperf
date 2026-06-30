@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -42,3 +43,30 @@ def build_server_metrics_override(cli: CLIConfig) -> dict[str, Any] | None:
         override["formats"] = built["formats"]
 
     return override or None
+
+
+def normalize_server_metrics_base_for_override(
+    base: dict[str, Any],
+    overrides: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Normalize YAML server_metrics shorthand before CLI override merging."""
+    if not _has_benchmark_server_metrics_override(overrides):
+        return base
+
+    benchmark = base.get("benchmark")
+    if not isinstance(benchmark, dict) or "server_metrics" not in benchmark:
+        return base
+
+    from aiperf.config.server_metrics import ServerMetricsConfig
+
+    normalized = copy.deepcopy(base)
+    normalized_benchmark = normalized["benchmark"]
+    normalized_benchmark["server_metrics"] = ServerMetricsConfig.model_validate(
+        normalized_benchmark["server_metrics"]
+    ).model_dump(mode="python")
+    return normalized
+
+
+def _has_benchmark_server_metrics_override(overrides: dict[str, Any] | None) -> bool:
+    benchmark = overrides.get("benchmark") if isinstance(overrides, dict) else None
+    return isinstance(benchmark, dict) and "server_metrics" in benchmark

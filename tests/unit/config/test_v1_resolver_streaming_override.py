@@ -176,6 +176,32 @@ async def test_server_metrics_formats_cli_override_preserves_yaml_urls(
     assert writer.output_file == artifact_dir / "server_metrics_export.jsonl"
 
 
+async def test_server_metrics_formats_cli_override_preserves_yaml_scalar_url(
+    tmp_path: Path,
+) -> None:
+    cfg_file = tmp_path / "server-metrics-scalar.yaml"
+    await asyncio.to_thread(
+        cfg_file.write_text,
+        _YAML_SERVER_METRICS_JSON_CSV.replace(
+            "server_metrics:\n"
+            "    enabled: true\n"
+            "    urls:\n"
+            "      - http://worker:9090/metrics\n"
+            "    formats:\n"
+            "      - json\n"
+            "      - csv",
+            "server_metrics: http://worker:9090/metrics",
+        ),
+    )
+    user = CLIConfig(server_metrics_formats=["jsonl"])
+
+    config = await asyncio.to_thread(resolve_config, user, cfg_file)
+
+    assert config.benchmark.server_metrics.enabled is True
+    assert config.benchmark.server_metrics.urls == ["http://worker:9090/metrics"]
+    assert config.benchmark.server_metrics.formats == [ServerMetricsFormat.JSONL]
+
+
 async def test_server_metrics_formats_cli_override_enables_yaml_server_metrics(
     tmp_path: Path,
 ) -> None:
