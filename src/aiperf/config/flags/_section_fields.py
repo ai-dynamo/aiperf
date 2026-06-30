@@ -169,6 +169,7 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "request_count",
         "request_rate",
         "request_rate_ramp_duration",
+        "request_rate_series",
         "user_centric_rate",
         "warmup_arrival_pattern",
         "warmup_concurrency",
