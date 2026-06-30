@@ -18,7 +18,7 @@ present; they run in CI environments that provide ``HF_TOKEN``.
 Adding a new benchmark
 ----------------------
 1. Add a ``param(...)`` entry to ``_BENCHMARK_DATASETS`` below.
-2. ``test_all_hf_benchmarks_have_smoke_entry`` will fail if you add a benchmark
+2. ``test_all_hf_benchmarks_are_covered_by_network_tests`` will fail if you add a benchmark
    module with a ``DATASET_NAME`` constant but forget step 1 — the test tells
    you exactly which module is missing.
 """
@@ -106,8 +106,8 @@ _BENCHMARK_DATASETS = [
 _COVERED_MODULE_NAMES = {p.id for p in _BENCHMARK_DATASETS}
 
 
-def test_all_hf_benchmarks_have_smoke_entry() -> None:
-    """Fail if a benchmark module defines DATASET_NAME but has no smoke entry.
+def test_all_hf_benchmarks_are_covered_by_network_tests() -> None:
+    """Fail if a benchmark module defines DATASET_NAME but has no network test entry.
 
     When adding a new HuggingFace-backed benchmark, add a param() to
     ``_BENCHMARK_DATASETS`` above with the same id as the module filename
