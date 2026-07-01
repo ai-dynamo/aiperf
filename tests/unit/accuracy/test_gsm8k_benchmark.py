@@ -98,7 +98,7 @@ class TestDatasetLoading:
     @pytest.mark.asyncio
     async def test_loads_main_subset_test_split(self) -> None:
         _, mock_load = await _load([_make_row()])
-        mock_load.assert_called_once_with("gsm8k", "main", split="test")
+        mock_load.assert_called_once_with("openai/gsm8k", "main", split="test")
 
     @pytest.mark.asyncio
     async def test_returns_one_problem_per_row(self) -> None:

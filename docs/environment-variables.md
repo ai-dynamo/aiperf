@@ -149,6 +149,18 @@ MLflow export configuration. Controls timeout behavior for post-run MLflow artif
 |----------------------|---------|-------------|-------------|
 | `AIPERF_MLFLOW_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run MLflow export operation. If the MLflow tracking server is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. |
 
+## NETWORKLATENCY
+
+Network latency calibration configuration. Controls the TCP-handshake RTT probes used to estimate the client-to-endpoint network round-trip time so it can be subtracted from latency metrics. Probes run throughout the profiling phase. Enable with `--network-latency-automatic`.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_NETWORK_LATENCY_DEFAULT_PROBE_INTERVAL` | `1.0` | ≥ 0.001, ≤ 300.0 | Default seconds between RTT probes when --network-latency-ping-interval is unset (default: 1.0s, ~1Hz) |
+| `AIPERF_NETWORK_LATENCY_MIN_SAMPLES` | `5` | ≥ 1, ≤ 100000 | Minimum number of successful RTT samples to collect; extra probes are issued at profile completion if a short run did not reach this floor |
+| `AIPERF_NETWORK_LATENCY_CONNECT_TIMEOUT` | `5.0` | ≥ 0.001, ≤ 300.0 | Timeout in seconds for a single TCP-handshake RTT probe |
+| `AIPERF_NETWORK_LATENCY_COMPLETE_TOPUP_TIMEOUT` | `3.0` | ≥ 0.0, ≤ 30.0 | Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes at PROFILE_COMPLETE, kept well under the command-response budget so a slow endpoint cannot stall completion |
+| `AIPERF_NETWORK_LATENCY_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for the network latency jsonl writer export results processor |
+
 ## OTEL
 
 OpenTelemetry metrics streaming configuration. Controls buffering and flush behavior for OTLP metric streaming.

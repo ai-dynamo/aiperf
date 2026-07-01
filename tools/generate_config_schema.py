@@ -213,6 +213,12 @@ class ConfigSchemaGenerator(Generator):
         if self.verbose and duration_count > 0:
             print_step(f"Added duration string support to {duration_count} fields")
 
+        adaptive_sla_count = self._add_adaptive_sla_compact_form(enhanced_schema)
+        if self.verbose and adaptive_sla_count > 0:
+            print_step(
+                f"Added compact adaptive SLA form to {adaptive_sla_count} fields"
+            )
+
         # Add models field simplified forms (string/list[str] → ModelsAdvanced)
         self._add_models_simplified_forms(enhanced_schema)
         if self.verbose:
@@ -706,6 +712,64 @@ class ConfigSchemaGenerator(Generator):
                 walk_properties(additional, f"{path}.*")
 
         walk_properties(schema)
+        return enhanced_count
+
+    def _add_adaptive_sla_compact_form(self, schema: dict) -> int:
+        """Allow compact adaptive SLA YAML wherever BasePhaseConfig.sla appears.
+
+        Runtime accepts either the canonical ``list[SLAFilter]`` shape or a
+        compact metric/stat/op mapping, for example::
+
+            sla:
+              request_latency:
+                p95:
+                  le: 30000
+        """
+        compact_sla_schema = {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": {"type": ["number", "string"]},
+                },
+            },
+            "description": "Compact SLA mapping: metric -> stat -> operator -> threshold.",
+        }
+        enhanced_count = 0
+
+        def is_sla_filter_array(field_schema: dict) -> bool:
+            return (
+                field_schema.get("type") == "array"
+                and field_schema.get("items", {}).get("$ref") == "#/$defs/SLAFilter"
+            )
+
+        def walk(obj: object) -> None:
+            nonlocal enhanced_count
+            if isinstance(obj, dict):
+                properties = obj.get("properties")
+                if isinstance(properties, dict):
+                    field_schema = properties.get("sla")
+                    if isinstance(field_schema, dict) and is_sla_filter_array(
+                        field_schema
+                    ):
+                        original = copy.deepcopy(field_schema)
+                        properties["sla"] = {
+                            "description": (
+                                original.get("description", "")
+                                + " Accepts the canonical list form or compact metric/stat/op mapping."
+                            ).strip(),
+                            "title": original.get("title", "Sla"),
+                            "anyOf": [original, copy.deepcopy(compact_sla_schema)],
+                        }
+                        enhanced_count += 1
+                for value in obj.values():
+                    walk(value)
+            elif isinstance(obj, list):
+                for value in obj:
+                    walk(value)
+
+        walk(schema)
         return enhanced_count
 
     def _add_models_simplified_forms(self, schema: dict) -> None:
