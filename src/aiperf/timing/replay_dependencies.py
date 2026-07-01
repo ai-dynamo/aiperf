@@ -124,6 +124,7 @@ def infer_cross_stream_predecessors(
 
 @dataclass(slots=True)
 class _PendingDispatch:
+    turn: TurnToSend
     issue: Callable[[], Awaitable[bool]]
     on_refused: Callable[[], Awaitable[None]] | None
 
@@ -149,6 +150,7 @@ class ReplayBarrierCoordinator:
         self._roots: dict[str, _RootBarrierState] = {}
         self._dispatch_tasks: set[asyncio.Task] = set()
         self._active = False
+        self._releases_paused = False
 
     def activate(self) -> None:
         """Enable barriers after baseline cache priming completes."""
@@ -168,6 +170,10 @@ class ReplayBarrierCoordinator:
             dict(sorted(widths.items())),
         )
 
+    def pause_releases(self) -> None:
+        """Retain newly ready dispatches for an explicit phase handoff."""
+        self._releases_paused = True
+
     async def submit(
         self,
         turn: TurnToSend,
@@ -183,13 +189,15 @@ class ReplayBarrierCoordinator:
             root_id, _RootBarrierState(completed=set(), pending={})
         )
         key = ReplayTurnKey(turn.conversation_id, turn.turn_index)
-        if self._ready(state, key):
+        if self._ready(state, key) and not self._releases_paused:
             return await issue()
         if key in state.pending:
             raise RuntimeError(
                 f"Duplicate deferred replay dispatch for root={root_id!r}, turn={key!r}"
             )
-        state.pending[key] = _PendingDispatch(issue=issue, on_refused=on_refused)
+        state.pending[key] = _PendingDispatch(
+            turn=turn, issue=issue, on_refused=on_refused
+        )
         return True
 
     def complete(self, credit: Credit) -> None:
@@ -201,6 +209,8 @@ class ReplayBarrierCoordinator:
             root_id, _RootBarrierState(completed=set(), pending={})
         )
         state.completed.add(ReplayTurnKey(credit.conversation_id, credit.turn_index))
+        if self._releases_paused:
+            return
         ready = [key for key in state.pending if self._ready(state, key)]
         for key in sorted(ready):
             pending = state.pending.pop(key)
@@ -262,6 +272,23 @@ class ReplayBarrierCoordinator:
             )
         )
 
+    def pending_turns(self, root_id: str) -> tuple[TurnToSend, ...]:
+        """Return barrier-retained turns that have not gone on wire yet."""
+        state = self._roots.get(root_id)
+        if state is None:
+            return ()
+        return tuple(pending.turn for key, pending in sorted(state.pending.items()))
+
+    def pending_turns_by_root(self) -> dict[str, tuple[TurnToSend, ...]]:
+        """Return all barrier-retained turns grouped by runtime root id."""
+        return {
+            root_id: tuple(
+                pending.turn for key, pending in sorted(state.pending.items())
+            )
+            for root_id, state in self._roots.items()
+            if state.pending
+        }
+
     async def cancel_pending(self, *, notify_refused: bool) -> None:
         """Cancel retained dispatches during phase teardown."""
         callbacks = []
@@ -310,6 +337,11 @@ class ReplayIssueGate:
     def set_credit_issued(self, callback: Callable[[Credit], Awaitable[None]]) -> None:
         self._credit_issued = callback
 
+    def pause_releases(self) -> None:
+        """Retain ready barrier work instead of issuing it immediately."""
+        if self._coordinator is not None:
+            self._coordinator.pause_releases()
+
     async def submit(
         self,
         turn: TurnToSend,
@@ -353,6 +385,16 @@ class ReplayIssueGate:
         if self._coordinator is None:
             return ()
         return self._coordinator.completed_prefixes(root_correlation_id)
+
+    def pending_turns(self, root_correlation_id: str) -> tuple[TurnToSend, ...]:
+        if self._coordinator is None:
+            return ()
+        return self._coordinator.pending_turns(root_correlation_id)
+
+    def pending_turns_by_root(self) -> dict[str, tuple[TurnToSend, ...]]:
+        if self._coordinator is None:
+            return {}
+        return self._coordinator.pending_turns_by_root()
 
     async def cancel(self, *, notify_refused: bool) -> None:
         if self._coordinator is not None:

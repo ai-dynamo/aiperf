@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
-from aiperf.common.config import InputDefaults, UserConfig
+from aiperf.common.config import InputDefaults, LoadGeneratorConfig, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.plugin.enums import (
@@ -14,6 +14,8 @@ from aiperf.plugin.enums import (
     URLSelectionStrategy,
 )
 from aiperf.timing.request_cancellation import RequestCancellationConfig
+
+_AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC = 300.0
 
 
 class TimingConfig(AIPerfBaseModel):
@@ -221,6 +223,43 @@ class CreditPhaseConfig(AIPerfBaseModel):
     )
 
 
+def _agentic_warmup_grace_period(loadgen: LoadGeneratorConfig) -> float | None:
+    warmup_grace_period = loadgen.warmup_grace_period
+    if warmup_grace_period is not None:
+        return warmup_grace_period
+    cache_warmup_duration = loadgen.agentic_cache_warmup_duration
+    if cache_warmup_duration is not None:
+        default_grace_period = min(
+            cache_warmup_duration,
+            _AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC,
+        )
+        if loadgen.benchmark_grace_period is None:
+            return default_grace_period
+        return max(loadgen.benchmark_grace_period, default_grace_period)
+    return float("inf")
+
+
+def _build_agentic_warmup_config(loadgen: LoadGeneratorConfig) -> CreditPhaseConfig:
+    cache_warmup_duration = loadgen.agentic_cache_warmup_duration
+    return CreditPhaseConfig(
+        phase=CreditPhase.WARMUP,
+        timing_mode=TimingMode.AGENTIC_REPLAY,
+        total_expected_requests=(
+            None if cache_warmup_duration is not None else loadgen.concurrency
+        ),
+        expected_duration_sec=None,
+        expected_num_sessions=None,
+        concurrency=loadgen.concurrency,
+        prefill_concurrency=loadgen.prefill_concurrency,
+        request_rate=None,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        arrival_smoothness=loadgen.arrival_smoothness,
+        seamless=False,
+        grace_period_sec=_agentic_warmup_grace_period(loadgen),
+        agentic_cache_warmup_duration_sec=cache_warmup_duration,
+    )
+
+
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
     """Build warmup phase config if any warmup stop condition is set.
 
@@ -243,26 +282,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
     # fire after the warmup burst completes; if pool_size < concurrency the
     # strategy emits `mark_sending_complete()` itself in `_execute_warmup`.
     if user_config.timing_mode == TimingMode.AGENTIC_REPLAY:
-        cache_warmup_duration = loadgen.agentic_cache_warmup_duration
-        return CreditPhaseConfig(
-            phase=CreditPhase.WARMUP,
-            timing_mode=TimingMode.AGENTIC_REPLAY,
-            total_expected_requests=(
-                None if cache_warmup_duration is not None else loadgen.concurrency
-            ),
-            expected_duration_sec=None,
-            expected_num_sessions=None,
-            concurrency=loadgen.concurrency,
-            prefill_concurrency=loadgen.prefill_concurrency,
-            request_rate=None,
-            arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
-            arrival_smoothness=loadgen.arrival_smoothness,
-            seamless=False,
-            grace_period_sec=loadgen.warmup_grace_period
-            if loadgen.warmup_grace_period is not None
-            else float("inf"),
-            agentic_cache_warmup_duration_sec=cache_warmup_duration,
-        )
+        return _build_agentic_warmup_config(loadgen)
 
     if not (
         loadgen.warmup_request_count

@@ -32,6 +32,7 @@ from aiperf.common.enums import CreditPhase, ProfileCancelReason
 from aiperf.common.messages import (
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
+    ProcessServerMetricsResultMessage,
     ProfileCancelCommand,
 )
 from aiperf.common.models import (
@@ -558,6 +559,29 @@ class TestProfileCancelFinalizes:
         assert any(isinstance(m, ProcessRecordsResultMessage) for m in published)
         mgr._records_tracker.mark_phase_cancelled.assert_called_once_with(
             CreditPhase.PROFILING
+        )
+
+    @pytest.mark.asyncio
+    async def test_server_metrics_processing_failure_still_publishes_fanin(
+        self,
+    ) -> None:
+        mgr = _make_manager_mock(user_config_server_metrics_disabled=False)
+        mgr._process_server_metrics_results = AsyncMock(
+            side_effect=ValueError("start_ns must be less than end_ns")
+        )
+
+        await mgr._process_results(phase=CreditPhase.WARMUP, cancelled=True)
+
+        published = [c.args[0] for c in mgr.publish.await_args_list]
+        assert any(isinstance(m, ProcessRecordsResultMessage) for m in published)
+        server_metrics_messages = [
+            m for m in published if isinstance(m, ProcessServerMetricsResultMessage)
+        ]
+        assert len(server_metrics_messages) == 1
+        assert server_metrics_messages[0].server_metrics_result.results is None
+        assert any(
+            "Failed to process server metrics results" in str(call.args[0])
+            for call in mgr.exception.call_args_list
         )
 
 

@@ -1483,7 +1483,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug(
             "_publish_server_metrics_results: calling _process_server_metrics_results..."
         )
-        server_metrics_result = await self._process_server_metrics_results()
+        try:
+            server_metrics_result = await self._process_server_metrics_results()
+        except Exception as e:  # noqa: BLE001
+            self.exception(f"Failed to process server metrics results: {e!r}")
+            server_metrics_result = ProcessServerMetricsResult(results=None)
         self.debug(
             "_publish_server_metrics_results: publishing ProcessServerMetricsResultMessage..."
         )

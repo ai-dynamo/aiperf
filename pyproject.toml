@@ -167,6 +167,7 @@ markers = [
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
+    "looptime: marks tests that use virtual event-loop time",
 ]
 # Better console output
 console_output_style = "progress"

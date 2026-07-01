@@ -9,7 +9,10 @@ from aiperf.timing.config import _build_profiling_config, _build_warmup_config
 
 
 def _ar_user_config(
-    concurrency: int = 10, duration: float = 900, cap: float = 60.0
+    concurrency: int = 10,
+    duration: float = 900,
+    cap: float = 60.0,
+    benchmark_grace_period: float | None = None,
 ) -> MagicMock:
     cfg = MagicMock()
     cfg.timing_mode = TimingMode.AGENTIC_REPLAY
@@ -37,7 +40,7 @@ def _ar_user_config(
     cfg.loadgen.prefill_concurrency_ramp_duration = None
     cfg.loadgen.request_rate_ramp_duration = None
     cfg.loadgen.user_centric_rate = None
-    cfg.loadgen.benchmark_grace_period = None
+    cfg.loadgen.benchmark_grace_period = benchmark_grace_period
     cfg.loadgen.num_users = None
     cfg.input.conversation.num = None
     cfg.input.fixed_schedule_auto_offset = False
@@ -92,7 +95,7 @@ def test_warmup_config_total_expected_requests_tracks_concurrency() -> None:
 
 
 def test_cache_warmup_uses_strategy_controlled_stop() -> None:
-    cfg = _ar_user_config(concurrency=10)
+    cfg = _ar_user_config(concurrency=10, benchmark_grace_period=30.0)
     cfg.loadgen.agentic_cache_warmup_duration = 600.0
 
     warmup = _build_warmup_config(cfg)
@@ -100,3 +103,35 @@ def test_cache_warmup_uses_strategy_controlled_stop() -> None:
     assert warmup is not None
     assert warmup.total_expected_requests is None
     assert warmup.agentic_cache_warmup_duration_sec == 600.0
+    assert warmup.grace_period_sec == 300.0
+
+
+def test_cache_warmup_grace_uses_short_duration_without_benchmark_grace() -> None:
+    cfg = _ar_user_config(concurrency=10, benchmark_grace_period=None)
+    cfg.loadgen.agentic_cache_warmup_duration = 2.0
+
+    warmup = _build_warmup_config(cfg)
+
+    assert warmup is not None
+    assert warmup.grace_period_sec == 2.0
+
+
+def test_cache_warmup_grace_keeps_larger_benchmark_grace() -> None:
+    cfg = _ar_user_config(concurrency=10, benchmark_grace_period=30.0)
+    cfg.loadgen.agentic_cache_warmup_duration = 2.0
+
+    warmup = _build_warmup_config(cfg)
+
+    assert warmup is not None
+    assert warmup.grace_period_sec == 30.0
+
+
+def test_cache_warmup_explicit_warmup_grace_overrides_benchmark_grace() -> None:
+    cfg = _ar_user_config(concurrency=10, benchmark_grace_period=30.0)
+    cfg.loadgen.agentic_cache_warmup_duration = 600.0
+    cfg.loadgen.warmup_grace_period = 7.0
+
+    warmup = _build_warmup_config(cfg)
+
+    assert warmup is not None
+    assert warmup.grace_period_sec == 7.0

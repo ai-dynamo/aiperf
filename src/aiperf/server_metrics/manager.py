@@ -252,7 +252,7 @@ class ServerMetricsManager(BaseComponentService):
                         self.debug(
                             lambda url=endpoint_url: f"Server Metrics: Captured warmup final state from {url}"
                         )
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001
                         self.warning(
                             f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
                         )

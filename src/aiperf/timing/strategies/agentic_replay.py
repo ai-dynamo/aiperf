@@ -36,19 +36,22 @@ aborts PROFILING so steady-state metrics aren't silently biased by a
 degraded trajectory pool.
 
 PROFILING: each stream resumes at its first turn at/after t*
-(``next_turn_index``). Dispatch times are normalized so the trajectory's
-earliest post-t* request fires at profiling-time 0 and all other requests
-preserve their recorded relative offsets; subsequent turns honor trace
-inter-turn ``delay_ms`` (already clamped upstream in the loader). Gated
-parents fire their join turn when blocking children complete. When a root
-session reaches its final turn, its trace_id is recycled FIFO-style and a
-fresh session (starting at turn 0) is spawned from the next trace_id in the
-queue.
+(``next_turn_index``). Default dispatch preserves the stream's recorded offset
+from the replay boundary; ``--burst-phase-starts`` collapses each lane's first
+eligible request to profiling-time 0. Accelerated cache warmup synthesizes a
+new replay boundary at the warmup handoff and carries each live stream's
+residual next-turn delay into profiling, so the handoff ramps instead of
+firing every live stream at once. Subsequent turns honor trace inter-turn
+``delay_ms`` (already clamped upstream in the loader). Gated parents fire their
+join turn when blocking children complete. When a root session reaches its
+final turn, its trace_id is recycled FIFO-style and a fresh session (starting
+at turn 0) is spawned from the next trace_id in the queue.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections import Counter, deque
 from collections.abc import Iterable
@@ -170,6 +173,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._baseline_correlations: set[str] = set()
         self._accelerated_warmup_started = False
         self._handoff_credits: dict[str, Credit] = {}
+        self._handoff_returned_at_ns: dict[str, int] = {}
         self._root_to_lane: dict[str, int] = {}
 
         # Cache-bust state. WARMUP and PROFILING construct distinct strategy
@@ -601,6 +605,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _finish_accelerated_warmup(self) -> None:
         """Stop new pressure traffic and let all issued requests drain."""
         self.info("WARMUP cache pressure duration reached; draining requests")
+        self.credit_issuer.replay_gate.pause_releases()
         self.credit_issuer.mark_sending_complete()
 
     async def _dispatch_accelerated_trajectory(
@@ -679,8 +684,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self._correlation_to_lane[credit.x_correlation_id] = lane
         if credit.is_final_turn:
             self._handoff_credits.pop(credit.x_correlation_id, None)
+            self._handoff_returned_at_ns.pop(credit.x_correlation_id, None)
         else:
             self._handoff_credits[credit.x_correlation_id] = credit
+            self._handoff_returned_at_ns[credit.x_correlation_id] = (
+                time.perf_counter_ns()
+            )
 
     async def _handle_accelerated_warmup_return(self, credit: Credit) -> None:
         """Issue the next compressed turn or recycle a completed tree."""
@@ -704,7 +713,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """Persist the drained accelerated-warmup DAG for profiling."""
         if not self._accelerated_warmup_started:
             return
-        states_by_lane = self._build_handoff_states()
+        finalized_at_ns = time.perf_counter_ns()
+        states_by_lane = self._build_handoff_states(finalized_at_ns=finalized_at_ns)
         boundaries_by_lane = {
             lane: self._build_handoff_replay_boundaries(states)
             for lane, states in states_by_lane.items()
@@ -717,40 +727,228 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             f"{sum(len(states) for states in states_by_lane.values())} live streams"
         )
 
-    def _build_handoff_states(self) -> dict[int, list[ConversationState]]:
+    def _build_handoff_states(
+        self, *, finalized_at_ns: int | None = None
+    ) -> dict[int, list[ConversationState]]:
         """Convert drained credits and join annotations into lane states."""
-        blocked: dict[str, int] = {}
-        child_annotations: dict[str, tuple[str | None, int | None]] = {}
-        if self.branch_orchestrator is not None:
-            blocked, child_annotations = self.branch_orchestrator.snapshot_annotations()
-
+        if finalized_at_ns is None:
+            finalized_at_ns = time.perf_counter_ns()
+        blocked, child_annotations = self._handoff_annotations()
         states_by_lane: dict[int, list[ConversationState]] = {
             lane: [] for lane in range(len(self.conversation_source.trajectories))
         }
-        for credit in self._handoff_credits.values():
-            lane = self._root_to_lane.get(credit.effective_root_correlation_id)
-            if lane is None or credit.turn_index + 1 >= credit.num_turns:
-                continue
-            branch_id, join_target = child_annotations.get(
-                credit.x_correlation_id, (None, None)
-            )
-            states_by_lane[lane].append(
-                ConversationState(
-                    conversation_id=credit.conversation_id,
-                    x_correlation_id=credit.x_correlation_id,
-                    next_turn_index=credit.turn_index + 1,
-                    agent_depth=credit.agent_depth,
-                    parent_correlation_id=credit.parent_correlation_id,
-                    root_correlation_id=credit.root_correlation_id,
-                    waiting_on_children=credit.x_correlation_id in blocked,
-                    join_target_turn_index=(
-                        blocked.get(credit.x_correlation_id, join_target)
-                    ),
-                    branch_id=branch_id,
-                    branch_mode=credit.branch_mode,
-                )
-            )
+        seen_states = self._add_returned_handoff_states(
+            states_by_lane,
+            blocked=blocked,
+            child_annotations=child_annotations,
+            finalized_at_ns=finalized_at_ns,
+        )
+        self._add_pending_handoff_states(
+            states_by_lane, seen_states, child_annotations=child_annotations
+        )
         return states_by_lane
+
+    def _handoff_annotations(
+        self,
+    ) -> tuple[dict[str, int], dict[str, tuple[str | None, int | None]]]:
+        if self.branch_orchestrator is None:
+            return {}, {}
+        return self.branch_orchestrator.snapshot_annotations()
+
+    def _add_returned_handoff_states(
+        self,
+        states_by_lane: dict[int, list[ConversationState]],
+        *,
+        blocked: dict[str, int],
+        child_annotations: dict[str, tuple[str | None, int | None]],
+        finalized_at_ns: int,
+    ) -> set[tuple[str, str, int]]:
+        seen_states: set[tuple[str, str, int]] = set()
+        for credit in self._handoff_credits.values():
+            handoff = self._returned_credit_handoff_state(
+                credit,
+                blocked=blocked,
+                child_annotations=child_annotations,
+                finalized_at_ns=finalized_at_ns,
+            )
+            if handoff is None:
+                continue
+            lane, state = handoff
+            seen_states.add(
+                (state.conversation_id, state.x_correlation_id, state.next_turn_index)
+            )
+            states_by_lane[lane].append(state)
+        return seen_states
+
+    def _returned_credit_handoff_state(
+        self,
+        credit: Credit,
+        *,
+        blocked: dict[str, int],
+        child_annotations: dict[str, tuple[str | None, int | None]],
+        finalized_at_ns: int,
+    ) -> tuple[int, ConversationState] | None:
+        lane = self._root_to_lane.get(credit.effective_root_correlation_id)
+        if lane is None or credit.turn_index + 1 >= credit.num_turns:
+            return None
+        branch_id, join_target = child_annotations.get(
+            credit.x_correlation_id, (None, None)
+        )
+        return lane, ConversationState(
+            conversation_id=credit.conversation_id,
+            x_correlation_id=credit.x_correlation_id,
+            next_turn_index=credit.turn_index + 1,
+            next_dispatch_offset_ms=self._handoff_residual_delay_ms(
+                credit, finalized_at_ns=finalized_at_ns
+            ),
+            agent_depth=credit.agent_depth,
+            parent_correlation_id=credit.parent_correlation_id,
+            root_correlation_id=credit.root_correlation_id,
+            waiting_on_children=credit.x_correlation_id in blocked,
+            join_target_turn_index=blocked.get(credit.x_correlation_id, join_target),
+            branch_id=branch_id,
+            branch_mode=credit.branch_mode,
+        )
+
+    def _add_pending_handoff_states(
+        self,
+        states_by_lane: dict[int, list[ConversationState]],
+        seen_states: set[tuple[str, str, int]],
+        *,
+        child_annotations: dict[str, tuple[str | None, int | None]],
+    ) -> None:
+        for root_correlation_id, turns in self._pending_handoff_turns_by_root().items():
+            for turn in turns:
+                handoff = self._pending_turn_handoff_state(
+                    root_correlation_id,
+                    turn,
+                    seen_states,
+                    child_annotations=child_annotations,
+                )
+                if handoff is None:
+                    continue
+                lane, state_key, state = handoff
+                seen_states.add(state_key)
+                states_by_lane[lane].append(state)
+
+    def _pending_handoff_turns_by_root(self) -> dict[str, tuple[TurnToSend, ...]]:
+        pending_by_root_getter = getattr(
+            self.credit_issuer.replay_gate, "pending_turns_by_root", None
+        )
+        if callable(pending_by_root_getter):
+            pending_by_root = dict(pending_by_root_getter())
+        else:
+            pending_by_root = {}
+        pending_turns_getter = getattr(
+            self.credit_issuer.replay_gate, "pending_turns", None
+        )
+        if callable(pending_turns_getter):
+            for root_correlation_id in self._root_to_lane:
+                pending_by_root.setdefault(
+                    root_correlation_id,
+                    tuple(pending_turns_getter(root_correlation_id)),
+                )
+        return pending_by_root
+
+    def _pending_turn_handoff_state(
+        self,
+        root_correlation_id: str,
+        turn: TurnToSend,
+        seen_states: set[tuple[str, str, int]],
+        *,
+        child_annotations: dict[str, tuple[str | None, int | None]],
+    ) -> tuple[int, tuple[str, str, int], ConversationState] | None:
+        lane = self._handoff_lane_for_turn(root_correlation_id, turn)
+        state_key = (turn.conversation_id, turn.x_correlation_id, turn.turn_index)
+        if (
+            lane is None
+            or state_key in seen_states
+            or turn.turn_index >= turn.num_turns
+        ):
+            return None
+        self._root_to_lane[turn.effective_root_correlation_id] = lane
+        branch_id, join_target = child_annotations.get(
+            turn.x_correlation_id, (None, None)
+        )
+        state = ConversationState(
+            conversation_id=turn.conversation_id,
+            x_correlation_id=turn.x_correlation_id,
+            next_turn_index=turn.turn_index,
+            next_dispatch_offset_ms=0.0,
+            agent_depth=turn.agent_depth,
+            parent_correlation_id=turn.parent_correlation_id,
+            root_correlation_id=turn.root_correlation_id,
+            waiting_on_children=False,
+            join_target_turn_index=join_target,
+            branch_id=branch_id,
+            branch_mode=turn.branch_mode,
+        )
+        return lane, state_key, state
+
+    def _handoff_lane_for_turn(
+        self, root_correlation_id: str, turn: TurnToSend
+    ) -> int | None:
+        lane = self._root_to_lane.get(root_correlation_id)
+        if lane is not None:
+            return lane
+        lane = self._root_to_lane.get(turn.effective_root_correlation_id)
+        if lane is not None:
+            return lane
+        if turn.parent_correlation_id is not None:
+            lane = self._correlation_to_lane.get(turn.parent_correlation_id)
+            if lane is not None:
+                return lane
+        return self._correlation_to_lane.get(turn.x_correlation_id)
+
+    def _handoff_residual_delay_ms(
+        self, credit: Credit, *, finalized_at_ns: int
+    ) -> float:
+        """Delay before a warmup-handoff stream should issue in PROFILING.
+
+        Accelerated warmup intentionally removes idle gaps while it is building
+        KV pressure. At the profiling boundary, however, firing every drained
+        stream at once creates an artificial burst. Preserve the local replay
+        cadence by carrying the next turn's recorded delay forward, minus any
+        wall-clock time already spent waiting for the warmup drain/finalize.
+        """
+        delay_ms = self._handoff_base_delay_ms(credit)
+        returned_at_ns = self._handoff_returned_at_ns.get(credit.x_correlation_id)
+        if returned_at_ns is not None:
+            elapsed_ms = max(0.0, (finalized_at_ns - returned_at_ns) / 1_000_000.0)
+            delay_ms = max(0.0, delay_ms - elapsed_ms)
+        if self._phase_offset_cap_ms is not None:
+            delay_ms = min(delay_ms, self._phase_offset_cap_ms)
+        return delay_ms
+
+    def _handoff_base_delay_ms(self, credit: Credit) -> float:
+        """Recorded delay from a returned warmup credit to its next turn."""
+        try:
+            next_meta = self.conversation_source.get_next_turn_metadata(credit)
+        except (KeyError, ValueError):
+            return 0.0
+
+        delay_ms = _as_timestamp_ms(getattr(next_meta, "delay_ms", None))
+        if delay_ms is not None:
+            return max(0.0, delay_ms)
+
+        try:
+            metadata = self.conversation_source.get_metadata(credit.conversation_id)
+        except KeyError:
+            return 0.0
+        if credit.turn_index < 0 or credit.turn_index + 1 >= len(metadata.turns):
+            return 0.0
+
+        previous_meta = metadata.turns[credit.turn_index]
+        previous_ts_ms = _as_timestamp_ms(getattr(previous_meta, "timestamp_ms", None))
+        next_ts_ms = _as_timestamp_ms(
+            getattr(metadata.turns[credit.turn_index + 1], "timestamp_ms", None)
+        )
+        if previous_ts_ms is None or next_ts_ms is None:
+            return 0.0
+
+        previous_api_ms = _as_timestamp_ms(getattr(previous_meta, "api_time_ms", None))
+        previous_duration_ms = max(0.0, previous_api_ms or 0.0)
+        return max(0.0, next_ts_ms - previous_ts_ms - previous_duration_ms)
 
     def _build_handoff_replay_boundaries(
         self, states: list[ConversationState]
@@ -1272,6 +1470,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)
+            if state.agent_depth == 0:
+                turn = _struct_replace(turn, is_session_start=True)
             delay_s = (
                 offset_by_corr[state.x_correlation_id] - t0_offset_ms
             ) / MILLIS_PER_SECOND

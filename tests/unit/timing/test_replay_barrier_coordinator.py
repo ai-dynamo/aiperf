@@ -150,6 +150,74 @@ async def test_scalar_peak_would_slip_d_after_only_one_completion() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pending_turns_exposes_deferred_dispatch_for_phase_handoff() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    issued: list[str] = []
+    pending_turn = _turn("d")
+
+    await coordinator.submit(
+        pending_turn,
+        lambda: _record_issue(issued, "d"),
+    )
+
+    assert issued == []
+    assert coordinator.pending_turns("root") == (pending_turn,)
+    assert coordinator.pending_turns_by_root() == {"root": (pending_turn,)}
+
+    for name in "abc":
+        coordinator.complete(_credit(name))
+    await asyncio.sleep(0)
+
+    assert issued == ["d"]
+    assert coordinator.pending_turns("root") == ()
+    assert coordinator.pending_turns_by_root() == {}
+
+
+@pytest.mark.asyncio
+async def test_paused_releases_retain_ready_pending_for_phase_handoff() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    issued: list[str] = []
+    pending_turn = _turn("d")
+
+    await coordinator.submit(
+        pending_turn,
+        lambda: _record_issue(issued, "d"),
+    )
+    coordinator.pause_releases()
+
+    for name in "abc":
+        coordinator.complete(_credit(name))
+    await asyncio.sleep(0)
+
+    assert issued == []
+    assert coordinator.pending_turns("root") == (pending_turn,)
+    assert coordinator.pending_turns_by_root() == {"root": (pending_turn,)}
+
+
+@pytest.mark.asyncio
+async def test_paused_releases_retain_new_ready_submissions() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    issued: list[str] = []
+    pending_turn = _turn("d")
+
+    for name in "abc":
+        coordinator.complete(_credit(name))
+    coordinator.pause_releases()
+    await coordinator.submit(
+        pending_turn,
+        lambda: _record_issue(issued, "d"),
+    )
+    await asyncio.sleep(0)
+
+    assert issued == []
+    assert coordinator.pending_turns("root") == (pending_turn,)
+    assert coordinator.pending_turns_by_root() == {"root": (pending_turn,)}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "submission_order",
     [

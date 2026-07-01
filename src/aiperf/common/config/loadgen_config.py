@@ -482,7 +482,8 @@ class LoadGeneratorConfig(BaseConfig):
             description="Additional agentic replay warmup duration in seconds. "
             "After the normal snapshot warmup drains, AIPerf continues the live "
             "trajectories without recorded idle delays and with one-token outputs, "
-            "then drains and resumes profiling from the resulting trajectory state.",
+            "then drains and resumes profiling from the resulting trajectory state "
+            "using each live stream's residual next-turn delay.",
         ),
         CLIParameter(
             name=("--agentic-cache-warmup-duration",),

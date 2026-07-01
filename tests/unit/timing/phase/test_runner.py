@@ -827,6 +827,32 @@ class TestEdgeCases:
         assert r._lifecycle.is_complete
         r._branch_orchestrator.has_pending_branch_work.assert_not_called()
 
+    async def test_cache_warmup_sending_complete_preserves_replay_gate_until_finalize(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        r._credit_issuer.replay_gate.cancel = AsyncMock()
+        r._lifecycle.start()
+
+        with patch.object(
+            r,
+            "_wait_for_event_with_timeout",
+            new=AsyncMock(return_value=True),
+        ):
+            await r._wait_for_sending_complete(strategy)
+
+        r._credit_issuer.replay_gate.cancel.assert_not_awaited()
+
     async def test_cache_warmup_handoff_polls_until_wire_drain(
         self,
         conv_src: MagicMock,
@@ -857,6 +883,55 @@ class TestEdgeCases:
             await r._wait_for_returning_complete(strategy)
 
         sleep.assert_awaited_once_with(0.1)
+        assert r._progress.all_credits_returned_event.is_set()
+        assert r._lifecycle.is_complete
+
+    async def test_cache_warmup_handoff_timeout_cancels_and_aborts(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP, grace=0.01),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+        r._progress.freeze_sent_counts()
+
+        with (
+            patch.object(
+                type(r._progress),
+                "in_flight",
+                new_callable=PropertyMock,
+                return_value=1,
+            ),
+            patch.object(
+                r,
+                "_wait_for_accelerated_warmup_wire_drain",
+                new=AsyncMock(side_effect=asyncio.TimeoutError),
+            ) as drain,
+            pytest.raises(
+                TimeoutError,
+                match="Accelerated warmup drain timed out",
+            ),
+        ):
+            await r._wait_for_returning_complete(strategy)
+
+        assert drain.await_count == 2
+        router.cancel_all_credits.assert_awaited_once()
+        conc.release_stuck_slots.assert_called_once()
         assert r._progress.all_credits_returned_event.is_set()
         assert r._lifecycle.is_complete
 
