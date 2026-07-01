@@ -35,10 +35,12 @@ def _prompt_token_counts(stdout: str) -> list[int]:
 class TestChatCommand:
     """End-to-end checks that ``aiperf chat`` streams a reply and prints stats."""
 
-    async def test_quick_prints_minimal_stats(
+    async def test_quick_prints_stats(
         self, aiperf_runner: AIPerfRunnerFn, aiperf_mock_server: AIPerfMockServer
     ) -> None:
-        """``--quick`` streams one reply and prints only the TTFT/TPS block."""
+        """``--quick`` streams one reply and prints the stats block, including
+        the cache line (prefix caches are server-side, so even a single-shot
+        request reports a hit rate when the server surfaces cached tokens)."""
         result = await aiperf_runner(
             [
                 "chat",
@@ -55,9 +57,7 @@ class TestChatCommand:
         assert result.exit_code == 0, result.stderr
         assert "TTFT:" in result.stdout
         assert "TPS:" in result.stdout
-        # Single-shot stays minimal: no multi-turn-only lines.
-        assert "ITL:" not in result.stdout
-        assert "Cache:" not in result.stdout
+        assert "Cache:" in result.stdout
 
     async def test_multi_turn_resends_history(
         self, aiperf_mock_server: AIPerfMockServer
@@ -67,9 +67,10 @@ class TestChatCommand:
         stdout = await _run_chat_over_stdin(
             aiperf_mock_server.url, "tell me a short story\ncontinue the story\n"
         )
+        # The full per-turn block (all four metrics) prints for each turn.
         assert stdout.count("TTFT:") == 2
-        assert "ITL:" in stdout
-        assert "Cache:" in stdout
+        for label in ("TPS:", "ITL:", "Cache:"):
+            assert label in stdout
         prompts = _prompt_token_counts(stdout)
         assert len(prompts) == 2
         # Turn 2 resends turn 1 (user + assistant), so its prompt is larger.

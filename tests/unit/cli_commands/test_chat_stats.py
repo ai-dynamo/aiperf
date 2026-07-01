@@ -15,6 +15,7 @@ from pytest import param
 from aiperf.cli_commands._chat_stats import (
     build_record,
     compute_record_metrics,
+    count_tokens,
     format_stats,
     input_tokens_from_usage,
     make_response_data,
@@ -22,6 +23,7 @@ from aiperf.cli_commands._chat_stats import (
 )
 from aiperf.common.models.record_models import (
     ParsedResponse,
+    ParsedResponseRecord,
     ReasoningResponseData,
     TextResponseData,
 )
@@ -71,7 +73,15 @@ def test_make_response_data_empty_is_none() -> None:
     assert make_response_data(None, None) is None
 
 
-def _record(start_ns, perf_nss, *, output, reasoning=None, input=None, usage=None):
+def _record(
+    start_ns: int,
+    perf_nss: list[int],
+    *,
+    output: int | None,
+    reasoning: int | None = None,
+    input_tokens: int | None = None,
+    usage: dict | None = None,
+) -> ParsedResponseRecord:
     """Build a record with content responses at the given timestamps.
 
     Pass ``usage`` (a raw OpenAI-style usage dict) to attach a server usage
@@ -88,7 +98,7 @@ def _record(start_ns, perf_nss, *, output, reasoning=None, input=None, usage=Non
         end_ns=perf_nss[-1],
         timestamp_ns=start_ns,
         responses=responses,
-        input_tokens=input,
+        input_tokens=input_tokens,
         output_tokens=output,
         reasoning_tokens=reasoning,
     )
@@ -111,10 +121,21 @@ def test_osl_includes_reasoning_tokens_like_profile() -> None:
     assert metrics[OutputSequenceLengthMetric.tag] == 186
 
 
-def test_format_stats_renders_vllm_style_block() -> None:
-    record = _record(0, [20 * 1_000_000, 1_200 * 1_000_000], output=186)
+def test_format_stats_renders_full_block() -> None:
+    # With all data present the block is TTFT, TPS, ITL, and Cache -- one
+    # ordered set of first-class per-turn metrics.
+    # ttft=20ms, latency=520ms, osl=101 -> TPS=101/0.52, ITL=(520-20)/100=5ms.
+    usage = {"prompt_tokens": 480, "prompt_tokens_details": {"cached_tokens": 412}}
+    record = _record(
+        0, [20 * 1_000_000, 520 * 1_000_000], output=101, input_tokens=480, usage=usage
+    )
     stats = format_stats(compute_record_metrics(record), reasoning_tokens=None)
-    assert stats == ("TTFT: 20.00 ms\nTPS:  155.00 tokens/s (186 tokens in 1.20s)")
+    assert stats == (
+        "TTFT: 20.00 ms\n"
+        "TPS:  194.23 tokens/s (101 tokens in 0.52s)\n"
+        "ITL:  5.00 ms/token (decode 200.00 tokens/s)\n"
+        "Cache: 412/480 prompt tokens cached (85.8%)"
+    )
 
 
 def test_format_stats_annotates_reasoning_tokens() -> None:
@@ -124,49 +145,28 @@ def test_format_stats_annotates_reasoning_tokens() -> None:
     assert "186 tokens, 142 reasoning in 1.20s" in stats
 
 
-def test_format_stats_interactive_includes_decode_line() -> None:
-    # ttft=20ms, latency=520ms, osl=101 -> ITL=(520-20)/100=5ms, decode=200 tok/s
-    record = _record(0, [20 * 1_000_000, 520 * 1_000_000], output=101)
-    stats = format_stats(
-        compute_record_metrics(record), reasoning_tokens=None, interactive=True
-    )
-    assert "ITL:  5.00 ms/token (decode 200.00 tokens/s)" in stats
-
-
-def test_format_stats_single_shot_omits_decode_and_cache_lines() -> None:
-    usage = {"prompt_tokens": 480, "prompt_tokens_details": {"cached_tokens": 412}}
-    record = _record(
-        0, [20 * 1_000_000, 520 * 1_000_000], output=101, input=480, usage=usage
-    )
+def test_format_stats_omits_decode_line_for_single_token() -> None:
+    # ITL needs >=2 output tokens; a single-token reply has no inter-token gap.
+    record = _record(0, [20 * 1_000_000], output=1)
     stats = format_stats(compute_record_metrics(record), reasoning_tokens=None)
     assert "ITL:" not in stats
-    assert "Cache:" not in stats
-
-
-def test_format_stats_interactive_includes_cache_hit_rate() -> None:
-    # OpenAI/vLLM shape: prompt_tokens_details.cached_tokens are cache reads.
-    usage = {"prompt_tokens": 480, "prompt_tokens_details": {"cached_tokens": 412}}
-    record = _record(
-        0, [20 * 1_000_000, 520 * 1_000_000], output=101, input=480, usage=usage
-    )
-    stats = format_stats(
-        compute_record_metrics(record), reasoning_tokens=None, interactive=True
-    )
-    assert "Cache: 412/480 prompt tokens cached (85.8%)" in stats
 
 
 def test_format_stats_cache_line_omitted_without_usage() -> None:
-    # No usage chunk -> no cache metric -> no Cache line, even when interactive.
+    # No usage chunk -> no cache metric -> no Cache line.
     record = _record(0, [20 * 1_000_000, 520 * 1_000_000], output=101)
-    stats = format_stats(
-        compute_record_metrics(record), reasoning_tokens=None, interactive=True
-    )
+    stats = format_stats(compute_record_metrics(record), reasoning_tokens=None)
     assert "Cache:" not in stats
 
 
 def test_input_tokens_from_usage_reads_prompt_tokens() -> None:
     assert input_tokens_from_usage({"prompt_tokens": 480}) == 480
     assert input_tokens_from_usage(None) is None
+
+
+def test_count_tokens_encodes_nonempty_and_returns_none_for_empty() -> None:
+    assert count_tokens(lambda s: list(s), "abc") == 3
+    assert count_tokens(lambda s: list(s), "") is None
 
 
 def test_format_stats_no_tokens_received() -> None:

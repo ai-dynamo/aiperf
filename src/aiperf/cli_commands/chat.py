@@ -38,15 +38,11 @@ from aiperf.cli_commands._chat_stats import (
     split_delta,
 )
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models.record_models import ParsedResponse
+from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 app = App(name="chat")
-
-# SSE line markers for our hand-rolled streaming parse. aiperf's
-# AsyncSSEStreamReader parses fields generically and exposes no shared
-# ``data:`` / ``[DONE]`` constant to import, so they live here.
-_SSE_DATA_PREFIX = b"data:"
-_SSE_DONE = b"[DONE]"
 
 # Fail fast on an unreachable endpoint, but leave generous time for a slow first
 # token / long generation -- no ``total`` cap so streaming is never truncated
@@ -87,28 +83,24 @@ def _build_turn_messages(
 async def _consume_stream(
     resp: aiohttp.ClientResponse,
 ) -> tuple[list[ParsedResponse], list[str], list[str], dict | None]:
-    """Read the SSE stream: collect parsed responses (timestamped at arrival),
-    print content/reasoning live, and capture the final usage chunk.
+    """Read the SSE stream via aiperf's ``AsyncSSEStreamReader``: collect parsed
+    responses (timestamped at arrival), print content/reasoning live, and
+    capture the final usage chunk.
 
     Returns ``(responses, output_parts, reasoning_parts, last_usage)``.
+
+    Raises:
+        SSEResponseError: if the server signals a mid-stream ``event: error``
+            after a 200 OK (surfaced instead of reported as a truncated reply).
     """
     responses: list[ParsedResponse] = []
     output_parts: list[str] = []
     reasoning_parts: list[str] = []
     last_usage: dict | None = None
-    async for raw_line in resp.content:
-        line = raw_line.strip()
-        if not line.startswith(_SSE_DATA_PREFIX):
-            continue
-        data = line[len(_SSE_DATA_PREFIX) :].strip()
-        if data == _SSE_DONE:
-            break
-        try:
-            chunk = orjson.loads(data)
-        except orjson.JSONDecodeError:
-            # Tolerate a malformed/non-JSON data line (proxy error page,
-            # truncated stream) rather than crashing the turn, mirroring the
-            # endpoint parser's degrade-to-skip behavior.
+    async for message in AsyncSSEStreamReader(resp.content):
+        AsyncSSEStreamReader.inspect_message_for_error(message)
+        chunk = message.get_json()
+        if not chunk:  # keep-alive, ``[DONE]``, or unparsable frame
             continue
         if chunk.get("usage"):
             last_usage = chunk["usage"]
@@ -119,7 +111,7 @@ async def _consume_stream(
         data_obj = make_response_data(content, reasoning)
         if data_obj is None:
             continue
-        responses.append(ParsedResponse(perf_ns=time.perf_counter_ns(), data=data_obj))
+        responses.append(ParsedResponse(perf_ns=message.perf_ns, data=data_obj))
         if reasoning:
             reasoning_parts.append(reasoning)
             print(reasoning, end="", flush=True)
@@ -137,7 +129,6 @@ async def _run_turn(
     model: str,
     conversation: list[dict],
     encode: Callable[[str], list],
-    interactive: bool,
 ) -> str:
     """Stream one chat completion, print the reply live + a stats block, and
     return the assistant's text content (for appending to the conversation)."""
@@ -151,7 +142,11 @@ async def _run_turn(
     }
     start_ns = time.perf_counter_ns()
     timestamp_ns = time.time_ns()
-    async with session.post(url, json=payload, headers=headers) as resp:
+    # Serialize with orjson (repo-wide JSON rule) and send bytes; setting the
+    # content type ourselves since we bypass aiohttp's ``json=`` encoder.
+    body = orjson.dumps(payload)
+    post_headers = {**headers, "Content-Type": "application/json"}
+    async with session.post(url, data=body, headers=post_headers) as resp:
         resp.raise_for_status()
         responses, output_parts, reasoning_parts, last_usage = await _consume_stream(
             resp
@@ -179,12 +174,11 @@ async def _run_turn(
         output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
     )
-    print(
-        format_stats(
-            compute_record_metrics(record), reasoning_tokens, interactive=interactive
-        )
-    )
-    return "".join(output_parts)
+    print(format_stats(compute_record_metrics(record), reasoning_tokens))
+    # Fall back to the reasoning text when the reply had no visible content, so a
+    # reasoning-only turn isn't recorded as an empty assistant message in history
+    # (mirrors profile's build_assistant_turn reasoning-only fallback).
+    return "".join(output_parts) or "".join(reasoning_parts)
 
 
 async def _read_user_message(prompt: str) -> str:
@@ -207,19 +201,38 @@ async def _read_user_message(prompt: str) -> str:
         # in this thread. Signals never reach a non-main thread, so Exception
         # (not BaseException) is the correct breadth.
         except Exception as e:  # noqa: BLE001
-            _settle(loop, future.set_exception, e)
+            _settle(loop, future, exc=e)
         else:
-            _settle(loop, future.set_result, line)
+            _settle(loop, future, result=line)
 
     threading.Thread(target=_read, daemon=True, name="aiperf-chat-input").start()
     return await future
 
 
-def _settle(loop: asyncio.AbstractEventLoop, setter: Callable, value: object) -> None:
-    """Resolve the future from the read thread, ignoring a closed loop (e.g.
-    when the read returns during Ctrl-C shutdown)."""
+def _settle(
+    loop: asyncio.AbstractEventLoop,
+    future: asyncio.Future[str],
+    *,
+    result: str | None = None,
+    exc: BaseException | None = None,
+) -> None:
+    """Resolve ``future`` from the read thread.
+
+    No-ops if the future is already done -- Ctrl-C / task cancellation can
+    complete it before ``input()`` returns, and setting a result on a done
+    future raises ``InvalidStateError`` -- or if the loop is already closed.
+    """
+
+    def _apply() -> None:
+        if future.done():
+            return
+        if exc is not None:
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
+
     with contextlib.suppress(RuntimeError):
-        loop.call_soon_threadsafe(setter, value)
+        loop.call_soon_threadsafe(_apply)
 
 
 async def _chat_loop(
@@ -238,9 +251,6 @@ async def _chat_loop(
     )
 
     async with aiohttp.ClientSession(timeout=_REQUEST_TIMEOUT) as session:
-        # Single-shot keeps the minimal vLLM-style block; the interactive loop
-        # adds the ITL/decode + cache lines, where the headline TPS starts to
-        # mislead as growing history inflates TTFT.
         if quick is not None:
             await _run_turn(
                 session,
@@ -249,7 +259,6 @@ async def _chat_loop(
                 model=model,
                 conversation=_build_turn_messages(system_messages, [], quick),
                 encode=encode,
-                interactive=False,
             )
             return
 
@@ -275,12 +284,11 @@ async def _chat_loop(
                         system_messages, history, message
                     ),
                     encode=encode,
-                    interactive=True,
                 )
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError, SSEResponseError) as e:
                 # Keep the REPL alive on a transient failure (HTTP error, dropped
-                # connection, stall) -- report it and let the user retry instead
-                # of tearing down the whole session.
+                # connection, stall, or a mid-stream SSE error) -- report it and
+                # let the user retry instead of tearing down the whole session.
                 print(f"request failed: {e}", file=sys.stderr)
                 continue
             if not no_history:

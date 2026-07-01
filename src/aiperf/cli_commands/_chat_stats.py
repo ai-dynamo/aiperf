@@ -52,11 +52,14 @@ _METRIC_TAGS = (
 def split_delta(delta: dict) -> tuple[str | None, str | None]:
     """Split one streaming ``delta`` into ``(content, reasoning)`` text pieces.
 
-    Mirrors ``ChatEndpoint.extract_chat_response_data`` (``openai_chat.py``):
-    a server emits reasoning either in a dedicated ``reasoning_content`` /
-    ``reasoning`` field (when it runs a reasoning parser) or inline inside
-    ``content`` as ``<think>...</think>``. Keep this in sync with that method
-    so reasoning-token accounting matches ``aiperf profile``.
+    Reasoning is taken only from a dedicated ``reasoning_content`` /
+    ``reasoning`` field -- what a server emits when it runs a reasoning parser.
+    This matches ``ChatEndpoint.extract_chat_response_data`` (``openai_chat.py``),
+    which keys off the same fields. When a server instead emits reasoning inline
+    as ``<think>...</think>`` inside ``content`` (no reasoning parser), that text
+    stays in ``content`` and counts as output -- again exactly as ``aiperf
+    profile`` does, since neither path strips inline think tags. Either way,
+    reasoning-token accounting stays consistent with ``profile``.
     """
     content = delta.get("content")
     reasoning = delta.get("reasoning_content") or delta.get("reasoning")
@@ -137,26 +140,17 @@ def compute_record_metrics(record: ParsedResponseRecord) -> MetricRecordDict:
     return metrics
 
 
-def format_stats(
-    metrics: MetricRecordDict,
-    reasoning_tokens: int | None,
-    *,
-    interactive: bool = False,
-) -> str:
-    """Render the per-turn stats block from computed metric values.
+def format_stats(metrics: MetricRecordDict, reasoning_tokens: int | None) -> str:
+    """Render the per-turn stats block: TTFT, TPS, inter-token latency (ITL),
+    and prompt-cache hit rate.
 
-    TPS is the vLLM-familiar end-to-end rate (generated tokens / e2e latency,
-    which includes TTFT); OSL and latency themselves come straight from the
-    reused metric classes.
-
-    In ``interactive`` mode (the REPL loop, with or without history) two extra
-    lines are appended where they apply:
-    - ITL / decode-TPS, which isolates decode speed from prefill and so stays
-      comparable across turns even as resent history inflates TTFT.
-    - Prompt-cache hit rate, which climbs as the shared conversation prefix
-      gets served from the server's cache (low when ``--no-history`` is set,
-      since no prefix is resent). Both are omitted when the server does not
-      provide the underlying data.
+    Every value comes from the same metric classes ``aiperf profile`` uses.
+    TTFT and TPS always render (TPS is the vLLM-familiar end-to-end rate, which
+    includes TTFT). ITL and the cache hit rate render alongside them when their
+    data is available: ITL is defined only for >=2 output tokens, and the cache
+    rate needs the server to report cached prompt tokens (prefix caches are
+    server-side and shared across requests/sessions, so a hit does not require a
+    prior turn). Returns a placeholder when no tokens were received.
     """
     ttft_ns = metrics.get(TTFTMetric.tag)
     latency_ns = metrics.get(RequestLatencyMetric.tag)
@@ -169,21 +163,12 @@ def format_stats(
     tokens_desc = f"{osl} tokens"
     if reasoning_tokens:
         tokens_desc += f", {reasoning_tokens} reasoning"
+
     lines = [
         f"TTFT: {ttft_ns / NANOS_PER_MILLIS:.2f} ms",
         f"TPS:  {tps:.2f} tokens/s ({tokens_desc} in {latency_s:.2f}s)",
     ]
-    if interactive:
-        lines.extend(_interactive_stat_lines(metrics))
-    return "\n".join(lines)
 
-
-def _interactive_stat_lines(metrics: MetricRecordDict) -> list[str]:
-    """Build the interactive-only ITL and cache lines from computed metrics."""
-    lines: list[str] = []
-
-    # ITL requires >=2 output tokens; the metric raised NoMetricValue otherwise
-    # and the tag is simply absent.
     itl_ns = metrics.get(InterTokenLatencyMetric.tag)
     if itl_ns:
         decode_tps = NANOS_PER_SECOND / itl_ns
@@ -192,12 +177,10 @@ def _interactive_stat_lines(metrics: MetricRecordDict) -> list[str]:
             f"(decode {decode_tps:.2f} tokens/s)"
         )
 
-    # Cache hit rate needs both the prompt-token count and the server-reported
-    # cached-read count. Absent when the server doesn't report prompt-cache
-    # usage (no prefix caching, or the field isn't surfaced).
     isl = metrics.get(InputSequenceLengthMetric.tag)
     cache_read = metrics.get(UsagePromptCacheReadTokensMetric.tag)
     if isl and cache_read is not None:
         rate = 100 * cache_read / isl
         lines.append(f"Cache: {cache_read}/{isl} prompt tokens cached ({rate:.1f}%)")
-    return lines
+
+    return "\n".join(lines)

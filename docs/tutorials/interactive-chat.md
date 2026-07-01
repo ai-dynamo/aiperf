@@ -7,18 +7,19 @@ sidebar-title: Interactive Chat Sanity Checks
 # Interactive Chat Sanity Checks
 
 `aiperf chat` lets you talk to an OpenAI-compatible endpoint one message at a
-time and see per-turn speed stats (TTFT, TPS, generated tokens, end-to-end
-latency) after every reply. It is a lightweight sanity-check companion to
-`aiperf profile`: handy for confirming an endpoint is wired up correctly and
-getting a ballpark feel for performance before committing to a full benchmark
-run, and for eyeballing speculative-decoding or reasoning-model behavior where
-speedups are prompt-dependent.
+time and see per-turn speed stats — time to first token, throughput,
+inter-token latency, and prompt-cache hit rate — after every reply. It is a
+lightweight sanity-check companion to `aiperf profile`: handy for confirming an
+endpoint is wired up correctly and getting a ballpark feel for performance
+before committing to a full benchmark run, and for eyeballing
+speculative-decoding or reasoning-model behavior where speedups are
+prompt-dependent.
 
 It is deliberately minimal. For real benchmarking — concurrency, request rates,
 datasets, sampling knobs, artifacts, and statistical aggregation — use
-[`aiperf profile`](../../README.md#tutorials-and-feature-guides). The per-turn
-numbers `aiperf chat` prints are produced by the same metric definitions
-`profile` uses, so they stay consistent (including reasoning-token accounting).
+`aiperf profile`. Every number `aiperf chat` prints is produced by the same
+metric classes `profile` uses, so they stay consistent (including
+reasoning-token accounting).
 
 ---
 
@@ -50,19 +51,61 @@ Using model: Qwen/Qwen3-0.6B
 Hello! How can I help you today?
 TTFT: 20.06 ms
 TPS:  154.11 tokens/s (9 tokens in 0.06s)
+ITL:  6.31 ms/token (decode 158.40 tokens/s)
+Cache: 14/18 prompt tokens cached (77.8%)
 ```
 
+Every reply is followed by the same per-turn stats block, explained next.
+
+---
+
+## Reading the per-turn stats
+
+The block is the same in every mode (single-shot, multi-turn, or
+`--no-history`). All four values come from the same metric classes `aiperf
+profile` uses:
+
 - **TTFT** — time to first token (client-observed).
-- **TPS** — generated tokens divided by end-to-end latency. This is the
-  vLLM-familiar rate and *includes* TTFT, so it blends prefill and decode into
-  one number.
+- **TPS** — generated tokens divided by end-to-end latency. The vLLM-familiar
+  rate; it *includes* TTFT, so it blends prefill and decode into one number.
+- **ITL** (inter-token latency) / **decode** — a decode-focused rate that
+  excludes prefill. Because it ignores TTFT, it stays comparable across turns
+  even when a growing history inflates prefill (where TPS sags). Omitted for
+  single-token replies, where it is undefined.
+- **Cache** — prompt-cache hit rate (`cached / prompt tokens`). Prefix caches
+  are **server-side and shared across requests and sessions**, so a hit does
+  not require a prior turn in this conversation — a shared system prompt or any
+  prefix the server already cached (from earlier requests, other sessions, or
+  other clients) can hit, even on a first or single-shot message. It is read
+  from the server's `usage`, so it appears only when the server reports prompt
+  caching (see below), and reflects the same counts `aiperf profile` records.
+
+> **Don't see the `Cache:` line?** The server has to *report* cached tokens in
+> its `usage`, which is separate from merely *enabling* caching. Launch the
+> server accordingly:
+>
+> - **vLLM:** `--enable-prefix-caching` **and** `--enable-prompt-tokens-details`.
+>   The reporting flag is off by default and independent of prefix caching —
+>   without it vLLM sends `prompt_tokens_details: null` and no `Cache:` line
+>   appears.
+> - **SGLang:** `--enable-cache-report` (off by default).
+> - **TRT-LLM:** reports `cached_tokens` by default; no extra flag.
+>
+> A genuinely novel prefix is a cold miss (`Cache: 0/N … (0.0%)`); the rate
+> rises as prefixes are reused — within this session or already resident in the
+> server's cache. See
+> [Vendor Usage Field Reference](../reference/vendor-usage-fields.md) for the
+> full matrix.
 
 ---
 
 ## Interactive Multi-Turn Chat
 
-Omit `--quick` to start an interactive session. Conversation history is retained
-and resent each turn, so the model has full context. Press `Ctrl-D` to exit.
+Omit `--quick` to start an interactive session. History is retained and resent
+each turn, so the model has full context (press `Ctrl-D` to exit). Watching the
+same stats evolve turn over turn is the point: TTFT and the cache hit rate climb
+as the resent prefix grows, while ITL — the decode-only rate — stays roughly
+flat even as the headline TPS sags.
 
 ```bash
 aiperf chat --model Qwen/Qwen3-0.6B --url http://localhost:8000
@@ -84,40 +127,6 @@ ITL:  6.11 ms/token (decode 163.67 tokens/s)
 Cache: 56/72 prompt tokens cached (77.8%)
 ```
 
-Multi-turn mode adds two extra lines:
-
-**ITL** (inter-token latency) / **decode TPS**. This is intentional: as the
-conversation grows, the resent history makes prefill (and therefore TTFT) larger
-each turn, which drags the headline TPS down even though the model's raw decode
-speed hasn't changed. ITL isolates decode speed from prefill, so it stays
-comparable across turns — making it the more honest number to watch in a
-multi-turn session. (ITL is undefined for single-token replies and is omitted in
-those cases.)
-
-**Cache** — prompt-cache hit rate. Because each turn resends the conversation,
-the shared prefix can be served from the server's prefix cache. This line shows
-how many of the prompt tokens were cache hits (`cached / prompt tokens`), which
-typically climbs as the conversation grows. It is reported from the server's
-`usage` (`prompt_tokens_details.cached_tokens` and friends), so it appears only
-when the server supports and reports prompt caching, and reflects the same
-counts `aiperf profile` would record.
-
-> **Don't see the `Cache:` line?** The server has to *report* cached tokens in
-> its `usage`, which is separate from merely *enabling* caching. Launch the
-> server accordingly:
->
-> - **vLLM:** `--enable-prefix-caching` **and** `--enable-prompt-tokens-details`.
->   The reporting flag is off by default and independent of prefix caching —
->   without it vLLM sends `prompt_tokens_details: null` and no `Cache:` line
->   appears.
-> - **SGLang:** `--enable-cache-report` (off by default).
-> - **TRT-LLM:** reports `cached_tokens` by default; no extra flag.
->
-> The first turn is always a cold miss (`Cache: 0/N … (0.0%)`); the rate rises
-> on later turns as the shared prefix is reused. See
-> [Vendor Usage Field Reference](../reference/vendor-usage-fields.md) for the
-> full matrix.
-
 ---
 
 ## Stateless Turns (`--no-history`)
@@ -130,11 +139,12 @@ flow, where the model has no memory of prior turns:
 aiperf chat --model Qwen/Qwen3-0.6B --no-history
 ```
 
-This is useful for measuring cold, single-turn performance repeatedly without
-the prefill cost of a growing history. TTFT and ITL stay meaningful; the cache
-line will be low (there is no shared prefix being resent, beyond an optional
-system prompt). `--no-history` is ignored with `--quick`, which is already a
-single request.
+This is useful for measuring single-turn performance repeatedly without the
+prefill cost of a growing history. The same stats block still prints; the cache
+hit rate won't climb from *this* session's history (none is resent), but it can
+still be non-zero when the server already holds a matching prefix — e.g. a
+shared system prompt or a prefix cached from earlier requests. `--no-history` is
+ignored with `--quick`, which is already a single request.
 
 ---
 
@@ -144,7 +154,7 @@ When the endpoint serves a reasoning model, `aiperf chat` counts reasoning
 tokens the same way `aiperf profile` does. Whether the server emits reasoning in
 a dedicated `reasoning_content` field (via a reasoning parser) or inline as
 `<think>...</think>` in the content, the generated reasoning tokens are included
-in the token total, and a separate reasoning count is shown:
+in the token total, and a separate reasoning count is shown in the TPS line:
 
 ```
 TTFT: 20.06 ms
