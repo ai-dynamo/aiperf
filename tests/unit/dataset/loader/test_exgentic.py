@@ -393,6 +393,25 @@ def test_invalid_filter_lists_typed_values() -> None:
         _loader({"source_model": "unknown"})
 
 
+def test_v1_unsupported_filter_pair_fails_before_loading() -> None:
+    with pytest.raises(DatasetLoaderError, match="Unsupported.*available source"):
+        _loader(
+            {
+                "harness": "tool_calling_with_shortlisting",
+                "source_model": "gpt-4.1",
+            }
+        )
+
+
+def test_v2_unsupported_filter_pair_fails_before_loading() -> None:
+    with pytest.raises(DatasetLoaderError, match="Unsupported.*DeepSeek-V3.2"):
+        ExgenticV2DatasetLoader(
+            filters={"harness": "tool_calling", "source_model": "gpt-4.1"},
+            hf_dataset_name="Exgentic/agent-llm-traces-v2",
+            streaming=True,
+        )
+
+
 @pytest.mark.asyncio
 async def test_explicit_entries_win_over_request_count() -> None:
     run = make_run_from_cli(
