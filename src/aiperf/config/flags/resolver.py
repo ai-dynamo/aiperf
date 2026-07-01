@@ -22,6 +22,7 @@ from aiperf.common.enums import DatasetType
 from aiperf.config.flags._resolver_adaptive import (
     apply_basic_adaptive_scale_overrides,
 )
+from aiperf.config.flags._resolver_helpers import promote_benchmark_magic_lists
 from aiperf.config.flags._resolver_server_metrics import (
     build_server_metrics_override,
     normalize_server_metrics_base_for_override,
@@ -105,25 +106,13 @@ def resolve_config(
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
-    benchmark = merged.get("benchmark")
-    if isinstance(benchmark, dict):
-        sweep_type = getattr(cli_config, "sweep_type", "grid")
-        _promote_cli_dataset_magic_lists(benchmark, cli_config, sweep_type=sweep_type)
-        _retarget_dataset_magic_lists(benchmark)
-        _promote_magic_lists_to_sweep_block(benchmark, sweep_type=sweep_type)
-        promoted_sweep = benchmark.pop("sweep", None)
-        if isinstance(promoted_sweep, dict):
-            existing_sweep = merged.get("sweep")
-            if isinstance(existing_sweep, dict):
-                existing_sweep.setdefault(
-                    "type", promoted_sweep.get("type", sweep_type)
-                )
-                existing_sweep.setdefault("parameters", {})
-                existing_sweep["parameters"].update(
-                    promoted_sweep.get("parameters", {})
-                )
-            else:
-                merged["sweep"] = promoted_sweep
+    promote_benchmark_magic_lists(
+        merged,
+        cli_config,
+        promote_cli_dataset_magic_lists=_promote_cli_dataset_magic_lists,
+        promote_magic_lists_to_sweep_block=_promote_magic_lists_to_sweep_block,
+        retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
+    )
     return AIPerfConfig.model_validate(merged)
 
 
