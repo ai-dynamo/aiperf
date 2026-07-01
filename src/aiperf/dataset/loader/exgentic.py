@@ -7,6 +7,7 @@ import asyncio
 from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 import orjson
@@ -36,27 +37,13 @@ class ExgenticSourceModel(CaseInsensitiveStrEnum):
     GPT_5_2 = "gpt-5.2-2025-12-11"
 
 
-_UNSUPPORTED_FILTER_PAIRS = frozenset(
-    {
-        (ExgenticHarness.OPENAI_SOLO, ExgenticSourceModel.GPT_5_2),
-        (ExgenticHarness.SMOLAGENTS_CODE, ExgenticSourceModel.CLAUDE_OPUS_4_5),
-        (ExgenticHarness.SMOLAGENTS_CODE, ExgenticSourceModel.GEMINI_3_PRO_PREVIEW),
-        (ExgenticHarness.SMOLAGENTS_CODE, ExgenticSourceModel.GPT_5_2),
-        (ExgenticHarness.TOOL_CALLING, ExgenticSourceModel.GPT_5_2),
-        (
-            ExgenticHarness.TOOL_CALLING_WITH_SHORTLISTING,
-            ExgenticSourceModel.CLAUDE_OPUS_4_5,
-        ),
-        (
-            ExgenticHarness.TOOL_CALLING_WITH_SHORTLISTING,
-            ExgenticSourceModel.GPT_4_1,
-        ),
-        (
-            ExgenticHarness.TOOL_CALLING_WITH_SHORTLISTING,
-            ExgenticSourceModel.GPT_5_2,
-        ),
-    }
-)
+class ExgenticBenchmark(CaseInsensitiveStrEnum):
+    APPWORLD = "appworld"
+    BROWSECOMPPLUS = "browsecompplus"
+    SWEBENCH = "swebench"
+    TAU2_AIRLINE = "tau2_airline"
+    TAU2_RETAIL = "tau2_retail"
+    TAU2_TELECOM = "tau2_telecom"
 
 
 class ExgenticDatasetFilters(AIPerfBaseModel):
@@ -69,6 +56,10 @@ class ExgenticDatasetFilters(AIPerfBaseModel):
     source_model: ExgenticSourceModel | None = Field(
         default=None,
         description="Source model recorded by Exgentic, distinct from the target model.",
+    )
+    benchmark: ExgenticBenchmark | None = Field(
+        default=None,
+        description="Source benchmark. Available for Exgentic v2 traces.",
     )
 
 
@@ -211,6 +202,20 @@ def _normalize_messages(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _normalize_system_instructions(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, str):
+        raise ValueError("gen_ai.system_instructions must be a string")
+    if not value:
+        return []
+    try:
+        parts = _parse_json_list(value, field="gen_ai.system_instructions")
+    except ValueError:
+        return [{"role": "system", "content": value}]
+    return _normalize_message({"role": "system", "parts": parts})
+
+
 def _normalize_tools(value: Any) -> list[dict[str, Any]] | None:
     if value is None:
         return None
@@ -230,6 +235,26 @@ def _normalize_tools(value: Any) -> list[dict[str, Any]] | None:
             }
         )
     return normalized or None
+
+
+def _request_extra_body(attributes: dict[str, Any]) -> dict[str, Any] | None:
+    extra_body: dict[str, Any] = {}
+    if (temperature := attributes.get("gen_ai.request.temperature")) is not None:
+        if (
+            not isinstance(temperature, int | float)
+            or isinstance(temperature, bool)
+            or not isfinite(temperature)
+        ):
+            raise ValueError("gen_ai.request.temperature must be finite")
+        extra_body["temperature"] = temperature
+    if (stop_sequences := attributes.get("gen_ai.request.stop_sequences")) is not None:
+        if not isinstance(stop_sequences, list) or not all(
+            isinstance(sequence, str) for sequence in stop_sequences
+        ):
+            raise ValueError("gen_ai.request.stop_sequences must be a list of strings")
+        if stop_sequences:
+            extra_body["stop"] = stop_sequences
+    return extra_body or None
 
 
 class ExgenticDatasetLoader(BaseHFDatasetLoader):
@@ -253,23 +278,6 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             raise DatasetLoaderError(
                 f"Invalid Exgentic dataset filters: {error}; available filters: {available}"
             ) from error
-        if (
-            self.filters.harness is not None
-            and self.filters.source_model is not None
-            and (self.filters.harness, self.filters.source_model)
-            in _UNSUPPORTED_FILTER_PAIRS
-        ):
-            available_models = ", ".join(
-                model.value
-                for model in ExgenticSourceModel
-                if (self.filters.harness, model) not in _UNSUPPORTED_FILTER_PAIRS
-            )
-            raise DatasetLoaderError(
-                "Unsupported Exgentic filter combination "
-                f"harness={self.filters.harness.value!r}, "
-                f"source_model={self.filters.source_model.value!r}; "
-                f"available source models for this harness: {available_models}"
-            )
         super().__init__(**kwargs)
         self._fixed_schedule = any(
             phase.type == PhaseType.FIXED_SCHEDULE
@@ -278,9 +286,11 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
 
     @staticmethod
     def _available_filters() -> str:
-        harnesses = ", ".join(item.value for item in ExgenticHarness)
-        models = ", ".join(item.value for item in ExgenticSourceModel)
-        return f"harness=[{harnesses}], source_model=[{models}]"
+        return (
+            f"harness=[{', '.join(item.value for item in ExgenticHarness)}], "
+            f"source_model=[{', '.join(item.value for item in ExgenticSourceModel)}], "
+            f"benchmark=[{', '.join(item.value for item in ExgenticBenchmark)}]"
+        )
 
     def _max_conversations(self) -> int:
         dataset = self.run.cfg.get_default_dataset()
@@ -298,13 +308,17 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
     ) -> list[Conversation]:
         return await asyncio.to_thread(self._convert_rows, data["dataset"])
 
-    def _matches_filters(self, harness: str, source_models: set[str]) -> bool:
+    def _matches_filters(
+        self, harness: str, source_models: set[str], benchmark: str | None
+    ) -> bool:
         if self.filters.harness is not None and harness != self.filters.harness:
             return False
-        return self.filters.source_model is None or any(
+        if self.filters.source_model is not None and not any(
             model.casefold() == str(self.filters.source_model).casefold()
             for model in source_models
-        )
+        ):
+            return False
+        return self.filters.benchmark is None or benchmark == self.filters.benchmark
 
     @staticmethod
     def _parse_span(
@@ -313,14 +327,16 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         span: dict[str, Any],
         stats: Counter[str],
     ) -> tuple[float, int, float, Turn] | None:
-        if span.get("type") != "llm_call":
+        attributes = span.get("attributes") or {}
+        if span.get("type") != "llm_call" and (
+            span.get("type") is not None
+            or attributes.get("gen_ai.operation.name") != "chat"
+        ):
             stats["non_llm"] += 1
             return None
         if (span.get("status") or {}).get("code") == 2:
             stats["failed"] += 1
             return None
-
-        attributes = span.get("attributes") or {}
         input_tokens = attributes.get("gen_ai.usage.input_tokens")
         output_tokens = attributes.get("gen_ai.usage.output_tokens")
         if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
@@ -331,18 +347,24 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         if input_tokens <= 0 or output_tokens <= 0:
             stats["zero_token"] += 1
             return None
-
         try:
             start_ms = _timestamp_ms(span["start_time"])
             end_ms = _timestamp_ms(span["end_time"])
             if end_ms < start_ms:
                 raise ValueError("span ends before it starts")
+            requested_max_tokens = attributes.get("gen_ai.request.max_tokens")
+            if requested_max_tokens is not None and (
+                not isinstance(requested_max_tokens, int) or requested_max_tokens < 1
+            ):
+                raise ValueError("gen_ai.request.max_tokens must be a positive integer")
             turn = Turn(
-                max_tokens=output_tokens,
-                raw_messages=_normalize_messages(
-                    attributes.get("gen_ai.input.messages")
-                ),
+                max_tokens=requested_max_tokens or output_tokens,
+                raw_messages=_normalize_system_instructions(
+                    attributes.get("gen_ai.system_instructions")
+                )
+                + _normalize_messages(attributes.get("gen_ai.input.messages")),
                 raw_tools=_normalize_tools(attributes.get("gen_ai.tool.definitions")),
+                extra_body=_request_extra_body(attributes),
                 extra_headers={"x-dynamo-session-id": session_id},
             )
         except (KeyError, TypeError, ValueError) as error:
@@ -404,13 +426,16 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             raise DatasetLoaderError(f"Exgentic row {row_index} has no harness")
         if not isinstance(session_id, str) or not session_id:
             raise DatasetLoaderError(f"Exgentic row {row_index} has no session_id")
-
         models, row_spans = _validated_row_lists(row_index, row)
         source_models = {canonical_source_model(value) for value in models}
         combinations.update((harness, model) for model in source_models)
-        if not self._matches_filters(harness, source_models):
+        benchmark = row.get("benchmark")
+        if not self._matches_filters(
+            harness,
+            source_models,
+            benchmark if isinstance(benchmark, str) else None,
+        ):
             return []
-
         spans = []
         for span_index, span in enumerate(row_spans):
             parsed = self._parse_span(session_id, span_index, span, stats)
@@ -422,7 +447,6 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         if session_id in seen_sessions:
             raise DatasetLoaderError(f"Duplicate Exgentic session_id {session_id!r}")
         seen_sessions.add(session_id)
-
         stats["sessions"] += 1
         stats["requests"] += len(spans)
         if self._fixed_schedule:
@@ -462,7 +486,8 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             raise DatasetLoaderError(
                 "No replayable Exgentic spans matched "
                 f"harness={self.filters.harness!s}, "
-                f"source_model={self.filters.source_model!s}; "
+                f"source_model={self.filters.source_model!s}, "
+                f"benchmark={self.filters.benchmark!s}; "
                 f"available combinations: {available or 'none'}"
             )
 

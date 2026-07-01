@@ -17,6 +17,7 @@ from aiperf.dataset.loader.exgentic import (
     ExgenticDatasetLoader,
     canonical_source_model,
 )
+from aiperf.dataset.loader.exgentic_v2 import ExgenticV2DatasetLoader
 from aiperf.plugin.enums import PublicDatasetType
 from tests.unit.conftest import make_run_from_cli
 
@@ -34,14 +35,18 @@ def _span(
     input_tokens: int = 100,
     output_tokens: int = 20,
     status: int = 1,
-    span_type: str = "llm_call",
+    span_type: str | None = "llm_call",
+    request_max_tokens: int | None = None,
+    temperature: float | None = None,
+    stop_sequences: list[str] | None = None,
+    system_instructions: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    span = {
         "start_time": start,
         "end_time": end,
-        "type": span_type,
         "status": {"code": status},
         "attributes": {
+            "gen_ai.operation.name": "chat",
             "gen_ai.input.messages": _message_json(messages),
             "gen_ai.output.messages": _message_json(
                 [
@@ -56,6 +61,17 @@ def _span(
             "gen_ai.usage.output_tokens": output_tokens,
         },
     }
+    if span_type is not None:
+        span["type"] = span_type
+    for key, value in {
+        "gen_ai.request.max_tokens": request_max_tokens,
+        "gen_ai.request.temperature": temperature,
+        "gen_ai.request.stop_sequences": stop_sequences,
+        "gen_ai.system_instructions": system_instructions,
+    }.items():
+        if value is not None:
+            span["attributes"][key] = value
+    return span
 
 
 def _row(
@@ -64,13 +80,17 @@ def _row(
     *,
     harness: str = "tool_calling",
     models: list[str] | None = None,
+    benchmark: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    row = {
         "harness": harness,
         "models": models or ["openai/azure/Kimi-K2.5"],
         "session_id": session_id,
         "spans": spans,
     }
+    if benchmark is not None:
+        row["benchmark"] = benchmark
+    return row
 
 
 def _loader(filters: dict[str, str] | None = None) -> ExgenticDatasetLoader:
@@ -278,6 +298,81 @@ async def test_filters_normalize_provider_aliases_and_limit_sessions() -> None:
     assert [conversation.session_id for conversation in conversations] == ["keep"]
 
 
+@pytest.mark.asyncio
+async def test_v2_converts_otel_spans_with_request_controls_and_benchmark_filter() -> (
+    None
+):
+    loader = ExgenticV2DatasetLoader(
+        filters={
+            "benchmark": "swebench",
+            "harness": "openai_solo",
+            "source_model": "gpt-5.2-2025-12-11",
+        },
+        hf_dataset_name="Exgentic/agent-llm-traces-v2",
+        streaming=True,
+    )
+    instructions = _message_json(
+        [{"type": "text", "content": "Follow the repository policy."}]
+    )
+    conversations = await loader.convert_to_conversations(
+        {
+            "dataset": [
+                _row(
+                    "skip",
+                    [
+                        _span(
+                            "2026-01-01T00:00:00Z",
+                            "2026-01-01T00:00:01Z",
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "parts": [{"type": "text", "content": "skip"}],
+                                }
+                            ],
+                            span_type=None,
+                        )
+                    ],
+                    harness="openai_solo",
+                    models=["gpt-5.2-2025-12-11"],
+                    benchmark="appworld",
+                ),
+                _row(
+                    "keep",
+                    [
+                        _span(
+                            "2026-01-01T00:00:00Z",
+                            "2026-01-01T00:00:01Z",
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "parts": [{"type": "text", "content": "keep"}],
+                                }
+                            ],
+                            span_type=None,
+                            request_max_tokens=512,
+                            temperature=0.7,
+                            stop_sequences=["END"],
+                            system_instructions=instructions,
+                        )
+                    ],
+                    harness="openai_solo",
+                    models=["gpt-5.2-2025-12-11"],
+                    benchmark="swebench",
+                ),
+            ]
+        }
+    )
+
+    turn = conversations[0].turns[0]
+    assert conversations[0].session_id == "keep"
+    assert turn.max_tokens == 512
+    assert turn.extra_body == {"temperature": 0.7, "stop": ["END"]}
+    assert turn.raw_messages == [
+        {"role": "system", "content": "Follow the repository policy."},
+        {"role": "user", "content": "keep"},
+    ]
+
+
 @pytest.mark.parametrize(
     "source, expected",
     [
@@ -296,16 +391,6 @@ def test_canonical_source_model_strips_provider_aliases(
 def test_invalid_filter_lists_typed_values() -> None:
     with pytest.raises(DatasetLoaderError, match=r"available filters:.*Kimi-K2.5"):
         _loader({"source_model": "unknown"})
-
-
-def test_unsupported_filter_pair_fails_before_loading() -> None:
-    with pytest.raises(DatasetLoaderError, match="Unsupported.*available source"):
-        _loader(
-            {
-                "harness": "tool_calling_with_shortlisting",
-                "source_model": "gpt-4.1",
-            }
-        )
 
 
 @pytest.mark.asyncio
@@ -381,6 +466,25 @@ async def test_huggingface_dataset_revision_is_pinned() -> None:
         trust_remote_code=False,
         streaming=True,
         revision="70036b93a04e61b0ea2706a68b962f4f26774587",
+    )
+
+
+@pytest.mark.asyncio
+async def test_v2_huggingface_dataset_revision_is_pinned() -> None:
+    load_dataset = MagicMock(return_value=[])
+    with patch("aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", load_dataset):
+        ExgenticV2DatasetLoader(
+            hf_dataset_name="Exgentic/agent-llm-traces-v2",
+            streaming=True,
+        )._load_hf_dataset()
+
+    load_dataset.assert_called_once_with(
+        "Exgentic/agent-llm-traces-v2",
+        name=None,
+        split="train",
+        trust_remote_code=False,
+        streaming=True,
+        revision="4b8ad4ab198438e5a170f9171c19c6a2cf7c1814",
     )
 
 
