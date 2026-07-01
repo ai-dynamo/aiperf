@@ -9,7 +9,7 @@ Mirrors lighteval's ``gsm8k_leaderboard`` task config
     gsm8k_leaderboard = LightevalTaskConfig(
         name="gsm8k",
         prompt_function=prompt.gsm8k,      # "Question: {question}\\nAnswer:"
-        hf_repo="gsm8k",
+        hf_repo="openai/gsm8k",
         hf_subset="main",
         evaluation_splits=["test"],
         few_shots_split=None,
@@ -54,14 +54,14 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-DATASET_NAME = "gsm8k"
+DATASET_NAME = "openai/gsm8k"
 DATASET_CONFIG = "main"
 TASK_NAME = "gsm8k"
 
 # lighteval's gsm8k_leaderboard task config: ``generation_size=256``.
 DEFAULT_GENERATION_SIZE = 256
 
-# Schema field names in the ``gsm8k`` (``main``) dataset.
+# Schema field names in the ``openai/gsm8k`` (``main``) dataset.
 QUESTION_FIELD = "question"
 ANSWER_FIELD = "answer"
 
@@ -69,7 +69,7 @@ ANSWER_FIELD = "answer"
 class GSM8KBenchmark(AIPerfLoggerMixin):
     """GSM8K lighteval-aligned benchmark loader.
 
-    Loads ``gsm8k`` (``main`` subset, test split) and emits one user
+    Loads ``openai/gsm8k`` (``main`` subset, test split) and emits one user
     message per problem formatted as ``"Question: {question}\\nAnswer:"``
     — matching lighteval's ``prompt.gsm8k``. Gold is the raw ``answer``
     field (which ends in ``#### <number>``); ``LightevalGSM8KGrader``

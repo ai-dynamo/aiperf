@@ -1066,11 +1066,134 @@
                       "default": null,
                       "description": "Request cancellation testing configuration."
                     },
+                    "sla": {
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                      "title": "Sla",
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
+                    },
                     "seamless": {
                       "default": false,
                       "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
                       "title": "Seamless",
                       "type": "boolean"
+                    },
+                    "adaptiveScale": {
+                      "default": false,
+                      "description": "Enable single-run adaptive scale control for this phase.",
+                      "title": "Adaptivescale",
+                      "type": "boolean"
+                    },
+                    "adaptiveSustainDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+                      "title": "Adaptivesustainduration"
+                    },
+                    "adaptiveAssessmentPeriod": {
+                      "anyOf": [
+                        {
+                          "minimum": 1.0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Duration in seconds for each adaptive scale SLA assessment window.",
+                      "title": "Adaptiveassessmentperiod"
+                    },
+                    "adaptiveMinCompletedRequests": {
+                      "default": 1,
+                      "description": "Minimum completed requests needed before an adaptive SLA window can make a decision.",
+                      "minimum": 1,
+                      "title": "Adaptivemincompletedrequests",
+                      "type": "integer"
+                    },
+                    "adaptiveControlVariable": {
+                      "const": "concurrency",
+                      "default": "concurrency",
+                      "description": "Named adaptive control variable. Only concurrency is supported in v1.",
+                      "title": "Adaptivecontrolvariable",
+                      "type": "string"
+                    },
+                    "adaptiveScaleMinConcurrency": {
+                      "default": 1,
+                      "description": "Minimum concurrency used by adaptive scale discovery.",
+                      "minimum": 1,
+                      "title": "Adaptivescaleminconcurrency",
+                      "type": "integer"
+                    },
+                    "adaptiveScaleStrategyType": {
+                      "const": "ramp_until_fail",
+                      "default": "ramp_until_fail",
+                      "description": "Adaptive scale controller strategy. v1 supports ramp_until_fail.",
+                      "title": "Adaptivescalestrategytype",
+                      "type": "string"
+                    },
+                    "adaptiveScaleStepPolicy": {
+                      "default": "sla_margin",
+                      "description": "Adaptive scale increase policy. sla_margin uses normalized SLA margin to choose larger steps when far from the boundary; fixed_percent_step uses a fixed percentage of the current control value.",
+                      "enum": [
+                        "sla_margin",
+                        "fixed_percent_step"
+                      ],
+                      "title": "Adaptivescalesteppolicy",
+                      "type": "string"
+                    },
+                    "adaptiveScaleBaseStep": {
+                      "default": 10,
+                      "description": "Minimum adaptive scale step for SLA-margin policy.",
+                      "minimum": 1,
+                      "title": "Adaptivescalebasestep",
+                      "type": "integer"
+                    },
+                    "adaptiveScaleMaxStepMultiplier": {
+                      "default": 4,
+                      "description": "Maximum base-step multiplier for SLA-margin policy.",
+                      "minimum": 1,
+                      "title": "Adaptivescalemaxstepmultiplier",
+                      "type": "integer"
+                    },
+                    "adaptiveScaleStepPercent": {
+                      "default": 25.0,
+                      "description": "Percent of current concurrency used by fixed-percent adaptive scaling.",
+                      "exclusiveMinimum": 0,
+                      "title": "Adaptivescalesteppercent",
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -1228,6 +1351,36 @@
                       ],
                       "default": null,
                       "description": "Request cancellation testing configuration."
+                    },
+                    "sla": {
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                      "title": "Sla",
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -1410,6 +1563,36 @@
                       ],
                       "default": null,
                       "description": "Request cancellation testing configuration."
+                    },
+                    "sla": {
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                      "title": "Sla",
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -1607,6 +1790,36 @@
                       "default": null,
                       "description": "Request cancellation testing configuration."
                     },
+                    "sla": {
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                      "title": "Sla",
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
+                    },
                     "seamless": {
                       "default": false,
                       "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
@@ -1788,6 +2001,36 @@
                       ],
                       "default": null,
                       "description": "Request cancellation testing configuration."
+                    },
+                    "sla": {
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                      "title": "Sla",
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -1977,6 +2220,36 @@
                       ],
                       "default": null,
                       "description": "Request cancellation testing configuration."
+                    },
+                    "sla": {
+                      "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                      "title": "Sla",
+                      "anyOf": [
+                        {
+                          "description": "SLA filters evaluated by adaptive load controllers.",
+                          "items": {
+                            "$ref": "#/$defs/SLAFilter"
+                          },
+                          "title": "Sla",
+                          "type": "array"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "number",
+                                  "string"
+                                ]
+                              }
+                            }
+                          },
+                          "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                        }
+                      ]
                     },
                     "seamless": {
                       "default": false,
@@ -2783,11 +3056,134 @@
                   "default": null,
                   "description": "Request cancellation testing configuration."
                 },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
+                },
                 "seamless": {
                   "default": false,
                   "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
                   "title": "Seamless",
                   "type": "boolean"
+                },
+                "adaptiveScale": {
+                  "default": false,
+                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "title": "Adaptivescale",
+                  "type": "boolean"
+                },
+                "adaptiveSustainDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+                  "title": "Adaptivesustainduration"
+                },
+                "adaptiveAssessmentPeriod": {
+                  "anyOf": [
+                    {
+                      "minimum": 1.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Duration in seconds for each adaptive scale SLA assessment window.",
+                  "title": "Adaptiveassessmentperiod"
+                },
+                "adaptiveMinCompletedRequests": {
+                  "default": 1,
+                  "description": "Minimum completed requests needed before an adaptive SLA window can make a decision.",
+                  "minimum": 1,
+                  "title": "Adaptivemincompletedrequests",
+                  "type": "integer"
+                },
+                "adaptiveControlVariable": {
+                  "const": "concurrency",
+                  "default": "concurrency",
+                  "description": "Named adaptive control variable. Only concurrency is supported in v1.",
+                  "title": "Adaptivecontrolvariable",
+                  "type": "string"
+                },
+                "adaptiveScaleMinConcurrency": {
+                  "default": 1,
+                  "description": "Minimum concurrency used by adaptive scale discovery.",
+                  "minimum": 1,
+                  "title": "Adaptivescaleminconcurrency",
+                  "type": "integer"
+                },
+                "adaptiveScaleStrategyType": {
+                  "const": "ramp_until_fail",
+                  "default": "ramp_until_fail",
+                  "description": "Adaptive scale controller strategy. v1 supports ramp_until_fail.",
+                  "title": "Adaptivescalestrategytype",
+                  "type": "string"
+                },
+                "adaptiveScaleStepPolicy": {
+                  "default": "sla_margin",
+                  "description": "Adaptive scale increase policy. sla_margin uses normalized SLA margin to choose larger steps when far from the boundary; fixed_percent_step uses a fixed percentage of the current control value.",
+                  "enum": [
+                    "sla_margin",
+                    "fixed_percent_step"
+                  ],
+                  "title": "Adaptivescalesteppolicy",
+                  "type": "string"
+                },
+                "adaptiveScaleBaseStep": {
+                  "default": 10,
+                  "description": "Minimum adaptive scale step for SLA-margin policy.",
+                  "minimum": 1,
+                  "title": "Adaptivescalebasestep",
+                  "type": "integer"
+                },
+                "adaptiveScaleMaxStepMultiplier": {
+                  "default": 4,
+                  "description": "Maximum base-step multiplier for SLA-margin policy.",
+                  "minimum": 1,
+                  "title": "Adaptivescalemaxstepmultiplier",
+                  "type": "integer"
+                },
+                "adaptiveScaleStepPercent": {
+                  "default": 25.0,
+                  "description": "Percent of current concurrency used by fixed-percent adaptive scaling.",
+                  "exclusiveMinimum": 0,
+                  "title": "Adaptivescalesteppercent",
+                  "type": "number"
                 }
               },
               "required": [
@@ -2945,6 +3341,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3127,6 +3553,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3324,6 +3780,36 @@
                   "default": null,
                   "description": "Request cancellation testing configuration."
                 },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
+                },
                 "seamless": {
                   "default": false,
                   "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
@@ -3505,6 +3991,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3694,6 +4210,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -3901,11 +4447,134 @@
                   "default": null,
                   "description": "Request cancellation testing configuration."
                 },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
+                },
                 "seamless": {
                   "default": false,
                   "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
                   "title": "Seamless",
                   "type": "boolean"
+                },
+                "adaptiveScale": {
+                  "default": false,
+                  "description": "Enable single-run adaptive scale control for this phase.",
+                  "title": "Adaptivescale",
+                  "type": "boolean"
+                },
+                "adaptiveSustainDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+                  "title": "Adaptivesustainduration"
+                },
+                "adaptiveAssessmentPeriod": {
+                  "anyOf": [
+                    {
+                      "minimum": 1.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Duration in seconds for each adaptive scale SLA assessment window.",
+                  "title": "Adaptiveassessmentperiod"
+                },
+                "adaptiveMinCompletedRequests": {
+                  "default": 1,
+                  "description": "Minimum completed requests needed before an adaptive SLA window can make a decision.",
+                  "minimum": 1,
+                  "title": "Adaptivemincompletedrequests",
+                  "type": "integer"
+                },
+                "adaptiveControlVariable": {
+                  "const": "concurrency",
+                  "default": "concurrency",
+                  "description": "Named adaptive control variable. Only concurrency is supported in v1.",
+                  "title": "Adaptivecontrolvariable",
+                  "type": "string"
+                },
+                "adaptiveScaleMinConcurrency": {
+                  "default": 1,
+                  "description": "Minimum concurrency used by adaptive scale discovery.",
+                  "minimum": 1,
+                  "title": "Adaptivescaleminconcurrency",
+                  "type": "integer"
+                },
+                "adaptiveScaleStrategyType": {
+                  "const": "ramp_until_fail",
+                  "default": "ramp_until_fail",
+                  "description": "Adaptive scale controller strategy. v1 supports ramp_until_fail.",
+                  "title": "Adaptivescalestrategytype",
+                  "type": "string"
+                },
+                "adaptiveScaleStepPolicy": {
+                  "default": "sla_margin",
+                  "description": "Adaptive scale increase policy. sla_margin uses normalized SLA margin to choose larger steps when far from the boundary; fixed_percent_step uses a fixed percentage of the current control value.",
+                  "enum": [
+                    "sla_margin",
+                    "fixed_percent_step"
+                  ],
+                  "title": "Adaptivescalesteppolicy",
+                  "type": "string"
+                },
+                "adaptiveScaleBaseStep": {
+                  "default": 10,
+                  "description": "Minimum adaptive scale step for SLA-margin policy.",
+                  "minimum": 1,
+                  "title": "Adaptivescalebasestep",
+                  "type": "integer"
+                },
+                "adaptiveScaleMaxStepMultiplier": {
+                  "default": 4,
+                  "description": "Maximum base-step multiplier for SLA-margin policy.",
+                  "minimum": 1,
+                  "title": "Adaptivescalemaxstepmultiplier",
+                  "type": "integer"
+                },
+                "adaptiveScaleStepPercent": {
+                  "default": 25.0,
+                  "description": "Percent of current concurrency used by fixed-percent adaptive scaling.",
+                  "exclusiveMinimum": 0,
+                  "title": "Adaptivescalesteppercent",
+                  "type": "number"
                 }
               },
               "required": [
@@ -4063,6 +4732,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -4245,6 +4944,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -4442,6 +5171,36 @@
                   "default": null,
                   "description": "Request cancellation testing configuration."
                 },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
+                },
                 "seamless": {
                   "default": false,
                   "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
@@ -4623,6 +5382,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -4812,6 +5601,36 @@
                   ],
                   "default": null,
                   "description": "Request cancellation testing configuration."
+                },
+                "sla": {
+                  "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+                  "title": "Sla",
+                  "anyOf": [
+                    {
+                      "description": "SLA filters evaluated by adaptive load controllers.",
+                      "items": {
+                        "$ref": "#/$defs/SLAFilter"
+                      },
+                      "title": "Sla",
+                      "type": "array"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": [
+                              "number",
+                              "string"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+                    }
+                  ]
                 },
                 "seamless": {
                   "default": false,
@@ -5223,11 +6042,246 @@
           "default": null,
           "description": "Request cancellation testing configuration."
         },
+        "sla": {
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+          "title": "Sla",
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
+        },
         "seamless": {
           "default": false,
           "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
           "title": "Seamless",
           "type": "boolean"
+        },
+        "adaptiveScale": {
+          "default": false,
+          "description": "Enable single-run adaptive scale control for this phase.",
+          "title": "Adaptivescale",
+          "type": "boolean"
+        },
+        "adaptiveSustainDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+          "title": "Adaptivesustainduration",
+          "x-jinja2-supported": true
+        },
+        "adaptiveAssessmentPeriod": {
+          "anyOf": [
+            {
+              "minimum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Duration in seconds for each adaptive scale SLA assessment window.",
+          "title": "Adaptiveassessmentperiod",
+          "x-jinja2-supported": true
+        },
+        "adaptiveMinCompletedRequests": {
+          "default": 1,
+          "description": "Minimum completed requests needed before an adaptive SLA window can make a decision.",
+          "title": "Adaptivemincompletedrequests",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Minimum completed requests needed before an adaptive SLA window can make a decision.",
+              "minimum": 1,
+              "title": "Adaptivemincompletedrequests",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "adaptiveControlVariable": {
+          "const": "concurrency",
+          "default": "concurrency",
+          "description": "Named adaptive control variable. Only concurrency is supported in v1.",
+          "title": "Adaptivecontrolvariable",
+          "type": "string"
+        },
+        "adaptiveScaleMinConcurrency": {
+          "default": 1,
+          "description": "Minimum concurrency used by adaptive scale discovery.",
+          "title": "Adaptivescaleminconcurrency",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Minimum concurrency used by adaptive scale discovery.",
+              "minimum": 1,
+              "title": "Adaptivescaleminconcurrency",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "adaptiveScaleStrategyType": {
+          "const": "ramp_until_fail",
+          "default": "ramp_until_fail",
+          "description": "Adaptive scale controller strategy. v1 supports ramp_until_fail.",
+          "title": "Adaptivescalestrategytype",
+          "type": "string"
+        },
+        "adaptiveScaleStepPolicy": {
+          "default": "sla_margin",
+          "description": "Adaptive scale increase policy. sla_margin uses normalized SLA margin to choose larger steps when far from the boundary; fixed_percent_step uses a fixed percentage of the current control value.",
+          "enum": [
+            "sla_margin",
+            "fixed_percent_step"
+          ],
+          "title": "Adaptivescalesteppolicy",
+          "type": "string"
+        },
+        "adaptiveScaleBaseStep": {
+          "default": 10,
+          "description": "Minimum adaptive scale step for SLA-margin policy.",
+          "title": "Adaptivescalebasestep",
+          "oneOf": [
+            {
+              "default": 10,
+              "description": "Minimum adaptive scale step for SLA-margin policy.",
+              "minimum": 1,
+              "title": "Adaptivescalebasestep",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "adaptiveScaleMaxStepMultiplier": {
+          "default": 4,
+          "description": "Maximum base-step multiplier for SLA-margin policy.",
+          "title": "Adaptivescalemaxstepmultiplier",
+          "oneOf": [
+            {
+              "default": 4,
+              "description": "Maximum base-step multiplier for SLA-margin policy.",
+              "minimum": 1,
+              "title": "Adaptivescalemaxstepmultiplier",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "adaptiveScaleStepPercent": {
+          "default": 25.0,
+          "description": "Percent of current concurrency used by fixed-percent adaptive scaling.",
+          "title": "Adaptivescalesteppercent",
+          "oneOf": [
+            {
+              "default": 25.0,
+              "description": "Percent of current concurrency used by fixed-percent adaptive scaling.",
+              "exclusiveMinimum": 0,
+              "title": "Adaptivescalesteppercent",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
         }
       },
       "required": [
@@ -5484,6 +6538,36 @@
           ],
           "default": null,
           "description": "Request cancellation testing configuration."
+        },
+        "sla": {
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+          "title": "Sla",
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -6750,6 +7834,36 @@
           "default": null,
           "description": "Request cancellation testing configuration."
         },
+        "sla": {
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+          "title": "Sla",
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
+        },
         "seamless": {
           "default": false,
           "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
@@ -7075,6 +8189,36 @@
           ],
           "default": null,
           "description": "Request cancellation testing configuration."
+        },
+        "sla": {
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+          "title": "Sla",
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -9152,6 +10296,36 @@
           ],
           "default": null,
           "description": "Request cancellation testing configuration."
+        },
+        "sla": {
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+          "title": "Sla",
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,
@@ -11854,6 +13028,36 @@
           ],
           "default": null,
           "description": "Request cancellation testing configuration."
+        },
+        "sla": {
+          "description": "SLA filters evaluated by adaptive load controllers. Accepts the canonical list form or compact metric/stat/op mapping.",
+          "title": "Sla",
+          "anyOf": [
+            {
+              "description": "SLA filters evaluated by adaptive load controllers.",
+              "items": {
+                "$ref": "#/$defs/SLAFilter"
+              },
+              "title": "Sla",
+              "type": "array"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "description": "Compact SLA mapping: metric -> stat -> operator -> threshold."
+            }
+          ]
         },
         "seamless": {
           "default": false,

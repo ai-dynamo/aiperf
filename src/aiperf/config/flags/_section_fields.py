@@ -146,6 +146,10 @@ TOKENIZER_FIELDS: frozenset[str] = frozenset(
 
 LOADGEN_FIELDS: frozenset[str] = frozenset(
     {
+        "adaptive_assessment_period",
+        "adaptive_scale",
+        "adaptive_scale_sla",
+        "adaptive_sustain_duration",
         "arrival_pattern",
         "arrival_smoothness",
         "benchmark_duration",
