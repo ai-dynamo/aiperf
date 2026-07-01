@@ -609,7 +609,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
                 text=text,
                 trace_timing=timing,
                 is_duplicate=is_duplicate,
-                content_type=content_type,
+                content_type=content_type or None,
             )
         except (aiohttp.ClientConnectionError, RuntimeError) as e:
             if self.stop_requested or session.closed:

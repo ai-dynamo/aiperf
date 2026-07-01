@@ -280,7 +280,9 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         metrics_dict: dict[str, MetricFamily] = {}
 
         try:
-            for family in self._parse_families(fetch_result):
+            for family in self._parse_families(
+                fetch_result.text, fetch_result.content_type
+            ):
                 # Skip _created metrics - these are timestamps indicating when the parent metric was created, not actual metric data
                 # or _uptime metrics - these are timestamps indicating how long the server has been running.
                 if (
@@ -346,18 +348,12 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
             is_duplicate=fetch_result.is_duplicate,
         )
 
-    def _parse_families(self, fetch_result: FetchResult) -> list[Metric]:
-        """Parse the body, preferring the OpenMetrics parser for
-        ``application/openmetrics-text`` and falling back to the classic parser.
-
-        vLLM's Rust frontend serves OpenMetrics, which the classic parser
-        mistypes; but the OpenMetrics parser is strict (e.g. it rejects a body
-        with no trailing ``# EOF``), so a non-conformant body falls back to the
-        classic parser rather than disabling the whole collector.
+    def _parse_families(self, text: str, content_type: str | None) -> list[Metric]:
+        """Parse the body with the OpenMetrics parser for
+        ``application/openmetrics-text`` (classic mistypes its counters), falling
+        back to the classic parser if the stricter OpenMetrics parser rejects it.
         """
-        text = fetch_result.text or ""
-        content_type = fetch_result.content_type or ""
-        if content_type.startswith(OPENMETRICS_CONTENT_TYPE_PREFIX):
+        if content_type and content_type.startswith(OPENMETRICS_CONTENT_TYPE_PREFIX):
             try:
                 return list(openmetrics_text_string_to_metric_families(text))
             except ValueError:
