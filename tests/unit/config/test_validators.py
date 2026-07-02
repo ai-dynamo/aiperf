@@ -72,6 +72,67 @@ def test_sweep_with_simple_ui_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _reject_scenario_with_sweep — a fixed-spec scenario lock forbids sweeps.
+# A scenario locks ONE configuration; a sweep would fan it into N diverging
+# variations, each individually satisfying the lock (the falsification the v1
+# list-shaped --concurrency rejection prevented). In v2 magic-list flags are
+# hoisted to a sweep block before the config is built, so the rejection lives
+# here at the envelope level.
+# ---------------------------------------------------------------------------
+
+
+def test_scenario_with_sweep_rejected() -> None:
+    with pytest.raises(ValueError, match="does not support parameter sweeps"):
+        _make(
+            scenario="inferencex-agentx-mvp",
+            sweep={
+                "type": "grid",
+                "parameters": {"phases.profiling.concurrency": [1, 2, 3]},
+            },
+            runtime={"ui": "simple"},
+        )
+
+
+def test_scenario_without_sweep_accepted() -> None:
+    cfg = _make(scenario="inferencex-agentx-mvp")
+    assert cfg.benchmark.scenario == "inferencex-agentx-mvp"
+    assert cfg.sweep is None
+
+
+def test_sweep_without_scenario_accepted() -> None:
+    cfg = _make(
+        sweep={
+            "type": "grid",
+            "parameters": {"phases.profiling.concurrency": [1, 2, 3]},
+        },
+        runtime={"ui": "simple"},
+    )
+    assert cfg.benchmark.scenario is None
+    assert cfg.sweep is not None
+
+
+def test_scenario_with_sweep_unsafe_override_warns_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        cfg = _make(
+            scenario="inferencex-agentx-mvp",
+            unsafe_override=True,
+            sweep={
+                "type": "grid",
+                "parameters": {"phases.profiling.concurrency": [1, 2, 3]},
+            },
+            runtime={"ui": "simple"},
+        )
+    assert cfg.sweep is not None
+    assert any(
+        "does not support parameter sweeps" in r.message
+        for r in caplog.records
+        if r.levelname == "WARNING"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Cooldown / same_seed / iteration_order moved to GridSweep — verified
 # structurally there. AIPerfConfig no longer enforces these.
 # ---------------------------------------------------------------------------
@@ -128,3 +189,80 @@ def test_grid_sweep_same_seed_field_round_trips() -> None:
         runtime={"ui": "simple"},
     )
     assert cfg.sweep.same_seed is True
+
+
+# ---------------------------------------------------------------------------
+# validate_agentic_cache_warmup — ``--agentic-cache-warmup-duration`` is
+# consumed only on the AGENTIC_REPLAY path. On any other run the value is
+# silently dropped, so the guard hard-raises rather than accept a no-op flag.
+# A scenario governs the timing_mode (stamped post-construction by
+# apply_scenario, which never re-runs this gate), so the validator resolves the
+# scenario's declared timing_mode from its ScenarioSpec and rejects the flag
+# when the scenario is not agentic_replay. A no-scenario config is final and
+# resolved from the phases directly.
+# ---------------------------------------------------------------------------
+
+
+def _agentic_phase(**phase_overrides) -> list[dict]:
+    return [
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "requests": 10,
+            "concurrency": 1,
+            **phase_overrides,
+        }
+    ]
+
+
+def test_agentic_cache_warmup_without_scenario_non_agentic_rejected() -> None:
+    with pytest.raises(ValueError, match="requires the agentic_replay"):
+        _make(phases=_agentic_phase(agentic_cache_warmup_duration=30.0))
+
+
+def test_agentic_cache_warmup_with_agentic_scenario_accepted() -> None:
+    """The agentic scenario locks AGENTIC_REPLAY, so the flag is accepted."""
+    cfg = _make(
+        scenario="inferencex-agentx-mvp",
+        phases=_agentic_phase(agentic_cache_warmup_duration=30.0),
+    )
+    assert cfg.benchmark.scenario == "inferencex-agentx-mvp"
+
+
+def test_agentic_cache_warmup_with_non_agentic_scenario_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-agentic scenario must reject the flag, not silently drop it.
+
+    The validator resolves the scenario's declared timing_mode rather than
+    deferring; ``apply_scenario`` stamps the mode post-construction and never
+    re-runs this gate, so a blanket deferral would let a no-op flag through.
+    """
+    from aiperf.common.scenario import registry
+    from aiperf.plugin.enums import TimingMode
+
+    non_agentic = registry.SCENARIOS["inferencex-agentx-mvp"].model_copy(
+        update={"name": "test-non-agentic", "timing_mode": TimingMode.REQUEST_RATE}
+    )
+    monkeypatch.setitem(registry.SCENARIOS, non_agentic.name, non_agentic)
+
+    with pytest.raises(ValueError, match="requires the agentic_replay"):
+        _make(
+            scenario="test-non-agentic",
+            phases=_agentic_phase(agentic_cache_warmup_duration=30.0),
+        )
+
+
+def test_agentic_cache_warmup_with_explicit_agentic_timing_mode_accepted() -> None:
+    cfg = _make(
+        phases=_agentic_phase(
+            agentic_cache_warmup_duration=30.0,
+            timing_mode="agentic_replay",
+        ),
+    )
+    assert cfg.benchmark.phases[0].agentic_cache_warmup_duration == 30.0
+
+
+def test_no_agentic_cache_warmup_duration_accepted() -> None:
+    cfg = _make(phases=_agentic_phase())
+    assert cfg.benchmark.phases[0].agentic_cache_warmup_duration is None

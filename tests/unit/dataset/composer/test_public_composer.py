@@ -165,6 +165,7 @@ class TestCreateDatasetAsync:
                     prompt_column="problem",
                     multi_turn=False,
                     streaming=False,
+                    is_trace=False,
                 ),
             ),
         ):
@@ -208,6 +209,7 @@ class TestCreateDatasetAsync:
                     prompt_column="problem",
                     multi_turn=False,
                     streaming=False,
+                    is_trace=False,
                 ),
             ),
         ):

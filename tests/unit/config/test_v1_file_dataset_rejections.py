@@ -6,14 +6,17 @@ on file (mooncake_trace, single_turn, ...) datasets.
 
 These flags previously leaked through ``_apply_dataset_type``'s strip into
 ``FileDataset`` validation and crashed with ``extra_forbidden`` (e.g.
-``--isl-block-size`` carried via ``prompts.block_size``, ``--seq-dist`` via
-``prompts.sequence_distribution``). The strip in ``_apply_dataset_type``
-covers ``prompts``/``prefix_prompts``/``rankings``/``audio``/``images``/
-``video`` keys at FILE-type discrimination time, but ``_apply_sequence_distribution``
-runs *after* and can re-add ``prompts``. Reject at convert-time instead so
-the user sees a clear flag-level error rather than a Pydantic stack trace
-or silently-dropped flags (the prior behavior of ``--isl-block-size`` on
-mooncake_trace, which masked the use of the hardcoded block-size fallback).
+``--seq-dist`` via ``prompts.sequence_distribution``). The strip in
+``_apply_dataset_type`` covers ``prompts``/``prefix_prompts``/``rankings``/
+``audio``/``images``/``video`` keys at FILE-type discrimination time, but
+``_apply_sequence_distribution`` runs *after* and can re-add ``prompts``.
+Reject at convert-time instead so the user sees a clear flag-level error
+rather than a Pydantic stack trace or silently-dropped flags.
+
+NOTE: ``--isl-block-size`` is NOT rejected here -- it is the hash-id block
+granularity that the trace loaders (mooncake/bailian/...) consume, so it is
+routed onto ``FileDataset.block_size`` by ``_apply_block_size``. It is rejected
+ONLY for weka (inline per-block sizes). See ``test_block_size_routing.py``.
 """
 
 from __future__ import annotations
@@ -57,11 +60,6 @@ def _file_user(mc_jsonl: Path, *, prompt_kwargs: dict | None = None) -> CLIConfi
     "prompt_kwargs, expected_flag_fragment",
     [
         param(
-            {"prompt_input_tokens_block_size": 20},
-            "--isl-block-size",
-            id="isl-block-size",
-        ),
-        param(
             {"prompt_input_tokens_mean": 128},
             "--isl",
             id="isl-mean",
@@ -85,6 +83,16 @@ def _file_user(mc_jsonl: Path, *, prompt_kwargs: dict | None = None) -> CLIConfi
             {"prompt_prefix_length": 20},
             "--prompt-prefix-length",
             id="prefix-prompt-length",
+        ),
+        param(
+            {"conversation_turn_mean": 3},
+            "--conversation-turn-mean",
+            id="conversation-turn-mean",
+        ),
+        param(
+            {"conversation_turn_delay_mean": 1.0},
+            "--conversation-turn-delay-mean",
+            id="conversation-turn-delay-mean",
         ),
     ],
 )  # fmt: skip
@@ -137,3 +145,32 @@ def test_mooncake_trace_without_synthetic_flags_validates_cleanly(
     assert len(datasets) == 1
     assert datasets[0].type == "file"
     assert str(datasets[0].path) == str(mc_jsonl)
+
+
+@pytest.mark.parametrize(
+    "extra, expected_flag_fragment",
+    [
+        param({"conversation_turn_mean": 3}, "--conversation-turn-mean", id="conv-turn-scalar"),
+        param({"conversation_turn_mean": [1, 3]}, "--conversation-turn-mean", id="conv-turn-list"),
+        param({"prompt_input_tokens_mean": 128}, "--isl", id="isl-scalar"),
+        param({"prompt_input_tokens_mean": [128, 256]}, "--isl", id="isl-list"),
+        param({"prompt_prefix_length": 20}, "--prompt-prefix-length", id="prefix"),
+    ],
+)  # fmt: skip
+def test_synthetic_only_flag_rejected_on_public_dataset(
+    extra: dict, expected_flag_fragment: str
+) -> None:
+    """Synthetic-only flags must raise a clear ValueError on a PUBLIC dataset
+    (weka_hf) too -- not silently drop (scalar) or crash with extra_forbidden
+    (magic-list) as they did when the rejection was FILE-only."""
+    from aiperf.plugin.enums import PublicDatasetType
+
+    user = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type="chat",
+        **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+        public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS,
+        **extra,
+    )
+    with pytest.raises(ValueError, match=expected_flag_fragment):
+        build_dataset(user)

@@ -427,12 +427,18 @@ class TestDatasetManagerFallbackHandlers:
 
     @pytest.fixture
     async def dataset_manager_with_entries(self, mock_tokenizer):
-        """Create a configured dataset manager with multiple entries."""
+        """Create a configured dataset manager with multiple entries.
+
+        Uses multi-turn conversations so the dataset uses CONVERSATION mmap
+        format (multi-turn without responses cannot be preformatted into the
+        PAYLOAD_BYTES fast path, which the get_conversation fallback can't serve).
+        """
         cli_config = CLIConfig(
             model_names=["test-model"],
             num_dataset_entries=3,
+            conversation_turn_mean=2,
+            conversation_turn_stddev=0,
         )
-        CLIConfig()
         dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()

@@ -149,7 +149,7 @@ class TestCoreFunctionality:
             composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
         assert composer.loader.multi_turn
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_create_dataset_trace(
@@ -167,7 +167,7 @@ class TestCoreFunctionality:
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     def test_max_tokens_config(
@@ -250,7 +250,7 @@ class TestCoreFunctionality:
         assert turns[1].max_tokens == 200
         assert turns[2].max_tokens == 300
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     @patch("pathlib.Path.iterdir", return_value=[])

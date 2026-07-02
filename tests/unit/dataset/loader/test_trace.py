@@ -349,7 +349,7 @@ class TestMooncakeTraceDatasetLoader:
         # Check that the skipped traces message is logged
         assert f"Skipped {expected_skipped:,} traces" in caplog.text
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_convert_to_conversations(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
@@ -1001,7 +1001,7 @@ class TestMooncakeTraceReproducibility:
             prompt_input_tokens_block_size=64,
         )
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_mooncake_flow_reproducibility_with_same_seed(
         self, mock_parallel_decode, mock_tokenizer_cls, cfg_for_reproducibility
     ):
@@ -1098,7 +1098,7 @@ class TestMooncakeTraceReproducibility:
             f"First run: {prompts1}, Second run: {prompts2}"
         )
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):

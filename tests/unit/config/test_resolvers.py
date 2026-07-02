@@ -21,8 +21,10 @@ from aiperf.config.resolution.resolvers import (
     ConfigResolverChain,
     DatasetResolver,
     GpuMetricsResolver,
+    ScenarioResolver,
     TimingResolver,
     TokenizerResolver,
+    _describe_phase,
     build_default_resolver_chain,
 )
 from aiperf.config.tokenizer import TokenizerConfig
@@ -726,17 +728,21 @@ class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
         assert isinstance(chain, ConfigResolverChain)
-        assert len(chain._resolvers) == 6
+        assert len(chain._resolvers) == 7
 
     def test_resolver_order(self):
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
+        # ScenarioResolver sits AFTER DatasetResolver (needs resolved
+        # dataset_types for the loader-identity check) and BEFORE TimingResolver
+        # (locks per-phase timing_mode / duration before the duration sum).
         assert types == [
             ArtifactDirResolver,
             TokenizerResolver,
             GpuMetricsResolver,
             CommConfigResolver,
             DatasetResolver,
+            ScenarioResolver,
             TimingResolver,
         ]
 
@@ -817,3 +823,27 @@ class TestDeriveRunMeta:
         monkeypatch.setenv("AIPERF_NAMESPACE", "")
         meta = _derive_run_meta(Path("/tmp/bench"))
         assert meta.namespace == ""
+
+
+class TestRatePhaseDescriptor:
+    """The artifact-dir descriptor for rate phases (poisson/gamma/constant) must
+    read the v2 phase field `rate` (NOT the v1 `request_rate`, which v2 renamed),
+    or the `request_rate{N}` slug token is silently dropped from the run dir."""
+
+    def _rate_phase(self, request_rate: float = 25.0):
+        from aiperf.config.flags.cli_config import CLIConfig
+        from aiperf.config.flags.converter import convert_cli_to_aiperf
+
+        cfg = convert_cli_to_aiperf(
+            CLIConfig(model_names=["m"], request_rate=request_rate, request_count=20)
+        )
+        return next(
+            p
+            for p in cfg.benchmark.phases
+            if not getattr(p, "exclude_from_results", False)
+        )
+
+    def test_rate_appears_in_descriptor(self):
+        phase = self._rate_phase(25.0)
+        assert phase.rate == 25.0
+        assert "request_rate25.0" in _describe_phase(phase)

@@ -57,6 +57,9 @@ class EndpointDefaults:
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
+    USE_DYNAMO_CONV_AWARE_ROUTING = False
+    USE_LEGACY_DYNAMO_SESSION_CONTROL = False
+    DYNAMO_SESSION_TIMEOUT_SECONDS = 300
     # Readiness probe defaults. Timeout 0 disables the probe (the default);
     # any positive value enables it. Interval is only consulted when the
     # probe is enabled but is validated positive so mis-configuration
@@ -200,6 +203,8 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    _streaming_explicitly_set: bool = False
+
     transport: Annotated[
         TransportType | None,
         Field(
@@ -317,6 +322,48 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    use_dynamo_conv_aware_routing: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING,
+            description=(
+                "Emit Dynamo nvext.session_control in OpenAI-compatible request "
+                "bodies so Dynamo can bind all turns from the same replayed "
+                "conversation lineage to the same backend worker. This is only "
+                "intended for Dynamo frontends that implement session_control."
+            ),
+        ),
+    ]
+
+    use_legacy_dynamo_session_control: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.USE_LEGACY_DYNAMO_SESSION_CONTROL,
+            description=(
+                "Emit the legacy Dynamo nvext.session_control lifecycle that "
+                "released Dynamo (v1.2.x) understands: action 'open' on the first "
+                "turn, session_id only on intermediate turns, and action 'close' "
+                "on the final turn. Use this when the target Dynamo predates the "
+                "'bind' action (added in v1.3.0-dev); otherwise 'bind' is rejected "
+                "with an HTTP 400. Requires use_dynamo_conv_aware_routing, and "
+                "the Dynamo deployment must expose a worker session_control "
+                "endpoint for 'open' to take effect."
+            ),
+        ),
+    ]
+
+    dynamo_session_timeout_seconds: Annotated[
+        int,
+        Field(
+            default=EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS,
+            ge=1,
+            description=(
+                "Dynamo nvext.session_control timeout in seconds when "
+                "use_dynamo_conv_aware_routing is enabled."
+            ),
+        ),
+    ]
+
     wait_for_model_timeout: Annotated[
         float,
         Field(
@@ -406,6 +453,18 @@ class EndpointConfig(BaseConfig):
                 pass
 
         return data
+
+    @model_validator(mode="after")
+    def _record_streaming_explicit_set_flag(self) -> Self:
+        """Snapshot whether the user explicitly set ``streaming``.
+
+        Scenario validation distinguishes "user explicitly passed
+        --streaming/--no-streaming" (raise on conflict) from "streaming is at
+        default; auto-fill from the scenario spec" (info log). Surface a stable
+        underscore flag for the scenario resolver's defensive ``getattr``.
+        """
+        self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
 
     @model_validator(mode="after")
     def _validate_endpoint_boundaries(self) -> Self:
@@ -524,5 +583,22 @@ class EndpointConfig(BaseConfig):
                 f"request_content_type={self.request_content_type} is only supported for "
                 f"endpoint types that accept form-data (e.g. image_edit, "
                 f"video_generation); endpoint type {self.type} does not."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_dynamo_session_control_coherent(self) -> Self:
+        """Reject legacy Dynamo session control unless conversation-aware routing
+        is enabled, since the legacy flag only selects the wire contract for the
+        session_control that use_dynamo_conv_aware_routing emits.
+        """
+        if (
+            self.use_legacy_dynamo_session_control
+            and not self.use_dynamo_conv_aware_routing
+        ):
+            raise ValueError(
+                "--use-legacy-dynamo-session-control has no effect unless "
+                "--use-dynamo-conv-aware-routing is enabled. Enable conversation-"
+                "aware routing, or drop the legacy flag."
             )
         return self

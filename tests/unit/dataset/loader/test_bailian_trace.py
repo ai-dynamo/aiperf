@@ -407,7 +407,7 @@ class TestBailianTraceDatasetLoader:
 
     # ---- convert_to_conversations ----
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_convert_to_conversations(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
@@ -479,7 +479,7 @@ class TestBailianTraceDatasetLoader:
             mean=100, stddev=0, hash_ids=[]
         )
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
@@ -518,7 +518,7 @@ class TestBailianTraceDatasetLoader:
 
     # ---- multi-turn conversation conversion ----
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_multi_turn_conversation_ordering(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
