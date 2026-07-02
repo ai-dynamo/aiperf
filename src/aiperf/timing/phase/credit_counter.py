@@ -184,6 +184,29 @@ class CreditCounter:
     # Atomic Operations (lock-free - no await between read and write)
     # =========================================================================
 
+    def account_lane_session(self, session_turns: int) -> None:
+        """Count a deferred-lane session that acquires its slot directly.
+
+        A gated parent admitted via ``CreditIssuer.acquire_lane_credit`` had its
+        turn 0 before t*, so it never dispatches a session-start root credit
+        through :meth:`increment_sent` -- yet its join turn DOES reach a terminal
+        turn that bumps ``_completed_sessions`` in :meth:`increment_returned`.
+        Without this, ``completed_sessions > sent_sessions`` and
+        ``in_flight_sessions`` goes negative.
+
+        Mirrors the ``(turn_index == 0 or is_session_start)`` arm of
+        :meth:`increment_sent`: bump ``_sent_sessions`` and add the session's
+        remaining turns to ``_total_session_turns`` so ``can_send_any_turn``
+        (root_requests_sent vs total_session_turns) stays consistent as the
+        gated parent's join + tail turns dispatch. Must be called AFTER the lane
+        slot is acquired so the session does not gate its own admission via
+        ``can_start_new_session`` (sent_sessions < expected_num_sessions).
+
+        Lock-free: no async calls.
+        """
+        self._sent_sessions += 1
+        self._total_session_turns += session_turns
+
     def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, bool]:
         """Atomically increment sent count and return (credit_index, is_final_credit).
 
@@ -202,12 +225,25 @@ class CreditCounter:
         ``RequestCountStopCondition.applies_to_dag_children``), the cap
         can be crossed on a child increment, and the issuer must still
         unblock the strategy loop and the phase runner — otherwise the
-        run hangs at-cap waiting for a signal that never fires.
+        run hangs at-cap waiting for a signal that never fires. The
+        request-count cap fires regardless of ``counts_toward_phase_target``
+        because it is a global wire-request cap (dag_jsonl #891 hang fix);
+        the session-target predicate is gated on ``counts_toward_phase_target``
+        so reactive AGENTIC_REPLAY children/sidecars (which set it False)
+        cannot satisfy the sampled root plan.
 
         Lock-free: no async calls.
         """
         credit_index = self._requests_sent
         new_sent_count = self._requests_sent + 1
+
+        # The request-count cap is a global wire cap honored by every credit
+        # (root or child), so it can flip is_final_credit even for a credit
+        # that does not count toward the sampled phase target.
+        hit_request_cap = (
+            self._config.total_expected_requests is not None
+            and new_sent_count >= self._config.total_expected_requests
+        )
 
         if turn_to_send.agent_depth > 0:
             # Children: bump the wire-request counter only (slot is
@@ -216,34 +252,38 @@ class CreditCounter:
             # on this child increment so the strategy loop and phase
             # runner unblock the same way they would for a root.
             self._requests_sent = new_sent_count
-            is_final_credit = (
-                self._config.total_expected_requests is not None
-                and new_sent_count >= self._config.total_expected_requests
-            )
-            return credit_index, is_final_credit
+            return credit_index, hit_request_cap
 
         new_sent_sessions_count = self._sent_sessions
         new_total_session_turns = self._total_session_turns
         new_root_sent = self._root_requests_sent + 1
 
-        if turn_to_send.turn_index == 0:
+        # A root session is counted on its first credit in the phase: turn 0,
+        # or an agentic mid-trace resume (is_session_start, turn_index > 0).
+        # Without this, a resumed root would bump completed_sessions on its
+        # final turn while never bumping sent_sessions, driving
+        # completed_sessions > sent_sessions and in_flight_sessions < 0.
+        # total_session_turns counts only the turns this session will actually
+        # send (num_turns - start index), so a resumed root contributes its
+        # remaining tail, keeping it consistent with root_requests_sent.
+        if turn_to_send.turn_index == 0 or turn_to_send.is_session_start:
             new_sent_sessions_count += 1
-            new_total_session_turns += turn_to_send.num_turns
+            new_total_session_turns += turn_to_send.num_turns - turn_to_send.turn_index
 
         # Use root-only wire count (not global ``new_sent_count``) for the
         # session-completion predicate: BG-fork parents continue running
         # turns AFTER children begin firing, so the global counter would
         # spuriously satisfy the predicate the moment the first child wire
         # lands and the strategy loop would exit before the parent's
-        # remaining turns could dispatch.
-        is_final_credit = (
-            self._config.total_expected_requests is not None
-            and new_sent_count >= self._config.total_expected_requests
-        ) or (
+        # remaining turns could dispatch. The session-target arm is gated on
+        # ``counts_toward_phase_target`` so reactive (post-sampling) work does
+        # not satisfy the sampled plan; the global request-cap arm is not.
+        hit_session_target = turn_to_send.counts_toward_phase_target and (
             self._config.expected_num_sessions is not None
             and new_sent_sessions_count >= self._config.expected_num_sessions
             and new_root_sent >= new_total_session_turns
         )
+        is_final_credit = hit_request_cap or hit_session_target
 
         self._requests_sent = new_sent_count
         self._root_requests_sent = new_root_sent
@@ -253,11 +293,22 @@ class CreditCounter:
         return credit_index, is_final_credit
 
     def increment_returned(
-        self, is_final_turn: bool, cancelled: bool, errored: bool = False
+        self,
+        is_final_turn: bool,
+        cancelled: bool,
+        errored: bool = False,
+        *,
+        is_child: bool = False,
     ) -> bool:
         """Atomically increment returned count and check phase completion.
 
         Lock-free: no async calls.
+
+        DAG children DO bump ``_requests_completed`` / ``_requests_cancelled``
+        — these are user-visible metrics of actual HTTP activity, symmetric
+        with ``_requests_sent`` being bumped on the dispatch side. They do
+        NOT bump ``_completed_sessions`` / ``_cancelled_sessions`` (session
+        slot was inherited, not acquired).
 
         Args:
             is_final_turn: Whether the returned turn is the final turn of its session
@@ -266,6 +317,10 @@ class CreditCounter:
                 requests still count as "returned" for the all-returned invariant
                 (they are not cancellations), but also bump ``_request_errors``
                 so the phase-complete log line reflects fault-injected runs.
+                Request-level, so it ticks for children too.
+            is_child: True when ``credit.agent_depth > 0``. Session-level
+                counters are skipped for children; request-level counters
+                still tick.
 
         Returns:
             True if ALL sent credits have now been returned or cancelled
@@ -273,11 +328,11 @@ class CreditCounter:
         """
         if cancelled:
             self._requests_cancelled += 1
-            if is_final_turn:
+            if is_final_turn and not is_child:
                 self._cancelled_sessions += 1
         else:
             self._requests_completed += 1
-            if is_final_turn:
+            if is_final_turn and not is_child:
                 self._completed_sessions += 1
             if errored:
                 self._request_errors += 1
