@@ -17,15 +17,17 @@ AIPerf determines how to schedule requests based on which CLI options you specif
 | `--concurrency` (alone) | Saturation/throughput testing | Send requests as fast as possible within concurrency limits |
 | `--fixed-schedule` | Trace replay | Replay requests at exact timestamps from dataset |
 | `--user-centric-rate` | KV cache benchmarking | Per-user rate limiting with consistent turn gaps |
+| selected by `--scenario` (e.g. `inferencex-agentx-mvp`) | Multi-turn agentic-trace replay | Trajectory-based warmup + steady-state with sampler-driven trace recycle and per-session-tree concurrency (one slot per root + all its subagents), designed for agentic-coding traces (e.g. WEKA); the `agentic_replay` timing mode is locked in by the scenario, not by a direct flag |
 
 ### Option Priority
 
 When multiple options are specified, AIPerf uses this priority:
 
-1. `--fixed-schedule` or mooncake_trace dataset → Timestamp-based scheduling
+1. `--fixed-schedule`, or any trace dataset (e.g. mooncake_trace, weka_trace) with a `timestamp` field on its records → Timestamp-based scheduling
 2. `--user-centric-rate` → Per-user turn gap scheduling
-3. `--request-rate` → Rate-based scheduling with arrival patterns
-4. `--concurrency` only → Burst mode (as fast as possible within limits)
+3. `--scenario inferencex-agentx-mvp` (or any scenario whose spec pins `timing_mode=agentic_replay`) → Trajectory-based multi-turn replay. The `agentic_replay` mode is not a user-selectable flag; it is locked in by the scenario validator.
+4. `--request-rate` → Rate-based scheduling with arrival patterns
+5. `--concurrency` only → Burst mode (as fast as possible within limits)
 
 ---
 
@@ -125,7 +127,7 @@ When multiple options are specified, AIPerf uses this priority:
 
 ## Warmup Options
 
-Warmup options work **independently of the main benchmark configuration**. The warmup phase always uses rate-based scheduling internally.
+Warmup options work **independently of the main benchmark configuration**. For `--request-rate`, `--user-centric-rate`, `--fixed-schedule`, and bare `--concurrency` runs, the warmup phase uses rate-based scheduling internally. Under the `agentic_replay` timing mode (set by `--scenario inferencex-agentx-mvp`), the warmup phase is trajectory-based instead — it dispatches exactly one credit per trajectory at the sampled starting turn `k_i` and most warmup CLI flags below are ignored (only `--warmup-grace-period`, plus the inherited `--concurrency` / `--prefill-concurrency`, are honored).
 
 | Option | All Configurations | Notes |
 |--------|:------------------:|-------|
@@ -221,6 +223,51 @@ aiperf profile --url localhost:8000 --model llama \
 With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds between their turns.
 
 > **For complete KV cache benchmarking**, also configure shared system prompts and user context prompts. See the [User-Centric Timing Tutorial](../tutorials/user-centric-timing.md) for full configuration including `--shared-system-prompt-length`, `--user-context-prompt-length`, and other prompt options.
+
+### Using `agentic_replay` (Multi-Turn Agentic Replay, via `--scenario`)
+
+The `agentic_replay` timing mode is **not** user-selectable directly; it is
+locked in by passing a scenario whose spec pins it. Today the only built-in
+scenario that does so is `inferencex-agentx-mvp`.
+
+```bash
+# SemiAnalysis InferenceX AgentX-MVP rules locked in
+aiperf profile \
+    --scenario inferencex-agentx-mvp \
+    --url localhost:8000 \
+    --model your-model \
+    --endpoint-type chat \
+    --streaming \
+    --public-dataset semianalysis_cc_traces_weka_with_subagents \
+    --concurrency 100 \
+    --benchmark-duration 900 \
+    --num-profile-runs 3
+```
+
+**How it works:** The strategy picks `--concurrency` distinct conversations as *trajectories*, samples a per-trajectory starting turn `k_i` anywhere from 0% to 100% of each conversation (the default `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` window, clamped to leave at least one profile turn after warmup), and warms each trajectory by dispatching that one turn before profiling starts. During profiling, each trajectory resumes from `k_i + 1` and replays the remaining turns honoring the trace's recorded request-start schedule after applying the per-trace idle-gap rule. The default `--trace-idle-gap-cap-seconds` is `None` (no compression); the `inferencex-agentx-mvp` scenario locks it to `10` so coffee-break request-start gaps don't distort steady-state while preserving local subagent overlap.
+
+Weka replay also preserves the capture's fan-out/join shape. The loader compares
+request intervals `[t, t + api_time]` within each logical agent or subagent
+scope and records an explicit cross-stream completion frontier on every turn.
+Requests whose intervals overlap have no ordering edge and may execute in
+parallel. A later request waits until every request on its recorded predecessor
+frontier reaches a terminal outcome. Exact interval-boundary touches are
+sequential. Long transitive overlaps use this dependency frontier rather than
+an overlap connected-component, so a long request can overlap multiple
+sequential requests on another stream without launching all of them at once.
+Branches that began while their spawning request was in flight are scheduled
+from that request's send time; independent subagent scopes are not globally
+joined. The same barriers remain active during accelerated cache-pressure
+warmup, where idle delays are otherwise removed. When replay resumes at a
+sampled `t*` or crosses from accelerated warmup into profiling, the snapshot
+seeds each stream's exact completed prefix before any request can dispatch;
+request arrival order therefore cannot weaken or deadlock a join barrier.
+
+Concurrency is **per session tree**: each `--concurrency` lane holds one slot for a whole tree — the root conversation plus every subagent it spawns (children, subchildren, background `::fa:`/`::aux:` sidecars). A lane's slot is released, and the lane recycled into a fresh root, only once the entire tree drains (root terminal **and** all descendants returned) — so a background subagent that outlives its root does not free the lane early. Recycle then draws the next root from the dataset sampler (honoring the dataset's `sampling_strategy` — sequential / shuffle / random), starting it from turn 0. This keeps exactly `--concurrency` trees live at all times. The shared tree id (`root_correlation_id`) is persisted per record in `profile_export.jsonl`, so `aiperf analyze swim-lane` groups each tree under one lane and renders exactly `--concurrency` slots.
+
+**When to use:** A scenario-locked timing mode for multi-turn agentic-coding traces (currently WEKA), especially long runs where you want steady-state metrics rather than first-turn-only metrics. Pairs naturally with `--cache-bust first_turn_prefix` (auto-injected by the `inferencex-agentx-mvp` scenario) so recycled plays don't progressively warm the server's KV-cache prefix on identical content.
+
+**Tutorials:** [Weka Traces](../tutorials/weka-trace.md) for the underlying corpus; [InferenceX AgentX MVP](../tutorials/agentx-mvp.md) for the locked-rules submission flow.
 
 ---
 

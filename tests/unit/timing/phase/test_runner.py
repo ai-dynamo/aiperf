@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -611,7 +611,252 @@ class TestPhaseTypes:
             assert result.phase == phase
 
 
+class TestPreSessionBranchDispatch:
+    """Pre-session SPAWN branch dispatch must be gated on phase.
+
+    Pre-branch dispatch belongs to PROFILING only. Firing it during WARMUP
+    spawns children whose continuation turns the warmup strategy refuses to
+    advance, leaking per-parent/tree descendant counts and risking a wedged
+    all_credits_returned_event.
+    """
+
+    async def _run_with_orchestrator(
+        self,
+        phase: CreditPhase,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> MagicMock:
+        r = make_runner(cfg(phase=phase), conv_src, pub, router, conc, cancel, cb)
+        orch = MagicMock()
+        orch.dispatch_pre_session_branches = AsyncMock()
+        orch.has_pending_branch_work = MagicMock(return_value=False)
+        r._branch_orchestrator = orch
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+        return orch
+
+    async def test_pre_dispatch_suppressed_during_warmup(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        orch = await self._run_with_orchestrator(
+            CreditPhase.WARMUP, conv_src, pub, router, conc, cancel, cb
+        )
+        orch.dispatch_pre_session_branches.assert_not_called()
+
+    async def test_pre_dispatch_runs_during_profiling(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        orch = await self._run_with_orchestrator(
+            CreditPhase.PROFILING, conv_src, pub, router, conc, cancel, cb
+        )
+        orch.dispatch_pre_session_branches.assert_awaited_once()
+
+
 class TestEdgeCases:
+    async def test_cache_warmup_handoff_ignores_paused_dag_work(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        # v2 builds the orchestrator lazily; this non-DAG mock source leaves it
+        # None, so install one to assert the handoff short-circuit skips it.
+        r._branch_orchestrator = MagicMock()
+        r._branch_orchestrator.has_pending_branch_work = MagicMock(return_value=True)
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+        r._progress.freeze_sent_counts()
+
+        await r._wait_for_returning_complete(strategy)
+
+        assert r._progress.all_credits_returned_event.is_set()
+        assert r._lifecycle.is_complete
+        r._branch_orchestrator.has_pending_branch_work.assert_not_called()
+
+    async def test_cache_warmup_sending_complete_preserves_replay_gate_until_finalize(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        r._credit_issuer.replay_gate.cancel = AsyncMock()
+        r._lifecycle.start()
+
+        with patch.object(
+            r,
+            "_wait_for_event_with_timeout",
+            new=AsyncMock(return_value=True),
+        ):
+            await r._wait_for_sending_complete(strategy)
+
+        r._credit_issuer.replay_gate.cancel.assert_not_awaited()
+
+    async def test_cache_warmup_handoff_polls_until_wire_drain(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+        r._progress.freeze_sent_counts()
+
+        with (
+            patch.object(
+                type(r._progress),
+                "in_flight",
+                new_callable=PropertyMock,
+                side_effect=[1, 1, 0],
+            ),
+            patch("aiperf.timing.phase.runner.asyncio.sleep", new=AsyncMock()) as sleep,
+        ):
+            await r._wait_for_returning_complete(strategy)
+
+        sleep.assert_awaited_once_with(0.1)
+        assert r._progress.all_credits_returned_event.is_set()
+        assert r._lifecycle.is_complete
+
+    async def test_timeout_skips_cancel_drain_when_all_credits_returned(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(dur=1.0), conv_src, pub, router, conc, cancel, cb)
+        stats = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            start_ns=1,
+            sent_end_ns=2,
+            requests_end_ns=3,
+            final_requests_sent=94,
+            requests_sent=94,
+            requests_completed=94,
+            requests_cancelled=0,
+            final_requests_completed=94,
+            final_requests_cancelled=0,
+            final_request_errors=0,
+            final_sent_sessions=1,
+            final_completed_sessions=1,
+            final_cancelled_sessions=0,
+        )
+        r._progress.create_stats = MagicMock(return_value=stats)
+        # Force the post-timeout cancel branch: pretend credits are still
+        # outstanding at the initial check, time out the wait, then recompute
+        # need == 0 so the empty-drain guard sets the event without waiting.
+        r._progress.check_all_returned_or_cancelled = MagicMock(return_value=False)
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+
+        with patch.object(
+            r,
+            "_wait_for_event_with_timeout",
+            new=AsyncMock(return_value=True),
+        ):
+            await r._wait_for_returning_complete(
+                MagicMock(allows_pending_branch_handoff_after_sending_complete=False)
+            )
+
+        router.cancel_all_credits.assert_awaited_once()
+        assert r._progress.all_credits_returned_event.is_set()
+        r._concurrency_manager.release_stuck_slots.assert_not_called()
+
+    async def test_cache_warmup_handoff_timeout_cancels_and_aborts(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP, grace=0.01),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        strategy = MagicMock()
+        strategy.allows_pending_branch_handoff_after_sending_complete = True
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+        r._progress.freeze_sent_counts()
+
+        with (
+            patch.object(
+                type(r._progress),
+                "in_flight",
+                new_callable=PropertyMock,
+                return_value=1,
+            ),
+            patch.object(
+                r,
+                "_wait_for_accelerated_warmup_wire_drain",
+                new=AsyncMock(side_effect=asyncio.TimeoutError),
+            ) as drain,
+            pytest.raises(
+                TimeoutError,
+                match="Accelerated warmup drain timed out",
+            ),
+        ):
+            await r._wait_for_returning_complete(strategy)
+
+        assert drain.await_count == 2
+        router.cancel_all_credits.assert_awaited_once()
+        conc.release_stuck_slots.assert_called_once()
+        assert r._progress.all_credits_returned_event.is_set()
+        assert r._lifecycle.is_complete
+
     async def test_already_complete_returns_immediately(
         self,
         conv_src: MagicMock,
@@ -830,3 +1075,40 @@ class TestPhaseRunnerWorkerReadiness:
         real_router._register_worker("worker-1")
         await asyncio.wait_for(run_task, timeout=5.0)
         assert strategy.execute_called
+
+
+class TestWarmupProgressHeartbeat:
+    """Round-3 reversion guard: v1 emitted a throttled INFO warmup heartbeat in
+    _progress_report_loop (AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL, default
+    30s, 0 disables) so headless warmup stays observable. The port had dropped
+    both the formatter and the loop branch.
+    """
+
+    def test_format_warmup_progress_includes_returned_target_and_elapsed(self):
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=40,
+            requests_completed=30,
+            requests_cancelled=2,
+            request_errors=1,
+            total_expected_requests=50,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "Phase warmup progress" in msg
+        assert "returned=32/50" in msg  # completed + cancelled / target
+        assert "sent=40" in msg
+        assert "errors=1" in msg
+        assert "elapsed=" in msg
+
+    def test_format_warmup_progress_without_target(self):
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=5,
+            requests_completed=3,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "returned=3" in msg and "returned=3/" not in msg  # no target
+
+    def test_warmup_log_interval_env_field_exists(self):
+        # 0 disables; default is a positive heartbeat cadence.
+        assert Environment.SERVICE.WARMUP_PROGRESS_LOG_INTERVAL >= 0.0

@@ -202,6 +202,37 @@ def create_orchestrator_harness(mock_zmq, time_traveler):
     return create
 
 
+@pytest.fixture
+def force_fail_fast(monkeypatch: pytest.MonkeyPatch):
+    """Robustly force ``Environment.DAG.FAIL_FAST`` for the duration of one test.
+
+    Belt-and-suspenders against an observed one-shot xdist flake where
+    the bare ``monkeypatch.setattr(Environment.DAG, "FAIL_FAST", X)``
+    pattern occasionally landed but didn't stick by the time the
+    BranchOrchestrator constructor read it. The fixture also sets the
+    underlying env var so any Pydantic re-validation triggered between
+    the override and the read can't drop the value, and sanity-checks
+    immediately after the override so a flake surfaces at the override
+    site rather than 5 lines later in the orchestrator.
+
+    Use as ``def test_x(force_fail_fast): force_fail_fast(True)`` --
+    ``monkeypatch`` is wired in by the fixture; tests don't need to
+    request it separately for this purpose.
+    """
+
+    def _set(value: bool) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true" if value else "false")
+        monkeypatch.setattr(Environment.DAG, "FAIL_FAST", value)
+        assert Environment.DAG.FAIL_FAST is value, (
+            f"force_fail_fast({value}) didn't take: "
+            f"Environment.DAG.FAIL_FAST is {Environment.DAG.FAIL_FAST!r}"
+        )
+
+    return _set
+
+
 def make_credit(
     id: int = 1,
     conv_id: str = "conv1",
@@ -210,6 +241,8 @@ def make_credit(
     is_final: bool | None = None,
     phase: CreditPhase = CreditPhase.PROFILING,
     corr_id: str | None = None,
+    parent_correlation_id: str | None = None,
+    has_forks: bool = False,
 ) -> Credit:
     if num_turns is not None:
         n = num_turns
@@ -225,6 +258,8 @@ def make_credit(
         turn_index=turn,
         num_turns=n,
         issued_at_ns=time.time_ns(),
+        parent_correlation_id=parent_correlation_id,
+        has_forks=has_forks,
     )
 
 

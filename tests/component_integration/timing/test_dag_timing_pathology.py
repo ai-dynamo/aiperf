@@ -658,10 +658,14 @@ async def test_orchestrator_zero_child_branch_via_direct_construction() -> None:
 @pytest.mark.asyncio
 async def test_orchestrator_zero_child_branch_with_gate_does_not_hang() -> None:
     """Branch with zero children but the parent's next turn declares a
-    SPAWN_JOIN against it. The orchestrator's expected_gates path must
-    create a future-join with an unregistered PrereqState seed (from
-    _gated_turn_prereq_keys) AND mark it registered with expected=0 — so
-    is_done is True and the gate does NOT block the parent."""
+    SPAWN_JOIN against it. The orchestrator's expected_gates path creates a
+    future-join with an unregistered PrereqState seed (from
+    _gated_turn_prereq_keys) AND marks it registered with expected=0 — so it is
+    vacuously satisfied. Because the gate sits at the parent's IMMEDIATE-NEXT
+    turn, it is popped SILENTLY: intercept returns False and the strategy's
+    normal continuation dispatches the now-ungated turn exactly once. The
+    orchestrator must NOT dispatch the join turn here too (that double-dispatches
+    the same turn_index, since intercept returned False)."""
     branch = ConversationBranchInfo(
         branch_id="root:0",
         child_conversation_ids=[],  # zero children
@@ -686,12 +690,17 @@ async def test_orchestrator_zero_child_branch_with_gate_does_not_hang() -> None:
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     s = await orch.intercept(_mk_credit("root", "p", turn_index=0, num_turns=2))
-    # No children -> the expected_gates path fires the join immediately, so
-    # by the time intercept returns the gate has been drained and the parent
-    # is NOT suspended.
+    # No children -> the gate is vacuously satisfied and popped silently; the
+    # parent is NOT suspended, so by the time intercept returns the strategy's
+    # normal continuation (not the orchestrator) will dispatch the next turn.
     assert s is False, "zero-child branch must not deadlock parent at next turn"
-    issuer.dispatch_join_turn.assert_awaited_once()
-    assert orch.stats.parents_resumed == 1
+    issuer.dispatch_join_turn.assert_not_awaited()
+    assert "p" not in orch._active_joins
+    assert not orch._future_joins.get("p")
+    # parents_resumed counts orchestrator-driven resumes (_release_blocked_join);
+    # here the parent resumes via the normal continuation, so it is not counted
+    # (matches v1, which also pops this immediate-next gate silently).
+    assert orch.stats.parents_resumed == 0
     assert orch.stats.parents_suspended == 0
 
 

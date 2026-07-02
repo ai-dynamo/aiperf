@@ -142,8 +142,12 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(
         self,
         credit: Credit,
+        *,
+        error: str | None = None,
     ) -> None:
         """Handle credit return: dispatch next turn based on trace timing.
+
+        ``error`` is accepted for protocol parity and ignored here.
 
         Calculates delay from timestamp_ms or delay_ms metadata, then issues
         credit immediately (delay=0) or schedules for later (delay>0).
@@ -153,7 +157,10 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
 
         # This contains the delay_ms or timestamp_ms for the next turn
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
-        turn = TurnToSend.from_previous_credit(credit)
+        # Pass next_meta so has_forks rides onto the continuation turn: the
+        # sticky router defers parent-entry eviction until DAG children drain
+        # (dropping it premature-evicts a fork-bearing parent's later turns).
+        turn = TurnToSend.from_previous_credit(credit, next_meta)
 
         if next_meta.timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(
