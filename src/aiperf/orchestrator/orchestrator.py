@@ -717,4 +717,5 @@ class MultiRunOrchestrator:
         if run.variation is not None:
             result.variation_label = run.variation.label
             result.variation_values = dict(run.variation.values)
+            result.variation_index = run.variation.index
         result.trial_index = trial_index
