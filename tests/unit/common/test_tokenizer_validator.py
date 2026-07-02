@@ -95,7 +95,7 @@ class _SyncExecutor:
         future: concurrent.futures.Future = concurrent.futures.Future()
         try:
             future.set_result(fn(*args, **kwargs))
-        except BaseException as e:  # noqa: BLE001 - mirror real executor behavior
+        except BaseException as e:  # mirror real executor behavior
             future.set_exception(e)
         return future
 
@@ -509,7 +509,7 @@ class TestCacheTokenizerCauseChainPreservation:
             future = pool.submit(
                 _cache_tokenizer, "clearly-not-a-real-model", False, "main"
             )
-            with pytest.raises(Exception) as exc_info:  # noqa: BLE001
+            with pytest.raises(Exception) as exc_info:
                 future.result()
 
         e = exc_info.value
