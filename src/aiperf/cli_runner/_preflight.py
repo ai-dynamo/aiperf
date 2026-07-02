@@ -4,9 +4,9 @@
 
 These run before any service bootstrap so misconfiguration surfaces as a
 clean ``ConfigurationError`` instead of a stack trace from deep inside the
-controller. The three checks are: artifact-dir creatable+writable, file
-descriptor soft limit raised (and hard limit large enough), and the target
-endpoint reachable.
+controller. The checks are: artifact-dir creatable+writable, accuracy
+benchmark/grader optional dependencies present, file descriptor soft limit
+raised (and hard limit large enough), and the target endpoint reachable.
 """
 
 from __future__ import annotations
@@ -85,54 +85,68 @@ def _preflight_fd_limit() -> None:
         resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
 
 
-def _preflight_accuracy_grader_deps(plan: BenchmarkPlan) -> None:
-    """Fail fast if a selected accuracy grader's optional dependency is missing.
+def _preflight_accuracy_deps(plan: BenchmarkPlan) -> None:
+    """Fail fast if a selected accuracy benchmark's or grader's optional
+    dependency (lighteval / deepeval, the ``[accuracy]`` extra) is missing.
 
-    Why: graders backed by an optional package (lighteval) raise at
-    instantiation inside the record-processor service, which runs as a daemon
-    child. That crash isn't propagated to the controller, so the user sees a
-    raw multiprocessing traceback and the main process hangs waiting for
-    records that never arrive. Checking here — in the main process, before any
-    service spawns — turns it into a single clean ``ConfigurationError`` panel
-    with a non-zero exit and no hang.
+    Why: both the benchmark loader (dataset-manager service) and the grader
+    (record-processor daemon) raise at instantiation when their optional
+    package is absent. The grader crash isn't propagated to the controller, so
+    the user sees a raw multiprocessing traceback and the run hangs waiting for
+    records that never arrive; the loader crash surfaces later and less
+    cleanly. Checking here — in the main process, before any service spawns —
+    turns both into a single clean ``ConfigurationError`` panel with a non-zero
+    exit and no hang.
     """
     from aiperf.config.loader.errors import ConfigurationError
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
     from aiperf.plugin.types import TypeNotFoundError
 
-    checked: set[str] = set()
+    checked: set[tuple[str, str]] = set()
     for config in plan.configs:
         acc_cfg = getattr(config, "accuracy", None)
         if acc_cfg is None or not acc_cfg.enabled:
             continue
 
         # Keep every preflight failure on the ConfigurationError path: plugin
-        # lookups raise TypeNotFoundError/KeyError for an unknown benchmark or
-        # grader name, and check_available raises RuntimeError for a missing
-        # optional dependency. Either would otherwise leak a raw traceback.
+        # lookups raise TypeNotFoundError/KeyError/ValueError for an unknown or
+        # malformed benchmark/grader name (ImportError for a broken external
+        # plugin), and check_available raises RuntimeError for a missing
+        # optional dependency. Any of these would otherwise leak a raw traceback.
         try:
-            grader_name = acc_cfg.grader
-            if grader_name is None:
-                meta = plugins.get_metadata(
-                    PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
-                )
-                grader_name = meta.get("default_grader", "multiple_choice")
+            meta = plugins.get_metadata(
+                PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
+            )
+            grader_name = acc_cfg.grader or meta.get(
+                "default_grader", "multiple_choice"
+            )
 
-            if grader_name in checked:
+            key = (str(acc_cfg.benchmark), grader_name)
+            if key in checked:
                 continue
-            checked.add(grader_name)
+            checked.add(key)
 
+            # ``check_available`` is an optional hook on both the benchmark
+            # loader and grader: the plugin contracts don't require it, so a
+            # custom plugin need not define it. Built-in graders inherit a
+            # no-op default from ``BaseGrader``; the deepeval-gated benchmark
+            # loaders define it. Treat absence as "no optional deps to verify".
+            benchmark_cls = plugins.get_class(
+                PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
+            )
             grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
-            # ``check_available`` is an optional hook: the accuracy_grader
-            # contract is ``AccuracyGraderProtocol`` (grade + extract_answer
-            # only), so a custom grader plugin need not define it. Built-in
-            # graders inherit a no-op default from ``BaseGrader``; treat its
-            # absence as "no optional deps to verify".
-            check = getattr(grader_cls, "check_available", None)
-            if callable(check):
-                check()
-        except (TypeNotFoundError, KeyError, RuntimeError) as exc:
+            for cls in (benchmark_cls, grader_cls):
+                check = getattr(cls, "check_available", None)
+                if callable(check):
+                    check()
+        except (
+            TypeNotFoundError,
+            KeyError,
+            ValueError,
+            ImportError,
+            RuntimeError,
+        ) as exc:
             raise ConfigurationError(str(exc)) from exc
 
 
