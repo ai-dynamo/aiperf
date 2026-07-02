@@ -18,6 +18,16 @@
     ],
     [
       "file-size",
+      "src/aiperf/analysis/sweepline.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/analysis/swim_lane.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/cli_runner/_sweep_aggregate.py",
       ""
     ],
@@ -83,6 +93,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/common/scenario/validator.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/common/tokenizer.py",
       ""
     ],
@@ -103,6 +118,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/config/dataset/content.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/config/distributions.py",
       ""
     ],
@@ -118,12 +138,32 @@
     ],
     [
       "file-size",
+      "src/aiperf/config/flags/_converter_optionals.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/flags/_converter_profiling.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/config/flags/converter.py",
       ""
     ],
     [
       "file-size",
+      "src/aiperf/config/flags/resolver.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/config/loader/core.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/config/phases.py",
       ""
     ],
     [
@@ -139,6 +179,16 @@
     [
       "file-size",
       "src/aiperf/controller/system_controller.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/credit/callback_handler.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/credit/issuer.py",
       ""
     ],
     [
@@ -163,7 +213,22 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/composer/base.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/dataset_manager.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/generator/prompt.py",
       ""
     ],
     [
@@ -173,12 +238,52 @@
     ],
     [
       "file-size",
+      "src/aiperf/dataset/loader/base_trace_loader.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/loader/dag_jsonl.py",
       ""
     ],
     [
       "file-size",
+      "src/aiperf/dataset/loader/weka_agent_chains.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/dataset/memory_map_utils.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/dataset/mmap_cache.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/endpoints/base_endpoint.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/endpoints/openai_responses.py",
       ""
     ],
     [
@@ -199,6 +304,16 @@
     [
       "file-size",
       "src/aiperf/gpu_telemetry/manager.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/metrics/accumulator.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/metrics/column_store.py",
       ""
     ],
     [
@@ -293,12 +408,22 @@
     ],
     [
       "file-size",
+      "src/aiperf/records/inference_result_parser.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/records/records_manager.py",
       ""
     ],
     [
       "file-size",
       "src/aiperf/search_recipes/builtins.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/server_metrics/accumulator.py",
       ""
     ],
     [
@@ -338,7 +463,22 @@
     ],
     [
       "file-size",
+      "src/aiperf/timing/config.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/timing/phase/runner.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/timing/trajectory_source.py",
       ""
     ],
     [
@@ -355,6 +495,36 @@
       "function-size",
       "src/aiperf/accuracy/graders/_math_strip.py",
       "strip_string"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "function-size",
+      "src/aiperf/cli_runner/_sweep_aggregate.py",
+      "_export_one_variation_aggregate"
     ],
     [
       "function-size",
@@ -393,6 +563,16 @@
     ],
     [
       "function-size",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "function-size",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
+    ],
+    [
+      "function-size",
       "src/aiperf/dataset/agentic_code_gen/reporting/comparison.py",
       "render_comparison_text"
     ],
@@ -423,8 +603,128 @@
     ],
     [
       "function-size",
-      "src/aiperf/dataset/loader/base_trace_loader.py",
-      "BaseTraceDatasetLoader.convert_to_conversations"
+      "src/aiperf/dataset/composer/base.py",
+      "BaseDatasetComposer._init_isl_compensation"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._configure_dataset"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_config_file"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_error_traceback"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_git_diff"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_markdown_doc"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_sql_query"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_tool_read_long"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/generator/prompt.py",
+      "PromptGenerator._build_token_sequence"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/parallel_convert.py",
+      "parallel_convert"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_agent_chains.py",
+      "_resolve_seams"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.advance_turn"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.init_turn_0"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_parallel_reconstruction_tasks"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._detect_and_split_flat_chains"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._emit_flat_chain_conversation"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_parallel"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader.convert_to_conversations"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "_build_trace_idle_timing"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "_expand_subagent_to_child_plans"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/mmap_cache.py",
+      "_settings_payload_from_run"
+    ],
+    [
+      "function-size",
+      "src/aiperf/dataset/mmap_cache_lock.py",
+      "acquire_cache_lock"
     ],
     [
       "function-size",
@@ -433,8 +733,18 @@
     ],
     [
       "function-size",
+      "src/aiperf/exporters/aggregate/aggregate_confidence_json_exporter.py",
+      "AggregateConfidenceJsonExporter._aggregate_to_export_data"
+    ],
+    [
+      "function-size",
       "src/aiperf/exporters/aggregate/aggregate_sweep_csv_exporter.py",
       "AggregateSweepCsvExporter._generate_content"
+    ],
+    [
+      "function-size",
+      "src/aiperf/exporters/metrics_json_exporter.py",
+      "MetricsJsonExporter._generate_content"
     ],
     [
       "function-size",
@@ -460,6 +770,11 @@
       "function-size",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector._collect_gpu_metrics"
+    ],
+    [
+      "function-size",
+      "src/aiperf/metrics/accumulator.py",
+      "MetricsAccumulator._compute_timeslices"
     ],
     [
       "function-size",
@@ -878,6 +1193,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
+    ],
+    [
+      "function-size",
       "src/aiperf/search_recipes/_itl_surface_fit.py",
       "_extract_2d_points"
     ],
@@ -978,8 +1298,83 @@
     ],
     [
       "function-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._finalize_failed_dispatches"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.seed_snapshot"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase/credit_counter.py",
+      "CreditCounter.increment_sent"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner._run_strategy"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner._wait_for_returning_complete"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/phase_orchestrator.py",
+      "PhaseOrchestrator.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy.__init__"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._dispatch_snapshot_for_profiling"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._execute_warmup"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy.handle_credit_return"
+    ],
+    [
+      "function-size",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._log_trajectory_summary"
+    ],
+    [
+      "function-size",
+      "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._snapshot_for"
     ],
     [
       "function-size",
@@ -1023,13 +1418,48 @@
     ],
     [
       "function-size",
-      "src/aiperf/workers/worker.py",
-      "Worker.__init__"
+      "src/aiperf/workers/inference_client.py",
+      "InferenceClient._send_request_to_transport"
+    ],
+    [
+      "function-size",
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager.create_and_store"
     ],
     [
       "function-size",
       "src/aiperf/workers/worker.py",
-      "Worker._process_credit"
+      "Worker.__init__"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_stats.py",
+      "compute_active_weighted_stats"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/cli_commands/swim_lane.py",
+      "swim_lane"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/cli_commands/turn_messages.py",
+      "turn_messages"
     ],
     [
       "keyword-only-args",
@@ -1050,6 +1480,11 @@
       "keyword-only-args",
       "src/aiperf/dataset/agentic_code_gen/reporting/cache_explorer.py",
       "_classify_turn_blocks"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/loader/weka_synth_buf.py",
+      "ConversationReconstructor.init_turn_0"
     ],
     [
       "keyword-only-args",
@@ -1192,6 +1627,11 @@
       "ServerMetricsParquetExporter._collect_scalar_rows"
     ],
     [
+      "keyword-only-args",
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager.create_and_store"
+    ],
+    [
       "module-state",
       "src/aiperf/common/aiperf_logger.py",
       "_ignored_files"
@@ -1235,6 +1675,11 @@
       "nesting-depth",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
+    ],
+    [
+      "nesting-depth",
+      "src/aiperf/dataset/generator/coding_content.py",
+      "CodingContentGenerator._gen_config_file"
     ],
     [
       "nesting-depth",

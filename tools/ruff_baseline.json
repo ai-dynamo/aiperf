@@ -1,5 +1,5 @@
 {
-  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations \u2014 prefer fixing the underlying code over extending the list.",
+  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations — prefer fixing the underlying code over extending the list.",
   "rules": [
     "PLR0915",
     "PLR0912",
@@ -229,6 +229,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/cli_runner/_aggregate.py",
+      "_stamp_scenario_submission_metadata"
+    ],
+    [
+      "BLE001",
       "src/aiperf/cli_runner/_pareto.py",
       "_resolve_pareto_axes"
     ],
@@ -295,6 +300,11 @@
     [
       "BLE001",
       "src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py",
+      "BufferedJSONLWriterMixin._flush_buffer_periodically"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py",
       "BufferedJSONLWriterMixin.buffered_write"
     ],
     [
@@ -316,6 +326,11 @@
       "BLE001",
       "src/aiperf/common/mixins/task_manager_mixin.py",
       "TaskManagerMixin._background_task_loop"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/common/scenario/context_overflow.py",
+      "_extract_openai_error_message"
     ],
     [
       "BLE001",
@@ -349,8 +364,48 @@
     ],
     [
       "BLE001",
+      "src/aiperf/dataset/composer/base.py",
+      "_estimate_chat_template_overheads"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._configure_from_cache_hit"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._populate_cache_after_run"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._profile_configure_command"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._try_cache_lookup"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader.can_load"
+    ],
+    [
+      "BLE001",
       "src/aiperf/dataset/memory_map_utils.py",
       "MemoryMapDatasetClient.close"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/mmap_cache.py",
+      "_read_manifest"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/dataset/mmap_cache.py",
+      "populate"
     ],
     [
       "BLE001",
@@ -559,6 +614,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/post_processors/raw_record_writer_processor.py",
+      "RawRecordWriterProcessor.buffered_write"
+    ],
+    [
+      "BLE001",
       "src/aiperf/post_processors/record_export_results_processor.py",
       "RecordExportResultsProcessor.process_result"
     ],
@@ -719,11 +779,6 @@
     ],
     [
       "BLE001",
-      "src/aiperf/zmq/pull_client.py",
-      "ZMQPullClient._pull_receiver"
-    ],
-    [
-      "BLE001",
       "src/aiperf/zmq/router_reply_client.py",
       "ZMQRouterReplyClient._handle_request"
     ],
@@ -739,23 +794,8 @@
     ],
     [
       "BLE001",
-      "src/aiperf/zmq/streaming_dealer_client.py",
-      "ZMQStreamingDealerClient._streaming_dealer_receiver"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/zmq/streaming_router_client.py",
-      "ZMQStreamingRouterClient._streaming_router_receiver"
-    ],
-    [
-      "BLE001",
       "src/aiperf/zmq/sub_client.py",
       "ZMQSubClient._handle_message"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/zmq/sub_client.py",
-      "ZMQSubClient._sub_receiver"
     ],
     [
       "BLE001",
@@ -774,6 +814,21 @@
     ],
     [
       "C901",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
+    ],
+    [
+      "C901",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
+    ],
+    [
+      "C901",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "C901",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
     ],
@@ -789,6 +844,11 @@
     ],
     [
       "C901",
+      "src/aiperf/config/flags/_converter_dataset.py",
+      "_build_prompts"
+    ],
+    [
+      "C901",
       "src/aiperf/config/flags/variant_parser.py",
       "parse_variant"
     ],
@@ -796,6 +856,16 @@
       "C901",
       "src/aiperf/config/sweep/expand.py",
       "_normalize_scenario_dataset_form"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "C901",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
     ],
     [
       "C901",
@@ -814,8 +884,33 @@
     ],
     [
       "C901",
+      "src/aiperf/dataset/dataset_manager.py",
+      "DatasetManager._preformat_payloads"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/generator/video.py",
       "VideoGenerator._get_ffmpeg_install_instructions"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_model_map"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_parallel"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
     ],
     [
       "C901",
@@ -1005,12 +1100,7 @@
     [
       "C901",
       "src/aiperf/records/records_manager.py",
-      "RecordsManager.__init__"
-    ],
-    [
-      "C901",
-      "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
+      "_render_realtime_block"
     ],
     [
       "C901",
@@ -1029,6 +1119,11 @@
     ],
     [
       "C901",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_timeslices"
+    ],
+    [
+      "C901",
       "src/aiperf/server_metrics/histogram_percentiles.py",
       "_generate_observations_with_sum_constraint"
     ],
@@ -1039,8 +1134,33 @@
     ],
     [
       "C901",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator.dispatch_pre_session_branches"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._dispatch_snapshot_for_profiling"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._execute_warmup"
+    ],
+    [
+      "C901",
       "src/aiperf/timing/strategies/request_rate.py",
       "RequestRateStrategy.execute_phase"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/trajectory_source.py",
+      "TrajectorySource._snapshot_for"
     ],
     [
       "C901",
@@ -1081,6 +1201,11 @@
       "D103",
       "src/aiperf/common/optional_dependencies.py",
       "otel_dependency_message"
+    ],
+    [
+      "D103",
+      "src/aiperf/common/scenario/registry.py",
+      "get_scenario"
     ],
     [
       "D103",
@@ -1134,8 +1259,23 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/credit/callback_handler.py",
+      "CreditCallbackHandler.on_credit_return"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/credit/sticky_router.py",
+      "StickyCreditRouter.send_credit"
     ],
     [
       "PLR0912",
@@ -1151,6 +1291,21 @@
       "PLR0912",
       "src/aiperf/dataset/generator/video.py",
       "VideoGenerator._get_ffmpeg_install_instructions"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._build_model_map"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
     ],
     [
       "PLR0912",
@@ -1254,13 +1409,38 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
     ],
     [
       "PLR0912",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_stats"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/server_metrics/histogram_percentiles.py",
       "_generate_observations_with_sum_constraint"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._dispatch_snapshot_for_profiling"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/timing/strategies/agentic_replay.py",
+      "AgenticReplayStrategy._execute_warmup"
     ],
     [
       "PLR0912",
@@ -1289,6 +1469,21 @@
     ],
     [
       "PLR0915",
+      "src/aiperf/analysis/swim_lane.py",
+      "plot_swim_lane"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/analysis/swim_lane.py",
+      "write_swim_lane_html"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/analysis/turn_messages.py",
+      "build_payload"
+    ],
+    [
+      "PLR0915",
       "src/aiperf/common/bootstrap.py",
       "bootstrap_and_run_service"
     ],
@@ -1301,6 +1496,16 @@
       "PLR0915",
       "src/aiperf/dataset/agentic_code_gen/reporting/simulation_engine.py",
       "simulate"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/dataset/loader/weka_parallel_convert.py",
+      "_process_task"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/dataset/loader/weka_trace.py",
+      "WekaTraceLoader._reconstruct_serial"
     ],
     [
       "PLR0915",
@@ -1420,7 +1625,12 @@
     [
       "PLR0915",
       "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
+      "RecordsManager.__init__"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
     ],
     [
       "PLR0915",
@@ -1434,6 +1644,11 @@
     ],
     [
       "PLR0915",
+      "src/aiperf/timing/branch_orchestrator.py",
+      "BranchOrchestrator._spawn_children_and_register_gates"
+    ],
+    [
+      "PLR0915",
       "src/aiperf/transports/aiohttp_client.py",
       "AioHttpClient._request"
     ],
@@ -1441,6 +1656,11 @@
       "PLR0915",
       "src/aiperf/transports/aiohttp_trace.py",
       "create_aiohttp_trace_config"
+    ],
+    [
+      "PLR0915",
+      "src/aiperf/transports/aiohttp_transport.py",
+      "AioHttpTransport.send_request"
     ],
     [
       "PLR0915",

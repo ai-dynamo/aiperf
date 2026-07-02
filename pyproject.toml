@@ -224,6 +224,7 @@ markers = [
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
     "network: marks tests that require network access",
     "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
+    "looptime: marks tests that use virtual event-loop time",
 ]
 # Better console output
 console_output_style = "progress"
@@ -255,4 +256,4 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/config/schema/aiperf-config.schema.json"
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency"
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen"

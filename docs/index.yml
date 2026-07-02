@@ -98,6 +98,10 @@ navigation:
       path: tutorials/prefix-synthesis.md
     - page: Agentic Code Dataset Generator
       path: tutorials/agentic-code-generator.md
+    - page: Replay Weka Agentic Coding Traces
+      path: tutorials/weka-trace.md
+    - page: InferenceX AgentX MVP Benchmark
+      path: tutorials/agentx-mvp.md
   - section: Load Patterns & Scheduling
     collapsed: true
     contents:
@@ -201,6 +205,10 @@ navigation:
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
     path: reference/tokenizer-auto-detection.md
+  - page: Input Sequence Length (ISL) Tokenization
+    path: reference/isl-tokenization.md
+  - page: ISL Budget Compensation Derivation
+    path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
