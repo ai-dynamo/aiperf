@@ -159,7 +159,7 @@ class TestPreflightCliTrustBoundary:
         factory = _RecordingK8sClientFactory(api=api)
         checker = CLIPreflightChecker(
             namespace="aiperf-ci",
-            kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
+            kubeconfig="/opt/ci/kubeconfigs/aiperf-ci.yaml",
             kube_context="kind-aiperf-ci",
         )
         # The orchestrator opens the shared client and stamps self._api; the
@@ -175,7 +175,7 @@ class TestPreflightCliTrustBoundary:
         assert results.passed is True
         assert factory.calls == [
             _K8sClientCall(
-                kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
+                kubeconfig="/opt/ci/kubeconfigs/aiperf-ci.yaml",
                 context="kind-aiperf-ci",
             )
         ]
@@ -227,7 +227,7 @@ class TestPreflightCliTrustBoundary:
             await preflight_cmd._run_preflight(
                 manage_options=KubeManageOptions(
                     namespace="aiperf-ci",
-                    kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
+                    kubeconfig="/opt/ci/kubeconfigs/aiperf-ci.yaml",
                     kube_context="kind-aiperf-ci",
                 ),
                 image="nvcr.io/nvidia/aiperf:ci",
@@ -242,7 +242,7 @@ class TestPreflightCliTrustBoundary:
         assert captured == [
             _CapturedCheckerInit(
                 namespace="aiperf-ci",
-                kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
+                kubeconfig="/opt/ci/kubeconfigs/aiperf-ci.yaml",
                 kube_context="kind-aiperf-ci",
                 image="nvcr.io/nvidia/aiperf:ci",
                 endpoint_url="http://llama.default.svc.cluster.local:8000/v1",

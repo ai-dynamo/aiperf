@@ -236,7 +236,7 @@ class TestOperatorApiDiscovery:
                 local_port=31081,
                 operator_namespace="aiperf-observability",
                 results_port=9001,
-                kubeconfig="/home/anthony/.kube/dgx.yaml",
+                kubeconfig="/opt/ci/kubeconfigs/perf-cluster.yaml",
                 kube_context="kind-aiperf-smoke",
                 run="1770000000",
             )
@@ -252,7 +252,7 @@ class TestOperatorApiDiscovery:
                 "local_port": 31081,
                 "remote_port": 9001,
                 "verify_api": False,
-                "kubeconfig": "/home/anthony/.kube/dgx.yaml",
+                "kubeconfig": "/opt/ci/kubeconfigs/perf-cluster.yaml",
                 "kube_context": "kind-aiperf-smoke",
             }
         ]

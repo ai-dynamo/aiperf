@@ -114,7 +114,7 @@ class TestOperatorBaseUrlEnvInjection:
         )
 
     def test_custom_namespace_propagates(self) -> None:
-        docs = _helm_template(namespace="acasagrande-aiperf")
+        docs = _helm_template(namespace="perf-team-aiperf")
         deploy = _find(docs, "Deployment", "aiperf-operator")
         operator_container = next(
             c
@@ -124,7 +124,7 @@ class TestOperatorBaseUrlEnvInjection:
         env_by_name = {e["name"]: e["value"] for e in operator_container.get("env", [])}
         assert (
             env_by_name.get("AIPERF_OPERATOR_BASE_URL")
-            == "http://aiperf-operator.acasagrande-aiperf:8081"
+            == "http://aiperf-operator.perf-team-aiperf:8081"
         )
 
     def test_fullname_override_propagates(self) -> None:

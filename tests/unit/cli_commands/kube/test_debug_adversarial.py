@@ -142,7 +142,7 @@ async def _collect_nodes(api: MagicMock) -> list[dict[str, object]]:
 
 def _source_files_under_debug_command() -> list[Path]:
     """Return source files that implement ``aiperf kube debug`` output paths."""
-    root = Path("/home/anthony/nvidia/projects/aiperf/ajc/new-config-kube")
+    root = Path(__file__).resolve().parents[4]
     return [
         root / "src/aiperf/cli_commands/kube/debug.py",
         root / "src/aiperf/cli_commands/kube/_debug_extract.py",
@@ -476,14 +476,14 @@ class TestDebugClusterSelectionPropagation:
             await debug(
                 manage_options=KubeManageOptions(
                     namespace="llama-benchmarks",
-                    kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
+                    kubeconfig="/opt/ci/kubeconfigs/aiperf-ci.yaml",
                     kube_context="kind-aiperf-ci",
                 )
             )
 
         assert factory.calls == [
             _K8sClientCall(
-                kubeconfig="/home/anthony/.kube/aiperf-ci.yaml",
+                kubeconfig="/opt/ci/kubeconfigs/aiperf-ci.yaml",
                 context="kind-aiperf-ci",
             )
         ]
