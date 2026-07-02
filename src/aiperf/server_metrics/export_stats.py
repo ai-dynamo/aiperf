@@ -602,6 +602,8 @@ def _compute_histogram_timeslices(
         raise ValueError("slice_duration must be positive")
 
     reference_idx, final_idx = time_series.get_indices_for_filter(time_filter)
+    if final_idx is None:
+        return None
 
     timestamps = time_series.timestamps
     sums = time_series.sums
@@ -711,6 +713,8 @@ def _compute_histogram_stats(
         return None
 
     reference_idx, final_idx = time_series.get_indices_for_filter(time_filter)
+    if final_idx is None:
+        return None
 
     # Reference values
     if reference_idx is not None:
