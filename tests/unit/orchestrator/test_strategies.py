@@ -288,6 +288,56 @@ class TestFixedTrialsStrategy:
             "`exclude_from_results`, not a hardcoded name string."
         )
 
+    def test_disable_warmup_clears_agentic_cache_warmup_duration(self):
+        """Trials 2+ must suppress the synthesized agentic cache-pressure warmup.
+
+        AGENTIC_REPLAY warmup is not a stored ``exclude_from_results`` phase; it
+        is derived from the surviving profiling phase by
+        ``TimingConfig.from_run`` -> ``_build_agentic_warmup_config``, keyed off
+        the profiling phase's ``agentic_cache_warmup_duration``. Stripping the
+        excluded phases alone leaves that field set, so the accelerated
+        cache-pressure substage would re-run on every trial. Pin that
+        ``_disable_warmup`` zeroes it so trials 2+ run with NO warmup at all.
+        """
+        from aiperf.plugin.enums import TimingMode
+
+        strategy = FixedTrialsStrategy(num_trials=3, disable_warmup_after_first=True)
+        config = _make_config(
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 1,
+                    "timing_mode": TimingMode.AGENTIC_REPLAY,
+                    "agentic_cache_warmup_duration": 30.0,
+                },
+            ],
+        )
+
+        # First trial keeps the cache-pressure warmup on the profiling phase.
+        first_config = strategy.get_next_config(config, [])
+        assert (
+            first_config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
+        )
+
+        results = [
+            RunResult(
+                label="run_0001",
+                success=True,
+                summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
+                artifacts_path=Path("/tmp/run_0001"),
+            )
+        ]
+
+        # Second trial must have the cache-pressure warmup suppressed.
+        second_config = strategy.get_next_config(config, results)
+        for phase in second_config.get_profiling_phases():
+            assert phase.agentic_cache_warmup_duration is None
+
+        # Original config untouched (deep copy).
+        assert config.get_profiling_phases()[0].agentic_cache_warmup_duration == 30.0
+
     def test_get_run_path(self):
         """Test get_run_path returns correct path structure."""
         strategy = FixedTrialsStrategy(num_trials=3)
