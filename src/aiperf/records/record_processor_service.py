@@ -31,6 +31,7 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
+from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 if TYPE_CHECKING:
@@ -67,6 +68,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             run=self.run,
         )
 
+        # DatasetConfiguredNotification (SUB) and inference results (PULL) arrive on
+        # independent channels with no ordering guarantee. Gate record processing on
+        # this event so processors are configured (e.g. accuracy ground truths) before
+        # any record is graded.
+        self._dataset_configured_event: asyncio.Event = asyncio.Event()
+
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
             try:
@@ -97,6 +104,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         for processor in self.records_processors:
             if hasattr(processor, "on_dataset_configured"):
                 processor.on_dataset_configured(message.metadata)
+        self._dataset_configured_event.set()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -169,6 +177,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""
+        if not await await_dataset_configured(self, self._dataset_configured_event):
+            return
         record = message.record
 
         # Capture last response timestamp before parsing frees raw SSE data.
