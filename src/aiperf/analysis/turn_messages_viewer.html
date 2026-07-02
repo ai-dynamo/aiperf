@@ -1,0 +1,158 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>turn input messages</title>
+<style>
+:root{--bg:#0b0f17;--panel:#121826;--ink:#e6edf3;--mut:#8b98a9;--line:#1e2838;--accent:#3b82f6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;padding:12px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0e1420,#0b0f17e6);backdrop-filter:blur(6px)}
+h1{margin:0 0 4px;font-size:15px;font-weight:650}
+.sub{color:var(--mut);font-size:12px}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+button,input{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:12px}
+button{cursor:pointer}button:hover{border-color:#33425c}
+input{min-width:240px}
+#legend{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.rb{font-size:11px;padding:2px 7px;border-radius:999px;color:#0b0f17;background:var(--c);font-weight:600}
+main{padding:14px 18px 60px}
+details{margin:0}
+summary{cursor:pointer;list-style:none;user-select:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸";color:var(--mut);display:inline-block;width:1em;transition:transform .12s}
+details[open]>summary::before{transform:rotate(90deg)}
+.conv{border:1px solid var(--line);border-radius:10px;margin:8px 0;background:#0e1422;overflow:hidden}
+.conv>summary{padding:10px 12px;font-weight:600;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.conv>summary:hover{background:#121a2b}
+.cid{font-family:ui-monospace,Menlo,monospace;color:var(--accent)}
+.kind{font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--line);color:var(--mut)}
+.kind.root{color:#22c55e;border-color:#1f5132}.kind.sub{color:#f59e0b;border-color:#5a4216}
+.cmeta{margin-left:auto;color:var(--mut);font-size:11.5px}
+.lane{font-size:10.5px;font-family:ui-monospace,monospace;color:#7dd3fc;border:1px solid #1c3a4d;border-radius:5px;padding:1px 6px}
+.turns{padding:4px 10px 10px 22px}
+.turn{border-left:2px solid var(--line);margin:5px 0;padding-left:8px}
+.turn>summary{padding:5px 4px;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.turn>summary:hover{color:#fff}
+.tn{font-weight:600;font-family:ui-monospace,monospace}
+.badges{display:flex;gap:5px;flex-wrap:wrap}
+.meta{margin-left:auto;color:var(--mut);font-size:11px}
+.flag{font-size:10px;padding:1px 6px;border-radius:5px;font-weight:600}
+.flag.cancel{background:#3a2f10;color:#f5c451}.flag.err{background:#3a1414;color:#f87171}
+.msgs{padding:3px 0 3px 16px}
+.msg{border-left:3px solid var(--c);margin:4px 0;background:#0c1019;border-radius:0 7px 7px 0}
+.msg>summary{padding:5px 9px;display:flex;gap:9px;align-items:center}
+.msg>summary:hover{background:#111726}
+.role{font-size:10.5px;font-weight:700;color:#0b0f17;background:var(--c);padding:2px 7px;border-radius:5px;text-transform:uppercase;letter-spacing:.4px}
+.prev{color:var(--mut);font-family:ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.len{color:#5b6b80;font-size:11px;white-space:nowrap}
+pre{margin:0;padding:10px 12px;background:#070a11;border-top:1px solid var(--line);white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,Menlo,monospace;max-height:460px;overflow:auto;color:#cdd9e5}
+.more{color:#5b6b80;font-size:11.5px;padding:6px 4px}
+.hidden{display:none}
+#loading{padding:24px 18px;color:var(--mut)}
+</style></head><body>
+<header>
+<h1>Turn input messages <span class="sub">— what the run actually sent, by conversation → turn → role</span></h1>
+<div class="sub" id="stat">inflating payload…</div>
+<div class="controls">
+<button id="expand">expand all conversations</button><button id="collapse">collapse all</button>
+<input id="q" placeholder="filter conversations by id…">
+<label class="sub"><input type="checkbox" id="rootsOnly"> roots only</label>
+<div id="legend"></div>
+</div>
+</header>
+<main id="root"><div id="loading">inflating compressed payload…</div></main>
+<script>__FZSTD_JS__</script>
+<script>
+// payload is zstd-compressed (--long=26) then base64-encoded at export time;
+// inflate it with the inlined pure-JS fzstd decoder (no deps, no network), then
+// build the DOM lazily so the live tree stays tiny no matter how large the run.
+// Messages are interned: each turn carries integer `ids` into the shared `MSGS`
+// table; we dereference + count roles client-side as turns are opened.
+const ROLE_COLOR={system:"#a855f7",user:"#3b82f6",assistant:"#22c55e",tool:"#f59e0b",developer:"#ec4899"};
+const DFLT="#94a3b8";
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;};
+const fmt=n=>n.toLocaleString();
+let MSGS=[];
+
+async function inflate(){
+  const bytes=Uint8Array.from(atob("__PAYLOAD_B64__"),c=>c.charCodeAt(0));
+  const buf=fzstd.decompress(bytes);
+  return JSON.parse(new TextDecoder().decode(buf));
+}
+
+function badge(role,n){const s=el("span","rb");s.style.setProperty("--c",ROLE_COLOR[role]||DFLT);s.textContent=`${role}×${n}`;return s;}
+
+function renderMsg(m){
+  const c=ROLE_COLOR[m.role]||DFLT;
+  const d=el("details","msg");d.style.setProperty("--c",c);
+  const sum=el("summary");
+  const role=el("span","role",m.role);role.style.setProperty("--c",c);
+  const prev=el("span","prev",(m.body||"").slice(0,90).replace(/\n/g," "));
+  const len=el("span","len",`${fmt(m.len)} ch`);
+  sum.append(role,prev,len);
+  const pre=el("pre",null,m.body+(m.trunc?`\n\n… [${fmt(m.trunc)} more chars truncated; total ${fmt(m.len)}]`:""));
+  d.append(sum,pre);
+  return d;
+}
+
+function renderTurn(t){
+  const d=el("details","turn");
+  const sum=el("summary");
+  sum.append(el("span","tn",`Turn ${t.ti}`));
+  const msgs=t.ids.map(i=>MSGS[i]);
+  const counts=new Map();
+  for(const m of msgs)counts.set(m.role,(counts.get(m.role)||0)+1);
+  const badges=el("span","badges");
+  for(const [r,n] of counts)badges.append(badge(r,n));
+  sum.append(badges);
+  if(t.cancelled)sum.append(el("span","flag cancel","cancelled"));
+  if(t.error)sum.append(el("span","flag err","error"));
+  let meta=`${msgs.length} msg`;
+  if(t.maxTokens)meta+=` · max_tokens=${t.maxTokens}`;
+  if(t.phase)meta+=` · ${t.phase}`;
+  sum.append(el("span","meta",meta));
+  const wrap=el("div","msgs");
+  d.append(sum,wrap);
+  let built=false;
+  d.addEventListener("toggle",()=>{if(d.open&&!built){built=true;const f=document.createDocumentFragment();for(const m of msgs)f.append(renderMsg(m));wrap.append(f);}});
+  return d;
+}
+
+function renderConv(c){
+  const d=el("details","conv");
+  d.dataset.kind=c.isRoot?"root":"sub";d.dataset.fid=c.id;
+  const sum=el("summary");
+  sum.append(el("span","cid",c.disp));
+  if(c.replayTag)sum.append(el("span","kind sub",c.replayTag));
+  sum.append(el("span","kind "+(c.isRoot?"root":"sub"),c.kind));
+  if(c.parent)sum.append(el("span","cmeta","parent "+c.parent));
+  if(c.lane)sum.append(el("span","lane","lane "+c.lane));
+  sum.append(el("span","cmeta",`${c.nt} turns · ${c.models}`));
+  const turns=el("div","turns");
+  d.append(sum,turns);
+  let built=false;
+  d.addEventListener("toggle",()=>{if(d.open&&!built){built=true;const f=document.createDocumentFragment();for(const t of c.turns)f.append(renderTurn(t));if(c.moreTurns)f.append(el("div","more",`… ${c.moreTurns} more turns hidden (raise --max-turns)`));turns.append(f);}});
+  return d;
+}
+
+(async()=>{
+  const data=await inflate();
+  MSGS=data.msgs;
+  $("#stat").textContent=data.stat;
+  const leg=$("#legend");
+  for(const [r,n] of data.legend){const s=el("span","rb");s.style.setProperty("--c",ROLE_COLOR[r]||DFLT);s.textContent=`${r} (${fmt(n)})`;leg.append(s);}
+  const root=$("#root");root.textContent="";
+  const f=document.createDocumentFragment();
+  for(const c of data.convs)f.append(renderConv(c));
+  root.append(f);
+  // "expand all" opens conversations only (one level); turns/messages stay
+  // lazy so the DOM doesn't balloon. Drill into individual turns as needed.
+  $("#expand").onclick=()=>$$(".conv").forEach(d=>d.open=true);
+  $("#collapse").onclick=()=>$$("details").forEach(d=>d.open=false);
+  $("#q").oninput=e=>{const v=e.target.value.toLowerCase();$$(".conv").forEach(c=>{const id=(c.dataset.fid||"").toLowerCase();c.classList.toggle("hidden",v&&!id.includes(v));});};
+  $("#rootsOnly").onchange=e=>{$$(".conv").forEach(c=>{if(e.target.checked)c.classList.toggle("hidden",c.dataset.kind!=="root");else c.classList.remove("hidden");});if($("#q").value)$("#q").oninput({target:$("#q")});};
+})();
+</script></body></html>
