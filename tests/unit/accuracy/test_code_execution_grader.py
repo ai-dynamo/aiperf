@@ -141,3 +141,27 @@ class TestGradeClearsDaemonFlag:
         # Grading ran to completion instead of being mislabeled unparsed.
         assert result.unparsed is False
         assert result.correct is True
+
+    async def test_codegen_metrics_exception_becomes_grading_failure(
+        self, monkeypatch
+    ) -> None:
+        """If sandboxed execution raises (e.g. the daemon-fork error), grade()
+        must return a clean failure result — not propagate and crash the
+        record processor."""
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("daemonic processes are not allowed to have children")
+
+        monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
+        monkeypatch.setattr(code_execution, "codegen_metrics", _boom)
+        monkeypatch.setattr(code_execution, "extract_code", lambda _text: "print(1)")
+
+        grader = CodeExecutionGrader(run=MagicMock())
+        payload = orjson.dumps(
+            {"public_test_cases": [{"input": "1", "output": "1"}], "metadata": ""}
+        ).decode()
+
+        result = await grader.grade("```python\nprint(1)\n```", payload)
+        assert result.correct is False
+        assert result.unparsed is True
+        assert "sandboxed exec failed" in result.reasoning

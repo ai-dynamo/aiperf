@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import multiprocessing as mp
+import threading
 
 import orjson
 import pytest
@@ -64,6 +65,56 @@ class TestAllowDaemonChildren:
             with allow_daemon_children():
                 assert mp.current_process().daemon is False
             assert mp.current_process().daemon is False
+        finally:
+            self._set_daemon(original)
+
+    def test_reentrant_nested_use_restores_only_at_outermost_exit(self) -> None:
+        """Nested entries must keep the flag cleared until the outermost exits,
+        so an inner block completing doesn't restore daemon=True while the outer
+        one still needs it cleared."""
+        original = mp.current_process().daemon
+        try:
+            self._set_daemon(True)
+            with allow_daemon_children():
+                with allow_daemon_children():
+                    assert mp.current_process().daemon is False
+                # inner exited, but outer is still active → stay cleared
+                assert mp.current_process().daemon is False
+            # outermost exited → restored
+            assert mp.current_process().daemon is True
+        finally:
+            self._set_daemon(original)
+
+    def test_concurrent_threads_keep_flag_cleared_until_all_exit(self) -> None:
+        """Under concurrent use (the LCB asyncio.to_thread grading pattern), the
+        flag must remain cleared while ANY thread is inside the context — an
+        early-finishing thread must not restore daemon=True under the others."""
+        original = mp.current_process().daemon
+        entered = threading.Barrier(3)  # 2 workers + main
+        release = threading.Event()
+        observed: list[bool] = []
+
+        def worker() -> None:
+            with allow_daemon_children():
+                entered.wait(timeout=5)
+                release.wait(timeout=5)
+                observed.append(mp.current_process().daemon)
+
+        try:
+            self._set_daemon(True)
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            for t in threads:
+                t.start()
+            entered.wait(timeout=5)  # both workers are inside the context
+            # While both are active, the flag must be cleared.
+            assert mp.current_process().daemon is False
+            release.set()
+            for t in threads:
+                t.join(timeout=5)
+            # Every worker saw a cleared flag; none clobbered it early.
+            assert observed == [False, False]
+            # All exited → restored.
+            assert mp.current_process().daemon is True
         finally:
             self._set_daemon(original)
 

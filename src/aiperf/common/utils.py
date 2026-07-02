@@ -4,6 +4,7 @@ import inspect
 import multiprocessing as mp
 import os
 import sys
+import threading
 import types
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -155,9 +156,22 @@ def _set_daemon(daemon: bool) -> None:
         mp.current_process()._config["daemon"] = daemon
 
 
+# Reentrancy/thread-safety for allow_daemon_children: the daemon flag is
+# process-global, but callers may enter concurrently — e.g. LCB grading pushes
+# codegen_metrics to asyncio.to_thread so multiple grade() calls fan out at
+# once. A naive clear/restore lets one caller restore daemon=True while another
+# is still spawning workers, intermittently reintroducing the very
+# "daemonic processes are not allowed to have children" crash. A lock-protected
+# depth counter clears on the first entry and restores only when the last
+# concurrent caller exits.
+_daemon_override_lock = threading.Lock()
+_daemon_override_depth = 0
+_daemon_override_was_daemon = False
+
+
 @contextmanager
 def allow_daemon_children() -> Iterator[None]:
-    """Temporarily clear the current process's daemon flag.
+    """Temporarily clear the current process's daemon flag (reentrant, thread-safe).
 
     Python's multiprocessing refuses to spawn children from daemon
     processes, and AIPerf services run as daemons (see
@@ -167,18 +181,26 @@ def allow_daemon_children() -> Iterator[None]:
     context, or it raises ``AssertionError: daemonic processes are not
     allowed to have children``.
 
-    Restores the original flag on exit. Not safe against concurrent
-    daemon-flag toggling within the same process, matching the
-    single-owner usage in the batch tokenizer decode path.
+    Safe under concurrent/nested use within a process: the flag is cleared
+    while any caller is active and restored to its original value only when the
+    outermost/last caller exits. The lock is held only around the flag
+    mutation, not during the wrapped work, so concurrent pools still run in
+    parallel.
     """
-    was_daemon = mp.current_process().daemon
-    if was_daemon:
-        _set_daemon(False)
+    global _daemon_override_depth, _daemon_override_was_daemon
+    with _daemon_override_lock:
+        if _daemon_override_depth == 0:
+            _daemon_override_was_daemon = mp.current_process().daemon
+            if _daemon_override_was_daemon:
+                _set_daemon(False)
+        _daemon_override_depth += 1
     try:
         yield
     finally:
-        if was_daemon:
-            _set_daemon(True)
+        with _daemon_override_lock:
+            _daemon_override_depth -= 1
+            if _daemon_override_depth == 0 and _daemon_override_was_daemon:
+                _set_daemon(True)
 
 
 # This is used to identify the source file of the call_all_functions function
