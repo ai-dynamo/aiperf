@@ -11,6 +11,7 @@ Supports the following sweep strategies:
 from __future__ import annotations
 
 import math
+import re
 import warnings
 from typing import Annotated, Any, ClassVar, Literal
 
@@ -230,6 +231,25 @@ class ScenarioSweep(_GridSweepBase):
             raise ValueError(
                 f"scenario sweep runs must have unique names; duplicates: {dups!r}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_run_name_path_safety(self) -> Self:
+        # `name` becomes a filesystem path segment via `variation.dir_name`
+        # (`base_dir / dir_name`). Reject path separators and `..` up front so
+        # a name like `../outside` can't escape the artifact directory.
+        # `dir_name` sanitizes the label as a backstop; rejecting here makes
+        # the failure explicit instead of silently rewriting the user's name.
+        for run in self.runs:
+            name = run.get("name") if isinstance(run, dict) else None
+            if isinstance(name, str) and (
+                re.search(r"[/\\]|\.\.", name) or re.fullmatch(r"\.+", name)
+            ):
+                raise ValueError(
+                    f"scenario sweep run name {name!r} is path-unsafe (contains "
+                    f"a path separator or '..', or is only dots); choose a name "
+                    f"usable as a directory."
+                )
         return self
 
 
@@ -665,9 +685,11 @@ class SweepVariation(BaseConfig):
 
         Naming convention is
         ``{last_segment_of_dotted_key}_{value}``. Multi-dim variations
-        join components with ``__``. Falls back to ``label`` when
-        ``values`` is empty (e.g. ``"base"`` for non-sweep runs, or
-        named scenarios like ``"scenario_a"``).
+        join components with ``__``. Falls back to the sanitized ``label``
+        when ``values`` is empty (e.g. ``"base"`` for non-sweep runs, or
+        named scenarios like ``"scenario_a"``) or nested (scenario sweeps
+        without an explicit ``values:`` block). The label is sanitized so a
+        user-supplied scenario name cannot inject path segments.
 
         Examples:
 
@@ -676,7 +698,34 @@ class SweepVariation(BaseConfig):
         >>> # values={"a.b": 1, "c.d": 2}                    -> "b_1__d_2"
         >>> # values={}                                      -> self.label
         """
-        return _format_dir_name(self.values) or self.label
+        return _format_dir_name(self.values) or _label_dir_segment(
+            self.label, self.index
+        )
+
+
+def _is_nested_override(values: dict[str, Any]) -> bool:
+    """True if any value is a nested dict/list (a scenario override subtree).
+
+    Such values can't form a readable ``{leaf}_{value}`` segment, so callers
+    fall back to the variation label. Shared by the per-run (`dir_name`),
+    aggregate (`_variation_dir_name`), and expansion-warning paths so their
+    nested-detection can't drift.
+    """
+    return any(isinstance(value, (dict, list)) for value in values.values())
+
+
+def _label_dir_segment(label: str, index: int) -> str:
+    """Canonical, sanitized, always-non-empty dir segment from a variation label.
+
+    Shared by the per-run and aggregate paths so a sanitizable label
+    (e.g. ``qps:100`` -> ``qps100``) yields the *same* directory name on both,
+    keeping per-run and aggregate artifacts matched. ``variation_{index}`` is
+    the last resort for a label that sanitizes to empty (e.g. ``../..`` -> "");
+    without it `dir_name` would be "" and `base_dir / ""` collapses to
+    `base_dir`, so runs would clobber each other. The index is always present
+    and unique.
+    """
+    return _sanitize_dir_segment(label) or f"variation_{index}"
 
 
 def _format_dir_name(values: dict[str, Any]) -> str:
@@ -685,8 +734,16 @@ def _format_dir_name(values: dict[str, Any]) -> str:
     Returns ``""`` when ``values`` is empty so callers can fall back to a
     user-provided label. Single-dim sweeps produce ``{last_seg}_{value}``
     (e.g. ``concurrency_10``); multi-dim joins components with ``__``.
+
+    Also returns ``""`` when any value is a nested dict/list: scenario
+    sweeps without an explicit ``values:`` block carry the whole override
+    subtree here, which would stringify into an unreadable path
+    (``benchmark_{'phases': [...]}``). Falling back to the label yields the
+    human-authored name (e.g. ``aa-1k``).
     """
     if not values:
+        return ""
+    if _is_nested_override(values):
         return ""
     parts = []
     for dotted_key, value in values.items():
@@ -697,10 +754,12 @@ def _format_dir_name(values: dict[str, Any]) -> str:
 
 def _sanitize_dir_segment(segment: str) -> str:
     """Strip filesystem-unsafe characters from a single path segment."""
-    import re as _re
-
-    sanitized = _re.sub(r"[/\\]|\.\.", "", segment)
-    return _re.sub(r'[<>:"|?*]', "", sanitized)
+    sanitized = re.sub(r"[/\\]|\.\.", "", segment)
+    sanitized = re.sub(r'[<>:"|?*]', "", sanitized)
+    # An all-dots result (e.g. "." or "...") resolves to the current directory,
+    # so `base_dir / segment` collapses to `base_dir`; treat it as empty so
+    # callers fall back to a real segment.
+    return "" if set(sanitized) <= {"."} else sanitized
 
 
 # Resolve the forward ref on `SearchRecipeOutput.adaptive_search` once

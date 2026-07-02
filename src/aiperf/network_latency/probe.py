@@ -179,11 +179,11 @@ class NetworkLatencyProbeCollector(AIPerfLifecycleMixin):
         # callback failure must be logged, not crash the benchmark run.
         try:
             await self._record_callback([sample], self.id)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.error(f"Failed to send probe sample via callback: {e!r}")
             if self._error_callback:
                 # why: error-callback dispatch is also an isolation boundary.
                 try:
                     await self._error_callback(ErrorDetails.from_exception(e), self.id)
-                except Exception as callback_error:  # noqa: BLE001
+                except Exception as callback_error:
                     self.error(f"Failed to send error via callback: {callback_error!r}")

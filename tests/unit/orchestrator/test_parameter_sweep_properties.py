@@ -218,12 +218,12 @@ class TestProperty2PBT:
         # dict[str, list[Any]]); the rejection happens at plan-build time
         # when the per-variation BenchmarkConfig is validated.
         cfg = _make_config(test_values)
-        with pytest.raises(Exception):  # noqa: BLE001, B017 - pydantic ValidationError surfaces here
+        with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError surfaces here
             build_benchmark_plan(cfg)
 
     def test_rejects_zero_scalar_concurrency(self) -> None:
         """Scalar concurrency=0 fails AIPerfConfig validation directly."""
-        with pytest.raises(Exception):  # noqa: BLE001, B017 - pydantic ValidationError
+        with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
             _make_config(0)
 
 

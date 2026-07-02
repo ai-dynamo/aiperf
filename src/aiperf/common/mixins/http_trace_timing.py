@@ -110,3 +110,9 @@ class FetchResult:
 
     is_duplicate: bool = False
     """True if response content hash matches previous fetch, indicating unchanged metrics."""
+
+    content_type: str | None = None
+    """Lowercased HTTP ``Content-Type`` header from the response (e.g.
+    ``application/openmetrics-text; version=1.0.0`` for vLLM's Rust frontend),
+    or None when absent. Callers use it to route between the OpenMetrics and
+    classic Prometheus exposition parsers."""

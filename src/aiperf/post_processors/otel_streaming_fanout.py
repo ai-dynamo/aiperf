@@ -203,7 +203,7 @@ def run_otel_streaming_fanout(
                 otel_dependency_message("OTel sink is enabled in the fanout process"),
                 exc,
             )
-        except Exception as exc:  # noqa: BLE001 - OTel SDK init failure must not crash fanout process
+        except Exception as exc:  # OTel SDK init failure must not crash fanout process
             logger.warning(f"OTel sink disabled in fanout process: {exc!r}")
 
     histograms: dict[str, Any] = {}
@@ -262,7 +262,8 @@ def run_otel_streaming_fanout(
                 exc,
             )
             mlflow_state = None
-        except Exception as exc:  # noqa: BLE001 - MLflow client init failure must not crash fanout process
+        # MLflow client init failure must not crash fanout process
+        except Exception as exc:
             logger.warning(f"MLflow live streaming disabled in fanout process: {exc!r}")
             mlflow_state = None
 
@@ -345,7 +346,8 @@ def run_otel_streaming_fanout(
             mlflow_state.buffer = []
             _flush_backoff_seconds = 1.0
             _flush_backoff_until = 0.0
-        except Exception as exc:  # noqa: BLE001 - MLflow log_batch failure must not lose the entire buffer
+        # MLflow log_batch failure must not lose the entire buffer
+        except Exception as exc:
             # Apply exponential backoff to avoid log-spam on persistent failures.
             _flush_backoff_until = time.monotonic() + _flush_backoff_seconds
             _flush_backoff_seconds = min(_flush_backoff_seconds * 2, _MAX_FLUSH_BACKOFF)
@@ -425,7 +427,7 @@ def run_otel_streaming_fanout(
                             payload["value"], payload["attributes"]
                         )
                     _append_mlflow_metric(metric_name, payload["value"])
-                except Exception as exc:  # noqa: BLE001 - malformed payload must not crash fanout loop
+                except Exception as exc:  # malformed payload must not crash fanout loop
                     logger.warning(
                         f"Invalid histogram fanout payload received: {exc!r}"
                     )
@@ -463,7 +465,7 @@ def run_otel_streaming_fanout(
                         phase = attrs.get("aiperf.benchmark_phase")
                         mlflow_name = f"{metric_name}.{phase}" if phase else metric_name
                         _append_mlflow_metric(mlflow_name, metric_snaps[attr_key])
-                except Exception as exc:  # noqa: BLE001 - malformed payload must not crash fanout loop
+                except Exception as exc:  # malformed payload must not crash fanout loop
                     logger.warning(f"Invalid counter fanout payload received: {exc!r}")
                 last_flush_monotonic = _maybe_flush(
                     now=time.monotonic(),
@@ -490,7 +492,7 @@ def run_otel_streaming_fanout(
                         payload["value"],
                         payload["attributes"],
                     )
-                except Exception as exc:  # noqa: BLE001 - malformed payload must not crash fanout loop
+                except Exception as exc:  # malformed payload must not crash fanout loop
                     logger.warning(
                         f"Invalid up-down-counter fanout payload received: {exc!r}"
                     )
@@ -531,5 +533,6 @@ def run_otel_streaming_fanout(
             try:
                 _flush_mlflow_metrics(force=True)
                 mlflow_state.module.end_run()
-            except Exception as exc:  # noqa: BLE001 - MLflow shutdown failure must not crash fanout exit
+            # MLflow shutdown failure must not crash fanout exit
+            except Exception as exc:
                 logger.warning(f"Failed to close live MLflow run cleanly: {exc!r}")

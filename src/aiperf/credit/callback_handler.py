@@ -388,7 +388,7 @@ class CreditCallbackHandler:
         try:
             if orchestrator.get_branch_ids(credit):
                 return True
-        except Exception:  # noqa: BLE001 - probe must never break the return path
+        except Exception:  # probe must never break the return path
             return False
         return False
 
@@ -420,7 +420,7 @@ class CreditCallbackHandler:
                 await orchestrator.on_child_errored(credit.x_correlation_id)
             else:
                 await orchestrator.on_child_leaf_reached(credit.x_correlation_id)
-        except Exception as exc:  # noqa: BLE001 - orchestrator hook boundary
+        except Exception as exc:  # orchestrator hook boundary
             _logger.warning(
                 lambda exc=exc: f"BranchOrchestrator child-completion hook "
                 f"failed for x_correlation_id={credit.x_correlation_id}: {exc}"
@@ -438,7 +438,7 @@ class CreditCallbackHandler:
             return False
         try:
             return await orchestrator.intercept(credit)
-        except Exception as exc:  # noqa: BLE001 - orchestrator hook boundary
+        except Exception as exc:  # orchestrator hook boundary
             _logger.warning(
                 lambda exc=exc: f"BranchOrchestrator intercept failed for "
                 f"credit {credit.id}: {exc}"
