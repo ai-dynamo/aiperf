@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import itertools
+import warnings
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -446,6 +447,17 @@ def _expand_scenario_sweep(
         variant = {k: v for k, v in variant.items() if k != "sweep"}
         label = scenario.get("name", f"scenario_{idx}")
         values = dict(explicit_values) if explicit_values is not None else scenario_data
+        if scenario.get("name") is None and any(
+            isinstance(v, (dict, list)) for v in values.values()
+        ):
+            warnings.warn(
+                f"sweep run [{idx}]: no 'name:' set and its overrides are "
+                f"nested, so per-run and aggregate artifact directories fall "
+                f"back to the positional name '{label}'. Add a 'name:' "
+                f"(e.g. 'aa-1k') for readable directory names.",
+                UserWarning,
+                stacklevel=2,
+            )
         results.append((variant, SweepVariation(index=idx, label=label, values=values)))
     return results
 
