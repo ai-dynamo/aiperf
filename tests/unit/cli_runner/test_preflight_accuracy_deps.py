@@ -69,6 +69,33 @@ class TestPreflightAccuracyGraderDeps:
         _preflight_accuracy_grader_deps(_plan(None))
         assert called is False
 
+    def test_grader_without_check_available_is_allowed(self, monkeypatch) -> None:
+        """A custom grader satisfying only AccuracyGraderProtocol (no
+        check_available) must pass preflight, not raise AttributeError."""
+
+        class _ProtocolOnlyGrader:
+            async def grade(self, response_text, ground_truth, **kwargs): ...
+            def extract_answer(self, response_text, **kwargs): ...
+
+        monkeypatch.setattr(
+            "aiperf.plugin.plugins.get_class",
+            lambda _type, _name: _ProtocolOnlyGrader,
+        )
+        # Must not raise (check_available absent → treated as no-op).
+        _preflight_accuracy_grader_deps(_plan(_acc(enabled=True, grader="custom")))
+
+    def test_unknown_grader_name_raises_configuration_error(self, monkeypatch) -> None:
+        """A bad grader name makes the plugin registry raise TypeNotFoundError;
+        it must be converted to a clean ConfigurationError, not leak a traceback."""
+        from aiperf.plugin.types import TypeNotFoundError
+
+        def _raise(*_a, **_k):
+            raise TypeNotFoundError("accuracy_grader", "nope", ["exact_match"])
+
+        monkeypatch.setattr("aiperf.plugin.plugins.get_class", _raise)
+        with pytest.raises(ConfigurationError):
+            _preflight_accuracy_grader_deps(_plan(_acc(enabled=True, grader="nope")))
+
     def test_resolves_default_grader_from_benchmark_metadata(self, monkeypatch) -> None:
         """When grader is unset, the default_grader from benchmark metadata is
         resolved and checked."""

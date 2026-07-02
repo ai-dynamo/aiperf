@@ -99,6 +99,7 @@ def _preflight_accuracy_grader_deps(plan: BenchmarkPlan) -> None:
     from aiperf.config.loader.errors import ConfigurationError
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
+    from aiperf.plugin.types import TypeNotFoundError
 
     checked: set[str] = set()
     for config in plan.configs:
@@ -106,21 +107,32 @@ def _preflight_accuracy_grader_deps(plan: BenchmarkPlan) -> None:
         if acc_cfg is None or not acc_cfg.enabled:
             continue
 
-        grader_name = acc_cfg.grader
-        if grader_name is None:
-            meta = plugins.get_metadata(
-                PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
-            )
-            grader_name = meta.get("default_grader", "multiple_choice")
-
-        if grader_name in checked:
-            continue
-        checked.add(grader_name)
-
-        grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
+        # Keep every preflight failure on the ConfigurationError path: plugin
+        # lookups raise TypeNotFoundError/KeyError for an unknown benchmark or
+        # grader name, and check_available raises RuntimeError for a missing
+        # optional dependency. Either would otherwise leak a raw traceback.
         try:
-            grader_cls.check_available()
-        except RuntimeError as exc:
+            grader_name = acc_cfg.grader
+            if grader_name is None:
+                meta = plugins.get_metadata(
+                    PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
+                )
+                grader_name = meta.get("default_grader", "multiple_choice")
+
+            if grader_name in checked:
+                continue
+            checked.add(grader_name)
+
+            grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
+            # ``check_available`` is an optional hook: the accuracy_grader
+            # contract is ``AccuracyGraderProtocol`` (grade + extract_answer
+            # only), so a custom grader plugin need not define it. Built-in
+            # graders inherit a no-op default from ``BaseGrader``; treat its
+            # absence as "no optional deps to verify".
+            check = getattr(grader_cls, "check_available", None)
+            if callable(check):
+                check()
+        except (TypeNotFoundError, KeyError, RuntimeError) as exc:
             raise ConfigurationError(str(exc)) from exc
 
 
