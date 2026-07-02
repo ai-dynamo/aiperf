@@ -164,6 +164,33 @@ class TestBasicCreditIssuance:
         assert sent_credit.num_turns == 5
         assert sent_credit.issued_at_ns > 0
 
+    async def test_issue_credit_propagates_max_tokens_override(
+        self, credit_issuer, mock_router
+    ):
+        turn = make_turn()
+        turn = TurnToSend(
+            conversation_id=turn.conversation_id,
+            x_correlation_id=turn.x_correlation_id,
+            turn_index=turn.turn_index,
+            num_turns=turn.num_turns,
+            max_tokens_override=1,
+        )
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.max_tokens_override == 1
+
+    async def test_runtime_max_tokens_override_covers_undecorated_turns(
+        self, credit_issuer, mock_router
+    ):
+        credit_issuer.set_max_tokens_override(1)
+
+        await credit_issuer.issue_credit(make_turn())
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.max_tokens_override == 1
+
     async def test_issue_credit_returns_true_when_more_credits_can_be_sent(
         self, credit_issuer, mock_progress
     ):
@@ -311,6 +338,48 @@ class TestFinalCreditHandling:
 
         mock_progress.freeze_sent_counts.assert_not_called()
         assert not mock_progress.all_credits_sent_event.is_set()
+
+
+# =============================================================================
+# Test: Sending-Complete Signals
+# =============================================================================
+
+
+class TestSendingCompleteSignals:
+    """Tests for ``mark_sending_complete`` vs ``signal_sending_complete``.
+
+    The accelerated cache-pressure warmup drain (``_finish_accelerated_warmup``)
+    must wake the phase runner WITHOUT freezing the phase's sent counts: its
+    paused DAG branches are handed off to profiling, so completion flows through
+    the in-flight==0 handoff path, not the frozen-count
+    ``check_all_returned_or_cancelled`` path. Freezing would snapshot
+    ``_final_requests_sent`` and let the count-based completion fire prematurely
+    on a phase that still has work to hand off.
+    """
+
+    def test_mark_sending_complete_sets_event_without_freezing(
+        self, credit_issuer, mock_progress
+    ):
+        """mark_sending_complete sets the event but does NOT freeze counts."""
+        credit_issuer.mark_sending_complete()
+
+        assert mock_progress.all_credits_sent_event.is_set()
+        mock_progress.freeze_sent_counts.assert_not_called()
+
+    def test_mark_sending_complete_stops_issuing(self, credit_issuer):
+        """mark_sending_complete refuses every subsequent credit."""
+        credit_issuer.mark_sending_complete()
+
+        assert credit_issuer._issuing_stopped is True
+
+    def test_signal_sending_complete_freezes_and_sets_event(
+        self, credit_issuer, mock_progress
+    ):
+        """signal_sending_complete DOES freeze counts (zero-credit hang path)."""
+        credit_issuer.signal_sending_complete()
+
+        mock_progress.freeze_sent_counts.assert_called_once()
+        assert mock_progress.all_credits_sent_event.is_set()
 
 
 # =============================================================================
