@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chaos: benchmark-runtime faults against the mock inference server.
 
-Covers scenarios B1, B2, B3 from
-``docs/superpowers/specs/2026-04-23-chaos-expansion-design.md``. Each
+Covers chaos-expansion scenarios B1, B2, B3. Each
 test deploys a duration-based AIPerfJob CR, injects a fault into the
 mock-server path while profiling is active, and asserts that the
 benchmark terminates honestly (``Completed`` phase, non-zero request

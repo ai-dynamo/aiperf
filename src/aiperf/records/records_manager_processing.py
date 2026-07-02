@@ -336,8 +336,7 @@ def load_analyzers(
     Cross-input analyzers (e.g. energy efficiency, which needs both GPU
     telemetry and inference records) are NOT loaded here — they run
     controller-side as plain functions because their accumulator dependencies
-    live in separate processes. See
-    ``docs/superpowers/specs/2026-05-02-cross-input-analyzers-design.md``.
+    live in separate processes.
     """
     analyzers: dict[AnalyzerType, AnalyzerProtocol] = {}
     for entry in plugins.iter_entries(PluginType.ANALYZER):

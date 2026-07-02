@@ -1701,7 +1701,6 @@ class SystemController(
         Single-input analyzers (steady-state) ran records-manager-side and
         arrived via ``ProcessAllResultsMessage``; cross-input analysis runs
         here because the underlying accumulators live in separate processes.
-        See ``docs/superpowers/specs/2026-05-02-cross-input-analyzers-design.md``.
         """
         if (
             self.run.cfg.gpu_telemetry_disabled

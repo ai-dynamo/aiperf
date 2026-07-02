@@ -3,8 +3,7 @@
 """Chaos (unified): real-world infrastructure faults (K1, K2, K3).
 
 Unified-API port of :py:mod:`tests.kubernetes.chaos.test_chaos_infra`. Covers
-scenarios K1, K2, K3 from the chaos-expansion design
-(``docs/superpowers/specs/2026-04-23-chaos-expansion-design.md``):
+chaos-expansion scenarios K1, K2, K3:
 
 * K1 -- non-existent container image surfaces ``ImagePullBackOff`` on
   JobSet pods and the operator transitions the CR to ``Failed`` instead of

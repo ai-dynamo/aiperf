@@ -6,7 +6,7 @@
 
 The classic LLM-serving capacity question: **what is the highest concurrency at which the SUT still meets its SLA?** Issue [ai-dynamo/aiperf#883](https://github.com/ai-dynamo/aiperf/issues/883) asks for an adaptive search that names both the maximum passing concurrency and the first failing concurrency in O(log N) trials. The answer is the `max-concurrency-under-sla` search recipe; the goodput-formulation alternative is `max-goodput-under-slo`. Both are plugin-registered presets that compose with the existing adaptive-search engine documented in [Bayesian-Optimization Outer Loop](bayesian-optimization.md) and [Search Recipes](search-recipes.md).
 
-The research basis (industry survey + academic citations) lives in the companion design notes [`2026-05-04-adaptive-sla-search-research.md`](../superpowers/specs/2026-05-04-adaptive-sla-search-research.md).
+The research basis is an industry survey plus academic citations (SCOOT, DistServe, Letham 2017, Gardner 2014).
 
 ## Quick start
 
@@ -213,4 +213,3 @@ Edge cases: `max_passing_concurrency: null` when every point fails; `first_faili
 - [Bayesian-Optimization Outer Loop](bayesian-optimization.md) — engine details, `search_history.json` schema, `--search-*` flag reference.
 - [Adaptive Search Tutorial](../tutorials/adaptive-search.md) — narrative walkthrough.
 - [Goodput tutorial](../tutorials/goodput.md) — per-request SLO definitions used by `max-goodput-under-slo`.
-- [`2026-05-04-adaptive-sla-search-research.md`](../superpowers/specs/2026-05-04-adaptive-sla-search-research.md) — industry survey and academic citations (SCOOT, DistServe, Letham 2017, Gardner 2014).

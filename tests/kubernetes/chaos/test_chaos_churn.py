@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chaos: CR churn + invalid-spec validation.
 
-Covers scenarios C10, C11, C12 from the chaos-expansion design doc
-(``docs/superpowers/specs/2026-04-23-chaos-expansion-design.md``).
+Covers chaos-expansion scenarios C10, C11, C12.
 
 Exercises these operator code paths:
 

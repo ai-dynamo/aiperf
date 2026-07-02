@@ -2,11 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chaos: CR churn + invalid-spec validation, ported to the unified interface.
 
-Covers scenarios C10, C11, C12 from the chaos-expansion design doc
-(``docs/superpowers/specs/2026-04-23-chaos-expansion-design.md``). The legacy
+Covers chaos-expansion scenarios C10, C11, C12. The legacy
 implementation lives at :py:mod:`tests.kubernetes.chaos.test_chaos_churn`;
-this module ports those three cases to the
-``docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md``
+this module ports those three cases to the unified-chaos
 ``faults.inject(...)`` API.
 
 Exercises these operator code paths:

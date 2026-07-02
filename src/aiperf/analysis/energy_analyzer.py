@@ -10,8 +10,6 @@ subprocesses in local multi-process mode, so an in-process AnalyzerProtocol
 implementation cannot reach the GPU telemetry data. SystemController is the
 fan-in point that already receives both summary payloads via
 ProcessTelemetryResultMessage and ProcessRecordsResultMessage.
-
-See docs/superpowers/specs/2026-05-02-cross-input-analyzers-design.md.
 """
 
 from __future__ import annotations

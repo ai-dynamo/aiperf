@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chaos: API-disruption via toxiproxy.
 
-Covers scenarios C15 and C16 from the chaos-expansion design doc
-(``docs/superpowers/specs/2026-04-23-chaos-expansion-design.md``).
+Covers chaos-expansion scenarios C15 and C16.
 
 Both scenarios require toxiproxy to front a live connection between
 the operator and either the apiserver (C15) or the SystemController

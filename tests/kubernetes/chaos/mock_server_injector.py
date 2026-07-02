@@ -4,8 +4,7 @@
 
 The k8s test harness runs a single-replica ``aiperf-mock-server`` Deployment
 (see ``tests/kubernetes/conftest.py``); this module patches / restarts /
-scales / env-overrides it to exercise benchmark-runtime chaos (B1-B3 in
-``docs/superpowers/specs/2026-04-23-chaos-expansion-design.md``).
+scales / env-overrides it to exercise benchmark-runtime chaos (B1-B3).
 
 Every fault method records the mutation in ``self._applied_ops`` so
 ``restore()`` can reverse them in LIFO order between tests.

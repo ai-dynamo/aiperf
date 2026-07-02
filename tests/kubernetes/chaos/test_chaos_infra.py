@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chaos: real-world infrastructure faults.
 
-Covers scenarios K1, K2, K3 from the chaos-expansion design
-(`docs/superpowers/specs/2026-04-23-chaos-expansion-design.md`). These
+Covers chaos-expansion scenarios K1, K2, K3. These
 scenarios exercise operator behavior under faults that originate OUTSIDE
 the operator's code path — a broken container image, an unreachable
 endpoint hostname, and a namespace-level admission quota.

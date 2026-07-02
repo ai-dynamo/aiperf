@@ -7,9 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Fault-injection tests for the kopf operator that back the AIPerfJob CRD. This suite sits alongside `tests/kubernetes/` and reuses its cluster/operator fixtures; it lives under `tests/kubernetes/chaos/` so the standard `K8S_TEST_*` flags (Kind cluster, image loading, mock server) all apply unchanged.
 
-Design documents:
-- [`docs/superpowers/specs/2026-04-23-operator-chaos-testing-design.md`](../../../docs/superpowers/specs/2026-04-23-operator-chaos-testing-design.md) — v1 scenarios (C1–C5b).
-- [`docs/superpowers/specs/2026-04-23-chaos-expansion-design.md`](../../../docs/superpowers/specs/2026-04-23-chaos-expansion-design.md) — v2 expansion (JobSet pods, Helm, churn, API disruption, benchmark-runtime).
+Scenario waves: v1 (C1–C5b) covers operator lifecycle; the v2 expansion adds JobSet pods, Helm, churn, API disruption, and benchmark-runtime scenarios.
 
 ## Running
 

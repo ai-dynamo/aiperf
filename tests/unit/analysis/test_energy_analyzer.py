@@ -7,8 +7,6 @@ an AnalyzerProtocol plugin) because the underlying GPU telemetry accumulator
 lives in a separate process. These tests construct synthetic
 ``TelemetryExportData`` and ``ProfileResults`` directly and assert the math /
 branching of the compute function.
-
-See ``docs/superpowers/specs/2026-05-02-cross-input-analyzers-design.md``.
 """
 
 from __future__ import annotations

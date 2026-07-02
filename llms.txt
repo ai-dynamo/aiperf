@@ -67,7 +67,6 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/kubernetes/direct-mode.md](docs/kubernetes/direct-mode.md): `aiperf kube profile --no-operator` — operator-vs-direct feature matrix, when to use, cleanup, limitations.
 - [docs/kubernetes/user-files.md](docs/kubernetes/user-files.md): User-declared templated output files (`artifacts.user_files`) — schema, jinja2 context, injected names, error catalog.
 - [docs/kubernetes/ai-debugging-guide.md](docs/kubernetes/ai-debugging-guide.md) / [ai-deployment-guide.md](docs/kubernetes/ai-deployment-guide.md): Agent-oriented runbooks for debugging and deploying `AIPerfJob` CRs.
-- [docs/superpowers/specs/2026-04-29-fast-job-sweep-index-design.md](docs/superpowers/specs/2026-04-29-fast-job-sweep-index-design.md): Fast runs/sweep SQLite index design — schema, write points, read fallback, bootstrap and rebuild story.
 
 ## Optional
 

@@ -2,10 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """InjectorRegistry: dispatch by `fault_id`, compose with LIFO restore.
 
-See `docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md` §3.2.
-
 Discovery is explicit (`register()` calls inside fixtures). Decorator-based
-auto-discovery was rejected (spec §7) -- too much magic for a test harness.
+auto-discovery was rejected -- too much magic for a test harness.
 """
 
 from __future__ import annotations

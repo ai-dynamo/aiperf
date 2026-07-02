@@ -7,8 +7,7 @@ sidebar-title: Parameter Sweeps and Multi-Run on Kubernetes
 `aiperf kube sweep` submits an `AIPerfSweep` CR that orchestrates parameter sweeps,
 multi-run confidence trials, and adaptive convergence on a Kubernetes cluster.
 The orchestration loop runs in a dedicated sweep-controller pod, not in the kopf
-operator — see `docs/superpowers/specs/2026-04-25-k8s-sweeps-design.md` for the
-design rationale.
+operator.
 
 ## Quick start: grid sweep over concurrency × rate
 

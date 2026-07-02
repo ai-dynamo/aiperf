@@ -8,8 +8,7 @@ Covers Wave-1 C-series scenarios C6, C7, C8, C9 through the unified
 kill_container_in_pod` directly are now routed through
 ``async with faults.inject("pod.kill_pid", ...)`` /
 ``async with faults.inject("pod.kill_container", ...)`` so the dispatch
-matches every other chaos suite (see
-``docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md``).
+matches every other chaos suite.
 
 Non-fault ChaosInjector helpers (``get_controller_pod_name``,
 ``wait_for_phase``, ``read_claim_annotation``, ``wait_for_container_restart``,

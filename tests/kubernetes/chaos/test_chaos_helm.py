@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chaos: Helm chart lifecycle resilience.
 
-Covers scenarios H1, H2, H3, H4 from the chaos-expansion design doc
-(``docs/superpowers/specs/2026-04-23-chaos-expansion-design.md``).
+Covers chaos-expansion scenarios H1, H2, H3, H4.
 
 Every test in this module owns its Helm release: it performs its own
 install and an unconditional ``finally``-clause uninstall plus namespace

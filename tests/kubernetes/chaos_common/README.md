@@ -3,14 +3,7 @@
 This module hosts the shared fault-injection primitives (registries, ABCs,
 marks, and helpers) that the unified chaos suite uses to express
 reproducible fault scenarios across the AIPerf data plane, control plane,
-and Dynamo integration paths. The full design lives in the unified
-chaos interface spec at
-`~/.aiperf/docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md`
-and the Dynamo-specific D-series in
-`~/.aiperf/docs/superpowers/specs/2026-05-19-dynamo-chaos-suite-design.md`.
-(Both specs live outside this repo, under the user-scoped
-`~/.aiperf/docs/superpowers/` tree, per the project's superpowers-doc
-convention.)
+and Dynamo integration paths.
 
 ## Status
 

@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """ABC + supporting types for the unified chaos-injection interface.
 
-See `docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md` §3.1.
-
 Concrete injectors MAY expose `wait_for_*` helpers; they are not part of this
 ABC (open question Q1 resolved as "concrete-only" so the surface stays minimal).
 """

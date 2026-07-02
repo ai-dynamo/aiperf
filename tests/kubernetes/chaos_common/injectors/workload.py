@@ -4,8 +4,7 @@
 
 Adapts :py:class:`tests.kubernetes.chaos.mock_server_injector.MockServerInjector`
 (the legacy Deployment chaos driver) onto the unified
-:py:class:`FaultInjector` ABC introduced in
-``docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md``.
+:py:class:`FaultInjector` ABC.
 
 Each :py:meth:`WorkloadInjector.inject` call constructs a per-spec
 :py:class:`MockServerInjector` so the LIFO restore stack stays scoped to a

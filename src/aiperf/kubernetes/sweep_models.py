@@ -4,8 +4,7 @@
 
 AIPerfSweep is the parent CR that owns child AIPerfJob CRs and orchestrates
 parameter sweeps and multi-run trials. The orchestration loop runs in a
-dedicated sweep-controller pod, not in the kopf operator. See
-docs/superpowers/specs/2026-04-25-k8s-sweeps-design.md.
+dedicated sweep-controller pod, not in the kopf operator.
 
 `ConvergenceConfig` is re-exported from `aiperf.config.multi_run` so
 existing K8s-side callers keep importing from this module while the

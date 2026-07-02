@@ -8,10 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 Reference for the unified chaos-injection module under
 [`tests/kubernetes/chaos_common/`](.). Companion to [`README.md`](README.md),
 which covers the Cilium-on-kind D704 gate and the chaos-suite invocation
-matrix. This document is the source-of-truth capability table from the
-unified chaos interface spec
-(`~/.aiperf/docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md`,
-§ 2) with a `Status` column tracking what has shipped.
+matrix. This document is the source-of-truth capability table for the unified
+chaos interface, with a `Status` column tracking what has shipped.
 
 The unified surface wraps two pre-existing systems:
 

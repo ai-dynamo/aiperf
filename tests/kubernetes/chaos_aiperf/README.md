@@ -13,8 +13,6 @@ adapter injectors faithfully wrap the legacy mechanisms.
 See:
 - `tests/kubernetes/chaos_common/` — unified `FaultInjector` ABC + injectors.
 - `tests/kubernetes/chaos_common/FEATURES.md` — capability matrix.
-- `~/.aiperf/docs/superpowers/specs/2026-05-19-unified-chaos-interface-design.md`
-  § 6 — the backward-compat / coexistence strategy.
 
 ## Relationship to `chaos/`
 

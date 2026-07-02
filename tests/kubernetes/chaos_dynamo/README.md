@@ -1,10 +1,8 @@
 # AIPerf Chaos Dynamo — D-series Scenario Suite
 
 D-series chaos scenarios targeting a live Dynamo deployment, complementing
-the unit-grade `chaos_common/` adapter tests. See:
-
-- `~/.aiperf/docs/superpowers/specs/2026-05-19-dynamo-chaos-suite-design.md` — D-series catalog (54 scenarios).
-- `~/.aiperf/docs/superpowers/specs/2026-05-19-dynamo-net-new-chaos-tests.md` — the 33-of-54 that close real gaps in dynamo's `tests/fault_tolerance/`.
+the unit-grade `chaos_common/` adapter tests. The D-series catalog defines 54
+scenarios; 33 of them close real gaps in dynamo's `tests/fault_tolerance/`.
 
 ## Status
 

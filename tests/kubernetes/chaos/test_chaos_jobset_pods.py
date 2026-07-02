@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chaos: JobSet pod / sidecar kills mid-benchmark.
 
-Covers Wave 1 of the chaos expansion (`docs/superpowers/specs/
-2026-04-23-chaos-expansion-design.md`): scenarios C6, C7, C8, C9. These
+Covers Wave 1 of the chaos expansion: scenarios C6, C7, C8, C9. These
 tests all require the operator to be deployed with
 ``AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true`` so that every JobSet pod sets
 ``spec.shareProcessNamespace=true`` — this lets us ``kubectl exec`` into
