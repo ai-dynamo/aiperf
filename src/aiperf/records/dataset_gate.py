@@ -33,6 +33,10 @@ async def await_dataset_configured(
     dataset. Returns False in that case so the caller skips processing (``_kill``
     force-exits the process, so this return is a safety net if it ever does not).
     """
+    # Fast path: once configured (the common case), avoid the per-record
+    # wait_for timer allocation on the hot path.
+    if event.is_set():
+        return True
     try:
         await asyncio.wait_for(
             event.wait(), timeout=Environment.DATASET.CONFIGURATION_TIMEOUT
