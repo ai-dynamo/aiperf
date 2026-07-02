@@ -270,7 +270,7 @@ When a gauge never changes during collection (standard deviation = 0), stats are
   "endpoint_url": "http://localhost:11001/metrics",
   "labels": {
     "dynamo_component": "prefill",
-    "dynamo_namespace": "acasagrande_sglang_acasagrande_sglang_disagg"
+    "dynamo_namespace": "perf_team_sglang_disagg"
   },
   "stats": {
     "avg": 1024.0,

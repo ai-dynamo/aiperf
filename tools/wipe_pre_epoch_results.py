@@ -11,7 +11,7 @@ epoch subdirs. This includes:
 
 Run on the operator pod via ``kubectl exec``::
 
-    kubectl exec -n acasagrande-aiperf deploy/aiperf-operator -c operator -- \\
+    kubectl exec -n aiperf-system deploy/aiperf-operator -c operator -- \\
         python /app/tools/wipe_pre_epoch_results.py /data --apply
 """
 
