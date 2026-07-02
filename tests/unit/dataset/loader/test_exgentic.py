@@ -395,14 +395,15 @@ def test_invalid_filter_lists_typed_values() -> None:
 
 
 def test_v2_invalid_filter_lists_benchmark() -> None:
-    with pytest.raises(
-        DatasetLoaderError, match=r"available filters:.*benchmark=.*swebench"
-    ):
+    with pytest.raises(DatasetLoaderError) as error:
         ExgenticV2DatasetLoader(
             filters={"source_model": "unknown"},
             hf_dataset_name="Exgentic/agent-llm-traces-v2",
             streaming=True,
         )
+    available_filters = str(error.value).split("; available filters: ", 1)[1]
+    assert "benchmark=[appworld, browsecompplus, swebench" in available_filters
+    assert "gpt-4.1" not in available_filters
 
 
 def test_v1_unsupported_filter_pair_fails_before_loading() -> None:
@@ -419,6 +420,15 @@ def test_v2_unsupported_filter_pair_fails_before_loading() -> None:
     with pytest.raises(DatasetLoaderError, match=r"Unsupported.*DeepSeek-V3\.2"):
         ExgenticV2DatasetLoader(
             filters={"harness": "tool_calling", "source_model": "gpt-4.1"},
+            hf_dataset_name="Exgentic/agent-llm-traces-v2",
+            streaming=True,
+        )
+
+
+def test_v2_unsupported_source_model_fails_before_loading() -> None:
+    with pytest.raises(DatasetLoaderError, match="no harness supports it"):
+        ExgenticV2DatasetLoader(
+            filters={"source_model": "gpt-4.1"},
             hf_dataset_name="Exgentic/agent-llm-traces-v2",
             streaming=True,
         )

@@ -19,10 +19,10 @@ from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.exgentic_filters import (
     V1_UNSUPPORTED_FILTER_PAIRS,
-    ExgenticBenchmark,
     ExgenticDatasetFilters,
     ExgenticHarness,
     ExgenticSourceModel,
+    available_filter_values,
 )
 from aiperf.plugin.enums import PhaseType
 
@@ -240,7 +240,10 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         try:
             self.filters = ExgenticDatasetFilters.model_validate(normalized_filters)
         except ValidationError as error:
-            available = self._available_filters()
+            available = available_filter_values(
+                self.unsupported_filter_pairs,
+                supports_benchmark_filter=self.supports_benchmark_filter,
+            )
             raise DatasetLoaderError(
                 f"Invalid Exgentic dataset filters: {error}; available filters: {available}"
             ) from error
@@ -265,24 +268,19 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                 f"source_model={self.filters.source_model.value!r}; "
                 f"available source models for this harness: {available_models}"
             )
+        if self.filters.source_model is not None and all(
+            (harness, self.filters.source_model) in self.unsupported_filter_pairs
+            for harness in ExgenticHarness
+        ):
+            raise DatasetLoaderError(
+                "Unsupported Exgentic source_model="
+                f"{self.filters.source_model.value!r}; no harness supports it"
+            )
         super().__init__(**kwargs)
         self._fixed_schedule = any(
             phase.type == PhaseType.FIXED_SCHEDULE
             for phase in self.run.cfg.get_profiling_phases()
         )
-
-    @classmethod
-    def _available_filters(cls) -> str:
-        available = (
-            f"harness=[{', '.join(item.value for item in ExgenticHarness)}], "
-            f"source_model=[{', '.join(item.value for item in ExgenticSourceModel)}]"
-        )
-        if cls.supports_benchmark_filter:
-            return (
-                f"{available}, "
-                f"benchmark=[{', '.join(item.value for item in ExgenticBenchmark)}]"
-            )
-        return available
 
     def _max_conversations(self) -> int:
         dataset = self.run.cfg.get_default_dataset()

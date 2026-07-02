@@ -54,6 +54,30 @@ class ExgenticDatasetFilters(AIPerfBaseModel):
 
 ExgenticFilterPair = tuple[ExgenticHarness, ExgenticSourceModel]
 
+
+def available_filter_values(
+    unsupported_filter_pairs: frozenset[ExgenticFilterPair],
+    *,
+    supports_benchmark_filter: bool,
+) -> str:
+    """Format filter values that have at least one supported harness/model pair."""
+    source_models = ", ".join(
+        model.value
+        for model in ExgenticSourceModel
+        if any(
+            (harness, model) not in unsupported_filter_pairs
+            for harness in ExgenticHarness
+        )
+    )
+    available = (
+        f"harness=[{', '.join(item.value for item in ExgenticHarness)}], "
+        f"source_model=[{source_models}]"
+    )
+    if supports_benchmark_filter:
+        return f"{available}, benchmark=[{', '.join(item.value for item in ExgenticBenchmark)}]"
+    return available
+
+
 V1_UNSUPPORTED_FILTER_PAIRS: frozenset[ExgenticFilterPair] = frozenset(
     {
         (ExgenticHarness.OPENAI_SOLO, ExgenticSourceModel.GPT_5_2),
