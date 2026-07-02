@@ -75,6 +75,8 @@ class TestSweepModels:
             param("a/b", id="forward_slash"),
             param("a\\b", id="backslash"),
             param("..", id="dot_dot"),
+            param(".", id="single_dot"),
+            param("...", id="triple_dot"),
         ],
     )  # fmt: skip
     def test_scenario_sweep_rejects_path_unsafe_names(self, bad_name):
@@ -1367,6 +1369,13 @@ class TestSweepVariationDirName:
         segment keeps it non-empty and unique."""
         v = SweepVariation(index=3, label="../..", values={})
         assert v.dir_name == "variation_3"
+
+    def test_label_that_is_all_dots_falls_back_to_index(self):
+        """A dot-only label sanitizes to "" (it would resolve to the current
+        dir, collapsing `base_dir / dir_name` to `base_dir`); the index
+        fallback keeps dir_name non-empty and unique."""
+        assert SweepVariation(index=2, label=".", values={}).dir_name == "variation_2"
+        assert SweepVariation(index=5, label="...", values={}).dir_name == "variation_5"
 
     def test_nested_dict_value_falls_back_to_label(self):
         """Scenario sweeps without an explicit `values:` block carry the whole

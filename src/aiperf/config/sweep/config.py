@@ -242,10 +242,12 @@ class ScenarioSweep(_GridSweepBase):
         # the failure explicit instead of silently rewriting the user's name.
         for run in self.runs:
             name = run.get("name") if isinstance(run, dict) else None
-            if isinstance(name, str) and re.search(r"[/\\]|\.\.", name):
+            if isinstance(name, str) and (
+                re.search(r"[/\\]|\.\.", name) or re.fullmatch(r"\.+", name)
+            ):
                 raise ValueError(
-                    f"scenario sweep run name {name!r} contains path-unsafe "
-                    f"characters (path separators or '..'); choose a name "
+                    f"scenario sweep run name {name!r} is path-unsafe (contains "
+                    f"a path separator or '..', or is only dots); choose a name "
                     f"usable as a directory."
                 )
         return self
@@ -696,15 +698,34 @@ class SweepVariation(BaseConfig):
         >>> # values={"a.b": 1, "c.d": 2}                    -> "b_1__d_2"
         >>> # values={}                                      -> self.label
         """
-        # `variation_{index}` is the last-resort segment for a label that
-        # sanitizes to empty (e.g. "../.." -> ""); without it `dir_name`
-        # would be "" and `base_dir / ""` collapses to `base_dir`, so runs
-        # would clobber each other. The index is always present and unique.
-        return (
-            _format_dir_name(self.values)
-            or _sanitize_dir_segment(self.label)
-            or f"variation_{self.index}"
+        return _format_dir_name(self.values) or _label_dir_segment(
+            self.label, self.index
         )
+
+
+def _is_nested_override(values: dict[str, Any]) -> bool:
+    """True if any value is a nested dict/list (a scenario override subtree).
+
+    Such values can't form a readable ``{leaf}_{value}`` segment, so callers
+    fall back to the variation label. Shared by the per-run (`dir_name`),
+    aggregate (`_variation_dir_name`), and expansion-warning paths so their
+    nested-detection can't drift.
+    """
+    return any(isinstance(value, (dict, list)) for value in values.values())
+
+
+def _label_dir_segment(label: str, index: int) -> str:
+    """Canonical, sanitized, always-non-empty dir segment from a variation label.
+
+    Shared by the per-run and aggregate paths so a sanitizable label
+    (e.g. ``qps:100`` -> ``qps100``) yields the *same* directory name on both,
+    keeping per-run and aggregate artifacts matched. ``variation_{index}`` is
+    the last resort for a label that sanitizes to empty (e.g. ``../..`` -> "");
+    without it `dir_name` would be "" and `base_dir / ""` collapses to
+    `base_dir`, so runs would clobber each other. The index is always present
+    and unique.
+    """
+    return _sanitize_dir_segment(label) or f"variation_{index}"
 
 
 def _format_dir_name(values: dict[str, Any]) -> str:
@@ -722,7 +743,7 @@ def _format_dir_name(values: dict[str, Any]) -> str:
     """
     if not values:
         return ""
-    if any(isinstance(value, (dict, list)) for value in values.values()):
+    if _is_nested_override(values):
         return ""
     parts = []
     for dotted_key, value in values.items():
@@ -734,7 +755,11 @@ def _format_dir_name(values: dict[str, Any]) -> str:
 def _sanitize_dir_segment(segment: str) -> str:
     """Strip filesystem-unsafe characters from a single path segment."""
     sanitized = re.sub(r"[/\\]|\.\.", "", segment)
-    return re.sub(r'[<>:"|?*]', "", sanitized)
+    sanitized = re.sub(r'[<>:"|?*]', "", sanitized)
+    # An all-dots result (e.g. "." or "...") resolves to the current directory,
+    # so `base_dir / segment` collapses to `base_dir`; treat it as empty so
+    # callers fall back to a real segment.
+    return "" if set(sanitized) <= {"."} else sanitized
 
 
 # Resolve the forward ref on `SearchRecipeOutput.adaptive_search` once

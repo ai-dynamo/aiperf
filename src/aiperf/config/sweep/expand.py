@@ -411,7 +411,7 @@ def _expand_scenario_sweep(
     hashable groupings (e.g. pareto-sweep crossing paired ISL/OSL with a
     concurrency list) set ``values`` explicitly.
     """
-    from aiperf.config.sweep import SweepVariation
+    from aiperf.config.sweep import SweepVariation, _is_nested_override
 
     results = []
     for idx, scenario in enumerate(runs):
@@ -447,9 +447,7 @@ def _expand_scenario_sweep(
         variant = {k: v for k, v in variant.items() if k != "sweep"}
         label = scenario.get("name", f"scenario_{idx}")
         values = dict(explicit_values) if explicit_values is not None else scenario_data
-        if scenario.get("name") is None and any(
-            isinstance(v, (dict, list)) for v in values.values()
-        ):
+        if scenario.get("name") is None and _is_nested_override(values):
             warnings.warn(
                 f"sweep run [{idx}]: no 'name:' set and its overrides are "
                 f"nested, so per-run and aggregate artifact directories fall "
