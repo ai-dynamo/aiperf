@@ -23,6 +23,11 @@ from aiperf.common.models import ErrorDetails
 from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
 
+# Response Content-Type prefixes for routing/rejecting metrics payloads. Matched
+# against the lowercased header value, which may carry `; version=...; charset=...`.
+JSON_CONTENT_TYPE_PREFIX = "application/json"
+OPENMETRICS_CONTENT_TYPE_PREFIX = "application/openmetrics-text"
+
 
 @dataclass(slots=True)
 class HttpTraceTiming:
@@ -123,11 +128,17 @@ class FetchResult:
         is_duplicate: True if response content hash matches previous fetch,
                      indicating metrics haven't changed. Callers can skip parsing
                      when True to save CPU on repetitive data.
+        content_type: Lowercased HTTP `Content-Type` header from the response
+                     (e.g. "application/openmetrics-text; version=1.0.0" for
+                     vLLM's Rust frontend), or None when absent. Callers use it
+                     to route between the OpenMetrics and classic Prometheus
+                     exposition parsers.
     """
 
     text: str | None
     trace_timing: HttpTraceTiming
     is_duplicate: bool = False
+    content_type: str | None = None
 
 
 # Type variables for records returned by collectors
@@ -530,7 +541,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
                 # serve a JSON iteration-stats array at /metrics, which the
                 # Prometheus parser cannot interpret. Reject up front so the
                 # caller can auto-disable instead of looping on parse errors.
-                if content_type.startswith("application/json"):
+                if content_type.startswith(JSON_CONTENT_TYPE_PREFIX):
                     raise IncompatibleMetricsEndpointError(
                         f"endpoint {self._endpoint_url!r} returned non-Prometheus "
                         f"content-type {content_type!r}; expected text/plain "
@@ -548,7 +559,10 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             is_duplicate = response_hash == self._last_response_hash
             self._last_response_hash = response_hash
             return FetchResult(
-                text=text, trace_timing=timing, is_duplicate=is_duplicate
+                text=text,
+                trace_timing=timing,
+                is_duplicate=is_duplicate,
+                content_type=content_type or None,
             )
         except (aiohttp.ClientConnectionError, RuntimeError) as e:
             if self.stop_requested or session.closed:
