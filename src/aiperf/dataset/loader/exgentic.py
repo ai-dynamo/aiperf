@@ -226,6 +226,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
 
     hf_revision = "70036b93a04e61b0ea2706a68b962f4f26774587"
     unsupported_filter_pairs = V1_UNSUPPORTED_FILTER_PAIRS
+    supports_benchmark_filter = False
 
     def __init__(
         self,
@@ -243,6 +244,10 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             raise DatasetLoaderError(
                 f"Invalid Exgentic dataset filters: {error}; available filters: {available}"
             ) from error
+        if self.filters.benchmark is not None and not self.supports_benchmark_filter:
+            raise DatasetLoaderError(
+                "Exgentic benchmark filter is only supported for Exgentic v2 traces"
+            )
         if (
             self.filters.harness is not None
             and self.filters.source_model is not None
@@ -266,13 +271,18 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             for phase in self.run.cfg.get_profiling_phases()
         )
 
-    @staticmethod
-    def _available_filters() -> str:
-        return (
+    @classmethod
+    def _available_filters(cls) -> str:
+        available = (
             f"harness=[{', '.join(item.value for item in ExgenticHarness)}], "
-            f"source_model=[{', '.join(item.value for item in ExgenticSourceModel)}], "
-            f"benchmark=[{', '.join(item.value for item in ExgenticBenchmark)}]"
+            f"source_model=[{', '.join(item.value for item in ExgenticSourceModel)}]"
         )
+        if cls.supports_benchmark_filter:
+            return (
+                f"{available}, "
+                f"benchmark=[{', '.join(item.value for item in ExgenticBenchmark)}]"
+            )
+        return available
 
     def _max_conversations(self) -> int:
         dataset = self.run.cfg.get_default_dataset()
@@ -336,7 +346,9 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                 raise ValueError("span ends before it starts")
             requested_max_tokens = attributes.get("gen_ai.request.max_tokens")
             if requested_max_tokens is not None and (
-                not isinstance(requested_max_tokens, int) or requested_max_tokens < 1
+                not isinstance(requested_max_tokens, int)
+                or isinstance(requested_max_tokens, bool)
+                or requested_max_tokens < 1
             ):
                 raise ValueError("gen_ai.request.max_tokens must be a positive integer")
             turn = Turn(

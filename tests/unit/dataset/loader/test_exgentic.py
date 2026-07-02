@@ -363,6 +363,7 @@ async def test_v2_converts_otel_spans_with_request_controls_and_benchmark_filter
         }
     )
 
+    assert len(conversations) == 1
     turn = conversations[0].turns[0]
     assert conversations[0].session_id == "keep"
     assert turn.max_tokens == 512
@@ -393,8 +394,19 @@ def test_invalid_filter_lists_typed_values() -> None:
         _loader({"source_model": "unknown"})
 
 
+def test_v2_invalid_filter_lists_benchmark() -> None:
+    with pytest.raises(
+        DatasetLoaderError, match=r"available filters:.*benchmark=.*swebench"
+    ):
+        ExgenticV2DatasetLoader(
+            filters={"source_model": "unknown"},
+            hf_dataset_name="Exgentic/agent-llm-traces-v2",
+            streaming=True,
+        )
+
+
 def test_v1_unsupported_filter_pair_fails_before_loading() -> None:
-    with pytest.raises(DatasetLoaderError, match="Unsupported.*available source"):
+    with pytest.raises(DatasetLoaderError, match=r"Unsupported.*available source"):
         _loader(
             {
                 "harness": "tool_calling_with_shortlisting",
@@ -404,11 +416,43 @@ def test_v1_unsupported_filter_pair_fails_before_loading() -> None:
 
 
 def test_v2_unsupported_filter_pair_fails_before_loading() -> None:
-    with pytest.raises(DatasetLoaderError, match="Unsupported.*DeepSeek-V3.2"):
+    with pytest.raises(DatasetLoaderError, match=r"Unsupported.*DeepSeek-V3\.2"):
         ExgenticV2DatasetLoader(
             filters={"harness": "tool_calling", "source_model": "gpt-4.1"},
             hf_dataset_name="Exgentic/agent-llm-traces-v2",
             streaming=True,
+        )
+
+
+def test_v1_benchmark_filter_fails_before_loading() -> None:
+    with pytest.raises(DatasetLoaderError, match="only supported for Exgentic v2"):
+        _loader({"benchmark": "appworld"})
+
+
+@pytest.mark.asyncio
+async def test_boolean_requested_max_tokens_raises_dataset_error() -> None:
+    with pytest.raises(DatasetLoaderError, match="must be a positive integer"):
+        await _loader().convert_to_conversations(
+            {
+                "dataset": [
+                    _row(
+                        "session-1",
+                        [
+                            _span(
+                                "2026-01-01T00:00:00Z",
+                                "2026-01-01T00:00:01Z",
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "parts": [{"type": "text", "content": "hi"}],
+                                    }
+                                ],
+                                request_max_tokens=True,
+                            )
+                        ],
+                    )
+                ]
+            }
         )
 
 

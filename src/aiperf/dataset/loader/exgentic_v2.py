@@ -10,3 +10,4 @@ class ExgenticV2DatasetLoader(ExgenticDatasetLoader):
 
     hf_revision = "4b8ad4ab198438e5a170f9171c19c6a2cf7c1814"
     unsupported_filter_pairs = V2_UNSUPPORTED_FILTER_PAIRS
+    supports_benchmark_filter = True
