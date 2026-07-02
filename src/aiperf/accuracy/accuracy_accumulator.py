@@ -17,25 +17,30 @@ from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricResult
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import SummaryContext
     from aiperf.common.messages.inference_messages import MetricRecordsData
     from aiperf.common.models.dataset_models import DatasetMetadata
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-class AccuracyResultsProcessor(AIPerfLifecycleMixin):
-    """Results processor for accuracy benchmarking.
+class AccuracyAccumulator(AIPerfLifecycleMixin):
+    """Metric-records accumulator for accuracy benchmarking.
 
-    Receives task names via on_dataset_configured (called by RecordsManager
-    when DatasetConfiguredNotification arrives). Accumulates per-record grading
-    results from AccuracyRecordProcessor, then summarizes into per-task and
-    overall accuracy MetricResult objects.
+    Registered as ``accumulator:accuracy_results`` with ``record_types:
+    [metric_records]``, so RecordsManager dispatches every inference metric
+    record to :meth:`process_record` and folds :meth:`summarize`'s output into
+    ``ProfileResults.records``. Receives task names via
+    :meth:`on_dataset_configured` (called by RecordsManager when
+    DatasetConfiguredNotification arrives, before any records are processed),
+    accumulates the per-record grading results stamped by AccuracyRecordProcessor,
+    then summarizes into per-task and overall accuracy MetricResult objects.
     """
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         acc_cfg = run.cfg.accuracy
         if acc_cfg is None or not acc_cfg.enabled:
             raise PostProcessorDisabled(
-                "Accuracy results processor is disabled: accuracy mode is not enabled"
+                "Accuracy accumulator is disabled: accuracy mode is not enabled"
             )
 
         super().__init__(**kwargs)
@@ -54,7 +59,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
 
         Called by RecordsManager before any records are processed. Builds the
         ordered list of task names from ConversationMetadata so that
-        process_result can bucket results without re-loading the benchmark.
+        process_record can bucket results without re-loading the benchmark.
         """
         self._tasks = [
             c.accuracy_task
@@ -62,7 +67,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
             if c.accuracy_task is not None
         ]
 
-    async def process_result(self, record_data: MetricRecordsData) -> None:
+    async def process_record(self, record_data: MetricRecordsData) -> None:
         """Accumulate per-task accuracy counts from a single record's metrics.
 
         Reads ``accuracy.correct`` from ``record_data.metrics`` (produced by
@@ -74,8 +79,8 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         """
         if self._tasks is None:
             raise RuntimeError(
-                "AccuracyResultsProcessor: dataset not configured; "
-                "on_dataset_configured must be called before process_result"
+                "AccuracyAccumulator: dataset not configured; "
+                "on_dataset_configured must be called before process_record"
             )
         metrics = record_data.metrics
         correct = metrics.get("accuracy.correct")
@@ -98,8 +103,11 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
         if is_unparsed:
             self._task_unparsed[task] += 1
 
-    async def summarize(self) -> list[MetricResult]:
+    async def summarize(self, ctx: SummaryContext | None = None) -> list[MetricResult]:
         """Return overall and per-task accuracy and unparsed counts as MetricResult list.
+
+        Conforms to the accumulator summarize contract (``ctx`` is accepted for
+        protocol compatibility and unused; this accumulator owns its own state).
 
         Emits:
         - ``accuracy.overall``: overall correct/total ratio
