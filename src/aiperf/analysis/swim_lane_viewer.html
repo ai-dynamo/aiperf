@@ -532,19 +532,17 @@ DATA.sessions.forEach((s, si) => { idToSi[s.id] = si; });
 const laneColor = (si) => sessColor(DATA.sessions[si].ci);
 // categorical role of a session for the "role" color mode: the main/root
 // conversation, a solo sub-agent, a parallel worker-group member (::wg:), a
-// one-shot ::aux: sidecar, or a ::aux:red: reduction (compaction / summary /
-// tool-output digest). Reduction is a distinguished sidecar flavor.
-const ROLE_COLOR = { main: "#62a0ea", agent: "#57c994", worker: "#9b8cf0", sidecar: "#f5b942", reduction: "#e0703a" };
-const sessRole = (s) => (!s.sub ? "main" : s.red ? "reduction" : s.aux ? "sidecar" : s.wg ? "worker" : "agent");
+// one-shot ::aux: sidecar.
+const ROLE_COLOR = { main: "#62a0ea", agent: "#57c994", worker: "#9b8cf0", sidecar: "#f5b942" };
+const sessRole = (s) => (!s.sub ? "main" : s.aux ? "sidecar" : s.wg ? "worker" : "agent");
 const roleColor = (s) => ROLE_COLOR[sessRole(s)];
 const N_SUB = DATA.sessions.reduce((a, s) => a + (s.sub ? 1 : 0), 0);
 // aux (sidecar) sessions are a subset of subagents (agent_depth > 0); count
 // them separately so the stats and legend can distinguish one-shot tool calls
-// from sustained subagents. Worker-group (::wg:) members and reductions
-// (::aux:red:, a subset of aux) are counted on their own too.
+// from sustained subagents. Worker-group (::wg:) members are counted on their
+// own too.
 const N_AUX = DATA.sessions.reduce((a, s) => a + (s.aux ? 1 : 0), 0);
 const N_WG = DATA.sessions.reduce((a, s) => a + (s.wg ? 1 : 0), 0);
-const N_RED = DATA.sessions.reduce((a, s) => a + (s.red ? 1 : 0), 0);
 // each slot expands to one full-size sub-lane per concurrently-running turn,
 // plus one child tier per concurrently-running subagent session
 let foldSubs = false; // when true, subagent tiers are hidden and lanes re-flow
@@ -616,7 +614,6 @@ function metricColor(t) {
     ...(N_SUB - N_AUX - N_WG ? [["subagents", N_SUB - N_AUX - N_WG]] : []),
     ...(N_WG ? [["worker-group", N_WG]] : []),
     ...(N_AUX ? [["aux", N_AUX]] : []),
-    ...(N_RED ? [["reductions", N_RED]] : []),
     ["slots", N_SLOTS],
     ...(TOTAL_ROWS > N_SLOTS ? [["sub-lanes", TOTAL_ROWS]] : []),
     ["turns", totalTurns],
@@ -662,7 +659,7 @@ function metricColor(t) {
     if (!colorBy) { hint.style.display = "none"; return; }
     hint.style.display = "flex";
     if (colorBy === "role") {
-      hint.innerHTML = ["main", "agent", "worker", "sidecar", "reduction"]
+      hint.innerHTML = ["main", "agent", "worker", "sidecar"]
         .filter((r) => DATA.sessions.some((s) => sessRole(s) === r))
         .map((r) => `<span class="key" style="margin-right:8px"><span class="swatch" style="background:${ROLE_COLOR[r]}"></span>${r}</span>`)
         .join("");

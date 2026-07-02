@@ -8,7 +8,7 @@ parallel fan-out:
 - ``is_aux_chain``: a short chain from a small fresh context, or a cross-model
   one-shot, is a tool-issued sidecar (``::fa:`` -> ``::aux:``).
 - ``is_reduction_chain``: a same-model single large-input/short-output one-shot
-  is a reduction sidecar (``::fa:`` -> ``::aux:red:``).
+  is a reduction sidecar (``::fa:`` -> ``::aux:``).
 - ``worker_group_assignment`` / ``worker_group_members``: among workers that
   forked from shared context, those whose active intervals OVERLAP form a
   concurrent parallel fan-out, tagged ``::fa:`` -> ``::wg:{group}_{member}``.
@@ -397,7 +397,7 @@ def test_worker_suffix_precedence_and_shape():
     )
     assert (
         _worker_suffix(n=3, is_aux=False, is_reduction=True, wg_coord=(1, 0))
-        == "aux:red:003"
+        == "aux:003"
     )
     # worker-group: underscore-joined (group, member) value, colon stays structural
     assert (

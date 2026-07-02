@@ -51,7 +51,7 @@ def _replay_scope_for_session(session_id: str, parent_trace_id: str) -> str:
         return parent_trace_id
     trace_id, suffix = session_id.split(marker, 1)
     agent_id = suffix
-    for worker_marker in (":aux:red:", ":aux:", ":fa:", ":wg:"):
+    for worker_marker in (":aux:", ":fa:", ":wg:"):
         if worker_marker in agent_id:
             agent_id = agent_id.rsplit(worker_marker, 1)[0]
     return f"{trace_id}{marker}{agent_id}"
@@ -344,19 +344,17 @@ def _worker_suffix(
     """Session-id suffix (marker + index) for a detected worker chain.
 
     Precedence: auxiliary classification wins over worker-group (a one-shot
-    sidecar is never a parallel agent). ``aux:red`` keeps reductions inside the
-    aux family (the ``:aux:`` substring still flags them) while distinguishing
-    them from fetch/size sidecars. A worker-group member carries its parallel-
-    fan-out coordinate as an underscore-joined value ``wg:{group}_{member}``
-    (``group`` = the fork-point fan-out it belongs to, ``member`` = index within
-    it; colon stays purely structural -- the coordinate is one value, like the
-    underscore-joined ``agent_id`` after an ``sa:`` key); ``fa`` is a solo agent.
-    ``n`` is the dense per-trace worker index used for the single-valued
-    markers."""
-    if is_aux:
+    sidecar is never a parallel agent). Reductions are emitted as normal
+    auxiliary sidecars because the distinction is classifier-internal and
+    should not leak into session ids. A worker-group member carries its
+    parallel-fan-out coordinate as an underscore-joined value
+    ``wg:{group}_{member}`` (``group`` = the fork-point fan-out it belongs to,
+    ``member`` = index within it; colon stays purely structural -- the
+    coordinate is one value, like the underscore-joined ``agent_id`` after an
+    ``sa:`` key); ``fa`` is a solo agent. ``n`` is the dense per-trace worker
+    index used for the single-valued markers."""
+    if is_aux or is_reduction:
         return f"aux:{n:03d}"
-    if is_reduction:
-        return f"aux:red:{n:03d}"
     if wg_coord is not None:
         group, member = wg_coord
         return f"wg:{group:03d}_{member:03d}"
@@ -368,6 +366,7 @@ class _ChildPlan:
     session_id: str
     parent_trace_id: str
     subagent_index: int
+    source_outer_idx: int
     entry: WekaSubagentEntry
     chain_index: int
     """0 = the subagent's main chain; >0 = a spawned chain (see
@@ -375,6 +374,9 @@ class _ChildPlan:
     requests: list[WekaNormalRequest]
     """The chain's requests in time order, with ``t`` normalized to
     root-trace coordinates."""
+    request_inner_indices: list[int]
+    """Original zero-based indexes within ``entry.requests`` aligned with
+    ``requests``."""
     block_size: int
     init_tool_tokens: int
     """Turn-0 tools-prefix attribution for this chain; see
@@ -383,7 +385,7 @@ class _ChildPlan:
     """Turn-0 system-prefix attribution for this chain (same gate)."""
     is_aux: bool = False
     """True when an overflow chain is an auxiliary one-shot sidecar (emitted as
-    ``:aux:NNN`` or ``:aux:red:NNN`` rather than the ``:fa:NNN`` agent marker).
+    ``:aux:NNN`` rather than the ``:fa:NNN`` agent marker).
     See :func:`weka_agent_chains.is_aux_chain` /
     :func:`weka_agent_chains.is_reduction_chain`. Always False for the main chain."""
 
@@ -391,6 +393,7 @@ class _ChildPlan:
 def _expand_subagent_to_child_plans(
     trace_id: str,
     sa_index: int,
+    source_outer_idx: int,
     entry: WekaSubagentEntry,
     block_size: int,
     *,
@@ -433,20 +436,28 @@ def _expand_subagent_to_child_plans(
     -- the system role is never fabricated for a thread that did not record
     the declared prefix.
     """
-    normalized = [
-        req.model_copy(update={"t": _subagent_request_absolute_t(entry, req)})
-        if req.t + _JOIN_EPSILON_SECONDS < entry.t
-        else req
-        for req in entry.requests
+    normalized_pairs = [
+        (
+            inner_idx,
+            req.model_copy(update={"t": _subagent_request_absolute_t(entry, req)})
+            if req.t + _JOIN_EPSILON_SECONDS < entry.t
+            else req,
+        )
+        for inner_idx, req in enumerate(entry.requests)
     ]
+    normalized = [req for _, req in normalized_pairs]
+    inner_idx_by_normalized_idx = {
+        normalized_idx: inner_idx
+        for normalized_idx, (inner_idx, _) in enumerate(normalized_pairs)
+    }
 
-    chains: list[list[WekaNormalRequest]]
+    chain_items: list[list[tuple[int, WekaNormalRequest]]]
     chain_wg_coord: list[tuple[int, int] | None]
     if not split_chains or not normalized:
         ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
-        chains = [[req for _, req in ordered]]
+        chain_items = [ordered]
         chain_wg_coord = [None]
-        classify_main = chains[0]
+        classify_main = [req for _, req in chain_items[0]]
     else:
         from aiperf.dataset.loader.weka_agent_chains import (
             detect_agent_chains,
@@ -473,10 +484,9 @@ def _expand_subagent_to_child_plans(
             main_requests = sorted(
                 preamble + detected_main, key=lambda it: (it[1].t, it[0])
             )
-        chains = [[req for _, req in main_requests]]
-        chains.extend(
-            [req for _, req in detection.chains[ci].requests]
-            for ci in detection.worker_indices
+        chain_items = [main_requests]
+        chain_items.extend(
+            list(detection.chains[ci].requests) for ci in detection.worker_indices
         )
         wg_coords = worker_group_assignment(
             detection, group_min=Environment.DATASET.WEKA_WORKER_GROUP_MIN
@@ -494,7 +504,12 @@ def _expand_subagent_to_child_plans(
     main_peak_isl = max((r.input_length for r in classify_main), default=0)
     main_model = classify_main[0].model if classify_main else None
     plans: list[_ChildPlan] = []
-    for chain_idx, chain_requests in enumerate(chains):
+    for chain_idx, chain_items_for_plan in enumerate(chain_items):
+        chain_requests = [req for _, req in chain_items_for_plan]
+        request_inner_indices = [
+            inner_idx_by_normalized_idx[normalized_idx]
+            for normalized_idx, _ in chain_items_for_plan
+        ]
         is_aux = is_reduction = False
         wg_coord: tuple[int, int] | None = None
         if chain_idx == 0:
@@ -509,11 +524,11 @@ def _expand_subagent_to_child_plans(
                 base_first_hash=main_first_hash,
                 chain_first_hash=first_hash,
             )
-            # Classify the overflow chain: a short, small-fresh-context or
-            # cross-model one-shot is the subagent's own sidecar (:aux:); a
-            # same-model large-in/short-out call is a reduction (:aux:red:); a
-            # member of a shared-spawn parallel group is a worker-group agent
-            # (:wg:); otherwise a nested agent (:fa:).
+            # Classify the overflow chain: a short, small-fresh-context,
+            # cross-model, or same-model large-in/short-out one-shot is the
+            # subagent's own sidecar (:aux:); a member of a shared-spawn
+            # parallel group is a worker-group agent (:wg:); otherwise a nested
+            # agent (:fa:).
             is_aux = is_aux_chain(
                 chain_requests,
                 main_peak_isl,
@@ -543,9 +558,11 @@ def _expand_subagent_to_child_plans(
                 session_id=child_sid,
                 parent_trace_id=trace_id,
                 subagent_index=sa_index,
+                source_outer_idx=source_outer_idx,
                 entry=entry,
                 chain_index=chain_idx,
                 requests=chain_requests,
+                request_inner_indices=request_inner_indices,
                 block_size=block_size,
                 init_tool_tokens=init_tool,
                 init_system_tokens=init_system,
@@ -1191,6 +1208,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         _expand_subagent_to_child_plans(
                             trace_id,
                             sa_index,
+                            idx,
                             req,
                             trace_bs,
                             split_chains=split_enabled,
@@ -1304,8 +1322,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             )
             # Classify each worker chain: cross-model / small-fresh-context
             # one-shot -> sidecar (::aux:); same-model large-in/short-out
-            # one-shot -> reduction (::aux:red:); shared-spawn parallel group
-            # member -> worker-group agent (::wg:); otherwise solo agent
+            # one-shot -> reduction sidecar (::aux:); shared-spawn parallel
+            # group member -> worker-group agent (::wg:); otherwise solo agent
             # (::fa:). Aux/reduction win over worker-group.
             aux = is_aux_chain(
                 chain_reqs,
@@ -1824,6 +1842,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         api_time_ms=None
                         if ignore_delays
                         else _api_time_ms(req.api_time),
+                        source_trace_id=plan.trace_id,
+                        source_outer_idx=outer_idx,
+                        source_kind="weka_main",
                         model=model_map.get(req.model, req.model),
                         max_tokens=self._cap_output(req),
                         raw_messages=delta.delta_messages,
@@ -2162,6 +2183,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         api_time_ms=None
                         if ignore_delays
                         else _api_time_ms(creq.api_time),
+                        source_trace_id=cp.parent_trace_id,
+                        source_outer_idx=cp.source_outer_idx,
+                        source_inner_idx=cp.request_inner_indices[k],
+                        source_kind="weka_subagent",
                         model=child_model_map.get(creq.model, creq.model),
                         max_tokens=creq.output_length,
                         raw_messages=child_delta.delta_messages,
@@ -2214,7 +2239,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             [(r.hash_ids, r.input_length) for _, r in fp.requests],
             fp.block_size,
         )
-        for k, (_outer_idx, req) in enumerate(fp.requests):
+        for k, (outer_idx, req) in enumerate(fp.requests):
             seed = f"{fp.session_id}:turn_{k}:partial_tail"
             input_kind = _classify_turn_input(req, fp.requests[k - 1][1] if k else None)
             is_tool_result = input_kind == TurnInputKind.TOOL_RESULT
@@ -2253,6 +2278,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     timestamp=None if ignore_delays else t_ms,
                     delay=None if ignore_delays else delay_ms,
                     api_time_ms=None if ignore_delays else _api_time_ms(req.api_time),
+                    source_trace_id=fp.parent_trace_id,
+                    source_outer_idx=outer_idx,
+                    source_kind="weka_flat",
                     model=model_map.get(req.model, req.model),
                     max_tokens=self._cap_output(req),
                     raw_messages=delta.delta_messages,
@@ -2364,6 +2392,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "t": creq.t,
                     "think_time": getattr(creq, "think_time", None),
                     "api_time": getattr(creq, "api_time", None),
+                    "source_trace_id": cp.parent_trace_id,
+                    "source_outer_idx": cp.source_outer_idx,
+                    "source_inner_idx": cp.request_inner_indices[k],
+                    "source_kind": "weka_subagent",
                     "theoretical_hit_blocks": hit_blocks,
                     "theoretical_total_blocks": total_blocks,
                     "input_kind": _classify_turn_input(
@@ -2494,7 +2526,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         trace_idle_timing = trace_idle_timing_by_trace.get(fp.parent_trace_id)
         flat_metric_values = metric_values_by_trace[fp.parent_trace_id]
         requests_dicts: list[_WekaNormalRequestPayload] = []
-        for k, (_outer_idx, req) in enumerate(fp.requests):
+        for k, (outer_idx, req) in enumerate(fp.requests):
             hit_blocks, total_blocks = flat_metric_values[(fp.session_id, k)]
             req_payload: _WekaNormalRequestPayload = {
                 "hash_ids": list(req.hash_ids),
@@ -2507,6 +2539,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 "input_kind": _classify_turn_input(
                     req, fp.requests[k - 1][1] if k else None
                 ),
+                "source_trace_id": fp.parent_trace_id,
+                "source_outer_idx": outer_idx,
+                "source_inner_idx": None,
+                "source_kind": "weka_flat",
                 "capped_output_length": self._cap_output(req),
                 "theoretical_hit_blocks": hit_blocks,
                 "theoretical_total_blocks": total_blocks,
@@ -2707,6 +2743,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         timestamp=t_dict["timestamp"],
                         delay=t_dict["delay"],
                         api_time_ms=t_dict.get("api_time_ms"),
+                        source_trace_id=t_dict.get("source_trace_id"),
+                        source_outer_idx=t_dict.get("source_outer_idx"),
+                        source_inner_idx=t_dict.get("source_inner_idx"),
+                        source_kind=t_dict.get("source_kind"),
                         model=t_dict["model"],
                         max_tokens=t_dict["max_tokens"],
                         raw_messages=t_dict["raw_messages"],
@@ -2763,6 +2803,10 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             timestamp=t_dict["timestamp"],
                             delay=t_dict["delay"],
                             api_time_ms=t_dict.get("api_time_ms"),
+                            source_trace_id=t_dict.get("source_trace_id"),
+                            source_outer_idx=t_dict.get("source_outer_idx"),
+                            source_inner_idx=t_dict.get("source_inner_idx"),
+                            source_kind=t_dict.get("source_kind"),
                             model=t_dict["model"],
                             max_tokens=t_dict["max_tokens"],
                             raw_messages=t_dict["raw_messages"],

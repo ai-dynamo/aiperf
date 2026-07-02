@@ -254,6 +254,10 @@ def _assert_parity(serial: list[Conversation], parallel: list[Conversation]) -> 
             ctx = f"{sid} turn {k}"
             assert st.timestamp == pt.timestamp, ctx
             assert st.delay == pt.delay, ctx
+            assert st.source_trace_id == pt.source_trace_id, ctx
+            assert st.source_outer_idx == pt.source_outer_idx, ctx
+            assert st.source_inner_idx == pt.source_inner_idx, ctx
+            assert st.source_kind == pt.source_kind, ctx
             assert st.model == pt.model, ctx
             assert st.max_tokens == pt.max_tokens, ctx
             assert st.branch_ids == pt.branch_ids, ctx
@@ -400,6 +404,26 @@ def test_convert_mixed_split_directory_ordering_parallel_byte_identical(
     # Invariant: every retained request appears in exactly one conversation
     # exactly once (6 + 3 + 6 requests -> 15 turns).
     assert sum(len(c.turns) for c in serial) == 15
+    convs = _by_sid(serial)
+    assert [
+        (t.source_trace_id, t.source_outer_idx, t.source_inner_idx, t.source_kind)
+        for t in convs["trace_a"].turns
+    ] == [
+        ("trace_a", 0, None, "weka_main"),
+        ("trace_a", 3, None, "weka_main"),
+        ("trace_a", 5, None, "weka_main"),
+    ]
+    assert [
+        (t.source_trace_id, t.source_outer_idx, t.source_inner_idx, t.source_kind)
+        for t in convs["trace_a::fa:000"].turns
+    ] == [
+        ("trace_a", 1, None, "weka_flat"),
+        ("trace_a", 4, None, "weka_flat"),
+    ]
+    assert [
+        (t.source_trace_id, t.source_outer_idx, t.source_inner_idx, t.source_kind)
+        for t in convs["trace_a::fa:001"].turns
+    ] == [("trace_a", 2, None, "weka_flat")]
 
 
 @pytest.mark.parametrize("idle_gap_cap", [None, 4.0])
@@ -460,6 +484,11 @@ def test_convert_split_trace_with_subagent_children_order_parallel_byte_identica
     t1_joins = {p.branch_id for p in root.turns[1].prerequisites}
     assert "trace_mix:spawn:agent_x" in t1_joins
     assert len(root.turns[2].prerequisites) == 1
+    child = _by_sid(serial)["trace_mix::sa:agent_x"]
+    assert [
+        (t.source_trace_id, t.source_outer_idx, t.source_inner_idx, t.source_kind)
+        for t in child.turns
+    ] == [("trace_mix", 1, 0, "weka_subagent")]
 
 
 def test_convert_think_time_only_with_delay_cap_parallel_byte_identical(

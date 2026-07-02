@@ -425,8 +425,8 @@ class _DatasetSettings(BaseSettings):
         "same-model and large. The bound separates a bounded summary from "
         "generative agent output (a real agent emits long completions); corpus "
         "reductions cap well below 4k output across every capture. Reductions "
-        "are emitted as ::aux:red: (still aux, distinguishable from fetch/size "
-        "sidecars). Set to 0 to disable the reduction arm. Only applies when "
+        "are emitted as ordinary ::aux: sidecars. Set to 0 to disable the "
+        "reduction arm. Only applies when "
         "WEKA_SPLIT_FLATTENED_AGENTS is True.",
     )
     WEKA_AUX_REDUCTION_RATIO: float = Field(

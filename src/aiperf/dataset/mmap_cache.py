@@ -75,6 +75,15 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v23: same-model reduction sidecars are still classified as auxiliary for
+    # scheduling, but no longer emit the extra reduction session-id flavor.
+    # They now use plain ::aux:, so cached Weka manifests need rebuilt session
+    # ids.
+    # v22: Weka source provenance now includes source_inner_idx for nested
+    # subagent child requests. Cached manifests produced before v22 deserialize
+    # with None for that field, so request exports cannot deep-link exact
+    # raw+inner source coordinates even though replay bytes are otherwise
+    # identical.
     # v21: Weka traces carry explicit api_time interval-frontier metadata in
     # DatasetMetadata (replay_scope_id + per-turn replay_predecessors). Cached
     # manifests produced before v21 deserialize with empty defaults, silently
@@ -107,11 +116,11 @@ MANIFEST_VERSION = (
     # as ::wg:{lineage}_{burst}_{member} (was ::wg:{NNN}). lineage = shared-
     # spawn-block group; burst = temporal dispatch wave split at
     # WEKA_WORKER_GROUP_BURST_GAP_SECONDS; member = index within the burst. Those
-    # ::wg: child session ids changed; ::fa:/::aux:/::aux:red: are unchanged.
+    # ::wg: child session ids changed; ::fa:/::aux: are unchanged.
     # v16: aux classification gained a reduction arm and worker-group tagging.
     # A same-model single-request large-input/short-output one-shot (context
     # compaction, subagent-result summary, tool-output digest) is now a sidecar
-    # at ::aux:red: (and :aux:red: under subagents) via WEKA_AUX_REDUCTION_*;
+    # via WEKA_AUX_REDUCTION_*;
     # and a worker chain sharing a spawn block with >= WEKA_WORKER_GROUP_MIN
     # siblings and a deep fork is tagged ::wg: (parallel fan-out agent) instead
     # of the generic ::fa:, so those child session ids changed.
@@ -142,7 +151,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    21
+    23
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

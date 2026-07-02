@@ -44,7 +44,7 @@ def _disable_weka_aux_classification(monkeypatch):
 
     Worker-chain sub-classification (``is_aux_chain`` size/cross-model arms,
     ``is_reduction_chain``, and ``worker_group_members``) relabels short
-    one-shots as ``::aux:``/``::aux:red:`` sidecars and shared-spawn fan-out as
+    one-shots as ``::aux:`` sidecars and shared-spawn fan-out as
     ``::wg:``. The flat-split mechanics tests assert ``::fa:`` session ids and
     byte-identical reconstruction and are agnostic to those tags, so default all
     three off here. Classification itself is covered directly by

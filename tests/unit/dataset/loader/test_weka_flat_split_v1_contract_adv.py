@@ -508,12 +508,11 @@ def test_cross_model_large_singleton_emits_aux_sidecar(tmp_path, monkeypatch):
     assert not any(sid.startswith("xm::fa:") for sid in convs), sorted(convs)
 
 
-def test_same_model_large_reduction_emits_aux_red_sidecar(tmp_path, monkeypatch):
+def test_same_model_large_reduction_emits_aux_sidecar(tmp_path, monkeypatch):
     # A same-model single one-shot with a large input and a short output (a
     # context compaction / result summary / tool-output digest) is a reduction
-    # sidecar -> ::aux:red:, distinct from a fetch/size ::aux: sidecar. It
-    # escapes the size arm (input above the floor) and the cross-model arm
-    # (same model "m"), so only the reduction arm catches it.
+    # sidecar -> ::aux:. It escapes the size arm (input above the floor) and the
+    # cross-model arm (same model "m"), so only the reduction arm catches it.
     monkeypatch.setattr(Environment.DATASET, "WEKA_AUX_REDUCTION_OSL_MAX", 4000)
     reqs = [
         _row(t=0.0, hash_ids=[1, 2, 3]),  # main chain, model "m"
@@ -522,7 +521,7 @@ def test_same_model_large_reduction_emits_aux_red_sidecar(tmp_path, monkeypatch)
     ]
     p = _write_trace(tmp_path / "rd.json", trace_id="rd", requests=reqs)
     convs = _convs_by_sid(_loader_for(p))
-    assert "rd::aux:red:000" in convs, sorted(convs)
+    assert "rd::aux:000" in convs, sorted(convs)
     assert not any(sid.startswith("rd::fa:") for sid in convs), sorted(convs)
 
 

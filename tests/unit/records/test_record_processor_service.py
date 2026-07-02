@@ -128,6 +128,29 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         assert getattr(metadata, expected_metadata_field) is None
         assert metadata.worker_id == worker_id
 
+    def test_create_metadata_propagates_source_provenance(
+        self, mock_record_processor, sample_request_record
+    ):
+        sample_request_record.request_info = (
+            sample_request_record.request_info.model_copy(
+                update={
+                    "source_trace_id": "trace",
+                    "source_outer_idx": 204,
+                    "source_inner_idx": 16,
+                    "source_kind": "weka_flat",
+                }
+            )
+        )
+
+        metadata = RecordProcessor._create_metric_record_metadata(
+            mock_record_processor, sample_request_record, "worker-5"
+        )
+
+        assert metadata.source_trace_id == "trace"
+        assert metadata.source_outer_idx == 204
+        assert metadata.source_inner_idx == 16
+        assert metadata.source_kind == "weka_flat"
+
 
 class TestRecordProcessorForwardsRecordOnFailure:
     """Lockstep invariant: every received InferenceResultsMessage must forward
