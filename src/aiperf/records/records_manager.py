@@ -82,6 +82,7 @@ from aiperf.post_processors.protocols import (
     FlushableResultsProcessorProtocol,
     ResultsProcessorProtocol,
 )
+from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.server_metrics.protocols import (
@@ -257,10 +258,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
         """Handle a metric records message."""
-        await asyncio.wait_for(
-            self._dataset_configured_event.wait(),
-            timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
-        )
+        if not await await_dataset_configured(self, self._dataset_configured_event):
+            return
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 

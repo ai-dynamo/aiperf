@@ -31,6 +31,7 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
+from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 if TYPE_CHECKING:
@@ -176,10 +177,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""
-        await asyncio.wait_for(
-            self._dataset_configured_event.wait(),
-            timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
-        )
+        if not await await_dataset_configured(self, self._dataset_configured_event):
+            return
         record = message.record
 
         # Capture last response timestamp before parsing frees raw SSE data.

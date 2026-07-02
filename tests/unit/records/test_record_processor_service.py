@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -174,3 +175,32 @@ class TestRecordProcessorDatasetConfiguredBarrier:
         mock_self._dataset_configured_event.set()
         with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
             await asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_on_inference_results_fails_run_on_config_timeout(self, monkeypatch):
+        """On dataset-config timeout, abort the run (report error + kill) rather
+        than process the record without a configured dataset."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self.service_id = "rp-test"
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.publish = AsyncMock()
+        mock_self._kill = AsyncMock()
+        mock_self.inference_result_parser = MagicMock()
+        mock_self.inference_result_parser.parse_request_record = AsyncMock()
+
+        async def _raise_timeout(coro, *args, **kwargs):
+            coro.close()  # avoid "coroutine was never awaited" warning
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(
+            "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
+        )
+
+        await RecordProcessor._on_inference_results(mock_self, MagicMock())
+
+        # Run is failed loudly ...
+        mock_self._kill.assert_awaited_once()
+        published = mock_self.publish.await_args.args[0]
+        assert isinstance(published, BaseServiceErrorMessage)
+        # ... and the record is not processed.
+        mock_self.inference_result_parser.parse_request_record.assert_not_called()

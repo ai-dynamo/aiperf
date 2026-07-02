@@ -9,6 +9,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
     MetricRecordsMessage,
@@ -1141,3 +1142,34 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         mock_self._dataset_configured_event.set()
         with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
             await asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_on_metric_records_fails_run_on_config_timeout(self, monkeypatch):
+        """On dataset-config timeout, abort the run (report error + kill) rather
+        than process the record without a configured dataset."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self.service_id = "rm-test"
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.is_trace_enabled = False
+        mock_self.publish = AsyncMock()
+        mock_self._kill = AsyncMock()
+        mock_self._send_results_to_results_processors = AsyncMock()
+        message = MagicMock()
+        message.metadata.benchmark_phase = CreditPhase.PROFILING
+
+        async def _raise_timeout(coro, *args, **kwargs):
+            coro.close()  # avoid "coroutine was never awaited" warning
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(
+            "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
+        )
+
+        await RecordsManager._on_metric_records(mock_self, message)
+
+        # Run is failed loudly ...
+        mock_self._kill.assert_awaited_once()
+        published = mock_self.publish.await_args.args[0]
+        assert isinstance(published, BaseServiceErrorMessage)
+        # ... and the record is not processed.
+        mock_self._send_results_to_results_processors.assert_not_called()
