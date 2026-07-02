@@ -120,6 +120,12 @@ def fake_wandb(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             self.columns = columns
             self.data = data
 
+    class FakeSettings:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
     def fake_init(**kwargs: Any) -> FakeRun:
         state["init_kwargs"] = kwargs
         return FakeRun()
@@ -128,6 +134,7 @@ def fake_wandb(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     fake_module.init = fake_init  # type: ignore[attr-defined]
     fake_module.Table = FakeTable  # type: ignore[attr-defined]
     fake_module.Artifact = FakeArtifact  # type: ignore[attr-defined]
+    fake_module.Settings = FakeSettings  # type: ignore[attr-defined]
     state["table_cls"] = FakeTable
     monkeypatch.setitem(sys.modules, "wandb", fake_module)
     return state
@@ -183,6 +190,9 @@ class TestWandbDataExporter:
         assert init_kwargs["project"] == "aiperf-dev"
         assert init_kwargs["name"] == "my-run"
         assert "aa-repro" in init_kwargs["tags"]
+        settings = init_kwargs["settings"]
+        assert settings.x_disable_meta is True
+        assert settings.save_code is False
         config = init_kwargs["config"]
         assert config["models"]["items"][0]["name"] == "test-model"
         assert config["phases"][0]["concurrency"] == 1
