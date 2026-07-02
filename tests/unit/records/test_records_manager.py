@@ -30,8 +30,9 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
-from aiperf.plugin.enums import TimingMode
+from aiperf.plugin.enums import AccumulatorType, TimingMode
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
@@ -330,6 +331,14 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager._timing_results_processors = []
     manager._send_timing_to_results_processors = AsyncMock()
     manager._send_results_to_results_processors = AsyncMock()
+    # Accumulator engine dispatch (primary summary path) — stubbed; these tests
+    # exercise the finalization-ordering logic, not the per-record fan-out.
+    manager._metric_record_accumulators = []
+    manager._metric_record_stream_exporters = []
+    manager._skipped_context_overflow_count = 0
+    manager._send_record_to_accumulators = AsyncMock()
+    manager._maybe_hint_missing_cache_reporting = MagicMock()
+    manager._maybe_trigger_failed_request_abort = AsyncMock()
     manager.info = MagicMock()
     manager.notice = MagicMock()
     manager.debug = MagicMock()
@@ -865,9 +874,19 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
             MetricResult(tag="output_token_count", header="h", unit="tokens", avg=2.0),
         ]
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=request_records)
-        manager._metric_results_processors = [processor]
+        # The byte-exact summary engine now sources records from the
+        # metric_record accumulators (AccumulatorMetricsSummary shape), not the
+        # legacy MetricResultsProcessor.
+        metric_accumulator = MagicMock()
+        metric_accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(
+                results={r.tag: r for r in request_records},
+            )
+        )
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
+        manager._metric_record_accumulators = [metric_accumulator]
+        manager._stream_exporters = {}
+        manager._skipped_context_overflow_count = 0
 
         efficiency_metrics = [
             MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
@@ -946,9 +965,16 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
         ]
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=request_records)
-        manager._metric_results_processors = [processor]
+        metric_accumulator = MagicMock()
+        metric_accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(
+                results={r.tag: r for r in request_records},
+            )
+        )
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
+        manager._metric_record_accumulators = [metric_accumulator]
+        manager._stream_exporters = {}
+        manager._skipped_context_overflow_count = 0
 
         accumulator = MagicMock()
         accumulator.compute_efficiency_metrics = MagicMock(
@@ -1000,9 +1026,14 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.run.cfg.server_metrics_disabled = True
         manager.run.cfg.network_latency.enabled = False
 
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=[])
-        manager._metric_results_processors = [processor]
+        metric_accumulator = MagicMock()
+        metric_accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(results={})
+        )
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
+        manager._metric_record_accumulators = [metric_accumulator]
+        manager._stream_exporters = {}
+        manager._skipped_context_overflow_count = 0
 
         accumulator = MagicMock()
         manager._gpu_telemetry_accumulator = accumulator
@@ -1095,6 +1126,110 @@ class TestMidRunCacheReportingHint:
         manager.warning.assert_not_called()
 
 
+class TestRealtimeUpdateGate:
+    """The realtime block must re-render when EITHER the record count OR the
+    live server-metrics snapshot changes. The port had gated on record count
+    alone, freezing the server-metrics row (cache hit rate, KV usage, queue
+    depth) during lulls where the count was momentarily static."""
+
+    def _manager(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._previous_realtime_records = None
+        manager._previous_realtime_server_snapshot = None
+        return manager
+
+    def test_first_tick_is_an_update(self):
+        m = self._manager()
+        assert m._has_realtime_update(0, {}) is True
+
+    def test_record_count_change_triggers_update(self):
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        assert m._has_realtime_update(11, {"kv_cache_usage_pct": 50.0}) is True
+
+    def test_server_metric_change_triggers_update_even_with_static_records(self):
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        # Record count unchanged, but KV usage moved -> must still re-render.
+        assert m._has_realtime_update(10, {"kv_cache_usage_pct": 72.0}) is True
+
+    def test_no_change_skips_update(self):
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        assert m._has_realtime_update(10, {"kv_cache_usage_pct": 50.0}) is False
+
+
+class TestRecordsManagerFailedRequestAbort:
+    """Bug #12: the per-record abort check must read the tracker's plain int
+    counters, not build a full validated PhaseRecordsStats per PROFILING record.
+    """
+
+    def _manager(self, tracker: RecordsTracker) -> RecordsManager:
+        m = RecordsManager.__new__(RecordsManager)
+        m._records_tracker = tracker
+        m._failed_request_threshold = 0.5
+        m._failed_request_grace_floor = 10
+        m._failed_request_abort_triggered = False
+        m.service_id = "records-manager"
+        m.publish = AsyncMock()
+        m.warning = MagicMock()
+        return m
+
+    @pytest.mark.asyncio
+    async def test_abort_check_does_not_build_stats_model_per_record(self) -> None:
+        tracker = RecordsTracker()
+        tracker.create_stats_for_phase = MagicMock(
+            side_effect=AssertionError(
+                "abort check must not construct PhaseRecordsStats per record"
+            )
+        )
+        # Below the grace floor: no abort, and crucially no stats-model build.
+        m = self._manager(tracker)
+        await m._maybe_trigger_failed_request_abort(CreditPhase.PROFILING)
+        m.publish.assert_not_awaited()
+        tracker.create_stats_for_phase.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_abort_fires_via_int_accessors_when_threshold_exceeded(
+        self,
+    ) -> None:
+        tracker = RecordsTracker()
+        phase_tracker = tracker._get_phase_tracker(CreditPhase.PROFILING)
+        # 6 errors / 10 total = 0.6 > 0.5 threshold, total >= grace floor (10).
+        for _ in range(4):
+            phase_tracker.increment_success_records()
+        for _ in range(6):
+            phase_tracker.increment_error_records()
+        tracker.create_stats_for_phase = MagicMock(
+            side_effect=AssertionError(
+                "abort check must not construct PhaseRecordsStats per record"
+            )
+        )
+        m = self._manager(tracker)
+        await m._maybe_trigger_failed_request_abort(CreditPhase.PROFILING)
+        m.publish.assert_awaited_once()
+        assert m._failed_request_abort_triggered is True
+        tracker.create_stats_for_phase.assert_not_called()
+
+    def test_int_accessors_match_stats_model(self) -> None:
+        tracker = RecordsTracker()
+        phase_tracker = tracker._get_phase_tracker(CreditPhase.PROFILING)
+        for _ in range(7):
+            phase_tracker.increment_success_records()
+        for _ in range(3):
+            phase_tracker.increment_error_records()
+        stats = tracker.create_stats_for_phase(CreditPhase.PROFILING)
+        assert tracker.total_records_for_phase(CreditPhase.PROFILING) == (
+            stats.total_records
+        )
+        assert tracker.error_records_for_phase(CreditPhase.PROFILING) == (
+            stats.error_records
+        )
+
+
 class TestRecordsManagerDatasetConfiguredBarrier:
     """The records manager must not run metric records through its results
     processors until the DatasetConfiguredNotification has been applied.
@@ -1110,6 +1245,7 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         mock_self = MagicMock(spec=RecordsManager)
         mock_self._dataset_configured_event = asyncio.Event()
         mock_self._metric_results_processors = []
+        mock_self._accumulators = {}
 
         await RecordsManager._on_dataset_configured(mock_self, MagicMock())
 
@@ -1127,6 +1263,10 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         )
         message = MagicMock()
         message.metadata.benchmark_phase = CreditPhase.PROFILING
+        # A bare MagicMock attribute is truthy and would divert the handler
+        # into the agentic context-overflow skip branch before it reaches the
+        # results processors.
+        message.to_data.return_value.metadata.context_overflow_skip = False
 
         task = asyncio.create_task(
             RecordsManager._on_metric_records(mock_self, message)

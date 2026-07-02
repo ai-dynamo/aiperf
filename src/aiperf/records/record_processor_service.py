@@ -13,6 +13,7 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     InferenceResultsMessage,
     MetricRecordsMessage,
+    ProfileCompleteCommand,
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -25,6 +26,7 @@ from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.scenario import get_scenario
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -67,6 +69,24 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self.inference_result_parser = InferenceResultParser(
             run=self.run,
         )
+        # Cache: flag context-overflow records for the records-side "skip" path
+        # (not dropped -- they still count toward total_records) when the active
+        # scenario uses AGENTIC_REPLAY timing. The trajectory is already
+        # terminated by the timing strategy via the separate CreditReturn path,
+        # so the overflow event is intentionally tolerated and kept out of every
+        # user-facing metric while the run still terminates cleanly.
+        self._drop_agentic_overflow_records: bool = False
+        scenario_name = self.run.cfg.scenario
+        if scenario_name is not None:
+            try:
+                spec = get_scenario(scenario_name)
+                self._drop_agentic_overflow_records = (
+                    str(spec.timing_mode) == "agentic_replay"
+                )
+            except Exception:  # noqa: BLE001
+                # Unknown scenario names are validated elsewhere; record
+                # processing degrades to default error-emission behavior here.
+                self._drop_agentic_overflow_records = False
 
         # DatasetConfiguredNotification (SUB) and inference results (PULL) arrive on
         # independent channels with no ordering guarantee. Gate record processing on
@@ -112,6 +132,33 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     ) -> None:
         """Configure the tokenizers."""
         await self.inference_result_parser.configure()
+
+    @on_command(CommandType.PROFILE_COMPLETE)
+    async def _profile_complete_command(
+        self,
+        message: ProfileCompleteCommand,  # noqa: ARG002
+    ) -> None:
+        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+
+        RecordsManager sends PROFILE_COMPLETE after all records are processed
+        but before exporting/aggregating results. Flushing children here ensures
+        buffered writers drain to disk before the RawRecordAggregator reads them.
+
+        We flush rather than stop: stop() runs the @on_stop hook chain inside
+        the message-handler task, and when SystemController later broadcasts
+        SHUTDOWN it cancels the in-flight handler task, leaving the writer
+        wedged at STOPPING with the buffer un-flushed. flush_buffer() drains
+        the buffer without tearing down the file handle, and the writer's
+        normal _close_file hook handles teardown during service shutdown.
+        """
+        for child in self._children:
+            flush = getattr(child, "flush_buffer", None)
+            if flush is None:
+                continue
+            try:
+                await flush()
+            except Exception as e:  # noqa: BLE001
+                self.error(f"Failed to flush child {child}: {e!r}")
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""
@@ -162,6 +209,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             request_end_ns=request_end_ns,
             conversation_id=record.request_info.conversation_id,
             turn_index=record.request_info.turn_index,
+            source_trace_id=record.request_info.source_trace_id,
+            source_outer_idx=record.request_info.source_outer_idx,
+            source_inner_idx=record.request_info.source_inner_idx,
+            source_kind=record.request_info.source_kind,
             record_processor_id=self.service_id,
             benchmark_phase=record.request_info.credit_phase,
             x_request_id=record.request_info.x_request_id,
@@ -172,11 +223,24 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             cancellation_time_ns=cancellation_time_ns,
             agent_depth=record.request_info.agent_depth,
             parent_correlation_id=record.request_info.parent_correlation_id,
+            root_correlation_id=record.request_info.root_correlation_id,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
-        """Handle an inference results message."""
+        """Handle an inference results message.
+
+        Lockstep contract: every received message forwards exactly one
+        ``MetricRecordsMessage``. The worker has already returned the credit as
+        completed by the time the record arrives here, so a dropped record
+        leaves the RecordsManager completion barrier (``success_records +
+        error_records >= final_requests_completed``, which has no timeout)
+        permanently short and hangs the run at end-of-phase. A parse/process
+        failure is therefore forwarded as an error record instead of being
+        allowed to escape the handler. The dataset-configured gate below is
+        the one exception: its False path has already killed the service and
+        aborted the run, so no barrier is left waiting.
+        """
         if not await await_dataset_configured(self, self._dataset_configured_event):
             return
         record = message.record
@@ -186,6 +250,26 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             record.responses[-1].perf_ns if record.responses else None
         )
 
+        try:
+            await self._process_and_forward_record(
+                message, record, last_response_perf_ns
+            )
+        except Exception as e:  # noqa: BLE001
+            # Never drop the record: the worker already returned this credit as
+            # completed, so forward an error record to keep the records-side
+            # count in lockstep and let the completion barrier converge.
+            self.exception(
+                f"Failed to process inference record; forwarding as error: {e!r}"
+            )
+            await self._forward_failed_record(message, record, last_response_perf_ns, e)
+
+    async def _process_and_forward_record(
+        self,
+        message: InferenceResultsMessage,
+        record: RequestRecord,
+        last_response_perf_ns: int | None,
+    ) -> None:
+        """Parse, process, and forward the metric record for a single request."""
         parsed_record = await self.inference_result_parser.parse_request_record(record)
 
         # Free raw SSE messages now that parsing extracted what it needs.
@@ -196,6 +280,28 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
         )
+
+        # Flag context-overflow records for the records-side "skip" path when
+        # the active scenario uses AGENTIC_REPLAY. RecordsManager will count
+        # the record toward ``total_records`` (so the records-side counter
+        # stays in lockstep with credit-side ``final_requests_completed``
+        # and the completion barrier converges -- returning early here instead
+        # would break that invariant in one direction only and hang the run at
+        # end-of-phase) but skip the error tracker, accumulators, and stream
+        # exporters so the overflow event doesn't show up in any user-facing
+        # metric.
+        if self._drop_agentic_overflow_records and getattr(
+            record, "context_overflow", False
+        ):
+            metadata = metadata.model_copy(update={"context_overflow_skip": True})
+            self.debug(
+                lambda r=record: (
+                    f"AGENTIC_REPLAY: flagging context-overflow record as "
+                    f"metrics-skip (credit={r.request_info.credit_num} "
+                    f"conv={r.request_info.conversation_id} "
+                    f"turn={r.request_info.turn_index})"
+                )
+            )
         raw_results = await self._process_record(parsed_record, metadata)
 
         trace_data, error = self._free_record_data(record, parsed_record)
@@ -219,6 +325,28 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             )
         )
 
+    async def _forward_failed_record(
+        self,
+        message: InferenceResultsMessage,
+        record: RequestRecord,
+        last_response_perf_ns: int | None,
+        exc: Exception,
+    ) -> None:
+        """Forward an error record after a parse/process failure so the
+        records-side count stays in lockstep with the already-returned credit."""
+        metadata = self._create_metric_record_metadata(
+            record, message.service_id, last_response_perf_ns
+        )
+        await self.records_push_client.push(
+            MetricRecordsMessage(
+                service_id=self.service_id,
+                metadata=metadata,
+                results=[],
+                trace_data=None,
+                error=record.error or ErrorDetails.from_exception(exc),
+            )
+        )
+
     def _free_record_data(
         self, record: RequestRecord, parsed_record: ParsedResponseRecord
     ) -> tuple[BaseTraceData | None, ErrorDetails | None]:
@@ -228,7 +356,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         The only data sent downstream in MetricRecordsMessage is metadata, results,
         trace_data, and error -- so everything else can be released here.
 
-        We assign None to fields typed as non-optional lists (turns, responses) to let
+        We assign None to fields typed as non-optional lists (responses) to let
         the GC reclaim the underlying objects. Using .clear() would keep the empty list
         alive, and reassigning [] would allocate a new object for no reason.
         """
@@ -236,13 +364,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         error = record.error
         if self.run.cfg.artifacts.export_level != ExportLevel.RAW:
             record.responses = None
-        record.turns = None
         record.trace_data = None
         record.request_headers = None
-        if record.request_info:
-            record.request_info.turns = None
-            record.request_info.system_message = None
-            record.request_info.user_context_message = None
         parsed_record.responses = None
         return trace_data, error
 
