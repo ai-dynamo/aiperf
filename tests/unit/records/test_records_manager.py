@@ -318,6 +318,9 @@ def _create_credit_phase_stats() -> CreditPhaseStats:
 
 def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager = RecordsManager.__new__(RecordsManager)
+    # These tests exercise the post-configuration flow; release the barrier.
+    manager._dataset_configured_event = asyncio.Event()
+    manager._dataset_configured_event.set()
     manager._records_tracker = MagicMock()
     manager._error_tracker = MagicMock()
     manager._complete_credit_phases = set()
@@ -1089,3 +1092,52 @@ class TestMidRunCacheReportingHint:
         record_data = SimpleNamespace(metrics={"output_sequence_length": 32})
         manager._maybe_hint_missing_cache_reporting(record_data)
         manager.warning.assert_not_called()
+
+
+class TestRecordsManagerDatasetConfiguredBarrier:
+    """The records manager must not run metric records through its results
+    processors until the DatasetConfiguredNotification has been applied.
+
+    Metric records (PULL socket) and the notification (SUB socket) arrive on
+    independent channels with no ordering guarantee, so processing must block
+    on an explicit barrier that _on_dataset_configured releases.
+    """
+
+    @pytest.mark.asyncio
+    async def test_on_dataset_configured_sets_event(self):
+        """_on_dataset_configured must release the barrier once processors are configured."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self._metric_results_processors = []
+
+        await RecordsManager._on_dataset_configured(mock_self, MagicMock())
+
+        assert mock_self._dataset_configured_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_on_metric_records_waits_for_dataset_configured(self):
+        """_on_metric_records must block until the dataset is configured, then proceed."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.is_trace_enabled = False
+        # First downstream step after the barrier; raising proves the barrier was passed.
+        mock_self._send_results_to_results_processors = AsyncMock(
+            side_effect=RuntimeError("REACHED_PROCESSING")
+        )
+        message = MagicMock()
+        message.metadata.benchmark_phase = CreditPhase.PROFILING
+
+        task = asyncio.create_task(
+            RecordsManager._on_metric_records(mock_self, message)
+        )
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        # Barrier not released: processing has not started.
+        assert not task.done()
+        assert not mock_self._send_results_to_results_processors.called
+
+        # Barrier released: processing proceeds past the wait.
+        mock_self._dataset_configured_event.set()
+        with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
+            await asyncio.wait_for(task, timeout=1.0)
