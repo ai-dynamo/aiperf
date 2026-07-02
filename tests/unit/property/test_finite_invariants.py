@@ -353,6 +353,38 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # AdaptiveSearchSweep.outcome_constraints: list[OutcomeConstraint], not a
     # numeric field. Per-element OutcomeConstraint.bound is already FiniteFloat.
     "AdaptiveSearchSweep.outcome_constraints",
+    # ServerMetricsResults.warmup_endpoint_summaries: dict of summary models,
+    # not a numeric leaf — same shape as the baselined endpoint_summaries
+    # sibling; per-summary numeric fields carry their own bounds.
+    "ServerMetricsResults.warmup_endpoint_summaries",
+    # Weka trace-replay models are DELIBERATELY lenient parsers of external
+    # corpus data: test_weka_trace_models_adversarial pins that NaN/+-inf
+    # timestamps and negative lengths are accepted (the parser must load
+    # whatever a real recorded trace contains rather than reject it). Bounding
+    # these would break trace loading, so they are intentionally unbounded.
+    # hash_ids is a list[int] (per-element bounds not meaningful).
+    "WekaNormalRequest.t",
+    "WekaNormalRequest.input_length",
+    "WekaNormalRequest.output_length",
+    "WekaNormalRequest.api_time",
+    "WekaNormalRequest.think_time",
+    "WekaNormalRequest.hash_ids",
+    "WekaStreamingRequest.t",
+    "WekaStreamingRequest.input_length",
+    "WekaStreamingRequest.output_length",
+    "WekaStreamingRequest.api_time",
+    "WekaStreamingRequest.think_time",
+    "WekaStreamingRequest.ttft",
+    "WekaStreamingRequest.hash_ids",
+    "WekaSubagentEntry.t",
+    "WekaSubagentEntry.duration_ms",
+    "WekaSubagentEntry.total_tokens",
+    "WekaSubagentEntry.tool_use_count",
+    "WekaSubagentEntry.tool_tokens",
+    "WekaSubagentEntry.system_tokens",
+    "WekaTrace.block_size",
+    "WekaTrace.tool_tokens",
+    "WekaTrace.system_tokens",
 }
 
 

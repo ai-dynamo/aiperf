@@ -56,8 +56,18 @@ class Message(AIPerfBaseModel):
         Note:
             Prefer this method over model_dump_json() for ZMQ message passing
             and other high-throughput scenarios.
+
+            ``context={"include_internal": True}`` opts the dump into keeping
+            IPC-only fields like ``MetricResult.console_group`` that are stripped
+            from public/exporter dumps but must survive the cross-process bus.
         """
-        return orjson.dumps(self.model_dump(exclude_none=True, mode="json"))
+        return orjson.dumps(
+            self.model_dump(
+                exclude_none=True,
+                mode="json",
+                context={"include_internal": True},
+            )
+        )
 
 
 class RequiresRequestNSMixin(Message):

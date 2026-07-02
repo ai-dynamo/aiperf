@@ -200,7 +200,7 @@ def test_pre_session_fork_bypass_via_model_construct_rejects():
         child_conversation_ids=["child"],
         mode=ConversationBranchMode.FORK,
         dispatch_timing="pre",
-        background=False,
+        is_background=False,
     )
     parent = _conv(
         "px",
@@ -277,7 +277,7 @@ def test_branch_mode_outside_supported_set_rejects():
         child_conversation_ids=["c"],
         mode="loopback",  # not in _SUPPORTED_BRANCH_MODES
         dispatch_timing="post",
-        background=False,
+        is_background=False,
     )
     parent = _conv("p", [_turn(branch_ids=["b0"])], branches=[bad])
     child = _conv(

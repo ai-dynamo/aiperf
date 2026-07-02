@@ -122,6 +122,20 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.USE_SERVER_TOKEN_COUNT,
         description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
     )
+    use_dynamo_conv_aware_routing: bool = Field(
+        default=EndpointDefaults.USE_DYNAMO_CONV_AWARE_ROUTING,
+        description="Emit Dynamo nvext.session_control for conversation-aware routing.",
+    )
+    use_legacy_dynamo_session_control: bool = Field(
+        default=EndpointDefaults.USE_LEGACY_DYNAMO_SESSION_CONTROL,
+        description="Emit the v1.2.x-compatible open/close session_control lifecycle "
+        "instead of the 'bind' action (which only exists in Dynamo >= v1.3.0-dev).",
+    )
+    dynamo_session_timeout_seconds: int = Field(
+        default=EndpointDefaults.DYNAMO_SESSION_TIMEOUT_SECONDS,
+        ge=1,
+        description="Timeout in seconds for Dynamo nvext.session_control sessions.",
+    )
     connection_reuse_strategy: ConnectionReuseStrategy = Field(
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
@@ -207,6 +221,15 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 api_key=ep.api_key,
                 use_legacy_max_tokens=ep.use_legacy_max_tokens,
                 use_server_token_count=ep.use_server_token_count,
+                use_dynamo_conv_aware_routing=getattr(
+                    ep, "use_dynamo_conv_aware_routing", False
+                ),
+                use_legacy_dynamo_session_control=getattr(
+                    ep, "use_legacy_dynamo_session_control", False
+                ),
+                dynamo_session_timeout_seconds=getattr(
+                    ep, "dynamo_session_timeout_seconds", 300
+                ),
                 connection_reuse_strategy=ep.connection_reuse,
                 download_video_content=ep.download_video_content,
                 request_content_type=ep.request_content_type,

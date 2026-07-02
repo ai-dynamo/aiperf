@@ -9,6 +9,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -41,6 +42,24 @@ logging.getLogger("asyncio").setLevel(logging.INFO)
 # contention to occasionally trip glibc's double-free detector during C
 # extension teardown. Bounding arenas fixes it without user-visible cost.
 os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+
+# Isolate the memory-mapped dataset cache per test process. Without this the
+# integration suite reads/writes the user's real ~/.cache/aiperf/dataset_mmap,
+# which (a) makes runs depend on prior cache warmth -- a warm trace entry sends
+# the dataset manager down the cache-HIT path, and (b) lets parallel xdist
+# workers contend on the same entries (transient flakes). A fresh per-process
+# temp dir keeps every run hermetic. setdefault so an explicit override wins.
+os.environ.setdefault(
+    "AIPERF_DATASET_MMAP_CACHE_DIR",
+    tempfile.mkdtemp(prefix="aiperf_test_mmap_cache_"),
+)
+
+# MLflow 3.x put the filesystem (file://) tracking backend into "maintenance
+# mode" and raises unless this opt-out is set. The MLflow exporter integration
+# tests use file:// stores under tmp_path, so without this they fail with
+# MlflowException and write zero runs. The exporter itself works fine against a
+# file store once opted in. setdefault so an explicit override still wins.
+os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 
 _logger = AIPerfLogger(__name__)
 

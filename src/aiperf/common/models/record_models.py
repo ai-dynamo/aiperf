@@ -15,14 +15,22 @@ from pydantic import (
     Field,
     PlainSerializer,
     RootModel,
+    SerializationInfo,
     SerializeAsAny,
     field_validator,
+    model_serializer,
 )
 from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
+from aiperf.common.enums import (
+    CacheBustTarget,
+    CreditPhase,
+    MetricConsoleGroup,
+    MetricValueTypeT,
+    SSEFieldType,
+)
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
@@ -59,6 +67,28 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The sum of all the metric values across all records",
     )
+    console_group: MetricConsoleGroup | None = Field(
+        default=None,
+        description="Optional console-grouping override for analyzer-injected results "
+        "whose tags are not in MetricRegistry. The registered metric class's "
+        "`console_group` ClassVar is the source of truth for everything else; this "
+        "field is only consulted by the console exporter when a tag isn't registered. "
+        "Dropped from every public dump (CSV / JSON exports / REST API); only IPC "
+        "passes `context={'include_internal': True}` to keep it across process boundaries.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_internal_fields(self, handler, info: SerializationInfo) -> dict[str, Any]:
+        """Strip internal-only fields (`console_group`) from every dump unless
+        the caller opts in with ``context={'include_internal': True}`` -- i.e.
+        cross-process IPC. User-facing CSV/JSON/REST exports never set the
+        flag, so they always see the public shape."""
+        data = handler(self)
+        if isinstance(data, dict) and not (
+            info.context and info.context.get("include_internal")
+        ):
+            data.pop("console_group", None)
+        return data
 
     def to_display_unit(self) -> MetricResult:
         """Convert the metric result to its display unit."""
@@ -125,6 +155,36 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
     )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
+    )
     credit_issued_ns: int | None = Field(
         default=None,
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
@@ -164,6 +224,18 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
     )
+    context_overflow_skip: bool = Field(
+        default=False,
+        description="True iff the record was classified as a context-overflow event "
+        "AND the active scenario uses AGENTIC_REPLAY timing. Set on the worker side "
+        "by ``RecordProcessor`` and consumed by ``RecordsManager``: the record still "
+        "increments ``total_records`` (so the records-side counter stays in lockstep "
+        "with the credit-side ``final_requests_completed`` and the completion barrier "
+        "converges), but it is skipped from the error tracker, the per-record "
+        "accumulators (latency/throughput/etc.), and the stream exporters. Net effect: "
+        "the overflow event doesn't show up in any user-facing metric, while the run "
+        "still terminates cleanly.",
+    )
     agent_depth: int = Field(
         default=0,
         description="The DAG agent depth of the session that produced this record. 0 for root sessions, "
@@ -174,6 +246,60 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this record's session via a "
         "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. Stable "
+        "across the whole tree (root + every descendant subagent at any depth); equals x_correlation_id "
+        "for a root session. Groups every record of one agentic session (root + subagents) under a single "
+        "lane and lets analysis reconstruct exactly-N session-tree concurrency.",
+    )
+
+
+class TimesliceResult(AIPerfBaseModel):
+    """Per-timeslice results: window bounds + metric results.
+
+    Combines ``start_ns`` / ``end_ns`` / ``is_complete`` with the metric
+    results computed for that slice. Stored in chronological order in
+    :attr:`ProfileResults.timeslices`; position in the parent list is the
+    slice's chronological index, matching the ``BaseTimeslice`` wire shape.
+
+    ``is_complete`` is ``None`` for fully-closed windows (space-efficient
+    default matching ``BaseTimeslice``) and ``False`` for the trailing
+    partial window when the benchmark stopped before the next slice
+    boundary. Partial slices should be excluded from aggregate statistics
+    to avoid skewing rate calculations.
+
+    Metric results are keyed by metric tag for direct lookup. The
+    JSON/CSV exporters flatten them to per-tag fields in the wire format.
+    """
+
+    start_ns: int = Field(
+        ge=0,
+        description="Timeslice start timestamp in nanoseconds",
+    )
+    end_ns: int = Field(
+        ge=0,
+        description="Timeslice end timestamp in nanoseconds",
+    )
+    is_complete: bool | None = Field(
+        default=None,
+        description="False for partial timeslices (typically the final slice). "
+        "None for complete timeslices covering the full configured duration.",
+    )
+    metric_results: dict[MetricTagT, MetricResult] = Field(
+        default_factory=dict,
+        description="Metric results computed for this timeslice's window, "
+        "keyed by metric tag.",
+    )
+
+    @field_validator("metric_results", mode="before")
+    @classmethod
+    def _coerce_metric_results(cls, value: Any) -> Any:
+        """Accept ``list[MetricResult]`` for ergonomic construction and rekey
+        by ``tag``. Existing dict input passes through unchanged."""
+        if isinstance(value, list):
+            return {r.tag: r for r in value}
+        return value
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -182,9 +308,22 @@ class ProfileResults(AIPerfBaseModel):
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )
+    warmup_records: list[MetricResult] | None = Field(
+        default=None,
+        description="Metric results computed only from warmup-phase records. "
+        "Top-level records remain profiling-only.",
+    )
+    timeslices: list[TimesliceResult] | None = Field(
+        default=None,
+        description="Per-timeslice results in chronological order. Each entry "
+        "bundles the slice's window bounds (start_ns, end_ns, is_complete) "
+        "with its metric results. Position in the list is the slice's "
+        "chronological index. Produced by the MetricsAccumulator engine.",
+    )
     timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
         default=None,
-        description="The timeslice metric results of the profile (if using timeslice mode)",
+        description="The timeslice metric results of the profile (if using the "
+        "legacy timeslice results-processor path)",
     )
     total_expected: int | None = Field(
         default=None,
@@ -223,6 +362,13 @@ class ProfileResults(AIPerfBaseModel):
         "None for non-DAG runs; a populated snapshot for DAG-shaped "
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
+    )
+    context_overflow_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of AGENTIC_REPLAY context-overflow records skipped from "
+        "normal metric accumulation and stream export, retained only for "
+        "aggregate runtime submission validation.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -545,6 +691,36 @@ class RecordContext(AIPerfBaseModel):
         ...,
         description="The index of the turn in the conversation (if applicable).",
     )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
+    )
     x_request_id: str = Field(
         ...,
         description="The X-Request-ID header of the request. This is a unique ID for the request.",
@@ -572,6 +748,14 @@ class RecordContext(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this session via a DAG "
         "subagent fork. None for root sessions. Sourced from the originating Credit.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. "
+        "Stable across the whole tree (root + every descendant subagent at any depth); equals "
+        "x_correlation_id for a root session. Sourced from the originating Credit. Use to group "
+        "every record of one agentic session (root + subagents) and to reconstruct exactly-N "
+        "session-tree concurrency in analysis.",
+    )
 
     # --- Hoisted metric inputs (avoid shipping full Turn structs) -------------
 
@@ -594,22 +778,21 @@ class RecordContext(AIPerfBaseModel):
         "the full ``turns`` list on the wire. None for non-ASR requests.",
     )
 
-    # --- Records-pipeline reads (read by inference_result_parser, raw_record_writer) ----
+    # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
 
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations. "
-        "Read by the records pipeline (``inference_result_parser``, ``raw_record_writer_processor``) for response parsing and raw export.",
-    )
-    system_message: str | None = Field(
+    cache_bust_marker: str | None = Field(
         default=None,
-        description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time. Read by the records pipeline.",
+        description="Pre-rendered cache-bust marker text for this request, "
+        "sourced from ``Credit.cache_bust_marker``. Already includes whitespace "
+        "boundaries. None when the cache-bust feature is disabled or no marker "
+        "applied to this request. Exported in the raw JSONL so a replay tool "
+        "can correlate the inserted bytes with the originating session.",
     )
-    user_context_message: str | None = Field(
+    cache_bust_target: CacheBustTarget | None = Field(
         default=None,
-        description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time. Read by the records pipeline.",
+        description="Where the marker was injected for this request, sourced "
+        "from ``Credit.cache_bust_target``. None when cache-bust is disabled. "
+        "Pairs with ``cache_bust_marker`` for raw-JSONL provenance.",
     )
 
 
@@ -628,6 +811,29 @@ class RequestInfo(RecordContext):
     model_endpoint: ModelEndpointInfo = Field(
         ...,
         description="The model endpoint that the request was sent to.",
+    )
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request, consumed by "
+        "``format_payload`` to build the wire body. Lives on ``RequestInfo`` "
+        "(not ``RecordContext``) so the full Turn list never crosses the "
+        "ZMQ hop to the record processor — only the canonical "
+        "``payload_bytes`` travel.",
+    )
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message extracted from "
+        "``Conversation.system_message`` at request time. Consumed by the "
+        "endpoint's ``format_payload`` (or top-level ``instructions`` on the "
+        "Responses API) and inlined into ``payload_bytes`` before transport; "
+        "lives on ``RequestInfo`` because the record processor reads only "
+        "``payload_bytes`` downstream.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context message extracted "
+        "from ``Conversation.user_context_message`` at request time. Same "
+        "inlining contract as ``system_message``.",
     )
     endpoint_headers: dict[str, str] = Field(
         default_factory=dict,
@@ -714,6 +920,15 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The error details if the request failed.",
     )
+    context_overflow: bool = Field(
+        default=False,
+        description="True iff this request's error response was classified "
+        "as a server-side context-overflow event by "
+        "``aiperf.common.scenario.is_context_overflow_response`` "
+        "(InferenceX AgentX scenario, RFC section 7). Set on the worker side at "
+        "response-parsing time; consumed by the ``ContextOverflowCountMetric`` "
+        "aggregate counter.",
+    )
     credit_drop_latency: int | None = Field(
         default=None,
         description="The latency of the credit drop in nanoseconds from when it was first received by a Worker to when the inference request was actually sent. "
@@ -730,11 +945,6 @@ class RequestRecord(AIPerfBaseModel):
         description="Comprehensive trace data captured via a trace config. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="Deep copy of the request turns. This is a copy of the turns from request_info, "
-        "made to avoid mutating the original session data when stripping multimodal content.",
     )
 
     @field_validator("trace_data", mode="before")
@@ -1073,6 +1283,22 @@ class TokenCounts:
     """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
 
 
+@dataclass(slots=True)
+class MediaCounts:
+    """Multimodal content-part counts for a record.
+
+    Computed once by ``InferenceResultParser`` at parse time via the endpoint's
+    ``extract_payload_inputs`` hook (which walks the wire payload's message-array
+    shape) and stashed on ``ParsedResponseRecord`` so record-metric classes
+    (``NumImagesMetric`` et al.) never re-parse ``payload_bytes`` per metric per
+    record. Zero-valued when the payload carries no recognised media parts.
+    """
+
+    images: int = 0
+    audios: int = 0
+    videos: int = 0
+
+
 @dataclass
 class ParsedResponseRecord:
     """Record of a request and its associated responses, already parsed and ready for metrics.
@@ -1088,6 +1314,9 @@ class ParsedResponseRecord:
 
     token_counts: TokenCounts | None = None
     """The token counts for the response. None if the token counts could not be calculated."""
+
+    media_counts: MediaCounts = field(default_factory=MediaCounts)
+    """Multimodal content-part counts derived once from the wire payload (images/audios/videos)."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
@@ -1217,9 +1446,20 @@ class RawRecordInfo(AIPerfBaseModel):
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
     )
-    payload: dict[str, Any] = Field(
-        ...,
-        description="The raw request payload sent to the server.",
+    payload: dict[str, Any] | None = Field(
+        default=None,
+        description="The raw request payload sent to the server. Exactly one "
+        "of ``payload`` or ``payload_bytes`` is populated per record — "
+        "``payload_bytes`` is preferred by the JSONL writer (bytes are "
+        "spliced as a JSON fragment without a loads+dumps round-trip).",
+    )
+    payload_bytes: bytes | None = Field(
+        default=None,
+        exclude=True,
+        description="Canonical pre-encoded JSON bytes of the request body, "
+        "inherited from ``RequestInfo.payload_bytes``. Spliced directly into "
+        "the JSONL line via ``orjson.Fragment`` to avoid the pointless "
+        "decode-then-encode round-trip ``payload: dict`` would require.",
     )
     request_headers: dict[str, str] | None = Field(
         default=None,
@@ -1240,4 +1480,18 @@ class RawRecordInfo(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    cache_bust_marker: str | None = Field(
+        default=None,
+        description="Cache-bust marker text injected into the wire payload for "
+        "this request, copied from the originating ``Credit``. None when the "
+        "cache-bust feature is disabled. Surfaced here so raw-JSONL consumers "
+        "can correlate inserted bytes with the originating session without "
+        "re-parsing ``payload``.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected (``system_prefix``, "
+        "``system_suffix``, ``first_turn_prefix``, or ``first_turn_suffix``). "
+        "None when cache-bust is disabled.",
     )

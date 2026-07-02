@@ -15,6 +15,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# NOTE: this module is imported by ``aiperf.plugin.plugins`` (top-level), and
+# ``aiperf.common.enums`` imports ``aiperf.plugin.enums`` -> ``plugins`` -> here,
+# so importing ``PromptCorpus`` from ``aiperf.common.enums`` would form an import
+# cycle. The ``default_prompt_corpus`` metadata fields are therefore typed as
+# plain ``str`` with the coercible literal default ``"sonnet"``; ``PromptCorpus``
+# is a ``CaseInsensitiveStrEnum`` so consumers comparing
+# ``meta.default_prompt_corpus == PromptCorpus.CODING`` still match by value.
+
 # =============================================================================
 # Plugins YAML Schema (plugins.yaml)
 # =============================================================================
@@ -357,6 +365,15 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "(e.g. 16 for Bailian, 512 for Mooncake)."
         ),
     )
+    default_prompt_corpus: str = Field(
+        default="sonnet",
+        description=(
+            "Default synthetic prompt corpus for this loader. Applied when the "
+            "user does not explicitly pass --prompt-corpus. Loaders for coding "
+            "agent traces (e.g. weka_trace) override to 'coding' so reconstructed "
+            "prompts resemble real tool-use content."
+        ),
+    )
     category: str | None = Field(
         default=None,
         description=(
@@ -390,6 +407,33 @@ class PublicDatasetLoaderMetadata(BaseModel):
     hf_subset: str | None = Field(
         default=None,
         description="HuggingFace dataset subset/config name. Only needed for datasets with multiple configs.",
+    )
+    is_trace: bool = Field(
+        default=False,
+        description=(
+            "Whether this loader handles trace-format datasets. Trace public "
+            "datasets reuse hash_ids-based prompt generation, require a "
+            "tokenizer, and prefer sequential sampling. Mirrors the field of "
+            "the same name on CustomDatasetLoaderMetadata so trace loaders can "
+            "live in either pipeline."
+        ),
+    )
+    default_block_size: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Default token block size for hash-based prompt caching. Used "
+            "when the user does not explicitly set --isl-block-size. Must "
+            "match the block size used to generate the trace's hash_ids."
+        ),
+    )
+    default_prompt_corpus: str = Field(
+        default="sonnet",
+        description=(
+            "Default synthetic prompt corpus for this loader. Applied when "
+            "the user does not explicitly pass --prompt-corpus. Loaders for "
+            "coding agent traces override to 'coding'."
+        ),
     )
     prompt_column: str | None = Field(
         default=None,
@@ -487,6 +531,28 @@ class GPUTelemetryCollectorMetadata(BaseModel):
     is_local: bool = Field(
         default=False,
         description="Whether this collector runs in-process against the local host.",
+    )
+
+
+class RecordRoutingMetadata(BaseModel):
+    """Metadata schema for record routing in accumulator and stream exporter plugins.
+
+    Defines which record types an accumulator or stream exporter accepts. Used by
+    RecordsManager to build a routing table: incoming records are dispatched to all
+    accumulators and stream exporters whose record_types include the matching type.
+    The role (accumulator vs stream_exporter) is determined by the plugin category.
+
+    Referenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class
+    Used in: plugins.yaml accumulator and stream_exporter entries
+    """
+
+    record_types: list[str] = Field(
+        description=(
+            "Record type identifiers this accumulator or stream exporter accepts for routing. "
+            "RecordsManager dispatches incoming records to all accumulators and stream exporters "
+            "whose record_types include the matching type. "
+            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
+        ),
     )
 
 
