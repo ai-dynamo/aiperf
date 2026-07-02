@@ -441,7 +441,7 @@ class _K8sEnvironment(BaseSettings):
     # Guaranteed QoS: requests == limits (no throttling, dedicated resources).
     # Calibrated via ``src/aiperf/analysis/measure_cpu_usage.py`` and
     # ``src/aiperf/analysis/calibrate_memory_estimates.py``; cross-checked
-    # against ``dev/results/sweep-isl-osl-mem-findings.md`` real RSS sweeps.
+    # against real-cluster RSS measurements (2026-04-30 ISL/OSL memory sweep).
     #
     # Controller pod: one container per control-plane service.
     #   Defaults are low requests for burstable QoS. They reserve enough for

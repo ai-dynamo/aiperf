@@ -611,7 +611,7 @@ class TestJobSetSpecContainerDetails:
         assert total_cpu <= 0.61
         # Controller-pod containers (~1792 MiB) + WORKER_POD default (4 GiB).
         # Bumped from 1536 → 6144 alongside the memory-estimator recalibration
-        # against dev/results/sweep-isl-osl-mem-findings.md (per-process Python
+        # against the 2026-04-30 ISL/OSL memory sweep (per-process Python
         # baseline 150 MiB; controller container limits now sized to fit
         # measured RSS 1080-1161 MiB with PEAK_MARGIN headroom).
         assert total_memory_mib <= 6144

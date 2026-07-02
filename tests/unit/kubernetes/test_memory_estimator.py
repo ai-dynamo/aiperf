@@ -839,7 +839,7 @@ class TestScalingScenarios:
         """ISL=4096 OSL=2048 should use more per-pod memory than ISL=512 OSL=128.
 
         With realistic per-process Python baselines (~150 MiB/process,
-        calibrated against ``dev/results/sweep-isl-osl-mem-findings.md``),
+        calibrated against the 2026-04-30 ISL/OSL memory sweep),
         the per-process base dominates at low concurrency. The variable
         component still moves measurably with ISL/OSL — at default
         ``_make_params`` (max_concurrency=100, total_workers=10, so 10

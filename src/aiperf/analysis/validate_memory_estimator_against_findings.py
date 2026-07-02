@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""End-to-end accuracy validation of the K8s memory estimator against the
-real ``kubectl top`` measurements logged in
-``dev/results/sweep-isl-osl-mem-findings.md``.
+"""End-to-end accuracy validation of the K8s memory estimator against real
+``kubectl top`` measurements from the 2026-04-30 ISL/OSL memory sweep
+(embedded below as ``_FINDINGS``).
 
 For each (concurrency, ISL, OSL) cell the sweep recorded, run
 ``MemoryEstimator`` with the same topology the sweep used (250
@@ -17,10 +17,10 @@ Use this whenever:
 - You re-run the sweep on a new image and want to regression-check the
   estimator's predictions before trusting them.
 
-Caveats already noted in the findings doc apply: high-OSL cells (≥1024)
-saw 25-55% errors during the sweep, so effective concurrency was below
-nominal — the estimator's over-prediction at those cells is appropriate.
-We treat them as "expected loose" rather than failures.
+Caveat from the sweep itself: high-OSL cells (≥1024) saw 25-55% errors
+during the sweep, so effective concurrency was below nominal — the
+estimator's over-prediction at those cells is appropriate. We treat them
+as "expected loose" rather than failures.
 
 Usage:
     uv run python -m aiperf.analysis.validate_memory_estimator_against_findings
@@ -38,14 +38,14 @@ from aiperf.kubernetes.memory_estimator import (
     MemoryEstimator,
 )
 
-# Sweep topology constants (mirror ``dev/scripts/sweep_isl_osl_mem.py``).
+# Topology the 2026-04-30 sweep ran with.
 _SWEEP_CONNECTIONS_PER_WORKER = 250
 _SWEEP_WORKERS_PER_POD = 10
 _SWEEP_RP_PER_POD = 1
 _SWEEP_DURATION_S = 300.0
 
 # (concurrency, isl, osl, requests, measured_max_pod_mib, measured_ctrl_mib).
-# Source: dev/results/sweep-isl-osl-mem-findings.md (2026-04-30 DGX run).
+# Source: 2026-04-30 ISL/OSL memory sweep (real-cluster kubectl top data).
 # Update this table when re-running the sweep on a different image.
 _FINDINGS = [
     (5000, 128, 128, 50_000, 2569, 1092),

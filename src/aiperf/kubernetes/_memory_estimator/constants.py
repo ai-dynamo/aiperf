@@ -11,8 +11,8 @@ from __future__ import annotations
 
 # Python subprocess working-set baseline. Captures interpreter + core libs +
 # GC + every module loaded by an AIPerf service (numpy, pandas, msgspec,
-# pydantic, orjson, aiohttp, ZMQ, asyncio). Calibrated from
-# ``dev/results/sweep-isl-osl-mem-findings.md`` (cell 1: 5K conc / ISL=128 /
+# pydantic, orjson, aiohttp, ZMQ, asyncio). Calibrated from a real-cluster
+# ISL/OSL memory sweep, 2026-04-30 (cell 1: 5K conc / ISL=128 /
 # OSL=128 sums to 2569 MiB across 12 containers — ~214 MiB / container at the
 # minimum-workload floor; subtracting per-service deltas leaves ~150 MiB
 # common Python+libs baseline).

@@ -10,8 +10,8 @@ This script's testable surface is small — most logic is the inline
   smoke-checked for shape consistency.
 - ``main``: end-to-end smoke (small finding set, small max_error_ratio).
 
-Out of scope (requires real ``dev/results/*.md`` parsing): there is no
-findings-doc parser in this script; the table is hard-coded.
+Out of scope: there is no findings-doc parser in this script; the
+measurement table is hard-coded.
 """
 
 from __future__ import annotations
