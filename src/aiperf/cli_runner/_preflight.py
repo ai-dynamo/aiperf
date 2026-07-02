@@ -85,6 +85,45 @@ def _preflight_fd_limit() -> None:
         resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
 
 
+def _preflight_accuracy_grader_deps(plan: BenchmarkPlan) -> None:
+    """Fail fast if a selected accuracy grader's optional dependency is missing.
+
+    Why: graders backed by an optional package (lighteval) raise at
+    instantiation inside the record-processor service, which runs as a daemon
+    child. That crash isn't propagated to the controller, so the user sees a
+    raw multiprocessing traceback and the main process hangs waiting for
+    records that never arrive. Checking here — in the main process, before any
+    service spawns — turns it into a single clean ``ConfigurationError`` panel
+    with a non-zero exit and no hang.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    checked: set[str] = set()
+    for config in plan.configs:
+        acc_cfg = getattr(config, "accuracy", None)
+        if acc_cfg is None or not acc_cfg.enabled:
+            continue
+
+        grader_name = acc_cfg.grader
+        if grader_name is None:
+            meta = plugins.get_metadata(
+                PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
+            )
+            grader_name = meta.get("default_grader", "multiple_choice")
+
+        if grader_name in checked:
+            continue
+        checked.add(grader_name)
+
+        grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
+        try:
+            grader_cls.check_available()
+        except RuntimeError as exc:
+            raise ConfigurationError(str(exc)) from exc
+
+
 def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
     """Block until the target endpoint is ready (see ready_checker).
 
