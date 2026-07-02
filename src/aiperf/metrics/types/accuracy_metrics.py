@@ -13,7 +13,7 @@ class AccuracyCorrectSumMetric(BaseAggregateMetric[float]):
 
     AccuracyRecordProcessor writes this tag to MetricRecordDict for every record.
     Registered here so MetricResultsProcessor can aggregate it without warnings.
-    AccuracyResultsProcessor and AccuracyConsoleExporter own display; this metric
+    AccuracyAccumulator and AccuracyConsoleExporter own display; this metric
     uses console_group=NONE | INTERNAL so it does not appear in the standard table.
     """
 
