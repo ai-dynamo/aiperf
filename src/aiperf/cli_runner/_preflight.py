@@ -111,9 +111,11 @@ def _preflight_accuracy_deps(plan: BenchmarkPlan) -> None:
 
         # Keep every preflight failure on the ConfigurationError path: plugin
         # lookups raise TypeNotFoundError/KeyError/ValueError for an unknown or
-        # malformed benchmark/grader name (ImportError for a broken external
-        # plugin), and check_available raises RuntimeError for a missing
-        # optional dependency. Any of these would otherwise leak a raw traceback.
+        # malformed benchmark/grader name, ImportError for a broken external
+        # plugin module, and AttributeError when the module imports but the
+        # configured class is missing (PluginEntry.load); check_available raises
+        # RuntimeError for a missing optional dependency. Any of these would
+        # otherwise leak a raw traceback.
         try:
             meta = plugins.get_metadata(
                 PluginType.ACCURACY_BENCHMARK, acc_cfg.benchmark
@@ -145,6 +147,7 @@ def _preflight_accuracy_deps(plan: BenchmarkPlan) -> None:
             KeyError,
             ValueError,
             ImportError,
+            AttributeError,
             RuntimeError,
         ) as exc:
             raise ConfigurationError(str(exc)) from exc

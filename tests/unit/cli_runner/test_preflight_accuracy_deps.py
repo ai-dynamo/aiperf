@@ -117,13 +117,17 @@ class TestPreflightAccuracyDeps:
         )
         _preflight_accuracy_deps(_plan(_acc(enabled=True, grader="custom")))
 
-    @pytest.mark.parametrize("exc_type", [KeyError, ValueError, ImportError])
+    @pytest.mark.parametrize(
+        "exc_type", [KeyError, ValueError, ImportError, AttributeError]
+    )
     def test_lookup_errors_become_configuration_error(
         self, monkeypatch, exc_type
     ) -> None:
-        """Unknown/malformed names (TypeNotFoundError/KeyError/ValueError) and
-        broken external plugins (ImportError) must convert to ConfigurationError,
-        not leak a raw traceback."""
+        """Unknown/malformed names (TypeNotFoundError/KeyError/ValueError),
+        broken external plugin modules (ImportError), and a module that imports
+        but is missing its configured class (AttributeError, from
+        PluginEntry.load) must all convert to ConfigurationError, not leak a
+        raw traceback."""
         monkeypatch.setattr(
             "aiperf.plugin.plugins.get_metadata",
             lambda _type, _name: {"default_grader": "g"},
