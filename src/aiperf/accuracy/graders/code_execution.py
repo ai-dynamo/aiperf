@@ -40,6 +40,7 @@ import orjson
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
+from aiperf.common.utils import allow_daemon_children
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -145,11 +146,7 @@ class CodeExecutionGrader(BaseGrader):
             # thread keeps the event loop free for other concurrent
             # grade() calls during a benchmark run.
             metrics, _ = await asyncio.to_thread(
-                codegen_metrics,
-                evaluation_sample,
-                generated_code,
-                k_list=list(_LCB_PASS_AT_K),
-                num_process_evaluate=_LCB_NUM_PROCESSES,
+                _run_codegen_metrics, evaluation_sample, generated_code
             )
         except Exception as exc:  # noqa: BLE001
             _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
@@ -174,6 +171,33 @@ class CodeExecutionGrader(BaseGrader):
             ),
             extracted_answer=snippet,
             ground_truth="<lcb test cases>",
+        )
+
+
+def _run_codegen_metrics(
+    evaluation_sample: list[dict[str, str]], generated_code: list[list[str]]
+) -> tuple[dict[str, Any], Any]:
+    """Run lighteval's ``codegen_metrics`` with the daemon flag cleared.
+
+    ``codegen_metrics`` fans out to a ProcessPoolExecutor. AIPerf runs the
+    record processor as a daemon (every service is spawned with
+    ``daemon=True``), and Python forbids daemons from spawning child
+    processes, so the flag must be cleared for the duration of the fork or
+    grading dies with "daemonic processes are not allowed to have children"
+    — silently mislabeled as unparsed.
+
+    TODO: This flag-flipping is a pragmatic workaround. The cleaner design is
+    to own the sandboxed-execution pool outside the daemon (e.g. a non-daemon
+    executor service the record processor delegates to) so no daemon state is
+    mutated. Revisit if sandboxed grading needs to scale beyond a single
+    per-record pool.
+    """
+    with allow_daemon_children():
+        return codegen_metrics(
+            evaluation_sample,
+            generated_code,
+            k_list=list(_LCB_PASS_AT_K),
+            num_process_evaluate=_LCB_NUM_PROCESSES,
         )
 
 

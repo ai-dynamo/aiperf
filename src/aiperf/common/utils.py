@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import inspect
+import multiprocessing as mp
 import os
 import sys
 import types
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import orjson
@@ -142,6 +144,41 @@ def compute_time_ns(
     if perf_ns < start_perf_ns:
         raise ValueError(f"perf_ns {perf_ns} is before start_perf_ns {start_perf_ns}")
     return start_time_ns + (perf_ns - start_perf_ns)
+
+
+def _set_daemon(daemon: bool) -> None:
+    """Set the daemon flag on the current process."""
+    try:
+        mp.current_process().daemon = daemon
+    except AssertionError:
+        # Fallback to the internal _config dict when assertions are enabled.
+        mp.current_process()._config["daemon"] = daemon
+
+
+@contextmanager
+def allow_daemon_children() -> Iterator[None]:
+    """Temporarily clear the current process's daemon flag.
+
+    Python's multiprocessing refuses to spawn children from daemon
+    processes, and AIPerf services run as daemons (see
+    ``multiprocess_service_manager.py``: every service is spawned with
+    ``daemon=True``). Any code that fans out with ``ProcessPoolExecutor``
+    or ``multiprocessing.Pool`` from inside a service must run under this
+    context, or it raises ``AssertionError: daemonic processes are not
+    allowed to have children``.
+
+    Restores the original flag on exit. Not safe against concurrent
+    daemon-flag toggling within the same process, matching the
+    single-owner usage in the batch tokenizer decode path.
+    """
+    was_daemon = mp.current_process().daemon
+    if was_daemon:
+        _set_daemon(False)
+    try:
+        yield
+    finally:
+        if was_daemon:
+            _set_daemon(True)
 
 
 # This is used to identify the source file of the call_all_functions function
