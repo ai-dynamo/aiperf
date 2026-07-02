@@ -3,7 +3,8 @@
 
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -103,6 +104,39 @@ class TestCompletionsEndpoint:
         assert payload["hash_ids"] == [1, 2]
         assert payload["block_size"] == 64
         assert payload["temperature"] == 0.7
+
+    def test_format_payload_warmup_prefix_survives_extra_body_prompt(
+        self, model_endpoint
+    ):
+        """WARMUP prefix must not be clobbered by an extra_body carrying `prompt`."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            texts=["recorded"],
+            credit_phase=CreditPhase.WARMUP,
+            extra_body={"prompt": "recorded", "hash_ids": [1, 2]},
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == [f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nrecorded"]
+        # Non-prompt extra_body knobs still forward during warmup.
+        assert payload["hash_ids"] == [1, 2]
+
+    def test_format_payload_non_warmup_extra_body_prompt_still_overrides(
+        self, model_endpoint
+    ):
+        """Outside warmup, extra_body retains its override semantics for `prompt`."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            texts=["recorded"],
+            extra_body={"prompt": "overridden"},
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == "overridden"
 
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",

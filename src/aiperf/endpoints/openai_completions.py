@@ -59,7 +59,14 @@ class CompletionsEndpoint(BaseEndpoint):
             payload.update(extra)
 
         if turn.extra_body:
-            payload.update(turn.extra_body)
+            if request_info.credit_phase == CreditPhase.WARMUP:
+                # Preserve the warmup-prefixed prompt: extra_body carries the bare
+                # recorded string and would otherwise clobber it back.
+                payload.update(
+                    {k: v for k, v in turn.extra_body.items() if k != "prompt"}
+                )
+            else:
+                payload.update(turn.extra_body)
 
         if (
             model_endpoint.endpoint.streaming
