@@ -292,6 +292,41 @@ class TestWandbDataExporter:
         assert cli_command.startswith("aiperf profile")
 
     @pytest.mark.asyncio
+    async def test_export_disables_wandb_metadata_capture_with_secrets_in_argv(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        fake_wandb: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """W&B captures raw sys.argv in its own metadata unless disabled.
+
+        AIPerf's uploaded config is redacted separately; this locks in the
+        setting that prevents W&B from independently persisting argv secrets.
+        """
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "aiperf",
+                "profile",
+                "--api-key",
+                "sk-secret-key",
+                "--header",
+                "Authorization:Bearer tok123",
+                "--wandb-project",
+                "aiperf-qa",
+            ],
+        )
+
+        exporter = _make_exporter(_make_cfg(tmp_path), sample_results)
+        await asyncio.to_thread(exporter._export_sync)
+
+        settings = fake_wandb["init_kwargs"]["settings"]
+        assert settings.x_disable_meta is True
+        assert settings.save_code is False
+
+    @pytest.mark.asyncio
     async def test_export_config_payload_redacts_api_key(
         self,
         tmp_path: Path,
