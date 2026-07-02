@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import orjson
 
+from aiperf.common.enums import RequestContentType
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -20,6 +21,10 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
+from aiperf.workers.dynamo_session_control import (
+    build_session_control,
+    merge_session_control,
+)
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -56,10 +61,30 @@ def detect_transport_from_url(url: str) -> str:
 class InferenceClient(AIPerfLifecycleMixin):
     """Inference client for the worker."""
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, service_id: str, **kwargs):
+    def __init__(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        service_id: str,
+        *,
+        strip_record_payload_bytes: bool = False,
+        **kwargs,
+    ):
         super().__init__(model_endpoint=model_endpoint, service_id=service_id, **kwargs)
         self.model_endpoint = model_endpoint
         self.service_id = service_id
+        # When True, omit canonical request payload bytes from the slim
+        # RecordContext after dispatch (memory optimization for large prompts).
+        # Resolved by the worker via record payload-retention auto-detection.
+        self.strip_record_payload_bytes = strip_record_payload_bytes
+
+        # Legacy Dynamo session_control only: session_ids this worker has already
+        # sent an 'open' for. 'open' is not idempotent and must be sent exactly
+        # once on the first request the worker makes for a session -- which under
+        # agentic replay is the WARMUP turn (k_i), not turn_index 0. The
+        # StickyCreditRouter pins every turn of a session (warmup + profiling) to
+        # one worker, so this per-process set sees them all. Entries are dropped
+        # on 'close' to bound the set to in-flight sessions.
+        self._dynamo_opened_sessions: set[str] = set()
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -77,6 +102,19 @@ class InferenceClient(AIPerfLifecycleMixin):
         )
         self.transport = TransportClass(model_endpoint=self.model_endpoint)
         self.attach_child_lifecycle(self.transport)
+
+    def discard_dynamo_session(self, session_id: str) -> None:
+        """Drop a session from the legacy Dynamo 'open' tracking set.
+
+        Called by the worker terminal-eviction path on ANY terminal outcome
+        (final turn OR cancelled OR abandoned before its final turn). The
+        inline final-turn discard in ``_send_request_to_transport`` only fires
+        when a final turn is actually dispatched; sessions recycled before that
+        (e.g. agentic_replay terminal-overflow) would otherwise leak entries
+        here forever on GC-disabled workers. Idempotent and a no-op for the
+        modern (non-legacy) path, which never populates this set.
+        """
+        self._dynamo_opened_sessions.discard(session_id)
 
     async def _send_request_to_transport(
         self,
@@ -102,16 +140,70 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        raw_payload = request_info.turns[-1].raw_payload
-        payload = (
-            raw_payload
-            if raw_payload is not None
-            else self.endpoint.format_payload(request_info)
-        )
-        request_info.payload_bytes = orjson.dumps(payload)
+        if request_info.payload_bytes is not None:
+            # PAYLOAD_BYTES fast path: bytes were validated at dataset-load time
+            # by the mmap loader / DatasetManager, and body-mutating features
+            # (cache-bust, Dynamo session_control) are refused against this
+            # verbatim-bytes path at dataset load, so nothing is injected here.
+            formatted_payload = request_info.payload_bytes
+        else:
+            current_turn = request_info.turns[-1] if request_info.turns else None
+            if current_turn and current_turn.raw_payload is not None:
+                formatted_payload = current_turn.raw_payload
+            else:
+                formatted_payload = self.endpoint.format_payload(request_info)
+            # Dynamo conversation-aware routing (opt-in): overlay
+            # nvext.session_control onto the structured request body. Done here,
+            # after the endpoint built the dict, so it is endpoint-agnostic and
+            # never mutates a cached Turn. The verbatim PAYLOAD_BYTES path is
+            # excluded by the dataset-load guard, so it is not handled here.
+            endpoint = self.model_endpoint.endpoint
+            if endpoint.use_dynamo_conv_aware_routing:
+                session_id = request_info.x_correlation_id
+                legacy = endpoint.use_legacy_dynamo_session_control
+                session_control = build_session_control(
+                    session_id=session_id,
+                    is_final_turn=request_info.is_final_turn,
+                    timeout_seconds=endpoint.dynamo_session_timeout_seconds,
+                    legacy=legacy,
+                    already_opened=session_id in self._dynamo_opened_sessions,
+                )
+                # Track the open/close lifecycle so legacy 'open' is sent exactly
+                # once per session (modern 'bind' is stateless and ignores this).
+                if legacy:
+                    if session_control.get("action") == "open":
+                        self._dynamo_opened_sessions.add(session_id)
+                    elif request_info.is_final_turn:
+                        # Final-turn discard. Sessions abandoned BEFORE their
+                        # final turn (agentic_replay terminal-overflow recycle,
+                        # cancellation) never reach this branch -- the worker
+                        # drops those via discard_dynamo_session() on its
+                        # terminal-eviction path so the set stays bounded.
+                        self._dynamo_opened_sessions.discard(session_id)
+                formatted_payload = merge_session_control(
+                    formatted_payload, session_control
+                )
+        # Canonicalise to bytes and stash on request_info. Two wins: (1) the
+        # transport skips its own orjson.dumps on the dict path, (2) the
+        # record processor can read the exact wire payload for raw-export.
+        # Multipart endpoints (image_edit / image_generation / video) are the
+        # exception: the transport must receive the structured dict so it can
+        # build the FormData. Pre-dumped bytes would be sent verbatim as JSON
+        # and the server's form parser would reject them (422, prompt=null).
+        wire_payload: dict[str, Any] | bytes = formatted_payload
+        if isinstance(formatted_payload, dict):
+            encoded = orjson.dumps(formatted_payload)
+            request_info.payload_bytes = encoded
+            is_multipart = (
+                self.model_endpoint.endpoint.request_content_type
+                == RequestContentType.MULTIPART_FORM_DATA
+            )
+            wire_payload = formatted_payload if is_multipart else encoded
+        else:
+            request_info.payload_bytes = formatted_payload
         return await self.transport.send_request(
             request_info,
-            payload=payload,
+            payload=wire_payload,
             first_token_callback=first_token_callback,
         )
 
@@ -171,12 +263,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
-        if not request_info.turns:
+        if not request_info.turns and not request_info.payload_bytes:
             raise ValueError(
                 f"RequestInfo has no turns (credit_num={request_info.credit_num}, "
                 f"conversation_id={request_info.conversation_id})"
             )
-        if self.is_trace_enabled:
+        if self.is_trace_enabled and request_info.turns:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
         # Redact sensitive headers on the request_info now that the transport has
@@ -195,10 +287,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         the record before the ZMQ hop to the record processor.
 
         The full ``RequestInfo`` carries transport-only extras
-        (``model_endpoint``, ``turns``, ``endpoint_headers``,
-        ``endpoint_params``, ``drop_perf_ns``, ``cancel_after_ns``, ...) that
-        the record-processor pipeline never reads; downcasting saves
-        ~500-900 bytes per record at high throughput.
+        (``model_endpoint``, ``turns``, ``system_message``,
+        ``user_context_message``, ``endpoint_headers``, ``endpoint_params``,
+        ``drop_perf_ns``, ``cancel_after_ns``, ...) that the record-processor
+        pipeline never reads; downcasting saves ~500-900 bytes per record at
+        high throughput. The full ``turns`` list never travels — live records
+        drive off the canonical ``payload_bytes``.
         """
         ctx_field_names = set(RecordContext.model_fields.keys())
         ri_dump = request_info.model_dump(include=ctx_field_names)
@@ -211,15 +305,33 @@ class InferenceClient(AIPerfLifecycleMixin):
         record: RequestRecord,
         request_info: RequestInfo,
     ) -> RequestRecord:
-        """Enrich a RequestRecord with the original request info."""
-        record.model_name = (
-            request_info.turns[-1].model or self.model_endpoint.primary_model_name
-        )
+        """Enrich a RequestRecord with the original request info.
+
+        The hoisted metric inputs ``max_tokens`` and ``audio_duration_seconds``
+        live only on the originating turn — they are NOT ``RecordContext``
+        fields on ``request_info`` and so are not copied by the downcast in
+        ``_enrich_request_record``. Populate them explicitly from the last
+        turn so the record processor (``osl_mismatch`` / ``audio_duration``
+        metrics) reads them directly off the slim record without the full
+        ``turns`` list on the wire.
+        """
+        last_turn = request_info.turns[-1] if request_info.turns else None
+        turn_model = last_turn.model if last_turn else None
+        record.model_name = turn_model or self.model_endpoint.primary_model_name
         self._enrich_request_record(record, request_info)
 
-        # Copy turns with stripped multimodal data to avoid mutating original session
-        # and reduce memory usage (placeholders instead of large image/audio/video data)
-        record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
+        if record.request_info is not None:
+            record.request_info.max_tokens = last_turn.max_tokens if last_turn else None
+            record.request_info.audio_duration_seconds = (
+                last_turn.audio_duration_seconds if last_turn else None
+            )
+
+            # When stripping is enabled (large-prompt memory optimization,
+            # resolved by the worker's payload-retention auto-detection), drop
+            # the canonical request payload bytes from the slim record context
+            # after dispatch.
+            if self.strip_record_payload_bytes:
+                record.request_info.payload_bytes = None
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

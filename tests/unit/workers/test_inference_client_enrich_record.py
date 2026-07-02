@@ -48,12 +48,14 @@ class TestEnrichRequestRecord:
         ri = _make_request_info()
         record = RequestRecord()
         enriched = InferenceClient._enrich_request_record(record, ri)
-        # downcast strips model_endpoint / endpoint_headers / drop_perf_ns,
-        # but ``turns``, ``system_message``, ``user_context_message`` were
-        # hoisted onto RecordContext (records pipeline reads them) and
-        # therefore survive the downcast.
+        # downcast strips model_endpoint / endpoint_headers / drop_perf_ns, and
+        # ``turns``, ``system_message``, ``user_context_message`` now live ONLY
+        # on RequestInfo (worker-side) so they never cross the ZMQ hop — the
+        # downcast to the slim RecordContext drops them too.
         dump = enriched.request_info.model_dump()
         assert "model_endpoint" not in dump
         assert "endpoint_headers" not in dump
         assert "drop_perf_ns" not in dump
-        assert "turns" in dump
+        assert "turns" not in dump
+        assert "system_message" not in dump
+        assert "user_context_message" not in dump
