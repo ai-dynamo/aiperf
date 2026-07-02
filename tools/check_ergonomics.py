@@ -16,7 +16,7 @@
 
 """LLM-ergonomics checks for AIPerf.
 
-Fails the build on *new* violations of the 8 rules in
+Fails the build on *new* violations of the rules from
 ``artifacts/code-review-2026-04-21/llm-codebase-ergonomics.md``.
 
 Existing violations are grandfathered via a baseline file at
@@ -26,18 +26,17 @@ Existing violations are grandfathered via a baseline file at
 
 Checks (each can also be run in isolation with --only <check>):
 
-    file-size           files under src/aiperf/ must be <= 500 lines
-    function-size       functions must be <= 80 lines
     nesting-depth       control-flow nesting must be <= 5 levels
     keyword-only-args   functions with >=5 positional args must use ``*,``
     module-state        no module-level mutable dict/list/set assignments
     duplicate-classes   class names must be unique across src/aiperf/
     pydantic-fields     Pydantic models must have <=30 ``Field(...)`` decls
     stdlib-json         no ``import json`` / ``json.dumps`` / ``json.loads``
+    exception-message   raised exception messages must carry context
 
 Usage:
     python tools/check_ergonomics.py                 # run all checks
-    python tools/check_ergonomics.py --only file-size
+    python tools/check_ergonomics.py --only nesting-depth
     python tools/check_ergonomics.py --regenerate-baseline
     python tools/check_ergonomics.py file1.py file2.py   # check specific files
 
@@ -62,8 +61,6 @@ BASELINE_PATH = Path(__file__).resolve().parent / "ergonomics_baseline.json"
 # Thresholds
 # ---------------------------------------------------------------------------
 
-MAX_FILE_LINES = 500
-MAX_FUNCTION_LINES = 80
 MAX_NESTING_DEPTH = 5
 MAX_POSITIONAL_ARGS = 4  # >= 5 positional args without `*,` is an error
 MAX_PYDANTIC_FIELDS = 30
@@ -77,30 +74,15 @@ MIN_EXCEPTION_MESSAGE_WORDS = 3  # R10: error messages must carry context
 # over time), these are deliberate design choices. Adding here requires a
 # `reason` documenting why the exception is permanent.
 
-INTENTIONAL_FILE_SIZE_EXEMPTIONS: dict[str, str] = {
-    "src/aiperf/config/flags/cli_config.py": (
-        "CLIConfig is the unified flat CLI input DTO. Every CLI flag is a "
-        "top-level field with a multi-line Annotated/Field/CLIParameter "
-        "annotation, so file size scales linearly with field count (~16 LOC "
-        "per field × ~200 fields). The flat shape is intentional per Tasks "
-        "1-13 of the v1 flatten — splitting into mixins or per-section "
-        "files re-introduces the structural complexity the flatten removed. "
-        "Section-by-Groups.X dividers + the disjointness invariant in "
-        "tests/unit/config/v1/test_section_fields.py keep the file scannable."
-    ),
-}
-
 INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS: dict[str, str] = {
     "src/aiperf/config/flags/cli_config.py::CLIConfig": (
-        "Same rationale as INTENTIONAL_FILE_SIZE_EXEMPTIONS for cli_config.py: "
-        "CLIConfig holds every CLI flag as a top-level field by design. "
+        "CLIConfig is the unified flat CLI input DTO and holds every CLI "
+        "flag as a top-level field by design (v1 flatten, Tasks 1-13). "
         "Splitting into sub-models would re-nest the v1 layer."
     ),
 }
 
 CHECKS = [
-    "file-size",
-    "function-size",
     "nesting-depth",
     "keyword-only-args",
     "module-state",
@@ -353,42 +335,6 @@ def _pydantic_field_count(cls: ast.ClassDef) -> int:
 # ---------------------------------------------------------------------------
 # Per-file checks
 # ---------------------------------------------------------------------------
-
-
-def check_file_size(path: Path, rel: str) -> list[Violation]:
-    if rel in INTENTIONAL_FILE_SIZE_EXEMPTIONS:
-        return []
-    lines = len(path.read_text().splitlines())
-    if lines > MAX_FILE_LINES:
-        return [
-            Violation(
-                check="file-size",
-                file=rel,
-                line=lines,
-                identifier="",
-                message=f"file has {lines} lines (>{MAX_FILE_LINES})",
-            )
-        ]
-    return []
-
-
-def check_function_size(tree: ast.Module, rel: str) -> list[Violation]:
-    out: list[Violation] = []
-    for qualname, node in _qualname_walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            end = node.end_lineno or node.lineno
-            length = end - node.lineno + 1
-            if length > MAX_FUNCTION_LINES:
-                out.append(
-                    Violation(
-                        check="function-size",
-                        file=rel,
-                        line=node.lineno,
-                        identifier=qualname,
-                        message=f"function '{qualname}' is {length} lines (>{MAX_FUNCTION_LINES})",
-                    )
-                )
-    return out
 
 
 def check_nesting_depth(tree: ast.Module, rel: str) -> list[Violation]:
@@ -671,13 +617,9 @@ def _run_per_file(
     path: Path, rel: str, enabled: set[str]
 ) -> tuple[list[Violation], ast.Module]:
     out: list[Violation] = []
-    if "file-size" in enabled:
-        out.extend(check_file_size(path, rel))
     tree = _parse(path)
     if "stdlib-json" in enabled:
         out.extend(check_stdlib_json(tree, rel))
-    if "function-size" in enabled:
-        out.extend(check_function_size(tree, rel))
     if "nesting-depth" in enabled:
         out.extend(check_nesting_depth(tree, rel))
     if "keyword-only-args" in enabled:

@@ -99,7 +99,7 @@ def _datasets_version_hint() -> str:
         import datasets
 
         major = int(datasets.__version__.split(".", 1)[0])
-    except Exception:  # noqa: BLE001 - diagnostic helper for an already-failing load; never mask the original error with a parser crash
+    except Exception:  # diagnostic helper for an already-failing load; never mask the original error with a parser crash
         return ""
     if major >= 4:
         return (

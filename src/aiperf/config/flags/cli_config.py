@@ -20,9 +20,9 @@ populated CLIConfig into the canonical AIPerfConfig.
 This file is intentionally large (~3200 LOC, ~200 fields) — every CLI flag
 is a top-level field by design, so size scales linearly with field count.
 The flat shape is the post-flatten architecture. Section dividers group
-fields by their CLIParameter ``Groups.X``. Both the file-size and
-pydantic-fields ergonomics checks have an explicit intentional exception
-for this file (see ``tools/check_ergonomics.py::INTENTIONAL_FILE_SIZE_EXEMPTIONS``).
+fields by their CLIParameter ``Groups.X``. The pydantic-fields
+ergonomics check has an explicit intentional exception for this file (see
+``tools/check_ergonomics.py::INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS``).
 
 See aiperf.config.flags.__init__ for the hard rules around adding new fields,
 and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.

@@ -222,7 +222,7 @@ class CreditCallbackHandler:
         try:
             if self._branch_orchestrator.get_branch_ids(credit):
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
         return False
 
@@ -325,7 +325,7 @@ class CreditCallbackHandler:
         )
         try:
             await self._on_warmup_abort()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Mirror the records-side threshold abort: if the broadcast fails,
             # reset the flag so a later warmup return retries, and the runner's
             # teardown backstop can still surface the failure.
@@ -427,7 +427,7 @@ class CreditCallbackHandler:
                     await self._branch_orchestrator.on_child_leaf_reached(
                         credit.x_correlation_id
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _logger.warning(
                     lambda exc=exc: f"BranchOrchestrator child-completion "
                     f"hook failed for x_correlation_id="
@@ -505,7 +505,7 @@ class CreditCallbackHandler:
                 await self._branch_orchestrator.on_child_stopped(
                     credit.x_correlation_id
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _logger.warning(
                     lambda exc=exc: f"BranchOrchestrator on_child_stopped "
                     f"hook failed for x_correlation_id="
