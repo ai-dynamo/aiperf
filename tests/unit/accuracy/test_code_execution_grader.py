@@ -3,25 +3,30 @@
 
 """Targeted unit tests for ``code_execution`` grader internals.
 
-The full sandboxed grading path (``CodeExecutionGrader.grade``) needs
-``lighteval``'s ``codegen_metrics`` plus a ``ProcessPoolExecutor``, so
-end-to-end grading is exercised in the component_integration suite.
-These tests cover the in-process helpers that don't need a sandbox:
-``_decode_private_test_cases``, which translates LCB's upstream-encoded
-``private_test_cases`` blob (base64 → zlib → pickle → json) into the
-list of ``{"input", "output"}`` dicts ``codegen_metrics`` expects.
+Covers the in-process helpers that don't need a real sandbox
+(``_decode_private_test_cases``, which translates LCB's upstream-encoded
+``private_test_cases`` blob: base64 → zlib → pickle → json) plus the
+daemon-flag handling in ``grade`` (with ``codegen_metrics`` mocked).
+
+The real daemon-fork path — spawning a ``ProcessPoolExecutor`` from a
+daemon process, which is what actually broke LCB grading — is guarded in
+``tests/component_integration/test_code_execution_daemon_grading.py``.
 """
 
 from __future__ import annotations
 
 import base64
+import multiprocessing as mp
 import pickle
 import zlib
+from unittest.mock import MagicMock
 
 import orjson
 import pytest
 
+import aiperf.accuracy.graders.code_execution as code_execution
 from aiperf.accuracy.graders.code_execution import (
+    CodeExecutionGrader,
     _decode_private_test_cases,
 )
 
@@ -87,3 +92,76 @@ class TestDecodePrivateTestCases:
         assert _decode_private_test_cases(None) == []
         assert _decode_private_test_cases("") == []
         assert _decode_private_test_cases([]) == []
+
+
+@pytest.mark.asyncio
+class TestGradeClearsDaemonFlag:
+    """Regression: AIPerf runs the record processor as a daemon (every service
+    is spawned ``daemon=True``). ``codegen_metrics`` fans out to a
+    ProcessPoolExecutor, which Python forbids from a daemon process. Before the
+    fix, grading died with "daemonic processes are not allowed to have children"
+    and was silently mislabeled ``unparsed``. ``grade`` must clear the daemon
+    flag around the ``codegen_metrics`` call.
+    """
+
+    def _set_daemon(self, value: bool) -> None:
+        try:
+            mp.current_process().daemon = value
+        except AssertionError:
+            mp.current_process()._config["daemon"] = value
+
+    async def test_codegen_metrics_runs_with_daemon_cleared(self, monkeypatch) -> None:
+        # Record the daemon flag as seen from inside codegen_metrics.
+        seen: dict[str, bool] = {}
+
+        def fake_codegen_metrics(*_args, **_kwargs):
+            seen["daemon"] = mp.current_process().daemon
+            return {"pass@1": 1.0}, {}
+
+        monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
+        monkeypatch.setattr(code_execution, "codegen_metrics", fake_codegen_metrics)
+        monkeypatch.setattr(code_execution, "extract_code", lambda _text: "print(1)")
+
+        grader = CodeExecutionGrader(run=MagicMock())
+        payload = orjson.dumps(
+            {"public_test_cases": [{"input": "1", "output": "1"}], "metadata": ""}
+        ).decode()
+
+        original = mp.current_process().daemon
+        try:
+            self._set_daemon(True)
+            result = await grader.grade("```python\nprint(1)\n```", payload)
+        finally:
+            self._set_daemon(original)
+
+        # codegen_metrics saw a non-daemon process (the fix), and the daemon
+        # flag was restored afterward.
+        assert seen["daemon"] is False
+        assert mp.current_process().daemon == original
+        # Grading ran to completion instead of being mislabeled unparsed.
+        assert result.unparsed is False
+        assert result.correct is True
+
+    async def test_codegen_metrics_exception_becomes_grading_failure(
+        self, monkeypatch
+    ) -> None:
+        """If sandboxed execution raises (e.g. the daemon-fork error), grade()
+        must return a clean failure result — not propagate and crash the
+        record processor."""
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("daemonic processes are not allowed to have children")
+
+        monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
+        monkeypatch.setattr(code_execution, "codegen_metrics", _boom)
+        monkeypatch.setattr(code_execution, "extract_code", lambda _text: "print(1)")
+
+        grader = CodeExecutionGrader(run=MagicMock())
+        payload = orjson.dumps(
+            {"public_test_cases": [{"input": "1", "output": "1"}], "metadata": ""}
+        ).decode()
+
+        result = await grader.grade("```python\nprint(1)\n```", payload)
+        assert result.correct is False
+        assert result.unparsed is True
+        assert "sandboxed exec failed" in result.reasoning
