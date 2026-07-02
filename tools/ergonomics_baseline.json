@@ -303,6 +303,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/server_metrics/data_collector.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/server_metrics/export_stats.py",
       ""
     ],
