@@ -90,6 +90,7 @@ def fake_wandb(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "artifact_files": [],
         "logged_artifacts": [],
         "finished": False,
+        "metadata_output": {},
     }
 
     class FakeArtifact:
@@ -128,6 +129,9 @@ def fake_wandb(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     def fake_init(**kwargs: Any) -> FakeRun:
         state["init_kwargs"] = kwargs
+        settings = kwargs.get("settings")
+        if not getattr(settings, "x_disable_meta", False):
+            state["metadata_output"] = {"args": sys.argv[1:]}
         return FakeRun()
 
     fake_module = types.ModuleType("wandb")
@@ -325,6 +329,9 @@ class TestWandbDataExporter:
         settings = fake_wandb["init_kwargs"]["settings"]
         assert settings.x_disable_meta is True
         assert settings.save_code is False
+        metadata_output = str(fake_wandb["metadata_output"])
+        assert "sk-secret-key" not in metadata_output
+        assert "Authorization:Bearer tok123" not in metadata_output
 
     @pytest.mark.asyncio
     async def test_export_config_payload_redacts_api_key(
