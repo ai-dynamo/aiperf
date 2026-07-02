@@ -6,6 +6,7 @@ import pytest
 
 from aiperf import __version__ as aiperf_version
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.models import Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -379,6 +380,18 @@ class TestSessionHeader:
 
         assert headers["X-Correlation-ID"] == "conv-uuid-123"
         assert "X-Session-ID" not in headers
+
+    def test_turn_headers_preserve_external_session_identity(self):
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+        request_info.turns = [
+            Turn(extra_headers={"x-dynamo-session-id": "source-session-1"})
+        ]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert headers["x-dynamo-session-id"] == "source-session-1"
 
     def test_session_header_replaces_x_correlation_id(self):
         """With --session-header, the configured name is used instead of X-Correlation-ID."""

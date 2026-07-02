@@ -13,6 +13,8 @@ Key responsibilities:
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -45,6 +47,7 @@ class PhaseCallbackContext:
     stop_checker: StopConditionChecker
     strategy: TimingStrategyProtocol
     concurrency_manager: ConcurrencyManager
+    handle_credit_result: Callable[[CreditReturn], Awaitable[None]] | None = None
 
 
 # =============================================================================
@@ -164,12 +167,16 @@ class CreditCallbackHandler:
             stop_checker: Evaluates stop conditions.
             strategy: Timing strategy for dispatching next turns.
         """
+        handle_credit_result = getattr(strategy, "handle_credit_result", None)
         self._phase_handlers[phase] = PhaseCallbackContext(
             progress=progress,
             lifecycle=lifecycle,
             stop_checker=stop_checker,
             strategy=strategy,
             concurrency_manager=self._concurrency_manager,
+            handle_credit_result=handle_credit_result
+            if inspect.iscoroutinefunction(handle_credit_result)
+            else None,
         )
         _logger.debug(lambda: f"Registered callback handler for phase {phase}")
 
@@ -207,6 +214,9 @@ class CreditCallbackHandler:
             return
 
         self._count_and_release(credit, credit_return, handler)
+
+        if handler.handle_credit_result is not None:
+            await handler.handle_credit_result(credit_return)
 
         # 4b. DAG child completion hook.
         # When a child session's final turn returns, notify the orchestrator
