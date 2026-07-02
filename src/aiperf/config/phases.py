@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 """
 AIPerf Configuration v2.0 - Phase Configuration
 
@@ -21,6 +20,7 @@ from pydantic import (
 )
 from typing_extensions import Self
 
+from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
 from aiperf.config.base import BaseConfig
 from aiperf.config.cancellation import CancellationConfig
 from aiperf.config.loader.duration import (
@@ -29,6 +29,7 @@ from aiperf.config.loader.duration import (
     _parse_duration,
 )
 from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
 __all__ = [
@@ -211,6 +212,14 @@ class BasePhaseConfig(BaseConfig):
         ),
     ]
 
+    sla: Annotated[
+        list[SLAFilter],
+        Field(
+            default_factory=list,
+            description="SLA filters evaluated by adaptive load controllers.",
+        ),
+    ]
+
     seamless: Annotated[
         bool,
         Field(
@@ -278,7 +287,7 @@ class BasePhaseConfig(BaseConfig):
 # =============================================================================
 
 
-class ConcurrencyPhase(BasePhaseConfig):
+class ConcurrencyPhase(AdaptiveScalePhaseMixin, BasePhaseConfig):
     """Concurrency-controlled load: dispatch immediately when a slot opens.
 
     Primary control is ``concurrency`` (defaults to 1).
@@ -401,11 +410,6 @@ class UserCentricPhase(RatePhaseConfig):
             )
 
         return self
-
-
-# =============================================================================
-# FIXED SCHEDULE PHASE
-# =============================================================================
 
 
 class FixedSchedulePhase(BasePhaseConfig):

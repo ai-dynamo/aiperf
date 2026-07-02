@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn
     from aiperf.credit.structs import Credit
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
@@ -87,6 +88,15 @@ class TimingStrategyProtocol(Protocol):
         Called for final turns and for non-final turns that become terminal
         because continuation is no longer possible.
         """
+        ...
+
+
+@runtime_checkable
+class CreditResultAwareStrategyProtocol(Protocol):
+    """Optional hook for strategies that need full credit result status."""
+
+    async def handle_credit_result(self, credit_return: CreditReturn) -> None:
+        """Observe a returned credit including error/cancellation status."""
         ...
 
 

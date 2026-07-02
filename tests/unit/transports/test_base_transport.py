@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from aiperf import __version__ as aiperf_version
-from aiperf.common.models import RequestInfo, RequestRecord
+from aiperf.common.models import RequestInfo, RequestRecord, Turn
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin import plugins
@@ -315,3 +315,95 @@ class TestBaseTransport:
         """Test that send_request is callable on concrete implementation."""
         record = await transport.send_request(request_info, {"test": "payload"})
         assert isinstance(record, RequestRecord)
+
+    def test_build_headers_merges_turn_extra_headers(self, transport, model_endpoint):
+        """Per-turn extra_headers are merged into the outgoing request headers."""
+        request_info = _make_request_info(
+            model_endpoint.cfg,
+            turns=[Turn(extra_headers={"x-dynamo-session-id": "sess-1"})],
+        )
+        headers = transport.build_headers(request_info)
+        assert headers["x-dynamo-session-id"] == "sess-1"
+
+    def test_get_url_abstract_implemented(self, transport, request_info):
+        """Test that get_url can be called on concrete implementation."""
+        url = transport.get_url(request_info)
+        assert isinstance(url, str)
+
+
+class TestTransportMetadata:
+    """Tests for TransportMetadata model."""
+
+    def test_transport_metadata_creation(self):
+        """Test creating TransportMetadata instance."""
+        metadata = TransportMetadata(
+            transport_type=TransportType.HTTP, url_schemes=["http", "https"]
+        )
+        assert metadata.transport_type == TransportType.HTTP
+        assert metadata.url_schemes == ["http", "https"]
+
+    def test_transport_metadata_single_scheme(self):
+        """Test metadata with single URL scheme."""
+        metadata = TransportMetadata(
+            transport_type=TransportType.HTTP, url_schemes=["grpc"]
+        )
+        assert len(metadata.url_schemes) == 1
+        assert "grpc" in metadata.url_schemes
+
+
+class TestBaseTransportAbstractMethods:
+    """Test that BaseTransport enforces abstract methods."""
+
+    def test_cannot_instantiate_base_transport(self):
+        """Test that BaseTransport cannot be instantiated directly."""
+        with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+            BaseTransport()
+
+    def test_must_implement_metadata(self):
+        """Test that subclasses must implement metadata()."""
+
+        class IncompleteTransport(BaseTransport):
+            def get_url(self, request_info: RequestInfo) -> str:
+                return ""
+
+            async def send_request(
+                self, request_info: RequestInfo, payload: dict
+            ) -> RequestRecord:
+                return RequestRecord()
+
+        with pytest.raises(TypeError):
+            IncompleteTransport()
+
+    def test_must_implement_get_url(self):
+        """Test that subclasses must implement get_url()."""
+
+        class IncompleteTransport(BaseTransport):
+            @classmethod
+            def metadata(cls) -> TransportMetadata:
+                return TransportMetadata(
+                    transport_type=TransportType.HTTP, url_schemes=["http"]
+                )
+
+            async def send_request(
+                self, request_info: RequestInfo, payload: dict
+            ) -> RequestRecord:
+                return RequestRecord()
+
+        with pytest.raises(TypeError):
+            IncompleteTransport()
+
+    def test_must_implement_send_request(self):
+        """Test that subclasses must implement send_request()."""
+
+        class IncompleteTransport(BaseTransport):
+            @classmethod
+            def metadata(cls) -> TransportMetadata:
+                return TransportMetadata(
+                    transport_type=TransportType.HTTP, url_schemes=["http"]
+                )
+
+            def get_url(self, request_info: RequestInfo) -> str:
+                return ""
+
+        with pytest.raises(TypeError):
+            IncompleteTransport()

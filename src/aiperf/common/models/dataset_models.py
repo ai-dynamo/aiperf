@@ -235,6 +235,8 @@ class Turn(
     extra_body: dict[str, Any] | None = None
     """Non-native per-turn request-body fields merged into the top level of
     the chat-completions payload at dispatch time."""
+    extra_headers: dict[str, str] | None = None
+    """Per-turn HTTP headers merged into the request at dispatch time."""
     prerequisites: list[TurnPrerequisite] = msgspec.field(default_factory=list)
     """Conditions gating dispatch of this turn (DAG authoring)."""
     branch_ids: list[str] = msgspec.field(default_factory=list)

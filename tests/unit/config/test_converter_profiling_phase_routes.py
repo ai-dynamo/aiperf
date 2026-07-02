@@ -254,3 +254,132 @@ class TestRateRampRequiresRequestRate:
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof.get("rate_ramp") == {"duration": 30}
+
+
+class TestAdaptiveScaleRoutes:
+    def test_adaptive_scale_cli_fields_route_to_profiling_phase(self):
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_sustain_duration=120.0,
+            adaptive_assessment_period=30.0,
+            adaptive_scale_sla=["request_latency:p95:le:30000"],
+            benchmark_duration=600.0,
+            concurrency=200,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert prof["adaptive_scale"] is True
+        assert prof["adaptive_sustain_duration"] == 120.0
+        assert prof["adaptive_assessment_period"] == 30.0
+        assert prof["sla"] == [
+            {
+                "metric_tag": "request_latency",
+                "stat": "p95",
+                "op": "le",
+                "threshold": 30000.0,
+            }
+        ]
+
+    def test_adaptive_scale_requires_concurrency(self):
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_sustain_duration=120.0,
+            benchmark_duration=600.0,
+            request_rate=10.0,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="--adaptive-scale requires --concurrency"):
+            build_profiling(user)
+
+    def test_adaptive_scale_rejects_search_sla(self):
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_sustain_duration=120.0,
+            benchmark_duration=600.0,
+            concurrency=200,
+            search_sla=["request_latency:p95:le:30000"],
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="--adaptive-scale-sla"):
+            build_profiling(user)
+
+    def test_adaptive_scale_rejects_concurrency_ramp(self):
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(
+            ValueError, match="adaptive_scale cannot be combined with concurrency_ramp"
+        ):
+            ConcurrencyPhase.model_validate(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 600,
+                    "concurrency": 200,
+                    "concurrency_ramp": 30,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 120,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 30000,
+                        }
+                    ],
+                }
+            )
+
+    def test_nested_adaptive_scale_yaml_lowers_to_flat_phase_fields(self):
+        from aiperf.config.phases import ConcurrencyPhase
+
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "sla": {"request_latency": {"p95": {"lt": 30000}}},
+                "adaptive_scale": {
+                    "enabled": True,
+                    "min_concurrency": 2,
+                    "window": 30,
+                    "minCompletedRequests": 3,
+                    "sustain_duration": 120,
+                    "strategy": {
+                        "type": "ramp_until_fail",
+                        "step_policy": "sla_margin",
+                        "base_step": 10,
+                        "max_step_multiplier": 4,
+                    },
+                },
+            }
+        )
+
+        assert phase.adaptive_scale is True
+        assert phase.adaptive_scale_min_concurrency == 2
+        assert phase.adaptive_assessment_period == 30
+        assert phase.adaptive_min_completed_requests == 3
+        assert phase.adaptive_sustain_duration == 120
+        assert phase.adaptive_scale_strategy_type == "ramp_until_fail"
+        assert phase.adaptive_scale_step_policy == "sla_margin"
+        assert phase.adaptive_scale_base_step == 10
+        assert phase.adaptive_scale_max_step_multiplier == 4
+
+    def test_nested_adaptive_scale_string_false_disables_phase(self):
+        from aiperf.config.phases import ConcurrencyPhase
+
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": {"enabled": "false"},
+            }
+        )
+
+        assert phase.adaptive_scale is False

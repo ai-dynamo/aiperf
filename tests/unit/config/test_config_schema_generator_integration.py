@@ -290,6 +290,22 @@ def test_generated_schema_accepts_runtime_single_dict_phases_shorthand() -> None
             ),
             id="duration-uppercase-unit",
         ),
+        pytest.param(
+            _minimal_benchmark_config(
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 600,
+                        "concurrency": 200,
+                        "adaptiveScale": True,
+                        "adaptiveSustainDuration": 120,
+                        "sla": {"request_latency": {"p95": {"le": 30000}}},
+                    }
+                ]
+            ),
+            id="compact-adaptive-sla",
+        ),
     ],
 )  # fmt: skip
 def test_generated_schema_accepts_runtime_normalization_special_cases(

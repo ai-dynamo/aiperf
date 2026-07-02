@@ -13,6 +13,8 @@ Key responsibilities:
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -58,6 +60,10 @@ class PhaseCallbackContext:
 
     conversation_source: ConversationSource
     """Source for sampling conversations and resolving metadata."""
+
+    handle_credit_result: Callable[[CreditReturn], Awaitable[None]] | None = None
+    """Optional per-return callback the timing strategy exposes (adaptive
+    scaling consumes each CreditReturn to drive its SLA controller)."""
 
 
 @dataclass(slots=True)
@@ -210,6 +216,7 @@ class CreditCallbackHandler:
             stop_checker: Evaluates stop conditions.
             strategy: Timing strategy for dispatching next turns.
         """
+        handle_credit_result = getattr(strategy, "handle_credit_result", None)
         self._phase_handlers[phase] = PhaseCallbackContext(
             progress=progress,
             lifecycle=lifecycle,
@@ -217,6 +224,9 @@ class CreditCallbackHandler:
             strategy=strategy,
             concurrency_manager=self._concurrency_manager,
             conversation_source=conversation_source,
+            handle_credit_result=handle_credit_result
+            if inspect.iscoroutinefunction(handle_credit_result)
+            else None,
         )
         _logger.debug(lambda: f"Registered callback handler for phase {phase}")
 
@@ -320,6 +330,11 @@ class CreditCallbackHandler:
         # synchronous work is done.
         if is_final_returned and not self._dag_work_pending(credit):
             handler.progress.all_credits_returned_event.set()
+
+        # 4a. Per-return strategy hook (adaptive scaling consumes each return
+        # to drive its SLA controller). Runs before DAG hooks/dispatch.
+        if handler.handle_credit_result is not None:
+            await handler.handle_credit_result(credit_return)
 
         # 4b. DAG child completion hook. When a child session's final turn
         # returns, notify the orchestrator so it can decrement join refcounts,

@@ -111,6 +111,9 @@ class CreditContext(
     error: str | None = None
     """Error message if the request failed (None on success)."""
 
+    request_latency_ns: int | None = None
+    """Request latency in nanoseconds using records-pipeline semantics."""
+
 
 # =============================================================================
 # Turn Structs (pre-credit issuance structs)

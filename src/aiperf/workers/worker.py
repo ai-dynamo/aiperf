@@ -799,6 +799,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
+            request_latency_ns=credit_context.request_latency_ns,
             worker_id=self.service_id,
         )
         self.execute_async(self.credit_return_push_client.send(credit_return))
@@ -866,6 +867,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
+                request_latency_ns=credit_context.request_latency_ns,
                 worker_id=self.service_id,
             )
             with self.event_loop_monitor.activity(
@@ -1001,6 +1003,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         record: RequestRecord = await self.inference_client.send_request(
             request_info, first_token_callback=first_token_callback
         )
+        credit_context.request_latency_ns = self._request_latency_ns_for_record(record)
         # Store clock offset for cross-machine timestamp alignment.
         # Do NOT overwrite timestamp_ns — it was set at record creation
         # (pre-request) and serves as the wall-clock anchor for all
@@ -1017,6 +1020,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             resp_turn := await self._process_response(record)
         ):
             session.store_response(resp_turn)
+
+    def _request_latency_ns_for_record(self, record: RequestRecord) -> int | None:
+        """Return the same latency sample used by RequestLatencyMetric."""
+        final_response_perf_ns = None
+        for response in record.responses:
+            parsed = self.inference_client.endpoint.parse_response(response)
+            if parsed is not None and parsed.data:
+                final_response_perf_ns = parsed.perf_ns
+        if final_response_perf_ns is None:
+            return None
+        if final_response_perf_ns < record.start_perf_ns:
+            return None
+        return final_response_perf_ns - record.start_perf_ns
 
     def _create_request_info(
         self,

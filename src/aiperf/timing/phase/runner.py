@@ -324,6 +324,8 @@ class PhaseRunner(TaskManagerMixin):
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
             branch_orchestrator=self._branch_orchestrator,
+            concurrency_manager=self._concurrency_manager,
+            progress=self._progress,
         )
 
     async def _prepare_phase(self, strategy: TimingStrategyProtocol) -> None:

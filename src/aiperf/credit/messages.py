@@ -137,6 +137,9 @@ class CreditReturn(
         first_token_sent: True if FirstToken was sent before this return.
             Used by orchestrator to release prefill slot if not already released.
         error: Error message if the request failed (None on success).
+        request_latency_ns: Request latency in nanoseconds using the same
+            start/end semantics as the records-pipeline request_latency metric.
+            None when the request did not produce a valid content response.
         worker_id: Returning worker's id. Stamped on the PUSH/PULL return channel
             (CommAddress.CREDIT_RETURN), which carries no ZMQ envelope identity,
             so the router can attribute the return to the right worker.
@@ -156,6 +159,11 @@ class CreditReturn(
 
     error: str | None = None
     """Error message if the request failed (None on success)."""
+
+    request_latency_ns: int | None = None
+    """Request latency in nanoseconds using the same start/end semantics as the
+    records-pipeline request_latency metric. None when the request did not
+    produce a valid content response."""
 
     worker_id: str | None = None
     """Returning worker's id, stamped on the PUSH/PULL return channel (which has
