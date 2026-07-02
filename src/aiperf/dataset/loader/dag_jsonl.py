@@ -400,7 +400,7 @@ class DagJsonlLoader(BaseFileLoader):
                 branch_id=branch_id,
                 child_conversation_ids=[f.child for f in forks],
                 mode=ConversationBranchMode.FORK,
-                background=background,
+                is_background=background,
             )
         )
         conv.turns[idx].branch_ids.append(branch_id)

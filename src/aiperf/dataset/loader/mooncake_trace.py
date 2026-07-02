@@ -113,10 +113,15 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
         return trace.text_input
 
     def _build_turn(self, trace: MooncakeTrace, prompt: str) -> Turn:
+        # Verbatim payload/messages turns must honor --inter-turn-delay-cap-seconds
+        # too: clamp the recorded delay via the shared DelayCapTracker, matching
+        # both v1 and the synthesized-prompt branch (super()._build_turn, which
+        # clamps in BaseTraceDatasetLoader). Without this the cap was silently
+        # ignored for self-contained Mooncake sessions.
         if trace.payload is not None:
             return Turn(
                 timestamp=trace.timestamp,
-                delay=trace.delay,
+                delay=self._delay_cap_tracker.clamp(trace.delay),
                 max_tokens=trace.output_length,
                 raw_payload=trace.payload,
                 extra_body=trace.extra,
@@ -124,7 +129,7 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
         if trace.messages is not None:
             return Turn(
                 timestamp=trace.timestamp,
-                delay=trace.delay,
+                delay=self._delay_cap_tracker.clamp(trace.delay),
                 max_tokens=trace.output_length,
                 raw_messages=trace.messages,
                 raw_tools=trace.tools,

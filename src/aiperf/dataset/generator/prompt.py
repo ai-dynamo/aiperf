@@ -11,12 +11,55 @@ from aiperf.common.exceptions import (
     InvalidStateError,
     NotInitializedError,
 )
+from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.base import BaseGenerator
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
+
+
+def sample_tokens_from_corpus(
+    corpus,
+    num_tokens: int,
+    rng_to_use,
+    sep_token: int | None = None,
+) -> list[int]:
+    """Sample ``num_tokens`` tokens from ``corpus`` using ``rng_to_use``.
+
+    Mirrors :meth:`PromptGenerator._sample_tokens` but takes the RNG explicitly,
+    so callers (worker processes, the hash-id reseed path) can drive sampling
+    without sharing PromptGenerator state. Wraps the slice if it overflows the
+    corpus end so the result is always exactly ``num_tokens`` long.
+
+    Args:
+        corpus: Token corpus as a sequence of token IDs.
+        num_tokens: Number of tokens to sample.
+        rng_to_use: Random generator with a ``randrange(n)`` method.
+        sep_token: Optional block-separation token prepended at index 0
+            (consumes one slot of ``num_tokens``).
+
+    Returns:
+        List of sampled token IDs of length ``num_tokens``.
+    """
+    corpus_len = len(corpus)
+    tokens: list[int] = []
+
+    if sep_token is not None:
+        tokens.append(sep_token)
+        num_tokens -= 1
+
+    start = rng_to_use.randrange(corpus_len)
+    end = start + num_tokens
+
+    if end <= corpus_len:
+        tokens.extend(corpus[start:end])
+    else:
+        tokens.extend(corpus[start:])
+        tokens.extend(corpus[: end - corpus_len])
+
+    return tokens
 
 
 class PromptGenerator(BaseGenerator):
@@ -55,6 +98,11 @@ class PromptGenerator(BaseGenerator):
         self._corpus_rng = rng.derive("dataset.prompt.corpus")
         self._prefix_rng = rng.derive("dataset.prompt.prefix")
 
+        # Hash-ID-based RNG for deterministic per-(trace_id, hash_id) sampling.
+        # Used by the WekaTraceLoader so cross-process replay scopes block
+        # content to a single trace_id, eliminating cross-trace cache collisions.
+        self._hash_id_corpus_rng = HashIdRandomGenerator.from_base_rng(self._corpus_rng)
+
         super().__init__(tokenizer=tokenizer, **kwargs)
 
         # Cached prompts: block ID -> list of tokens
@@ -68,6 +116,14 @@ class PromptGenerator(BaseGenerator):
         # Initialize corpus if not already done
         if self._tokenized_corpus is None:
             self._initialize_corpus()
+
+        # Probe the tokenizer for a BPE-stable terminator we can append to
+        # every reconstructed segment so aiperf's join-with-" " ISL formula
+        # equals the sum of per-segment token counts (eliminates segment-join
+        # BPE re-merge drift). See spec §6.2.
+        self._bpe_stable_terminator_tokens: list[int] = (
+            self._determine_bpe_stable_terminator()
+        )
 
         # Initialize prefix prompts pool if the pool size > 0
         pool_size = (
@@ -151,6 +207,51 @@ class PromptGenerator(BaseGenerator):
             lambda: f"Initialized corpus with {self._corpus_size} tokens "
             f"from {len(chunks)} chunks using {num_threads} thread(s)"
         )
+
+    def _determine_bpe_stable_terminator(self) -> list[int]:
+        """Probe the tokenizer for a short token sequence that, when appended
+        to arbitrary content and followed by ``" " + arbitrary content``, does
+        NOT cause BPE re-merging across the seam.
+
+        Tries candidates in order and returns the first that passes the
+        join-byte-exact probe:
+
+        1. ``"\\n\\n"`` (typically a singleton in modern tokenizers)
+        2. ``"\\n"`` (fallback)
+        3. ``" "`` (last resort — degenerate)
+
+        Returns an empty list if no candidate passes; segment synthesis then
+        falls back to no terminator and segment-join drift is unfixed.
+        """
+        if not self._tokenized_corpus:
+            return []
+        corpus_size = self._corpus_size
+        if corpus_size < 264:
+            return []
+
+        a = self.tokenizer.decode(self._tokenized_corpus[100:164])
+        b = self.tokenizer.decode(self._tokenized_corpus[200:264])
+
+        a_tokens = self.tokenizer.encode(a, add_special_tokens=False)
+        b_with_lead_space = self.tokenizer.encode(" " + b, add_special_tokens=False)
+
+        for cand_text in ("\n\n", "\n", " "):
+            cand_tokens = self.tokenizer.encode(cand_text, add_special_tokens=False)
+            if len(cand_tokens) == 0:
+                continue
+            joined = a + cand_text + " " + b
+            joined_tokens = self.tokenizer.encode(joined, add_special_tokens=False)
+            expected_total = len(a_tokens) + len(cand_tokens) + len(b_with_lead_space)
+            if len(joined_tokens) == expected_total:
+                self.debug(
+                    lambda ct=cand_text, t=cand_tokens: (
+                        f"BPE-stable terminator chosen: {ct!r} -> tokens={t}"
+                    )
+                )
+                return list(cand_tokens)
+
+        self.debug("No BPE-stable terminator found; segment-join drift will be unfixed")
+        return []
 
     def _create_prefix_prompt_pool(self) -> None:
         """Generate a pool of prefix prompts to sample from."""
@@ -243,18 +344,8 @@ class PromptGenerator(BaseGenerator):
         Raises:
             ConfigurationError: If the input parameters are not compatible.
         """
-        # Check decoded string cache first to avoid redundant decode calls
-        cache_key = (tuple(hash_ids), num_tokens, block_size)
-        if cache_key in self._decoded_cache:
-            return self._decoded_cache[cache_key]
-
-        # Build token sequence using _build_token_sequence (shared logic)
         final_prompt = self._build_token_sequence(num_tokens, hash_ids, block_size)
-
-        # Decode and cache the result
-        decoded = self.tokenizer.decode(final_prompt)
-        self._decoded_cache[cache_key] = decoded
-        return decoded
+        return self.tokenizer.decode(final_prompt)
 
     def _build_token_sequence(
         self,
@@ -269,48 +360,82 @@ class PromptGenerator(BaseGenerator):
         If a hash index is found in `_cache`, its stored tokens are reused.
         Otherwise, new tokens are sampled and stored in `_cache`.
 
+        Three layouts are supported, matching how upstream trace formats record
+        cache structure:
+
+        - **Exact tile** (``len(hash_ids) * block_size == num_tokens``): every
+          hash is a full block.
+        - **Last block partial** (``(M-1)*block_size < num_tokens < M*block_size``):
+          synthetic prompts authored by AIPerf — the final hash maps to a
+          partial block of size ``num_tokens - (M-1)*block_size``.
+        - **Prefix only** (``M*block_size < num_tokens``): real
+          captured traces (e.g. weka kv-cache-tester) where ``hash_ids`` lists
+          only the cached prefix and the un-hashed tail represents fresh
+          tokens. The tail is padded with sampled (uncached) tokens.
+
         Args:
             num_tokens: The number of tokens required in the prompt.
-            hash_ids: A list of hash IDs to use for token reuse.
+            hash_ids: A list of hash IDs covering the cached prefix.
             block_size: The number of tokens allocated per hash block.
 
         Returns:
-            list[int]: A list of token IDs.
+            list[int]: A list of token IDs of length ``num_tokens``.
 
         Raises:
-            ConfigurationError: If the input parameters are not compatible.
+            ConfigurationError: If ``num_tokens <= 0`` or ``block_size <= 0``,
+                or if hash_ids overshoots and the implied partial block size is
+                outside ``(0, block_size]``.
         """
-        final_prompt: list[int] = []
-        current_block_size = block_size
-
-        # Sanity check the final block size
-        final_block_size = num_tokens - ((len(hash_ids) - 1) * block_size)
-        if final_block_size <= 0 or block_size < final_block_size:
+        if num_tokens <= 0 or block_size <= 0:
             raise ConfigurationError(
-                f"Input length: {num_tokens}, Hash IDs: {hash_ids}, Block size: {block_size} "
-                f"are not compatible. The final hash block size: {final_block_size} must be "
-                f"greater than 0 and less than or equal to {block_size}."
+                f"Input length: {num_tokens}, Hash IDs: {hash_ids}, "
+                f"Block size: {block_size} are not compatible. num_tokens "
+                f"and block_size must both be greater than 0."
             )
 
+        m = len(hash_ids)
+        total_hashed = m * block_size
+        final_prompt: list[int] = []
+
+        if not hash_ids:
+            return self._sample_tokens(num_tokens)
+
+        if total_hashed > num_tokens:
+            # Synthetic-prompt path: last hash is a partial block.
+            final_block_size = num_tokens - ((m - 1) * block_size)
+            if final_block_size <= 0 or final_block_size > block_size:
+                raise ConfigurationError(
+                    f"Input length: {num_tokens}, Hash IDs: {hash_ids}, "
+                    f"Block size: {block_size} are not compatible. The final "
+                    f"hash block size: {final_block_size} must be greater than "
+                    f"0 and less than or equal to {block_size}."
+                )
+        else:
+            # Exact-tile or prefix-only path: every hash is a full block.
+            final_block_size = block_size
+
         for index, hash_id in enumerate(hash_ids):
-            # For the last hash ID, use the remaining tokens as the block size
-            if index == len(hash_ids) - 1:
-                current_block_size = final_block_size
-
+            current_block_size = final_block_size if index == m - 1 else block_size
             if hash_id not in self._cache:
-                # To ensure that the prompt doesn't merge chunks, we insert a BOS or EOS token
-                # at the beginning. Length is maintained and the prompt generates the expected
-                # number of tokens. If no BOS or EOS token is available, we don't insert one.
-                prompt_tokens: list[int] = []
-                if self.tokenizer.block_separation_token_id is not None:
-                    prompt_tokens += [self.tokenizer.block_separation_token_id]
-                    prompt_tokens += self._sample_tokens(current_block_size - 1)
-                else:
-                    prompt_tokens += self._sample_tokens(current_block_size)
-
-                self._cache[hash_id] = prompt_tokens  # store to cache
+                # Reseed per-(trace_id, hash_id) so the same hash_id in a
+                # different trace file (different trace_id scope) produces
+                # different tokens. Trace loaders set the trace_id once per
+                # file in BaseTraceDatasetLoader.load_dataset and clear
+                # ``self._cache`` between files.
+                self._hash_id_corpus_rng.reseed_for_hash_id(hash_id)
+                self._cache[hash_id] = sample_tokens_from_corpus(
+                    self._tokenized_corpus,
+                    current_block_size,
+                    self._hash_id_corpus_rng,
+                    self.tokenizer.block_separation_token_id,
+                )
 
             final_prompt.extend(self._cache[hash_id])
+
+        # Prefix-only: pad the un-hashed tail with sampled (uncached) tokens.
+        tail = num_tokens - len(final_prompt)
+        if tail > 0:
+            final_prompt.extend(self._sample_tokens(tail))
 
         return final_prompt
 

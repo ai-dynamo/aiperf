@@ -81,6 +81,12 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        # BurstGPT overrides the base load_dataset (CSV, not JSONL records), so it
+        # must set up the per-file hash_id scope itself (clears the prompt cache
+        # and reseeds the corpus RNG with this file's trace_id) the same way
+        # BaseTraceDatasetLoader.load_dataset does.
+        self._delay_cap_tracker.reset()
+        self._init_trace_scope()
         items: list[BurstGPTTrace] = []
 
         with open(self.filename, newline="", encoding="utf-8") as f:
@@ -102,8 +108,6 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
 
                 items.append(trace)
 
-        self._log_filtering_summary()
-
         data = self._group_traces(items)
         self.debug(
             lambda: (
@@ -114,6 +118,15 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
 
         if _has_meaningful_synthesis(self._synthesis):
             data = self._apply_synthesis(data)
+
+        # Apply --synthesis-max-osl AFTER synthesis (matches the base
+        # load_dataset). This override otherwise returned uncapped output
+        # lengths -- the base-loader refactor moved the cap out of
+        # _filter_and_cap_trace into this grouped pass, which overriding
+        # loaders must call explicitly. Log AFTER the cap so the capped count
+        # is reflected in the summary (matches the base order).
+        data = self._cap_grouped_traces_max_osl(data)
+        self._log_filtering_summary()
 
         return data
 

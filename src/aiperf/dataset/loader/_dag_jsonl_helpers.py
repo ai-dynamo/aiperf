@@ -289,7 +289,7 @@ def validate_non_terminal_branches(conversations: dict[str, Any]) -> None:
                 for bid in turn.branch_ids
                 if (b := branch_by_id.get(bid)) is not None
                 and b.mode == ConversationBranchMode.FORK
-                and not b.background
+                and not b.is_background
             ]
             if offending:
                 raise DagLoadError(

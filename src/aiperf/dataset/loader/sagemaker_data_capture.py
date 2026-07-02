@@ -15,6 +15,7 @@ See https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-data-capture-e
 from __future__ import annotations
 
 import base64
+import binascii
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,20 +37,29 @@ def _parse_iso8601_to_ms(iso_str: str) -> float:
     return dt.timestamp() * 1000.0
 
 
-def _decode_payload(capture_entry: dict[str, Any]) -> dict[str, Any] | None:
+def _decode_payload(
+    capture_entry: dict[str, Any], event_id: str = "<unknown>"
+) -> dict[str, Any] | None:
     """Decode a captureData entry (endpointInput or endpointOutput).
 
     Handles JSON (raw) and BASE64 encoded payloads. Returns None for
-    CSV or unknown encodings.
+    CSV or unknown encodings. A malformed base64 or inner-JSON payload is
+    re-raised as DatasetLoaderError so one bad record does not abort the
+    whole load (matching the per-record attribution in _parse_trace).
     """
     data = capture_entry.get("data")
     if data is None:
         return None
     encoding = capture_entry.get("encoding", "BASE64")
-    if encoding == "JSON":
-        return orjson.loads(data)
-    if encoding == "BASE64":
-        return orjson.loads(base64.b64decode(data))
+    try:
+        if encoding == "JSON":
+            return orjson.loads(data)
+        if encoding == "BASE64":
+            return orjson.loads(base64.b64decode(data))
+    except (binascii.Error, ValueError, orjson.JSONDecodeError) as e:
+        raise DatasetLoaderError(
+            f"Capture record {event_id} payload decode failed: {e}"
+        ) from e
     return None
 
 
@@ -120,7 +130,9 @@ class SageMakerDataCaptureLoader(
             ) from e
 
         try:
-            input_data = _decode_payload(record["captureData"]["endpointInput"])
+            input_data = _decode_payload(
+                record["captureData"]["endpointInput"], event_id
+            )
         except KeyError as e:
             raise DatasetLoaderError(
                 f"Capture record {event_id} missing captureData.endpointInput: {e}"
@@ -132,7 +144,9 @@ class SageMakerDataCaptureLoader(
                 "Only OpenAI-compatible chat endpoints are supported."
             )
 
-        output_data = _decode_payload(record["captureData"].get("endpointOutput", {}))
+        output_data = _decode_payload(
+            record["captureData"].get("endpointOutput", {}), event_id
+        )
         usage = output_data.get("usage", {}) if isinstance(output_data, dict) else {}
 
         max_tokens = input_data.get("max_tokens")
@@ -292,12 +306,20 @@ class SageMakerDataCaptureLoader(
         items = [t for t in raw_items if self._filter_and_cap_trace(t)]
         items.sort(key=lambda t: t.timestamp)
 
-        self._log_filtering_summary()
         self.info(f"Loaded {len(items):,} traces from {source_desc}")
 
         data = self._group_traces(items)
 
         if _has_meaningful_synthesis(self._synthesis):
             data = self._apply_synthesis(data)
+
+        # Apply --synthesis-max-osl AFTER synthesis (matches the base
+        # load_dataset). This override otherwise returned uncapped output
+        # lengths -- the base-loader refactor moved the cap out of
+        # _filter_and_cap_trace into this grouped pass, which overriding
+        # loaders must call explicitly. Log AFTER the cap so the capped count
+        # is reflected in the summary (matches the base order).
+        data = self._cap_grouped_traces_max_osl(data)
+        self._log_filtering_summary()
 
         return data

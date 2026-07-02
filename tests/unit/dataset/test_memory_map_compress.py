@@ -130,6 +130,7 @@ class TestCompressOnlyMetadata:
 
         meta = store.get_client_metadata()
         assert isinstance(meta, MemoryMapClientMetadata)
+        assert meta.compressed is True
         assert meta.compressed_data_file_path is not None
         assert meta.compressed_index_file_path is not None
         assert meta.compressed_size_bytes > 0
@@ -150,6 +151,7 @@ class TestCompressOnlyMetadata:
         await store.finalize()
 
         meta = store.get_client_metadata()
+        assert meta.compressed is False
         assert meta.compressed_data_file_path is None
         assert meta.compressed_index_file_path is None
         assert meta.compressed_size_bytes == 0
