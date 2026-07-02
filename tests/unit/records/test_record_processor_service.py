@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import copy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aiperf.common.inference_wire import build_inference_results_wire_message
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsBatchWireMessage,
@@ -218,6 +220,8 @@ class TestRecordProcessorWireMessages:
         processor.run.cfg = _make_sample_benchmark_config()
         processor.run.cfg.output.records = []
         processor.service_id = "record-processor-1"
+        processor._dataset_configured_event = asyncio.Event()
+        processor._dataset_configured_event.set()
         processor.inference_result_parser = MagicMock()
         processor.inference_result_parser.parse_request_record = AsyncMock(
             return_value=sample_parsed_record
@@ -417,3 +421,97 @@ class TestRecordProcessorShutdownResilience:
         assert isinstance(sent, GroupPeerCommandAck)
         assert sent.cid == "cmd-2"
         processor.debug.assert_not_called()
+
+
+class TestRecordProcessorDatasetConfiguredBarrier:
+    """The record processor must not process inference results until the
+    DatasetConfiguredNotification has been applied to its processors.
+
+    Records (PULL socket) and the notification (SUB socket) arrive on
+    independent channels with no ordering guarantee, so processing must block
+    on an explicit barrier that _on_dataset_configured releases.
+    """
+
+    @staticmethod
+    def _wire_message(sample_request_record):
+        record = copy.deepcopy(sample_request_record)
+        record.responses = []
+        record.turns = record.request_info.turns
+        return build_inference_results_wire_message(
+            service_id="worker-7",
+            record=record,
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_dataset_configured_sets_event(self):
+        """_on_dataset_configured must release the barrier once processors are configured."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.records_processors = []
+
+        await RecordProcessor._on_dataset_configured(mock_self, MagicMock())
+
+        assert mock_self._dataset_configured_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_on_inference_results_waits_for_dataset_configured(
+        self, sample_request_record
+    ):
+        """_on_inference_results must block until the dataset is configured, then proceed."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.inference_result_parser = MagicMock()
+        # First downstream step after the barrier; raising proves the barrier was passed.
+        mock_self.inference_result_parser.parse_request_record = AsyncMock(
+            side_effect=RuntimeError("REACHED_PROCESSING")
+        )
+
+        task = asyncio.create_task(
+            RecordProcessor._on_inference_results(
+                mock_self, self._wire_message(sample_request_record)
+            )
+        )
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        # Barrier not released: processing has not started.
+        assert not task.done()
+        assert not mock_self.inference_result_parser.parse_request_record.called
+
+        # Barrier released: processing proceeds past the wait.
+        mock_self._dataset_configured_event.set()
+        with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
+            await asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_on_inference_results_fails_run_on_config_timeout(
+        self, sample_request_record, monkeypatch
+    ):
+        """On dataset-config timeout, abort the run (report error + kill) rather
+        than process the record without a configured dataset."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self.service_id = "rp-test"
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.publish = AsyncMock()
+        mock_self._kill = AsyncMock()
+        mock_self.inference_result_parser = MagicMock()
+        mock_self.inference_result_parser.parse_request_record = AsyncMock()
+
+        async def _raise_timeout(coro, *args, **kwargs):
+            coro.close()  # avoid "coroutine was never awaited" warning
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(
+            "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
+        )
+
+        await RecordProcessor._on_inference_results(
+            mock_self, self._wire_message(sample_request_record)
+        )
+
+        # Run is failed loudly ...
+        mock_self._kill.assert_awaited_once()
+        published = mock_self.publish.await_args.args[0]
+        assert isinstance(published, BaseServiceErrorMessage)
+        # ... and the record is not processed.
+        mock_self.inference_result_parser.parse_request_record.assert_not_called()

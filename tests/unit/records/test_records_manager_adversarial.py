@@ -136,6 +136,8 @@ def _make_manager(
     """Build a `RecordsManager` mock pre-wired for adversarial tests."""
     mgr = MagicMock()
     mgr.service_id = "records-manager-1"
+    mgr._dataset_configured_event = asyncio.Event()
+    mgr._dataset_configured_event.set()
     mgr._metric_results_processors = legacy_processors or []
     mgr._accumulators = accumulators or {}
     mgr._stream_exporters = stream_exporters or {}

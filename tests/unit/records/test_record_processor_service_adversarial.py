@@ -33,6 +33,7 @@ uncovered:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from types import SimpleNamespace
 from typing import Any
@@ -93,6 +94,8 @@ def _make_processor(
     """Build a `RecordProcessor` mock with `bind_methods` bound to the real fn."""
     proc = MagicMock(spec=RecordProcessor)
     proc.service_id = "rp-1"
+    proc._dataset_configured_event = asyncio.Event()
+    proc._dataset_configured_event.set()
     proc.service_type = "record_processor"
     proc._pending_metric_records = []
     proc._ingest_batch_size = ingest_batch_size

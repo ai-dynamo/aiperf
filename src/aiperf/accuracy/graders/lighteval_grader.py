@@ -108,6 +108,11 @@ class _LightevalBaseGrader(BaseGrader):
 
     _CORRECTNESS_THRESHOLD = 0.5
 
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if lighteval is missing (see ``BaseGrader.check_available``)."""
+        _require_lighteval()
+
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run=run, **kwargs)
         _require_lighteval()

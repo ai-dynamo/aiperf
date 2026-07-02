@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import msgspec
 import pytest
 
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsBatchWireMessage,
@@ -66,9 +68,12 @@ class TestRecordsManagerBatchWire:
             service_id="record-processor-1",
             records=[record_data, record_data],
         )
+        dataset_configured_event = asyncio.Event()
+        dataset_configured_event.set()
         manager = SimpleNamespace(
             is_trace_enabled=False,
             trace=MagicMock(),
+            _dataset_configured_event=dataset_configured_event,
             _records_tracker=MagicMock(),
             _send_results_to_results_processors=AsyncMock(),
             _error_tracker=MagicMock(),
@@ -154,3 +159,89 @@ class TestRecordsManagerTimeslice:
         assert result_dict["timeslice_metric_results"] is not None
         assert 0 in result_dict["timeslice_metric_results"]
         assert 1 in result_dict["timeslice_metric_results"]
+
+
+class TestRecordsManagerDatasetConfiguredBarrier:
+    """The records manager must not run metric records through its results
+    processors until the DatasetConfiguredNotification has been applied.
+
+    Metric records (PULL socket) and the notification (SUB socket) arrive on
+    independent channels with no ordering guarantee, so processing must block
+    on an explicit barrier that _on_dataset_configured releases.
+    """
+
+    @pytest.mark.asyncio
+    async def test_on_dataset_configured_sets_event(self):
+        """_on_dataset_configured must release the barrier once processors are configured."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self._metric_results_processors = []
+
+        await RecordsManager._on_dataset_configured(mock_self, MagicMock())
+
+        assert mock_self._dataset_configured_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_on_metric_records_waits_for_dataset_configured(self):
+        """_on_metric_records must block until the dataset is configured, then proceed."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.is_trace_enabled = False
+        # First downstream step after the barrier; raising proves the barrier was passed.
+        mock_self._process_metric_record_data = AsyncMock(
+            side_effect=RuntimeError("REACHED_PROCESSING")
+        )
+        record_data = create_metric_record_data(100, 200, {"request_latency": 1.0})
+        message = MetricRecordsBatchWireMessage(
+            service_id="record-processor-rp-7f2a",
+            records=[record_data],
+        )
+
+        task = asyncio.create_task(
+            RecordsManager._on_metric_records(mock_self, message)
+        )
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        # Barrier not released: processing has not started.
+        assert not task.done()
+        assert not mock_self._process_metric_record_data.called
+
+        # Barrier released: processing proceeds past the wait.
+        mock_self._dataset_configured_event.set()
+        with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
+            await asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_on_metric_records_fails_run_on_config_timeout(self, monkeypatch):
+        """On dataset-config timeout, abort the run (report error + kill) rather
+        than process the record without a configured dataset."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self.service_id = "rm-test"
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.is_trace_enabled = False
+        mock_self.publish = AsyncMock()
+        mock_self._kill = AsyncMock()
+        mock_self._process_metric_record_data = AsyncMock()
+        record_data = create_metric_record_data(100, 200, {"request_latency": 1.0})
+        message = MetricRecordsBatchWireMessage(
+            service_id="record-processor-rp-7f2a",
+            records=[record_data],
+        )
+
+        async def _raise_timeout(coro, *args, **kwargs):
+            coro.close()  # avoid "coroutine was never awaited" warning
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(
+            "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
+        )
+
+        await RecordsManager._on_metric_records(mock_self, message)
+
+        # Run is failed loudly ...
+        mock_self._kill.assert_awaited_once()
+        published = mock_self.publish.await_args.args[0]
+        assert isinstance(published, BaseServiceErrorMessage)
+        # ... and the record is not processed.
+        mock_self._process_metric_record_data.assert_not_called()

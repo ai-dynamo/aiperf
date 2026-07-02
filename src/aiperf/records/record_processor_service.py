@@ -62,6 +62,7 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
+from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 
@@ -119,6 +120,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self._on_pod_lifecycle_message
             )
 
+        # DatasetConfiguredNotification (SUB) and inference results (PULL) arrive on
+        # independent channels with no ordering guarantee. Gate record processing on
+        # this event so processors are configured (e.g. accuracy ground truths) before
+        # any record is graded.
+        self._dataset_configured_event: asyncio.Event = asyncio.Event()
+
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
             try:
@@ -149,6 +156,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         for processor in self.records_processors:
             if hasattr(processor, "on_dataset_configured"):
                 processor.on_dataset_configured(message.metadata)
+        self._dataset_configured_event.set()
 
     def _uses_controller_control_channel(self) -> bool:
         """Record processors stay off the controller control channel in group mode."""
@@ -403,6 +411,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
         """Handle an inference results message."""
+        if not await await_dataset_configured(self, self._dataset_configured_event):
+            return
         worker_id, record = wire_message_to_request_record(
             message=message,
         )

@@ -84,6 +84,7 @@ from aiperf.plugin.enums import (
     UIType,
 )
 from aiperf.post_processors.protocols import ResultsProcessorProtocol
+from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager_export import (
     current_results_record_count,
@@ -146,6 +147,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._records_tracker = RecordsTracker()
         self._error_tracker = ErrorTracker()
+
+        # DatasetConfiguredNotification (SUB) and metric records (PULL) arrive on
+        # independent channels with no ordering guarantee. Gate record processing on
+        # this event so results processors are configured (e.g. accuracy task names)
+        # before any record is accumulated.
+        self._dataset_configured_event: asyncio.Event = asyncio.Event()
 
         # Latest DAG branch-orchestration counters, captured from the
         # PROFILING phase's CreditPhaseCompleteMessage and threaded into
@@ -293,6 +300,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: MetricRecordsWireMessage | MetricRecordsBatchWireMessage
     ) -> None:
         """Handle a metric records message."""
+        if not await await_dataset_configured(self, self._dataset_configured_event):
+            return
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
@@ -530,6 +539,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for processor in self._metric_results_processors:
             if hasattr(processor, "on_dataset_configured"):
                 processor.on_dataset_configured(message.metadata)
+        self._dataset_configured_event.set()
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(
