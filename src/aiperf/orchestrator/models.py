@@ -37,6 +37,7 @@ class RunResult(AIPerfBaseModel):
     )
     variation_index: int = Field(
         default=0,
+        ge=0,
         description="Zero-based variation index; mirror of variation.index. Used to derive a unique fallback directory name.",
     )
     trial_index: int = Field(
