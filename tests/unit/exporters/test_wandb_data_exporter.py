@@ -90,6 +90,7 @@ def fake_wandb(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "artifact_files": [],
         "logged_artifacts": [],
         "finished": False,
+        "metadata_output": {},
     }
 
     class FakeArtifact:
@@ -120,14 +121,35 @@ def fake_wandb(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             self.columns = columns
             self.data = data
 
+    class FakeSettings:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
     def fake_init(**kwargs: Any) -> FakeRun:
         state["init_kwargs"] = kwargs
+        settings = kwargs.get("settings")
+        if not getattr(settings, "x_disable_meta", False):
+            state["metadata_output"] = {
+                "wandb-metadata.json": {"args": sys.argv[1:]},
+                "config.yaml": {
+                    "_wandb": {
+                        "value": {
+                            "e": {
+                                "writer-id": {"args": sys.argv[1:]},
+                            }
+                        }
+                    }
+                },
+            }
         return FakeRun()
 
     fake_module = types.ModuleType("wandb")
     fake_module.init = fake_init  # type: ignore[attr-defined]
     fake_module.Table = FakeTable  # type: ignore[attr-defined]
     fake_module.Artifact = FakeArtifact  # type: ignore[attr-defined]
+    fake_module.Settings = FakeSettings  # type: ignore[attr-defined]
     state["table_cls"] = FakeTable
     monkeypatch.setitem(sys.modules, "wandb", fake_module)
     return state
@@ -183,6 +205,9 @@ class TestWandbDataExporter:
         assert init_kwargs["project"] == "aiperf-dev"
         assert init_kwargs["name"] == "my-run"
         assert "aa-repro" in init_kwargs["tags"]
+        settings = init_kwargs["settings"]
+        assert settings.x_disable_meta is True
+        assert settings.save_code is False
         config = init_kwargs["config"]
         assert config["models"]["items"][0]["name"] == "test-model"
         assert config["phases"][0]["concurrency"] == 1
@@ -280,6 +305,44 @@ class TestWandbDataExporter:
         cli_command = fake_wandb["init_kwargs"]["config"]["aiperf.cli_command"]
         assert "secret" not in cli_command
         assert cli_command.startswith("aiperf profile")
+
+    @pytest.mark.asyncio
+    async def test_export_disables_wandb_metadata_capture_with_secrets_in_argv(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        fake_wandb: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """W&B captures raw sys.argv in its own metadata unless disabled.
+
+        AIPerf's uploaded config is redacted separately; this locks in the
+        setting that prevents W&B from independently persisting argv secrets.
+        """
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "aiperf",
+                "profile",
+                "--api-key",
+                "sk-secret-key",
+                "--header",
+                "Authorization: Bearer test-secret-token",
+                "--wandb-project",
+                "aiperf-qa",
+            ],
+        )
+
+        exporter = _make_exporter(_make_cfg(tmp_path), sample_results)
+        await asyncio.to_thread(exporter._export_sync)
+
+        settings = fake_wandb["init_kwargs"]["settings"]
+        assert settings.x_disable_meta is True
+        assert settings.save_code is False
+        metadata_output = str(fake_wandb["metadata_output"])
+        assert "sk-secret-key" not in metadata_output
+        assert "Authorization: Bearer test-secret-token" not in metadata_output
 
     @pytest.mark.asyncio
     async def test_export_config_payload_redacts_api_key(
