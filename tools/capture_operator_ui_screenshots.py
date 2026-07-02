@@ -40,7 +40,6 @@ from playwright.async_api import async_playwright
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from aiperf.operator.results_server import create_app  # noqa: E402
 from tests.e2e.operator_ui.conftest import (  # noqa: E402
     CACHEABLE_HOSTS,
     GOLDEN_K8S,
@@ -52,6 +51,8 @@ from tests.e2e.operator_ui.conftest import (  # noqa: E402
     _load_cdn_cached,
     _pod_raw_to_v1pod,
 )
+
+from aiperf.operator.results_server import create_app  # noqa: E402
 
 # Route → output-filename mapping. Order matters only for console readability.
 ROUTES = [

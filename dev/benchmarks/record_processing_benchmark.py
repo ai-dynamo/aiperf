@@ -40,8 +40,6 @@ import zmq.asyncio
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
-
 from aiperf.common.enums import ExportLevel
 from aiperf.common.inference_wire import (
     build_inference_results_wire_message,
@@ -82,6 +80,7 @@ from aiperf.dataset.memory_map_utils import (
     MemoryMapDatasetClientStore,
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.records.inference_result_parser import InferenceResultParser
 from aiperf.records.record_processor_service import RecordProcessor
 from aiperf.records.records_manager import RecordsManager

@@ -347,6 +347,8 @@ Sweep-controller pod settings. Used by the sweep-controller pod (`aiperf.sweep_c
 |----------------------|---------|-------------|-------------|
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_DELETION_TIMEOUT_SECONDS` | `60.0` | > 0, ≤ 600 | Max seconds the sweep-controller will wait for a same-named AIPerfJob from a prior sweep run to finish cascade-deletion before raising ChildNameConflictError. Hit when a user deletes and recreates a sweep with the same name while old children are still terminating. |
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_POLL_INTERVAL_SECONDS` | `2.0` | > 0, ≤ 30 | Poll interval (seconds) while waiting for a deleting same-named AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS. |
+| `AIPERF_SWEEP_CONTROLLER_CANCEL_GRACE_SECONDS` | `120.0` | > 0, ≤ 3600 | Max seconds the sweep-controller will keep polling a child AIPerfJob for a terminal phase after requesting cancel before giving up and advancing the sweep. Bounds the post-cancel wait so a stuck child (stalled operator cancel path, wedged pod, repeatedly-failing JobSet delete) cannot wedge the whole sweep indefinitely. |
+| `AIPERF_SWEEP_CONTROLLER_CHILD_MISSING_TIMEOUT_SECONDS` | `300.0` | > 0, ≤ 3600 | Max seconds the sweep-controller will keep polling for a child AIPerfJob that has gone missing (404) before its terminal phase, with no cancel requested, before giving up and advancing the sweep. Hit when a user (or the kube garbage collector) deletes a child AIPerfJob out-of-band mid-run; without this bound the sequential sweep wedges forever on the deleted variation. |
 
 ## TIMING
 

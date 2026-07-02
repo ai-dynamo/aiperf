@@ -154,4 +154,3 @@ class TestRecordsManagerTimeslice:
         assert result_dict["timeslice_metric_results"] is not None
         assert 0 in result_dict["timeslice_metric_results"]
         assert 1 in result_dict["timeslice_metric_results"]
-
