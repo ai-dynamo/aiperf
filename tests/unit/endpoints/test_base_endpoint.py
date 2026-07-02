@@ -257,3 +257,44 @@ class TestBaseEndpointAbstractMethods:
 
         with pytest.raises(TypeError):
             IncompleteEndpoint(model_endpoint=test_model_endpoint)
+
+
+class TestBuildMessagesResetContext:
+    """Byte-critical: build_messages must honor Turn.reset_context.
+
+    weka emits reset_context=True at a mid-segment LCP cut, where the prior
+    accumulated message array is discarded rather than extended. Main's model
+    has the field; this verifies build_messages acts on it.
+    """
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="http://localhost:8000/v1/test"
+        )
+        return create_endpoint_with_mock_transport(MockEndpoint, model_endpoint)
+
+    def test_extend_when_reset_context_false(self, endpoint):
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(raw_messages=[{"role": "user", "content": "C"}]),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["A", "B", "C"]
+
+    def test_reset_context_discards_prior_messages(self, endpoint):
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(
+                raw_messages=[{"role": "user", "content": "RESET"}],
+                reset_context=True,
+            ),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["RESET"]

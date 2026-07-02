@@ -909,3 +909,52 @@ class TestResponsesExtraBody:
         )
         payload = responses_endpoint.format_payload(request_info)
         assert "vendor_x" not in payload
+
+
+class TestResponsesBuildMessagesResetContext:
+    """ResponsesEndpoint.build_messages must honor reset_context (discard prior
+    accumulated turns) like BaseEndpoint.build_messages. The v2 Responses
+    override duplicated the flatten-and-filter skeleton but dropped the reset,
+    leaving pre-reset items on the wire -- breaking weka delta-replay ISL and
+    the worker's cache-bust prefix slice for endpoint=responses."""
+
+    @pytest.fixture
+    def endpoint(self):
+        return create_endpoint_with_mock_transport(
+            ResponsesEndpoint, create_model_endpoint(EndpointType.RESPONSES)
+        )
+
+    def test_reset_context_discards_prior_turns(self, endpoint):
+        turns = [
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "OLD"}],
+            ),
+            Turn(
+                role="assistant",
+                raw_messages=[
+                    {"type": "message", "role": "assistant", "content": "OLD reply"}
+                ],
+            ),
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "FRESH"}],
+                reset_context=True,
+            ),
+        ]
+        msgs = endpoint.build_messages(turns)
+        assert [m["content"] for m in msgs] == ["FRESH"]
+
+    def test_non_reset_turns_extend(self, endpoint):
+        turns = [
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "A"}],
+            ),
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "B"}],
+            ),
+        ]
+        msgs = endpoint.build_messages(turns)
+        assert [m["content"] for m in msgs] == ["A", "B"]
