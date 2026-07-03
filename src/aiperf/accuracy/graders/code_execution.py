@@ -90,10 +90,15 @@ class CodeExecutionGrader(BaseGrader):
     raised an exception during execution.
     """
 
-    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
-        super().__init__(run=run, **kwargs)
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if lighteval is missing (see ``BaseGrader.check_available``)."""
         if not _HAS_LIGHTEVAL_LCB:
             raise RuntimeError(_MISSING_LIGHTEVAL_HINT)
+
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(run=run, **kwargs)
+        self.check_available()
 
     def extract_answer(self, response_text: str, **kwargs: Any) -> str:
         """Return the code block lighteval would extract from the response.

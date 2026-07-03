@@ -140,10 +140,20 @@ class BigBenchBenchmark(AIPerfLoggerMixin):
     ``ExactMatchGrader`` for the recipe's strict equality scoring.
     """
 
-    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if deepeval is missing (see grader ``check_available``).
+
+        Called by the main-process preflight so a missing optional dependency
+        surfaces as a clean ConfigurationError before any service spawns,
+        rather than raising deep in the dataset-manager loader.
+        """
         if not _HAS_DEEPEVAL:
             raise RuntimeError(_MISSING_DEEPEVAL_HINT)
+
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.check_available()
         self.run = run
 
     async def load_problems(
