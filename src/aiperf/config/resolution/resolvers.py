@@ -152,7 +152,7 @@ class ArtifactDirResolver:
 
             metadata = plugins.get_endpoint_metadata(cfg.endpoint.type)
             parts.append(f"{metadata.service_kind}-{cfg.endpoint.type}")
-        except Exception:  # noqa: BLE001 - missing/partial plugin registry must not fail artifact-dir naming; falls back to str(endpoint.type)
+        except Exception:  # missing/partial plugin registry must not fail artifact-dir naming; falls back to str(endpoint.type)
             parts.append(str(cfg.endpoint.type))
 
         # 3. Stimulus from the first non-warmup phase

@@ -38,7 +38,7 @@ def _pool_without_guard(queue: mp.Queue) -> None:
         with ProcessPoolExecutor(max_workers=1) as executor:
             list(executor.map(_double, [1, 2, 3]))
         queue.put(("ok", None))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         queue.put(("error", repr(exc)))
 
 
@@ -50,7 +50,7 @@ def _pool_with_guard(queue: mp.Queue) -> None:
         with allow_daemon_children(), ProcessPoolExecutor(max_workers=1) as executor:
             result = list(executor.map(_double, [1, 2, 3]))
         queue.put(("ok", result))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         queue.put(("error", repr(exc)))
 
 

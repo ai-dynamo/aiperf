@@ -206,7 +206,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             return len(self._gpus) > 0
         try:
             return await asyncio.to_thread(self._probe_devices)
-        except Exception:  # noqa: BLE001 - reachability probe must never raise
+        except Exception:  # reachability probe must never raise
             return False
 
     def _probe_devices(self) -> bool:
@@ -295,7 +295,7 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                 return
             try:
                 amdsmi.amdsmi_shut_down()
-            except Exception as e:  # noqa: BLE001 - shutdown is best-effort
+            except Exception as e:  # shutdown is best-effort
                 self.warning(f"Error during amdsmi shutdown: {e!r}")
             finally:
                 self._initialized = False
@@ -326,11 +326,11 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
             records = await asyncio.to_thread(self._collect_gpu_metrics)
             if records and self._record_callback:
                 await self._record_callback(records, self.id)
-        except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+        except Exception as e:  # fault-tolerant telemetry
             if self._error_callback:
                 try:
                     await self._error_callback(ErrorDetails.from_exception(e), self.id)
-                except Exception as cb_err:  # noqa: BLE001 - callback failure must not propagate
+                except Exception as cb_err:  # callback failure must not propagate
                     self.error(f"Failed to send error via callback: {cb_err}")
             else:
                 self.error(f"Metrics collection error: {e}")

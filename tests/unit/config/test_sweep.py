@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for sweep configuration models and expansion."""
 
+import warnings
+
 import pytest
 from pydantic import ValidationError
 from pytest import param
@@ -65,6 +67,29 @@ class TestSweepModels:
     def test_scenario_sweep_forbids_extra(self):
         with pytest.raises(ValidationError):
             ScenarioSweep(runs=[{"x": 1}], unknown="bad")
+
+    @pytest.mark.parametrize(
+        "bad_name",
+        [
+            param("../outside", id="parent_traversal"),
+            param("a/b", id="forward_slash"),
+            param("a\\b", id="backslash"),
+            param("..", id="dot_dot"),
+            param(".", id="single_dot"),
+            param("...", id="triple_dot"),
+        ],
+    )  # fmt: skip
+    def test_scenario_sweep_rejects_path_unsafe_names(self, bad_name):
+        """A scenario `name:` becomes a directory segment; path separators or
+        `..` could write artifacts outside the run dir, so reject them up
+        front with a clear error rather than silently sanitizing."""
+        with pytest.raises(ValidationError, match="path-unsafe"):
+            ScenarioSweep(runs=[{"name": bad_name, "phases": {"concurrency": 8}}])
+
+    def test_scenario_sweep_allows_safe_names(self):
+        """Readable names with dots/hyphens are accepted unchanged."""
+        sweep = ScenarioSweep(runs=[{"name": "aa-1k", "phases": {"concurrency": 8}}])
+        assert sweep.runs[0]["name"] == "aa-1k"
 
 
 class TestExpandSweep:
@@ -186,6 +211,67 @@ class TestExpandSweep:
         # Other fields preserved (deep-merge by name keeps base requests=10)
         assert self._phase(result[0][0], "profiling")["requests"] == 10
         assert self._phase(result[1][0], "profiling")["requests"] == 10
+
+    def test_scenario_unnamed_nested_overrides_warns_and_uses_positional_label(self):
+        """Nested overrides can't produce a readable dir name; without a
+        `name:` the dir falls back to `scenario_N`. Warn so the user can add
+        one, and confirm the positional fallback still yields a safe name."""
+        data = self._base_config(
+            sweep={
+                "type": "scenarios",
+                "runs": [
+                    {"benchmark": {"phases": [{"name": "profiling", "requests": 20}]}},
+                ],
+            }
+        )
+        with pytest.warns(UserWarning, match=r"no 'name:'"):
+            result = expand_sweep(data)
+        assert result[0][1].label == "scenario_0"
+        assert result[0][1].dir_name == "scenario_0"
+
+    def test_scenario_named_nested_overrides_does_not_warn(self):
+        """An explicit `name:` produces a readable dir name, so no nudge."""
+        data = self._base_config(
+            sweep={
+                "type": "scenarios",
+                "runs": [
+                    {
+                        "name": "aa-1k",
+                        "benchmark": {
+                            "phases": [{"name": "profiling", "requests": 20}]
+                        },
+                    },
+                ],
+            }
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = expand_sweep(data)
+        assert not any("no 'name:'" in str(w.message) for w in caught)
+        assert result[0][1].dir_name == "aa-1k"
+
+    def test_scenario_unnamed_flat_values_does_not_warn(self):
+        """Flat scalar overrides yield a readable `{leaf}_{value}` dir name,
+        so there is no positional fallback and no nudge even without a
+        `name:`."""
+        data = self._base_config(
+            sweep={
+                "type": "scenarios",
+                "runs": [
+                    {
+                        "values": {"phases.profiling.concurrency": 8},
+                        "benchmark": {
+                            "phases": [{"name": "profiling", "concurrency": 8}]
+                        },
+                    },
+                ],
+            }
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = expand_sweep(data)
+        assert not any("no 'name:'" in str(w.message) for w in caught)
+        assert result[0][1].dir_name == "concurrency_8"
 
     def test_magic_list_detection(self):
         data = self._base_config()
@@ -1260,11 +1346,58 @@ class TestSweepVariationDirName:
         # Format is `{last_seg}_{value}` => "rate_5.0-rps_v2".
         assert v.dir_name == "rate_5.0-rps_v2"
 
-    def test_label_fallback_path_is_not_sanitized(self):
-        """Fallback to `label` skips the sanitizer (label is user-controlled
-        but already validated upstream by sweep-name uniqueness checks).
-        Pin this so a refactor that double-sanitizes the label doesn't
-        silently strip user-meaningful characters from named scenarios.
-        """
+    def test_label_fallback_preserves_safe_chars(self):
+        """The label fallback is sanitized (a user-supplied scenario name
+        reaches `dir_name` and must not inject path segments), but safe
+        characters -- dots, hyphens -- survive so readable names are kept."""
         v = SweepVariation(index=0, label="scenario.with.dots", values={})
         assert v.dir_name == "scenario.with.dots"
+
+    def test_label_fallback_sanitizes_path_traversal(self):
+        """An unsafe label reaching the fallback is stripped of traversal
+        characters so artifacts stay inside the run directory. The
+        scenario-sweep model also rejects such names upstream; this is the
+        point-of-use backstop for any label from another source."""
+        v = SweepVariation(index=0, label="../../etc", values={})
+        assert "/" not in v.dir_name
+        assert ".." not in v.dir_name
+
+    def test_label_that_sanitizes_to_empty_falls_back_to_index(self):
+        """A label made entirely of separators/`..` sanitizes to "". Without a
+        final fallback `dir_name` would be "" and `base_dir / ""` collapses to
+        `base_dir`, so runs would overwrite each other. The index-based
+        segment keeps it non-empty and unique."""
+        v = SweepVariation(index=3, label="../..", values={})
+        assert v.dir_name == "variation_3"
+
+    def test_label_that_is_all_dots_falls_back_to_index(self):
+        """A dot-only label sanitizes to "" (it would resolve to the current
+        dir, collapsing `base_dir / dir_name` to `base_dir`); the index
+        fallback keeps dir_name non-empty and unique."""
+        assert SweepVariation(index=2, label=".", values={}).dir_name == "variation_2"
+        assert SweepVariation(index=5, label="...", values={}).dir_name == "variation_5"
+
+    def test_nested_dict_value_falls_back_to_label(self):
+        """Scenario sweeps without an explicit `values:` block carry the whole
+        override subtree in `values`; stringifying a nested dict produced
+        unreadable per-run dirs like `benchmark_{'phases': [...]}`. Fall back
+        to the human-authored label instead."""
+        v = SweepVariation(
+            index=0,
+            label="aa-1k",
+            values={
+                "benchmark": {
+                    "phases": [{"name": "profiling", "requests": 10}],
+                    "datasets": [{"name": "default"}],
+                }
+            },
+        )
+        assert v.dir_name == "aa-1k"
+
+    def test_nested_list_value_falls_back_to_label(self):
+        v = SweepVariation(
+            index=0,
+            label="aa-10k",
+            values={"phases": [{"name": "profiling", "requests": 20}]},
+        )
+        assert v.dir_name == "aa-10k"

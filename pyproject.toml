@@ -176,20 +176,15 @@ select = [
 # can have some lines that are slightly over due to the way formatting works
 ignore = ["E501"]
 
-# LLM-ergonomics rules (PLR0915, PLR0912, C901, TID251) are deliberately
-# NOT in `select` above. They are enforced out-of-band via
+# LLM-ergonomics rules (C901, TID251, S110, S112, ANN201, D103) are
+# deliberately NOT in `select` above. They are enforced out-of-band via
 # ``tools/ruff_baselined.py``, which filters ruff's output through
 # ``tools/ruff_baseline.json`` (keyed on (rule, file, function-name)). This
 # avoids per-line ``# noqa`` noise and per-file exemptions while still
 # catching NEW violations in files that already have grandfathered ones.
 # The threshold/config blocks below are kept so that ``ruff check --select
-# PLR0915,...`` (invoked by the wrapper and available for ad-hoc runs)
+# C901,...`` (invoked by the wrapper and available for ad-hoc runs)
 # honors the project's tunings.
-
-[tool.ruff.lint.pylint]
-# Match tools/check_ergonomics.py thresholds.
-max-statements = 50  # function-size proxy (custom tool targets 80 lines)
-max-branches = 12    # nesting proxy (custom tool targets depth 5)
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

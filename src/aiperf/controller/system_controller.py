@@ -999,7 +999,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             # mask MemoryError, AssertionError from test injection, and any
             # other real bugs in the reporting code path.
             self.error(f"Post-shutdown reporting failed (continuing to exit): {e!r}")
-        except Exception:  # noqa: BLE001 - last-chance guard; logs full traceback
+        except Exception:  # last-chance guard; logs full traceback
             # Anything else: log full traceback to the file handler so the
             # bug is recoverable instead of being reduced to a one-line repr.
             self.exception(
