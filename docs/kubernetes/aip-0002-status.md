@@ -35,7 +35,7 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 | REQ 1 | Multi-pod distributed deployment via JobSet; Worker + RecordProcessor 1:1 sidecar | 🌟 | JobSet emitted (`kubernetes/jobset.py:235-256`); worker pod runs WPM + N workers + M RPs (scale factor default 1) — more flexible per-pod ratio than fixed 1:1. |
 | REQ 2 | Direct Kubernetes API integration for all components | 🌟 | Full kopf operator + `AIPerfJob` CRD reconcile loop (explicit AIP-0002 post-MVP future work); CLI-direct fallback exists at `profile_deploy_direct.py`. |
 | REQ 3 | Sustain ≥100K concurrency; scale to 1M+ | 🟡 | 1M+ ramps validated in memory (see `project_k8s_durability_ramp_*.md`), but integration test suite only exercises ≤10 workers (`tests/kubernetes/test_scaling.py`). |
-| REQ 4 | Preserve ZMQ (TCP inter-pod, IPC intra-pod) | ✅ | Full dual-bind / locality-aware resolver implemented in `zmq/_zmq_dual_bind.py`, `zmq/zmq_base_client.py:164-241`. |
+| REQ 4 | Preserve ZMQ (TCP inter-pod, IPC intra-pod) | ✅ | Full dual-bind / locality-aware resolver implemented in `config/comm/dual_bind.py`, `zmq/zmq_base_client.py:164-241`. |
 | REQ 5 | Lifecycle: deploy, execute, cleanup; `aiperf attach`; auto-cleanup on failure | 🌟 | All covered via richer surfaces: deploy/execute/attach ✅, cancel via `spec.cancel=true` CR field, cleanup via `kubectl delete aiperfjob` + ownerReferences GC + time-based results TTL. |
 | REQ 6 | Simple DX for 1M+ concurrency; basic K8s security hygiene | 🟡 | Operator path works but requires Helm install + CRD; spec's single-command `aiperf profile --kubernetes` flow is absent. |
 
@@ -67,12 +67,12 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 
 | Channel | Status | Notes |
 |---|---|---|
-| CREDIT_ROUTER IPC+TCP | ✅ | `_zmq_dual_bind.py:216-220, 251-253`; `credit/sticky_router.py:127-163` binds TCP additional address. |
+| CREDIT_ROUTER IPC+TCP | ✅ | `config/comm/dual_bind.py:216-220, 251-253`; `credit/sticky_router.py:127-163` binds TCP additional address. |
 | RAW_INFERENCE IPC-only (Worker → sidecar direct, bypassing proxy) | ✅ | Raw-inference proxy runs **inside each worker pod** via `WorkerGroupManager` (`workers/worker_pod_manager.py:126` `ProxyManager(enable_raw_inference=True)`); worker push → proxy → RP pull all happen over IPC in the shared emptyDir — no TCP. Proxy enables multi-worker fan-in to shared RPs at configurable RP:worker ratio. Spec's IPC intent met. |
-| RECORDS IPC+TCP | ✅ | `records/records_manager.py:97-111` + `_zmq_dual_bind.py:209-213, 261-263`. |
+| RECORDS IPC+TCP | ✅ | `records/records_manager.py:97-111` + `config/comm/dual_bind.py:209-213, 261-263`. |
 | EVENT_BUS_PROXY IPC+TCP | ✅ | Both IPC + TCP (`ZMQDualBindProxyConfig`); defaults 5663/5664 via `zmq/zmq_proxy_base.py:111,118`. |
 | Dual-bind proxies (IPC + TCP on same proxy) | ✅ | `zmq_base_client.py:164-241` binds primary, then `_bind_additional_address`. |
-| Locality-based transport selection in services | ✅ | `_zmq_dual_bind.py:_resolve()` selects TCP when `controller_host` is set, IPC otherwise; workers get `controller_host` via `K8sEnvironment.ZMQ.CONTROLLER_HOST`. |
+| Locality-based transport selection in services | ✅ | `config/comm/dual_bind.py:_resolve()` selects TCP when `controller_host` is set, IPC otherwise; workers get `controller_host` via `K8sEnvironment.ZMQ.CONTROLLER_HOST`. |
 | Configurable ZMQ addresses (M1) | ✅ | Full Pydantic config tree in `config/_models_comm.py` (Ipc / Tcp / DualBind), resolved in `config/_comm.py` + `config/resolvers.py:205-250`. |
 
 ---

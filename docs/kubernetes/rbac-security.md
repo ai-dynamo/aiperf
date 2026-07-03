@@ -299,7 +299,7 @@ in the benchmark namespace, allow:
 
 | Source | Destination | Ports | Reason |
 |---|---|---|---|
-| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668). See `src/aiperf/config/_zmq_tcp.py:85-130` (and the dual-bind variant in `src/aiperf/config/_zmq_dual_bind.py:161-200`). |
+| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668). See `src/aiperf/config/comm/tcp.py:85-130` (and the dual-bind variant in `src/aiperf/config/comm/dual_bind.py:161-200`). |
 | All benchmark pods | Controller pod | 8080-8088 (TCP) | Health and readiness probes (`src/aiperf/kubernetes/environment.py:180-215`) |
 | Client / ingress | API service | 9090 (TCP) | UI dispatch, progress streaming (`environment.py:195-196`) |
 | Client / ingress | Results sidecar | 9091 (TCP) | Post-run result downloads (`environment.py:197-203`) |

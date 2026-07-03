@@ -477,7 +477,7 @@ class TestResultsFileContentType:
 
 
 class TestFinalResultsHandler:
-    """Test the @on_message handler from FinalResultsMixin."""
+    """Test the @on_message handler on ResultsRouter."""
 
     @pytest.mark.asyncio
     async def test_on_process_records_result_stores_results(

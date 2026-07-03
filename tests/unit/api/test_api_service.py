@@ -864,8 +864,8 @@ class TestZmqSubscriptionManagement:
         mock_fastapi_service.subscribe.assert_not_called()
 
 
-class TestFinalResultsMixin:
-    """Test FinalResultsMixin message handling in FastAPIService."""
+class TestResultsRouterFinalResults:
+    """Test ResultsRouter final-results message handling in FastAPIService."""
 
     @pytest.mark.asyncio
     async def test_on_process_records_result_stores_results(

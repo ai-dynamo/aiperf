@@ -1748,9 +1748,9 @@ sweep_curves.tokens_in_flight_ts        # token load step function
 sweep_curves.tokens_in_flight
 ```
 
-**Step function utilities**: The existing `_step_lookup()`,
-`add_step_functions()`, and `divide_step_functions()` functions provide the
-mathematical operations needed for cross-signal analysis.
+**Step function utilities**: The existing `_step_lookup()` and
+`divide_step_functions()` functions provide the mathematical operations
+needed for cross-signal analysis.
 
 ### 12.5 Configuration Model
 

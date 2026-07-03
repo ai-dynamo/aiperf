@@ -312,7 +312,7 @@ Two things that surprise people:
 | Concept | File |
 |---|---|
 | Envelope, body, multi-run | `src/aiperf/config/{config,benchmark,multi_run}.py` |
-| Sweep variants + expansion | `src/aiperf/config/{sweep,_sweep_expand}.py` |
+| Sweep variants + expansion | `src/aiperf/config/sweep/{config,expand}.py` |
 | Plan loader (CLI/YAML → plan) | `src/aiperf/config/loader/plan.py` |
 | Orchestrator | `src/aiperf/orchestrator/orchestrator.py` |
 | Executors | `src/aiperf/orchestrator/{executor,local_executor}.py`, `src/aiperf/sweep_controller/k8s_executor.py` |

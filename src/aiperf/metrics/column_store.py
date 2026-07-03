@@ -33,8 +33,8 @@ def _resolve_list_backend_class() -> type[ListMetricBackendT]:
     Resolved on each ColumnStore construction so test-time monkey-patching of
     the env singleton takes effect without a process restart.
     """
-    # Defer import: environment -> _env_data is read at module init of
-    # several siblings, so importing eagerly risks a cycle.
+    # Defer import: environment.py is read at module init of several
+    # siblings, so importing eagerly risks a cycle.
     from aiperf.common.environment import Environment
 
     if Environment.METRICS.LIST_BACKEND == "tdigest":

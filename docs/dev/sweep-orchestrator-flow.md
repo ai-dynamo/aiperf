@@ -131,7 +131,7 @@ flowchart TD
     end
 
     subgraph BUILD["expand / render"]
-        expand["expand_sweep (config/_sweep_expand.py)<br/>grid: cartesian over sweep.variables<br/>scenarios: deep-merge runs[i].benchmark<br/>adaptive_search: 1-element placeholder"]
+        expand["expand_sweep (config/sweep/expand.py)<br/>grid: cartesian over sweep.variables<br/>scenarios: deep-merge runs[i].benchmark<br/>adaptive_search: 1-element placeholder"]
         jinja["per-variation Jinja render<br/>(variables overlay)"]
         bp["BenchmarkPlan<br/>configs[N], variations[N],<br/>variation_seeds[N], trials,<br/>multi_run, sweep, failure_policy"]
     end
@@ -620,10 +620,9 @@ sequenceDiagram
 | `BenchmarkPlan`, `BenchmarkRun`, `ResolvedConfig` | `src/aiperf/config/benchmark.py` |
 | `MultiRunConfig`, `ConvergenceConfig` | `src/aiperf/config/multi_run.py` |
 | `SweepConfig` union / `GridSweep` / `ScenarioSweep` / `AdaptiveSearchSweep` / `AdaptiveObjective` / `SweepVariation` | `src/aiperf/config/sweep.py` |
-| `expand_sweep` (definition) | `src/aiperf/config/_sweep_expand.py` (re-exported from `sweep.py`) |
+| `expand_sweep` (definition) | `src/aiperf/config/sweep/expand.py` (re-exported from the `sweep` package) |
 | `SearchSpaceDimension`, `SLAFilter` | `src/aiperf/config/adaptive_search.py` |
 | `PostProcessSpec`, `SearchRecipe`, `SearchRecipeContext`, `SearchRecipeOutput` | `src/aiperf/search_recipes/_base.py` |
-| `RecipeUserConfigView` | `src/aiperf/search_recipes/_user_config_view.py` |
 | `PostProcessHandler` Protocol + built-ins | `src/aiperf/search_recipes/post_process.py` |
 | `build_benchmark_plan` (load → plan) | `src/aiperf/config/loader/plan.py` |
 | v1→v2 converter | `src/aiperf/config/v1/converter.py` |
@@ -1230,17 +1229,13 @@ classDiagram
         expand(ctx) SearchRecipeOutput
     }
     class SearchRecipeContext {
-        user_config: RecipeUserConfigView
-        params: dict
+        benchmark_config: BenchmarkConfig
+        sla_targets: dict
+        sweep_overrides: dict
     }
     class SearchRecipeOutput {
         adaptive_search: AdaptiveSearchSweep
         post_process: PostProcessSpec | None
-    }
-    class RecipeUserConfigView {
-        <<protocol>>
-        endpoint: _EndpointView
-        models / dataset / phases (read-only)
     }
 
     class PostProcessHandler {
@@ -1272,7 +1267,7 @@ classDiagram
     SearchPlanner ..> AdaptiveSearchSweep : configured by
     SearchRecipe ..> SearchRecipeContext : reads
     SearchRecipe ..> SearchRecipeOutput : returns
-    SearchRecipeContext --> RecipeUserConfigView : user_config
+    SearchRecipeContext --> BenchmarkConfig : benchmark_config
     SearchRecipeOutput --> AdaptiveSearchSweep : produces
     SearchRecipeOutput --> PostProcessSpec : post_process
     PostProcessHandler <|.. DegradationKneeDetect
@@ -1347,7 +1342,6 @@ flowchart TB
     end
 
     subgraph RECIPE["recipe layer (optional)"]
-        ucv["RecipeUserConfigView<br/>(read-only Protocol)"]
         ctx["SearchRecipeContext"]
         rc["SearchRecipe plugin (Protocol)<br/>built-ins:<br/>max-throughput-ttft-sla<br/>max-throughput-itl-sla<br/>concurrency-ramp<br/>prefill-ttft-curve / decode-itl-curve<br/>max-goodput-under-slo<br/>max-concurrency-under-sla"]
         out["SearchRecipeOutput<br/>(adaptive_search, post_process)"]
@@ -1365,7 +1359,7 @@ flowchart TB
     end
 
     cli --> rc
-    uc --> ucv --> ctx --> rc --> out --> asc
+    uc --> ctx --> rc --> out --> asc
     cli -.direct path.-> asc
 
     asc --> plan
