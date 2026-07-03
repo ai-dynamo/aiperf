@@ -38,10 +38,15 @@ TEST_WARMUP = 2
 
 
 def _discover_recipes() -> list[Path]:
-    """Find all aiperfjob.yaml files in the recipes directory."""
+    """Find all perf.yaml recipe files in the recipes directory.
+
+    Recipes ship as ``recipes/**/perf.yaml`` (each an ``AIPerfJob`` CRD doc);
+    the sibling unit-level ``tests/unit/operator/test_recipes.py`` globs the
+    same name.
+    """
     if not RECIPES_DIR.exists():
         return []
-    return sorted(RECIPES_DIR.rglob("aiperfjob.yaml"))
+    return sorted(RECIPES_DIR.rglob("perf.yaml"))
 
 
 def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
@@ -121,6 +126,23 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
 
 
 RECIPE_FILES = _discover_recipes()
+
+
+def test_recipe_discovery_is_non_empty() -> None:
+    """Tripwire: fail loudly if recipe discovery finds nothing.
+
+    Requires no cluster fixtures so it runs during plain collection. If the
+    recipe glob ever drifts from the shipped filename again (the suite once
+    globbed ``aiperfjob.yaml`` after recipes were renamed to ``perf.yaml``),
+    the parametrized deployment cases silently collapse to zero and nothing
+    fails. This assertion turns that silent zero into a hard failure.
+    """
+    recipes = _discover_recipes()
+    assert len(recipes) > 0, (
+        f"No recipe files discovered under {RECIPES_DIR}; the parametrized "
+        "recipe suite would silently collect zero cases. Check the glob in "
+        "_discover_recipes() against the shipped recipe filename."
+    )
 
 
 @pytest.mark.parametrize(
