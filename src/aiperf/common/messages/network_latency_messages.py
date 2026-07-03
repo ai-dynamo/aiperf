@@ -12,8 +12,8 @@ class NetworkLatencyRecordMessage(
 
     Carries a single TCP-handshake RTT probe sample (success or failure) from
     one probe target. The ``error`` field is populated on a transport-level
-    failure to push the sample (mirrors ServerMetricsRecordMessage); a failed
-    probe itself is conveyed via ``sample.success == False``.
+    failure to push the sample; a failed probe itself is conveyed via
+    ``sample.success == False``.
     """
 
     collector_id: str

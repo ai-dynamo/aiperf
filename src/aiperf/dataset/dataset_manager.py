@@ -321,8 +321,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
             self.info(
-                "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
-                "from WorkerGroupManager before accessing dataset"
+                "Kubernetes mode: workers will wait for the dataset to be published "
+                "before accessing it"
             )
         return mmap_metadata
 

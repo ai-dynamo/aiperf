@@ -5,7 +5,6 @@ from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
     Conversation,
     DatasetMetadata,
-    ErrorDetails,
     MemoryMapClientMetadata,
     Turn,
 )
@@ -62,34 +61,3 @@ class DatasetConfiguredNotification(
     client_metadata: DatasetClientMetadataUnion
     benchmark_generation: str = ""
     dataset_generation: str = ""
-
-
-class DatasetDownloadedNotification(
-    BaseServiceMessage,
-    kw_only=True,
-    tag=MessageType.DATASET_DOWNLOADED_NOTIFICATION.value,
-):
-    """Pod-scoped dataset download complete."""
-
-    client_metadata: MemoryMapClientMetadata
-    pod_index: str | None = None
-    success: bool = True
-    error_message: str | None = None
-
-
-class DatasetConfigurationFailedNotification(
-    BaseServiceMessage,
-    kw_only=True,
-    tag=MessageType.DATASET_CONFIGURATION_FAILED.value,
-):
-    """Notification published by DatasetManager when its PROFILE_CONFIGURE handler raises.
-
-    Lets peer services (notably TimingManager, which awaits
-    ``DatasetConfiguredNotification``) abort their wait immediately instead of
-    blocking on the dataset configuration timeout. The control-channel
-    ``CommandErr`` response remains the authoritative failure signal for the
-    SystemController; this notification is the broadcast equivalent for fan-out
-    wakeups.
-    """
-
-    error: ErrorDetails

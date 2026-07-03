@@ -4,7 +4,6 @@ import msgspec
 
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.models.server_metrics_models import (
     ProcessServerMetricsResult,
     ServerMetricsEndpointSummary,
@@ -38,16 +37,3 @@ class RealtimeServerMetricsMessage(
     """Real-time per-endpoint server metrics."""
 
     endpoint_summaries: dict[str, ServerMetricsEndpointSummary]
-
-
-class ServerMetricsRecordMessage(
-    BaseServiceMessage, kw_only=True, tag=MessageType.SERVER_METRICS_RECORD.value
-):
-    """Server-metrics collector -> records manager.
-
-    Carries a single scrape's worth of metric samples from one Prometheus endpoint.
-    """
-
-    collector_id: str
-    record: ServerMetricsRecord | None = None
-    error: ErrorDetails | None = None

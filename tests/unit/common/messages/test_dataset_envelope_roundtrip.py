@@ -23,7 +23,6 @@ from aiperf.common.messages.dataset_messages import (
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     DatasetConfiguredNotification,
-    DatasetDownloadedNotification,
 )
 from aiperf.common.models import (
     Conversation,
@@ -99,14 +98,6 @@ def _client_metadata() -> MemoryMapClientMetadata:
                 dataset_generation="d1",
             ),
             id="DatasetConfiguredNotification",
-        ),
-        param(
-            lambda: DatasetDownloadedNotification(
-                service_id="dm",
-                client_metadata=_client_metadata(),
-                pod_index="0",
-            ),
-            id="DatasetDownloadedNotification",
         ),
     ],
 )

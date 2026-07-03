@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Self-reported process memory tracker.
 
-Each service process reads its own memory and publishes a MemoryReportMessage.
-The SystemController collects these reports into a ``MemoryTracker`` instance
-and calls ``print_summary()`` at shutdown.
+Each service process reads its own memory and publishes a ``MemoryReport``
+control struct. The SystemController collects these reports into a
+``MemoryTracker`` instance and calls ``print_summary()`` at shutdown.
 
 PSS (Proportional Set Size) divides shared pages proportionally among
 processes, giving accurate memory footprints when mmap is used (e.g., for

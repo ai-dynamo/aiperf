@@ -17,7 +17,6 @@ from aiperf.common.enums import LifecycleState
 from aiperf.common.messages.progress_messages import BenchmarkCompleteMessage
 from aiperf.common.messages.service_messages import (
     HeartbeatMessage,
-    RegistrationMessage,
     StatusMessage,
 )
 from aiperf.common.messages.worker_messages import WorkerHealthMessage
@@ -79,16 +78,6 @@ def _task_stats() -> WorkerTaskStats:
                 request_id="r",
             ),
             id="HeartbeatMessage",
-        ),
-        param(
-            lambda: RegistrationMessage(
-                service_id="w1",
-                service_type=ServiceType.WORKER,
-                state=LifecycleState.RUNNING,
-                request_ns=1,
-                request_id="r",
-            ),
-            id="RegistrationMessage",
         ),
         param(
             lambda: BenchmarkCompleteMessage(service_id="sc", was_cancelled=False),

@@ -10,9 +10,7 @@ from aiperf.common.messages.dataset_messages import (
     ConversationResponseMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
-    DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
-    DatasetDownloadedNotification,
 )
 from aiperf.common.messages.inference_messages import (
     InferenceResultsMessage,
@@ -36,7 +34,6 @@ from aiperf.common.messages.progress_messages import (
 from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
     RealtimeServerMetricsMessage,
-    ServerMetricsRecordMessage,
     ServerMetricsStatusMessage,
 )
 from aiperf.common.messages.service_messages import (
@@ -45,8 +42,6 @@ from aiperf.common.messages.service_messages import (
     BaseStatusMessage,
     ConnectionProbeMessage,
     HeartbeatMessage,
-    MemoryReportMessage,
-    RegistrationMessage,
     StatusMessage,
 )
 from aiperf.common.messages.telemetry_messages import (
@@ -74,13 +69,10 @@ __all__ = [
     "ConversationResponseMessage",
     "ConversationTurnRequestMessage",
     "ConversationTurnResponseMessage",
-    "DatasetConfigurationFailedNotification",
     "DatasetConfiguredNotification",
-    "DatasetDownloadedNotification",
     "ErrorMessage",
     "HeartbeatMessage",
     "InferenceResultsMessage",
-    "MemoryReportMessage",
     "Message",
     "MetricRecordsData",
     "MetricRecordsMessage",
@@ -94,9 +86,7 @@ __all__ = [
     "RealtimeServerMetricsMessage",
     "RealtimeTelemetryMetricsMessage",
     "RecordsProcessingStatsMessage",
-    "RegistrationMessage",
     "ResultsExportedMessage",
-    "ServerMetricsRecordMessage",
     "ServerMetricsStatusMessage",
     "StatusMessage",
     "SystemStateChangedMessage",

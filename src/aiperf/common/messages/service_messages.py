@@ -5,7 +5,6 @@ import time
 import msgspec
 
 from aiperf.common.enums import LifecycleState, MessageType
-from aiperf.common.memory_tracker import MemoryPhase
 from aiperf.common.messages.base_messages import Message
 from aiperf.common.models.error_models import ErrorDetails
 
@@ -31,30 +30,10 @@ class StatusMessage(BaseStatusMessage, kw_only=True, tag=MessageType.STATUS.valu
     """Service status report."""
 
 
-class RegistrationMessage(
-    BaseStatusMessage, kw_only=True, tag=MessageType.REGISTRATION.value
-):
-    """Service self-registration."""
-
-
 class HeartbeatMessage(
     BaseStatusMessage, kw_only=True, tag=MessageType.HEARTBEAT.value
 ):
     """Service heartbeat."""
-
-
-class MemoryReportMessage(
-    BaseServiceMessage, kw_only=True, tag=MessageType.MEMORY_REPORT.value
-):
-    """Self-reported memory snapshot from a service process."""
-
-    pid: int
-    service_type: str
-    phase: MemoryPhase
-    pss_bytes: int
-    rss_bytes: int | None = None
-    uss_bytes: int | None = None
-    shared_bytes: int | None = None
 
 
 class ConnectionProbeMessage(

@@ -6,7 +6,6 @@
 from unittest.mock import patch
 
 import pytest
-from pytest import param
 
 from aiperf.common.memory_tracker import (
     MemoryPhase,
@@ -460,83 +459,6 @@ class TestReadPssSelf:
         with patch("psutil.Process", side_effect=psutil.AccessDenied(99999)):
             result = read_pss_self()
         assert result is None
-
-
-# ---------------------------------------------------------------------------
-# MemoryReportMessage serialization
-# ---------------------------------------------------------------------------
-
-
-class TestMemoryReportMessage:
-    def test_phase_field_is_typed(self):
-        from aiperf.common.messages import MemoryReportMessage
-
-        msg = MemoryReportMessage(
-            service_id="svc_0",
-            service_type="worker",
-            pid=1234,
-            phase=MemoryPhase.STARTUP,
-            pss_bytes=100,
-        )
-        assert isinstance(msg.phase, MemoryPhase)
-        assert msg.phase == MemoryPhase.STARTUP
-
-    @pytest.mark.parametrize(
-        "phase",
-        [
-            param(MemoryPhase.STARTUP, id="startup"),
-            param(MemoryPhase.POST_CONFIG, id="post_config"),
-            param(MemoryPhase.SHUTDOWN, id="shutdown"),
-        ],
-    )  # fmt: skip
-    def test_all_phases_serialize(self, phase: MemoryPhase):
-        from aiperf.common.messages import MemoryReportMessage
-
-        msg = MemoryReportMessage(
-            service_id="svc_0",
-            service_type="worker",
-            pid=1234,
-            phase=phase,
-            pss_bytes=100,
-        )
-        assert msg.phase == phase
-
-    def test_roundtrip_serialization(self):
-        import orjson
-
-        from aiperf.common.messages import MemoryReportMessage
-
-        msg = MemoryReportMessage(
-            service_id="svc_0",
-            service_type="worker",
-            pid=1234,
-            phase=MemoryPhase.POST_CONFIG,
-            pss_bytes=100,
-            rss_bytes=200,
-            uss_bytes=50,
-            shared_bytes=150,
-        )
-        data = orjson.loads(orjson.dumps(msg.model_dump()))
-        restored = MemoryReportMessage.from_json(data)
-        assert restored.phase == MemoryPhase.POST_CONFIG
-        assert restored.pss_bytes == 100
-        assert restored.rss_bytes == 200
-        assert restored.uss_bytes == 50
-        assert restored.shared_bytes == 150
-
-    def test_optional_fields_default_none(self):
-        from aiperf.common.messages import MemoryReportMessage
-
-        msg = MemoryReportMessage(
-            service_id="svc_0",
-            service_type="worker",
-            pid=1234,
-            phase=MemoryPhase.STARTUP,
-            pss_bytes=100,
-        )
-        assert msg.rss_bytes is None
-        assert msg.uss_bytes is None
-        assert msg.shared_bytes is None
 
 
 # We need psutil for the mock patches
