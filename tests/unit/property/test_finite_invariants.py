@@ -54,13 +54,6 @@ ORJSON_SCRUB_WHITELIST: dict[str, str] = {
         "metadata-only orjson.dumps -- input_config, model names, endpoint "
         "urls, label-column keys, metric type counts. No metric values."
     ),
-    # Same as parquet_exporter.py: writes parquet-file metadata bytes (input
-    # config dict, model names, endpoint URLs, label-column keys, metric-type
-    # counts). Branch-only helper called from parquet_exporter.
-    "src/aiperf/server_metrics/parquet_metadata.py": (
-        "metadata-only orjson.dumps -- input_config, model names, endpoint "
-        "urls, label-column keys, metric type counts. No metric values."
-    ),
     # Energy summary JSON: dumps a summary dict that already coerces NaN/Inf
     # via to_json() before reaching orjson; ``default=str`` covers leftovers.
     "src/aiperf/exporters/energy_json_exporter.py": (
