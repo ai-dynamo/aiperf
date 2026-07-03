@@ -12,11 +12,13 @@ rebuilds the parent's ``Conversation`` from cached payload bytes, the
 ``is_fork_parent`` — which checks ``conversation.branches`` for any FORK —
 and decides the parent isn't a FORK parent at all. The parent is popped
 immediately on its own credit return, so by the time the first FORK
-child arrives at the same worker the parent's session is gone and the
-runtime aborts with::
-
-    RuntimeError: FORK routing invariant violated: parent session
-    '<id>' not found on this worker
+child arrives at the same worker the parent's session is gone. The miss is
+no longer fatal — ``_pin_parent_if_fork_child`` swallows the ``KeyError``
+and logs a warning, and ``_seed_from_parent_if_fork_child`` is a silent
+no-op — so the child dispatches with an EMPTY accumulator, dropping the
+parent's system prompt + captured response and corrupting FORK inheritance
+instead of aborting the run. This test pins the correct payload bytes, so a
+child missing the seeded parent context fails the byte-exact assertion.
 
 The fix: ``DatasetManager._preformat_payloads`` bails out whenever any
 conversation declares a FORK branch. The format stays ``CONVERSATION``,

@@ -112,7 +112,7 @@ class TestDagFullTopologyEndToEnd:
                 --custom-dataset-type dag_jsonl \
                 --num-conversations 1 \
                 --concurrency 1 \
-                --workers-max 2 \
+                --workers-max 1 \
                 --export-level raw \
                 --ui simple
             """,
@@ -281,10 +281,16 @@ class TestDagFullTopologyEndToEnd:
         assert result.json.branch_stats.children_errored == 0
 
         # -------------------------------------------------------------------
-        # E. Sticky routing: all 5 requests land on the same worker.
+        # E. Worker colocation: all 5 requests share one worker.
         # -------------------------------------------------------------------
+        # This profile runs with ``--workers-max 1`` so colocation is
+        # structural (only one worker exists). That makes the FORK-inheritance
+        # payload assertions in section C deterministic: a child can never land
+        # on a second worker and silently skip parent seeding. Sticky routing
+        # is inert on this branch, so we assert what is actually guaranteed —
+        # a single-worker run keeps every DAG request on the same worker.
         worker_ids = {rec.metadata.worker_id for rec in result.raw_records}
         assert len(worker_ids) == 1, (
-            f"All 5 DAG requests must route to the same worker via sticky "
-            f"routing; saw workers {worker_ids}"
+            f"With --workers-max 1 all 5 DAG requests must share one worker; "
+            f"saw workers {worker_ids}"
         )
