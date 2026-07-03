@@ -10,7 +10,7 @@ from aiperf.common.enums.base_enums import (
     BasePydanticEnumInfo,
     CaseInsensitiveStrEnum,
 )
-from aiperf.common.enums.dataset_enums import OslMode, SweepType
+from aiperf.common.enums.dataset_enums import SweepType
 from aiperf.common.enums.enums import (
     AIPerfLogLevel,
     AudioFormat,
@@ -38,7 +38,6 @@ from aiperf.common.enums.enums import (
     OptimizationDirection,
     PrerequisiteKind,
     PrometheusMetricType,
-    PromptSource,
     RequestContentType,
     ServerMetricsDiscoveryMode,
     ServerMetricsFormat,
@@ -85,14 +84,11 @@ from aiperf.common.enums.metric_enums import (
     TemperatureMetricUnit,
     TemperatureMetricUnitInfo,
 )
-from aiperf.common.enums.server_metrics_enums import GpuTelemetryType
 from aiperf.plugin.enums import DatasetFormat
 
 __all__ = [
     "AIPerfLogLevel",
     "AggregationKind",
-    "GpuTelemetryType",
-    "OslMode",
     "RecordExportFormat",
     "SummaryFormat",
     "SweepType",
@@ -151,7 +147,6 @@ __all__ = [
     "PowerMetricUnitInfo",
     "PrerequisiteKind",
     "PrometheusMetricType",
-    "PromptSource",
     "RequestContentType",
     "SSEEventType",
     "SSEFieldType",

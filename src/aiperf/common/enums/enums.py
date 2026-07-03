@@ -471,12 +471,6 @@ class PrometheusMetricType(CaseInsensitiveStrEnum):
             return cls.UNKNOWN
 
 
-class PromptSource(CaseInsensitiveStrEnum):
-    SYNTHETIC = "synthetic"
-    FILE = "file"
-    PAYLOAD = "payload"
-
-
 class ServerMetricsFormat(CaseInsensitiveStrEnum):
     """Format options for server metrics export.
 
