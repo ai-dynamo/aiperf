@@ -265,7 +265,7 @@ class TestUnknownJsonRoundTrip:
         exporter_config.server_metrics_results = results
         exporter_config.cfg = minimal_cfg
         exporter = ServerMetricsJsonExporter(exporter_config)
-        export_data, _ = exporter._build_hybrid_metrics()
+        export_data, _ = exporter._build_hybrid_metrics(results.endpoint_summaries)
         entry = export_data["node_netstat_Icmp_InErrors"]
         assert isinstance(entry, UnknownMetricData)
         assert entry.model_dump(mode="json")["type"] == "unknown"
