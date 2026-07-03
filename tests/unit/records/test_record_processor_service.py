@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.inference_wire import build_inference_results_wire_message
-from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.metric_records_wire import (
     MetricRecordMetadata,
     MetricRecordsBatchWireMessage,
     MetricRecordsData,
 )
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -509,9 +509,14 @@ class TestRecordProcessorDatasetConfiguredBarrier:
             mock_self, self._wire_message(sample_request_record)
         )
 
-        # Run is failed loudly ...
+        # Run is failed loudly via a single SERVICE_ERROR emit: the gate no
+        # longer publishes its own BaseServiceErrorMessage (that would surface
+        # twice in the controller exit summary); instead it threads the timeout
+        # detail into _kill, which owns the one publish.
         mock_self._kill.assert_awaited_once()
-        published = mock_self.publish.await_args.args[0]
-        assert isinstance(published, BaseServiceErrorMessage)
+        mock_self.publish.assert_not_awaited()
+        kill_error = mock_self._kill.await_args.kwargs["error"]
+        assert isinstance(kill_error, ErrorDetails)
+        assert "Dataset configuration not received" in kill_error.message
         # ... and the record is not processed.
         mock_self.inference_result_parser.parse_request_record.assert_not_called()

@@ -14,7 +14,6 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from aiperf.common.environment import Environment
-from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.models.error_models import ErrorDetails
 
 if TYPE_CHECKING:
@@ -27,10 +26,13 @@ async def await_dataset_configured(
     """Block until the dataset-configured ``event`` is set.
 
     Returns True once configured. On timeout, treats a missing dataset
-    configuration as a fatal misconfiguration: reports it via a
-    BaseServiceErrorMessage (so the run exits non-zero) and kills the service so
-    the run aborts loudly instead of processing records without a configured
-    dataset. Returns False in that case so the caller skips processing (``_kill``
+    configuration as a fatal misconfiguration: kills the service (so the run
+    exits non-zero) and threads the timeout detail into ``_kill``'s single
+    SERVICE_ERROR emit so the run aborts loudly instead of processing records
+    without a configured dataset. The gate does NOT publish its own
+    ``BaseServiceErrorMessage`` — ``_kill`` already publishes one, and a second
+    would surface the same failure twice in the controller's exit summary.
+    Returns False in that case so the caller skips processing (``_kill``
     force-exits the process, so this return is a safety net if it ever does not).
     """
     # Fast path: once configured (the common case), avoid the per-record
@@ -48,11 +50,5 @@ async def await_dataset_configured(
             f"{Environment.DATASET.CONFIGURATION_TIMEOUT}s; aborting run."
         )
         service.error(message)
-        await service.publish(
-            BaseServiceErrorMessage(
-                service_id=service.service_id,
-                error=ErrorDetails(message=message),
-            )
-        )
-        await service._kill()
+        await service._kill(error=ErrorDetails(message=message))
         return False

@@ -159,9 +159,15 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             return
         await super().stop()
 
-    async def _kill(self) -> None:
+    async def _kill(self, *, error: ErrorDetails | None = None) -> None:
         """Kill the lifecycle. This is used when the lifecycle is requested to stop, but is already in a stopping state.
         This is a last resort to ensure that the lifecycle is stopped.
+
+        ``error`` lets a caller thread richer failure context into the single
+        SERVICE_ERROR emit this method already publishes (e.g. the dataset gate
+        supplies "Dataset configuration not received ..." so callers do not
+        publish their own duplicate error before killing). Falls back to a
+        generic FAILED-state message when the caller has no specific detail.
         """
         await self._set_state(LifecycleState.FAILED)
         self.error(lambda: f"Killing {self}")
@@ -172,7 +178,8 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             await self.publish(
                 BaseServiceErrorMessage(
                     service_id=self.service_id,
-                    error=ErrorDetails(
+                    error=error
+                    or ErrorDetails(
                         message=f"Service {self.service_id} entered FAILED state and is being killed",
                     ),
                 )
