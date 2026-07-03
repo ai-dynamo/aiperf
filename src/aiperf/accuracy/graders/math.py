@@ -486,12 +486,6 @@ def _stdlib_normalize(expr: str) -> str:
     return s
 
 
-# Public alias retained for backward compatibility with the v1 tests
-# that imported ``_normalize`` directly. The body is the stdlib path;
-# in the new pipeline it's only used inside the fallback.
-_normalize = _stdlib_normalize
-
-
 class MathGrader(BaseGrader):
     """Grades math/AIME responses with the trt-llm reference algorithm.
 

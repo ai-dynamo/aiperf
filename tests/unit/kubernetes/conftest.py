@@ -15,14 +15,11 @@ from tests.harness.k8s import (
     build_completed_jobset,
     build_failed_jobset,
     build_mock_api,
-    build_pending_pod,
     build_running_jobset,
     build_sample_config,
     build_sample_jobset,
-    build_sample_pod,
     build_sample_pod_template,
     build_sample_run,
-    build_succeeded_pod,
     create_api_exception,
     create_jobset_list_response,
     patch_api_accessors,
@@ -75,24 +72,6 @@ def sample_completed_jobset(sample_jobset) -> dict[str, Any]:
 def sample_failed_jobset(sample_jobset) -> dict[str, Any]:
     """Create a sample failed JobSet."""
     return build_failed_jobset(sample_jobset)
-
-
-@pytest.fixture
-def sample_pod() -> dict[str, Any]:
-    """Create a sample Pod dict (raw K8s API format) for testing."""
-    return build_sample_pod()
-
-
-@pytest.fixture
-def sample_pending_pod(sample_pod) -> dict[str, Any]:
-    """Create a sample pending Pod."""
-    return build_pending_pod(sample_pod)
-
-
-@pytest.fixture
-def sample_succeeded_pod(sample_pod) -> dict[str, Any]:
-    """Create a sample succeeded Pod."""
-    return build_succeeded_pod(sample_pod)
 
 
 # =============================================================================

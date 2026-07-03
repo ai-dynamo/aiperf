@@ -6,7 +6,7 @@
 Coverage targets the three layers separately:
 
 1. Pure helpers (``_extract_last_boxed``, ``_extract_last_number``,
-   ``_normalize``, ``_to_fraction``) — exhaustive parametrized cases.
+   ``_stdlib_normalize``, ``_to_fraction``) — exhaustive parametrized cases.
 2. ``MathGrader._extract_with_flag`` — extraction priority and the
    ``unparsed`` flag semantics.
 3. ``MathGrader.grade`` — end-to-end correctness, including adversarial
@@ -24,7 +24,7 @@ from aiperf.accuracy.graders.math import (
     MathGrader,
     _extract_last_boxed,
     _extract_last_number,
-    _normalize,
+    _stdlib_normalize,
     _to_fraction,
 )
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
@@ -104,7 +104,7 @@ class TestExtractLastNumber:
 
 
 class TestNormalize:
-    """``_normalize`` — pre-comparison string canonicalization."""
+    """``_stdlib_normalize`` — pre-comparison string canonicalization."""
 
     @pytest.mark.parametrize(
         "raw,expected",
@@ -127,11 +127,11 @@ class TestNormalize:
         ],
     )  # fmt: skip
     def test_normalize(self, raw: str, expected: str) -> None:
-        assert _normalize(raw) == expected
+        assert _stdlib_normalize(raw) == expected
 
     def test_normalize_idempotent(self) -> None:
-        once = _normalize("$\\dfrac{1}{2}$.")
-        twice = _normalize(once)
+        once = _stdlib_normalize("$\\dfrac{1}{2}$.")
+        twice = _stdlib_normalize(once)
         assert once == twice
 
 

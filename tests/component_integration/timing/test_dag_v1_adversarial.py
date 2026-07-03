@@ -298,15 +298,6 @@ def test_multi_consumer_branch_accepted_end_to_end_phase_3() -> None:
     validate_for_orchestrator_v1(md)
 
 
-@pytest.mark.skip(
-    reason="Parent-join cycle is covered end-to-end by "
-    "tests/component_integration/timing/test_dag_join_end_to_end.py::"
-    "test_parent_resumes_after_all_children_complete; leaving e2e to the shipped test."
-)
-def test_full_parent_join_cycle_end_to_end_still_works_post_fixes() -> None:
-    """Covered by the shipped join-orchestration e2e test."""
-
-
 def test_hundred_child_gate_closes_end_to_end() -> None:
     """Validator-level: a branch carrying 100 child_conversation_ids passes v1."""
     children = [f"child-{i:03d}" for i in range(100)]

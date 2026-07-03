@@ -1413,36 +1413,3 @@ def verify_no_interleaving_within_session(
                 )
 
     return True, "All sessions have sequential turns"
-
-
-def verify_sessions_can_interleave(
-    credit_analyzer: CreditFlowAnalyzer,
-) -> tuple[bool, str]:
-    """Verify that different sessions CAN interleave globally.
-
-    Uses CapturedPayload.timestamp_ns (monotonic) for timing comparisons.
-    """
-    all_credits = []
-    for session_id, payloads in credit_analyzer.credits_by_session.items():
-        for p in payloads:
-            all_credits.append((p.timestamp_ns, session_id))
-
-    if len(all_credits) < 2:
-        return True, "Not enough credits to check interleaving"
-
-    sorted_credits = sorted(all_credits, key=lambda x: x[0])
-
-    transitions = 0
-    for i in range(1, len(sorted_credits)):
-        if sorted_credits[i][1] != sorted_credits[i - 1][1]:
-            transitions += 1
-
-    num_sessions = credit_analyzer.num_sessions
-    min_expected = num_sessions - 1
-
-    if transitions < min_expected:
-        return False, (
-            f"Only {transitions} session transitions, expected at least {min_expected}"
-        )
-
-    return True, f"{transitions} session transitions"

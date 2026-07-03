@@ -166,46 +166,6 @@ def build_failed_jobset(base: dict[str, Any] | None = None) -> dict[str, Any]:
     return jobset
 
 
-def build_sample_pod() -> dict[str, Any]:
-    """Create a sample Pod dict (raw K8s API format) for testing."""
-    return {
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {
-            "name": "aiperf-test-job-controller-0-0",
-            "namespace": "default",
-        },
-        "status": {
-            "phase": "Running",
-            "containerStatuses": [
-                {
-                    "name": "system-controller",
-                    "ready": True,
-                    "restartCount": 0,
-                }
-            ],
-        },
-        "spec": {
-            "containers": [{"name": "system-controller"}],
-        },
-    }
-
-
-def build_pending_pod(base: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Create a sample pending Pod."""
-    pod = copy.deepcopy(base or build_sample_pod())
-    pod["status"]["phase"] = "Pending"
-    pod["status"]["containerStatuses"][0]["ready"] = False
-    return pod
-
-
-def build_succeeded_pod(base: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Create a sample succeeded Pod."""
-    pod = copy.deepcopy(base or build_sample_pod())
-    pod["status"]["phase"] = "Succeeded"
-    return pod
-
-
 # =============================================================================
 # Config Builders
 # =============================================================================

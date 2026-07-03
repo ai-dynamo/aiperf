@@ -15,9 +15,6 @@ from tests.harness.operator import (
     build_full_aiperfjob_spec,
     build_high_concurrency_spec,
     build_minimal_aiperfjob_spec,
-    build_mock_aiohttp_session,
-    build_mock_http_response,
-    build_progress_response_complete,
     build_progress_response_running,
     build_progress_response_with_error,
     build_sample_body,
@@ -109,12 +106,6 @@ def progress_api_response_running() -> dict[str, Any]:
 
 
 @pytest.fixture
-def progress_api_response_complete() -> dict[str, Any]:
-    """Create a progress API response for a completed job."""
-    return build_progress_response_complete()
-
-
-@pytest.fixture
 def progress_api_response_with_error() -> dict[str, Any]:
     """Create a progress API response with an error."""
     return build_progress_response_with_error()
@@ -129,20 +120,3 @@ def progress_api_response_with_error() -> dict[str, Any]:
 def sample_conditions_list() -> list[dict[str, Any]]:
     """Create a sample conditions list from Kubernetes status."""
     return build_sample_conditions_list()
-
-
-# =============================================================================
-# Mock HTTP Session Fixtures
-# =============================================================================
-
-
-@pytest.fixture
-def mock_aiohttp_session():
-    """Create a mock aiohttp ClientSession."""
-    return build_mock_aiohttp_session()
-
-
-@pytest.fixture
-def mock_http_response():
-    """Create a mock HTTP response factory."""
-    return build_mock_http_response

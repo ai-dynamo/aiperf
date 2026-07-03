@@ -9,7 +9,6 @@ as fixtures; test files can also import them directly.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 # =============================================================================
 # Kubernetes Resource Body Builders
@@ -180,23 +179,6 @@ def build_progress_response_running() -> dict[str, Any]:
     }
 
 
-def build_progress_response_complete() -> dict[str, Any]:
-    """Create a progress API response for a completed job."""
-    return {
-        "phases": {
-            "profiling": {
-                "phase": "profiling",
-                "start_ns": 1000,
-                "requests_completed": 1000,
-                "total_expected_requests": 1000,
-                "requests_per_second": 50.0,
-                "requests_progress_percent": 100.0,
-                "is_requests_complete": True,
-            },
-        },
-    }
-
-
 def build_progress_response_with_error() -> dict[str, Any]:
     """Create a progress API response with an error."""
     return {
@@ -245,41 +227,3 @@ def build_sample_conditions_list() -> list[dict[str, Any]]:
             "lastTransitionTime": "2026-01-15T10:00:10Z",
         },
     ]
-
-
-# =============================================================================
-# Mock HTTP Builders
-# =============================================================================
-
-
-def build_mock_aiohttp_session() -> MagicMock:
-    """Create a mock aiohttp ClientSession."""
-    session = MagicMock()
-    session.get = AsyncMock()
-    session.close = AsyncMock()
-    return session
-
-
-def build_mock_http_response(json_data: dict[str, Any], status: int = 200) -> AsyncMock:
-    """Create a mock HTTP response.
-
-    Args:
-        json_data: JSON response body.
-        status: HTTP status code.
-
-    Returns:
-        AsyncMock configured as an aiohttp response.
-    """
-    response = AsyncMock()
-    response.status = status
-    response.json = AsyncMock(return_value=json_data)
-    response.raise_for_status = MagicMock()
-    if status >= 400:
-        from aiohttp import ClientResponseError
-
-        response.raise_for_status.side_effect = ClientResponseError(
-            request_info=MagicMock(),
-            history=(),
-            status=status,
-        )
-    return response
