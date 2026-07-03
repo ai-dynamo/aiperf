@@ -84,7 +84,17 @@ class FakeApiserver:
 
     @contextlib.contextmanager
     def context(self) -> Any:
-        """Patch ``k8s_client`` (yields a no-op context) and ``CustomObjectsApi``."""
+        """Patch ``k8s_client`` (yields a no-op context) and ``CustomObjectsApi``.
+
+        ``k8s_client`` must be patched at every module-level binding site, not
+        just its home module: operator modules that do
+        ``from aiperf.kubernetes.client import k8s_client`` at import time hold
+        their own reference, and patching only ``aiperf.kubernetes.client``
+        leaves those bindings pointing at the real client — which then loads
+        the developer's actual ``~/.kube/config`` (function-local imports
+        resolve through the patched home module at call time and need no
+        entry here).
+        """
 
         class _ApiCtx:
             async def __aenter__(_self) -> Any:
@@ -96,10 +106,19 @@ class FakeApiserver:
         custom = MagicMock()
         custom.get_namespaced_custom_object = AsyncMock(side_effect=self._get)
         custom.patch_namespaced_custom_object = AsyncMock(side_effect=self._patch)
-        with (
-            patch("aiperf.kubernetes.client.k8s_client", new=lambda: _ApiCtx()),
-            patch("kubernetes_asyncio.client.CustomObjectsApi", return_value=custom),
-        ):
+        k8s_client_binding_sites = [
+            "aiperf.kubernetes.client.k8s_client",
+            "aiperf.operator.client_cache.k8s_client",
+            "aiperf.operator.handlers.lifecycle.k8s_client",
+            "aiperf.operator.handlers.create.k8s_client",
+            "aiperf.operator.handlers.completion.k8s_client",
+        ]
+        with contextlib.ExitStack() as stack:
+            for site in k8s_client_binding_sites:
+                stack.enter_context(patch(site, new=lambda: _ApiCtx()))
+            stack.enter_context(
+                patch("kubernetes_asyncio.client.CustomObjectsApi", return_value=custom)
+            )
             yield self
 
 

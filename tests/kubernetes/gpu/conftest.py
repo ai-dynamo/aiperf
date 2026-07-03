@@ -248,14 +248,26 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Register --gpu-* CLI options."""
+    """Register --gpu-* CLI options.
+
+    Idempotent: chaos_dynamo's conftest delegates this hook by importing it,
+    so when both conftests are initial (e.g. ``pytest kubernetes/gpu
+    kubernetes/chaos_dynamo``) each option may be offered twice; duplicates
+    are skipped instead of raising ``ValueError: option already added``.
+    """
     group = parser.getgroup("gpu", "GPU Kubernetes E2E test options")
 
     for cli_flag, _env_var, _default, typ, help_text in _OPTIONS:
-        if typ == "bool":
-            group.addoption(cli_flag, action="store_true", default=None, help=help_text)
-        else:
-            group.addoption(cli_flag, default=None, help=help_text)
+        try:
+            if typ == "bool":
+                group.addoption(
+                    cli_flag, action="store_true", default=None, help=help_text
+                )
+            else:
+                group.addoption(cli_flag, default=None, help=help_text)
+        except ValueError:
+            # Already registered by the sibling conftest's delegated hook.
+            continue
 
 
 def _resolve_settings(config: pytest.Config) -> GPUTestSettings:
@@ -488,7 +500,14 @@ def _check_no_subpackage_init_files() -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Configure pytest for GPU tests."""
+    """Configure pytest for GPU tests.
+
+    Idempotent via the settings stash: chaos_dynamo's conftest delegates this
+    hook by importing it, so whole-tree runs register it twice — the second
+    invocation must not re-run preflight or reprint the banner.
+    """
+    if _SETTINGS_KEY in config.stash:
+        return
     _check_no_subpackage_init_files()
 
     # Resolve settings from CLI + env and stash them.

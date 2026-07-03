@@ -66,7 +66,24 @@ from tests.kubernetes.chaos_common.injectors.process import ProcessInjector
 from tests.kubernetes.chaos_common.injectors.store import StoreInjector
 from tests.kubernetes.chaos_common.injectors.workload import WorkloadInjector
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
-from tests.kubernetes.gpu.conftest import kubectl  # noqa: F401
+
+# ``gpu_settings``/``pytest_addoption``/``pytest_configure`` delegate to the
+# gpu conftest: assigning imported hook functions as this module's attributes
+# registers them as THIS conftest's hooks, and importing a fixture function
+# registers the fixture for this package. Modern pytest rejects
+# ``pytest_plugins`` in any non-rootdir conftest, so plugin-loading
+# tests.kubernetes.gpu.conftest is no longer an option. Without these, tests
+# that transitively depend on ``gpu_settings`` (e.g. ``dynamo_operator``,
+# ``dynamo_config``) ERROR at fixture-resolution, and ``pytest_configure``
+# would never stash the resolved GPUTestSettings. Both delegated hooks are
+# idempotent so whole-tree runs (where gpu/conftest.py also registers them)
+# do not double-fire.
+from tests.kubernetes.gpu.conftest import (  # noqa: F401
+    gpu_settings,
+    kubectl,
+    pytest_addoption,
+    pytest_configure,
+)
 from tests.kubernetes.gpu.dynamo.conftest import (
     dynamo_config,  # noqa: F401
     dynamo_operator,  # noqa: F401
@@ -75,17 +92,6 @@ from tests.kubernetes.gpu.dynamo.conftest import (
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 logger = AIPerfLogger(__name__)
-
-
-# Load the gpu conftest as a plugin so its ``pytest_addoption`` (the
-# ``--gpu-*`` CLI options + ``GPU_TEST_*`` env vars) and its
-# package-scoped ``gpu_settings`` fixture are visible from this sibling
-# package. Without this, tests that transitively depend on ``gpu_settings``
-# (e.g. ``dynamo_operator``, ``dynamo_config``) ERROR at fixture-resolution
-# with ``fixture 'gpu_settings' not found``. ``pytest_plugins`` is only
-# honored from rootdir/conftest.py and from conftest files of top-level
-# test packages, so keeping this here is load-bearing.
-pytest_plugins = ["tests.kubernetes.gpu.conftest"]
 
 
 # ============================================================================

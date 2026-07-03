@@ -6,14 +6,14 @@ Sibling of :py:mod:`tests.kubernetes.chaos_dynamo`. This module hosts the
 unified-API ports of legacy AIPerf chaos scenarios that live in
 :py:mod:`tests.kubernetes.chaos`. Composition is three layers:
 
-1. **Re-exported legacy chaos fixtures** -- ``pytest_plugins`` loads
-   :py:mod:`tests.kubernetes.chaos.conftest` so a ported test can request
-   ``operator_ready``, ``chaos_injector``, ``toxiproxy_injector``,
-   ``mock_server_injector``, ``operator_ready_toxiproxy_routed`` and
+1. **Re-exported legacy chaos fixtures** -- direct fixture imports from
+   :py:mod:`tests.kubernetes.chaos.conftest` (importing a fixture function
+   into a conftest registers it for the package) so a ported test can request
+   ``chaos_injector``, ``toxiproxy_injector``, ``mock_server_injector``,
+   ``operator_ready_toxiproxy_routed`` and
    ``operator_ready_apiserver_toxiproxy_routed`` exactly as legacy tests do.
-   The legacy conftest itself transitively pulls ``kubectl`` /
-   ``operator_job_namespace`` from the package-scoped
-   :py:mod:`tests.kubernetes.conftest`.
+   ``operator_ready``, ``kubectl`` and ``operator_job_namespace`` arrive via
+   the parent package-scoped :py:mod:`tests.kubernetes.conftest`.
 
 2. **Unified faults registry** -- overrides the echo-only ``faults`` fixture
    from :py:mod:`tests.kubernetes.chaos_common.conftest` with a per-test
@@ -47,6 +47,20 @@ import pytest_asyncio
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
+
+# Re-export the legacy AIPerf chaos fixtures by importing them directly:
+# importing a fixture function into a conftest module registers it for this
+# package. Modern pytest rejects ``pytest_plugins`` in any non-rootdir
+# conftest, so plugin-loading tests.kubernetes.chaos.conftest is no longer an
+# option. ``operator_ready``/``kubectl``/``operator_job_namespace`` still
+# arrive via the parent tests/kubernetes/conftest.py hierarchy.
+from tests.kubernetes.chaos.conftest import (  # noqa: F401
+    chaos_injector,
+    mock_server_injector,
+    operator_ready_apiserver_toxiproxy_routed,
+    operator_ready_toxiproxy_routed,
+    toxiproxy_injector,
+)
 from tests.kubernetes.chaos.toxiproxy import ToxiproxyError, ToxiproxyInjector
 from tests.kubernetes.chaos_common.injectors.client import ClientInjector
 from tests.kubernetes.chaos_common.injectors.cluster import ClusterInjector
@@ -58,13 +72,6 @@ from tests.kubernetes.chaos_common.injectors.store import StoreInjector
 from tests.kubernetes.chaos_common.injectors.workload import WorkloadInjector
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
 from tests.kubernetes.helpers.kubectl import KubectlClient
-
-# Load the legacy AIPerf chaos conftest as a plugin. The value must be a
-# dotted module path, not a filesystem path. ``pytest_plugins`` is only
-# honored from rootdir/conftest.py and from conftest files of top-level
-# test packages, so keeping this here (rather than nesting it under a
-# deeper conftest) is load-bearing.
-pytest_plugins = ["tests.kubernetes.chaos.conftest"]
 
 logger = AIPerfLogger(__name__)
 
@@ -84,7 +91,7 @@ AIPERF_OPERATOR_SELECTOR = "app.kubernetes.io/name=aiperf-operator"
 @pytest_asyncio.fixture
 async def faults(
     kubectl: KubectlClient,
-    toxiproxy_injector: ToxiproxyInjector,
+    toxiproxy_injector: ToxiproxyInjector,  # noqa: F811 — pytest fixture request; shadows the re-export import by design
 ) -> AsyncIterator[InjectorRegistry]:
     """Per-test :py:class:`InjectorRegistry` wired for the chaos_aiperf suite.
 
