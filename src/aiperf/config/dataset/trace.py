@@ -98,3 +98,33 @@ class SynthesisConfig(BaseConfig):
             "Traces with output_length > max_osl are capped to this value (not filtered).",
         ),
     ]
+
+
+def synthesis_should_apply(synthesis: SynthesisConfig | None) -> bool:
+    """Return True when a SynthesisConfig has any non-default transform set.
+
+    Shared gate for every "did the user configure trace synthesis?" site
+    (trace loaders and the custom-dataset validator). Trace loaders only invoke
+    the Synthesizer when a transform multiplier differs from its identity
+    default. Defaults: speedup_ratio=1.0, prefix_len_multiplier=1.0,
+    prefix_root_multiplier=1, prompt_len_multiplier=1.0, output_len_multiplier=1.0.
+
+    ``max_isl`` / ``max_osl`` are filters/caps, not transforms, so they are
+    intentionally excluded here; the custom-composer validator ORs those in
+    separately when rejecting synthesis on non-trace datasets.
+
+    Example:
+        >>> synthesis_should_apply(SynthesisConfig(output_len_multiplier=2.0))
+        True
+        >>> synthesis_should_apply(SynthesisConfig(max_isl=4096))
+        False
+    """
+    if synthesis is None:
+        return False
+    return (
+        synthesis.speedup_ratio != 1.0
+        or synthesis.prefix_len_multiplier != 1.0
+        or synthesis.prefix_root_multiplier != 1
+        or synthesis.prompt_len_multiplier != 1.0
+        or synthesis.output_len_multiplier != 1.0
+    )

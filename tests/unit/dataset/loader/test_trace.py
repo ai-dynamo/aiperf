@@ -1747,3 +1747,46 @@ class TestMooncakeTracePayloadMode:
         )
         with pytest.raises(ValueError, match="payload.*messages|messages.*payload"):
             loader.convert_to_conversations(loader.load_dataset())
+
+
+class TestBaseTraceLoaderSynthesisGate:
+    """The base trace loader invokes ``_apply_synthesis`` iff a transform is set."""
+
+    @pytest.fixture
+    def mock_prompt_generator(self):
+        generator = Mock()
+        generator.generate.return_value = "Generated prompt text"
+        generator._decoded_cache = {}
+        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        return generator
+
+    def _loader(self, create_jsonl_file, mock_prompt_generator, synthesis):
+        content = [
+            '{"input_length": 100, "output_length": 50, "hash_ids": [123], "timestamp": 1000}',
+        ]
+        filename = create_jsonl_file(content)
+        config = _make_file_config(path=filename, synthesis=synthesis)
+        return MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=_make_run(config),
+            prompt_generator=mock_prompt_generator,
+        )
+
+    def test_lone_output_len_multiplier_triggers_apply(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """A lone ``--synthesis-output-len-multiplier`` must not silently no-op."""
+        loader = self._loader(
+            create_jsonl_file, mock_prompt_generator, {"output_len_multiplier": 2.0}
+        )
+        with patch.object(loader, "_apply_synthesis", side_effect=lambda d: d) as spy:
+            loader.load_dataset()
+        spy.assert_called_once()
+
+    def test_default_synthesis_does_not_apply(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        loader = self._loader(create_jsonl_file, mock_prompt_generator, {})
+        with patch.object(loader, "_apply_synthesis", side_effect=lambda d: d) as spy:
+            loader.load_dataset()
+        spy.assert_not_called()

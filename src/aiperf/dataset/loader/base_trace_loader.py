@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config.dataset.trace import synthesis_should_apply
 from aiperf.config.defaults import InputTokensDefaults
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
@@ -42,18 +43,6 @@ def _get_file_dataset_synthesis(config: BenchmarkConfig) -> SynthesisConfig | No
     if isinstance(dataset, FileDataset):
         return dataset.synthesis
     return None
-
-
-def _synthesis_should_apply(synthesis: SynthesisConfig | None) -> bool:
-    """Check if synthesis should be triggered based on non-default values."""
-    if synthesis is None:
-        return False
-    return (
-        synthesis.speedup_ratio != 1.0
-        or synthesis.prefix_len_multiplier != 1.0
-        or synthesis.prefix_root_multiplier != 1
-        or synthesis.prompt_len_multiplier != 1.0
-    )
 
 
 class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
@@ -256,7 +245,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             )
         )
 
-        if _synthesis_should_apply(self._synthesis_config):
+        if synthesis_should_apply(self._synthesis_config):
             data = self._apply_synthesis(data)
 
         data = self._cap_grouped_traces_max_osl(data)

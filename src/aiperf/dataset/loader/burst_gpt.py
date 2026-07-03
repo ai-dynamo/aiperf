@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.config.dataset.trace import synthesis_should_apply
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import BurstGPTTrace
 
@@ -109,13 +110,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
             )
         )
 
-        dataset = self.run.cfg.get_default_dataset()
-        synthesis = getattr(dataset, "synthesis", None)
-        if synthesis is not None and (
-            synthesis.speedup_ratio != 1.0
-            or synthesis.prefix_len_multiplier != 1.0
-            or synthesis.prefix_root_multiplier != 1
-        ):
+        if synthesis_should_apply(self._synthesis_config):
             data = self._apply_synthesis(data)
 
         return data

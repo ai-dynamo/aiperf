@@ -23,10 +23,8 @@ import orjson
 
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Turn
-from aiperf.dataset.loader.base_trace_loader import (
-    BaseTraceDatasetLoader,
-    _synthesis_should_apply,
-)
+from aiperf.config.dataset.trace import synthesis_should_apply
+from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import SageMakerDataCaptureTrace
 
 
@@ -285,7 +283,7 @@ class SageMakerDataCaptureLoader(
 
         data = self._group_traces(items)
 
-        if _synthesis_should_apply(self._synthesis_config):
+        if synthesis_should_apply(self._synthesis_config):
             data = self._apply_synthesis(data)
 
         return data

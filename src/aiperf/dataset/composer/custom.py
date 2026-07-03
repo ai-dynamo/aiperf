@@ -9,6 +9,7 @@ from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
+from aiperf.config.dataset.trace import synthesis_should_apply
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.dataset.utils import check_file_exists
@@ -205,19 +206,16 @@ class CustomDatasetComposer(BaseDatasetComposer):
         if synthesis_config is None:
             return
 
-        # Check if synthesis is actually configured
-        should_synthesize = (
-            (
-                synthesis_config.speedup_ratio != 1.0
-                or synthesis_config.prefix_len_multiplier != 1.0
-                or synthesis_config.prefix_root_multiplier != 1.0
-                or synthesis_config.prompt_len_multiplier != 1.0
-            )
-            if synthesis_config
-            else False
+        # max_isl / max_osl are filters/caps rather than transforms, so they
+        # don't flip the loaders' apply gate; but they are still synthesis-only
+        # knobs, so the validator rejects them on non-trace datasets too.
+        synthesis_active = (
+            synthesis_should_apply(synthesis_config)
+            or synthesis_config.max_isl is not None
+            or synthesis_config.max_osl is not None
         )
 
-        if should_synthesize and not plugins.is_trace_dataset(dataset_type):
+        if synthesis_active and not plugins.is_trace_dataset(dataset_type):
             raise ValueError(
                 f"Synthesis options are only supported with trace datasets, "
                 f"but got {dataset_type.value}. "

@@ -4,6 +4,7 @@
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.models import Conversation, Turn
 from aiperf.config import AIPerfConfig
@@ -202,6 +203,7 @@ class TestSynthesisValidation:
             {"prefix_len_multiplier": 2.0},
             {"prefix_root_multiplier": 2},
             {"prompt_len_multiplier": 2.0},
+            {"output_len_multiplier": 2.0},
         ],
     )
     def test_various_synthesis_options_raise_error(
@@ -231,16 +233,50 @@ class TestSynthesisValidation:
         for dataset_type in CustomDatasetType:
             composer._validate_synthesis_config(dataset_type)
 
-    def test_max_isl_alone_allowed_with_any_type(self, mock_tokenizer):
-        """Test that max_isl alone doesn't trigger synthesis validation.
+    @pytest.mark.parametrize(
+        "synthesis_overrides",
+        [
+            param({"max_isl": 4096}, id="max_isl"),
+            param({"max_osl": 512}, id="max_osl"),
+        ],
+    )  # fmt: skip
+    def test_max_isl_osl_alone_raises_with_non_trace_type(
+        self, mock_tokenizer, synthesis_overrides
+    ):
+        """max_isl / max_osl are synthesis-only knobs and reject non-trace datasets.
 
-        max_isl is a filter, not a synthesis transformation.
+        They are filters/caps rather than transforms, so they do NOT flip the
+        loaders' apply gate, but the validator still treats them as
+        synthesis-active because they are meaningless without a trace loader.
         """
         config = _file_config(
             format_str="single_turn",
-            synthesis={"max_isl": 4096},
+            synthesis=synthesis_overrides,
         )
         composer = CustomDatasetComposer(_make_run(config), mock_tokenizer)
 
-        # Should not raise - max_isl doesn't trigger should_synthesize()
-        composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+        with pytest.raises(ValueError) as exc:
+            composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+
+        assert "only supported with trace datasets" in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "synthesis_overrides",
+        [
+            param({"max_isl": 4096}, id="max_isl"),
+            param({"max_osl": 512}, id="max_osl"),
+        ],
+    )  # fmt: skip
+    def test_max_isl_osl_alone_allowed_with_trace_type(
+        self, mock_tokenizer, synthesis_overrides
+    ):
+        """max_isl / max_osl are fine on a trace dataset."""
+        config = _file_config(
+            format_str="mooncake_trace",
+            path="trace_data.jsonl",
+            synthesis=synthesis_overrides,
+        )
+        composer = CustomDatasetComposer(_make_run(config), mock_tokenizer)
+
+        # Should not raise for a trace type.
+        composer._validate_synthesis_config(CustomDatasetType.MOONCAKE_TRACE)
