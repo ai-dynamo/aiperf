@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from aiperf_mock_server.models import (
+    AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -331,6 +332,9 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return text, None
     elif isinstance(request, ImageGenerationRequest):
         return request.prompt, None
+    elif isinstance(request, AnthropicMessagesRequest):
+        text = _extract_chat_messages(request.messages)
+        return text, request.max_output_tokens
     elif isinstance(request, SolidoRAGRequest):
         return " ".join(request.query), None
     else:

@@ -228,6 +228,38 @@ class SolidoRAGRequest(BaseModel):
     min_tokens: int | None = None
 
 
+class AnthropicMessage(BaseModel):
+    """Represents an Anthropic message with role and content."""
+
+    role: str
+    content: str | list[dict[str, Any]]
+
+
+class AnthropicMessagesRequest(BaseCompletionRequest):
+    """Request model for Anthropic /v1/messages endpoint."""
+
+    messages: list[AnthropicMessage]
+    # Required by the real API and by Dynamo's /v1/messages (u32, request
+    # fails deserialization without it) - enforce the same contract so a
+    # client regression that stops sending max_tokens fails e2e.
+    max_tokens: int
+    system: str | list[dict[str, Any]] | None = None
+    cache_control: dict[str, Any] | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: dict[str, Any] | None = None
+    thinking: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    stop_sequences: list[str] | None = None
+
+    @property
+    def max_output_tokens(self) -> int | None:
+        """Get max output tokens."""
+        return self.max_tokens
+
+
 # ============================================================================
 # Request Type Union
 # ============================================================================
@@ -243,4 +275,5 @@ RequestT = (
     | ImageGenerationRequest
     | ImageRetrievalRequest
     | SolidoRAGRequest
+    | AnthropicMessagesRequest
 )

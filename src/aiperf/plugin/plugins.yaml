@@ -240,9 +240,10 @@ endpoint:
   messages:
     class: aiperf.endpoints.anthropic_messages:MessagesEndpoint
     description: |
-      Anthropic Messages API endpoint. Supports text and image inputs and both
-      streaming and non-streaming responses. The shared system prompt lives in
-      the top-level system field and per-request max_tokens is required. Uses
+      Anthropic Messages API endpoint. Supports text and image inputs, tool
+      use, extended thinking, and both streaming and non-streaming responses.
+      The shared system prompt lives in the top-level system field and
+      per-request max_tokens is required. Uses x-api-key authentication and
       /v1/messages path.
     metadata:
       endpoint_path: /v1/messages
