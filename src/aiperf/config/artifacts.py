@@ -57,6 +57,7 @@ class OutputDefaults:
     )
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
+    PROFILE_EXPORT_CONSOLE_TXT_FILE = Path("profile_export_console.txt")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
     SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
     SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
@@ -268,6 +269,13 @@ class ArtifactsConfig(BaseConfig):
         """Path for the JSON summary export file."""
         base = self._base()
         name = f"{base}.json" if base else "profile_export_aiperf.json"
+        return self.dir / name
+
+    @property
+    def profile_export_console_txt_file(self) -> Path:
+        """Path for the plain-text console output capture file."""
+        base = self._base()
+        name = f"{base}_console.txt" if base else "profile_export_console.txt"
         return self.dir / name
 
     @property
