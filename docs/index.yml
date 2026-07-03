@@ -183,6 +183,8 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
+  - page: DAG Benchmarks (Branching Conversations)
+    path: benchmark-modes/dag.md
 
 - section: Kubernetes
   collapsed: true

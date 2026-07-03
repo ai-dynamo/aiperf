@@ -71,7 +71,7 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 ## Optional
 
 - [docs/tutorials/](docs/tutorials/): Feature-specific walkthroughs (arrival patterns, ramping, goodput, multi-turn, vision, audio, custom datasets, ...). Index: `README.md`.
-- [docs/benchmark-modes/](docs/benchmark-modes/): Benchmark modes, timing, traces.
+- [docs/benchmark-modes/](docs/benchmark-modes/): Benchmark modes, timing, traces. Includes [dag.md](docs/benchmark-modes/dag.md) — DAG branching conversations (FORK context inheritance + SPAWN sub-agents, authoring + reference).
 - [docs/accuracy/](docs/accuracy/): Accuracy benchmarks and graders. Note: `docs/accuracy/accuracy_stubs.md` — all accuracy loaders currently raise `NotImplementedError`; framework exists but implementations do not.
 - [docs/server-metrics/](docs/server-metrics/): Server-side metric schemas.
 - [docs/api/synthesis.md](docs/api/synthesis.md): Dataset synthesis API.
