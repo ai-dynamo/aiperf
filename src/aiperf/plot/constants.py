@@ -40,6 +40,13 @@ DEFAULT_OUTPUT_DIR = Path("plots")
 DEFAULT_PNG_OUTPUT_DIR = DEFAULT_OUTPUT_DIR / "png"
 PLOT_LOG_FILE = "aiperf_plot.log"
 
+# Per-run materialized plot envelope receipt. The auto-plot callback writes the
+# resolved ``PlotEnvelopeConfig`` here so a later ``aiperf plot <run>`` (or
+# ``aiperf plot --config <file>``) reproduces the run's plots without the
+# original AIPerf YAML. Shared by the writer (``auto_plot._materialize_envelope``)
+# and the reader (``PlotConfig._resolve_config_path`` Priority 1.5 scan).
+MATERIALIZED_PLOT_CONFIG_NAME = ".aiperf-plot-config.yaml"
+
 # Dashboard defaults
 DEFAULT_DASHBOARD_PORT = 8050
 

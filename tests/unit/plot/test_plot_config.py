@@ -10,8 +10,10 @@ Tests YAML configuration loading, validation, and conversion to PlotSpec objects
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.plot.config import PlotConfig, _parse_and_validate_metric_name
+from aiperf.plot.constants import MATERIALIZED_PLOT_CONFIG_NAME
 from aiperf.plot.core.plot_specs import (
     DataSource,
     MetricSpec,
@@ -19,6 +21,19 @@ from aiperf.plot.core.plot_specs import (
     PlotType,
     TimeSlicePlotSpec,
 )
+
+_MATERIALIZED_YAML = """
+visualization:
+  multi_run_defaults:
+    - materialized_plot
+  multi_run_plots:
+    materialized_plot:
+      type: scatter
+      x: request_latency_p50
+      y: request_throughput_avg
+  single_run_defaults: []
+  single_run_plots: {}
+"""
 
 
 class TestPlotConfigLoading:
@@ -182,6 +197,138 @@ visualization:
 
         with pytest.raises(ValueError, match="missing 'visualization' top-level key"):
             PlotConfig(config_file)
+
+
+class TestArtifactDirDetection:
+    """Priority 1.5: auto-detect a materialized envelope in artifact dirs.
+
+    The auto-plot callback writes ``<artifact_dir>/.aiperf-plot-config.yaml``
+    so ``aiperf plot <dir>`` reproduces a run's plots. Precedence:
+    explicit ``--config`` > materialized (first artifact dir that has one) >
+    user ``~/.aiperf/plot_config.yaml`` > shipped default.
+    """
+
+    @pytest.fixture
+    def isolated_home(self, tmp_path: Path, monkeypatch) -> Path:
+        """Point Path.home() at an empty dir so Priority 2 never masks 1.5."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+        return fake_home
+
+    def _write_materialized(self, art_dir: Path) -> Path:
+        art_dir.mkdir(parents=True, exist_ok=True)
+        target = art_dir / MATERIALIZED_PLOT_CONFIG_NAME
+        target.write_text(_MATERIALIZED_YAML)
+        return target
+
+    def test_materialized_config_detected(self, tmp_path: Path, isolated_home: Path):
+        art_dir = tmp_path / "run-artifacts"
+        target = self._write_materialized(art_dir)
+
+        config = PlotConfig(artifact_dirs=[art_dir])
+
+        assert config.resolved_path == target
+        assert config.get_multi_run_plot_specs()[0].name == "materialized_plot"
+
+    def test_explicit_config_beats_materialized(
+        self, tmp_path: Path, isolated_home: Path
+    ):
+        art_dir = tmp_path / "run-artifacts"
+        self._write_materialized(art_dir)
+
+        cli_config = tmp_path / "cli_config.yaml"
+        cli_config.write_text(
+            """
+visualization:
+  multi_run_defaults:
+    - cli_plot
+  multi_run_plots:
+    cli_plot:
+      type: scatter
+      x: request_latency_p50
+      y: request_throughput_avg
+  single_run_defaults: []
+  single_run_plots: {}
+"""
+        )
+
+        config = PlotConfig(cli_config, artifact_dirs=[art_dir])
+
+        assert config.resolved_path == cli_config
+        assert config.get_multi_run_plot_specs()[0].name == "cli_plot"
+
+    def test_materialized_beats_user_default(self, tmp_path: Path, monkeypatch):
+        fake_home = tmp_path / "home"
+        (fake_home / ".aiperf").mkdir(parents=True)
+        user_config = fake_home / ".aiperf" / "plot_config.yaml"
+        user_config.write_text(
+            """
+visualization:
+  multi_run_defaults:
+    - user_plot
+  multi_run_plots:
+    user_plot:
+      type: scatter
+      x: request_latency_p50
+      y: request_throughput_avg
+  single_run_defaults: []
+  single_run_plots: {}
+"""
+        )
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        art_dir = tmp_path / "run-artifacts"
+        target = self._write_materialized(art_dir)
+
+        config = PlotConfig(artifact_dirs=[art_dir])
+
+        assert config.resolved_path == target
+        assert config.get_multi_run_plot_specs()[0].name == "materialized_plot"
+
+    @pytest.mark.parametrize(
+        "hit_index",
+        [
+            param(0, id="first-dir-wins"),
+            param(1, id="second-dir-when-first-empty"),
+        ],
+    )  # fmt: skip
+    def test_multi_dir_first_hit_wins(
+        self, tmp_path: Path, isolated_home: Path, hit_index: int
+    ):
+        # Two artifact dirs are scanned in order; the FIRST one that contains a
+        # materialized envelope wins. When hit_index=1 the first dir has none.
+        dirs = [tmp_path / "run-a", tmp_path / "run-b"]
+        for d in dirs:
+            d.mkdir()
+        expected = self._write_materialized(dirs[hit_index])
+
+        config = PlotConfig(artifact_dirs=dirs)
+
+        assert config.resolved_path == expected
+
+    def test_multi_dir_earlier_hit_shadows_later(
+        self, tmp_path: Path, isolated_home: Path
+    ):
+        # Both dirs have a materialized file; the earlier dir must win.
+        first = self._write_materialized(tmp_path / "run-a")
+        self._write_materialized(tmp_path / "run-b")
+
+        config = PlotConfig(artifact_dirs=[tmp_path / "run-a", tmp_path / "run-b"])
+
+        assert config.resolved_path == first
+
+    def test_no_materialized_falls_through_to_user_default(
+        self, tmp_path: Path, isolated_home: Path
+    ):
+        # Empty artifact dir -> no Priority 1.5 hit -> user default auto-created.
+        art_dir = tmp_path / "run-artifacts"
+        art_dir.mkdir()
+
+        config = PlotConfig(artifact_dirs=[art_dir])
+
+        user_config = isolated_home / ".aiperf" / "plot_config.yaml"
+        assert config.resolved_path == user_config
 
 
 class TestPlotSpecConversion:

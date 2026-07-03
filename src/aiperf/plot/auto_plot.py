@@ -59,14 +59,24 @@ def _materialize_envelope(artifact_dir: Path, plot_envelope: Any) -> Path:
     """Write the envelope plot config to ``<artifact_dir>/.aiperf-plot-config.yaml``.
 
     ``run_plot_controller`` consumes the envelope only as a YAML file path, so the
-    resolved ``PlotEnvelopeConfig`` is dumped to disk (camelCase, mirroring
-    ``default_plot_config.yaml``) and the path is threaded back through ``config=``.
-    The materialized file also lets ``aiperf plot <dir>`` reproduce the run.
+    resolved ``PlotEnvelopeConfig`` is dumped to disk (snake_case field names,
+    mirroring ``default_plot_config.yaml``) and the path is threaded back through
+    ``config=``. The materialized file also lets ``aiperf plot <dir>`` reproduce
+    the run.
+
+    ``by_alias=False`` is load-bearing: ``PlotConfig`` reads snake_case keys
+    (``multi_run_defaults``, ``server_metrics_downsampling``,
+    ``experiment_classification``), so dumping the camelCase aliases would make
+    the reader silently find nothing and emit zero plots.
     """
     from ruamel.yaml import YAML
 
-    target = artifact_dir / ".aiperf-plot-config.yaml"
+    from aiperf.plot.constants import MATERIALIZED_PLOT_CONFIG_NAME
+
+    target = artifact_dir / MATERIALIZED_PLOT_CONFIG_NAME
     yaml = YAML()
     with target.open("w") as f:
-        yaml.dump(plot_envelope.model_dump(by_alias=True, mode="json"), f)
+        yaml.dump(
+            plot_envelope.model_dump(by_alias=False, mode="json", exclude_none=True), f
+        )
     return target

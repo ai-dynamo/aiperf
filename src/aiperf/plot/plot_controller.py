@@ -66,7 +66,11 @@ class PlotController:
             )
 
         self.mode_detector = ModeDetector()
-        self.plot_config = PlotConfig(config_path, verbose=verbose)
+        self.plot_config = PlotConfig(
+            config_path,
+            verbose=verbose,
+            artifact_dirs=list(paths),
+        )
 
         classification_config = self.plot_config.get_experiment_classification_config()
         if classification_config:
