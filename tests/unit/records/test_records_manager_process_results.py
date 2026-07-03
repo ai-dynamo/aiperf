@@ -46,6 +46,7 @@ from aiperf.common.models import (
     ProcessRecordsResult,
     ProfileResults,
 )
+from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.plugin.enums import AccumulatorType, AnalyzerType, StreamExporterType
 from aiperf.records.records_manager import RecordsManager
 
@@ -537,6 +538,107 @@ def test_per_accumulator_export_context_source_only() -> None:
     fallback timestamps; others: phase window). K8s does not — analyzer
     contexts share one ``SummaryContext`` whose time window comes from the
     records-tracker."""
+
+
+# ---------------------------------------------------------------------------
+# Tests: no double-emit when both legacy processor and accumulator summarize
+# ---------------------------------------------------------------------------
+
+
+class TestProcessResultsNoDoubleEmit:
+    """The legacy ``MetricResultsProcessor`` (results_processor plugin, still
+    live) and the ``MetricsAccumulator`` (accumulator plugin) both compute the
+    same core registry metrics from the same record stream. The legacy pipeline
+    owns the exporter rollup (see ``load_accumulators``); the accumulator adds
+    columnar-only outputs (timeslices, multi_turn TTFT, sweep/derived-latency
+    tags). A tag produced by BOTH must appear exactly once in
+    ``ProfileResults.records`` — otherwise every shared metric double-renders in
+    the console table and JSON export.
+    """
+
+    @pytest.mark.asyncio
+    async def test_shared_tag_appears_once_legacy_value_authoritative(self) -> None:
+        legacy_val = MetricResult(
+            tag="request_latency", header="Request Latency", unit="ms",
+            avg=100.0, count=10,
+        )  # fmt: skip
+        acc_val = MetricResult(
+            tag="request_latency", header="Request Latency", unit="ms",
+            avg=999.0, count=5,
+        )  # fmt: skip
+        proc = _make_legacy_processor([legacy_val])
+        acc = _make_stub_accumulator(
+            AccumulatorMetricsSummary(results={"request_latency": acc_val})
+        )
+        mgr = _make_manager_mock(
+            legacy_processors=[proc],
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+        )
+
+        result = await mgr._process_results(cancelled=False)
+
+        matches = [r for r in result.results.records if r.tag == "request_latency"]
+        assert len(matches) == 1, "shared tag must not be double-emitted"
+        assert matches[0].avg == 100.0, "legacy value stays authoritative"
+
+    @pytest.mark.asyncio
+    async def test_accumulator_only_tags_still_appended(self) -> None:
+        legacy_val = MetricResult(
+            tag="request_latency", header="Request Latency", unit="ms",
+            avg=100.0, count=10,
+        )  # fmt: skip
+        acc_only = MetricResult(
+            tag="output_token_throughput", header="Output Token Throughput",
+            unit="tokens/sec", avg=50.0, count=1,
+        )  # fmt: skip
+        proc = _make_legacy_processor([legacy_val])
+        acc = _make_stub_accumulator(
+            AccumulatorMetricsSummary(
+                results={
+                    "request_latency": MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ms",
+                        avg=999.0,
+                        count=5,
+                    ),  # fmt: skip
+                    "output_token_throughput": acc_only,
+                }
+            )
+        )
+        mgr = _make_manager_mock(
+            legacy_processors=[proc],
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+        )
+
+        result = await mgr._process_results(cancelled=False)
+
+        tags = [r.tag for r in result.results.records]
+        assert tags.count("request_latency") == 1
+        assert tags.count("output_token_throughput") == 1
+        acc_result = next(
+            r for r in result.results.records if r.tag == "output_token_throughput"
+        )
+        assert acc_result.avg == 50.0
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_ttft_trend_preserved(self) -> None:
+        trend = {
+            0: MetricResult(tag="time_to_first_token", header="TTFT", unit="ms", avg=10.0),
+            1: MetricResult(tag="time_to_first_token", header="TTFT", unit="ms", avg=8.0),
+        }  # fmt: skip
+        proc = _make_legacy_processor([_STUB_METRIC_RESULT])
+        acc = _make_stub_accumulator(
+            AccumulatorMetricsSummary(results={}, multi_turn_ttft_trend=trend)
+        )
+        mgr = _make_manager_mock(
+            legacy_processors=[proc],
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+        )
+
+        result = await mgr._process_results(cancelled=False)
+
+        assert result.results.multi_turn_ttft_trend == trend
 
 
 # Reference imports kept so static-analysis sees the protocol surface used

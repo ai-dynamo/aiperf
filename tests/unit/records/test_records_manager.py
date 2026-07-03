@@ -245,3 +245,55 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         mock_self._process_metric_record_data.assert_not_called()
+
+
+class TestMaybeHintMissingCacheReporting:
+    """One-shot mid-run hint when the server reports token usage but never
+    reports prompt-cache reads (cache-capable server not told to report
+    ``cached_tokens``). Restored from origin/main; wired on the branch's
+    ``_process_metric_record_data`` path."""
+
+    def _bound_manager(self) -> MagicMock:
+        mgr = MagicMock()
+        mgr._warned_missing_cache_reporting = False
+        mgr.warning = MagicMock()
+        mgr._maybe_hint_missing_cache_reporting = (
+            RecordsManager._maybe_hint_missing_cache_reporting.__get__(mgr)
+        )
+        return mgr
+
+    def test_fires_once_when_usage_without_cache(self) -> None:
+        mgr = self._bound_manager()
+        record = create_metric_record_data(
+            request_start_ns=0, request_end_ns=1, metrics={"usage_prompt_tokens": 128}
+        )
+
+        mgr._maybe_hint_missing_cache_reporting(record)
+        mgr._maybe_hint_missing_cache_reporting(record)  # second record: no re-warn
+
+        assert mgr._warned_missing_cache_reporting is True
+        mgr.warning.assert_called_once()
+
+    def test_no_hint_when_cache_reads_reported(self) -> None:
+        mgr = self._bound_manager()
+        record = create_metric_record_data(
+            request_start_ns=0,
+            request_end_ns=1,
+            metrics={"usage_prompt_tokens": 128, "usage_prompt_cache_read_tokens": 0},
+        )
+
+        mgr._maybe_hint_missing_cache_reporting(record)
+
+        assert mgr._warned_missing_cache_reporting is False
+        mgr.warning.assert_not_called()
+
+    def test_no_hint_when_no_usage(self) -> None:
+        mgr = self._bound_manager()
+        record = create_metric_record_data(
+            request_start_ns=0, request_end_ns=1, metrics={}
+        )
+
+        mgr._maybe_hint_missing_cache_reporting(record)
+
+        assert mgr._warned_missing_cache_reporting is False
+        mgr.warning.assert_not_called()

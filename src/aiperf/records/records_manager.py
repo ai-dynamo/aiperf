@@ -76,6 +76,10 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.metrics.cache_reporting_hint import (
+    CACHE_REPORTING_HINT,
+    usage_without_cache_in_record,
+)
 from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
 from aiperf.network_latency.protocols import NetworkLatencyProcessorProtocol
 from aiperf.plugin.enums import (
@@ -261,6 +265,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if not self._records_tracker.is_phase_excluded(
             record_data.metadata.benchmark_phase
         ):
+            self._maybe_hint_missing_cache_reporting(record_data)
             await self._send_results_to_results_processors(record_data)
             # Parallel accumulator path — see ``__init__`` for why both run.
             await self._send_record_to_accumulators(record_data)
@@ -307,6 +312,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     f"Accumulator {target.__class__.__name__} failed for "
                     f"metric_records: {result!r}"
                 )
+
+    def _maybe_hint_missing_cache_reporting(
+        self, record_data: MetricRecordsData
+    ) -> None:
+        """Warn once, mid-run, when the server reports token usage but no prompt-cache
+        reads — the signature of a cache-capable server that hasn't been told to
+        report ``cached_tokens``. Fires on the first qualifying record so a long run
+        can be aborted and re-launched with the flag set; the end-of-run console
+        exporter emits the same hint for anyone who only reads the final summary.
+
+        Cheap: guarded by the one-shot ``_warned_missing_cache_reporting`` flag, so
+        after the first hit this is a single boolean check per record.
+        """
+        if self._warned_missing_cache_reporting:
+            return
+        if usage_without_cache_in_record(record_data.metrics):
+            self._warned_missing_cache_reporting = True
+            self.warning(CACHE_REPORTING_HINT)
 
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(
@@ -1025,23 +1048,39 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ],
             return_exceptions=True,
         )
-        # The legacy ``MetricResultsProcessor`` was deleted by the
-        # accumulator-pipeline port; ``MetricsAccumulator`` (registered under
-        # the ``accumulator`` plugin category, not ``results_processor``) now
-        # owns the metric percentile rollup. Bridge it into the legacy
-        # ``ProcessRecordsResultMessage`` shape by appending its
-        # ``list[MetricResult]`` and timeslices dict to the bucketable output
-        # so ``bucket_summarize_results`` picks them up alongside whatever the
-        # JSONL / CSV / accuracy processors returned. ``multi_turn_ttft_trend``
-        # is returned separately because it's a dict[int, MetricResult] —
-        # ``bucket_summarize_results`` would mis-route it to the timeslices
-        # dict slot.
+        # Ownership: the legacy ``MetricResultsProcessor`` (a ``results_processor``
+        # plugin — plugins.yaml:816 — still live, NOT deleted) owns the metric
+        # rollup that feeds the exporters. ``MetricsAccumulator`` (``accumulator``
+        # plugin category) runs in parallel to give analyzers a columnar source
+        # (see ``records_manager_processing.load_accumulators``) and additionally
+        # supplies accumulator-only outputs the legacy path never computes:
+        # timeslices, the per-turn TTFT trend, sweep / derived-latency tags. Both
+        # compute the same core registry metrics, so appending ALL of the
+        # accumulator's ``results`` would emit every shared tag twice in
+        # ``ProfileResults.records`` (duplicate console rows and JSON entries).
+        # Append only its accumulator-only tags; the legacy value stays
+        # authoritative for any tag both produced. ``multi_turn_ttft_trend`` is
+        # returned separately because it's a ``dict[int, MetricResult]`` —
+        # ``bucket_summarize_results`` would mis-route it to the timeslices slot.
         multi_turn_ttft_trend: dict[int, MetricResult] | None = None
         metrics_acc = self._accumulators.get(AccumulatorType.METRIC_RESULTS)
         if metrics_acc is not None:
             try:
                 acc_summary = await metrics_acc.summarize()
-                results.append(list(acc_summary.results.values()))
+                already_emitted = {
+                    tag
+                    for entry in results
+                    if isinstance(entry, list)
+                    for result in entry
+                    if (tag := getattr(result, "tag", None)) is not None
+                }
+                results.append(
+                    [
+                        result
+                        for tag, result in acc_summary.results.items()
+                        if tag not in already_emitted
+                    ]
+                )
                 if acc_summary.timeslices is not None:
                     results.append(acc_summary.timeslices)
                 multi_turn_ttft_trend = acc_summary.multi_turn_ttft_trend
