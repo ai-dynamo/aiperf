@@ -72,7 +72,8 @@ class DagJsonlLoader(BaseFileLoader):
     Structural keys describe branching/scheduling (not sent on the wire):
 
     - ``forks``: FORK branches. Children inherit the parent's accumulated
-      context and sticky-route to the parent's worker. Bare-string entries
+      context by seeding from its session (same-worker pinning is inert in
+      v1, so prefix-cache locality is opportunistic). Bare-string entries
       terminate the parent; object entries with ``background=True`` keep
       the parent running its remaining turns.
     - ``spawns``: SPAWN branches. Children start fresh and route freely;

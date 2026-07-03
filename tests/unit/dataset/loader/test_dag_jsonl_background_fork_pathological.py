@@ -243,8 +243,8 @@ class TestModeMismatchAcrossBgFork:
         distinct case (different modes, disambiguated branch_ids) and is
         intentionally allowed.").
 
-        Result: the child runs TWICE, once as a FORK child (sticky-routed,
-        inheriting context) and once as a SPAWN child (fresh, free
+        Result: the child runs TWICE, once as a FORK child (inheriting the
+        parent's context) and once as a SPAWN child (fresh, free
         routing), with two distinct correlation_ids. Counted twice in
         ``children_spawned``. This is by design but worth a regression
         test so a future tightening (e.g. rejecting the cross-mode

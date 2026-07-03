@@ -120,16 +120,19 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
 
     Distinguishes two kinds of DAG branches sharing one primitive:
 
-    - ``FORK``: child inherits the parent's accumulated message context and
-      sticky-routes to the parent's worker (prefix-cache locality). Used by
-      aiperf's native DAG conversation-forking semantics.
+    - ``FORK``: child inherits the parent's accumulated message context by
+      seeding a fresh session from the parent (worker-local). Same-worker
+      placement is not enforced in v1, so prefix-cache locality is
+      opportunistic. Used by aiperf's native DAG conversation-forking
+      semantics.
     - ``SPAWN``: child starts with a fresh context, free routing. Used for
       pre-session sub-agent dispatch.
     """
 
     FORK = "fork"
     """Child inherits parent's turn_list (accumulated message history + captured
-    live responses); sticky-routes to parent's worker for prefix-cache locality."""
+    live responses) by seeding from the parent's live session. Same-worker
+    placement is not enforced in v1, so prefix-cache locality is opportunistic."""
 
     SPAWN = "spawn"
     """Child gets a fresh context; free routing (no sticky pin to parent).

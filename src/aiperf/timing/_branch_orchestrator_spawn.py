@@ -189,8 +189,9 @@ class BranchOrchestratorSpawnMixin:
             return None
         child_corr = child.x_correlation_id
         self._child_modes[child_corr] = branch.mode
-        # FORK-mode children sticky-route to the parent's worker; SPAWN-mode
-        # children do not register a refcount.
+        # FORK-mode children would bump the sticky-router refcount to pin them
+        # to the parent's worker, but the router is inert (None) in v1 so this
+        # is a no-op; SPAWN-mode children never register a refcount.
         if (
             branch.mode == ConversationBranchMode.FORK
             and self._sticky_router is not None

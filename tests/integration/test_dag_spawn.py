@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """End-to-end integration test for SPAWN-mode DAG branches.
 
-Unlike FORK mode (which inherits the parent's accumulated messages and pins
-the child to the parent's worker), SPAWN-mode children:
+Unlike FORK mode (which inherits the parent's accumulated messages by seeding
+from the parent's session; same-worker pinning is inert in v1), SPAWN-mode
+children:
 
 - Start with an EMPTY accumulator (no parent context merged in).
 - Route freely (no sticky pin to the parent's worker).

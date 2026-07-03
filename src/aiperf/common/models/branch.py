@@ -20,10 +20,11 @@ class ConversationBranchInfo(
     """Describes a DAG branch from a parent turn to one or more child conversations.
 
     One primitive unifies aiperf's native FORK semantics (child inherits
-    parent turn_list + sticky-routes to parent worker) with pre-session
-    SPAWN semantics (fresh context, free routing, optionally dispatched
-    before the parent's first turn). The ``mode`` field discriminates
-    the two; the ``dispatch_timing`` field gates pre-session SPAWN.
+    parent turn_list by seeding from the parent's session; same-worker
+    pinning is inert in v1) with pre-session SPAWN semantics (fresh context,
+    free routing, optionally dispatched before the parent's first turn). The
+    ``mode`` field discriminates the two; the ``dispatch_timing`` field gates
+    pre-session SPAWN.
 
     Disambiguation note: this "branch" is a DAG conversation branch (a
     parent turn fanning out to one or more child conversations). Not a

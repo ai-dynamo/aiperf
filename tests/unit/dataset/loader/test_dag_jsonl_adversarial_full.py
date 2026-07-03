@@ -644,7 +644,7 @@ def test_forks_and_spawns_pointing_at_same_child_emits_two_branches(
     """When ``forks`` and ``spawns`` on the SAME turn name the same child id,
     both branches are emitted with disambiguated suffixes.
 
-    The child is registered as both a FORK target (sticky-routed) and a
+    The child is registered as both a FORK target (context-inheriting) and a
     SPAWN target (fresh-context). Loader does not currently warn; test
     documents the silent acceptance.
     """

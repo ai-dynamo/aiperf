@@ -71,9 +71,11 @@ class BranchOrchestrator(
     5. ``cleanup()`` -- idempotent; logs final ``BranchStats``. Call once
        at phase teardown.
 
-    FORK children sticky-route via ``StickyCreditRouter.release_child_routing``
-    paired with ``on_child_*``; under ``AIPERF_DAG_FAIL_FAST=true`` the first
-    child error aborts the parent and every orphan sibling.
+    The sticky-router hooks (``register_child_routing`` / ``release_child_routing``
+    paired with ``on_child_*``) are inert in v1: the router is always ``None``
+    here, so FORK children get no same-worker pin and prefix-cache locality is
+    opportunistic. Under ``AIPERF_DAG_FAIL_FAST=true`` the first child error
+    aborts the parent and every orphan sibling.
     See ``docs/benchmark-modes/dag.md``.
     """
 

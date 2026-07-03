@@ -39,9 +39,9 @@ class DagFork(AIPerfBaseModel):
     Symmetric note: ``DagFork.background`` is to FORK what ``DagSpawn.join_at``
     is to SPAWN — the parent-continuation knob. ``background=True`` is fire-
     and-forget within the parent's session: child inherits the parent's
-    accumulator at the spawn point AND sticky-routes to the parent's worker
-    (locality preserved), but no SPAWN_JOIN prereq is generated, so the
-    parent dispatches its next turn without waiting.
+    accumulator at the spawn point (same-worker pinning is inert in v1, so
+    prefix-cache locality is opportunistic), but no SPAWN_JOIN prereq is
+    generated, so the parent dispatches its next turn without waiting.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -140,9 +140,9 @@ class DagTurn(AIPerfBaseModel):
     forks: list[str | DagFork] = Field(
         default_factory=list,
         description="Child session ids to dispatch as FORK branches after this "
-        "turn completes (children inherit the parent's accumulator and "
-        "sticky-route to the parent's worker). Each entry may be a bare "
-        "string (parent terminates after fork) or a ``DagFork`` "
+        "turn completes (children inherit the parent's accumulator by seeding "
+        "from its session; same-worker pinning is inert in v1). Each entry may "
+        "be a bare string (parent terminates after fork) or a ``DagFork`` "
         "object carrying ``background=True`` to keep the parent running.",
     )
     spawns: list[str | DagSpawn] = Field(

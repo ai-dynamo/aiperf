@@ -50,22 +50,24 @@ class SampledSession:
     parent_correlation_id: str | None = None
     """Parent session's x_correlation_id when this is a DAG child. None for root sessions.
 
-    The router uses this for sticky pinning so FORK children land on the parent's worker.
+    Intended as the sticky-pin key for FORK children, but same-worker pinning
+    is inert in v1, so this does not currently force children onto the parent's
+    worker.
     """
 
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     """How the child relates to its parent. FORK inherits the parent's accumulated message
-    history and pins to the same worker; SPAWN starts with a fresh context. Ignored when
-    parent_correlation_id is None.
+    history by seeding from the parent's session; SPAWN starts with a fresh context.
+    Ignored when parent_correlation_id is None.
     """
 
     @property
     def routing_key(self) -> str:
         """Sticky-routing key.
 
-        Returns the parent's correlation_id when set (so FORK children share
-        a worker with the parent), otherwise this session's own
-        x_correlation_id.
+        Returns the parent's correlation_id when set (the key a same-worker
+        pin would use for FORK children, though that pin is inert in v1),
+        otherwise this session's own x_correlation_id.
         """
         return self.parent_correlation_id or self.x_correlation_id
 
@@ -147,11 +149,11 @@ class ConversationSource:
     ) -> SampledSession:
         """Build a SampledSession for a DAG child conversation (FORK or SPAWN-on-parent).
 
-        The returned session inherits sticky-routing from its parent via
-        ``parent_correlation_id``; the credit router pins the child to the
-        parent's worker. SPAWN-mode children start with a fresh context but
-        keep the sticky pin at this layer — routing freedom (when desired) is
-        enforced upstream by the orchestrator/router.
+        The returned session carries ``parent_correlation_id`` as its intended
+        sticky-pin key, but same-worker pinning is inert in v1, so the child is
+        not forced onto the parent's worker. SPAWN-mode children start with a
+        fresh context; the sticky-pin key is retained at this layer for when
+        the router hooks become active.
         """
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(

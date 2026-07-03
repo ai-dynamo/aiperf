@@ -992,9 +992,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     def _pin_parent_if_fork_child(self, credit: Credit, x_correlation_id: str) -> None:
         """FORK child seed: pin the parent so its session stays resident in the
-        cache until every FORK child has joined. FORK children sticky-route to
-        the parent's worker, so the parent's session lives on this same
-        SessionManager.
+        cache until every FORK child has joined. Same-worker placement is not
+        enforced in v1, so this pin only helps when the FORK child happens to
+        land on the parent's worker; otherwise the parent's session lives on a
+        different SessionManager and locality is lost.
 
         SPAWN-mode children (fresh context) and root credits
         (``parent_correlation_id is None``) skip pinning.
