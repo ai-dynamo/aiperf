@@ -54,6 +54,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
         self.grader: BaseGrader = grader_cls(run=run)
 
+        self._verbose = acc_cfg.verbose
         self._ground_truths: list[str] | None = None
 
     def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
@@ -98,7 +99,42 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         record_metrics["accuracy.correct"] = 1.0 if result.correct else 0.0
         record_metrics["accuracy.unparsed"] = 1.0 if result.unparsed else 0.0
 
+        self._log_grading_detail(metadata.session_num, response_text, result)
+
         return record_metrics
+
+    def _log_grading_detail(
+        self, session_num: int, response_text: str, result: GradingResult
+    ) -> None:
+        """Surface per-problem grading diagnostics.
+
+        Every grader fills in ``reasoning`` (why a response was graded
+        correct/unparsed) and ``extracted_answer``, but only ``correct`` and
+        ``unparsed`` reach the metrics. Without this, a run reporting 100%
+        unparsed gives no clue whether the response was empty, the answer
+        format didn't match, or grading raised an exception (e.g. LCB's
+        sandboxed execution failing to fork from the daemon record processor).
+
+        Emits at info level under ``--accuracy-verbose`` (the flag's
+        documented "per-problem grading details") and always at debug, so the
+        reason is recoverable from logs without re-running.
+        """
+        if not self._verbose and not self.is_debug_enabled:
+            return
+
+        def _detail() -> str:
+            preview = response_text.strip().replace("\n", "\\n")[:200]
+            return (
+                f"[accuracy] session={session_num} correct={result.correct} "
+                f"unparsed={result.unparsed} reason={result.reasoning!r} "
+                f"extracted={result.extracted_answer[:120]!r} "
+                f"response_len={len(response_text)} response_preview={preview!r}"
+            )
+
+        if self._verbose:
+            self.info(_detail)
+        else:
+            self.debug(_detail)
 
     @staticmethod
     def _extract_response_text(record: ParsedResponseRecord) -> str:

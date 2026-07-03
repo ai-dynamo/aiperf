@@ -22,6 +22,11 @@ from aiperf.common.enums import DatasetType
 from aiperf.config.flags._resolver_adaptive import (
     apply_basic_adaptive_scale_overrides,
 )
+from aiperf.config.flags._resolver_helpers import promote_benchmark_magic_lists
+from aiperf.config.flags._resolver_server_metrics import (
+    build_server_metrics_override,
+    normalize_server_metrics_base_for_override,
+)
 from aiperf.config.flags._section_fields import (
     ENDPOINT_FIELDS,
     INPUT_FIELDS,
@@ -97,28 +102,17 @@ def resolve_config(
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
+    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
-    benchmark = merged.get("benchmark")
-    if isinstance(benchmark, dict):
-        sweep_type = getattr(cli_config, "sweep_type", "grid")
-        _promote_cli_dataset_magic_lists(benchmark, cli_config, sweep_type=sweep_type)
-        _retarget_dataset_magic_lists(benchmark)
-        _promote_magic_lists_to_sweep_block(benchmark, sweep_type=sweep_type)
-        promoted_sweep = benchmark.pop("sweep", None)
-        if isinstance(promoted_sweep, dict):
-            existing_sweep = merged.get("sweep")
-            if isinstance(existing_sweep, dict):
-                existing_sweep.setdefault(
-                    "type", promoted_sweep.get("type", sweep_type)
-                )
-                existing_sweep.setdefault("parameters", {})
-                existing_sweep["parameters"].update(
-                    promoted_sweep.get("parameters", {})
-                )
-            else:
-                merged["sweep"] = promoted_sweep
+    promote_benchmark_magic_lists(
+        merged,
+        cli_config,
+        promote_cli_dataset_magic_lists=_promote_cli_dataset_magic_lists,
+        promote_magic_lists_to_sweep_block=_promote_magic_lists_to_sweep_block,
+        retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
+    )
     return AIPerfConfig.model_validate(merged)
 
 
@@ -166,6 +160,7 @@ def build_cli_overrides(
     _apply_input_overrides(out, cli)
     _apply_recipe_and_multirun(out, cli, benchmark_config=benchmark_config)
     _apply_artifacts_overrides(out, cli)
+    _apply_optional_section(out, "server_metrics", build_server_metrics_override(cli))
     _apply_optional_section(out, "tokenizer", build_tokenizer(cli))
     _apply_optional_section(out, "accuracy", build_accuracy(cli))
     wandb_base_enabled = benchmark_config is not None and benchmark_config.wandb.enabled
