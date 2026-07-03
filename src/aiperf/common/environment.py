@@ -521,6 +521,12 @@ class _MetricsSettings(BaseSettings):
         default=10000,
         description="Initial array capacity for metric storage dictionaries to minimize reallocation",
     )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.05,
+        le=60.0,
+        default=1.0,
+        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
+    )
     USAGE_PCT_DIFF_THRESHOLD: float = Field(
         ge=0.0,
         le=100.0,
