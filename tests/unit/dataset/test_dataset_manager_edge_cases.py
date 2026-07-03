@@ -460,25 +460,57 @@ class TestDatasetManagerCleanup:
         manager._backing_store.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_profile_start_keeps_rebroadcast_task_in_kubernetes_mode(
+    async def test_rebroadcast_survives_profile_start_until_stop(
         self,
+        mock_tokenizer,
         tmp_path: Path,
     ) -> None:
-        cfg = _make_config(artifacts_dir=tmp_path)
-        manager = DatasetManager(
-            run=_make_run(cfg, artifact_dir=tmp_path),
-            service_id="dm-edge",
+        """Regression: rebroadcast must outlive PROFILE_START in local mode.
+
+        A late-subscribing record processor (warm-tokenizer fast path) depends
+        entirely on the 1 Hz rebroadcast to receive DatasetConfiguredNotification;
+        ZMQ pub/sub does not replay the initial publish. The DatasetManager has
+        no PROFILE_START handler, so the command falls through the base layer's
+        no-handler ack path and the rebroadcast task survives. `@on_stop`
+        (`_cleanup`) is the single owner that cancels it. Pre-fix, an
+        ``@on_command(PROFILE_START)`` handler cancelled the task in local mode,
+        hanging every fast-config profile run at "Processing Records: 0/N".
+        """
+        cfg = _make_config(
+            dataset={
+                "name": "default",
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 32, "osl": 16},
+            },
+            artifacts_dir=tmp_path,
         )
-        manager._compress_only = True
-        rebroadcast = asyncio.create_task(asyncio.sleep(60))
-        manager._rebroadcast_task = rebroadcast
+        manager = await _new_initialized_manager(_make_run(cfg, artifact_dir=tmp_path))
+        # Local (non-Kubernetes) mode is where the startup race lived.
+        assert manager._compress_only is False
 
-        await manager._on_profile_start(Command(cid="c", cmd=CommandType.PROFILE_START))
+        await manager._profile_configure_command(
+            Command(cid="c", cmd=CommandType.PROFILE_CONFIGURE)
+        )
+        rebroadcast = manager._rebroadcast_task
+        assert rebroadcast is not None
+        assert not rebroadcast.done()
 
+        # Drive the real command-dispatch path: PROFILE_START has no handler on
+        # DatasetManager, so the base layer must ack it without touching the
+        # rebroadcast task.
+        manager.control_client = AsyncMock()
+        await manager._handle_control_command(
+            Command(cid="c2", cmd=CommandType.PROFILE_START)
+        )
+        manager.control_client.send.assert_awaited_once()
         assert manager._rebroadcast_task is rebroadcast
         assert not rebroadcast.done()
-        rebroadcast.cancel()
+
+        await manager._cleanup()
+        assert manager._rebroadcast_task is None
         await asyncio.sleep(0)
+        assert rebroadcast.cancelled() or rebroadcast.done()
 
     @pytest.mark.asyncio
     async def test_cleanup_cancels_rebroadcast_task(

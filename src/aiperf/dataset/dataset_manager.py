@@ -117,20 +117,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._default_context_mode: ConversationContextMode | None = None
         self._profile_configure_task: asyncio.Task[None] | None = None
 
-    @on_command(CommandType.PROFILE_START)
-    async def _on_profile_start(self, message: Command) -> None:
-        """Stop local rebroadcasts once profiling begins.
-
-        Kubernetes worker pods can be recreated during profiling with the same
-        deterministic service IDs. Keep rebroadcasting there so replacement
-        WorkerGroupManagers can recover dataset state and become dispatchable.
-        """
-        if self._compress_only:
-            return
-        if self._rebroadcast_task is not None:
-            self._rebroadcast_task.cancel()
-            self._rebroadcast_task = None
-
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(self, message: Command) -> None:
         """Configure the dataset."""
@@ -405,7 +391,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     async def _rebroadcast_dataset_notification(
         self, notification: DatasetConfiguredNotification
     ) -> None:
-        """Rebroadcast the dataset notification every second until profile_start."""
+        """Re-publish the dataset notification at 1 Hz until the service stops.
+
+        ZMQ pub/sub has no replay: a subscriber whose SUB socket was not yet
+        connected when the initial publish went out never receives it. Record
+        processors (and, in Kubernetes, recreated WorkerGroupManager pods) are
+        spawned concurrently with dataset configuration and routinely subscribe
+        after the first publish. This 1 Hz rebroadcast is their only recovery
+        path, so it must outlive PROFILE_START and run until `@on_stop`
+        (`_cleanup`) cancels it -- the single owner of the task's lifetime.
+        """
         try:
             while True:
                 await asyncio.sleep(1.0)
