@@ -59,7 +59,7 @@ __all__ = [
     "ImageRetrievalResponseData",
     "InferenceServerResponse",
     "MetricRecordInfo",
-    "MetricRecordMetadata",
+    "MetricRecordMetadata",  # noqa: F822 — provided by module __getattr__ (PEP 562 lazy re-export below); ruff cannot see it
     "MetricResult",
     "MetricValue",
     "ParsedResponse",

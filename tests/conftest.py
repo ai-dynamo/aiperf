@@ -10,6 +10,7 @@ DO NOT ADD FIXTURES THAT ARE ONLY USED IN A SPECIFIC TEST TYPE.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import sys
@@ -201,10 +202,8 @@ def _default_watchdog_kill(nodeid: str, mem_bytes: int, threshold_bytes: int) ->
         pass
     # Best-effort: also try the saved fd in case the user is running without
     # pytest's fd capture (e.g. `-s`), so the diagnostic is visible inline.
-    try:
+    with contextlib.suppress(OSError):
         os.write(_WATCHDOG_STDERR_FD, blob)
-    except OSError:
-        pass
     os._exit(137)
 
 

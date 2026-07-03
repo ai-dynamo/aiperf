@@ -126,7 +126,7 @@ def _write_per_combination_section(
 
     seen: set[str] = set()
     for combo_entry in per_combination_metrics:
-        for k in combo_entry.get("metrics", {}).keys():
+        for k in combo_entry.get("metrics", {}):
             seen.add(k)
     metric_names = sorted(seen)
     header = list(param_names)
