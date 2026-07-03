@@ -38,6 +38,32 @@ from aiperf.kubernetes.preflight import (
     PreflightResults,
 )
 
+
+@pytest.fixture(autouse=True)
+def _hermetic_k8s_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every test in this module to a stub ``k8s_client``.
+
+    ``CLIPreflightChecker.run_all_checks`` / ``run_quick_checks`` open
+    ``k8s_client()`` before dispatching the individual checks. Tests that
+    override the ``_check_*`` methods but do not patch ``k8s_client`` would
+    otherwise reach a live client-open, which falls through to
+    ``load_kube_config()`` and depends on the developer's ``~/.kube/config``.
+    Tests that assert on the kubeconfig/context forwarded to the client install
+    their own factory via ``patch("aiperf.kubernetes.preflight.k8s_client", ...)``
+    — that re-patches over this default within the ``with`` block. Patched on the
+    ``preflight`` module because it binds ``k8s_client`` at import time.
+    """
+    from contextlib import asynccontextmanager
+
+    import aiperf.kubernetes.preflight as preflight_mod
+
+    @asynccontextmanager
+    async def _stub(*, kubeconfig: str | None = None, context: str | None = None):
+        yield MagicMock(spec=ApiClient)
+
+    monkeypatch.setattr(preflight_mod, "k8s_client", _stub)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

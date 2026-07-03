@@ -9,6 +9,31 @@ import pytest
 from aiperf.operator.handlers.sweep import child_rollup, lifecycle
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_k8s_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every test in this module to a stub ``k8s_client``.
+
+    ``on_child_phase_transition`` opens ``k8s_client()`` itself (it holds one
+    client for the whole rollup tick), so tests that monkeypatch only the inner
+    ``_count_owned_children`` / ``_patch_parent_status`` / ``_read_parent_status``
+    helpers still reach a live client-open, which falls through to
+    ``load_kube_config()`` and depends on the developer's ``~/.kube/config``.
+    Tests that assert on apiserver calls install their own fake via
+    ``_install_fake_k8s_for_rollup`` / ``_install_fake_k8s_for_lifecycle`` — those
+    ``monkeypatch.setattr`` calls re-patch over this default within the test body.
+    """
+    from contextlib import asynccontextmanager
+    from unittest.mock import MagicMock
+
+    import aiperf.kubernetes.client as kclient
+
+    @asynccontextmanager
+    async def _stub(*, kubeconfig: str | None = None, context: str | None = None):
+        yield MagicMock(name="ApiClient")
+
+    monkeypatch.setattr(kclient, "k8s_client", _stub)
+
+
 @pytest.mark.asyncio
 async def test_cancel_handler_writes_cancelling_condition():
     patch = kopf.Patch()
