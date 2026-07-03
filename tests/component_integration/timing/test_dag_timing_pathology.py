@@ -413,25 +413,19 @@ def test_request_rate_infinity_passes_validation_but_yields_zero_period() -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="Stale test mock, not a missing API. dispatch_child_turn IS live "
-    "(credit/issuer.py:264, called from request_rate.py:318). This test leaves "
-    "issuer.dispatch_child_turn as a plain MagicMock and awaits it, raising "
-    "'TypeError: object MagicMock can't be used in await expression', then "
-    "asserts issue_credit.assert_awaited_once() -- but the immediate child "
-    "continuation path now dispatches via dispatch_child_turn, not issue_credit. "
-    "Needs a test rewrite to mock/assert dispatch_child_turn (deferred: triage)."
-)
 async def test_request_rate_dag_child_continuation_bypasses_continuation_queue() -> (
     None
 ):
     """RequestRate.handle_credit_return path for a credit with agent_depth>0
     must bypass the rate-limited ``_continuation_turns`` queue and dispatch
-    via the credit issuer directly (immediate dispatch).
+    via the credit issuer's DAG path directly (immediate dispatch).
 
-    Source semantics (request_rate.py:232-239): children dispatch directly
-    rather than queueing because the main rate loop may have already exited
-    by the time their continuation turns arrive."""
+    Source semantics (request_rate.py:269-289 -> _issue_child_continuation_or_release
+    :300-318 -> credit_issuer.dispatch_child_turn, issuer.py:264): children
+    dispatch directly rather than queueing because they already hold their
+    parent's session slot and the main rate loop may have already exited by the
+    time their continuation turns arrive. The next turn carries no ``delay_ms``,
+    so this takes the immediate (non-scheduled) dispatch branch."""
     turns = [TurnMetadata(), TurnMetadata()]
     conv = ConversationMetadata(conversation_id="child", turns=turns)
     ds = DatasetMetadata(
@@ -442,7 +436,7 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
     src.get_next_turn_metadata = lambda credit: turns[credit.turn_index + 1]
 
     issuer = MagicMock()
-    issuer.issue_credit = AsyncMock(return_value=True)
+    issuer.dispatch_child_turn = AsyncMock(return_value=True)
 
     scheduler = MagicMock()
     lifecycle = MagicMock()
@@ -464,8 +458,8 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
         lifecycle=lifecycle,
     )
 
-    # Drive a child credit (agent_depth=1): must call issue_credit directly,
-    # NOT queue.
+    # Drive a child credit (agent_depth=1): must dispatch via the DAG child
+    # path directly, NOT enqueue on the rate-limited continuation queue.
     child_credit = _mk_credit(
         "child",
         "child-x",
@@ -476,7 +470,10 @@ async def test_request_rate_dag_child_continuation_bypasses_continuation_queue()
     )
     await strategy.handle_credit_return(child_credit)
 
-    issuer.issue_credit.assert_awaited_once()
+    issuer.dispatch_child_turn.assert_awaited_once()
+    # The immediate (no-delay) child path must not go through the scheduler.
+    scheduler.execute_async.assert_not_called()
+    scheduler.schedule_later.assert_not_called()
     assert strategy._continuation_turns.empty(), (
         "child continuation must not enter rate-limited queue"
     )
