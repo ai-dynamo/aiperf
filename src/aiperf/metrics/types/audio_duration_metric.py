@@ -21,12 +21,17 @@ class AudioDurationMetric(BaseRecordMetric[float]):
         A 12.5s audio clip produces audio_duration = 12.5. Useful for
         correlating latency with clip length and verifying RTFx post-hoc.
 
-    Computed only when the request's first turn carries
-    ``audio_duration_seconds``. Non-ASR requests yield no metric value.
+    Read from ``record.request.request_info.audio_duration_seconds``,
+    which is hoisted off the originating turn at record-enrichment time
+    (see ``inference_client._finalize_request_record``). The full ``turns``
+    list does not cross the ZMQ hop to the record processor, so reading
+    ``record.request.turns`` here would AttributeError on every record.
+    Non-ASR requests yield no metric value.
 
     Raises:
-        NoMetricValue: when the request has no turns, or the first turn
-            lacks ``audio_duration_seconds`` (or it is non-positive).
+        NoMetricValue: when the record has no ``request_info``, or
+            ``request_info.audio_duration_seconds`` is missing or
+            non-positive.
     """
 
     tag = "audio_duration"
@@ -43,14 +48,16 @@ class AudioDurationMetric(BaseRecordMetric[float]):
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
-        turns = record.request.turns
-        if not turns:
-            raise NoMetricValue("No turns in request; audio duration unavailable.")
+        request_info = record.request.request_info
+        if request_info is None:
+            raise NoMetricValue(
+                "Record has no request_info; audio_duration unavailable."
+            )
 
-        audio_duration = turns[0].audio_duration_seconds
+        audio_duration = request_info.audio_duration_seconds
         if audio_duration is None or audio_duration <= 0:
             raise NoMetricValue(
-                "Turn has no audio_duration_seconds; audio_duration metric applies to ASR requests only."
+                "Record has no audio_duration_seconds; audio_duration metric applies to ASR requests only."
             )
 
         return audio_duration

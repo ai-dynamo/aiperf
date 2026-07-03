@@ -322,7 +322,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             getattr(head_phase, "concurrency", None)
         ).encode("utf-8")
 
-        request_rate = getattr(head_phase, "request_rate", None)
+        request_rate = getattr(head_phase, "rate", None)
         if request_rate is not None:
             metadata[b"aiperf.request_rate"] = str(request_rate).encode("utf-8")
 
@@ -661,6 +661,8 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             reference_idx, final_idx = time_series.get_indices_for_filter(
                 self._time_filter
             )
+            if final_idx is None:
+                return []
             # Find first index in filter range
             first_idx = np.searchsorted(
                 time_series.timestamps, self._time_filter.start_ns, side="left"

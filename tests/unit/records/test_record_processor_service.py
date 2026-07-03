@@ -155,11 +155,10 @@ class TestRecordProcessorDatasetConfiguredBarrier:
         """_on_inference_results must block until the dataset is configured, then proceed."""
         mock_self = MagicMock(spec=RecordProcessor)
         mock_self._dataset_configured_event = asyncio.Event()
-        mock_self.inference_result_parser = MagicMock()
-        # First downstream step after the barrier; raising proves the barrier was passed.
-        mock_self.inference_result_parser.parse_request_record = AsyncMock(
-            side_effect=RuntimeError("REACHED_PROCESSING")
-        )
+        # First downstream step after the barrier; the handler swallows
+        # processing exceptions (lockstep contract), so assert on the call
+        # instead of a raised error.
+        mock_self._process_and_forward_record = AsyncMock()
 
         task = asyncio.create_task(
             RecordProcessor._on_inference_results(mock_self, MagicMock())
@@ -169,12 +168,12 @@ class TestRecordProcessorDatasetConfiguredBarrier:
 
         # Barrier not released: processing has not started.
         assert not task.done()
-        assert not mock_self.inference_result_parser.parse_request_record.called
+        assert not mock_self._process_and_forward_record.called
 
         # Barrier released: processing proceeds past the wait.
         mock_self._dataset_configured_event.set()
-        with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
-            await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(task, timeout=1.0)
+        mock_self._process_and_forward_record.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_inference_results_fails_run_on_config_timeout(self, monkeypatch):

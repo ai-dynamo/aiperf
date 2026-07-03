@@ -30,8 +30,9 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
-from aiperf.plugin.enums import TimingMode
+from aiperf.plugin.enums import AccumulatorType, TimingMode
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
@@ -330,6 +331,12 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager._timing_results_processors = []
     manager._send_timing_to_results_processors = AsyncMock()
     manager._send_results_to_results_processors = AsyncMock()
+    # Accumulator engine dispatch (primary summary path) — stubbed; these tests
+    # exercise the finalization-ordering logic, not the per-record fan-out.
+    manager._metric_record_accumulators = []
+    manager._metric_record_stream_exporters = []
+    manager._send_record_to_accumulators = AsyncMock()
+    manager._maybe_hint_missing_cache_reporting = MagicMock()
     manager.info = MagicMock()
     manager.notice = MagicMock()
     manager.debug = MagicMock()
@@ -865,9 +872,18 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
             MetricResult(tag="output_token_count", header="h", unit="tokens", avg=2.0),
         ]
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=request_records)
-        manager._metric_results_processors = [processor]
+        # The byte-exact summary engine now sources records from the
+        # metric_record accumulators (AccumulatorMetricsSummary shape), not the
+        # legacy MetricResultsProcessor.
+        metric_accumulator = MagicMock()
+        metric_accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(
+                results={r.tag: r for r in request_records},
+            )
+        )
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
+        manager._metric_record_accumulators = [metric_accumulator]
+        manager._stream_exporters = {}
 
         efficiency_metrics = [
             MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
@@ -946,9 +962,15 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
         ]
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=request_records)
-        manager._metric_results_processors = [processor]
+        metric_accumulator = MagicMock()
+        metric_accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(
+                results={r.tag: r for r in request_records},
+            )
+        )
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
+        manager._metric_record_accumulators = [metric_accumulator]
+        manager._stream_exporters = {}
 
         accumulator = MagicMock()
         accumulator.compute_efficiency_metrics = MagicMock(
@@ -1000,9 +1022,13 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.run.cfg.server_metrics_disabled = True
         manager.run.cfg.network_latency.enabled = False
 
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=[])
-        manager._metric_results_processors = [processor]
+        metric_accumulator = MagicMock()
+        metric_accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(results={})
+        )
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
+        manager._metric_record_accumulators = [metric_accumulator]
+        manager._stream_exporters = {}
 
         accumulator = MagicMock()
         manager._gpu_telemetry_accumulator = accumulator
@@ -1095,6 +1121,42 @@ class TestMidRunCacheReportingHint:
         manager.warning.assert_not_called()
 
 
+class TestRealtimeUpdateGate:
+    """The realtime block must re-render when EITHER the record count OR the
+    live server-metrics snapshot changes. The port had gated on record count
+    alone, freezing the server-metrics row (cache hit rate, KV usage, queue
+    depth) during lulls where the count was momentarily static."""
+
+    def _manager(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._previous_realtime_records = None
+        manager._previous_realtime_server_snapshot = None
+        return manager
+
+    def test_first_tick_is_an_update(self):
+        m = self._manager()
+        assert m._has_realtime_update(0, {}) is True
+
+    def test_record_count_change_triggers_update(self):
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        assert m._has_realtime_update(11, {"kv_cache_usage_pct": 50.0}) is True
+
+    def test_server_metric_change_triggers_update_even_with_static_records(self):
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        # Record count unchanged, but KV usage moved -> must still re-render.
+        assert m._has_realtime_update(10, {"kv_cache_usage_pct": 72.0}) is True
+
+    def test_no_change_skips_update(self):
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        assert m._has_realtime_update(10, {"kv_cache_usage_pct": 50.0}) is False
+
+
 class TestRecordsManagerDatasetConfiguredBarrier:
     """The records manager must not run metric records through its results
     processors until the DatasetConfiguredNotification has been applied.
@@ -1110,6 +1172,7 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         mock_self = MagicMock(spec=RecordsManager)
         mock_self._dataset_configured_event = asyncio.Event()
         mock_self._metric_results_processors = []
+        mock_self._accumulators = {}
 
         await RecordsManager._on_dataset_configured(mock_self, MagicMock())
 
