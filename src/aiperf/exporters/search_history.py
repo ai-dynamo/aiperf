@@ -18,7 +18,7 @@ from aiperf.orchestrator.search_planner._sla_helpers import first_failing_filter
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from aiperf.config.sweep import AdaptiveSearchSweep
+    from aiperf.config.sweep import AdaptiveSearchSweep, Objective
     from aiperf.orchestrator.search_planner.base import SearchIteration
 
 __all__ = ["write_search_history"]
@@ -43,6 +43,11 @@ def write_search_history(
           "best": {"iteration_idx": int, "objective_value": float, "variation_values": {...},
                    "feasible": bool, "feasible_count": int}
                   | null when no objectives recorded,
+          "best_trials": [
+            {"iteration_idx": int, "objective_value": float, "objective_values": [float, ...],
+             "variation_values": {...}, "feasible": bool, "feasible_count": int,
+             "pareto_rank": int}
+          ] | null when the history is unscored,
           "boundary_summary": {"swept_dim_path": str,
                                "feasible_max": {...} | null,
                                "infeasible_min": {..., "first_breach": {...}} | null}
@@ -55,6 +60,11 @@ def write_search_history(
     iteration satisfied every configured SLA filter, the best is chosen from
     the feasible subset; otherwise selection falls back to the full pool with
     ``feasible_count == 0`` so the reader can tell the two cases apart.
+
+    ``best`` is the scalar single-best (by the primary objective); ``best_trials``
+    is the length-1 argmax/argmin list for single-objective runs and the full
+    non-dominated (Pareto) front for multi-objective runs, every member carrying
+    ``pareto_rank == 0``. Both apply the same feasibility-first pool selection.
 
     ``boundary_summary`` (Plan-D) reports the literal SLA-feasibility boundary
     on the swept axis: ``feasible_max`` is the highest swept-dim value seen
@@ -149,36 +159,96 @@ def _compute_best_payload(
 def _compute_best_trials(
     history: list[SearchIteration], cfg: AdaptiveSearchSweep
 ) -> list[dict] | None:
-    """Multi-objective best-trial list (Pareto-aware projection of ``best``).
+    """Best-trial list: single argmax/argmin (1 objective) or Pareto front (N).
 
-    For single-objective configs this is a one-element list mirroring ``best``
-    with ``objective_values`` (vector form). Returned as ``None`` only when
-    the entire history is unscored, so consumers can always rely on
-    ``best_trials[0]`` when ``len > 0``.
+    Selection is feasibility-first: when any iteration satisfied every
+    configured SLA filter the winner(s) are drawn from the feasible subset;
+    otherwise selection falls back to the full scored pool with
+    ``feasible_count == 0`` so the reader can tell the two cases apart.
+
+    For length-1 ``cfg.objectives`` this returns a one-element list holding the
+    single best by ``objective_value`` under the objective's direction -- the
+    branch's original single-objective behavior, now also tagged
+    ``pareto_rank == 0`` for schema uniformity. For length-N objectives it
+    returns the non-dominated (Pareto) front over ``objective_values`` under
+    per-objective directions, one entry per front member, all ``pareto_rank
+    == 0`` (the front is unranked). Returned as ``None`` only when the entire
+    history is unscored, so consumers can always rely on ``best_trials[0]``
+    when ``len > 0``.
     """
-    from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+    from aiperf.common.enums import OptimizationDirection
 
     scored = [h for h in history if h.objective_value is not None]
     feasible = [h for h in scored if h.feasible]
     ranking_pool = feasible if feasible else scored
     if not ranking_pool:
         return None
-    if cfg.objectives and cfg.objectives[0].direction == OptimizationDirection.MAXIMIZE:
-        best = max(ranking_pool, key=lambda h: h.objective_value)
-    else:
-        best = min(ranking_pool, key=lambda h: h.objective_value)
-    return [
-        {
-            "iteration_idx": best.iteration_idx,
-            "objective_value": best.objective_value,
-            "objective_values": best.objective_values
-            if best.objective_values is not None
-            else [best.objective_value],
-            "variation_values": best.variation_values,
-            "feasible": best.feasible,
-            "feasible_count": len(feasible),
-        }
-    ]
+
+    if len(cfg.objectives) > 1:
+        front = _pareto_front(ranking_pool, cfg.objectives)
+        return [_serialize_trial(h, len(feasible), pareto_rank=0) for h in front]
+
+    maximize = bool(cfg.objectives) and (
+        cfg.objectives[0].direction == OptimizationDirection.MAXIMIZE
+    )
+    best = (max if maximize else min)(ranking_pool, key=lambda h: h.objective_value)
+    return [_serialize_trial(best, len(feasible), pareto_rank=0)]
+
+
+def _serialize_trial(
+    h: SearchIteration, feasible_count: int, *, pareto_rank: int
+) -> dict:
+    """Project a SearchIteration into the ``best_trials`` entry shape.
+
+    ``objective_values`` is always the vector form; single-objective
+    iterations degrade to ``[objective_value]`` when the planner recorded
+    only the scalar.
+    """
+    return {
+        "iteration_idx": h.iteration_idx,
+        "objective_value": h.objective_value,
+        "objective_values": h.objective_values
+        if h.objective_values is not None
+        else [h.objective_value],
+        "variation_values": h.variation_values,
+        "feasible": h.feasible,
+        "feasible_count": feasible_count,
+        "pareto_rank": pareto_rank,
+    }
+
+
+def _pareto_front(
+    pool: list[SearchIteration], objectives: list[Objective]
+) -> list[SearchIteration]:
+    """Non-dominated subset of ``pool`` under per-objective directions.
+
+    A point ``p`` dominates ``q`` iff ``p`` is no worse than ``q`` on every
+    objective and strictly better on at least one. "Better" is larger for
+    ``MAXIMIZE`` objectives and smaller for ``MINIMIZE`` -- matching the
+    direction convention used by ``_optuna_helpers.compute_hypervolume`` and
+    ``derive_reference_point``. Compares ``objective_values`` vectors, so every
+    pool member must carry a vector of length ``len(objectives)`` (guaranteed
+    for scored multi-objective iterations by ``OptunaSearchPlanner.tell``).
+    """
+    from aiperf.common.enums import OptimizationDirection
+
+    def dominates(a: SearchIteration, b: SearchIteration) -> bool:
+        strictly_better = False
+        for i, obj in enumerate(objectives):
+            av, bv = a.objective_values[i], b.objective_values[i]
+            if obj.direction == OptimizationDirection.MAXIMIZE:
+                if av < bv:
+                    return False
+                if av > bv:
+                    strictly_better = True
+            else:
+                if av > bv:
+                    return False
+                if av < bv:
+                    strictly_better = True
+        return strictly_better
+
+    return [p for p in pool if not any(dominates(q, p) for q in pool if q is not p)]
 
 
 def _build_config_block(cfg: AdaptiveSearchSweep) -> dict[str, Any]:
