@@ -191,16 +191,11 @@ class GenericMetricUnit(BaseMetricUnit):
     ERRORS = _unit("errors")
     IMAGE = _unit("image")
     IMAGES = _unit("images")
-    JOULES_PER_USER = _unit("joules/user")
     PERCENT = _unit("%")
     RATIO = _unit("ratio")
     REQUESTS = _unit("requests")
     TOKENS = _unit("tokens")
-    TOKENS_PER_JOULE = _unit("tokens/J")
     USER = _unit("user")
-    USERS = _unit("users")
-    VIDEO = _unit("video")
-    VIDEOS = _unit("videos")
 
 
 class PowerMetricUnitInfo(BaseMetricUnitInfo):
@@ -367,15 +362,6 @@ class MetricOverTimeUnit(BaseMetricUnit):
     MS_PER_IMAGE = MetricOverTimeUnitInfo(
         time_unit=MetricTimeUnit.MILLISECONDS,
         primary_unit=GenericMetricUnit.IMAGE,
-        inverted=True,
-    )
-    VIDEOS_PER_SECOND = MetricOverTimeUnitInfo(
-        primary_unit=GenericMetricUnit.VIDEOS,
-        time_unit=MetricTimeUnit.SECONDS,
-    )
-    MS_PER_VIDEO = MetricOverTimeUnitInfo(
-        time_unit=MetricTimeUnit.MILLISECONDS,
-        primary_unit=GenericMetricUnit.VIDEO,
         inverted=True,
     )
     MB_PER_SECOND = MetricOverTimeUnitInfo(
