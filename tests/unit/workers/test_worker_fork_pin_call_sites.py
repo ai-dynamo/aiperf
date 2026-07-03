@@ -22,11 +22,19 @@ from __future__ import annotations
 import pytest
 
 from aiperf.common.enums import ConversationBranchMode
+from aiperf.common.models import Text
 from aiperf.common.models.branch import ConversationBranchInfo
 from aiperf.common.models.dataset_models import Conversation, Turn
 from aiperf.credit.structs import Credit
+from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import EndpointType
 from aiperf.workers.session_manager import UserSessionManager
 from aiperf.workers.worker import Worker
+from tests.unit.endpoints.conftest import (
+    _wrap_model_endpoint,
+    create_config,
+    create_request_info,
+)
 
 
 def _fork_conversation(session_id: str = "root") -> Conversation:
@@ -223,3 +231,89 @@ class TestReleaseAndEvictForTerminal:
         worker._release_and_evict_for_terminal(child_credit, child_corr)
         assert worker.session_manager.get(parent_corr) is None
         assert worker.session_manager.get(child_corr) is None
+
+
+class TestForkSeededHistoryReachesWire:
+    """End-to-end seam test: the FORK-seeded ``turn_list`` must reach the wire.
+
+    Seeding into a ``turn_list`` nobody reads is invisible to the pin/seed
+    call-site tests above — this test drives the seeded session's
+    ``turn_list`` through a real ``ChatEndpoint.format_payload`` and asserts
+    the parent's authored raw_messages + captured assistant reply appear in
+    the payload BEFORE the child's own messages (the dag_jsonl FORK
+    inheritance contract asserted by ``test_dag_full_topology``).
+    """
+
+    def test_fork_child_payload_contains_seeded_parent_history(self) -> None:
+        manager = UserSessionManager()
+
+        # Parent: dag_jsonl-style authored raw_messages turn declaring a fork.
+        parent_conv = Conversation(
+            session_id="root",
+            turns=[
+                Turn(
+                    raw_messages=[
+                        {"role": "system", "content": "root system prompt"},
+                        {"role": "user", "content": "root user prompt"},
+                    ],
+                    branch_ids=["root:0"],
+                )
+            ],
+            branches=[
+                ConversationBranchInfo(
+                    branch_id="root:0",
+                    mode=ConversationBranchMode.FORK,
+                    child_conversation_ids=["branch-a"],
+                )
+            ],
+        )
+        parent = manager.create_and_store(
+            x_correlation_id="parent-corr",
+            conversation=parent_conv,
+            num_turns=1,
+        )
+        parent.advance_turn(0)
+        # Captured live assistant reply (shape produced by build_assistant_turn).
+        parent.store_response(
+            Turn(role="assistant", texts=[Text(contents=["captured root reply"])])
+        )
+
+        # Child: its own authored raw_messages turn.
+        child_conv = Conversation(
+            session_id="branch-a",
+            turns=[
+                Turn(
+                    raw_messages=[
+                        {"role": "user", "content": "branch-a user message A"},
+                        {"role": "user", "content": "branch-a user message B"},
+                    ]
+                )
+            ],
+        )
+        child = manager.create_and_store(
+            x_correlation_id="child-corr",
+            conversation=child_conv,
+            num_turns=1,
+        )
+        manager.pin_for_fork_child("parent-corr")
+        manager.seed_from_parent("child-corr", "parent-corr")
+        child.advance_turn(0)
+
+        # Build the wire payload exactly as the worker does: RequestInfo.turns
+        # is the session's accumulated turn_list.
+        config = create_config(
+            EndpointType.CHAT,
+            base_url="http://localhost:8000",
+            path="/v1/chat/completions",
+        )
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(config))
+        request_info = create_request_info(config=config, turns=child.turn_list)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == [
+            {"role": "system", "content": "root system prompt"},
+            {"role": "user", "content": "root user prompt"},
+            {"role": "assistant", "content": "captured root reply"},
+            {"role": "user", "content": "branch-a user message A"},
+            {"role": "user", "content": "branch-a user message B"},
+        ]

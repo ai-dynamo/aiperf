@@ -105,7 +105,9 @@ class TestChatEndpoint:
         )
         request_info = create_request_info(config=model_endpoint, turns=[turn])
 
-        with pytest.raises(ValueError, match="Audio content must be in the format"):
+        # Message comes from BaseEndpoint._render_audio_part now that chat
+        # payload construction flows through the shared build_messages path.
+        with pytest.raises(ValueError, match="audio content must be in the format"):
             endpoint.format_payload(request_info)
 
     def test_format_payload_with_video(self, endpoint, model_endpoint):

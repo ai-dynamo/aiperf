@@ -46,12 +46,14 @@ class ChatEndpoint(BaseEndpoint):
         turns = request_info.turns
         model_endpoint = self.run.cfg
 
-        if turns[-1].raw_messages is not None:
-            messages = self._format_messages(request_info, turns[-1].raw_messages)
-        else:
-            messages = self._create_messages(
-                turns, request_info.system_message, request_info.user_context_message
-            )
+        # Flatten ALL turns (raw_messages spliced verbatim, structured turns
+        # rendered) so accumulated session history — prior authored turns,
+        # captured assistant replies, and DAG FORK-seeded parent context —
+        # reaches the wire. A previous last-turn-only shortcut
+        # (``turns[-1].raw_messages``) silently dropped every prior turn for
+        # raw_messages datasets (dag_jsonl), severing multi-turn and FORK
+        # context inheritance.
+        messages = self._format_messages(request_info, self.build_messages(turns))
 
         payload = {
             "messages": messages,
@@ -283,7 +285,7 @@ class ChatEndpoint(BaseEndpoint):
         with a fallback when ``index`` is missing so parallel tool calls
         don't collapse), then returns a Turn whose ``raw_messages``
         re-renders as the full assistant message — ``content`` plus
-        ``tool_calls`` — verbatim through ``_create_messages``. This means a
+        ``tool_calls`` — verbatim through ``build_messages``. This means a
         FORK-mode DAG child that inherits the parent's history sees the
         parent's complete assistant message, not just the text.
 
