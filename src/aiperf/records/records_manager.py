@@ -763,16 +763,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         await self.publish(message)
 
-    @on_command(CommandType.PROCESS_RECORDS)
-    async def _on_process_records_command(
-        self, message: Command
-    ) -> ProcessRecordsResult:
-        """Handle the process records command by forwarding it to all of the results processors, and returning the results."""
-        self.debug(lambda: f"Received process records command: {message}")
-        payload = orjson.loads(message.payload) if message.payload else {}
-        cancelled = payload.get("cancelled", False)
-        return await self._process_results(cancelled=cancelled)
-
     @on_command(CommandType.PROFILE_CANCEL)
     async def _on_profile_cancel_command(
         self, message: Command

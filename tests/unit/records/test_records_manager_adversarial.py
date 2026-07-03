@@ -19,9 +19,9 @@ the branches the existing happy-path suite leaves uncovered:
 5. `_send_results_to_results_processors` — single-processor fast path,
    gather fan-out, and empty short-circuit.
 6. `_report_records_task` — skip-empty-phase + first-active-phase break.
-7. `_on_process_records_command` / `_on_profile_cancel_command` — payload
-   parsing, mark-cancelled bookkeeping. `_on_start_realtime_telemetry_command`
-   — realtime-loop un-park, idempotence, accumulator-absent error path.
+7. `_on_profile_cancel_command` — payload parsing, mark-cancelled
+   bookkeeping. `_on_start_realtime_telemetry_command` — realtime-loop
+   un-park, idempotence, accumulator-absent error path.
 8. `_report_realtime_inference_metrics_task` — early-exit gate and the
    "no new records" continue branch.
 9. `_report_realtime_metrics` — empty-raw + filtered-empty short-circuits.
@@ -46,7 +46,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import orjson
 import pytest
 from pytest import param
 
@@ -207,7 +206,6 @@ def _make_manager(
         "_on_credits_complete": RecordsManager._on_credits_complete,
         "_report_records_task": RecordsManager._report_records_task,
         "_publish_processing_stats": RecordsManager._publish_processing_stats,
-        "_on_process_records_command": RecordsManager._on_process_records_command,
         "_on_profile_cancel_command": RecordsManager._on_profile_cancel_command,
         "_report_realtime_inference_metrics_task": RecordsManager._report_realtime_inference_metrics_task,
         "_on_realtime_metrics_command": RecordsManager._on_realtime_metrics_command,
@@ -997,30 +995,7 @@ class TestReportRecordsTask:
 
 
 class TestCommandHandlers:
-    """`_on_process_records_command` and `_on_profile_cancel_command`."""
-
-    @pytest.mark.asyncio
-    async def test_process_records_command_with_cancelled_payload(self) -> None:
-        """`payload={"cancelled": true}` → `_process_results(cancelled=True)`."""
-        mgr = _make_manager(bind_methods=["_on_process_records_command"])
-        mgr._process_results = AsyncMock(return_value=MagicMock())
-        cmd = SimpleNamespace(payload=orjson.dumps({"cancelled": True}))
-
-        await mgr._on_process_records_command(cmd)
-
-        mgr._process_results.assert_awaited_once_with(cancelled=True)
-
-    @pytest.mark.asyncio
-    async def test_process_records_command_empty_payload_defaults_cancelled_false(
-        self,
-    ) -> None:
-        mgr = _make_manager(bind_methods=["_on_process_records_command"])
-        mgr._process_results = AsyncMock(return_value=MagicMock())
-        cmd = SimpleNamespace(payload=b"")
-
-        await mgr._on_process_records_command(cmd)
-
-        mgr._process_results.assert_awaited_once_with(cancelled=False)
+    """`_on_profile_cancel_command`."""
 
     @pytest.mark.asyncio
     async def test_profile_cancel_marks_all_results_phases_then_processes(self) -> None:
