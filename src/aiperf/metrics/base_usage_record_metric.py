@@ -4,12 +4,13 @@
 """Base class for metrics that read a single field from `record.final_usage`.
 
 The vast majority of `Usage*` metrics share the same shape: extract one
-property from the merged streaming usage, raise `NoMetricValue` when absent.
+property from the record's final usage, raise `NoMetricValue` when absent.
 Subclasses provide just two extra class attributes (`usage_field` and
 `missing_message`) instead of a duplicated `_parse_record` loop.
 
 The streaming-walk-back logic lives once on `ParsedResponseRecord.final_usage`
-(via `Usage.merge_streaming`); subclasses never re-implement it.
+(an inline backward scan over the response chunks that returns the most recent
+non-empty `Usage` block); subclasses never re-implement it.
 """
 
 from typing import ClassVar, Generic
