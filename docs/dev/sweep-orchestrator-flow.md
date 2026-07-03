@@ -742,7 +742,6 @@ flowchart TB
 
     subgraph TELEMETRY["telemetry"]
         gc["gpu_telemetry_collector"]
-        gp["gpu_telemetry_processor"]
         sm["server_metrics_processor"]
     end
 

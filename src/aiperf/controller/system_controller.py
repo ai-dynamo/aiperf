@@ -1809,14 +1809,14 @@ class SystemController(
         )
         self.info("Results exported to disk")
 
-    async def _kill(self) -> None:
+    async def _kill(self, *, error: ErrorDetails | None = None) -> None:
         """Kill the system controller."""
         try:
             await self.service_manager.kill_all_services()
         except Exception as e:
             raise self._service_error("Failed to stop all services") from e
 
-        await super()._kill()
+        await super()._kill(error=error)
 
 
 def main() -> None:
