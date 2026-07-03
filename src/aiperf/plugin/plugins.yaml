@@ -800,19 +800,6 @@ record_processor:
 # One-to-many mapping: multiple processors can be loaded simultaneously.
 # =============================================================================
 results_processor:
-  gpu_telemetry_accumulator:
-    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
-    description: |
-      GPU telemetry accumulator that aggregates GPU telemetry records and computes
-      metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-  gpu_telemetry_jsonl_writer:
-    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
-    description: |
-      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
-      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
-      export config.
-
   metric_results:
     class: aiperf.post_processors.metric_results_processor:MetricResultsProcessor
     description: |
@@ -942,29 +929,6 @@ analyzer:
     description: |
       Accuracy results processor that aggregates grading results and computes
       summary accuracy metrics. Self-disables when accuracy mode is off.
-
-# =============================================================================
-# GPU Telemetry Processors
-# =============================================================================
-# GPU telemetry processor plugins (accumulator + per-sample JSONL writer).
-# GPUTelemetryManager only collects raw DCGM/pynvml samples and pushes them to
-# RecordsManager on CommAddress.RECORDS; the aggregation and JSONL export run
-# inside RecordsManager (see records_manager._on_telemetry_records), not within
-# GPUTelemetryManager. One-to-many mapping.
-# =============================================================================
-gpu_telemetry_processor:
-  gpu_telemetry_accumulator:
-    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
-    description: |
-      GPU telemetry accumulator that aggregates GPU telemetry records and computes
-      metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-  gpu_telemetry_jsonl_writer:
-    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
-    description: |
-      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
-      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
-      export config.
 
 # =============================================================================
 # Server Metrics Processors

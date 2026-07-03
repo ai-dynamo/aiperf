@@ -291,10 +291,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Mirrors the legacy ``_send_results_to_results_processors`` fan-out but
         targets the new ``AccumulatorProtocol`` / ``StreamExporterProtocol``
         pipeline. Per-handler exceptions are caught so one bad accumulator
-        does not abort the others. GPU telemetry / server metrics records
-        are routed via their own side-channel pipelines on K8s
-        (``gpu_telemetry_processor`` / ``server_metrics_processor`` plugin
-        categories) and do **not** flow through here.
+        does not abort the others. This fan-out targets METRIC-record
+        accumulators only; GPU telemetry records reach their own ``accumulator``
+        + ``stream_exporter`` plugins (``gpu_telemetry`` /
+        ``gpu_telemetry_jsonl_writer``) via a separate record-type dispatch, and
+        server metrics run in ServerMetricsManager under the
+        ``server_metrics_processor`` category — neither flows through here.
         """
         targets: list[Any] = [
             *self._metric_record_accumulators,

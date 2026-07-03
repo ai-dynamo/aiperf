@@ -516,15 +516,17 @@ def test_message_contains_exported_artifacts_source_only() -> None:
 @pytest.mark.skip(
     reason="k8s ProcessAllResultsMessage carries telemetry_results / "
     "server_metrics_results as default None; they are populated by other "
-    "side-channel pipelines (gpu_telemetry_processor / "
-    "server_metrics_processor categories), not by RecordsManager._process_results."
+    "side-channel pipelines (GPU telemetry accumulator/stream-exporter plugins "
+    "and the server_metrics_processor category), not by "
+    "RecordsManager._process_results."
 )
 def test_message_contains_typed_results_source_only() -> None:
     """Source branch extracted ``TelemetryExportData`` / ``ServerMetricsResults``
     from accumulator outputs and attached them to ``ProcessAllResultsMessage``.
-    K8s routes telemetry/server-metrics records via separate top-level
-    ``gpu_telemetry_processor`` / ``server_metrics_processor`` plugin
-    categories that bypass ``RecordsManager`` entirely."""
+    K8s routes GPU telemetry through the ``gpu_telemetry`` accumulator +
+    ``gpu_telemetry_jsonl_writer`` stream-exporter plugins and server metrics
+    through the ``server_metrics_processor`` category — bypassing
+    ``RecordsManager._process_results`` entirely."""
 
 
 @pytest.mark.skip(
