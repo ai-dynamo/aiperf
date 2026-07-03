@@ -57,6 +57,7 @@ from aiperf.common.metric_records_wire import (
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
     BranchStats,
+    CreditPhaseStats,
     ErrorDetails,
     ErrorDetailsCount,
     ErrorTrackingState,
@@ -70,6 +71,7 @@ from aiperf.common.models import (
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
+    CreditPhaseProgressMessage,
     CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
@@ -106,6 +108,7 @@ from aiperf.records.records_manager_processing import (
     load_results_processors,
     load_stream_exporters,
     make_network_latency_accumulator,
+    select_timing_processors,
     stream_exporters_for_record_type,
 )
 from aiperf.records.records_tracker import RecordsTracker
@@ -174,6 +177,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._metric_results_processors: list[ResultsProcessorProtocol] = (
             load_results_processors(self)
+        )
+        # Curated subset that consumes CreditPhaseStats timing snapshots (OTel
+        # streamer under ``--stream timing``). Probed once so the per-tick
+        # credit-phase fan-out is a plain list walk and a CreditPhaseStats never
+        # reaches a processor expecting MetricRecordsData.
+        self._timing_results_processors: list[ResultsProcessorProtocol] = (
+            select_timing_processors(self._metric_results_processors)
         )
         self._init_network_latency()
         # Parallel accumulator pipeline (metrics-accumulator branch). The
@@ -552,21 +562,63 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._raise_unless_best_effort(processor, outcome)
 
     def _raise_unless_best_effort(
-        self, processor: ResultsProcessorProtocol, exc: BaseException
+        self,
+        processor: ResultsProcessorProtocol,
+        exc: BaseException,
+        *,
+        what: str = "metric record",
     ) -> None:
         """Log a ``process_result`` failure; swallow it only for best-effort processors.
 
         Non-``Exception`` errors (e.g. ``asyncio.CancelledError``) always
         re-raise regardless of the marker so cancellation is never absorbed.
+        ``what`` names the payload kind for the log line (``"metric record"`` or
+        ``"timing snapshot"``).
         """
         self.exception(
-            f"Failed to process metric record in "
-            f"{processor.__class__.__name__}: {exc!r}"
+            f"Failed to process {what} in {processor.__class__.__name__}: {exc!r}"
         )
         if not isinstance(exc, Exception) or not getattr(
             processor, IS_BEST_EFFORT_ATTR, False
         ):
             raise exc
+
+    async def _send_timing_to_results_processors(
+        self, phase_stats: CreditPhaseStats
+    ) -> None:
+        """Fan a phase-level timing snapshot to timing-capable results processors.
+
+        ``_timing_results_processors`` holds only processors that declared timing
+        support at startup (currently the OTel streamer under ``--stream
+        timing``), so the raw ``CreditPhaseStats`` never reaches a processor
+        expecting ``MetricRecordsData``. Mirrors the best-effort contract of
+        ``_send_results_to_results_processors``: best-effort processors' failures
+        are logged and swallowed, all others re-raise, and ``CancelledError``
+        always propagates.
+        """
+        if not self._timing_results_processors:
+            return
+        if len(self._timing_results_processors) == 1:
+            processor = self._timing_results_processors[0]
+            try:
+                await processor.process_result(phase_stats)
+            except Exception as exc:
+                self._raise_unless_best_effort(processor, exc, what="timing snapshot")
+            return
+        outcomes = await asyncio.gather(
+            *[
+                processor.process_result(phase_stats)
+                for processor in self._timing_results_processors
+            ],
+            return_exceptions=True,
+        )
+        for processor, outcome in zip(
+            self._timing_results_processors, outcomes, strict=True
+        ):
+            if isinstance(outcome, BaseException):
+                self._raise_unless_best_effort(
+                    processor, outcome, what="timing snapshot"
+                )
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
@@ -583,7 +635,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase start message in order to track the total number of expected requests."""
         self._records_tracker.update_phase_info(phase_start_msg.stats)
+        await self._send_timing_to_results_processors(phase_start_msg.stats)
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
+
+    @on_message(MessageType.CREDIT_PHASE_PROGRESS)
+    async def _on_credit_phase_progress(
+        self, message: CreditPhaseProgressMessage
+    ) -> None:
+        """Handle a credit phase progress tick: refresh phase counters and stream live timing.
+
+        Published every ``CREDIT_PROGRESS_REPORT_INTERVAL`` seconds (default 2s)
+        by the timing manager, not per-request, so the fan-out cost is bounded;
+        ``_send_timing_to_results_processors`` short-circuits when no processor
+        wants timing.
+        """
+        self._records_tracker.update_phase_info(message.stats)
+        await self._send_timing_to_results_processors(message.stats)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -594,6 +661,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"Phase '{message.stats.phase}': sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
         )
         self._records_tracker.update_phase_info(message.stats)
+        await self._send_timing_to_results_processors(message.stats)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(
@@ -610,6 +678,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ):
             self._latest_branch_stats = message.branch_stats
         self._records_tracker.update_phase_info(message.stats)
+        await self._send_timing_to_results_processors(message.stats)
         phase_stats = self._records_tracker.create_stats_for_phase(message.stats.phase)
         self.info(
             lambda: f"Phase '{message.stats.phase}' complete: {phase_stats.total_records:,} records"

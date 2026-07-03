@@ -93,6 +93,30 @@ def load_results_processors(host: _LoaderHost) -> list[ResultsProcessorProtocol]
     return processors
 
 
+def select_timing_processors(
+    processors: list[ResultsProcessorProtocol],
+) -> list[ResultsProcessorProtocol]:
+    """Pick the processors that consume ``CreditPhaseStats`` timing snapshots.
+
+    A processor opts in by exposing ``supports_timing() -> bool`` returning True
+    (today only the OTel streamer under ``--stream timing``). Processors without
+    the method — the metric aggregator, the accuracy grader — are excluded so a
+    ``CreditPhaseStats`` never reaches a ``process_result`` that expects
+    ``MetricRecordsData``. Probed once at startup so the per-tick fan-out stays a
+    plain list iteration.
+
+    Example:
+        >>> select_timing_processors([otel_streamer, metric_aggregator])
+        [otel_streamer]
+    """
+    selected: list[ResultsProcessorProtocol] = []
+    for processor in processors:
+        supports_timing = getattr(processor, "supports_timing", None)
+        if callable(supports_timing) and supports_timing():
+            selected.append(processor)
+    return selected
+
+
 def make_network_latency_accumulator(
     host: _LoaderHost,
 ) -> NetworkLatencyAccumulator | None:

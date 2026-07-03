@@ -50,6 +50,7 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     ProcessAllResultsMessage,
@@ -65,6 +66,7 @@ from aiperf.common.metric_records_wire import (
     WireErrorDetails,
 )
 from aiperf.common.models import (
+    CreditPhaseStats,
     ErrorDetails,
     MetricResult,
     PhaseRecordsStats,
@@ -140,6 +142,7 @@ def _make_manager(
     mgr._dataset_configured_event = asyncio.Event()
     mgr._dataset_configured_event.set()
     mgr._metric_results_processors = legacy_processors or []
+    mgr._timing_results_processors = []
     mgr._accumulators = accumulators or {}
     mgr._stream_exporters = stream_exporters or {}
     mgr._network_latency_processors = []
@@ -171,6 +174,9 @@ def _make_manager(
 
     # Async pipeline
     mgr.publish = AsyncMock()
+    # Timing fan-out defaults to a no-op AsyncMock so credit-phase handler tests
+    # can await it; fan-out tests override via ``bind_methods``.
+    mgr._send_timing_to_results_processors = AsyncMock()
     mgr.execute_async = MagicMock()
     mgr.control_client = MagicMock()
     mgr.control_client.request = AsyncMock()
@@ -194,8 +200,10 @@ def _make_manager(
         "_finalize_and_process_results": RecordsManager._finalize_and_process_results,
         "_on_metric_records": RecordsManager._on_metric_records,
         "_on_credit_phase_start": RecordsManager._on_credit_phase_start,
+        "_on_credit_phase_progress": RecordsManager._on_credit_phase_progress,
         "_on_credit_phase_sending_complete": RecordsManager._on_credit_phase_sending_complete,
         "_on_credit_phase_complete": RecordsManager._on_credit_phase_complete,
+        "_send_timing_to_results_processors": RecordsManager._send_timing_to_results_processors,
         "_on_credits_complete": RecordsManager._on_credits_complete,
         "_report_records_task": RecordsManager._report_records_task,
         "_publish_processing_stats": RecordsManager._publish_processing_stats,
@@ -584,6 +592,58 @@ class TestCreditPhaseMessageHandlers:
         mgr._handle_all_records_received.assert_awaited_once_with("profiling")
 
     @pytest.mark.asyncio
+    async def test_credit_phase_start_streams_timing_snapshot(self) -> None:
+        """Phase-start hands its stats to the timing fan-out (OTel/MLflow live)."""
+        mgr = _make_manager(bind_methods=["_on_credit_phase_start"])
+        msg = SimpleNamespace(
+            stats=MagicMock(phase="profiling"),
+            config=MagicMock(phase="profiling"),
+        )
+
+        await mgr._on_credit_phase_start(msg)
+
+        mgr._send_timing_to_results_processors.assert_awaited_once_with(msg.stats)
+
+    @pytest.mark.asyncio
+    async def test_credit_phase_progress_streams_timing_and_updates_tracker(
+        self,
+    ) -> None:
+        """Periodic progress ticks stream live timing and keep the tracker fresh."""
+        mgr = _make_manager(bind_methods=["_on_credit_phase_progress"])
+        msg = SimpleNamespace(stats=MagicMock(phase="profiling"))
+
+        await mgr._on_credit_phase_progress(msg)
+
+        mgr._records_tracker.update_phase_info.assert_called_once_with(msg.stats)
+        mgr._send_timing_to_results_processors.assert_awaited_once_with(msg.stats)
+
+    @pytest.mark.asyncio
+    async def test_credit_phase_sending_complete_streams_timing_snapshot(self) -> None:
+        mgr = _make_manager(bind_methods=["_on_credit_phase_sending_complete"])
+        msg = SimpleNamespace(stats=MagicMock(phase="profiling", final_requests_sent=7))
+
+        await mgr._on_credit_phase_sending_complete(msg)
+
+        mgr._send_timing_to_results_processors.assert_awaited_once_with(msg.stats)
+
+    @pytest.mark.asyncio
+    async def test_credit_phase_complete_streams_timing_snapshot(self) -> None:
+        mgr = _make_manager(bind_methods=["_on_credit_phase_complete"])
+        ready_stats = MagicMock(
+            phase="profiling",
+            total_records=5,
+            final_requests_completed=5,
+            exclude_from_results=False,
+        )
+        mgr._records_tracker.create_stats_for_phase.return_value = ready_stats
+        mgr._handle_all_records_received = AsyncMock()
+        msg = SimpleNamespace(stats=MagicMock(phase="profiling"))
+
+        await mgr._on_credit_phase_complete(msg)
+
+        mgr._send_timing_to_results_processors.assert_awaited_once_with(msg.stats)
+
+    @pytest.mark.asyncio
     async def test_credits_complete_checks_every_results_phase(self) -> None:
         """`_on_credits_complete` polls every non-excluded phase for completion."""
         mgr = _make_manager(bind_methods=["_on_credits_complete"])
@@ -757,6 +817,129 @@ class TestSendResultsToResultsProcessors:
 
         with pytest.raises(asyncio.CancelledError):
             await mgr._send_results_to_results_processors(_record())
+
+
+# ============================================================================
+# 5b) `_send_timing_to_results_processors` — CreditPhaseStats fan-out
+# ============================================================================
+
+
+def _phase_stats(phase: CreditPhase = CreditPhase.PROFILING) -> CreditPhaseStats:
+    """Real (unwrapped) ``CreditPhaseStats`` — what timing strategies match on."""
+    return CreditPhaseStats(phase=phase)
+
+
+class TestSendTimingToResultsProcessors:
+    """Timing snapshots reach only timing-capable processors, best-effort-safe."""
+
+    @pytest.mark.asyncio
+    async def test_no_timing_processors_short_circuits(self) -> None:
+        """Empty timing list → no fan-out, no errors (cheap when nobody wants timing)."""
+        mgr = _make_manager(bind_methods=["_send_timing_to_results_processors"])
+        mgr._timing_results_processors = []
+
+        await mgr._send_timing_to_results_processors(_phase_stats())
+
+        mgr.exception.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_single_timing_processor_receives_unwrapped_stats(self) -> None:
+        """Single-processor fast path forwards the raw ``CreditPhaseStats``."""
+        proc = MagicMock()
+        proc.process_result = AsyncMock()
+        mgr = _make_manager(bind_methods=["_send_timing_to_results_processors"])
+        mgr._timing_results_processors = [proc]
+        stats = _phase_stats()
+
+        await mgr._send_timing_to_results_processors(stats)
+
+        proc.process_result.assert_awaited_once_with(stats)
+
+    @pytest.mark.asyncio
+    async def test_multiple_timing_processors_fan_out_via_gather(self) -> None:
+        proc_a = MagicMock()
+        proc_a.process_result = AsyncMock()
+        proc_b = MagicMock()
+        proc_b.process_result = AsyncMock()
+        mgr = _make_manager(bind_methods=["_send_timing_to_results_processors"])
+        mgr._timing_results_processors = [proc_a, proc_b]
+        stats = _phase_stats()
+
+        await mgr._send_timing_to_results_processors(stats)
+
+        proc_a.process_result.assert_awaited_once_with(stats)
+        proc_b.process_result.assert_awaited_once_with(stats)
+
+    @pytest.mark.asyncio
+    async def test_best_effort_failure_swallowed_in_single_path(self) -> None:
+        proc = MagicMock()
+        proc.is_best_effort = True
+        proc.process_result = AsyncMock(side_effect=RuntimeError("otel down"))
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_timing_to_results_processors",
+                "_raise_unless_best_effort",
+            ]
+        )
+        mgr._timing_results_processors = [proc]
+
+        await mgr._send_timing_to_results_processors(_phase_stats())
+
+        mgr.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_best_effort_failure_swallowed_in_gather_path(self) -> None:
+        """A raising best-effort processor must not abort the fan-out; siblings run."""
+        bad = MagicMock()
+        bad.is_best_effort = True
+        bad.process_result = AsyncMock(side_effect=RuntimeError("otel down"))
+        good = MagicMock()
+        good.is_best_effort = True
+        good.process_result = AsyncMock()
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_timing_to_results_processors",
+                "_raise_unless_best_effort",
+            ]
+        )
+        mgr._timing_results_processors = [bad, good]
+
+        await mgr._send_timing_to_results_processors(_phase_stats())
+
+        good.process_result.assert_awaited_once()
+        mgr.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_best_effort_failure_reraises(self) -> None:
+        proc = MagicMock()
+        proc.is_best_effort = False
+        proc.process_result = AsyncMock(side_effect=RuntimeError("pipeline bug"))
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_timing_to_results_processors",
+                "_raise_unless_best_effort",
+            ]
+        )
+        mgr._timing_results_processors = [proc]
+
+        with pytest.raises(RuntimeError, match="pipeline bug"):
+            await mgr._send_timing_to_results_processors(_phase_stats())
+
+    @pytest.mark.asyncio
+    async def test_cancellation_never_swallowed_even_for_best_effort(self) -> None:
+        proc = MagicMock()
+        proc.is_best_effort = True
+        proc.process_result = AsyncMock(side_effect=asyncio.CancelledError())
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_timing_to_results_processors",
+                "_raise_unless_best_effort",
+            ]
+        )
+        mgr._timing_results_processors = [proc]
+
+        with pytest.raises(asyncio.CancelledError):
+            await mgr._send_timing_to_results_processors(_phase_stats())
 
 
 # ============================================================================

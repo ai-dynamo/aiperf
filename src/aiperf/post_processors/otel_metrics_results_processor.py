@@ -243,6 +243,19 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             f"MLflow live: {self._mlflow_live_enabled})"
         )
 
+    def supports_timing(self) -> bool:
+        """Whether this processor consumes ``CreditPhaseStats`` timing snapshots.
+
+        True only when ``--stream timing`` registered a ``TimingResultsStrategy``.
+        The records manager probes this once at startup to build its timing
+        fan-out list, so a metrics-only OTel run never receives phase-timing
+        payloads (and a ``CreditPhaseStats`` never reaches a metrics-only sink).
+        """
+        return any(
+            isinstance(strategy, TimingResultsStrategy)
+            for strategy in self._result_strategies
+        )
+
     async def process_result(self, record_data: OTelResultData) -> None:
         """Record metric data for export via the OpenTelemetry SDK."""
         if not self._streaming_ready:

@@ -5,7 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from aiperf.plugin.enums import PluginType
-from aiperf.records.records_manager_processing import load_results_processors
+from aiperf.records.records_manager_processing import (
+    load_results_processors,
+    select_timing_processors,
+)
 
 
 class _ValidResultsProcessor:
@@ -55,3 +58,27 @@ def test_load_results_processors_skips_plugins_without_results_protocol() -> Non
 
     assert [processor.__class__ for processor in processors] == [_ValidResultsProcessor]
     host.attach_child_lifecycle.assert_called_once_with(processors[0])
+
+
+class _TimingCapableProcessor(_ValidResultsProcessor):
+    def __init__(self, *, timing: bool) -> None:
+        self._timing = timing
+
+    def supports_timing(self) -> bool:
+        return self._timing
+
+
+def test_select_timing_processors_picks_only_timing_supporters() -> None:
+    """Only processors whose ``supports_timing()`` returns True are selected."""
+    timing = _TimingCapableProcessor(timing=True)
+    metrics_only = _TimingCapableProcessor(timing=False)
+    no_capability = _ValidResultsProcessor()  # no supports_timing method at all
+
+    selected = select_timing_processors([timing, metrics_only, no_capability])
+
+    assert selected == [timing]
+
+
+def test_select_timing_processors_empty_when_none_support_timing() -> None:
+    """The metric aggregator / accuracy grader (no supports_timing) are excluded."""
+    assert select_timing_processors([_ValidResultsProcessor()]) == []
