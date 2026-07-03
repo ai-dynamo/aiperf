@@ -2,17 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import contextlib
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.messages import DatasetConfiguredNotification
+from aiperf.common.messages import (
+    BaseServiceErrorMessage,
+    DatasetConfiguredNotification,
+)
 from aiperf.common.models import DatasetMetadata, MemoryMapClientMetadata
+from aiperf.common.models.error_models import ErrorDetails, ExitErrorInfo
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.manager import TimingManager
@@ -270,3 +275,107 @@ class TestTimingManagerStartProfilingAndInitialization:
             mgr._phase_orchestrator is None
             and not mgr._dataset_configured_event.is_set()
         )
+
+
+class TestTimingManagerPhaseOrchestratorDone:
+    """The phase-orchestrator done-callback escalates failures to SERVICE_ERROR.
+
+    ``execute_async`` is fire-and-forget, so a phase failure (e.g.
+    FixedScheduleStrategy rejecting a schedule with no first-turn timestamp)
+    is otherwise swallowed: the orchestrator's ``_fail`` path records the
+    error on its own ``_exit_errors`` and re-raises ``CancelledError``, which
+    ``TaskManagerMixin._on_task_done`` skips. The done-callback consults
+    orchestrator state and republishes as ``BaseServiceErrorMessage`` so the
+    SystemController exits non-zero.
+    """
+
+    @staticmethod
+    async def _make_cancelled_task() -> asyncio.Task:
+        """Build a real task in the cancelled state (mirrors ``_fail``).
+
+        ``PhaseOrchestrator._fail`` raises ``CancelledError`` after recording
+        the real error, so the wrapping task reports ``cancelled()`` True and
+        ``exception()`` would raise — exactly the shape the callback must
+        tolerate.
+        """
+
+        async def _raise_cancelled() -> None:
+            raise asyncio.CancelledError()
+
+        task = asyncio.create_task(_raise_cancelled())
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        return task
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_failed_state_publishes_service_error(
+        self, create_manager, config
+    ) -> None:
+        mgr = create_manager(config)
+        mgr.publish = AsyncMock()
+
+        details = ErrorDetails(
+            message="conversation 'c1' turn 0: missing first-turn timestamp",
+            type="FixedScheduleError",
+        )
+        orchestrator = MagicMock()
+        orchestrator.state = LifecycleState.FAILED
+        orchestrator._exit_errors = [
+            ExitErrorInfo(
+                error_details=details, operation="Starting", service_id="orch"
+            )
+        ]
+        mgr._phase_orchestrator = orchestrator
+
+        task = await self._make_cancelled_task()
+        mgr._on_phase_orchestrator_done(task)
+        await asyncio.sleep(0)  # allow the scheduled publish task to run
+
+        mgr.publish.assert_called_once()
+        published = mgr.publish.call_args.args[0]
+        assert isinstance(published, BaseServiceErrorMessage)
+        assert published.error == details
+        assert published.service_id == mgr.service_id
+
+    @pytest.mark.asyncio
+    async def test_no_publish_when_orchestrator_not_failed(
+        self, create_manager, config
+    ) -> None:
+        mgr = create_manager(config)
+        mgr.publish = AsyncMock()
+
+        orchestrator = MagicMock()
+        orchestrator.state = LifecycleState.STOPPED
+        orchestrator._exit_errors = []
+        mgr._phase_orchestrator = orchestrator
+
+        task = await self._make_cancelled_task()
+        mgr._on_phase_orchestrator_done(task)
+        await asyncio.sleep(0)
+
+        mgr.publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_publish_failure_in_callback_does_not_raise(
+        self, create_manager, config
+    ) -> None:
+        mgr = create_manager(config)
+        # Simulate comms already torn down: scheduling the publish blows up.
+        mgr.execute_async = MagicMock(side_effect=RuntimeError("comms already down"))
+        mgr.publish = MagicMock(return_value=MagicMock())
+
+        orchestrator = MagicMock()
+        orchestrator.state = LifecycleState.FAILED
+        orchestrator._exit_errors = [
+            ExitErrorInfo(
+                error_details=ErrorDetails(message="boom"),
+                operation="Starting",
+                service_id="orch",
+            )
+        ]
+        mgr._phase_orchestrator = orchestrator
+
+        task = await self._make_cancelled_task()
+        # Must not raise even though the publish path failed.
+        mgr._on_phase_orchestrator_done(task)
+        mgr.execute_async.assert_called_once()

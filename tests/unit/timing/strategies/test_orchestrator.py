@@ -124,6 +124,41 @@ class TestCancellation:
 
 
 @pytest.mark.asyncio
+class TestOrchestratorStop:
+    """Tests for PhaseOrchestrator @on_stop cleanup.
+
+    Without the @on_stop hook, runners tracked in ``_active_runners`` are
+    leaked on the normal (non-cancellation) shutdown path.
+    """
+
+    async def test_stop_cancels_and_clears_active_runners(self) -> None:
+        """@on_stop cancels every tracked runner and empties the active list."""
+        router = make_router()
+        cfg = make_timing_config(
+            TimingMode.REQUEST_RATE, request_count=5, request_rate=10.0
+        )
+        orch = PhaseOrchestrator(
+            config=cfg,
+            phase_publisher=make_publisher(),
+            credit_router=router,
+            dataset_metadata=make_dataset(3, 2),
+        )
+        await orch.initialize()
+
+        runner_a = MagicMock()
+        runner_a.phase = "warmup"
+        runner_b = MagicMock()
+        runner_b.phase = "profiling"
+        orch._active_runners.extend([runner_a, runner_b])
+
+        await orch.stop()
+
+        runner_a.cancel.assert_called_once()
+        runner_b.cancel.assert_called_once()
+        assert orch._active_runners == []
+
+
+@pytest.mark.asyncio
 class TestPhaseConfig:
     """Tests for phase configuration handling."""
 

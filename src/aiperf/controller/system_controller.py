@@ -53,6 +53,7 @@ from aiperf.common.memory_tracker import (
     read_pss_self,
 )
 from aiperf.common.messages import (
+    BaseServiceErrorMessage,
     BenchmarkCompleteMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
@@ -1085,6 +1086,31 @@ class SystemController(
         """
         service_id = message.service_id
         self.info(f"Received credits complete from '{service_id}'")
+
+    @on_message(MessageType.SERVICE_ERROR)
+    async def _process_service_error_message(
+        self, message: BaseServiceErrorMessage
+    ) -> None:
+        """Record a service-reported failure so the run exits non-zero.
+
+        Sources include ``BaseService._kill`` (FAILED-state self-kill),
+        the dataset gate, and TimingManager's phase-orchestrator
+        done-callback. Without this handler the failure only logs while
+        ``_exit_errors`` stays empty, so ``os._exit(0)`` masks it — most
+        visibly when FixedScheduleStrategy rejects a schedule whose
+        first-turn timestamp was filtered out by the offset window.
+        """
+        self.error(
+            f"Received service error from '{message.service_id}': "
+            f"{message.error.message}"
+        )
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=message.error,
+                operation="service_runtime",
+                service_id=message.service_id,
+            )
+        )
 
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _handle_profile_complete_relay(self, message: Command) -> None:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType, MessageType
+from aiperf.common.enums import CommandType, LifecycleState, MessageType
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
@@ -19,8 +19,11 @@ from aiperf.common.hooks import (
     on_message,
     on_stop,
 )
-from aiperf.common.messages import DatasetConfiguredNotification
-from aiperf.common.models import DatasetMetadata
+from aiperf.common.messages import (
+    BaseServiceErrorMessage,
+    DatasetConfiguredNotification,
+)
+from aiperf.common.models import DatasetMetadata, ErrorDetails
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
@@ -123,7 +126,77 @@ class TimingManager(BaseComponentService):
         self.event_loop_monitor.start()
 
         self.debug("Starting profiling")
-        self.execute_async(self._phase_orchestrator.start())
+        task = self.execute_async(self._phase_orchestrator.start())
+        task.add_done_callback(self._on_phase_orchestrator_done)
+
+    def _on_phase_orchestrator_done(self, task: asyncio.Task) -> None:
+        """Surface phase-orchestrator failures to the SystemController.
+
+        ``execute_async`` is fire-and-forget, so a phase setup error (e.g.
+        FixedScheduleStrategy rejecting a schedule whose only conversation
+        has no first-turn timestamp) is otherwise stored on the task and
+        never observed by the parent service. Without this hook the run
+        finishes with zero records but a clean ``os._exit(0)``, masking real
+        bugs. Publish a ``BaseServiceErrorMessage`` so the SystemController
+        records it in its exit-error list and exits non-zero.
+
+        The orchestrator's ``_fail`` path re-raises ``CancelledError`` after
+        recording the original exception on the orchestrator's
+        ``_exit_errors``, so ``task.exception()`` is ``None`` on that path.
+        We therefore consult orchestrator state (``LifecycleState.FAILED``),
+        not ``task.exception()``, to decide whether the run actually failed.
+        A bare ``CancelledError`` with no recorded failure (e.g. user Ctrl+C)
+        leaves the orchestrator STOPPED, not FAILED, and must not escalate.
+        """
+        orchestrator = self._phase_orchestrator
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                self._publish_phase_failure(exc)
+                return
+
+        if orchestrator is not None and orchestrator.state == LifecycleState.FAILED:
+            inner = orchestrator._exit_errors[0] if orchestrator._exit_errors else None
+            details = inner.error_details if inner is not None else None
+            self._publish_phase_failure_from_details(details)
+
+    def _publish_phase_failure(self, exc: BaseException) -> None:
+        """Publish a phase-orchestrator failure captured directly on the task."""
+        self.error(f"Phase orchestrator failed: {exc!r}")
+        self._publish_service_error_safely(
+            BaseServiceErrorMessage(
+                service_id=self.service_id,
+                error=ErrorDetails.from_exception(exc),
+            )
+        )
+
+    def _publish_phase_failure_from_details(self, details: ErrorDetails | None) -> None:
+        """Publish a phase-orchestrator failure recorded on orchestrator state."""
+        self.error(f"Phase orchestrator entered FAILED state: {details}")
+        self._publish_service_error_safely(
+            BaseServiceErrorMessage(
+                service_id=self.service_id,
+                error=details
+                or ErrorDetails(message="Phase orchestrator entered FAILED state"),
+            )
+        )
+
+    def _publish_service_error_safely(self, message: BaseServiceErrorMessage) -> None:
+        """Schedule the error publish, swallowing failures if comms are down.
+
+        Runs from a task done-callback (sync context), so the publish is
+        scheduled via ``execute_async`` rather than awaited. A publish
+        failure must not mask the original phase failure.
+        """
+        try:
+            self.execute_async(self.publish(message))
+        except Exception as publish_error:
+            self.debug(
+                lambda e=publish_error: (
+                    f"Failed to publish BaseServiceErrorMessage from phase failure "
+                    f"(comms may already be down): {e!r}"
+                )
+            )
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _handle_profile_cancel_command(self, message: Command) -> None:

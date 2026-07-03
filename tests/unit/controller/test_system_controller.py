@@ -17,6 +17,7 @@ from aiperf.common.exceptions import (
     LifecycleOperationError,
     ServiceRegistrationTimeoutError,
 )
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.worker_messages import (
     WorkerPodStateMessage,
     WorkerStatusSummaryMessage,
@@ -220,6 +221,33 @@ class TestSystemControllerExitScenarios:
             "Configure Services",
             system_controller.id,
         )
+
+    @pytest.mark.asyncio
+    async def test_service_error_message_appends_exit_error(
+        self,
+        system_controller: SystemController,
+    ):
+        """A SERVICE_ERROR message (e.g. from TimingManager's phase-orchestrator
+        done-callback or BaseService._kill) is recorded so the run exits non-zero.
+        """
+        assert not system_controller._exit_errors  # precondition
+
+        error = ErrorDetails(
+            type="FixedScheduleError",
+            message="Phase orchestrator entered FAILED state",
+        )
+        await system_controller._process_service_error_message(
+            BaseServiceErrorMessage(service_id="timing-manager", error=error)
+        )
+
+        assert_exit_error(
+            system_controller,
+            error,
+            "service_runtime",
+            "timing-manager",
+        )
+        # A non-empty _exit_errors list is what drives os._exit(1).
+        assert system_controller._exit_errors
 
 
 # =============================================================================
