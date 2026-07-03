@@ -22,7 +22,7 @@ def main() -> int:
     start = time.perf_counter()
 
     try:
-        from aiperf.config.templates import _load_all_templates
+        from aiperf.config.templates.discovery import _load_all_templates
 
         # Clear cache so we always re-parse from disk
         _load_all_templates.cache_clear()

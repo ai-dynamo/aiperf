@@ -10,8 +10,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
-LogQueue: TypeAlias = multiprocessing.Queue
-
 from rich.console import Console, ConsoleRenderable, Group
 from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
@@ -25,6 +23,8 @@ from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.runtime import ServiceDefaults
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType, UIType
+
+LogQueue: TypeAlias = multiprocessing.Queue
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun

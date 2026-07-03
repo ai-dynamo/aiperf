@@ -30,7 +30,7 @@ Event-loop-scope invariant (DO NOT REFACTOR AWAY):
     pytest-asyncio's function loop. A cached ``aiohttp.ClientSession``
     created in the package loop raises
     ``RuntimeError: Timeout context manager should be used inside a task``
-    when re-used from a function-scoped test. A per-call session (~10 ms
+    when reused from a function-scoped test. A per-call session (~10 ms
     overhead) keeps the aiohttp timeout context bound to the current task.
     The kubectl port-forward subprocess is safe to keep alive across
     loops — only the TCP port it bound is used here, not its transport.
