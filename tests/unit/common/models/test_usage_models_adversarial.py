@@ -1,5 +1,3 @@
-from aiperf.common.enums import CreditPhase
-
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Adversarial / edge-case tests for the Usage model.
@@ -35,6 +33,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pytest import param
 
+from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ParsedResponse,

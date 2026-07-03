@@ -11,6 +11,8 @@ from typing import Any
 from pydantic import Field
 
 from aiperf.common.models import MetricResult
+from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.types import MetricTagT
 
 
 def _to_dict(obj: Any) -> dict[str, Any]:
@@ -26,10 +28,6 @@ def _to_dict(obj: Any) -> dict[str, Any]:
     if hasattr(obj, "model_dump"):
         return obj.model_dump()
     return dict(obj)
-
-
-from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.common.types import MetricTagT
 
 
 class SteadyStateWindowMetadata(AIPerfBaseModel, frozen=True):
