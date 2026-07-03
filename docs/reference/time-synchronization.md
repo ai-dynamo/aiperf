@@ -73,7 +73,7 @@ estimated_one_way = baseline_rtt // 2
 estimated_clock_skew = offset - estimated_one_way
 ```
 
-Before sending `WorkerReady`, each worker sends 5 `TimePing` probes on the credit DEALER/ROUTER socket and waits for `TimePong` echoes. The minimum RTT becomes `baseline_rtt_ns`. This follows Cristian's algorithm with the improvement of taking multiple probes and selecting the minimum for tighter bounds.
+Before sending `WorkerDispatchable`, each worker sends 5 `TimePing` probes on the credit DEALER/ROUTER socket and waits for `TimePong` echoes. The minimum RTT becomes `baseline_rtt_ns`. This follows Cristian's algorithm with the improvement of taking multiple probes and selecting the minimum for tighter bounds.
 
 RTT measurement runs once at startup in both local and Kubernetes modes, on the exact same DEALER/ROUTER path that credits travel.
 

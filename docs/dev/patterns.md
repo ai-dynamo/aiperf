@@ -1143,14 +1143,21 @@ value" fallback that both call sites (`_converter_endpoint` and
 
 A normal `BaseDerivedMetric` computes its value from peer metrics in the
 `MetricResultsDict` via `_derive_value`. Some derived metrics, however, are
-computed from data that never lives in the `MetricResultsDict` at all —
-GPU power and energy come from telemetry scrapes, not from request
-records, so their values must be injected by the accumulator that owns
-the sensor data rather than derived by the standard registry walk.
+computed from data that never lives in any single process's
+`MetricResultsDict` at all. GPU energy and power come from telemetry
+scrapes, and the per-token / per-watt figures need those telemetry summaries
+*plus* the inference profile results. On Kubernetes the GPU-telemetry
+accumulator and the metrics accumulator live in separate container processes
+(separate subprocesses in local multi-process mode), so no in-process
+derivation walk can reach both sides. The values are instead computed
+controller-side by the energy analyzer, which fans the two summaries in at
+`SystemController`, and injected into the energy-efficiency export.
 
 Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py).
-Injection site: `GPUTelemetryAccumulator.compute_efficiency_metrics`
-([`src/aiperf/gpu_telemetry/accumulator.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/accumulator.py)).
+Injection site: `compute_energy_efficiency_from_summaries`
+([`src/aiperf/analysis/energy_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/analysis/energy_analyzer.py)),
+called from `SystemController` once both `ProcessTelemetryResultMessage` and
+`ProcessRecordsResultMessage` have arrived.
 
 ### The three-part contract
 
@@ -1165,12 +1172,16 @@ site and the catching path explicitly:
 class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
     """Sum of GPU energy consumed across all GPUs during the benchmark phase, in joules.
 
-    Invariant: externally injected by
-    `GPUTelemetryAccumulator.compute_efficiency_metrics` from
-    energy_consumption counter deltas. `_derive_value` is intentionally
-    non-functional; `MetricResultsProcessor.update_derived_metrics` is
-    expected to catch NoMetricValue and skip the tag during its
-    derivation walk.
+    Invariant: not derivable from ``MetricResultsDict``. The value is produced
+    controller-side by
+    ``analysis.energy_analyzer.compute_energy_efficiency_from_summaries``, which
+    fans in the GPU telemetry summary and the inference profile results across
+    process boundaries and attaches ``total_gpu_energy`` to the energy-efficiency
+    export (not to ``ProfileResults.records``). This class only registers the
+    ``total_gpu_energy`` tag / header / unit in the ``MetricRegistry``;
+    ``_derive_value`` is intentionally non-functional, and
+    ``MetricResultsProcessor.update_derived_metrics`` is expected to catch
+    ``NoMetricValue`` and skip the tag during its derivation walk.
     """
 ```
 
@@ -1187,22 +1198,22 @@ from aiperf.metrics.metric_dicts import MetricResultsDict
 def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
     raise NoMetricValue(
         "Cannot derive 'total_gpu_energy' from MetricResultsDict: this metric "
-        "is externally injected by "
-        "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
-        "surfaces, the derivation walk is missing its NoMetricValue handler "
-        "(see MetricResultsProcessor.update_derived_metrics)."
+        "is computed controller-side by the energy analyzer "
+        "(analysis.energy_analyzer.compute_energy_efficiency_from_summaries). "
+        "If this exception surfaces, the derivation walk is missing its "
+        "NoMetricValue handler (see MetricResultsProcessor.update_derived_metrics)."
     )
 ```
 
 **3. Error message names the operation, the injection site, and the catching
-path.** A message that only names the source ("X is computed by the GPU
-telemetry accumulator") gives debugging agents no clue where the contract
-is enforced. The recommended shape is:
+path.** A message that only names the source ("X is computed by the energy
+analyzer") gives debugging agents no clue where the contract is enforced. The
+recommended shape is:
 
 - *Operation*: what derivation was attempted (`Cannot derive 'X' from
   MetricResultsDict`).
-- *Injection site*: which method is the source of truth
-  (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
+- *Injection site*: which function is the source of truth
+  (`analysis.energy_analyzer.compute_energy_efficiency_from_summaries`).
 - *Catching path*: where the exception is expected to be absorbed
   (`MetricResultsProcessor.update_derived_metrics`). If this fires in
   production, the catching path has a bug.
@@ -1217,23 +1228,27 @@ external injection.
 
 ### Where the injection happens
 
-`RecordsManager._apply_gpu_efficiency_metrics` calls
-`GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
-`MetricResult` objects directly with the relevant tags and appends them
-to the records list before `ProcessRecordsResult` is built. The standard
-`update_derived_metrics` walk sees these tags too, raises `NoMetricValue`
-via `_derive_value`, catches it, and skips — so the externally-injected
-values are not overwritten.
+`SystemController` calls
+`compute_energy_efficiency_from_summaries(telemetry=..., profile_results=...)`
+after both the GPU-telemetry summary (`ProcessTelemetryResultMessage`) and the
+inference profile results (`ProcessRecordsResultMessage`) have arrived. The
+analyzer constructs `MetricResult` objects for `total_gpu_energy` and the
+per-token / per-watt figures directly and stores them on
+`self._energy_efficiency_results` for the energy-efficiency exporters — it does
+**not** write them into `ProfileResults.records`. The standard
+`update_derived_metrics` walk still sees the registered `total_gpu_energy` tag,
+raises `NoMetricValue` via `_derive_value`, catches it, and skips — so the tag
+never lands in the per-record results with a bogus value.
 
 ### Test contract
 
-The error-message invariants are pinned by
+The error-message invariant is pinned by
 [`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
-(parametrized over the three classes): every `_derive_value` call must
-raise `NoMetricValue` with a message that names the tag, the operation
-source (`MetricResultsDict`), and the injection site
-(`compute_efficiency_metrics`). A future weakening of any message fails
-the test rather than silently drifting.
+(`TestTotalGpuEnergyDeriveValueContract`): the `_derive_value` call must raise
+`NoMetricValue` with a message that names the tag (`total_gpu_energy`), the
+operation source (`MetricResultsDict`), and the injection site
+(`energy_analyzer`). A future weakening of the message fails the test rather
+than silently drifting.
 
 ## Testing Pattern
 

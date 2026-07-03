@@ -137,7 +137,7 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 | `AIPERF_CONFIG_SERVICE_FILE` env / `--service-config` | 🔵 | Consolidated: containers bootstrap via `--benchmark-run /etc/aiperf/run_config.json` (`jobset_helpers.py:136-143`), with the full `BenchmarkRun` envelope written by `ConfigMapSpec.from_benchmark_run` (`resources.py:132-170`). Pydantic field `common/_env_services.py:34-38` retained but unused. |
 | `AIPERF_CONFIG_USER_FILE` env / `--user-config` | 🔵 | Same consolidation as above — single `run_config.json` covers service- and user-scope config (`common/_env_services.py:39-43` unused). |
 | Pydantic `to_json()` / `from_json()` round-trip (M0) | 🔵 | Uses `model_dump(mode="json")` + `orjson.dumps` for write (`resources.py:154-159`), `--benchmark-run` Path for read. |
-| `ProfileConfigureCommand` for per-sweep dynamic config | ✅ | Command enum at `common/enums/communication_enums.py:49`; handlers in dataset/gpu/records/timing/server/worker (7 handler sites). |
+| `CommandType.PROFILE_CONFIGURE` for per-sweep dynamic config | ✅ | Carried on the `Command` struct (`common/control_structs.py:176`); `CommandType` enum at `common/enums/enums.py:93`; handlers in dataset/gpu/records/timing/server/worker (7 handler sites). |
 
 ---
 
@@ -213,7 +213,7 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 | Worker retries (backoffLimit); exhaustion tolerated | 🌟 | `WORKER_BACKOFF_LIMIT=20` production-tuned (spec's 2 is insufficient for high-scale ZMQ first-connect); `successPolicy` targets controller only, so exhaustion doesn't fail JobSet. |
 | CLI disconnect → benchmark continues; reattach via `aiperf attach` | ✅ | `aiperf kube attach` (`cli_commands/kube/attach.py`, `kubernetes/attach.py`); benchmark runs independent of CLI. |
 | CLI non-zero exit on fatal errors | ✅ | `exit_on_error` wraps kube subcommands (`cli_utils.py:61`; used across profile/attach/preflight/watch). |
-| Graceful shutdown: CreditsComplete → ProcessRecordsResult → ShutdownCommand | ✅ | `timing/phase/publisher.py:91` → `records/records_manager.py:301,480` → `controller/system_controller.py:997,1026,1139`. |
+| Graceful shutdown: CreditsComplete → ProcessRecordsResult → CommandType.SHUTDOWN | ✅ | `timing/phase/publisher.py:91` → `records/records_manager.py:301,480` → `controller/system_controller.py:997,1026,1139`. |
 | CLI retry w/ exponential backoff on API drops | ✅ | `operator/progress_client.py:60,149-181` `retry_with_backoff` with configurable `max_retries`/`initial_backoff`. |
 
 ---
