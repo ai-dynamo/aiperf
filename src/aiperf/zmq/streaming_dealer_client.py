@@ -50,8 +50,9 @@ class ZMQStreamingDealerClient(BaseZMQClient):
 
     Example:
     ```python
-        from aiperf.common.structs import (
-            Credit, CancelCredits, WorkerReady, WorkerShutdown, CreditReturn
+        from aiperf.credit.structs import Credit
+        from aiperf.credit.messages import (
+            CancelCredits, WorkerDispatchable, WorkerShutdown, CreditReturn
         )
 
         # Create via comms (recommended - handles lifecycle management)
@@ -73,7 +74,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         # Lifecycle managed by comms
         await comms.initialize()
         await comms.start()
-        await dealer.send(WorkerReady(worker_id="worker-1"))
+        await dealer.send(WorkerDispatchable(worker_id="worker-1"))
         ...
         await dealer.send(WorkerShutdown(worker_id="worker-1"))
         await comms.stop()
@@ -183,7 +184,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         data = _encoder.encode(struct)
         # FD-driver owns both directions of the socket; never touch zmq.asyncio
         # send here or it corrupts the shared FD edge-trigger. Before the
-        # receiver task has created the driver (early WorkerReady), send
+        # receiver task has created the driver (early WorkerDispatchable), send
         # directly — SNDHWM=0 means the NOBLOCK send will not block.
         if self._fd_reader is not None:
             self._fd_reader.send(data)

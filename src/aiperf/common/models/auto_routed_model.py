@@ -18,8 +18,8 @@ Cascading discriminators (different field at each level):
         message_type: str = "command"
         command: str
 
-    class SpawnWorkersCommand(CommandMessage):
-        command: str = "spawn_workers"
+    class PingCommand(CommandMessage):
+        command: str = "ping"
 
 Hierarchical discriminators (same field, multiple levels):
     class Animal(AutoRoutedModel):

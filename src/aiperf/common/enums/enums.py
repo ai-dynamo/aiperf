@@ -136,9 +136,10 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
 
     Disambiguation note: this SPAWN is the DAG-branch mode (a child
     *conversation* that runs alongside its parent). It is unrelated to
-    ``SpawnWorkersCommand`` (the controller->worker-manager command that
-    spawns *worker processes*). One is dataset/orchestration semantics;
-    the other is process lifecycle.
+    worker-*process* spawning (the ``CommandType.SPAWN_WORKERS`` control
+    command; in the current build worker processes are launched at
+    WorkerGroupManager startup rather than by that command). One is
+    dataset/orchestration semantics; the other is process lifecycle.
     """
 
 

@@ -56,7 +56,7 @@ def _configure_child_process() -> None:
 
     Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
     the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
-    handled via the message bus (ShutdownCommand); process.terminate() is only
+    handled via the control channel (CommandType.SHUTDOWN); process.terminate() is only
     called after the message bus path has already timed out, and the manager
     falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
     prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension

@@ -215,7 +215,7 @@ class RecordsTracker:
         return phase_tracker._was_cancelled
 
     def mark_phase_cancelled(self, phase: CreditPhase) -> None:
-        """Mark a phase as cancelled (e.g., from ProfileCancelCommand).
+        """Mark a phase as cancelled (e.g., from a CommandType.PROFILE_CANCEL command).
 
         This should be called when the cancel command is received to ensure
         the cancelled state is tracked even before the CreditPhaseCompleteMessage

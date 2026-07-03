@@ -3,10 +3,9 @@
 
 """Tests for RecordExportJSONLWriter.
 
-NOTE: The previous test_record_export_results_processor.py covered
-RecordExportResultsProcessor (k8s, BenchmarkRun-based). The class was
-renamed to RecordExportJSONLWriter as part of the metrics-accumulator
-synthesis. Detailed behavioral coverage is pending re-port.
+NOTE: This is the k8s, BenchmarkRun-based records-JSONL exporter, renamed
+to RecordExportJSONLWriter as part of the metrics-accumulator synthesis.
+Detailed behavioral coverage is pending re-port.
 """
 
 from aiperf.post_processors.record_export_jsonl_writer import RecordExportJSONLWriter

@@ -774,9 +774,9 @@ class TestFixedScheduleConfigCorrection:
 
 class TestPhaseRunnerWorkerReadiness:
     """The phase must gate credit issuance on worker readiness. Regression
-    coverage for the startup-race deadlock (see PhaseRunner._run_strategy)."""
+    coverage for the startup-race deadlock (see PhaseRunner._prepare_phase)."""
 
-    async def test_run_strategy_awaits_wait_for_workers_with_start_timeout(
+    async def test_prepare_phase_awaits_wait_for_workers_with_start_timeout(
         self,
         conv_src: MagicMock,
         pub: MagicMock,
@@ -799,7 +799,7 @@ class TestPhaseRunnerWorkerReadiness:
             timeout=Environment.SERVICE.START_TIMEOUT
         )
 
-    async def test_run_strategy_blocks_execution_until_worker_registers(
+    async def test_prepare_phase_blocks_execution_until_worker_registers(
         self,
         benchmark_run,
         conv_src: MagicMock,

@@ -35,7 +35,7 @@ _RESULT_VALUE_FIELDS = ("avg", "sum", "min", "max", "p50", "current")
 def usage_without_cache_in_record(record: Mapping[str, Any]) -> bool:
     """Return True if a per-record metric map reports prompt tokens but no cache reads.
 
-    Used mid-run on streamed ``MetricRecordsData.results`` dicts. A cache-read
+    Used mid-run on streamed ``MetricRecordsData.metrics`` dicts. A cache-read
     value of 0 (caching on, no hits) counts as reported; only an absent value
     (cache reporting off) triggers the hint.
     """
