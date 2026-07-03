@@ -327,7 +327,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             return
         try:
             await self._branch_orchestrator.on_child_stopped(credit.x_correlation_id)
-        except Exception as exc:  # orchestrator error boundary; never propagate to the rate loop
+        except (
+            Exception
+        ) as exc:  # orchestrator error boundary; never propagate to the rate loop
             self.error(
                 f"BranchOrchestrator.on_child_stopped raised for "
                 f"x_correlation_id={credit.x_correlation_id}: {exc!r}"
@@ -362,7 +364,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             return
         try:
             await self._branch_orchestrator.on_child_stopped(credit.x_correlation_id)
-        except Exception as exc:  # orchestrator error boundary; never mask the cancellation
+        except (
+            Exception
+        ) as exc:  # orchestrator error boundary; never mask the cancellation
             self.error(
                 f"BranchOrchestrator.on_child_stopped raised during cancel for "
                 f"x_correlation_id={credit.x_correlation_id}: {exc!r}"
