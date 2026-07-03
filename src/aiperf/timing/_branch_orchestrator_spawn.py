@@ -38,9 +38,8 @@ class BranchOrchestratorSpawnMixin:
     """Spawn pipeline + child-dispatch rollback. See ``BranchOrchestrator``.
 
     Note: "spawn" here means dispatching a child conversation in DAG mode
-    (``ConversationBranchMode.SPAWN``) -- unrelated to the
-    ``CommandType.SPAWN_WORKERS`` control command, which spawns worker
-    subprocesses.
+    (``ConversationBranchMode.SPAWN``) -- unrelated to worker-process
+    spawning (worker subprocesses launched at WorkerGroupManager startup).
     """
 
     async def _fire_pre_session_children(self, branch: ConversationBranchInfo) -> None:

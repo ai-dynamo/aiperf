@@ -97,7 +97,6 @@ class CommandType(CaseInsensitiveStrEnum):
     PROFILE_COMPLETE = "profile_complete"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
-    REGISTER_SERVICE = "register_service"
     REPORT_WORKER_STATUS_SUMMARY = "report_worker_status_summary"
     GET_POD_STATES = "get_pod_states"
     """Service → controller request: return the controller's authoritative
@@ -105,8 +104,6 @@ class CommandType(CaseInsensitiveStrEnum):
     FastAPI sidecar serve ``/api/progress.workers`` and ``/api/debug/*``
     from the controller's view instead of its own bus-fed mirror."""
     SHUTDOWN = "shutdown"
-    SHUTDOWN_WORKERS = "shutdown_workers"
-    SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
     ABORT = "abort"
     """Signal sibling pod peers (workers/record-processors) to exit the process
@@ -139,10 +136,9 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
 
     Disambiguation note: this SPAWN is the DAG-branch mode (a child
     *conversation* that runs alongside its parent). It is unrelated to
-    worker-*process* spawning (the ``CommandType.SPAWN_WORKERS`` control
-    command; in the current build worker processes are launched at
-    WorkerGroupManager startup rather than by that command). One is
-    dataset/orchestration semantics; the other is process lifecycle.
+    worker-*process* spawning (worker processes are launched at
+    WorkerGroupManager startup). One is dataset/orchestration semantics;
+    the other is process lifecycle.
     """
 
 
