@@ -39,6 +39,20 @@ Defines equivalent model hierarchies for all hot-path types (SSEMessage, ParsedR
 - **Three-way full record**: Single and concurrent comparisons across all three approaches
 - **Three-way per-object**: Individual type overhead (SSEMessage, ParsedResponse, Turn, RequestInfo, TokenCounts)
 
+## Other benchmarks (throughput / latency / serialization)
+
+These do not use `tracemalloc`; they profile CPU, latency, or serialization
+cost. Run any of them with `uv run python dev/benchmarks/<script>`.
+
+- **`enum_comparison_benchmark.py`** — Microbenchmark of `CaseInsensitiveStrEnum` comparison (`==`) vs identity/plain-string checks on the per-packet SSE streaming hot path.
+- **`serialization_benchmark.py`** — Compares JSON (orjson) vs MessagePack (msgspec) serialization to test whether it bottlenecks the receive path.
+- **`zmq_credit_bench.py`** — Open-loop ZMQ credit microbenchmark measuring throughput and round-trip latency percentiles across ZMQ patterns (`await` drive vs `FdEdgeReader`/sync-NOBLOCK), multi-process rig.
+- **`per_worker_credit_latency.py`** — Derives per-worker percentiles of credit-to-request-start latency (`request_start_ns - credit_issued_ns`) from the column-store filter + timestamp/numeric-metadata columns.
+- **`filter_demo.py`** — Demonstrates the column-store filter + summarize primitives against `MetricsAccumulator` (categorical/bool/time-range masks, numpy boolean ops, `compute_results_for_mask`).
+- **`pipeline_profile.py`** — cProfile probe of the metrics-accumulator ingest and summarize path over a synthetic export-schema batch (ingest and `summarize()` timed separately).
+- **`record_processing_benchmark.py`** — Microbenchmarks the record-processing drain path; select stages with `--scenario {parser,rp,rm-ingest,export}` and emit machine-readable results with `--json`.
+- **`tdigest_batch_benchmark.py`** — Measures per-record vs cross-record batching (batch size K) for the t-digest wrapper `TDigestListMetricAggregator`.
+
 ## Running
 
 ```bash

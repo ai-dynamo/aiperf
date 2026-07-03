@@ -151,7 +151,3 @@ jobs:
           SHARD_INDEX: ${{ matrix.shard.shard_index }}
           SHARD_TOTAL: ${{ matrix.shard.shard_total }}
         run: bash -x tests/ci/test_docs_end_to_end/setup_test.sh
-
-      - name: Cleanup Docker containers
-        if: always()
-        run: docker compose -f docker-compose.yml down || true
