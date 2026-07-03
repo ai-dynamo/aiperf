@@ -414,8 +414,13 @@ def test_request_rate_infinity_passes_validation_but_yields_zero_period() -> Non
 
 @pytest.mark.asyncio
 @pytest.mark.skip(
-    reason="Depends on dispatch_child_turn API on CreditIssuer not yet ported "
-    "(future task; see plan P2T18 follow-ups)."
+    reason="Stale test mock, not a missing API. dispatch_child_turn IS live "
+    "(credit/issuer.py:264, called from request_rate.py:318). This test leaves "
+    "issuer.dispatch_child_turn as a plain MagicMock and awaits it, raising "
+    "'TypeError: object MagicMock can't be used in await expression', then "
+    "asserts issue_credit.assert_awaited_once() -- but the immediate child "
+    "continuation path now dispatches via dispatch_child_turn, not issue_credit. "
+    "Needs a test rewrite to mock/assert dispatch_child_turn (deferred: triage)."
 )
 async def test_request_rate_dag_child_continuation_bypasses_continuation_queue() -> (
     None
