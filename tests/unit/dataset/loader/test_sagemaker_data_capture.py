@@ -108,31 +108,20 @@ def _make_default_run():
     return _make_run(config)
 
 
-def _patch_synthesis_attr(loader: SageMakerDataCaptureLoader) -> None:
-    """Attach a no-op user_config shim covering production-side synthesis check.
-
-    The `load_dataset` override in `sagemaker_data_capture.py` still references
-    `self.user_config.input.synthesis.should_synthesize()` (a missed branch-API
-    migration). The base class actually uses `self._synthesis_config`, so we
-    install a MagicMock that returns False for that one call site.
-    """
-    shim = MagicMock()
-    shim.input.synthesis.should_synthesize.return_value = False
-    loader.user_config = shim  # type: ignore[attr-defined]
-
-
 def _build_loader(
     filename: str | Path,
     *,
     prompt_generator: Any | None = None,
 ) -> SageMakerDataCaptureLoader:
-    loader = SageMakerDataCaptureLoader(
+    # The loader gates synthesis via the shared ``synthesis_should_apply``
+    # helper against ``self._synthesis_config``, which defaults to
+    # not-applied for the mooncake_trace run built by ``_make_default_run``.
+    # No ``user_config`` shim is needed.
+    return SageMakerDataCaptureLoader(
         filename=filename,
         run=_make_default_run(),
         prompt_generator=prompt_generator or MagicMock(),
     )
-    _patch_synthesis_attr(loader)
-    return loader
 
 
 class TestParseIso8601ToMs:

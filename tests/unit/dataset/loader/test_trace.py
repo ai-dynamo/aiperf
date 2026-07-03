@@ -1244,7 +1244,7 @@ class TestMooncakeTraceSynthesisIntegration:
     def test_synthesis_not_applied_when_disabled(
         self, mock_prompt_generator, sample_trace_data
     ):
-        """Test that synthesis is skipped when should_synthesize() returns False."""
+        """Test that synthesis is skipped when synthesis_should_apply() returns False."""
         config = _make_synthesis_config()  # All defaults, should not synthesize
 
         loader = MooncakeTraceDatasetLoader(
