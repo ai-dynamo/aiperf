@@ -134,8 +134,8 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 |---|---|---|
 | CLI creates ConfigMap via K8s API from Pydantic models | 🔵 | `ConfigMapSpec.from_benchmark_run` (`resources.py:132-170`) serializes `BenchmarkRun` as single `run_config.json`, not separate service/user files. Direct-deploy path at `profile_deploy_direct.py:46-47`. |
 | Pods mount ConfigMap at `/etc/aiperf/` | ✅ | `jobset_helpers.py:98,102` mounts `config` volume at `CONFIG_MOUNT_PATH` (`/etc/aiperf`). |
-| `AIPERF_CONFIG_SERVICE_FILE` env / `--service-config` | 🔵 | Consolidated: containers bootstrap via `--benchmark-run /etc/aiperf/run_config.json` (`jobset_helpers.py:136-143`), with the full `BenchmarkRun` envelope written by `ConfigMapSpec.from_benchmark_run` (`resources.py:132-170`). Pydantic field `common/_env_services.py:34-38` retained but unused. |
-| `AIPERF_CONFIG_USER_FILE` env / `--user-config` | 🔵 | Same consolidation as above — single `run_config.json` covers service- and user-scope config (`common/_env_services.py:39-43` unused). |
+| `AIPERF_CONFIG_SERVICE_FILE` env / `--service-config` | 🔵 | Consolidated: containers bootstrap via `--benchmark-run /etc/aiperf/run_config.json` (`jobset_helpers.py:136-143`), with the full `BenchmarkRun` envelope written by `ConfigMapSpec.from_benchmark_run` (`resources.py:132-170`). The unused Pydantic env fields have since been removed. |
+| `AIPERF_CONFIG_USER_FILE` env / `--user-config` | 🔵 | Same consolidation as above — single `run_config.json` covers service- and user-scope config (its unused env fields have since been removed). |
 | Pydantic `to_json()` / `from_json()` round-trip (M0) | 🔵 | Uses `model_dump(mode="json")` + `orjson.dumps` for write (`resources.py:154-159`), `--benchmark-run` Path for read. |
 | `CommandType.PROFILE_CONFIGURE` for per-sweep dynamic config | ✅ | Carried on the `Command` struct (`common/control_structs.py:176`); `CommandType` enum at `common/enums/enums.py:93`; handlers in dataset/gpu/records/timing/server/worker (7 handler sites). |
 
@@ -151,7 +151,7 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 | `--public-dataset sharegpt` (in-cluster generation) | ✅ | `dataset/dataset_manager.py:266` via `load_public_dataset`. |
 | Synthetic (`--isl`, `--num-dataset-entries`, etc.) | ✅ | `dataset/synthesis/` composer path runs inside `DatasetManager`. |
 | Controller `POST /api/dataset` chunked + LZ4/ZSTD | ⚪ | Obsolete — replaced by `podTemplate` volume mounts. No upload endpoint needed. |
-| Broadcast `DATASET_CONFIGURED_NOTIFICATION` | ✅ | Enum at `common/enums/communication_enums.py:99`; consumers in `timing/manager.py:79`, `workers/worker.py:396`, `workers/worker_pod_manager.py:230`, `api/routers/dataset.py:73`. |
+| Broadcast `DATASET_CONFIGURED_NOTIFICATION` | ✅ | Enum at `common/enums/enums.py:368`; consumers in `timing/manager.py:79`, `workers/worker.py:396`, `workers/worker_pod_manager.py:230`, `api/routers/dataset.py:73`. |
 | Worker `GET /api/dataset` → emptyDir → mmap | ✅ | `workers/worker_pod_dataset_download.py:51-83` + `dataset/memory_map_client.py:135`. |
 | `--dataset-pvc` mount path | 🌟 | See `--dataset-pvc` row in CLI options — `podTemplate.volumes`/`volumeMounts` handle this generically. |
 

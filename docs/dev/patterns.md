@@ -215,7 +215,7 @@ cli_commands/
     _app.py           # group App + lazy subcommand registration
     attach.py         # aiperf kube attach
     list_.py          # aiperf kube list
-    profile.py        # aiperf kube profile (cyclopts placeholder; click owns this command)
+    profile.py        # aiperf kube profile
     ...
 ```
 
