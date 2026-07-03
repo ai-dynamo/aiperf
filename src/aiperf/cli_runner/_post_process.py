@@ -94,7 +94,7 @@ def run_post_process_hook(
         result_dict = scrub_non_finite(result_dict)
         out_path.write_bytes(orjson.dumps(result_dict, option=orjson.OPT_INDENT_2))
         logger.info(f"Post-process artifact written: {out_path}")
-    except Exception as exc:  # noqa: BLE001 - quarantine: see docstring
+    except Exception as exc:  # quarantine: see docstring
         errors_path = aggregate_dir / "post_process_errors.json"
         payload = {
             "handler": handler_name,
