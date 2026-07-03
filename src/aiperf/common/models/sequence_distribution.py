@@ -32,21 +32,18 @@ Examples:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.models.sequence_distribution_core import (
-    SequenceLengthDistribution,
+    SequenceLengthDistribution as SequenceLengthDistribution,
+)
+from aiperf.common.models.sequence_distribution_core import (
     SequenceLengthPair,
 )
 from aiperf.common.models.sequence_distribution_parser import (
     DistributionParser as DistributionParser,
 )
-
-if TYPE_CHECKING:
-    pass
 
 logger = AIPerfLogger(__name__)
 
@@ -72,38 +69,3 @@ def _validate_probability_sum(pairs: list[SequenceLengthPair]) -> None:
             f"Probabilities must sum to 100.0, got {total_prob:.6f}. "
             f"Pairs: {[str(p) for p in pairs]}"
         )
-
-
-def create_uniform_distribution(isl: int, osl: int) -> SequenceLengthDistribution:
-    """
-    Create a uniform distribution with a single ISL/OSL pair.
-
-    Args:
-        isl: Input sequence length
-        osl: Output sequence length
-
-    Returns:
-        SequenceLengthDistribution with single pair at 100% probability
-    """
-    return SequenceLengthDistribution([SequenceLengthPair(isl, osl, 100.0)])
-
-
-def create_balanced_distribution(
-    pairs: list[tuple[int, int]],
-) -> SequenceLengthDistribution:
-    """
-    Create a balanced distribution where all pairs have equal probability.
-
-    Args:
-        pairs: List of (isl, osl) tuples
-
-    Returns:
-        SequenceLengthDistribution with equal probabilities
-    """
-    if not pairs:
-        raise ValueError("Cannot create distribution from empty pairs list")
-
-    prob_per_pair = 100.0 / len(pairs)
-    seq_pairs = [SequenceLengthPair(isl, osl, prob_per_pair) for isl, osl in pairs]
-
-    return SequenceLengthDistribution(seq_pairs)

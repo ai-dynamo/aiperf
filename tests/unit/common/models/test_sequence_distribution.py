@@ -20,8 +20,6 @@ from aiperf.common.models.sequence_distribution import (
     DistributionParser,
     SequenceLengthDistribution,
     SequenceLengthPair,
-    create_balanced_distribution,
-    create_uniform_distribution,
 )
 
 
@@ -544,39 +542,6 @@ class TestDistributionParser:
         rng.init(42)
         isl, osl = semi.sample()
         assert (isl, osl) in {(128, 64), (256, 128)}
-
-
-class TestUtilityFunctions:
-    """Test utility functions."""
-
-    def test_create_uniform_distribution(self):
-        """Test creating uniform single-pair distribution."""
-        dist = create_uniform_distribution(512, 256)
-
-        assert len(dist.pairs) == 1
-        assert dist.pairs[0] == SequenceLengthPair(512, 256, 100.0)
-
-        # Should always return the same values
-        for _ in range(10):
-            isl, osl = dist.sample()
-            assert isl == 512
-            assert osl == 256
-
-    def test_create_balanced_distribution(self):
-        """Test creating balanced distribution."""
-        pairs = [(256, 128), (512, 256), (1024, 512)]
-        dist = create_balanced_distribution(pairs)
-
-        assert len(dist.pairs) == 3
-
-        # All probabilities should be 100/3 ≈ 33.33%
-        for pair in dist.pairs:
-            assert abs(pair.probability - 100.0 / 3.0) < 1e-10
-
-    def test_create_balanced_empty_pairs(self):
-        """Test creating balanced distribution with empty pairs."""
-        with pytest.raises(ValueError):
-            create_balanced_distribution([])
 
 
 class TestIntegration:

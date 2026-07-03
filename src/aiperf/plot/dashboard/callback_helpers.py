@@ -30,60 +30,6 @@ MULTI_RUN_STAT_OPTIONS = [
 ]
 
 
-def filter_stat_options_by_available(
-    all_options: list[dict],
-    available_stats: list[str],
-) -> list[dict]:
-    """
-    Filter stat options to only include those available for a metric.
-
-    Args:
-        all_options: Full list of stat options with label/value dicts.
-        available_stats: List of stat keys that are available.
-
-    Returns:
-        Filtered list of options containing only available stats.
-    """
-    if not available_stats:
-        return all_options
-    return [opt for opt in all_options if opt["value"] in available_stats]
-
-
-def select_best_stat(
-    available_stats: list[str],
-    current_stat: str | None,
-    preference_order: list[str] | None = None,
-) -> str | None:
-    """
-    Select the best stat from available options with smart fallback.
-
-    Args:
-        available_stats: List of available stat keys.
-        current_stat: Currently selected stat (may be None).
-        preference_order: Preferred stats in order. Defaults to common stats.
-
-    Returns:
-        Best stat to use, or None if no stats available.
-    """
-    if not available_stats:
-        return None
-
-    if len(available_stats) == 1:
-        return available_stats[0]
-
-    if current_stat and current_stat in available_stats:
-        return current_stat
-
-    if preference_order is None:
-        preference_order = ["p50", "avg", "p90", "p95", "p99"]
-
-    for pref in preference_order:
-        if pref in available_stats:
-            return pref
-
-    return available_stats[0]
-
-
 @dataclass
 class SingleRunFieldConfig:
     """Configuration for single-run modal field visibility and options."""

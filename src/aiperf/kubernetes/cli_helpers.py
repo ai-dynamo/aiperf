@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from aiperf.kubernetes.console import (
-    clear_last_benchmark,
     get_last_benchmark,
     print_action,
     print_error,
@@ -361,10 +360,3 @@ async def confirm_action(msg: str) -> bool:
         print_info("Aborted")
         return False
     return True
-
-
-def clear_last_benchmark_if_matches(job_id: str) -> None:
-    """Clear stored last benchmark info if it matches the given job_id."""
-    last = get_last_benchmark()
-    if last and last.job_id == job_id:
-        clear_last_benchmark()

@@ -162,11 +162,6 @@ def get_preloaded(
     return tok
 
 
-def preloaded_models() -> list[str]:
-    """Return the model IDs that succeeded at preload time."""
-    return list(_LOADED)
-
-
 def get_or_load(
     name: str,
     *,

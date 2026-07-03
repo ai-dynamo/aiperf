@@ -8,14 +8,11 @@ import numpy as np
 import pytest
 
 from aiperf.analysis.sweepline import (
-    add_step_functions,
     compute_active_weighted_stats,
     compute_time_weighted_stats,
     concurrency_sweep_line,
     divide_step_functions,
-    prefill_throughput_per_user_sweep_line,
     prefill_throughput_sweep_line,
-    throughput_per_user_sweep_line,
     throughput_sweep_line,
     throughput_sweep_line_icl,
     tokens_in_flight_sweep_line,
@@ -196,38 +193,6 @@ class TestTotalThroughputSweep:
         # During prefill [0,50): rate = 2.0
         # During generation [50,150): rate = 1.0
         assert float(np.max(tput)) == pytest.approx(2.0)
-
-    def test_matches_add_step_functions(self) -> None:
-        """Single-pass sweep matches separate sweeps + add for overlapping requests."""
-        start = np.array([0.0, 10.0, 20.0])
-        gen_start = np.array([50.0, 60.0, 70.0])
-        end = np.array([150.0, 160.0, 170.0])
-        input_tokens = np.array([100.0, 200.0, 150.0])
-        output_tokens = np.array([101.0, 51.0, 76.0])
-
-        # Single-pass
-        ts1, vals1 = total_throughput_sweep_line(
-            start,
-            gen_start,
-            end,
-            input_tokens,
-            output_tokens=output_tokens,
-        )
-
-        # Two-pass + add
-        pts, pvals = prefill_throughput_sweep_line(start, gen_start, input_tokens)
-        tts, tvals = throughput_sweep_line(gen_start, end, output_tokens)
-        ts2, vals2 = add_step_functions(pts, pvals, tts, tvals)
-
-        # Both should give same time-weighted avg over the full window
-        from aiperf.analysis.sweepline import compute_time_weighted_stats
-
-        w_start = min(float(ts1[0]), float(ts2[0]))
-        w_end = max(float(ts1[-1]), float(ts2[-1]))
-        stats1 = compute_time_weighted_stats(ts1, vals1, w_start, w_end)
-        stats2 = compute_time_weighted_stats(ts2, vals2, w_start, w_end)
-        assert stats1.avg == pytest.approx(stats2.avg, rel=1e-10)
-        assert stats1.max == pytest.approx(stats2.max, rel=1e-10)
 
     def test_prefill_only(self) -> None:
         """No valid generation data → only prefill contributes."""
@@ -467,55 +432,6 @@ class TestComputeTimeWeightedStats:
         assert all(v == 0.0 for v in stats)
 
 
-class TestAddStepFunctions:
-    def test_both_empty(self) -> None:
-        empty = np.zeros(0, dtype=np.float64)
-        ts, vals = add_step_functions(empty, empty, empty, empty)
-        assert len(ts) == 0
-
-    def test_first_empty(self) -> None:
-        """Empty first → returns copy of second."""
-        empty = np.zeros(0, dtype=np.float64)
-        b_ts = np.array([1.0, 2.0])
-        b_vals = np.array([5.0, 0.0])
-        ts, vals = add_step_functions(empty, empty, b_ts, b_vals)
-        np.testing.assert_array_equal(ts, b_ts)
-        np.testing.assert_array_equal(vals, b_vals)
-
-    def test_second_empty(self) -> None:
-        """Empty second → returns copy of first."""
-        empty = np.zeros(0, dtype=np.float64)
-        a_ts = np.array([1.0, 2.0])
-        a_vals = np.array([3.0, 0.0])
-        ts, vals = add_step_functions(a_ts, a_vals, empty, empty)
-        np.testing.assert_array_equal(ts, a_ts)
-        np.testing.assert_array_equal(vals, a_vals)
-
-    def test_identical_grids(self) -> None:
-        ts = np.array([0.0, 50.0, 100.0])
-        a = np.array([10.0, 20.0, 0.0])
-        b = np.array([3.0, 7.0, 0.0])
-        out_ts, out_vals = add_step_functions(ts, a, ts, b)
-        np.testing.assert_array_equal(out_ts, ts)
-        np.testing.assert_array_almost_equal(out_vals, [13.0, 27.0, 0.0])
-
-    def test_overlapping_grids(self) -> None:
-        """Interleaved timestamps sum step-function values at merged points."""
-        a_ts = np.array([0.0, 100.0])
-        a_vals = np.array([10.0, 0.0])
-        b_ts = np.array([50.0, 100.0])
-        b_vals = np.array([5.0, 0.0])
-        out_ts, out_vals = add_step_functions(a_ts, a_vals, b_ts, b_vals)
-        # Merged: [0, 50, 100]
-        # At 0: a=10, b=0(before first event) → 10
-        # At 50: a=10, b=5 → 15
-        # At 100: a=0, b=0 → 0
-        assert len(out_ts) == 3
-        assert out_vals[0] == pytest.approx(10.0)
-        assert out_vals[1] == pytest.approx(15.0)
-        assert out_vals[2] == pytest.approx(0.0)
-
-
 class TestDivideStepFunctions:
     def test_empty_numerator(self) -> None:
         """Empty numerator returns empty arrays."""
@@ -600,122 +516,6 @@ class TestDivideStepFunctions:
         out_ts, out_vals = divide_step_functions(num_ts, num_vals, den_ts, den_vals)
         assert len(out_ts) == 1
         assert out_vals[0] == pytest.approx(3.0)
-
-
-class TestThroughputPerUserSweep:
-    def test_single_request(self) -> None:
-        """Single request: concurrency=1 → per-user rate equals aggregate rate."""
-        gen_start = np.array([0.0])
-        end = np.array([100.0])
-        # Throughput sweep for this request: rate = (101-1)/100 = 1.0 tokens/ns
-        tput_ts, tput_vals = throughput_sweep_line(gen_start, end, np.array([101.0]))
-        ts, per_user = throughput_per_user_sweep_line(
-            gen_start, end, tput_ts, tput_vals
-        )
-        assert len(ts) > 0
-        # With concurrency 1, per-user should equal aggregate
-        max_val = float(np.max(per_user))
-        assert max_val == pytest.approx(1.0, rel=0.01)
-
-    def test_overlapping_requests(self) -> None:
-        """N overlapping requests: per-user ≈ aggregate / N at peak."""
-        gen_start = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
-        end = np.array([100.0, 100.0, 100.0, 100.0, 100.0])
-        output_tokens = np.array([101.0, 101.0, 101.0, 101.0, 101.0])
-        # Each request: rate = 1.0 tokens/ns, aggregate = 5.0
-        tput_ts, tput_vals = throughput_sweep_line(gen_start, end, output_tokens)
-        ts, per_user = throughput_per_user_sweep_line(
-            gen_start, end, tput_ts, tput_vals
-        )
-        assert len(ts) > 0
-        # Peak aggregate = 5.0, concurrency = 5 → per-user = 1.0
-        max_val = float(np.max(per_user))
-        assert max_val == pytest.approx(1.0, rel=0.01)
-
-    def test_nan_filtering(self) -> None:
-        """NaN records are excluded from both throughput and concurrency."""
-        gen_start = np.array([0.0, np.nan])
-        end = np.array([100.0, np.nan])
-        output_tokens = np.array([101.0, np.nan])
-        tput_ts, tput_vals = throughput_sweep_line(gen_start, end, output_tokens)
-        ts, per_user = throughput_per_user_sweep_line(
-            gen_start, end, tput_ts, tput_vals
-        )
-        # Only 1 valid request → concurrency 1 → per-user = aggregate
-        if len(ts) > 0:
-            max_val = float(np.max(per_user))
-            assert max_val == pytest.approx(1.0, rel=0.01)
-
-    def test_empty_throughput(self) -> None:
-        """Empty throughput curve → empty per-user curve."""
-        gen_start = np.array([], dtype=np.float64)
-        end = np.array([], dtype=np.float64)
-        tput_ts = np.zeros(0, dtype=np.float64)
-        tput_vals = np.zeros(0, dtype=np.float64)
-        ts, per_user = throughput_per_user_sweep_line(
-            gen_start, end, tput_ts, tput_vals
-        )
-        assert len(ts) == 0
-
-
-class TestPrefillThroughputPerUserSweep:
-    def test_single_request(self) -> None:
-        """Single request: prefill concurrency=1 → per-user equals aggregate."""
-        start = np.array([0.0])
-        gen_start = np.array([50.0])
-        input_tokens = np.array([100.0])
-        # Prefill rate = 100/50 = 2.0 tokens/ns
-        ptput_ts, ptput_vals = prefill_throughput_sweep_line(
-            start, gen_start, input_tokens
-        )
-        ts, per_user = prefill_throughput_per_user_sweep_line(
-            start, gen_start, ptput_ts, ptput_vals
-        )
-        assert len(ts) > 0
-        max_val = float(np.max(per_user))
-        assert max_val == pytest.approx(2.0, rel=0.01)
-
-    def test_overlapping_requests(self) -> None:
-        """N overlapping prefills: per-user ≈ aggregate / N."""
-        start = np.array([0.0, 0.0, 0.0])
-        gen_start = np.array([50.0, 50.0, 50.0])
-        input_tokens = np.array([100.0, 100.0, 100.0])
-        # Each prefill: rate = 2.0, aggregate = 6.0, concurrency = 3
-        ptput_ts, ptput_vals = prefill_throughput_sweep_line(
-            start, gen_start, input_tokens
-        )
-        ts, per_user = prefill_throughput_per_user_sweep_line(
-            start, gen_start, ptput_ts, ptput_vals
-        )
-        assert len(ts) > 0
-        max_val = float(np.max(per_user))
-        assert max_val == pytest.approx(2.0, rel=0.01)
-
-    def test_nan_filtering(self) -> None:
-        """NaN records excluded from both prefill throughput and concurrency."""
-        start = np.array([0.0, np.nan])
-        gen_start = np.array([50.0, np.nan])
-        input_tokens = np.array([100.0, np.nan])
-        ptput_ts, ptput_vals = prefill_throughput_sweep_line(
-            start, gen_start, input_tokens
-        )
-        ts, per_user = prefill_throughput_per_user_sweep_line(
-            start, gen_start, ptput_ts, ptput_vals
-        )
-        if len(ts) > 0:
-            max_val = float(np.max(per_user))
-            assert max_val == pytest.approx(2.0, rel=0.01)
-
-    def test_empty_prefill_throughput(self) -> None:
-        """Empty prefill throughput curve → empty per-user curve."""
-        start = np.array([], dtype=np.float64)
-        gen_start = np.array([], dtype=np.float64)
-        ptput_ts = np.zeros(0, dtype=np.float64)
-        ptput_vals = np.zeros(0, dtype=np.float64)
-        ts, per_user = prefill_throughput_per_user_sweep_line(
-            start, gen_start, ptput_ts, ptput_vals
-        )
-        assert len(ts) == 0
 
 
 class TestTokensInFlightSweep:

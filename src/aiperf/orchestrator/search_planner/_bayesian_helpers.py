@@ -8,10 +8,10 @@ cap. Each function reads no planner state, so module-scope is the right home.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
+    from aiperf.config.sweep.adaptive import SLAFilter
 
 
 # Plateau-detection guard: coefficient of variation has no meaning when |mean|
@@ -29,13 +29,6 @@ NO_DATA_SENTINEL_LOSS = 1.0e6
 # (not ±inf / 1e18) to avoid GP variance distortion; tune up if BO ignores
 # soft constraints, down if it dominates exploration too early.
 PENALTY_WEIGHT_MULTIPLIER: float = 100.0
-
-
-def coerce_for_kind(value: Any, dim: SearchSpaceDimension) -> int | float:
-    """Skopt returns numpy scalars; coerce to plain Python int/float."""
-    if dim.kind == "int":
-        return int(value)
-    return float(value)
 
 
 def signed_violation(value: float, sla: SLAFilter) -> float:

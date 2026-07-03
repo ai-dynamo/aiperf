@@ -27,7 +27,6 @@ from pytest import param
 from aiperf.kubernetes.cli_helpers import (
     ResolvedJob,
     ResolvedSweep,
-    clear_last_benchmark_if_matches,
     confirm_action,
     resolve_job_id_and_namespace,
     resolve_target,
@@ -453,41 +452,3 @@ class TestConfirmationAndLastBenchmarkGuards:
             assert "Aborted" not in out
         else:
             assert "Aborted" in out
-
-    def test_clear_last_benchmark_if_matches_clears_only_matching_job_id(self) -> None:
-        clear_last = MagicMock()
-        with (
-            patch(
-                "aiperf.kubernetes.cli_helpers.get_last_benchmark",
-                return_value=LastBenchmarkInfo(
-                    job_id="llama3-throughput-v07", namespace="bench-prod"
-                ),
-            ),
-            patch(
-                "aiperf.kubernetes.cli_helpers.clear_last_benchmark",
-                new=clear_last,
-            ),
-        ):
-            clear_last_benchmark_if_matches("llama3-throughput-v07")
-
-        clear_last.assert_called_once_with()
-
-    def test_clear_last_benchmark_if_matches_preserves_unrelated_last_benchmark(
-        self,
-    ) -> None:
-        clear_last = MagicMock()
-        with (
-            patch(
-                "aiperf.kubernetes.cli_helpers.get_last_benchmark",
-                return_value=LastBenchmarkInfo(
-                    job_id="unrelated-throughput-run", namespace="bench-prod"
-                ),
-            ),
-            patch(
-                "aiperf.kubernetes.cli_helpers.clear_last_benchmark",
-                new=clear_last,
-            ),
-        ):
-            clear_last_benchmark_if_matches("llama3-throughput-v07")
-
-        clear_last.assert_not_called()

@@ -172,9 +172,3 @@ def _flag_names(info: FieldInfo) -> list[str]:
                 return [name]
             return list(name)
     return []
-
-
-def reset_alias_table_cache_for_tests() -> None:
-    """Drop the cached alias table. Tests may need this when monkeypatching."""
-    global _alias_table_cache
-    _alias_table_cache = None

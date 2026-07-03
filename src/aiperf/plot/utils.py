@@ -367,60 +367,6 @@ def create_series_legend_label(
     return _endpoint_short_label(endpoint_url)
 
 
-def get_available_labels_for_metric(
-    server_metrics_aggregated: dict,
-    metric_name: str,
-) -> dict[str, list[dict[str, str]]]:
-    """
-    Get all available label combinations for a server metric.
-
-    Extracts unique label sets across all endpoints for a given metric.
-    Useful for UI dropdowns and user guidance on available filtering options.
-
-    Args:
-        server_metrics_aggregated: Server metrics aggregated dict from RunData
-        metric_name: Metric name to query
-
-    Returns:
-        Dict mapping endpoint_url to list of label dicts:
-        {
-            "http://localhost:8081/metrics": [
-                {"method": "GET", "status": "200"},
-                {"method": "POST", "status": "200"}
-            ],
-            ...
-        }
-
-    Examples:
-        >>> labels = get_available_labels_for_metric(
-        ...     server_metrics_aggregated,
-        ...     "vllm:request_success"
-        ... )
-        >>> labels["http://localhost:8081/metrics"]
-        [{"method": "GET"}, {"method": "POST"}]
-    """
-    if metric_name not in server_metrics_aggregated:
-        return {}
-
-    result = {}
-    endpoint_data = server_metrics_aggregated[metric_name]
-
-    for endpoint_url, labels_dict in endpoint_data.items():
-        labels_list = []
-        for labels_key in labels_dict:
-            if labels_key != "{}":
-                # Parse JSON to dict
-                labels_obj = orjson.loads(labels_key.encode())
-                labels_list.append(labels_obj)
-            else:
-                # Empty labels
-                labels_list.append({})
-
-        result[endpoint_url] = labels_list
-
-    return result
-
-
 def get_server_metrics_summary(run_data) -> dict[str, dict]:
     """
     Get comprehensive summary of server metrics with label information.

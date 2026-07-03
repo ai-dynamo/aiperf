@@ -88,7 +88,7 @@ class TestPreload:
         with patch("aiperf.common.tokenizer.Tokenizer.from_pretrained") as loader:
             _tokenizer_preload._preload()
         loader.assert_not_called()
-        assert _tokenizer_preload.preloaded_models() == []
+        assert list(_tokenizer_preload._LOADED) == []
 
     def test_preload_sets_tokenizers_parallelism_false_when_env_set(
         self, monkeypatch: pytest.MonkeyPatch
@@ -127,7 +127,7 @@ class TestPreload:
         ) as loader:
             _tokenizer_preload._preload()
         assert loader.call_count == 2
-        assert _tokenizer_preload.preloaded_models() == [
+        assert list(_tokenizer_preload._LOADED) == [
             "Qwen/Qwen3-0.6B",
             "openai/gpt-oss-120b",
         ]
@@ -144,7 +144,7 @@ class TestPreload:
             _tokenizer_preload._preload()
         # broken model was skipped, second one succeeded
         assert loader.call_count == 2
-        assert _tokenizer_preload.preloaded_models() == ["Qwen/Qwen3-0.6B"]
+        assert list(_tokenizer_preload._LOADED) == ["Qwen/Qwen3-0.6B"]
         assert "broken/model" not in _tokenizer_preload._LOADED
 
     def test_preload_respects_trust_remote_code_env(
@@ -262,4 +262,4 @@ class TestModuleImport:
         with patch("aiperf.common.tokenizer.Tokenizer.from_pretrained") as loader:
             importlib.reload(_tokenizer_preload)
         loader.assert_not_called()
-        assert _tokenizer_preload.preloaded_models() == []
+        assert list(_tokenizer_preload._LOADED) == []

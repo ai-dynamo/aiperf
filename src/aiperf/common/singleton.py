@@ -75,16 +75,3 @@ class Singleton(metaclass=SingletonMeta):
         key = (cls, os.getpid())
         SingletonMeta._instances.pop(key, None)
         SingletonMeta._instances_locks.pop(key, None)
-
-
-def clear_all_singletons() -> None:
-    """Clear all singleton instances cached by SingletonMeta for the current process.
-
-    This is useful for test cleanup to ensure singleton instances
-    don't leak between tests.
-    """
-    pid = os.getpid()
-    keys_to_remove = [key for key in SingletonMeta._instances if key[1] == pid]
-    for key in keys_to_remove:
-        SingletonMeta._instances.pop(key, None)
-        SingletonMeta._instances_locks.pop(key, None)

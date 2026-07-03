@@ -181,34 +181,6 @@ def _step_lookup(
     return np.where(idx >= 0, event_vals[np.clip(idx, 0, len(event_vals) - 1)], 0.0)
 
 
-def add_step_functions(
-    a_ts: FloatArray,
-    a_vals: FloatArray,
-    b_ts: FloatArray,
-    b_vals: FloatArray,
-) -> tuple[FloatArray, FloatArray]:
-    """Add two step functions, returning a new step function on merged timestamps.
-
-    Args:
-        a_ts: Sorted timestamps of the first step function.
-        a_vals: Values of the first step function.
-        b_ts: Sorted timestamps of the second step function.
-        b_vals: Values of the second step function.
-
-    Returns:
-        Tuple of (merged_timestamps, sum_values).
-    """
-    if len(a_ts) == 0:
-        return b_ts.copy(), b_vals.copy()
-    if len(b_ts) == 0:
-        return a_ts.copy(), a_vals.copy()
-
-    merged_ts = np.unique(np.concatenate([a_ts, b_ts]))
-    return merged_ts, _step_lookup(a_ts, a_vals, merged_ts) + _step_lookup(
-        b_ts, b_vals, merged_ts
-    )
-
-
 def divide_step_functions(
     num_ts: FloatArray,
     num_vals: FloatArray,
@@ -238,48 +210,6 @@ def divide_step_functions(
     result = np.zeros_like(num_at)
     np.divide(num_at, den_at, out=result, where=den_at > 0)
     return merged_ts, result
-
-
-def throughput_per_user_sweep_line(
-    generation_start_ns: FloatArray,
-    end_ns: FloatArray,
-    tput_ts: FloatArray,
-    tput_vals: FloatArray,
-) -> tuple[FloatArray, FloatArray]:
-    """Compute per-user throughput by dividing aggregate throughput by generation-phase concurrency.
-
-    Args:
-        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
-        end_ns: Request end timestamps. NaN for missing.
-        tput_ts: Sorted timestamps from throughput_sweep (or ICL variant).
-        tput_vals: Throughput values (tokens/ns) at each timestamp.
-
-    Returns:
-        Tuple of (timestamps, per_user_throughput) in tokens/ns/user.
-    """
-    conc_ts, conc_vals = concurrency_sweep_line(generation_start_ns, end_ns)
-    return divide_step_functions(tput_ts, tput_vals, conc_ts, conc_vals)
-
-
-def prefill_throughput_per_user_sweep_line(
-    start_ns: FloatArray,
-    generation_start_ns: FloatArray,
-    ptput_ts: FloatArray,
-    ptput_vals: FloatArray,
-) -> tuple[FloatArray, FloatArray]:
-    """Compute per-user prefill throughput by dividing aggregate prefill throughput by prefill-phase concurrency.
-
-    Args:
-        start_ns: Request start timestamps. NaN for missing.
-        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
-        ptput_ts: Sorted timestamps from prefill_throughput_sweep.
-        ptput_vals: Prefill throughput values (tokens/ns) at each timestamp.
-
-    Returns:
-        Tuple of (timestamps, per_user_prefill_throughput) in tokens/ns/user.
-    """
-    conc_ts, conc_vals = concurrency_sweep_line(start_ns, generation_start_ns)
-    return divide_step_functions(ptput_ts, ptput_vals, conc_ts, conc_vals)
 
 
 def concurrency_sweep_line(

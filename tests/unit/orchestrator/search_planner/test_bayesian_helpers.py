@@ -11,12 +11,11 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.orchestrator.search_planner._bayesian_helpers import (
     NO_DATA_SENTINEL_LOSS,
     PENALTY_WEIGHT_MULTIPLIER,
     PLATEAU_MEAN_EPSILON,
-    coerce_for_kind,
     signed_violation,
 )
 
@@ -32,51 +31,6 @@ class TestConstants:
     def test_penalty_weight_multiplier_is_finite(self) -> None:
         assert PENALTY_WEIGHT_MULTIPLIER == 100.0
         assert PENALTY_WEIGHT_MULTIPLIER > 0
-
-
-class TestCoerceForKind:
-    @pytest.mark.parametrize(
-        "kind, value, expected_type, expected_value",
-        [
-            param("int", 5, int, 5, id="int-from-python-int"),
-            param("int", 5.7, int, 5, id="int-truncates-float"),
-            param("int", -3.9, int, -3, id="int-truncates-toward-zero-negative"),
-            param("real", 5, float, 5.0, id="real-from-python-int"),
-            param("real", 1.5, float, 1.5, id="real-from-python-float"),
-            param("real", 0, float, 0.0, id="real-from-zero"),
-        ],
-    )  # fmt: skip
-    def test_coerce_python_scalars(
-        self,
-        kind: str,
-        value: int | float,
-        expected_type: type,
-        expected_value: int | float,
-    ) -> None:
-        dim = SearchSpaceDimension(
-            path="phases.profiling.concurrency", lo=1, hi=100, kind=kind
-        )  # type: ignore[arg-type]
-        result = coerce_for_kind(value, dim)
-        assert type(result) is expected_type
-        assert result == expected_value
-
-    def test_coerce_int_from_numpy_scalar(self) -> None:
-        np = pytest.importorskip("numpy")
-        dim = SearchSpaceDimension(
-            path="phases.profiling.concurrency", lo=1, hi=100, kind="int"
-        )
-        result = coerce_for_kind(np.int64(42), dim)
-        assert type(result) is int
-        assert result == 42
-
-    def test_coerce_real_from_numpy_scalar(self) -> None:
-        np = pytest.importorskip("numpy")
-        dim = SearchSpaceDimension(
-            path="phases.profiling.concurrency", lo=0.0, hi=1.0, kind="real"
-        )
-        result = coerce_for_kind(np.float64(0.25), dim)
-        assert type(result) is float
-        assert result == 0.25
 
 
 class TestSignedViolation:
