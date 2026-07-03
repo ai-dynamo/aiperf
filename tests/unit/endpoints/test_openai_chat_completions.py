@@ -158,36 +158,45 @@ class TestChatEndpoint:
         }
         assert payload == expected_payload
 
-    def test_create_messages_hotfix(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
-        turn = sample_conversations["session_1"].turns[0]
-        turns = [turn]
-        messages = endpoint._create_messages(turns, None, None)
-        assert messages[0]["role"] == (turn.role or "user")
-        assert "name" not in messages[0]
-        assert messages[0]["content"] == turn.texts[0].contents[0]
-
-    def test_create_messages_with_empty_content(
+    def test_single_text_turn_renders_plain_string_hotfix(
         self, model_endpoint, sample_conversations
     ):
+        """Single-text turn renders ``content`` as a plain string (Dynamo hotfix
+        for servers that reject a list-of-parts), with no leaked ``name``.
+
+        Exercises the live ``format_payload`` -> ``build_messages`` path (the
+        pre-flatten ``_create_messages`` helper this test used to call was dead
+        code removed on this branch)."""
+        endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
+        turn = sample_conversations["session_1"].turns[0]
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
+        message = endpoint.format_payload(request_info)["messages"][0]
+        assert message["role"] == (turn.role or "user")
+        assert "name" not in message
+        assert message["content"] == turn.texts[0].contents[0]
+
+    def test_empty_text_content_renders_empty_string(
+        self, model_endpoint, sample_conversations
+    ):
+        """A turn whose only text is empty renders ``content == ""`` on the wire."""
         endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.texts[0].contents = [""]
-        turns = [turn]
-        messages = endpoint._create_messages(turns, None, None)
-        assert messages[0]["role"] == (turn.role or "user")
-        assert "name" not in messages[0]
-        assert messages[0]["content"] == ""
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
+        message = endpoint.format_payload(request_info)["messages"][0]
+        assert message["role"] == (turn.role or "user")
+        assert "name" not in message
+        assert message["content"] == ""
 
-    def test_create_messages_audio_format_error(
-        self, model_endpoint, sample_conversations
-    ):
+    def test_audio_format_error(self, model_endpoint, sample_conversations):
+        """Malformed audio (missing ``fmt,b64`` comma) raises through the live
+        multimodal rendering path."""
         endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         turn.audios = [type("Audio", (), {"contents": ["not_base64_audio"]})()]
-        turns = [turn]
+        request_info = create_request_info(config=model_endpoint, turns=[turn])
         with pytest.raises(ValueError):
-            endpoint._create_messages(turns, None, None)
+            endpoint.format_payload(request_info)
 
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",
@@ -233,78 +242,86 @@ class TestChatEndpoint:
         else:
             assert "stream_options" in payload
             assert payload["stream_options"] == expected_stream_options
-            endpoint._create_messages(turns, None, None)
 
-    def test_create_messages_with_system_message(
+    def test_format_payload_prepends_system_message(
         self, model_endpoint, sample_conversations
     ):
+        """``RequestInfo.system_message`` is prepended as a leading system role."""
         endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
-        turns = [turn]
         system_message = "You are a helpful AI assistant."
-        messages = endpoint._create_messages(turns, system_message, None)
+        request_info = create_request_info(
+            config=model_endpoint, turns=[turn], system_message=system_message
+        )
+        messages = endpoint.format_payload(request_info)["messages"]
 
-        # First message should be the system message
         assert messages[0]["role"] == "system"
         assert messages[0]["content"] == system_message
-        # Second message should be the turn
         assert messages[1]["role"] == (turn.role or "user")
         assert messages[1]["content"] == turn.texts[0].contents[0]
 
-    def test_create_messages_with_user_context_message(
+    def test_format_payload_prepends_user_context_message(
         self, model_endpoint, sample_conversations
     ):
+        """``RequestInfo.user_context_message`` is prepended as a leading user role."""
         endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
-        turns = [turn]
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, None, user_context)
+        request_info = create_request_info(
+            config=model_endpoint, turns=[turn], user_context_message=user_context
+        )
+        messages = endpoint.format_payload(request_info)["messages"]
 
-        # First message should be the user context
         assert messages[0]["role"] == "user"
         assert messages[0]["content"] == user_context
-        # Second message should be the turn
         assert messages[1]["role"] == (turn.role or "user")
         assert messages[1]["content"] == turn.texts[0].contents[0]
 
-    def test_create_messages_with_both_context_messages(
+    def test_format_payload_prepends_both_context_messages(
         self, model_endpoint, sample_conversations
     ):
+        """System then user-context prepend ahead of the turn, in that order."""
         endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
-        turns = [turn]
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, system_message, user_context)
+        request_info = create_request_info(
+            config=model_endpoint,
+            turns=[turn],
+            system_message=system_message,
+            user_context_message=user_context,
+        )
+        messages = endpoint.format_payload(request_info)["messages"]
 
-        # First message should be system
         assert messages[0]["role"] == "system"
         assert messages[0]["content"] == system_message
-        # Second message should be user context
         assert messages[1]["role"] == "user"
         assert messages[1]["content"] == user_context
-        # Third message should be the turn
         assert messages[2]["role"] == (turn.role or "user")
         assert messages[2]["content"] == turn.texts[0].contents[0]
 
-    def test_create_messages_with_context_and_multiple_turns(
+    def test_format_payload_context_messages_with_multiple_turns(
         self, model_endpoint, sample_conversations
     ):
+        """System + user-context prepend ahead of every flattened turn."""
         endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turns = sample_conversations["session_1"].turns
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
-        messages = endpoint._create_messages(turns, system_message, user_context)
+        request_info = create_request_info(
+            config=model_endpoint,
+            turns=turns,
+            system_message=system_message,
+            user_context_message=user_context,
+        )
+        messages = endpoint.format_payload(request_info)["messages"]
 
-        # Should have system + user context + 2 turns = 4 messages
+        # system + user context + 2 flattened turns = 4 messages
         assert len(messages) == 4
-        # First message should be system
         assert messages[0]["role"] == "system"
         assert messages[0]["content"] == system_message
-        # Second message should be user context
         assert messages[1]["role"] == "user"
         assert messages[1]["content"] == user_context
-        # Third and fourth messages should be the turns
         assert messages[2]["role"] == (turns[0].role or "user")
         assert messages[3]["role"] == turns[1].role
 

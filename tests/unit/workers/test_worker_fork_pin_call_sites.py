@@ -30,7 +30,7 @@ from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from aiperf.workers.session_manager import UserSessionManager
 from aiperf.workers.worker import Worker
-from tests.unit.endpoints.conftest import (
+from tests.harness.endpoint_helpers import (
     _wrap_model_endpoint,
     create_config,
     create_request_info,

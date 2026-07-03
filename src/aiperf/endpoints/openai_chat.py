@@ -19,7 +19,6 @@ from aiperf.common.models import (
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
-_DEFAULT_ROLE: str = "user"
 _FAST_PARSE_FALLBACK = object()
 
 
@@ -111,49 +110,6 @@ class ChatEndpoint(BaseEndpoint):
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
-    def _create_messages(
-        self,
-        turns: list[Turn],
-        system_message: str | None,
-        user_context_message: str | None,
-    ) -> list[dict[str, Any]]:
-        """Create messages from turns for OpenAI Chat Completions.
-
-        Args:
-            turns: List of turns in the request
-            system_message: Optional shared system message to prepend
-            user_context_message: Optional per-conversation user context to prepend
-
-        Returns:
-            List of formatted message dicts for OpenAI Chat Completions API
-        """
-        messages = []
-
-        # Prepend system_message and user_context_message if present
-        if system_message:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": system_message,
-                }
-            )
-
-        if user_context_message:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": user_context_message,
-                }
-            )
-
-        for turn in turns:
-            message = {
-                "role": turn.role or _DEFAULT_ROLE,
-            }
-            self._set_message_content(message, turn)
-            messages.append(message)
-        return messages
-
     @staticmethod
     def _format_messages(
         request_info: RequestInfo, rendered: list[dict[str, Any]]
@@ -209,73 +165,6 @@ class ChatEndpoint(BaseEndpoint):
         else:
             first["content"] = f"{system_message}\n{content}"
         return [first, *rendered[1:]]
-
-    def _set_message_content(self, message: dict[str, Any], turn: Turn) -> None:
-        """Create message content from turn for OpenAI Chat Completions."""
-        if (
-            len(turn.texts) == 1
-            and len(turn.texts[0].contents) == 1
-            and len(turn.images) == 0
-            and len(turn.audios) == 0
-            and len(turn.videos) == 0
-        ):
-            # Hotfix for Dynamo API which does not yet support a list of messages
-            message["content"] = (
-                turn.texts[0].contents[0] if turn.texts[0].contents else ""
-            )
-            return
-
-        message_content: list[dict[str, Any]] = []
-        self._append_text_parts(message_content, turn)
-        self._append_image_parts(message_content, turn)
-        self._append_audio_parts(message_content, turn)
-        self._append_video_parts(message_content, turn)
-        message["content"] = message_content
-
-    @staticmethod
-    def _append_text_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
-        for text in turn.texts:
-            for content in text.contents:
-                if not content:
-                    continue
-                parts.append({"type": "text", "text": content})
-
-    @staticmethod
-    def _append_image_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
-        for image in turn.images:
-            for content in image.contents:
-                if not content:
-                    continue
-                parts.append({"type": "image_url", "image_url": {"url": content}})
-
-    @staticmethod
-    def _append_audio_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
-        for audio in turn.audios:
-            for content in audio.contents:
-                if not content:
-                    continue
-                if "," not in content:
-                    raise ValueError(
-                        "Audio content must be in the format 'format,b64_audio'."
-                    )
-                format, b64_audio = content.split(",", 1)
-                parts.append(
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": b64_audio,
-                            "format": format,
-                        },
-                    }
-                )
-
-    @staticmethod
-    def _append_video_parts(parts: list[dict[str, Any]], turn: Turn) -> None:
-        for video in turn.videos:
-            for content in video.contents:
-                if not content:
-                    continue
-                parts.append({"type": "video_url", "video_url": {"url": content}})
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Capture text + ``tool_calls`` from a chat response for replay.

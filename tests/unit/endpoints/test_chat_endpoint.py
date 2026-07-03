@@ -350,10 +350,9 @@ class TestChatEndpoint:
         # Model should be from the last turn
         assert payload["model"] == "model2"
 
-    def test_format_payload_raw_messages_bypasses_create_messages(
-        self, endpoint, model_endpoint
-    ):
-        """Test that raw_messages on turn bypasses _create_messages and is used directly."""
+    def test_format_payload_raw_messages_used_verbatim(self, endpoint, model_endpoint):
+        """raw_messages on a turn are spliced verbatim into payload['messages']
+        (via build_messages), never re-rendered from structured turn fields."""
         raw_messages = [
             {"role": "system", "content": "You are helpful."},
             {"role": "user", "content": "Hello"},
