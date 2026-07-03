@@ -63,6 +63,8 @@ class ResponsesEndpoint(BaseEndpoint):
         instructions = payload.get("instructions")
         if isinstance(instructions, str):
             result.texts.insert(0, instructions)
+            if result.messages is not None:
+                result.messages.insert(0, {"role": "system", "content": instructions})
         elif isinstance(instructions, list):
             collected: list[str] = []
             for part in instructions:
@@ -74,6 +76,13 @@ class ResponsesEndpoint(BaseEndpoint):
                     collected.append(part)
             for text in reversed(collected):
                 result.texts.insert(0, text)
+            if result.messages is not None and collected:
+                # Chat-template view: collapse the multi-part instructions
+                # into a single leading system message (the template wraps it
+                # once regardless of how the API split the parts).
+                result.messages.insert(
+                    0, {"role": "system", "content": "".join(collected)}
+                )
         return result
 
     # --- Content-part hooks (override only the type names) -------------------
@@ -149,6 +158,14 @@ class ResponsesEndpoint(BaseEndpoint):
         messages: list[dict[str, Any]] = []
         for turn in turns:
             if turn.raw_messages:
+                # reset_context discards everything accumulated from prior turns
+                # before applying this turn's raw_messages (weka's mid-segment
+                # LCP cut). Mirror BaseEndpoint.build_messages -- this override
+                # otherwise duplicates its skeleton and silently dropped the
+                # reset, leaving pre-reset items on the wire (breaking weka
+                # delta-replay ISL and the worker's cache-bust prefix slice).
+                if turn.reset_context:
+                    messages = []
                 for item in turn.raw_messages:
                     if (
                         isinstance(item, dict)
