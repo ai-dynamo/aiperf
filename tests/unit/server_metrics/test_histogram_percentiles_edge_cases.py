@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Edge case tests for histogram_percentiles.py polynomial histogram algorithm."""
+"""Edge case tests for the histogram_percentiles package polynomial histogram algorithm."""
 
 import numpy as np
 import pytest

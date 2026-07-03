@@ -189,7 +189,7 @@ one. The remaining gates protect the cardinality contract:
 | `kind: AIPerfJob` + `spec.sweep` (any type) | Rejected at admission — single benchmarks must use `kind: AIPerfJob` with `spec.sweep` unset | CRD `x-kubernetes-validations` rule (`!has(self.sweep)` on AIPerfJob) |
 | `kind: AIPerfSweep` without `spec.sweep` | Rejected at admission — sweeps must declare a `sweep` block | CRD `x-kubernetes-validations` rule (`has(self.sweep)` on AIPerfSweep) |
 | `sweep.type: adaptive_search` + `spec.benchmark.sweep` | Rejected — sweep axes belong on the parent CR, not embedded in the per-iteration body | `BenchmarkConfig` schema (no `sweep` field) plus operator-side validator |
-| Per-iteration `AIPerfJob` containing magic-list flags (`--concurrency 10,20,30`) | Rejected inside each child by `_reject_in_process_sweep_under_operator` | `src/aiperf/cli_runner.py` |
+| Per-iteration `AIPerfJob` containing magic-list flags (`--concurrency 10,20,30`) | Rejected inside each child by `_reject_in_process_sweep_under_operator` | `src/aiperf/cli_runner/_multi_run.py` |
 
 These prevent sweeping on top of sweeping and keep a single source of
 truth for variation generation.

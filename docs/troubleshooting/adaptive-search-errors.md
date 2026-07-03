@@ -95,7 +95,7 @@ Add the entry first or fix the typo.
 ### Cause
 
 The dotted path is resolved by `_set_nested_value` in
-`src/aiperf/config/sweep.py` against the dict form of `BenchmarkConfig`.
+`src/aiperf/config/sweep/config.py` against the dict form of `BenchmarkConfig`.
 Named-list segments (e.g. `phases.profiling.*`) match on the entry's
 `name` field. Typos like `phase.profiling.concurrency` (no `s`) or
 `phases.profilling.concurrency` (extra `l`) error loudly rather than
@@ -127,7 +127,7 @@ appears in CSV/JSON exports. The statistic is selected separately via
 See `_extract_trial_objectives` in
 `src/aiperf/orchestrator/search_planner/bayesian.py` and
 `AdaptiveSearchSweep.objective.metric` in
-`src/aiperf/config/sweep.py`.
+`src/aiperf/config/sweep/config.py`.
 
 ### Fix
 
@@ -233,7 +233,7 @@ Drop the sweep block to use BO, or drop the --search-* flags.
 
 Magic-list flags (`--concurrency 10,20,30`) are promoted to a top-level
 `sweep:` block by `_promote_magic_lists_to_sweep_block` in
-`src/aiperf/config/v1/converter.py`. The plan-builder (`build_benchmark_plan`
+`src/aiperf/config/flags/converter.py`. The plan-builder (`build_benchmark_plan`
 in `src/aiperf/config/loader/plan.py`) then rejects the combination — BO
 chooses iterations adaptively from continuous ranges, while a magic-list
 expects you to enumerate the discrete points up front.
@@ -300,7 +300,7 @@ sweep:
 ```
 
 Raised as `TypeError` from the CLI assembly pipeline in
-`src/aiperf/cli/assemble/optionals.py` when both
+`src/aiperf/config/flags/_converter_optionals.py` when both
 `--search-space` (with its companion `--search-*` flags) and
 `--convergence-metric` are set on the same `aiperf profile` invocation.
 
@@ -341,7 +341,7 @@ n_initial_points (<n>) must be < max_iterations (<m>); otherwise the GP never fi
 ### Cause
 
 `AdaptiveSearchSweep._check_initial_points_below_max_iterations` in
-`src/aiperf/config/sweep.py` rejects the configuration. BO needs
+`src/aiperf/config/sweep/config.py` rejects the configuration. BO needs
 at least one iteration **after** the random Sobol-seeded initial points so
 skopt can fit the GP and propose informed points. Defaults: `5` and `30`.
 
@@ -382,7 +382,7 @@ drop the comma in --concurrency / other magic-list flags.
 
 ### Why this is not a problem for adaptive search
 
-`_reject_in_process_sweep_under_operator` (in `src/aiperf/cli_runner.py`)
+`_reject_in_process_sweep_under_operator` (in `src/aiperf/cli_runner/_multi_run.py`)
 only fires when `plan.is_sweep` is true. Adaptive-search plans set
 `plan.is_adaptive_search` and have a single placeholder variation in
 `plan.configs` — `plan.is_sweep` is **false**. The guard's docstring calls

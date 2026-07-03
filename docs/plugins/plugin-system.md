@@ -64,7 +64,7 @@ Registry (singleton)
 | Built-in Plugins | `src/aiperf/plugin/plugins.yaml` | Built-in plugin registrations |
 | Schemas | `src/aiperf/plugin/schema/schemas.py` | Pydantic models for validation |
 | Enums | `src/aiperf/plugin/enums.py` | Auto-generated enums from registry |
-| CLI | `src/aiperf/cli_commands/plugins_cli.py` | Plugin exploration commands |
+| CLI | `src/aiperf/cli_commands/plugins.py` | Plugin exploration commands |
 
 ## Architecture
 

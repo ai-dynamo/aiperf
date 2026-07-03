@@ -73,7 +73,7 @@ The cluster path layout matches [`docs/kubernetes/sweeps.md`](../kubernetes/swee
 
 ### `config` Section
 
-A snapshot of the BO configuration sufficient to reproduce or audit the run. The writer records every field of the in-memory `AdaptiveSearchSweep` (`src/aiperf/config/sweep.py`) that influences planner behavior — `random_seed`, `n_initial_points`, `improvement_patience`, `plateau_window`, and `plateau_threshold` are all serialized so the trajectory is fully reproducible from the file alone. The objective triple is written FLAT here (`objective_metric` / `objective_stat` / `objective_direction`) even though the in-memory shape nests them under `objective:` — this is the stable on-disk wire format, intentionally preserved across the schema-2.0 redesign so old tooling can still parse new files.
+A snapshot of the BO configuration sufficient to reproduce or audit the run. The writer records every field of the in-memory `AdaptiveSearchSweep` (`src/aiperf/config/sweep/config.py`) that influences planner behavior — `random_seed`, `n_initial_points`, `improvement_patience`, `plateau_window`, and `plateau_threshold` are all serialized so the trajectory is fully reproducible from the file alone. The objective triple is written FLAT here (`objective_metric` / `objective_stat` / `objective_direction`) even though the in-memory shape nests them under `objective:` — this is the stable on-disk wire format, intentionally preserved across the schema-2.0 redesign so old tooling can still parse new files.
 
 ```json
 {

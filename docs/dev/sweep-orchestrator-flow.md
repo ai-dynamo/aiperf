@@ -123,7 +123,7 @@ flowchart TD
     subgraph PARSE["parse"]
         loader["load_config_from_string<br/>(reject flat shape, env-var sub)"]
         v1["v1 UserConfig<br/>(no validators)"]
-        conv["v1 → v2 converter (config/v1/converter.py)<br/>• _assemble_optional<br/>• _apply_recipe_sweep_variables<br/>• _promote_magic_lists_to_sweep_block<br/>• _wrap_under_envelope<br/>(envelope keys: sweep, multi_run,<br/>variables, random_seed, benchmark)"]
+        conv["CLIConfig → AIPerfConfig converter (config/flags/converter.py)<br/>• _assemble_optional<br/>• _apply_recipe_sweep_parameters<br/>• _promote_magic_lists_to_sweep_block<br/>• _wrap_under_envelope<br/>(envelope keys: sweep, multi_run,<br/>variables, random_seed, benchmark)"]
     end
 
     subgraph VALIDATE["validate"]
@@ -617,15 +617,15 @@ sequenceDiagram
 | Concept | File |
 |---|---|
 | `AIPerfConfig` envelope, `BenchmarkConfig` body | `src/aiperf/config/config.py` |
-| `BenchmarkPlan`, `BenchmarkRun`, `ResolvedConfig` | `src/aiperf/config/benchmark.py` |
-| `MultiRunConfig`, `ConvergenceConfig` | `src/aiperf/config/multi_run.py` |
-| `SweepConfig` union / `GridSweep` / `ScenarioSweep` / `AdaptiveSearchSweep` / `AdaptiveObjective` / `SweepVariation` | `src/aiperf/config/sweep.py` |
+| `BenchmarkPlan`, `BenchmarkRun`, `ResolvedConfig` | `src/aiperf/config/resolution/plan.py` |
+| `MultiRunConfig`, `ConvergenceConfig` | `src/aiperf/config/sweep/multi_run.py` |
+| `SweepConfig` union / `GridSweep` / `ScenarioSweep` / `AdaptiveSearchSweep` / `AdaptiveObjective` / `SweepVariation` | `src/aiperf/config/sweep/config.py` |
 | `expand_sweep` (definition) | `src/aiperf/config/sweep/expand.py` (re-exported from the `sweep` package) |
-| `SearchSpaceDimension`, `SLAFilter` | `src/aiperf/config/adaptive_search.py` |
+| `SearchSpaceDimension`, `SLAFilter` | `src/aiperf/config/sweep/adaptive.py` |
 | `PostProcessSpec`, `SearchRecipe`, `SearchRecipeContext`, `SearchRecipeOutput` | `src/aiperf/search_recipes/_base.py` |
 | `PostProcessHandler` Protocol + built-ins | `src/aiperf/search_recipes/post_process.py` |
 | `build_benchmark_plan` (load → plan) | `src/aiperf/config/loader/plan.py` |
-| v1→v2 converter | `src/aiperf/config/v1/converter.py` |
+| CLIConfig→AIPerfConfig converter | `src/aiperf/config/flags/converter.py` |
 | `MultiRunOrchestrator` | `src/aiperf/orchestrator/orchestrator.py` |
 | `RunExecutor` ABC + `RunResult` | `src/aiperf/orchestrator/executor.py`, `src/aiperf/orchestrator/models.py` |
 | `LocalSubprocessExecutor` | `src/aiperf/orchestrator/local_executor.py` |
@@ -637,9 +637,9 @@ sequenceDiagram
 | `BayesianSearchPlanner` / `MonotonicSLASearchPlanner` / `OptunaSearchPlanner` | `src/aiperf/orchestrator/search_planner/{bayesian,monotonic,optuna_planner}.py` |
 | `parse_sla_filter`, `parse_search_space` | `src/aiperf/orchestrator/search_planner/parsing.py` |
 | `SweepAnalyzer` + exporters | `src/aiperf/orchestrator/aggregation/sweep.py` |
-| `aggregate_sweep_and_export` (file writer) | `src/aiperf/_cli_runner_sweep_helpers.py` (re-exported from `_cli_runner_helpers.py`) |
+| `aggregate_sweep_and_export` (file writer) | `src/aiperf/cli_runner/_sweep_aggregate.py` |
 | `write_search_history` | `src/aiperf/exporters/search_history.py` |
-| `run_benchmark` (single vs multi dispatch) + `_reject_in_process_sweep_under_operator` | `src/aiperf/cli_runner.py` |
+| `run_benchmark` (single vs multi dispatch) + `_reject_in_process_sweep_under_operator` | `src/aiperf/cli_runner/` (`__init__.py`, `_multi_run.py`) |
 | Operator kopf wiring | `src/aiperf/operator/main.py` |
 | AIPerfJob create / monitor / completion handlers | `src/aiperf/operator/handlers/{create,monitor,completion}.py` |
 | JobSet terminal-condition + pod-restart watchers | `src/aiperf/operator/handlers/{jobset_terminal,pod_restarts}.py` |

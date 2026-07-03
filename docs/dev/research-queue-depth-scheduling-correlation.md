@@ -2154,7 +2154,7 @@ in this document and in AIPerf's ServerMetricsAccumulator:
 |------------------|------|---------------|-----------------|
 | `vllm:num_requests_running` | Gauge | N_run, L_exec | Stored in ServerMetricsHierarchy as gauge time series |
 | `vllm:num_requests_waiting` | Gauge | N_wait, L_queue | Stored in ServerMetricsHierarchy as gauge time series |
-| `vllm:request_queue_time_seconds` | Histogram | W_queue | Polynomial percentile estimation via `histogram_percentiles.py` |
+| `vllm:request_queue_time_seconds` | Histogram | W_queue | Polynomial percentile estimation via the `histogram_percentiles` package |
 | `vllm:request_success` | Counter | lambda_server (via delta rate) | Delta rate computed in `export_stats.py` |
 | `vllm:e2e_request_latency_seconds` | Histogram | W_server | Polynomial percentile estimation |
 

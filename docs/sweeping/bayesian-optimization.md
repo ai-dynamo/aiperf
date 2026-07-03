@@ -646,5 +646,5 @@ The current planner family is a noisy-objective BO with the conventional knobs p
 - [Space-filling designs](space-filling.md) — Sobol / LHS designs for the initial-points phase.
 - [Adaptive Search Tutorial](../tutorials/adaptive-search.md) — narrative walkthrough of a single-objective run.
 - [Search History API](../api/search-history.md) — full `search_history.json` schema, including the multi-objective `best_trials` shape and `boundary_summary` fields.
-- [Sweeps troubleshooting](../troubleshooting/sweeps.md) — common issues and fixes.
+- [Sweeps troubleshooting](../troubleshooting/parameter-sweeping-errors.md) — common issues and fixes.
 - [Goodput tutorial](../tutorials/goodput.md) — per-request SLO definitions used by `max-goodput-under-slo`.

@@ -166,7 +166,7 @@ le="2.5", le="5.0", le="7.5", le="10.0", le="+Inf"
 
 These bucket boundaries create resolution bands. Between 100ms and 250ms, for
 example, all observations are grouped into a single bucket. AIPerf's polynomial
-histogram algorithm (see `histogram_percentiles.py`) mitigates this by learning
+histogram algorithm (see the `histogram_percentiles` package) mitigates this by learning
 per-bucket mean positions from scrape-to-scrape deltas, improving percentile
 accuracy by approximately 2.5x over standard Prometheus linear interpolation.
 
@@ -1617,7 +1617,7 @@ def _extract_histogram_percentiles(
 ) -> EstimatedPercentiles | None:
     """Extract percentile estimates from a server-side Prometheus histogram.
 
-    Uses the polynomial histogram algorithm (histogram_percentiles.py) for
+    Uses the polynomial histogram algorithm (histogram_percentiles package) for
     improved accuracy over standard Prometheus linear interpolation.
 
     Steps:

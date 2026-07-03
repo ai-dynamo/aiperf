@@ -618,7 +618,7 @@ class TestPromptConfigIntegration:
     when the modality sub-configs were de-nested. The DistributionParser path is
     exercised end-to-end via the converter; see
     ``tests/unit/config/test_resolve_dataset_entries.py`` and
-    ``src/aiperf/config/v1/_converter_dataset.py::_apply_sequence_distribution``.
+    ``src/aiperf/config/flags/_converter_dataset.py::_apply_sequence_distribution``.
     """
 
 
