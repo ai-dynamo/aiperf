@@ -14,7 +14,6 @@ JOBS_PATH = UI_DIR / "pages" / "jobs.js"
 COMPARE_PATH = UI_DIR / "pages" / "compare.js"
 COMPARE_FILTERS_PATH = UI_DIR / "pages" / "compare-filters.js"
 LAUNCH_PATH = UI_DIR / "pages" / "launch.js"
-LOGS_PANE_PATH = UI_DIR / "components" / "logs-pane.js"
 EPOCH_SELECTOR_PATH = UI_DIR / "components" / "epoch-selector.js"
 METRIC_SELECTOR_PATH = UI_DIR / "components" / "metric-selector.js"
 
@@ -104,36 +103,6 @@ def test_keyboard_shortcuts_cover_button_like_chips_and_launch_editor() -> None:
 
     assert "if ((e.ctrlKey || e.metaKey) && e.key === 'Enter')" in launch
     assert "if (state.kind !== 'submitting') launch();" in launch
-
-
-def test_numeric_tail_input_clamps_and_falls_back_on_invalid_text() -> None:
-    source = _source(LOGS_PANE_PATH)
-
-    assert 'type="number"' in source
-    assert 'min="1"' in source
-    assert 'max="5000"' in source
-    assert "parseInt(e.target.value, 10) || 200" in source
-    assert "Math.max(1, Math.min(5000" in source
-    assert (
-        "const clampedTail = Math.max(1, Math.min(5000, Number(tailLines) || 200));"
-        in source
-    )
-
-
-def test_worker_pod_select_ignores_values_that_are_not_options() -> None:
-    source = _source(LOGS_PANE_PATH)
-
-    assert "const wp = workerPods.find(p => p.name === e.target.value);" in source
-    assert "if (!wp) return;" in source
-    assert "setSelectedPod(wp.name);" in source
-
-
-def test_worker_container_select_ignores_values_that_are_not_options() -> None:
-    source = _source(LOGS_PANE_PATH)
-
-    assert "const c = workerContainerList.find(c => c === e.target.value);" in source
-    assert "if (!c) return;" in source
-    assert "setSelectedContainer(c);" in source
 
 
 def test_metric_selector_rejects_values_that_are_not_options() -> None:

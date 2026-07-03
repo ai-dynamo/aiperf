@@ -139,16 +139,6 @@ def test_job_and_sweep_tables_share_scrollable_sticky_table_contract() -> None:
 
 def test_diagnostics_drawer_has_viewport_clamp_and_mobile_full_width_rules() -> None:
     _assert_source_references(
-        _COMPONENTS / "diagnostics-drawer.js",
-        {
-            'class="diagnostics-drawer__backdrop"',
-            'class="diagnostics-drawer"',
-            "width: 420px",
-            "max-width: 100vw",
-            "overflow-y: auto",
-        },
-    )
-    _assert_source_references(
         _COMPONENTS / "diagnostics-panel.js",
         {'class="diag-tabs"', "diag-tab--active", 'class="diag-tab-count"'},
     )

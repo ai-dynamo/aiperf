@@ -195,7 +195,7 @@ def test_job_detail_websocket_effect_closes_subscription_handle() -> None:
 
 
 def test_streaming_log_effects_abort_fetches_on_unmount() -> None:
-    for rel in ("components/logs-pane.js", "components/diagnostics-logs-tab.js"):
+    for rel in ("components/diagnostics-logs-tab.js",):
         src = _source(_UI_ROOT / rel)
         assert "const ac = new AbortController();" in src
         assert "signal: ac.signal" in src

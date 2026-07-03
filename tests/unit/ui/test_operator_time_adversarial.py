@@ -11,7 +11,6 @@ from tests.unit.ui.node_utils import run_node
 
 UI_ROOT = Path(__file__).resolve().parents[3] / "src" / "aiperf" / "operator" / "ui"
 TIME_PATH = UI_ROOT / "components" / "time.js"
-RUN_PICKER_HELPERS_PATH = UI_ROOT / "components" / "run-picker-helpers.js"
 
 
 def _time_probe() -> dict[str, object]:
@@ -105,36 +104,6 @@ def _time_probe() -> dict[str, object]:
     return json.loads(run_node(script))
 
 
-def _run_picker_probe() -> dict[str, object]:
-    script = f"""
-        import {{ buildButtonLabel, formatRelativeTime }} from {RUN_PICKER_HELPERS_PATH.as_uri()!r};
-
-        const nowSeconds = 1_716_038_400;
-        const oneHourAgoSeconds = nowSeconds - 3_600;
-        const oneHourAgoMillis = oneHourAgoSeconds * 1_000;
-        const completionBeforeStart = buildButtonLabel({{
-          now: nowSeconds,
-          current: undefined,
-          epochs: [{{
-            epoch: 'bad-order',
-            isLatest: true,
-            status: 'succeeded',
-            startedAt: nowSeconds,
-            endedAt: nowSeconds - 300,
-            mtimeEpoch: nowSeconds,
-          }}],
-        }});
-
-        console.log(JSON.stringify({{
-          secondsInput: formatRelativeTime(oneHourAgoSeconds, nowSeconds),
-          millisecondsInput: formatRelativeTime(oneHourAgoMillis, nowSeconds),
-          futureSecondsInput: formatRelativeTime(nowSeconds + 30, nowSeconds),
-          completionBeforeStart,
-        }}));
-    """
-    return json.loads(run_node(script))
-
-
 def test_absolute_time_formats_timezone_less_and_rejects_unparseable_calendar_values() -> (
     None
 ):
@@ -172,12 +141,3 @@ def test_relative_time_update_intervals_scale_with_age_and_ignore_raw_seconds() 
     assert out["components"]["rawSecondsNoTimer"] == "30s"
     assert out["intervalCalls"] == [300_000, 5_000, 30_000, 300_000]
     assert out["cleanupCalls"] == ["timer-1", "timer-2", "timer-3", "timer-4"]
-
-
-def test_run_picker_epoch_seconds_boundaries_and_milliseconds_confusion() -> None:
-    out = _run_picker_probe()
-
-    assert out["secondsInput"] == "1h ago"
-    assert out["futureSecondsInput"] == "0s ago"
-    assert out["millisecondsInput"] == "0s ago"
-    assert out["completionBeforeStart"]["text"] == "Run 1 · 5m ago"

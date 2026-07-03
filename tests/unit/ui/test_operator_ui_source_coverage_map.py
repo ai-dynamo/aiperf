@@ -11,24 +11,12 @@ _UI_ROOT = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui"
 _TEST_ROOT = _REPO_ROOT / "tests" / "unit" / "ui"
 _THIS_FILE = Path(__file__).resolve()
 
-_TRIVIAL_OR_EXTERNAL_MODULES_WITH_REASON = {
-    "vendor/chart.umd.min.js": "third-party minified Chart.js bundle covered by upstream; local tests exercise wrappers",
-}
+_TRIVIAL_OR_EXTERNAL_MODULES_WITH_REASON: dict[str, str] = {}
 
 _UNCOVERED_MODULES_WITH_REASON = {
     "components/cluster-stats-banner.js": "dashboard presentation component currently covered only through composed page tests",
     "components/diagnostics-conditions-tab.js": "thin diagnostics tab composition around the covered conditions renderer",
     "components/epoch-selector.js": "selector UI wiring lacks direct static-unit coverage after source split",
-    "components/events-pane.js": "events rendering pane lacks a focused static fixture test",
-    "components/identity-bar.js": "identity presentation component lacks a direct static fixture test",
-    "components/job-detail-rail.js": "job-detail rail composition lacks direct static coverage",
-    "components/kpi-rail.js": "KPI rail composition lacks direct static coverage despite child KPI tests",
-    "components/kpi-tile.js": "KPI tile presentation lacks direct static fixture coverage",
-    "components/live-charts-panel.js": "live chart composition lacks direct static coverage",
-    "components/logs-pane.js": "logs rendering pane lacks a focused static fixture test",
-    "components/phase-strip.js": "phase strip presentation lacks direct static fixture coverage",
-    "components/pod-heatmap.js": "pod heatmap presentation lacks direct static fixture coverage",
-    "components/records-strip.js": "records strip presentation lacks direct static fixture coverage",
     "components/spinner.js": "loading indicator helpers lack direct static fixture coverage",
     "components/sweep-live-trial-board.js": "live trial board presentation is exercised through composed sweep-detail page tests; lacks a direct static fixture test",
     "components/sweep-winner-summary.js": "winner summary presentation is exercised through composed sweep-detail page tests; lacks a direct static fixture test",

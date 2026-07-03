@@ -4,16 +4,12 @@
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from tests.unit.ui.node_utils import run_node
-
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _UI_ROOT = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui"
-_COMPONENT_RAIL_PATH = _UI_ROOT / "components" / "job-detail-rail.js"
 _UI_EXTENSIONS = {".html", ".js"}
 
 _RAW_HTML_SINK_RE = re.compile(
@@ -183,63 +179,3 @@ def test_web_storage_does_not_persist_sensitive_payloads_without_redaction() -> 
 
 def test_api_urls_encode_user_controlled_path_parts() -> None:
     assert _raw_api_url_interpolation_violations() == []
-
-
-def test_script_like_rail_labels_remain_interpolated_values_not_template_markup() -> (
-    None
-):
-    script_like_label = '<script>alert("rail")</script><img src=x onerror=alert(1)>'
-    script = f"""
-        import fs from 'node:fs';
-        const source = fs.readFileSync({str(_COMPONENT_RAIL_PATH)!r}, 'utf8')
-          .replace(new RegExp('^import .*;\\n', 'gm'), '')
-          .replace(/export function /g, 'function ');
-
-        function html(strings, ...values) {{
-          return {{ __html: true, strings: Array.from(strings), values }};
-        }}
-
-        eval(source + '\\nglobalThis.RailAction = RailAction; globalThis.RailCard = RailCard; globalThis.RailKv = RailKv;');
-
-        function templateStrings(node, out = []) {{
-          if (node == null || node === false) return out;
-          if (Array.isArray(node)) {{
-            for (const item of node) templateStrings(item, out);
-            return out;
-          }}
-          if (typeof node === 'object' && node.__html) {{
-            out.push(...node.strings);
-            for (const value of node.values) templateStrings(value, out);
-          }}
-          return out;
-        }}
-
-        function collectValues(node, out = []) {{
-          if (node == null || node === false) return out;
-          if (Array.isArray(node)) {{
-            for (const item of node) collectValues(item, out);
-            return out;
-          }}
-          if (typeof node === 'object' && node.__html) {{
-            for (const value of node.values) collectValues(value, out);
-            return out;
-          }}
-          out.push(node);
-          return out;
-        }}
-
-        const rendered = [
-          RailAction({{ icon: '!', label: {json.dumps(script_like_label)}, onClick: () => {{}} }}),
-          RailCard({{ title: {json.dumps(script_like_label)}, testId: 'evil-card', children: [] }}),
-          RailKv({{ k: {json.dumps(script_like_label)}, v: {json.dumps(script_like_label)} }}),
-        ];
-        const templates = templateStrings(rendered).join('');
-        const values = collectValues(rendered).map(String);
-        console.log(JSON.stringify({{
-          valuesContainLabel: values.includes({json.dumps(script_like_label)}),
-          templatesContainLabel: templates.includes({json.dumps(script_like_label)}),
-        }}));
-    """
-
-    out = json.loads(run_node(script))
-    assert out == {"valuesContainLabel": True, "templatesContainLabel": False}

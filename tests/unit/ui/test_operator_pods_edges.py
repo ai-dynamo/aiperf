@@ -11,7 +11,6 @@ _COMPONENTS = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "components"
 _PAGES = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "pages"
 
 _PODS_BAR_JS = _COMPONENTS / "pods-bar.js"
-_PODS_STRIP_JS = _COMPONENTS / "pods-strip.js"
 _DIAGNOSTICS_PANEL_JS = _COMPONENTS / "diagnostics-panel.js"
 _DIAGNOSTICS_PODS_TAB_JS = _COMPONENTS / "diagnostics-pods-tab.js"
 _JOB_DETAIL_JS = _PAGES / "job-detail.js"
@@ -25,25 +24,14 @@ def _source(path: Path) -> str:
 def test_empty_pods_are_not_reported_as_healthy() -> None:
     pods_bar = _source(_PODS_BAR_JS)
     pods_tab = _source(_DIAGNOSTICS_PODS_TAB_JS)
-    pods_strip = _source(_PODS_STRIP_JS)
 
     assert "No pods</div>" in pods_bar
     assert "No pods</div>" in pods_tab
-    assert "list.length === 0" in pods_strip
-    assert "no pods" in pods_strip.lower()
-    assert "metaParts.push('all healthy');" not in pods_strip
 
 
 def test_crashloop_badges_count_nested_kubernetes_reasons() -> None:
-    pods_strip = _source(_PODS_STRIP_JS)
     job_detail = _source(_JOB_DETAIL_JS)
     sweep_detail = _source(_SWEEP_DETAIL_JS)
-
-    # PodsStrip owns the nested-status extraction: it walks containerStatuses
-    # and unwraps the waiting reason to flag a crashloop.
-    assert "crashloop" in pods_strip.lower()
-    assert "containerStatuses" in pods_strip
-    assert "waiting?.reason" in pods_strip or "state?.waiting?.reason" in pods_strip
 
     # The detail pages consume the already-flattened ``pod.reason`` and only need
     # to count crashloops for the diagnostics badge.
@@ -54,13 +42,10 @@ def test_crashloop_badges_count_nested_kubernetes_reasons() -> None:
 
 def test_readiness_counts_use_ready_state_not_running_phase() -> None:
     pods_bar = _source(_PODS_BAR_JS)
-    pods_strip = _source(_PODS_STRIP_JS)
     pods_tab = _source(_DIAGNOSTICS_PODS_TAB_JS)
 
     assert "pods.filter((p) => p.ready).length" in pods_bar
     assert "pods.filter((p) => p.ready).length" in pods_tab
-    assert "list.filter((p) => p.ready).length" in pods_strip
-    assert "return ph === 'running';" not in pods_strip
 
 
 def test_restart_totals_include_missing_top_level_restarts_fallbacks() -> None:
@@ -85,16 +70,10 @@ def test_missing_pod_fields_get_stable_display_fallbacks() -> None:
         assert '<td class="pods-table-name" title=${pod.name}>${pod.name}</td>' in src
 
 
-def test_pods_strip_generates_diagnostics_pods_navigation() -> None:
-    pods_strip = _source(_PODS_STRIP_JS)
+def test_diagnostics_panel_owns_pods_navigation() -> None:
     diagnostics_panel = _source(_DIAGNOSTICS_PANEL_JS)
     job_detail = _source(_JOB_DETAIL_JS)
 
-    # PodsStrip routes bar/tile clicks to its onExpand callback so a consumer
-    # can open the ?diag=pods view.
-    assert "can navigate to ?diag=pods" in pods_strip
-    assert "onBarClick=${onExpand}" in pods_strip
-    assert "onPodClick=${onExpand}" in pods_strip
     # The diagnostics panel owns the URL-backed ?diag=<tab> navigation and
     # mounts the dedicated pods tab; job-detail mounts the panel.
     assert "url.searchParams.set('diag', tab);" in diagnostics_panel

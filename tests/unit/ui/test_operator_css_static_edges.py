@@ -124,18 +124,7 @@ def test_log_strip_component_classes_have_css_rules() -> None:
     assert {"log-strip-cat--phase", "log-strip-cat--worker"} <= css_classes
 
 
-def test_diagnostics_drawer_and_tabs_classes_have_css_rules() -> None:
-    _assert_css_covers(
-        _COMPONENTS / "diagnostics-drawer.js",
-        {
-            "diagnostics-drawer__backdrop",
-            "diagnostics-drawer",
-            "diagnostics-drawer__head",
-            "diagnostics-drawer__title",
-            "diagnostics-drawer__close",
-            "diagnostics-drawer__body",
-        },
-    )
+def test_diagnostics_tabs_classes_have_css_rules() -> None:
     _assert_css_covers(
         _COMPONENTS / "diagnostics-panel.js",
         {
