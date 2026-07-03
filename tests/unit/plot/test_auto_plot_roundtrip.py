@@ -49,6 +49,54 @@ def _make_envelope() -> PlotEnvelopeConfig:
     )
 
 
+def _make_single_run_envelope() -> PlotEnvelopeConfig:
+    """Envelope with a populated ``single_run_plots`` preset + default."""
+    return PlotEnvelopeConfig.model_validate(
+        {
+            "visualization": {
+                "single_run_defaults": ["ttft_over_time"],
+                "single_run_plots": {
+                    "ttft_over_time": {
+                        "type": "scatter",
+                        "x": "request_number",
+                        "y": "time_to_first_token",
+                        "title": "TTFT Per Request Over Time",
+                    }
+                },
+            },
+        }
+    )
+
+
+def _make_experiment_classification_envelope() -> PlotEnvelopeConfig:
+    """Envelope carrying a full ``experiment_classification`` block."""
+    return PlotEnvelopeConfig.model_validate(
+        {
+            "visualization": {
+                "multi_run_defaults": ["throughput_vs_latency"],
+                "multi_run_plots": {
+                    "throughput_vs_latency": {
+                        "type": "scatter_line",
+                        "x": "request_latency_p50",
+                        "y": "request_throughput_avg",
+                        "title": "Throughput vs Latency",
+                    }
+                },
+            },
+            "experiment_classification": {
+                "baselines": ["*_agg_*", "*baseline*"],
+                "treatments": ["*_disagg_*"],
+                "default": "treatment",
+                "group_extraction_pattern": r"^(baseline|treatment_\d+)",
+                "group_display_names": {
+                    "baseline": "Baseline",
+                    "treatment_1": "Disaggregated",
+                },
+            },
+        }
+    )
+
+
 class TestMaterializedEnvelopeRoundTrip:
     """The written envelope must be re-readable by PlotConfig, unchanged."""
 
@@ -97,3 +145,33 @@ class TestMaterializedEnvelopeRoundTrip:
         specs = config.get_multi_run_plot_specs()
         assert len(specs) == 1
         assert specs[0].name == "throughput_vs_latency"
+
+    def test_roundtrip_preserves_single_run_plots(self, tmp_path: Path):
+        # A populated single_run_plots dict + single_run_defaults must survive
+        # the snake_case / exclude_none writer and re-parse into a PlotSpec.
+        envelope = _make_single_run_envelope()
+        target = _materialize_envelope(tmp_path, envelope)
+
+        config = PlotConfig(config_path=target)
+        specs = config.get_single_run_plot_specs()
+        assert len(specs) == 1
+        assert specs[0].name == "ttft_over_time"
+        assert specs[0].plot_type == PlotType.SCATTER
+
+    def test_roundtrip_preserves_experiment_classification(self, tmp_path: Path):
+        # experiment_classification is a snake_case top-level block the reader
+        # consumes directly; the writer must not drop it or its nested fields.
+        envelope = _make_experiment_classification_envelope()
+        target = _materialize_envelope(tmp_path, envelope)
+
+        config = PlotConfig(config_path=target)
+        exp = config.get_experiment_classification_config()
+        assert exp is not None
+        assert exp.baselines == ["*_agg_*", "*baseline*"]
+        assert exp.treatments == ["*_disagg_*"]
+        assert exp.default == "treatment"
+        assert exp.group_extraction_pattern == r"^(baseline|treatment_\d+)"
+        assert exp.group_display_names == {
+            "baseline": "Baseline",
+            "treatment_1": "Disaggregated",
+        }
