@@ -188,6 +188,7 @@ def _make_manager(
         "_process_metric_record_data": RecordsManager._process_metric_record_data,
         "_send_record_to_accumulators": RecordsManager._send_record_to_accumulators,
         "_send_results_to_results_processors": RecordsManager._send_results_to_results_processors,
+        "_raise_unless_best_effort": RecordsManager._raise_unless_best_effort,
         "_handle_all_records_received": RecordsManager._handle_all_records_received,
         "_finalize_and_process_results": RecordsManager._finalize_and_process_results,
         "_on_metric_records": RecordsManager._on_metric_records,
@@ -652,6 +653,109 @@ class TestSendResultsToResultsProcessors:
 
         proc_a.process_result.assert_awaited_once_with(record)
         proc_b.process_result.assert_awaited_once_with(record)
+
+    @pytest.mark.asyncio
+    async def test_best_effort_processor_failure_is_swallowed_in_gather_path(
+        self,
+    ) -> None:
+        """A best-effort processor raising must not fail the fan-out; siblings still run."""
+        otel_like = MagicMock()
+        otel_like.is_best_effort = True
+        otel_like.process_result = AsyncMock(side_effect=RuntimeError("otel down"))
+        sibling = MagicMock()
+        sibling.is_best_effort = False
+        sibling.process_result = AsyncMock()
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_results_to_results_processors",
+                "_raise_unless_best_effort",
+            ],
+            legacy_processors=[otel_like, sibling],
+        )
+        record = _record()
+
+        await mgr._send_results_to_results_processors(record)
+
+        sibling.process_result.assert_awaited_once_with(record)
+        mgr.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_best_effort_processor_failure_reraises_in_gather_path(
+        self,
+    ) -> None:
+        proc_a = MagicMock()
+        proc_a.is_best_effort = False
+        proc_a.process_result = AsyncMock(side_effect=RuntimeError("pipeline bug"))
+        proc_b = MagicMock()
+        proc_b.is_best_effort = False
+        proc_b.process_result = AsyncMock()
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_results_to_results_processors",
+                "_raise_unless_best_effort",
+            ],
+            legacy_processors=[proc_a, proc_b],
+        )
+
+        with pytest.raises(RuntimeError, match="pipeline bug"):
+            await mgr._send_results_to_results_processors(_record())
+
+    @pytest.mark.asyncio
+    async def test_best_effort_processor_failure_is_swallowed_in_single_path(
+        self,
+    ) -> None:
+        otel_like = MagicMock()
+        otel_like.is_best_effort = True
+        otel_like.process_result = AsyncMock(side_effect=RuntimeError("otel down"))
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_results_to_results_processors",
+                "_raise_unless_best_effort",
+            ],
+            legacy_processors=[otel_like],
+        )
+
+        await mgr._send_results_to_results_processors(_record())
+
+        mgr.exception.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_best_effort_processor_failure_reraises_in_single_path(
+        self,
+    ) -> None:
+        proc = MagicMock()
+        proc.is_best_effort = False
+        proc.process_result = AsyncMock(side_effect=RuntimeError("pipeline bug"))
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_results_to_results_processors",
+                "_raise_unless_best_effort",
+            ],
+            legacy_processors=[proc],
+        )
+
+        with pytest.raises(RuntimeError, match="pipeline bug"):
+            await mgr._send_results_to_results_processors(_record())
+
+    @pytest.mark.asyncio
+    async def test_cancellation_is_never_swallowed_even_for_best_effort(self) -> None:
+        """CancelledError must propagate so shutdown is not absorbed by the marker."""
+        otel_like = MagicMock()
+        otel_like.is_best_effort = True
+        otel_like.process_result = AsyncMock(side_effect=asyncio.CancelledError())
+        sibling = MagicMock()
+        sibling.is_best_effort = False
+        sibling.process_result = AsyncMock()
+        mgr = _make_manager(
+            bind_methods=[
+                "_send_results_to_results_processors",
+                "_raise_unless_best_effort",
+            ],
+            legacy_processors=[otel_like, sibling],
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await mgr._send_results_to_results_processors(_record())
 
 
 # ============================================================================

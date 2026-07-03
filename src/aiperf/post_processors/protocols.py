@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Final, Protocol, runtime_checkable
 
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.protocols import AIPerfLifecycleProtocol
@@ -15,6 +15,24 @@ if TYPE_CHECKING:
     )
     from aiperf.common.models import MetricResult
     from aiperf.metrics.metric_dicts import MetricRecordDict
+
+# Used by telemetry processors (OTel / MLflow live streaming) whose failures
+# must not crash the benchmark. Centralised here so future authors can find
+# the convention and type-check their use.
+IS_BEST_EFFORT_ATTR: Final[str] = "is_best_effort"
+
+
+class BestEffortMarker(Protocol):
+    """Marker protocol for results processors that tolerate dispatch failures.
+
+    A processor that sets ``is_best_effort: ClassVar[bool] = True`` signals to
+    the records manager that ``process_result`` exceptions should be logged but
+    not re-raised. The records manager reads this attribute via ``getattr``
+    (structural typing is advisory — runtime isinstance checks would force
+    every processor to inherit from a shared base).
+    """
+
+    is_best_effort: ClassVar[bool]
 
 
 @runtime_checkable

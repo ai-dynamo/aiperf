@@ -83,7 +83,10 @@ from aiperf.plugin.enums import (
     StreamExporterType,
     UIType,
 )
-from aiperf.post_processors.protocols import ResultsProcessorProtocol
+from aiperf.post_processors.protocols import (
+    IS_BEST_EFFORT_ATTR,
+    ResultsProcessorProtocol,
+)
 from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager_export import (
@@ -519,18 +522,51 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _send_results_to_results_processors(
         self, record_data: MetricRecordsData
     ) -> None:
-        """Send the results to each of the metric results processors."""
+        """Send the results to each of the metric results processors.
+
+        Processors with ``is_best_effort=True`` (streaming telemetry like OTel)
+        have their ``process_result`` exceptions logged and swallowed; all
+        others re-raise to surface data-pipeline bugs. See
+        ``post_processors.protocols.BestEffortMarker``.
+        """
         if not self._metric_results_processors:
             return
         if len(self._metric_results_processors) == 1:
-            await self._metric_results_processors[0].process_result(record_data)
+            processor = self._metric_results_processors[0]
+            try:
+                await processor.process_result(record_data)
+            except Exception as exc:
+                self._raise_unless_best_effort(processor, exc)
             return
-        await asyncio.gather(
+        outcomes = await asyncio.gather(
             *[
                 results_processor.process_result(record_data)
                 for results_processor in self._metric_results_processors
-            ]
+            ],
+            return_exceptions=True,
         )
+        for processor, outcome in zip(
+            self._metric_results_processors, outcomes, strict=True
+        ):
+            if isinstance(outcome, BaseException):
+                self._raise_unless_best_effort(processor, outcome)
+
+    def _raise_unless_best_effort(
+        self, processor: ResultsProcessorProtocol, exc: BaseException
+    ) -> None:
+        """Log a ``process_result`` failure; swallow it only for best-effort processors.
+
+        Non-``Exception`` errors (e.g. ``asyncio.CancelledError``) always
+        re-raise regardless of the marker so cancellation is never absorbed.
+        """
+        self.exception(
+            f"Failed to process metric record in "
+            f"{processor.__class__.__name__}: {exc!r}"
+        )
+        if not isinstance(exc, Exception) or not getattr(
+            processor, IS_BEST_EFFORT_ATTR, False
+        ):
+            raise exc
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
