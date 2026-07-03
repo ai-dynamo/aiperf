@@ -15,14 +15,6 @@ from aiperf.credit.structs import Credit
 from aiperf.timing.config import CreditPhaseConfig
 
 
-class CreditPhasesConfiguredMessage(
-    BaseServiceMessage, kw_only=True, tag=MessageType.CREDIT_PHASES_CONFIGURED.value
-):
-    """Credit phase configuration announcement."""
-
-    configs: list[CreditPhaseConfig]
-
-
 class CreditPhaseStartMessage(
     BaseServiceMessage, kw_only=True, tag=MessageType.CREDIT_PHASE_START.value
 ):

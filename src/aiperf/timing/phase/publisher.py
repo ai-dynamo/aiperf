@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
-    CreditPhasesConfiguredMessage,
     CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
@@ -40,14 +39,6 @@ class PhasePublisher:
         """Initialize publisher with message bus client."""
         self._pub_client = pub_client
         self._service_id = service_id
-
-    async def publish_phases_configured(self, configs: list[CreditPhaseConfig]) -> None:
-        """Publish phases configured event."""
-        msg = CreditPhasesConfiguredMessage(
-            service_id=self._service_id,
-            configs=configs,
-        )
-        await self._pub_client.publish(msg)
 
     async def publish_phase_start(
         self, config: CreditPhaseConfig, phase_stats: CreditPhaseStats

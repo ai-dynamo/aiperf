@@ -365,7 +365,6 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASE_PROGRESS = "credit_phase_progress"
     CREDIT_PHASE_SENDING_COMPLETE = "credit_phase_sending_complete"
     CREDIT_PHASE_START = "credit_phase_start"
-    CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
     ERROR = "error"

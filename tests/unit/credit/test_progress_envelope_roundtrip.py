@@ -22,7 +22,6 @@ from aiperf.common.models import CreditPhaseStats, PhaseRecordsStats
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
-    CreditPhasesConfiguredMessage,
     CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
@@ -64,10 +63,6 @@ def _config() -> CreditPhaseConfig:
 @pytest.mark.parametrize(
     "message_factory",
     [
-        param(
-            lambda: CreditPhasesConfiguredMessage(service_id="t", configs=[_config()]),
-            id="CreditPhasesConfiguredMessage",
-        ),
         param(
             lambda: CreditPhaseStartMessage(
                 service_id="t", stats=_stats(), config=_config()
@@ -141,27 +136,3 @@ def test_progress_message_decodes_from_dict() -> None:
     assert msg.stats.phase == "profiling"
     assert msg.stats.requests_completed == 40
     assert isinstance(msg.stats, CreditPhaseStats)
-
-
-def test_phases_configured_message_decodes_timing_mode_enum() -> None:
-    """CreditPhaseConfig.timing_mode is an ExtensibleStrEnum — dec_hook handles it."""
-    payload = {
-        "service_id": "timing-manager",
-        "request_ns": 1,
-        "message_type": "credit_phases_configured",
-        "configs": [
-            {
-                "phase": "profiling",
-                "timing_mode": "request_rate",
-                "total_expected_requests": 100,
-                "concurrency": 10,
-            }
-        ],
-    }
-
-    msg = CreditPhasesConfiguredMessage.from_json(payload)
-
-    assert len(msg.configs) == 1
-    cfg = msg.configs[0]
-    assert cfg.timing_mode == TimingMode.REQUEST_RATE
-    assert cfg.concurrency == 10
