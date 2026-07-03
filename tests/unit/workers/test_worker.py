@@ -71,38 +71,43 @@ def mock_worker(
 
 @pytest.mark.asyncio
 class TestWorker:
-    async def test_process_response(
-        self, monkeypatch, mock_worker, sample_request_record
-    ):
-        """Ensure process_response extracts text correctly from RequestRecord."""
+    async def test_process_response(self, monkeypatch, mock_worker):
+        """Ensure process_response captures assistant text from a RequestRecord.
+
+        ``_process_response`` delegates to the endpoint's ``build_assistant_turn``
+        (off the event loop); patching ``extract_response_data`` on the real
+        endpoint drives that path with fixed parsed data.
+        """
         mock_parsed_response = ParsedResponse(
             perf_ns=0,
             data=TextResponseData(text="Hello, world!"),
         )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(sample_request_record)
+        monkeypatch.setattr(
+            mock_worker.inference_client.endpoint,
+            "extract_response_data",
+            Mock(return_value=[mock_parsed_response]),
+        )
+        turn = await mock_worker._process_response(RequestRecord())
         assert turn.texts[0].contents == ["Hello, world!"]
 
-    async def test_process_response_empty(
-        self, monkeypatch, mock_worker, sample_request_record
-    ):
-        """Ensure process_response handles empty responses correctly."""
+    async def test_process_response_empty(self, monkeypatch, mock_worker):
+        """Ensure process_response returns None when there is no assistant text."""
         mock_parsed_response = ParsedResponse(
             perf_ns=0,
             data=TextResponseData(text=""),
         )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
-        turn = await mock_worker._process_response(sample_request_record)
+        monkeypatch.setattr(
+            mock_worker.inference_client.endpoint,
+            "extract_response_data",
+            Mock(return_value=[mock_parsed_response]),
+        )
+        turn = await mock_worker._process_response(RequestRecord())
         assert turn is None
 
     async def test_process_response_reasoning_extracts_content(
         self, monkeypatch, mock_worker
     ):
-        """Ensure process_response extracts content from reasoning responses."""
+        """Ensure process_response prefers ``content`` over ``reasoning``."""
         mock_parsed_response = ParsedResponse(
             perf_ns=0,
             data=ReasoningResponseData(
@@ -110,16 +115,25 @@ class TestWorker:
                 content="The answer is 42.",
             ),
         )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+        monkeypatch.setattr(
+            mock_worker.inference_client.endpoint,
+            "extract_response_data",
+            Mock(return_value=[mock_parsed_response]),
+        )
         turn = await mock_worker._process_response(RequestRecord())
         assert turn.texts[0].contents == ["The answer is 42."]
 
-    async def test_process_response_reasoning_only_returns_none(
+    async def test_process_response_reasoning_only_captured_for_fork_inheritance(
         self, monkeypatch, mock_worker
     ):
-        """Ensure process_response returns None for reasoning-only responses (no content)."""
+        """Reasoning-only responses must still capture a non-empty assistant turn.
+
+        Servers (and the mock) that return all output as ``reasoning`` with
+        empty ``content`` (Qwen3-style) must not yield an empty capture — a
+        FORK-mode DAG child that inherits the parent's history would otherwise
+        see no assistant turn. ``build_assistant_turn`` falls back to the
+        reasoning text; a prior worker-local reimplementation dropped it.
+        """
         mock_parsed_response = ParsedResponse(
             perf_ns=0,
             data=ReasoningResponseData(
@@ -127,11 +141,14 @@ class TestWorker:
                 content=None,
             ),
         )
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=[mock_parsed_response])
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+        monkeypatch.setattr(
+            mock_worker.inference_client.endpoint,
+            "extract_response_data",
+            Mock(return_value=[mock_parsed_response]),
+        )
         turn = await mock_worker._process_response(RequestRecord())
-        assert turn is None
+        assert turn is not None
+        assert turn.texts[0].contents == ["Let me think about this..."]
 
     async def test_process_response_mixed_reasoning_and_text_combines_content(
         self, monkeypatch, mock_worker
@@ -150,9 +167,11 @@ class TestWorker:
                 ),
             ),
         ]
-        mock_endpoint = Mock()
-        mock_endpoint.extract_response_data = Mock(return_value=mock_parsed_responses)
-        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+        monkeypatch.setattr(
+            mock_worker.inference_client.endpoint,
+            "extract_response_data",
+            Mock(return_value=mock_parsed_responses),
+        )
         turn = await mock_worker._process_response(RequestRecord())
         assert turn.texts[0].contents == ["HelloWorld"]
 

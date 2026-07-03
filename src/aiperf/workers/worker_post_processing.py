@@ -18,9 +18,7 @@ from aiperf.common.inference_wire import (
 )
 from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.models import (
-    ReasoningResponseData,
     RequestRecord,
-    Text,
     Turn,
     WorkerTaskStats,
 )
@@ -36,26 +34,16 @@ def process_response_sync(
 ) -> Turn | None:
     """Synchronous response processing — runs in a thread pool.
 
-    Parses responses into structured data, extracts text from all responses,
-    and returns a Turn with role="assistant" if text is present, else None.
+    Delegates to the endpoint's ``build_assistant_turn`` so the captured
+    assistant Turn carries the endpoint's full replay semantics: the base
+    text + reasoning-only fallback (Qwen3-style / mock-server responses that
+    put everything in ``reasoning`` with empty ``content``) and the chat
+    endpoint's ``tool_calls`` / ``function_call`` preservation. A hand-rolled
+    text-only copy here silently dropped the reasoning fallback, so FORK-mode
+    DAG children inherited a parent context with no captured assistant turn.
+    Returns ``None`` when the record has no replayable assistant content.
     """
-    resp = inference_client.endpoint.extract_response_data(record)
-    output_texts = []
-    for response in resp:
-        if not response.data:
-            continue
-        if isinstance(response.data, ReasoningResponseData):
-            if response.data.content:
-                output_texts.append(response.data.content)
-        else:
-            output_texts.append(response.data.get_text())
-    resp_text = "".join(output_texts)
-
-    return (
-        Turn(role="assistant", texts=[Text(contents=[resp_text])])
-        if resp_text
-        else None
-    )
+    return inference_client.endpoint.build_assistant_turn(record)
 
 
 def build_inference_wire_message(

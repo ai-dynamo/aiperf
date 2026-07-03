@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.enums import ConversationBranchMode
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 
@@ -179,6 +180,35 @@ class TestBasicCreditIssuance:
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.id == 5
         assert sent_credit.session_num == 3
+
+    async def test_issue_credit_copies_dag_lineage_from_turn(
+        self, credit_issuer, mock_router, mock_progress
+    ):
+        """Issued Credit must carry the FORK-child lineage fields from the turn.
+
+        Guards the middle "CreditIssuer copy" hop of the three-touch
+        strategy->TurnToSend->Credit->Worker wiring: the worker's FORK-child
+        discriminator reads ``credit.parent_correlation_id`` +
+        ``credit.branch_mode``, so a dropped copy here would silently disable
+        FORK context inheritance while leaving every other test green.
+        """
+        mock_progress.increment_sent.return_value = (7, 0, False)
+        turn = TurnToSend(
+            conversation_id="conv",
+            x_correlation_id="child-corr",
+            turn_index=0,
+            num_turns=1,
+            parent_correlation_id="root-corr",
+            branch_mode=ConversationBranchMode.FORK,
+            has_forks=True,
+        )
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.parent_correlation_id == "root-corr"
+        assert sent_credit.branch_mode is ConversationBranchMode.FORK
+        assert sent_credit.has_forks is True
 
     async def test_issue_credit_returns_true_when_more_credits_can_be_sent(
         self, credit_issuer, mock_progress
