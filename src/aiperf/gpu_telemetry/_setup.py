@@ -12,17 +12,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
-from aiperf.gpu_telemetry.protocols import (
-    GPUTelemetryAccumulatorProtocol,
-    GPUTelemetryProcessorProtocol,
-)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     GPUTelemetryCollectorType,
-    GPUTelemetryProcessorType,
     PluginType,
 )
 
@@ -73,50 +67,6 @@ def compute_endpoints_for_display(
     elif user_provided_endpoints:
         return user_provided_endpoints
     return []
-
-
-def create_processors(
-    manager: GPUTelemetryManager,
-) -> tuple[
-    list[GPUTelemetryProcessorProtocol],
-    GPUTelemetryAccumulatorProtocol | None,
-]:
-    """Instantiate all registered GPU telemetry processors for ``manager``.
-
-    Returns the list of created processors plus the accumulator instance
-    (or None if no accumulator plugin is registered). Failures to
-    instantiate an individual processor are logged and skipped so one bad
-    plugin cannot disable telemetry entirely.
-    """
-    processors: list[GPUTelemetryProcessorProtocol] = []
-    accumulator: GPUTelemetryAccumulatorProtocol | None = None
-
-    for entry in plugins.iter_entries(PluginType.GPU_TELEMETRY_PROCESSOR):
-        try:
-            ProcessorClass = plugins.get_class(
-                PluginType.GPU_TELEMETRY_PROCESSOR, entry.name
-            )
-            processor = ProcessorClass(
-                service_id=manager.service_id,
-                run=manager.run,
-                pub_client=manager.pub_client,
-            )
-            manager.attach_child_lifecycle(processor)
-            processors.append(processor)
-            if entry.name == GPUTelemetryProcessorType.GPU_TELEMETRY_ACCUMULATOR:
-                accumulator = processor
-            manager.debug(
-                f"Created GPU telemetry processor: {entry.name}: "
-                f"{processor.__class__.__name__}"
-            )
-        except PostProcessorDisabled:
-            manager.debug(
-                f"GPU telemetry processor {entry.name} is disabled and will not be used"
-            )
-        except Exception as e:  # noqa: BLE001 - per-plugin; skip bad processor and continue
-            manager.error(f"Failed to create GPU telemetry processor {entry.name}: {e}")
-
-    return processors, accumulator
 
 
 async def configure_pynvml_collector(manager: GPUTelemetryManager) -> None:

@@ -946,8 +946,11 @@ analyzer:
 # =============================================================================
 # GPU Telemetry Processors
 # =============================================================================
-# GPU telemetry processors aggregate and export GPU telemetry records locally
-# within GPUTelemetryManager. One-to-many mapping.
+# GPU telemetry processor plugins (accumulator + per-sample JSONL writer).
+# GPUTelemetryManager only collects raw DCGM/pynvml samples and pushes them to
+# RecordsManager on CommAddress.RECORDS; the aggregation and JSONL export run
+# inside RecordsManager (see records_manager._on_telemetry_records), not within
+# GPUTelemetryManager. One-to-many mapping.
 # =============================================================================
 gpu_telemetry_processor:
   gpu_telemetry_accumulator:
