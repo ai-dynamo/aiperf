@@ -188,9 +188,14 @@ class TimingManager(BaseComponentService):
         scheduled via ``execute_async`` rather than awaited. A publish
         failure must not mask the original phase failure.
         """
+        coro = self.publish(message)
         try:
-            self.execute_async(self.publish(message))
+            self.execute_async(coro)
         except Exception as publish_error:
+            # execute_async never took ownership of the coroutine, so close it
+            # here — otherwise it is abandoned unawaited on exactly the failure
+            # path this guard protects (RuntimeWarning + leaked coroutine).
+            coro.close()
             self.debug(
                 lambda e=publish_error: (
                     f"Failed to publish BaseServiceErrorMessage from phase failure "
