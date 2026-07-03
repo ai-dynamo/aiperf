@@ -63,14 +63,14 @@ class TestStressScenarios:
         """High worker count (100 workers) with streaming.
 
         100 worker subprocesses spawning concurrently overrun the
-        default registration retry budget (10 attempts x 1s = 10s)
-        because the SystemController's registration handler services
-        requests serially and 100 simultaneous registrants queue up.
-        Bump the per-worker max attempts so each worker has ~60s
-        before giving up. Doesn't affect normal runs - only this
-        stress test hits the contention.
+        default registration timeout (30s) because the SystemController's
+        registration handler services requests serially and 100
+        simultaneous registrants queue up. Bump the per-worker
+        registration timeout so each worker has ~60s before giving up.
+        Doesn't affect normal runs - only this stress test hits the
+        contention.
         """
-        monkeypatch.setenv("AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS", "60")
+        monkeypatch.setenv("AIPERF_SERVICE_REGISTRATION_TIMEOUT", "60")
 
         result = await cli.run(
             f"""

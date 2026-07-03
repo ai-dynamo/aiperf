@@ -298,12 +298,6 @@ class _DeveloperSettings(BaseSettings):
         description="Enable memory profiling using tracemalloc. "
         "Logs memory usage and top allocators periodically.",
     )
-    MEMORY_PROFILE_INTERVAL: float = Field(
-        ge=1.0,
-        le=3600.0,
-        default=10.0,
-        description="Interval in seconds between memory profile snapshots when profiling is enabled.",
-    )
     MEMORY_PROFILE_TOP_N: int = Field(
         ge=1,
         le=100,
@@ -362,21 +356,6 @@ class _GPUSettings(BaseSettings):
         default=100,
         description="Batch size for telemetry record export results processor",
     )
-    FINAL_SCRAPE_GRACE_NS: int = Field(
-        ge=0,
-        le=60_000_000_000,
-        default=666_000_000,
-        description=(
-            "Grace window in nanoseconds appended to phase end_ns when computing "
-            "the GPU energy-counter delta. Energy is scraped on a cadence "
-            "(see COLLECTION_INTERVAL), so the trailing scrape often lands after "
-            "the phase ends; this grace lets it be included while bounding the "
-            "window so cooldown/idle samples and subsequent-phase samples don't "
-            "leak into the delta. Default 666_000_000 ns ~= 2x the default "
-            "333 ms COLLECTION_INTERVAL; raise this if you also raise "
-            "COLLECTION_INTERVAL."
-        ),
-    )
     REACHABILITY_TIMEOUT: int = Field(
         ge=1,
         le=300,
@@ -388,12 +367,6 @@ class _GPUSettings(BaseSettings):
         le=300.0,
         default=5.0,
         description="Delay in seconds before shutting down GPU telemetry service to allow command response transmission",
-    )
-    THREAD_JOIN_TIMEOUT: float = Field(
-        ge=1.0,
-        le=300.0,
-        default=5.0,
-        description="Timeout in seconds for joining GPU telemetry collection threads during shutdown",
     )
 
 
@@ -431,22 +404,10 @@ class _HTTPSettings(BaseSettings):
         default=10485760,  # 10MB
         description="Socket receive buffer size in bytes (default: 10MB for high-throughput streaming)",
     )
-    SO_RCVTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket receive timeout in seconds",
-    )
     SO_SNDBUF: int = Field(
         ge=1024,
         default=10485760,  # 10MB
         description="Socket send buffer size in bytes (default: 10MB for high-throughput streaming)",
-    )
-    SO_SNDTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket send timeout in seconds",
     )
     TCP_KEEPCNT: int = Field(
         ge=1,
@@ -1056,12 +1017,6 @@ class _ServiceSettings(BaseSettings):
         default=1.0,
         description="Interval in seconds between registration attempts for component services",
     )
-    REGISTRATION_MAX_ATTEMPTS: int = Field(
-        ge=1,
-        le=100000,
-        default=10,
-        description="Maximum number of registration attempts before giving up",
-    )
     REGISTRATION_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -1281,12 +1236,6 @@ class _UISettings(BaseSettings):
         default=1.0,
         description="Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs)",
     )
-    NOTIFICATION_TIMEOUT: int = Field(
-        ge=1,
-        le=100000,
-        default=3,
-        description="Duration in seconds to display UI notifications before auto-dismissing",
-    )
     REALTIME_METRICS_INTERVAL: float = Field(
         ge=1.0,
         le=1000.0,
@@ -1398,12 +1347,6 @@ class _ZMQSettings(BaseSettings):
         env_prefix="AIPERF_ZMQ_",
     )
 
-    CONTEXT_TERM_TIMEOUT: float = Field(
-        ge=1.0,
-        le=100000.0,
-        default=10.0,
-        description="Timeout in seconds for terminating the ZMQ context during shutdown",
-    )
     PULL_YIELD_INTERVAL: int = Field(
         ge=0,
         le=1_000_000,

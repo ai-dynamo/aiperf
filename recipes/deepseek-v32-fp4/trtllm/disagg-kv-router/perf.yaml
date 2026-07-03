@@ -68,8 +68,6 @@ spec:
     env:
       - name: AIPERF_HTTP_CONNECTION_LIMIT
         value: "200"
-      - name: AIPERF_HTTP_SO_RCVTIMEO
-        value: "120"
       - name: HF_HOME
         value: /model-cache
       - name: TRANSFORMERS_OFFLINE
