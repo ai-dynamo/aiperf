@@ -323,8 +323,6 @@ navigation:
     path: dev/sweep-architecture-overview.md
   - page: Sweep Orchestrator Flow
     path: dev/sweep-orchestrator-flow.md
-  - page: Sweep + Orchestrator Developer Reference
-    path: dev/sweep-orchestrator.md
   - page: Metrics Flow
     path: diagrams/metrics-flow.md
   - page: Mixins

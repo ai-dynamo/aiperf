@@ -134,7 +134,7 @@ You will want these when an iteration looks like a noise spike (a clearly out-of
 
 ### `sweep_aggregate/profile_export_aiperf_sweep.{json,csv}` — combination summary
 
-The same per-combination aggregate the grid sweep path emits. One row per `(concurrency)` value visited, with the four sections (per-combination / best / pareto / metadata). Read this when you want a tabular CSV of "what concurrency values did BO actually visit, and what was the throughput at each." The `best_configurations` and `pareto_optimal` sections here are computed by `SweepAnalyzer` across the whole `RunResult` set; they are **orthogonal** to `search_history.json["best_trials"]` (which is what the BO planner converged on). For a single-objective run with no failed iterations the two usually agree on the winning concurrency, but they can disagree — see [Sweep Orchestrator — Stage 7 aggregate](../dev/sweep-orchestrator.md).
+The same per-combination aggregate the grid sweep path emits. One row per `(concurrency)` value visited, with the four sections (per-combination / best / pareto / metadata). Read this when you want a tabular CSV of "what concurrency values did BO actually visit, and what was the throughput at each." The `best_configurations` and `pareto_optimal` sections here are computed by `SweepAnalyzer` across the whole `RunResult` set; they are **orthogonal** to `search_history.json["best_trials"]` (which is what the BO planner converged on). For a single-objective run with no failed iterations the two usually agree on the winning concurrency, but they can disagree — see [Sweep architecture — aggregate stage](../dev/sweep-architecture-overview.md#end-to-end-flow).
 
 ## Interpreting `best_trials`
 
