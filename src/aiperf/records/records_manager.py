@@ -719,6 +719,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a real-time metrics command."""
         await self._report_realtime_metrics()
 
+    @on_command(CommandType.START_REALTIME_TELEMETRY)
+    async def _on_start_realtime_telemetry_command(self, message: Command) -> None:
+        """Un-park the GPU telemetry accumulator's realtime reporting loop.
+
+        Sent by the SystemController when the user enables the telemetry pane
+        in the dashboard UI at runtime without having started in realtime
+        telemetry mode. Idempotent: repeat commands re-set an already-set
+        enable event, which is harmless.
+        """
+        accumulator = self._gpu_telemetry_accumulator
+        if accumulator is not None:
+            accumulator.start_realtime_telemetry()
+        else:
+            self.error(
+                "GPU telemetry accumulator not found, cannot start realtime telemetry"
+            )
+
     async def _report_realtime_metrics(self) -> None:
         """Report inference metrics (used by command handler).
 

@@ -369,12 +369,17 @@ class SystemController(
             )
 
     async def start_realtime_telemetry(self) -> None:
-        """Send START_REALTIME_TELEMETRY command to GPUTelemetryManager(s)."""
-        gpu_ids = [
+        """Send START_REALTIME_TELEMETRY command to the RecordsManager(s).
+
+        The GPU telemetry accumulator that owns the parked realtime loop is
+        loaded by RecordsManager (GPUTelemetryManager only pushes raw samples
+        to it), so the runtime dashboard toggle must be routed there.
+        """
+        rm_ids = [
             s.service_id
-            for s in ServiceRegistry.get_services(ServiceType.GPU_TELEMETRY_MANAGER)
+            for s in ServiceRegistry.get_services(ServiceType.RECORDS_MANAGER)
         ]
-        for sid in gpu_ids:
+        for sid in rm_ids:
             await self._send_control_command(
                 sid, CommandType.START_REALTIME_TELEMETRY, timeout=5.0
             )

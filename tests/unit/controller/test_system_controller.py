@@ -90,6 +90,34 @@ class TestSystemController:
         assert system_controller._start_profiling_all_services.called
 
 
+class TestStartRealtimeTelemetryRouting:
+    """`start_realtime_telemetry` must target the RecordsManager services.
+
+    The GPU telemetry accumulator (whose realtime loop the command un-parks)
+    is owned by RecordsManager, not GPUTelemetryManager — the manager only
+    pushes raw samples to it. Routing anywhere else leaves the dashboard
+    toggle a no-op.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sends_command_to_each_records_manager(
+        self, system_controller: SystemController
+    ) -> None:
+        infos = [MagicMock(service_id="records-manager-1")]
+        system_controller._send_control_command = AsyncMock()
+
+        with patch(
+            "aiperf.controller.system_controller.ServiceRegistry.get_services",
+            return_value=infos,
+        ) as mock_get:
+            await system_controller.start_realtime_telemetry()
+
+        mock_get.assert_called_once_with(ServiceType.RECORDS_MANAGER)
+        system_controller._send_control_command.assert_awaited_once_with(
+            "records-manager-1", CommandType.START_REALTIME_TELEMETRY, timeout=5.0
+        )
+
+
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""
 

@@ -20,7 +20,8 @@ the branches the existing happy-path suite leaves uncovered:
    gather fan-out, and empty short-circuit.
 6. `_report_records_task` — skip-empty-phase + first-active-phase break.
 7. `_on_process_records_command` / `_on_profile_cancel_command` — payload
-   parsing, mark-cancelled bookkeeping.
+   parsing, mark-cancelled bookkeeping. `_on_start_realtime_telemetry_command`
+   — realtime-loop un-park, idempotence, accumulator-absent error path.
 8. `_report_realtime_inference_metrics_task` — early-exit gate and the
    "no new records" continue branch.
 9. `_report_realtime_metrics` — empty-raw + filtered-empty short-circuits.
@@ -856,6 +857,78 @@ class TestCommandHandlers:
         ]
         assert marks == ["warmup", "profiling"]
         mgr._process_results.assert_awaited_once_with(cancelled=True)
+
+
+class TestStartRealtimeTelemetryCommand:
+    """`_on_start_realtime_telemetry_command` — the runtime GPU-telemetry toggle.
+
+    The dashboard sends START_REALTIME_TELEMETRY when the user enables the
+    telemetry pane at runtime; the handler must un-park the accumulator's
+    realtime loop via `start_realtime_telemetry()`. Uses a bare
+    `RecordsManager.__new__` host (not the MagicMock factory) so the real
+    `_gpu_telemetry_accumulator` property resolves through `_accumulators` —
+    a MagicMock host would auto-create the attribute and hide wiring bugs.
+    """
+
+    def _make_host(self, accumulators: dict[Any, Any] | None = None) -> RecordsManager:
+        mgr = RecordsManager.__new__(RecordsManager)
+        mgr._accumulators = accumulators or {}
+        for level in ("debug", "info", "warning", "error"):
+            setattr(mgr, level, MagicMock())
+        return mgr
+
+    def _make_real_accumulator(self):
+        from aiperf.config.flags.cli_config import CLIConfig
+        from aiperf.gpu_telemetry.accumulator import GPUTelemetryAccumulator
+        from tests.unit.conftest import make_run_from_cli
+
+        run = make_run_from_cli(CLIConfig(model_names=["test-model"]))
+        return GPUTelemetryAccumulator(
+            run=run, pub_client=MagicMock(), service_id="records-manager-1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unparks_realtime_loop_on_real_accumulator(self) -> None:
+        """Dispatching the command sets the accumulator's enable event and
+        flips the run config into realtime-dashboard mode."""
+        from aiperf.common.enums import GPUTelemetryMode
+
+        acc = self._make_real_accumulator()
+        mgr = self._make_host({AccumulatorType.GPU_TELEMETRY: acc})
+        cmd = SimpleNamespace(payload=b"")
+
+        assert not acc._realtime_enable_event.is_set()
+        await mgr._on_start_realtime_telemetry_command(cmd)
+
+        assert acc._realtime_enable_event.is_set()
+        assert acc.run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+        mgr.error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_repeat_command_is_harmless(self) -> None:
+        """A second START_REALTIME_TELEMETRY is idempotent: the event stays
+        set, nothing raises, and no error is logged."""
+        acc = self._make_real_accumulator()
+        mgr = self._make_host({AccumulatorType.GPU_TELEMETRY: acc})
+        cmd = SimpleNamespace(payload=b"")
+
+        await mgr._on_start_realtime_telemetry_command(cmd)
+        await mgr._on_start_realtime_telemetry_command(cmd)
+
+        assert acc._realtime_enable_event.is_set()
+        mgr.error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_accumulator_logs_error_and_does_not_raise(self) -> None:
+        """GPU telemetry disabled → no accumulator loaded. The handler must
+        log an error (mirroring upstream) and return without raising."""
+        mgr = self._make_host({})
+        cmd = SimpleNamespace(payload=b"")
+
+        await mgr._on_start_realtime_telemetry_command(cmd)
+
+        mgr.error.assert_called_once()
+        assert "accumulator" in str(mgr.error.call_args).lower()
 
 
 # ============================================================================
