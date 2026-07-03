@@ -3,7 +3,7 @@
 """Pytest configuration and shared fixtures for the aiohttp client test suite."""
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
@@ -14,6 +14,9 @@ from aiperf.common.models import RequestRecord, SSEMessage, TextResponse
 from aiperf.config import AIPerfConfig, BenchmarkConfig, BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
+
+if TYPE_CHECKING:
+    from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 _MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
     "models": ["test-model"],

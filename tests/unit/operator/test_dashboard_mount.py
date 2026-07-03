@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import orjson
+import pytest
 import zstandard
 
 from aiperf.operator.dashboard_mount import DashboardProxy, build_dashboard
