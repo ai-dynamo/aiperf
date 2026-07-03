@@ -9,24 +9,46 @@ Code examples for common development tasks. Referenced from CLAUDE.md.
 
 ## CLI Command Pattern
 
-AIPerf has two parallel command surfaces. Both are dispatched by
-`aiperf.cli.main` based on the argv prefix.
-
-**click apps (the five spec-bearing commands).** `aiperf profile`,
-`aiperf config generate`, and `aiperf kube profile|sweep|generate` are built
-from the `CLIFlag` table in `src/aiperf/cli/spec.py` by
-`aiperf.cli.click_apps:build_command`. Help text resolves from
-`AIPerfConfig` field descriptions (preferred) or an explicit override on
-the row.
-
-**cyclopts apps (everything else).** `aiperf plugins`, `aiperf kube list`,
-`aiperf synthesize`, etc., live in `src/aiperf/cli_commands/<name>.py` and
-are lazily registered in `aiperf.cli`:
+Every AIPerf command is a [cyclopts](https://cyclopts.readthedocs.io/) `App`.
+The root app is `aiperf.cli:app` in `src/aiperf/cli.py` (a module, not a
+package). It registers each subcommand lazily by import string; the order in
+`cli.py` is the order commands appear in `docs/cli-options.md`:
 
 ```python
-# aiperf/cli/__init__.py - register with lazy import strings
+# src/aiperf/cli.py - register with lazy import strings
+app.command("aiperf.cli_commands.profile:app", name="profile")
 app.command("aiperf.cli_commands.plugins:app", name="plugins")
 ```
+
+There are two shapes of command.
+
+**Benchmark-config commands** (`aiperf profile`, `aiperf config …`,
+`aiperf kube profile|sweep|generate`) take a single `cli_config: CLIConfig`
+kwarg. cyclopts populates every benchmark and service-runtime flag onto the
+flat `CLIConfig` DTO; the body resolves it into an `AIPerfConfig`:
+
+```python
+# aiperf/cli_commands/profile.py - thin command definition
+from cyclopts import App
+
+from aiperf.config.flags import CLIConfig
+
+app = App(name="profile")
+
+@app.default
+def profile(*, cli_config: CLIConfig) -> None:
+    """Run the Profile subcommand."""
+    from aiperf.config.flags.resolver import resolve_config
+    from aiperf.config.loader import build_benchmark_plan
+
+    config = resolve_config(cli_config, cli_config.config_file)
+    plan = build_benchmark_plan(config)
+    ...
+```
+
+**Utility commands** (`aiperf plugins`, `aiperf synthesize`, `aiperf kube
+list`, etc.) live in `src/aiperf/cli_commands/<name>.py` and declare their own
+`Parameter(...)` kwargs — they do not route through `CLIConfig`:
 
 ```python
 # aiperf/cli_commands/plugins.py - thin command definition
@@ -42,7 +64,7 @@ def plugins(*, validate: bool = False) -> None:
     run(validate=validate)
 ```
 
-**Conventions (cyclopts side):**
+**Conventions:**
 - Export a single `App` named `app`.
 - Hyphenate multi-word commands: `App(name="analyze-trace")`.
 - Keep module-level imports minimal; heavy deps go inside the function body.
@@ -59,156 +81,125 @@ def plugins(*, validate: bool = False) -> None:
 - Heavy implementation logic lives in a `cli.py` inside the owning domain
   package (e.g. `aiperf/plugin/cli.py`), lazily imported at call time.
 
-### How to add a CLI flag (spec-bearing command)
+### Adding a New CLI Flag
 
-The five spec-bearing commands take their flag surface from
-`src/aiperf/cli/spec.py:FLAGS`. Add a flag in four steps:
+Every benchmark flag is a top-level field on `CLIConfig`
+(`src/aiperf/config/flags/cli_config.py`). `CLIConfig` is a flat cyclopts
+input DTO: no nested config classes, no domain validators (the sole
+validation gate is `AIPerfConfig`). Adding a flag is three steps — declare the
+field, ensure a destination on `AIPerfConfig`, wire the two in the converter.
 
-**1. Add the destination on `AIPerfConfig`.** Every flag must point at a
-field on `AIPerfConfig` (or an envelope sibling: `sweep`, `multi_run`,
-`variables`, `random_seed`). The YAML/v2 layer is the single validation
-gate.
-
-```python
-# src/aiperf/config/_models_endpoint.py
-class EndpointConfig(BaseConfig):
-    request_compression: CompressionAlgorithm | None = Field(
-        default=None,
-        description=(
-            "Compression algorithm for outbound request bodies. "
-            "Set to 'gzip' or 'zstd' for high-throughput servers; "
-            "leave unset to send uncompressed."
-        ),
-    )
-```
-
-**2. Add a `CLIFlag` row to `cli/spec.py:FLAGS`.** Use `help_from`
-(preferred) to inherit the `Field(description=...)` from step 1; an
-explicit `help` override requires a `# Override: <reason>` comment on the
-line above the row.
+**1. Declare the field on `CLIConfig`.** Each field is
+`Annotated[type, Field(description=…), CLIParameter(…)]`, optionally with a
+`BeforeValidator` for input-shape parsing. `CLIParameter`
+(`src/aiperf/config/cli_parameter.py`) subclasses `cyclopts.Parameter` with
+AIPerf defaults; `group=` selects the `--help` section from `Groups`, and
+`negative="--no-x"` adds the slash-flag negation.
 
 ```python
-# src/aiperf/cli/spec.py
-CLIFlag(
-    names=("--request-compression",),
-    kwarg="request_compression",
-    type=_enum_choice(CompressionAlgorithm),
-    group=Group.ENDPOINT,
-    help_from="benchmark.endpoint.request_compression",
-),
+# src/aiperf/config/flags/cli_config.py
+streaming: Annotated[
+    bool,
+    Field(
+        description="Enable streaming responses. Enables measurement of "
+        "time-to-first-token (TTFT) and inter-token latency (ITL) metrics.",
+    ),
+    CLIParameter(
+        name=("--streaming",),  # GenAI-Perf
+        group=Groups.ENDPOINT,
+    ),
+] = EndpointDefaults.STREAMING
 ```
 
-`tools/check_cli_help.py` (pre-commit) enforces the override-comment
-contract.
+Good: the `Field(description=...)` is the single source of help text — it
+feeds both `--help` and the generated `docs/cli-options.md`. Bad: adding a
+nested class to group related flags, or attaching a domain validator here.
+Hoist related flags flat with a modality prefix (`image_batch_size`,
+`audio_batch_size`) to disambiguate cross-modality collisions on `batch_size`.
 
-**3. Polymorphic input parsing.** When the flag accepts multiple shapes
-(scalar OR comma-separated list, magic-list sweep promotion, etc.),
-declare the shape conversion as a `click.ParamType` subclass in
-`src/aiperf/cli/param_types.py`:
+**2. Ensure a destination on `AIPerfConfig`.** Every flag lands on a field of
+the validated envelope (`AIPerfConfig` / `BenchmarkConfig` and its section
+models: `endpoint`, `input`, `phases`, …). If the destination field does not
+exist yet, add it there with its own `Field(description=...)` and any domain
+validators — that layer is where "concurrency cannot exceed request_count"
+style checks belong.
+
+**3. Wire input parsing + the converter mapping.** For a flag that accepts
+multiple shapes (scalar OR comma-separated list), attach a `BeforeValidator`
+from `aiperf.config.loader.parsing` so the raw token normalizes before
+validation — never do domain validation here:
 
 ```python
-# src/aiperf/cli/param_types.py
-class IntOrIntList(click.ParamType):
-    """Accept '10' or '10,20,30'. Lists trigger magic-list sweep promotion
-    in cli/assemble/__init__.py."""
-
-    name = "int_or_int_list"
-
-    def convert(self, value, param, ctx):
-        if isinstance(value, list):
-            return value
-        if "," in value:
-            return [int(v) for v in value.split(",")]
-        return int(value)
+# src/aiperf/config/flags/cli_config.py
+concurrency: Annotated[
+    Any,
+    Field(
+        description="Number of concurrent requests to maintain. Pass a "
+        "comma-separated list (e.g. `--concurrency 10,20,30`) to sweep over "
+        "multiple concurrencies; the converter promotes the list to a sweep "
+        "before AIPerfConfig validation.",
+    ),
+    BeforeValidator(parse_int_or_int_list),
+    CLIParameter(name=("--concurrency",), group=Groups.LOAD_GENERATOR),
+] = None
 ```
 
-ParamType subclasses are responsible for *input shape* only - never
-domain validation. AIPerfConfig owns the validation.
-
-**4. Section-level assembly.** Cross-flag transforms (warmup conditional,
-GPU-telemetry fan-out, magic-list -> `sweep:` promotion) live in
-`src/aiperf/cli/assemble/<section>.py`. Each section assembler consumes
-the flat kwargs dict from `cli/loader.py:layer_inputs` and returns an
-AIPerfConfig-shaped dict slice:
+The converter (`aiperf.config.flags.converter`) is the only module outside
+`cli_commands/` allowed to read `CLIConfig`. It composes seven
+section-builders (`_converter_endpoint`, `_converter_profiling`,
+`_converter_warmup`, `_converter_dataset`, `_converter_runtime`,
+`_converter_telemetry`, `_converter_optionals`) into a nested dict, then
+validates it through `AIPerfConfig`. Each builder carries a small
+`(output_key, cli_attr)` route table; add a row so your flag reaches its
+destination. `--concurrency`'s route already lives in `_converter_profiling`:
 
 ```python
-# src/aiperf/cli/assemble/_endpoint.py
-def assemble_endpoint(flat: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    if (algo := flat.get("request_compression")) is not None:
-        out["request_compression"] = algo
-    if urls := flat.get("urls"):
-        out["urls"] = urls if isinstance(urls, list) else [urls]
-    return out
+# src/aiperf/config/flags/_converter_profiling.py
+_PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
+    ("concurrency", "concurrency"),  # (AIPerfConfig key, CLIConfig attr)
+    ("prefill_concurrency", "prefill_concurrency"),
+    ...
+)
 ```
 
-**Adding a flag to a non-spec-bearing command** (`aiperf plugins`,
-`aiperf kube preflight`, etc.) follows the regular cyclopts
-`Parameter(...)` pattern shown above. The `cli/spec.py:FLAGS` table is
-exclusive to the five migrated commands.
+Flags that promote a comma-separated list into a `sweep:` block (magic-list
+promotion) must also be listed in `MAGIC_LIST_FIELDS`
+(`src/aiperf/config/sweep/expand.py`).
 
-### Cyclopts-style multi-value flags (`eat_all=True`)
+**4. Regenerate the docs.** `docs/cli-options.md` is produced by
+`tools/generate_cli_docs.py`, which introspects the cyclopts app and reads the
+`Field(description=...)` behind each `CLIParameter`. Run `make
+generate-cli-docs` (a pre-commit hook regenerates it and fails the commit on
+drift).
 
-Click's stock `multiple=True` accepts repeated occurrences (`--flag a --flag b`)
-but rejects multiple values in a single occurrence (`--flag a b`). Cyclopts
-accepted both, and several aiperf flags rely on the second form (chaos suite,
-historical scripts, tutorials). For parity, set `eat_all=True` instead of
-`multiple=True` and pair with a ParamType that accepts a tuple/list:
+**Adding a flag to a utility command** (`aiperf plugins`, `aiperf kube
+preflight`, …) follows the plain cyclopts `Parameter(...)` pattern shown
+above — those commands do not route through `CLIConfig`.
 
-```python
-# src/aiperf/cli/spec.py
-CLIFlag(
-    names=("--server-metrics",),
-    kwarg="server_metrics",
-    type=ServerMetricsFlags(),
-    group=Group.SERVER_METRICS,
-    help=(...),
-    eat_all=True,   # accepts `--server-metrics URL_A URL_B` single occurrence
-),
-```
+### Multi-value flags
 
-`MultiValueOption` (the click.Option subclass enabled by `eat_all=True`,
-defined in `src/aiperf/cli/click_apps.py`) hooks the option parser to consume
-every following non-option token as one occurrence. The collected tuple flows
-through to the registered ParamType's `convert` as a single call - so the
-ParamType must accept tuples/lists, not just strings.
+cyclopts natively accepts both repeated occurrences (`--url a --url b`) and,
+for `list`-typed fields, multiple values in a single occurrence. For flags
+that also accept a comma-separated string (`--concurrency 10,20,30`,
+`--header k1:v1,k2:v2`), attach a `BeforeValidator` from
+`aiperf.config.loader.parsing` — `parse_str_or_list`, `parse_int_or_int_list`,
+`parse_float_or_float_list`, or `parse_str_or_dict_as_tuple_list` — which
+normalizes the raw token(s) into the field's list shape before validation.
+The `BeforeValidator` owns *input shape* only; `AIPerfConfig` owns validation.
 
-Three companion ParamTypes in `cli/spec.py` cover the common shapes:
+### Precedence: only user-set flags override YAML
 
-- **`_StringList`** - returns `tuple[str, ...]`. Used for `--header`,
-  `--extra-inputs`, `--search-space`, `--search-sla` (raw token lists feeding
-  downstream parsers like `parse_str_or_dict_as_tuple_list`).
-- **`_ListEnumChoice`** - subclasses `_HyphenTolerantChoice` (and therefore
-  `click.Choice`) so the doc generator and `--help` renderer auto-list per-token
-  choices. Validates each token against the inner enum. Used for
-  `--server-metrics-formats`.
-- **Custom polymorphic types** like `GpuTelemetryFlags` and `ServerMetricsFlags`
-  that classify tokens by shape (e.g. `pynvml` vs `dashboard` vs URL vs `.csv`).
+With both a YAML config and CLI flags (`aiperf profile -f base.yaml
+--streaming`), the YAML is the base and only *explicitly set* CLI flags
+overlay on top. `build_cli_overrides` (`src/aiperf/config/flags/resolver.py`)
+keys off each nested model's `model_fields_set`, so a flag the user did not
+pass — even a slash-bool that defaults to `False` — is left out of the
+override dict and YAML's value survives.
 
-`eat_all` and `multiple` are mutually exclusive (`CLIFlag.__post_init__`
-enforces this) - eat-all single-occurrence multi-value subsumes the repeated
-form for our purposes.
-
-### Slash-flag bool defaults must not overshadow YAML
-
-Click's stock default for a `--x/--no-x` slash-flag is `False`, which lands in
-the flat-kwargs dict whether or not the user passed the flag. In the
-defaults / yaml / env / cli-kwargs precedence layering (`cli/loader.py:
-layer_inputs`), this stock False would silently overwrite a YAML envelope's
-`streaming: true` (and every other slash-bool field) when the user didn't
-pass the flag on argv.
-
-`_build_option` therefore sets the slash-bool default to `None` (rather than
-letting click default to False), so the upstream filter in
-`cli/_callback_helpers.py:flat_to_aiperf_config` (which strips `None` and
-`()`) drops the flag entirely from the cli-kwargs layer when the user didn't
-say. YAML's value survives layering, and explicit `--x` / `--no-x` still wins.
-
-The corollary for guards: `_has(flat, key)` is unsafe for slash-bool kwargs
-because the key may have ridden through the filter as `False` from a non-default
-path (or even `True` from YAML). Use a value-aware predicate (see
-`_is_user_active` in `cli/assemble/dataset.py` for the
-`tokenizer_trust_remote_code` guard pattern).
+The corollary for guards: never gate on a slash-bool's *value* (a defaulted
+`False` is indistinguishable from an unset one, and YAML may have set it
+`True`). Gate on membership in `cli.model_fields_set` instead — the same test
+the recipe/magic-list rejection logic in `converter.py` uses.
 
 ### Subcommand Groups
 
@@ -344,8 +335,8 @@ service:
 
 **Config types:**
 - `AIPerfConfig` (`aiperf.config.config`): the YAML/v2 envelope - the single
-  validation gate. Spec-bearing CLI flags resolve onto fields here through
-  `cli/spec.py:FLAGS` + `cli/assemble/`.
+  validation gate. CLI flags resolve onto fields here through the flat
+  `CLIConfig` DTO + `aiperf.config.flags.converter`.
 - `BenchmarkConfig` (`aiperf.config`): the resolved, validated benchmark
   spec body inside `AIPerfConfig.benchmark` (endpoint, datasets, phases,
   runtime, artifacts).
@@ -457,16 +448,20 @@ Named, plugin-registered presets that bundle a search space + objective +
 optional SLA constraints + optional post-process step into a single
 `--search-recipe <name>` CLI selector. Recipes implement the
 `SearchRecipe` Protocol in `aiperf.search_recipes._base` and expand to a
-populated `AdaptiveSearchSweep` (BO) or `sweep_variables` dict (grid) in
-`cli/assemble/`; the recipe NAME never reaches `AIPerfConfig`.
+populated `AdaptiveSearchSweep` (BO) or `sweep_variables` dict (grid) in the
+converter (`aiperf.config.flags.converter` + `_converter_optionals`); the
+recipe NAME never reaches `AIPerfConfig`.
 
 ```python
 # src/my_pkg/recipes.py
 from typing import ClassVar
 
 from aiperf.common.enums import OptimizationDirection
-from aiperf.config.adaptive_search import SearchSpaceDimension
-from aiperf.config.sweep import AdaptiveObjective, AdaptiveSearchSweep
+from aiperf.config.sweep import (
+    AdaptiveObjective,
+    AdaptiveSearchSweep,
+    SearchSpaceDimension,
+)
 from aiperf.search_recipes._base import (
     SearchRecipe,
     SearchRecipeContext,
