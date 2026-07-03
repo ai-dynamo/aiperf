@@ -202,7 +202,7 @@ def _describe_user_centric(phase: object) -> str:
 
 def _describe_rate_phase(phase: object) -> str:
     """Rate phases (poisson, gamma, constant) - render by attribute presence."""
-    rate = getattr(phase, "request_rate", None)
+    rate = getattr(phase, "rate", None)
     concurrency = getattr(phase, "concurrency", None)
     parts: list[str] = []
     if concurrency is not None:

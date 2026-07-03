@@ -322,7 +322,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             getattr(head_phase, "concurrency", None)
         ).encode("utf-8")
 
-        request_rate = getattr(head_phase, "request_rate", None)
+        request_rate = getattr(head_phase, "rate", None)
         if request_rate is not None:
             metadata[b"aiperf.request_rate"] = str(request_rate).encode("utf-8")
 

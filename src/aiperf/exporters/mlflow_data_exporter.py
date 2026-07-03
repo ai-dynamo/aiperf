@@ -369,8 +369,8 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             params["timing.mode"] = str(phase.type)
             if getattr(phase, "concurrency", None) is not None:
                 params["loadgen.concurrency"] = str(phase.concurrency)
-            if getattr(phase, "request_rate", None) is not None:
-                params["loadgen.request_rate"] = str(phase.request_rate)
+            if getattr(phase, "rate", None) is not None:
+                params["loadgen.request_rate"] = str(phase.rate)
             if phase.requests is not None:
                 params["loadgen.request_count"] = str(phase.requests)
             if phase.duration is not None:
