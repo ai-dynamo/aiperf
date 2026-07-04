@@ -427,7 +427,7 @@ A hardened rollout checklist:
    chart with `rbac.create=false` and `serviceAccount.create=false`.
 2. **Dedicated benchmark namespace per team** — never share the benchmark
    namespace between teams. Benchmark pods have read access to every pod
-   in the namespace (`benchmark-rbac.yaml:17-19`), so coexisting unrelated
+   in the namespace (`benchmark-rbac.yaml:22-24`), so coexisting unrelated
    workloads leak metadata.
 3. **Distinct ServiceAccounts per namespace** — the benchmark `RoleBinding`
    targets `default`. If multiple apps must coexist, rename the benchmark

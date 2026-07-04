@@ -46,11 +46,9 @@ For CI pipelines or AI agents, use NDJSON output (one JSON object per line per r
 aiperf kube watch --output json
 ```
 
-Include live log lines in the JSON stream:
-
-```bash
-aiperf kube watch --output json --follow-logs
-```
+To tail live log lines alongside the watch, run `aiperf kube logs --follow`
+in a separate terminal — `watch --follow-logs` is reserved for future use and
+currently fails fast.
 
 ### Adjust Refresh Rate
 
