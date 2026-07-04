@@ -61,18 +61,18 @@ The Dataset Manager handles all aspects of input data management during benchmar
 The Timing Manager controls and coordinates the timing of requests during benchmarking runs through a credit-based system.
 
 **Key Responsibilities:**
-- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, or user-centric rate)
+- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, adaptive-scale, or user-centric rate)
 - Managing precise timing to accurately reproduce real-world or synthetic load patterns
 - Supporting advanced timing scenarios, such as replaying traces with specific inter-arrival times or simulating bursty traffic
 - Ensuring that requests are dispatched to workers at the correct intervals for reliable measurement
 
 ### Worker Manager
 
-The Worker Manager monitors the health and status of worker processes during benchmarking. Workers are spawned directly by the System Controller as part of required services.
+The Worker Manager monitors the health and status of worker processes during benchmarking. Workers are spawned group-local by the `WorkerGroupManager`, not by the System Controller — the controller's required services are the Dataset Manager, Timing Manager, Records Manager, and Worker Group Manager.
 
 **Key Responsibilities:**
 - Monitoring worker status, progress, and resource usage via `WorkerHealthMessage`
-- Tracking worker health states (HEALTHY, ERROR, HIGH_LOAD, IDLE, STALE)
+- Tracking worker health states (HEALTHY, HIGH_LOAD, ERROR, IDLE, STALE)
 - Publishing worker status summaries to the message bus for the UI dashboard
 - Reporting per-worker process stats at profile completion
 
@@ -97,7 +97,7 @@ The Record Processor processes and interprets the responses received from the in
 
 **Key Responsibilities:**
 - Parsing raw inference results to extract relevant metrics (latency, output tokens, correctness)
-- Handling different response formats from various model endpoints (OpenAI, vLLM, Triton, custom APIs)
+- Handling different response formats from various model endpoints (OpenAI-compatible APIs, Cohere, Hugging Face, and other custom APIs)
 - Validating and normalizing results to ensure consistency across benchmarking runs
 - Computing metrics derived from individual requests (TTFT, ITL, Request Latency, Request Throughput etc.)
 - Supporting error detection and handling for malformed or unexpected responses
@@ -119,9 +119,10 @@ The Records Manager handles the collection, organization, and storage of benchma
 The GPU Telemetry Manager collects GPU metrics during benchmarking runs via pluggable collectors.
 
 **Key Responsibilities:**
-- Collecting GPU metrics (power, utilization, memory, temperature, errors) via two collector backends:
+- Collecting GPU metrics (power, utilization, memory, temperature, errors) via three collector backends:
   - **DCGM**: Scrapes DCGM Exporter HTTP endpoints (Prometheus format)
   - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required)
+  - **AMDSMI**: Queries AMD GPUs directly via the amdsmi Python library shipped with ROCm
 - Auto-discovering DCGM endpoints
 - Supporting custom endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
@@ -143,7 +144,7 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 
 The `AIPerfSweep` CRD owns child `AIPerfJob` CRs via `ownerReferences` to orchestrate parameter sweeps, multi-run confidence trials, and adaptive convergence on a Kubernetes cluster. The orchestration loop runs in a dedicated **sweep-controller pod** (created by the kopf operator from a JobSet manifest), not in the operator itself; this keeps kopf as a thin reconciler. The sweep-controller uses `kubernetes_asyncio` to create child `AIPerfJob`s deterministically named per `(variation, trial)`, watches each to terminal phase, pulls per-child summary metrics from the operator's results-server, and runs `aggregate_and_export` over the cumulative `RunResult` list. Idempotency is anchored on the apiserver — deterministic child names plus owner references — so a sweep-controller pod restart resumes from the first non-existent child without re-running terminal ones. See [docs/kubernetes/sweeps.md](kubernetes/sweeps.md) for usage.
 
-**Adaptive outer loop (BO).** When `--search-space` is set, `MultiRunOrchestrator.execute` dispatches to `execute_adaptive_search`, which drives a pluggable `SearchPlanner` (currently `BayesianSearchPlanner` backed by `skopt`). Each iteration the planner proposes a `BenchmarkConfig` materialized as a synthesized `SweepVariation`, the orchestrator runs `plan.trials` benchmarks at it via the same `_run_independent_cell` used by grid mode, and feeds results back. A separate `search_history.json` is written incrementally next to `sweep_aggregate/`; the existing post-hoc aggregator handles BO results unchanged because `aggregate_sweep_and_export` groups by the stamped `variation_values`. BO runs both in-process (`aiperf profile --search-*`) and cluster-side via `AIPerfSweep` CRs whose `spec.sweep` block uses `type: adaptive_search` — `sweep_controller/main.py` instantiates the same `BayesianSearchPlanner` and the K8s executor creates one `AIPerfJob` per iteration; the kopf operator side stays BO-agnostic. See [docs/sweeping/bayesian-optimization.md](sweeping/bayesian-optimization.md) and [docs/kubernetes/sweeps.md](kubernetes/sweeps.md#adaptive-search-bayesian-optimization).
+**Adaptive outer loop (BO).** When `--search-space` is set, `MultiRunOrchestrator.execute` dispatches to `execute_adaptive_search`, which drives a pluggable `SearchPlanner` (default `BayesianSearchPlanner`, a curated preset that subclasses `OptunaSearchPlanner` — BoTorch with an Optuna TPE fallback). Each iteration the planner proposes a `BenchmarkConfig` materialized as a synthesized `SweepVariation`, the orchestrator runs `plan.trials` benchmarks at it via the same `_run_independent_cell` used by grid mode, and feeds results back. A separate `search_history.json` is written incrementally next to `sweep_aggregate/`; the existing post-hoc aggregator handles BO results unchanged because `aggregate_sweep_and_export` groups by the stamped `variation_values`. BO runs both in-process (`aiperf profile --search-*`) and cluster-side via `AIPerfSweep` CRs whose `spec.sweep` block uses `type: adaptive_search` — `sweep_controller/main.py` instantiates the same `BayesianSearchPlanner` and the K8s executor creates one `AIPerfJob` per iteration; the kopf operator side stays BO-agnostic. See [docs/sweeping/bayesian-optimization.md](sweeping/bayesian-optimization.md) and [docs/kubernetes/sweeps.md](kubernetes/sweeps.md#adaptive-search-bayesian-optimization).
 
 ### Envelope vs Benchmark Body
 
@@ -182,6 +183,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - The Timing Manager issues credits according to the configured timing mode:
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
   - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
+  - **Adaptive-scale mode**: Single-run controller that discovers and sustains an SLA boundary by adjusting load
   - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
 
 **Flow Control Benefits:**
@@ -220,7 +222,7 @@ This section describes the end-to-end message flow during a benchmark run, showi
 5. Workers push raw results to Record Processors
 6. Record Processors push metric records to Records Manager via a dedicated msgspec MessagePack wire payload on the records PUSH/PULL channel
 7. Records Manager aggregates request metrics and publishes `ProcessRecordsResultMessage` to the System Controller
-8. GPU Telemetry Manager and Server Metrics Manager accumulate their own collector records in-process and publish `ProcessTelemetryResultMessage` / `ProcessServerMetricsResultMessage` directly to the System Controller on `PROFILE_COMPLETE` — these side-channel result streams never flow through Records Manager
+8. GPU Telemetry Manager PUSHes its collector records (`TelemetryRecordsMessage`) to the Records Manager on `CommAddress.RECORDS`; the Records Manager accumulates them and is the sole publisher of `ProcessTelemetryResultMessage` to the System Controller. Server Metrics Manager, by contrast, accumulates its collector records in-process and publishes `ProcessServerMetricsResultMessage` directly to the System Controller — server metrics is the only true in-process side-channel that bypasses the Records Manager
 
 ## Communication Architecture
 

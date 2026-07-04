@@ -70,17 +70,20 @@ CLI commands defined in `src/aiperf/cli_commands/kube/`:
 | Command | Purpose |
 |---------|---------|
 | `init` | Generate a starter configuration template |
-| `validate` | Validate AIPerfJob YAML files against the CRD schema |
+| `validate` | Validate AIPerfJob and AIPerfSweep YAML files against the CRD schema |
 | `profile` | Run a benchmark in Kubernetes |
+| `sweep` | Run a parameter sweep or multi-run benchmark in Kubernetes |
 | `generate` | Generate Kubernetes YAML manifests |
 | `attach` | Attach to a running benchmark and stream progress |
 | `list` | List benchmark jobs and their status |
 | `logs` | Retrieve logs from benchmark pods |
 | `results` | Retrieve benchmark results |
+| `show` | Render an AIPerfJob CR with Jinja2/env-vars resolved |
 | `debug` | Run diagnostic analysis on a deployment |
 | `watch` | Watch a running benchmark with live status and diagnostics |
 | `preflight` | Run pre-flight checks against the target cluster |
 | `dashboard` | Open the operator results server UI in your browser |
+| `index` | Manage the operator's runs/sweep_variations SQLite index |
 
 ## 2. Deployment Generation
 
@@ -328,7 +331,7 @@ DatasetManager                      API Service                    WorkerGroupMa
 | `run_service()` | No-op (pods created by JobSet) |
 | `stop_service()` | No-op (JobSet manages lifecycle) |
 | `wait_for_all_services_registration()` | Waits for ZMQ registration |
-| `wait_for_all_services_start()` | Waits for RUNNING state |
+| `wait_for_api_subprocess()` | Blocks until the API subprocess exits (no-op when the API runs as its own container) |
 
 ## 7. Results Collection
 
@@ -349,7 +352,7 @@ DatasetManager                      API Service                    WorkerGroupMa
 
 In operator mode, results are served by the `results-server` container inside the operator deployment (port 8081), which reads from the operator PVC. In direct mode (no operator) or when the operator PVC is unavailable, results can be copied from the controller pod's `results-sidecar` or via `kubectl cp`.
 
-The same `results-server` container also hosts every `/api/v1/*` router for the operator (jobs, sweeps, results, config, admin, analytics, dashboard_proxy) — there is no separate FastAPI app in the operator container, which only runs kopf (`/healthz` + `/metrics` on port 8080). The sweep-controller's empty-summary fallback (`K8sChildJobExecutor._fetch_summary_from_operator`) targets this container too via `AIPERF_OPERATOR_BASE_URL` (default `http://aiperf-operator.aiperf-system:8081`); it does not point at the operator container's port 8080.
+The same `results-server` container also hosts every `/api/v1/*` router for the operator (jobs, sweeps, results, config, admin, analytics, dashboard_proxy) — there is no separate FastAPI app in the operator container, which only runs kopf (`/healthz` on port 8080 and the Prometheus `/metrics` endpoint on port 9090). The sweep-controller's empty-summary fallback (`K8sChildJobExecutor._fetch_summary_from_operator`) targets this container too via `AIPERF_OPERATOR_BASE_URL` (default `http://aiperf-operator.aiperf-system:8081`); it does not point at the operator container's port 8080.
 
 ### Retrieval Methods
 
@@ -398,7 +401,7 @@ automatically; no URL rewrites needed.
 | `GET /api/v1/results/<ns>/<name>/runs/<epoch>.zip` | Zip bundle of a historical run |
 | `GET /api/v1/results/<ns>/<name>/runs/<epoch>/<filename>` | Download one file from a historical run |
 
-`<epoch>` is validated against `^\d{9,11}$|^legacy$` before any disk access.
+`<epoch>` is validated against `EPOCH_RE` (`^\d{9,20}$`, in `src/aiperf/operator/results_layout.py`) before any disk access.
 
 ### Edge cases
 
@@ -491,26 +494,31 @@ Resource limits configured via `src/aiperf/kubernetes/environment.py`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | 500m | System controller container CPU (request and limit) |
-| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | 2Gi | Dataset manager container memory (request and limit) |
-| `AIPERF_K8S_WORKER_POD_CPU` | 4000m | Worker pod CPU (request and limit) |
-| `AIPERF_K8S_WORKER_POD_MEMORY` | 12Gi | Worker pod memory (request and limit) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | 75m | System controller container CPU (request and limit) |
+| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | 256Mi | Dataset manager container memory (request and limit) |
+| `AIPERF_K8S_WORKER_POD_CPU` | 150m | Worker pod CPU (request and limit) |
+| `AIPERF_K8S_WORKER_POD_MEMORY` | 4Gi | Worker pod memory (request and limit) |
 | `AIPERF_K8S_PORT_API_SERVICE` | 9090 | API service port |
 | `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` | 300 | TTL after completion |
 
 ### AIPerfSweep handlers
 
-The kopf operator gains three handlers in `src/aiperf/operator/main.py` for the parent `AIPerfSweep` CRD:
+The kopf operator registers sweep-lifecycle handlers in `src/aiperf/operator/main.py`. Five are on the parent `AIPerfSweep` CRD; one more watches child `AIPerfJob`s to roll their status up into the parent:
 
 - `@kopf.on.create AIPerfSweep` (handler in `handlers/sweep/create.py`) — validates spec via `AIPerfSweepSpec.model_validate`, computes `totalVariations`/`maxTotalRuns`, sets `status.runEpoch` from `metadata.creationTimestamp`, provisions a namespace-scoped ServiceAccount/Role/RoleBinding for the sweep-controller pod, and creates a single-replica JobSet that runs `python -m aiperf.sweep_controller.main`.
 - `@kopf.on.update AIPerfSweep field=spec.cancel` (handler in `handlers/sweep/lifecycle.py`) — mirrors the cancel signal into `status.conditions[Cancelling]`. The sweep-controller pod observes `spec.cancel` directly via its own poll and propagates it to the current child.
-- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, recomputes the parent's `completedRuns`/`failedRuns`/`lastChildEvent`. When all children are terminal, transitions parent to `Aggregating`; the sweep-controller's aggregation step then flips it to `Succeeded` or `PartiallyFailed`. Standalone AIPerfJobs are no-ops.
+- `@kopf.on.field AIPerfSweep field=status.aggregation.phase new=Complete` — triggers `handlers/sweep/_aggregate_fetch.fetch_sweep_aggregate_to_disk` to pull the cross-variation aggregate off the sweep-controller's `emptyDir` results-sidecar before the JobSet is reaped.
+- `@kopf.on.delete AIPerfSweep` — cooperative teardown of the sweep-controller JobSet and RBAC.
+- `@kopf.timer` `cleanup_old_sweeps` — TTL reaper for terminal `AIPerfSweep`s.
+- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — this one is on **child AIPerfJobs**, not the AIPerfSweep CRD: for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, it recomputes the parent's `runStates`/`currentChildRef`/`lastChildEvent`. Standalone AIPerfJobs are no-ops.
 
 ## CRD Generator
 
 Both CRDs (`aiperfjobs.aiperf.nvidia.com`, `aiperfsweeps.aiperf.nvidia.com`)
-are auto-generated from the `AIPerfConfig` and `AIPerfSweepSpec` Pydantic
-models by `tools/generate_crd.py`. **Never edit the rendered YAML in
+are auto-generated by `tools/generate_crd.py` from the `AIPerfJobSpec` and
+`AIPerfSweepSpec` Pydantic models (`src/aiperf/operator/models.py`);
+`AIPerfConfig` is only the embedded `spec.benchmark` sub-tree, not the CRD
+root. **Never edit the rendered YAML in
 `deploy/helm/aiperf-operator/templates/crd*.yaml` directly** — the next
 regeneration overwrites it.
 
@@ -533,10 +541,14 @@ regeneration overwrites it.
    (`_walk_dict_apply`) calls every decorator on every dict node, so the
    same set of CEL rules fires on both AIPerfJob's `spec.benchmark` and
    AIPerfSweep's `spec.benchmark` from a single pass.
-4. **Path-targeted attachment** — sweep-specific rules that should fire on
-   AIPerfSweep but **not** AIPerfJob (e.g. forbidding `sweep`/`multiRun` in
-   the per-child benchmark) are attached by explicit path traversal in
-   `build_aiperfsweep_crd` after the walker runs.
+4. **Kind-specific attachment** — sweep-only rules are added in
+   `_build_aiperfsweep_crd_from_schema` by direct property indexing after the
+   walker runs: `has(self.sweep)` makes the sweep block required on AIPerfSweep
+   (the inverse `!has(self.sweep)` fires on AIPerfJob), plus `oldSelf == self`
+   immutability on `spec.sweep` / `spec.multiRun`. The old Tier-1D rule that
+   forbade `sweep`/`multi_run` inside the per-child benchmark was removed —
+   `AIPerfJobSpec.benchmark` is typed as `BenchmarkConfig` (no such fields), so
+   the generated structural schema enforces it at the apiserver without CEL.
 
 ### Adding a CEL rule
 
