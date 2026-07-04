@@ -8,7 +8,7 @@ sidebar-title: Results Server API Reference
 
 The AIPerf operator ships a standalone HTTP server (the **results server**) as a sidecar inside the operator pod. It exposes a catalog of `/api/v1/...` endpoints for listing jobs, downloading raw result files, querying DuckDB-backed analytics, and introspecting live AIPerfJob state.
 
-This reference documents every endpoint served by that process. The source of truth is `src/aiperf/operator/results_server.py` and the routers under `src/aiperf/operator/routers/`.
+This reference documents the primary endpoints served by that process; it is not exhaustive. The results server also mounts a **sweeps** router (`/api/v1/sweeps/...` — list, detail, cells, children, epochs, events, logs, artifacts), a **config** router (`/api/v1/config/retention`, `/api/v1/config/features`), additional per-job routes (`/api/v1/jobs/{ns}/{name}/epochs|events|logs`, zip and per-epoch result downloads), and an admin `run/{ns}/{job_id}` index-row route. The source of truth is `src/aiperf/operator/results_server.py` and the routers under `src/aiperf/operator/routers/`.
 
 ---
 
@@ -68,9 +68,9 @@ The sidecar reads result files from the shared PVC and queries the Kubernetes AP
 | GET | `/api/v1/analytics/summary/{namespace}/{job_id}` | results-analytics | Full aggregated summary |
 | GET | `/api/v1/index` | results-analytics | Fast job index |
 | GET | `/admin/index/stats` | admin | Runs-index row counts, DB size, and schema version |
-| POST | `/admin/index/rebuild` | admin | Rebuild the runs index from disk (mutating route; bearer token required when enabled) |
+| POST | `/admin/index/rebuild` | admin | Rebuild the runs index from disk — **disabled on the results-server** (mounted `allow_rebuild=False`), returns `503`; the index rebuilds automatically at operator startup |
 | GET | `/api/v1/config/{namespace}/{job_id}` | results-analytics | Original CR spec/config |
-| GET | `/dashboard/` | dashboard (WSGI) | Plotly Dash app (returns `503` until the first run lands on the PVC) |
+| GET | `/dashboard/` | dashboard-proxy | httpx reverse-proxy to the optional Plotly Dash sidecar (returns `503` when the sidecar is disabled or unreachable) |
 
 ---
 
@@ -203,11 +203,23 @@ curl http://localhost:8081/api/v1/cluster
 {
   "nodes": 12,
   "gpus": 96,
-  "kubernetes_version": "v1.29.4"
+  "gpus_used": 40,
+  "gpus_free": 56,
+  "utilization_percent": 41.7,
+  "gpu_nodes": 8,
+  "nodes_free": 4,
+  "nodes_partial": 3,
+  "nodes_full": 1,
+  "kubernetes_version": "v1.29.4",
+  "cluster_name": "dgx-prod"
 }
 ```
 
-Both the node list and version query are best-effort: if RBAC is insufficient or the call fails, `kubernetes_version` is reported as `"unknown"` and `nodes`/`gpus` fall back to `0`. The endpoint does not surface errors for these sub-queries.
+`ClusterResponse` (`operator/routers/jobs_models.py`) carries the full GPU
+accounting (`gpus_used`/`gpus_free`/`utilization_percent`), GPU-node breakdown
+(`gpu_nodes`, `nodes_free`/`nodes_partial`/`nodes_full`), and an optional
+`cluster_name` in addition to the basic `nodes`/`gpus`/`kubernetes_version`.
+Both the node list and version query are best-effort: if RBAC is insufficient or the call fails, `kubernetes_version` is reported as `"unknown"` and counts fall back to `0`. The endpoint does not surface errors for these sub-queries.
 
 ### `WS /api/v1/jobs/{namespace}/{name}/ws`
 
@@ -480,7 +492,7 @@ curl http://localhost:8081/api/v1/analytics/summary/aiperf-benchmarks/aiperf-ben
 
 ### `GET /api/v1/index`
 
-Return the full job index used for fast lookups (backed by `aiperf.operator.job_index`). The shape is an opaque dict consumed by the dashboard.
+Return the full job index used for fast lookups, keyed by `<namespace>/<job_id>`. It is backed by the runs-index SQLite store via `get_db().index_entries()` (`operator/results_db.py` / `operator/runs_index.py`) — there is no `aiperf.operator.job_index` module. The shape is a dict of index rows consumed by the dashboard.
 
 ```bash
 curl http://localhost:8081/api/v1/index
@@ -488,11 +500,14 @@ curl http://localhost:8081/api/v1/index
 
 ### `GET /api/v1/config/{namespace}/{job_id}`
 
-Return the original CR spec/config used to run a job. The server tries three sources in order and records which one it used:
+Return the original CR spec/config used to run a job. The server tries four sources in order (first hit wins) and records which one it used:
 
-1. **Index** (`source: "index"`) — fast path, served from the in-memory job index.
+1. **Index** (`source: "index"`) — fast path, served from the runs-index SQLite cache.
 2. **Standalone spec file** (`source: "file"`) — `<base>/<namespace>/<job_id>/job_spec.json` on the PVC.
 3. **Summary extraction** (`source: "summary"`) — pulls `input_config` out of the aggregated summary if the spec wasn't persisted separately.
+4. **Live CR** (`source: "cr"`) — fetches `spec` from the apiserver, covering running jobs whose artifacts haven't been persisted yet.
+
+Accepts an optional `?epoch=` query param (default: follow latest).
 
 ```bash
 curl http://localhost:8081/api/v1/config/aiperf-benchmarks/aiperf-bench-7f2a
@@ -512,7 +527,7 @@ curl http://localhost:8081/api/v1/config/aiperf-benchmarks/aiperf-bench-7f2a
 
 **Status codes**
 
-- `200` — config found via one of the three sources
+- `200` — config found via one of the four sources
 - `404` — none of the sources had data for that `namespace/job_id`
 
 ---
@@ -521,9 +536,9 @@ curl http://localhost:8081/api/v1/config/aiperf-benchmarks/aiperf-bench-7f2a
 
 Read-only results-server routes do not authenticate individual HTTP requests. Mutating routes are disabled by default and require an explicit bearer token when enabled.
 
-- **Mutating-route gate.** `POST /api/v1/jobs`, `POST /api/v1/jobs/{namespace}/{name}/cancel`, and `POST /admin/index/rebuild` return `403` unless `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED=true` is set on the results-server. When enabled, `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` must also be set and callers must send `Authorization: Bearer <token>`. Missing or invalid credentials return `401`.
-- **Helm configuration.** In chart installs, set `resultsServer.mutatingRoutes.enabled=true` and point `resultsServer.mutatingRoutes.tokenSecretName` / `tokenSecretKey` at a Secret key containing the bearer token. The chart maps those values to `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` in the results-server container.
-- **First-party callers.** `aiperf kube index rebuild` reads `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` from the caller's environment and sends it as `Authorization: Bearer <token>`; missing or wrong tokens produce an actionable auth error without printing the token. The browser dashboard does not receive this secret and keeps create/cancel controls read-only/disabled; use `aiperf kube` or `kubectl` for those operations.
+- **Mutating-route gate.** `POST /api/v1/jobs` and `POST /api/v1/jobs/{namespace}/{name}/cancel` return `403` unless `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED=true` is set on the results-server. When enabled, `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` must also be set and callers must send `Authorization: Bearer <token>`; missing or invalid credentials return `401`. Note that `POST /admin/index/rebuild` is separately **disabled** on the results-server (`allow_rebuild=False`) and returns `503` regardless of the token — the index is rebuilt automatically at operator startup.
+- **Helm configuration.** The bundled chart does **not** template these variables — there is no `resultsServer.mutatingRoutes` value and no token-secret projection. Set `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` directly on the `results-server` container (e.g. via a deployment patch or a customized chart template).
+- **First-party callers.** `aiperf kube index rebuild` reads `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` from the caller's environment and sends it as `Authorization: Bearer <token>`; missing or wrong tokens produce an actionable auth error without printing the token. (Because the rebuild route is disabled on the results-server, this call currently returns `503`.) The browser dashboard does not receive this secret and keeps create/cancel controls read-only/disabled; use `aiperf kube` or `kubectl` for those operations.
 - **In-cluster RBAC.** The sidecar uses its ServiceAccount token to call the Kubernetes API. Every `/api/v1/jobs/*` and `/api/v1/cluster` call runs with those permissions, so `list aiperfjobs`, `get pods`, `patch aiperfjobs/spec`, and `list nodes` must be granted in the operator's ClusterRole. RBAC failures surface as `401` / `403` propagated from `kubernetes_asyncio`.
 - **Network isolation.** The Service is typically `ClusterIP` only. External access is expected to come via `kubectl port-forward` (trusted user), `aiperf kube dashboard` (trusted user), or an ingress controller. Add a `NetworkPolicy` if your cluster requires stricter pod-to-pod controls.
 - **Path traversal.** File-serving endpoints resolve every `{namespace}/{job_id}/{filename}` under the results directory and reject resolved paths that escape the base (`404`). Callers cannot read files outside the PVC.

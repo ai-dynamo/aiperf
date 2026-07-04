@@ -414,13 +414,42 @@ Then open [http://localhost:8081](http://localhost:8081) in your browser.
 - **Dashboard Tab** -- Overview with KPI cards, active jobs count, and throughput trends across all jobs
 - **Jobs Tab** -- Sortable table of all benchmark jobs with phase filters (Running, Completed, Failed)
 - **Job Detail Page** -- Live metrics, charts, phase progress bar, and pod status for a single job
+- **Sweeps Tab** -- Table of AIPerfSweeps with per-sweep drill-down (variation curves, Pareto, children)
+- **Launch Tab** -- Read-only YAML helper for scaffolding a manifest (copy-only; browser submission is disabled)
 - **Leaderboard Tab** -- Rank benchmark runs by any metric (throughput, latency percentiles, etc.)
 - **Compare Tab** -- Side-by-side comparison of multiple jobs to identify performance differences
 - **History Tab** -- Time-series charts showing how metrics evolve across all your benchmark runs
 
+See [Web Dashboard](dashboard-ui.md) for the full page-by-page reference.
+
 ### Quick Navigation
 
 Use **Ctrl+K** to open the command palette and quickly jump to any job or page. Search by job name or view recent benchmarks.
+
+---
+
+## Operator Prometheus Metrics
+
+The kopf operator container exposes a Prometheus `/metrics` endpoint from an
+in-process daemon thread (`src/aiperf/operator/metrics.py`). The port is
+`AIPERF_METRICS_PORT` (`OperatorEnvironment.METRICS_PORT`, default **9090**; set
+to `0` to disable). This is separate from the results-server on 8081.
+
+```bash
+kubectl port-forward -n aiperf-system deploy/aiperf-operator 9090:9090
+curl http://localhost:9090/metrics
+```
+
+Exposed series:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `aiperf_operator_handler_duration_seconds` | Histogram | `handler` | Wall-clock duration of each instrumented kopf reconcile handler. |
+| `aiperf_operator_handler_total` | Counter | `handler`, `outcome` | Reconcile-handler invocations by outcome (success / error / etc.). |
+| `aiperf_operator_completion_claim_races_total` | Counter | — | Lost `try_claim_completion` races (concurrent ticks contending for the completion claim). |
+
+Only kopf reconcile handlers are instrumented (via the `@track_handler("name")`
+decorator); helper functions are not.
 
 ---
 
