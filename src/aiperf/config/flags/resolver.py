@@ -34,6 +34,7 @@ from aiperf.config.flags._section_fields import (
     OUTPUT_FIELDS,
     SWEEPING_FIELDS,
 )
+from aiperf.config.loader.normalizers import normalize_benchmark_input
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,6 +82,14 @@ def resolve_config(
     from aiperf.config.loader import load_config_dict
 
     yaml_dict = load_config_dict(config_file)
+    # Normalize the benchmark body's shorthand forms (dataset:/flat phases:/
+    # model:) up front: the override walks below (_apply_phase_loadgen_overrides,
+    # promote_benchmark_magic_lists) require the normalized list shapes.
+    # Historically they got them via a side effect — model_validate's
+    # before-normalizer mutated this very dict in place; the normalizers now
+    # operate on copies, so the normalization must be explicit here.
+    if isinstance(yaml_dict.get("benchmark"), dict):
+        yaml_dict["benchmark"] = normalize_benchmark_input(yaml_dict["benchmark"])
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
