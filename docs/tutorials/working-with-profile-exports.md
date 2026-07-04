@@ -6,7 +6,7 @@ sidebar-title: Working with Profile Export Files
 
 # Working with Profile Export Files
 
-This guide demonstrates how to programmatically work with AIPerf benchmark output files using the native Pydantic data models.
+This guide demonstrates how to programmatically work with AIPerf benchmark output files using the native msgspec data models.
 
 ## Overview
 
@@ -19,7 +19,7 @@ AIPerf generates multiple output formats after each benchmark run, each optimize
 
 ## Data Models
 
-AIPerf uses Pydantic models for type-safe parsing and validation of all benchmark output files. These models ensure data integrity and provide IDE autocompletion support.
+AIPerf uses native `msgspec.Struct` types (and frozen dataclasses) for fast, type-safe parsing of all benchmark output files. `MetricRecordInfo` provides a `model_validate_json(...)` classmethod for Pydantic-style JSON loading and a `to_json_bytes()` method for serialization, but the structs are **frozen** — you cannot mutate a loaded record or add arbitrary fields to it.
 
 ### Core Models
 
@@ -36,9 +36,9 @@ from aiperf.common.models import (
 
 | Model | Description | Source |
 |-------|-------------|--------|
-| `MetricRecordInfo` | Complete per-request record including metadata, metrics, and error information | [record_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/record_models.py) |
-| `MetricRecordMetadata` | Request metadata: timestamps, IDs, worker identifiers, and phase information | [record_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/record_models.py) |
-| `MetricValue` | Individual metric value with associated unit of measurement | [record_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/record_models.py) |
+| `MetricRecordInfo` | Complete per-request record including metadata, metrics, and error information (frozen `msgspec.Struct`) | [record_export_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/record_export_models.py) |
+| `MetricRecordMetadata` | Request metadata: timestamps, IDs, worker identifiers, and phase information | [metric_records_wire.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/metric_records_wire.py) |
+| `MetricValue` | Individual metric value with associated unit of measurement (frozen dataclass) | [metric_result_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/metric_result_models.py) |
 | `ErrorDetails` | Error information including HTTP code, error type, and descriptive message | [error_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/error_models.py) |
 | `InputsFile` | Container for all input dataset sessions with formatted payloads for each turn | [dataset_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/dataset_models.py) |
 | `SessionPayloads` | Single conversation session with session ID and list of formatted request payloads | [dataset_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/dataset_models.py) |
@@ -99,7 +99,6 @@ The JSONL output contains one record per line, for each request sent during the 
     "time_to_first_token": {"value": 255.88656799999998, "unit": "ms"},
     "request_latency": {"value": 297.52522799999997, "unit": "ms"},
     "output_token_count": {"value": 9, "unit": "tokens"},
-    "time_to_first_token": {"value": 4.8984369999999995, "unit": "ms"},
     "inter_chunk_latency": {"value": [4.898437, 5.316006, 4.801489, 5.674918, 4.811467, 5.097998, 5.504797, 5.533548], "unit": "ms"},
     "output_sequence_length": {"value": 9, "unit": "tokens"},
     "inter_token_latency": {"value": 5.2048325, "unit": "ms"},
@@ -127,7 +126,7 @@ The JSONL output contains one record per line, for each request sent during the 
 - `cancellation_time_ns`: Epoch time in nanoseconds when the request was cancelled (if applicable).
 
 **Metrics:**
-See the [Complete Metrics Reference](../metrics-reference.md) page for a list of all metrics and their descriptions. Will always be null for failed requests.
+See the [Complete Metrics Reference](../metrics-reference.md) page for a list of all metrics and their descriptions. A failed request carries only the metrics that could still be computed (for example `error_isl`), and the rest are absent — see the failed-request record below.
 
 #### Failed Request Record
 
@@ -179,14 +178,14 @@ Contains the same aggregated statistics as the JSON format, but in a spreadsheet
 
 ## Working with Output Data
 
-AIPerf output files can be parsed using the native Pydantic models for type-safe data handling and analysis.
+AIPerf output files can be parsed using the native msgspec models for type-safe data handling and analysis.
 
 ### Synchronous Loading
 ```python
 from aiperf.common.models import MetricRecordInfo
 
 def load_records(file_path: Path) -> list[MetricRecordInfo]:
-    """Load artifacts/my-run/profile_export.jsonl file into structured Pydantic models in sync mode."""
+    """Load artifacts/my-run/profile_export.jsonl file into structured msgspec models in sync mode."""
     records = []
     with open(file_path, encoding="utf-8") as f:
         for line in f:
@@ -205,7 +204,7 @@ import aiofiles
 from aiperf.common.models import MetricRecordInfo
 
 async def process_streaming_records_async(file_path: Path) -> None:
-    """Load artifacts/my-run/profile_export.jsonl file into structured Pydantic models in async mode and process the streaming records."""
+    """Load artifacts/my-run/profile_export.jsonl file into structured msgspec models in async mode and process the streaming records."""
     async with aiofiles.open(file_path, encoding="utf-8") as f:
         async for line in f:
             if line.strip():
@@ -269,11 +268,18 @@ def correlate_inputs_and_results(inputs_path: Path, results_path: Path):
           if turn_idx >= len(session.payloads):
               raise ValueError(f"Turn index {turn_idx} is out of range for session {conv_id}")
 
-          # Assign the raw request payload to the record, and print it out
-          # You can do this because AIPerf models allow extra fields to be added to the model.
+          # MetricRecordInfo is a frozen msgspec.Struct — you cannot assign new
+          # attributes to it. Assemble a plain dict pairing the raw request
+          # payload with the metrics this record measured, and print that.
           payload = session.payloads[turn_idx]
-          record.payload = payload
-          print(record.model_dump_json(indent=2))
+          ttft = record.metrics.get("time_to_first_token")
+          combined = {
+              "conversation_id": conv_id,
+              "turn_index": turn_idx,
+              "payload": payload,
+              "time_to_first_token_ms": ttft.value if ttft else None,
+          }
+          print(msgspec.json.encode(combined).decode("utf-8"))
 
 correlate_inputs_and_results(
     Path("artifacts/my-run/inputs.json"),
@@ -284,5 +290,5 @@ correlate_inputs_and_results(
 ## Related Documentation
 
 - [HTTP Trace Metrics Guide](./http-trace-metrics.md) - Detailed HTTP request lifecycle timing (DNS, TCP/TLS, TTFB) with k6 and HAR conventions
-- [Source: record_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/record_models.py) - `MetricRecordInfo`, `MetricRecordMetadata`, and `MetricValue` model definitions
+- [Source: record_export_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/record_export_models.py) - `MetricRecordInfo` (frozen `msgspec.Struct`); `MetricRecordMetadata` lives in [metric_records_wire.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/metric_records_wire.py) and `MetricValue` in [metric_result_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/metric_result_models.py)
 - [Source: dataset_models.py](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/dataset_models.py) - `InputsFile` and `SessionPayloads` model definitions
