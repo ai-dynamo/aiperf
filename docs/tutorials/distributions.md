@@ -12,21 +12,36 @@ AIPerf's distribution system lets you describe these patterns declaratively in Y
 
 ## Quick Reference
 
-| Type | YAML Syntax | Use Case | Description |
-|------|-------------|----------|-------------|
-| Fixed | `isl: 512` | Baselines, controlled experiments | Constant value on every sample |
-| Normal | `{type: normal, mean: 512, stddev: 100}` | General-purpose variance | Gaussian spread around a center |
-| LogNormal | `{type: lognormal, mean: 512, sigma: 0.5}` | Production token distributions | Right-skewed, most values near mean with long tail |
-| Uniform | `{type: uniform, min: 128, max: 2048}` | Stress testing across a range | Flat probability between bounds |
-| Exponential | `{type: exponential, mean: 2000}` | Think times, inter-event delays | Memoryless, always positive |
-| Zipf | `{type: zipf, alpha: 1.5, scale: 128}` | Power-law popularity patterns | Heavy-tailed: few values dominate |
-| Mixture | `{type: mixture, components: [...]}` | Bimodal/multi-modal workloads | Weighted combination of sub-distributions |
-| Bounds | `min: N, max: M` | Hardware-safe limits | Optional fields on any distribution; clamps samples post-draw. |
-| Empirical | `{type: empirical, points: [...]}` | Replaying production histograms | Discrete weighted values |
+AIPerf supports exactly **five** distribution types. The type is auto-detected from the shape of the fields you provide -- you do not need a `type:` key (it is accepted but optional).
+
+| Type | YAML Syntax | Detected By | Use Case |
+|------|-------------|-------------|----------|
+| Fixed | `isl: 512` or `{value: 512}` | scalar, or `value` | Baselines, controlled experiments |
+| Normal | `{mean: 512, stddev: 100}` | `stddev` (or `mean` alone) | General-purpose symmetric variance |
+| LogNormal | `{mean: 512, median: 400}` | `median` | Right-skewed production token distributions |
+| Multimodal | `{peaks: [{...}, {...}]}` | `peaks` | Bimodal/multi-modal workloads |
+| Empirical | `{points: [{value, weight}, ...]}` | `points` | Replaying production histograms |
+| Bounds | `min: N, max: M` | (optional on any type) | Clamps samples post-draw into a safe range |
+
+There is no `uniform`, `exponential`, `zipf`, or `mixture` type. Multi-population workloads are expressed with `multimodal` (`peaks:`), and discrete replay with `empirical` (`points:`).
+
+## Auto-Detection and the Optional `type:` Key
+
+The distribution type is inferred structurally from the keys you provide, checked in this order:
+
+1. A bare scalar (`isl: 512`) -> **Fixed**
+2. `peaks:` present -> **Multimodal**
+3. `points:` present -> **Empirical**
+4. `median:` present -> **LogNormal**
+5. `stddev:` present -> **Normal**
+6. `value:` present -> **Fixed**
+7. `mean:` alone -> **Normal** (stddev defaults to 0, i.e. deterministic)
+
+You may add an explicit `type:` key (`{type: normal, mean: 512, stddev: 100}`) for clarity, but it is never required. An unknown `type:` (e.g. `type: uniform`) is rejected at config-load time.
 
 ## Scalar Shorthand
 
-Any field that accepts a distribution also accepts a bare number. A bare number is automatically converted to a `FixedDistribution`:
+Any field that accepts a distribution also accepts a bare number, which is automatically converted to a Fixed distribution:
 
 ```yaml
 # These are equivalent:
@@ -35,11 +50,9 @@ prompts:
   osl: 128
 
 prompts:
-  isl: {type: fixed, value: 512}
-  osl: {type: fixed, value: 128}
+  isl: {value: 512}
+  osl: {value: 128}
 ```
-
-This is the only shorthand. All other distribution types require an explicit `type` field in the YAML dict.
 
 ## Base Distributions
 
@@ -47,8 +60,8 @@ This is the only shorthand. All other distribution types require an explicit `ty
 
 ```yaml
 prompts:
-  isl: {type: fixed, value: 1024}
-  osl: {type: fixed, value: 256}
+  isl: {value: 1024}
+  osl: {value: 256}
 ```
 
 Returns the same value on every sample. Use this for controlled experiments where you need exact token counts, or as a baseline to compare against variable distributions. In practice, you will almost always use the scalar shorthand (`isl: 1024`) instead of the explicit form.
@@ -60,14 +73,14 @@ Returns the same value on every sample. Use this for controlled experiments wher
 
 ```yaml
 prompts:
-  isl: {type: normal, mean: 512, stddev: 100}
-  osl: {type: normal, mean: 256, stddev: 50}
+  isl: {mean: 512, stddev: 100}
+  osl: {mean: 256, stddev: 50}
 ```
 
-Gaussian distribution centered on `mean` with spread controlled by `stddev`. Values are truncated at zero (negative samples are redrawn as positive). This is the most common choice for adding realistic variance to token counts without making strong assumptions about the shape.
+Gaussian distribution centered on `mean` with spread controlled by `stddev`. Values are truncated at zero (negative samples are drawn as positive). This is the most common choice for adding realistic variance to token counts without making strong assumptions about the shape.
 
 **Parameters:**
-- `mean` -- Center of the distribution. For token counts, your target number of tokens.
+- `mean` -- Center of the distribution. Must be `>= 0`. For token counts, your target number of tokens.
 - `stddev` -- Standard deviation. Controls the spread. Defaults to `0` (deterministic). A `stddev` of ~20% of the mean produces moderate variance.
 
 **When to use:** General-purpose benchmarking where you want variance but expect a symmetric spread around the target.
@@ -76,118 +89,53 @@ Gaussian distribution centered on `mean` with spread controlled by `stddev`. Val
 
 ```yaml
 prompts:
-  isl: {type: lognormal, mean: 512, sigma: 0.8}
-  osl: {type: lognormal, mean: 256, sigma: 0.5}
+  isl: {mean: 512, median: 400}
+  osl: {mean: 256, median: 220}
 ```
 
-Produces right-skewed positive values. Most samples cluster near the mean, but a long tail extends to much larger values. This closely matches real-world token length distributions observed in production, where most requests are short or medium but some are very long.
+Produces right-skewed positive values. Most samples cluster near the median, but a long tail extends to much larger values, pulling the mean above the median. This closely matches real-world token length distributions observed in production, where most requests are short or medium but some are very long.
 
-The `mean` parameter is the desired output mean (not the log-space mean). AIPerf internally computes the log-space parameters so the distribution has the expected value you specify.
+The shape is controlled by the **ratio of `mean` to `median`**: the larger the gap, the heavier the right tail. When `mean == median` the distribution is deterministic. `median` must be `<= mean`. Internally AIPerf derives the log-space parameters (`sigma = sqrt(2 * ln(mean / median))`, `mu = ln(median)`) so the output distribution has the mean you specify.
 
 **Parameters:**
-- `mean` -- Desired mean of the output distribution (must be > 0).
-- `sigma` -- Shape parameter (log-space standard deviation). `0` means deterministic. Higher values produce more right skew: `0.3` is mild skew, `0.8` is moderate, `1.5` is extreme.
+- `mean` -- Desired mean of the output distribution (must be `> 0`).
+- `median` -- Desired median (must be `> 0` and `<= mean`). Lower median relative to the mean produces more right skew. `median = 0.9 * mean` is mild skew, `0.8 * mean` is moderate, `0.5 * mean` is heavy.
 
 **When to use:** Modeling production LLM traffic where most prompts are moderate length but a fraction are much longer.
 
-### Uniform
+## Multi-Population and Discrete Distributions
 
-```yaml
-prompts:
-  isl: {type: uniform, min: 128, max: 2048}
-  osl: {type: uniform, min: 64, max: 512}
-```
-
-Equal probability for any value between `min` and `max`. Every length in the range is equally likely. This is useful for stress testing across a full range of input sizes, ensuring your server handles both short and long sequences.
-
-**Parameters:**
-- `min` -- Lower bound (inclusive).
-- `max` -- Upper bound (inclusive). Must be >= `min`.
-
-**When to use:** Sweeping across a range of sequence lengths to find where performance degrades, or when you have no prior information about workload shape.
-
-### Exponential
-
-```yaml
-turn_delay: {type: exponential, mean: 2000}
-```
-
-Memoryless distribution that always produces positive values. The most likely values are near zero, with an exponentially decreasing tail. This is the natural model for waiting times and inter-event delays.
-
-**Parameters:**
-- `mean` -- Mean (expected value) of the distribution (must be > 0). For example, `mean: 2000` produces a distribution where the average delay is 2000ms, but individual delays range from near-zero to several times the mean.
-
-**When to use:** Modeling user think time between multi-turn conversation rounds, or any delay where events are independent and memoryless.
-
-### Zipf
-
-```yaml
-prompts:
-  isl: {type: zipf, alpha: 2.0, scale: 128}
-```
-
-Power-law distribution over positive integers. Rank `k` has probability proportional to `1/k^alpha`. A few values dominate while a long tail of rare values exists. The raw rank is mapped to output values via `offset + rank * scale`.
-
-**Parameters:**
-- `alpha` -- Exponent parameter (must be > 1). Higher values concentrate more probability on the first few ranks. `1.5` has a heavy tail, `3.0` is sharply peaked.
-- `scale` -- Multiplied by rank to produce the output value. Default `1.0`. With `scale: 128`, rank 1 produces 128, rank 2 produces 256, etc.
-- `offset` -- Added to the scaled rank. Default `0.0`.
-
-**When to use:** Modeling popularity patterns where a few common prompt lengths account for most traffic (e.g., a small set of template-driven queries dominate).
-
-## Composable Distributions
-
-Composable distributions wrap or combine other distributions. They accept any distribution type as input, including other composable distributions, allowing arbitrary nesting.
-
-### Mixture
+### Multimodal
 
 ```yaml
 prompts:
   isl:
-    type: mixture
-    components:
-      - distribution: {type: normal, mean: 128, stddev: 30}
-        weight: 70
-      - distribution: {type: lognormal, mean: 2048, sigma: 0.3}
-        weight: 30
+    peaks:
+      - {mean: 128, stddev: 30, weight: 70}
+      - {mean: 2048, median: 1800, weight: 30}
 ```
 
-Weighted combination of sub-distributions. Each sample first selects a component based on relative weights, then draws from that component's distribution. This is how you model bimodal or multi-modal workloads where traffic comes from distinct populations.
+A weighted mixture of two or more peaks. Each sample first selects a peak based on relative weights, then draws from that peak's distribution. This is how you model bimodal or multi-modal workloads where traffic comes from distinct populations.
 
-Weights are relative and normalized internally. `weight: 70` and `weight: 30` produce 70/30 split. `weight: 7` and `weight: 3` produce the same result.
+Each peak is written **inline**: the distribution fields (`mean`/`stddev`, `mean`/`median`, `value`, etc.) live directly in the peak dict alongside an optional `weight`. Weights are relative and normalized internally -- `weight: 70` / `weight: 30` produces a 70/30 split, and so does `weight: 7` / `weight: 3`. Omit `weight` for an equal split (it defaults to `1.0`).
 
-Requires at least 2 components. Components can themselves be any distribution type, including bounded distributions or empirical distributions:
+Requires at least 2 peaks. Peaks can be any base distribution, and each peak may carry its own `min`/`max` bounds:
 
 ```yaml
 # Three-tier workload: chatbot, RAG, and batch summarization
 prompts:
   isl:
-    type: mixture
-    components:
-      - distribution: {type: normal, mean: 64, stddev: 15}
-        weight: 50
-      - distribution: {type: lognormal, mean: 1024, sigma: 0.4, min: 256, max: 4096}
-        weight: 35
-      - distribution: {type: normal, mean: 8192, stddev: 500}
-        weight: 15
+    peaks:
+      - {mean: 64, stddev: 15, weight: 50}
+      - {mean: 1024, median: 820, min: 256, max: 4096, weight: 35}
+      - {mean: 8192, stddev: 500, weight: 15}
 ```
-
-### Bounds (min/max)
-
-```yaml
-prompts:
-  isl: {mean: 1024, stddev: 500, min: 64, max: 4096}
-  osl: {mean: 4096, median: 2048, max: 8192}
-```
-
-`min:` and `max:` are optional fields on **every** distribution. Samples that fall outside the bounds are clamped (not redrawn), preventing wide-spread distributions from producing values that exceed your model's context window or go below meaningful minimums. Either or both may be specified; bounds compose with all other distribution fields without nesting.
 
 ### Empirical
 
 ```yaml
 prompts:
   isl:
-    type: empirical
     points:
       - {value: 128, weight: 40}
       - {value: 512, weight: 35}
@@ -203,7 +151,6 @@ Weights default to `1.0` if omitted, producing uniform selection across values:
 # Equal probability for each bucket
 prompts:
   isl:
-    type: empirical
     points:
       - {value: 128}
       - {value: 256}
@@ -211,11 +158,21 @@ prompts:
       - {value: 1024}
 ```
 
+### Bounds (min/max)
+
+```yaml
+prompts:
+  isl: {mean: 1024, stddev: 500, min: 64, max: 4096}
+  osl: {mean: 4096, median: 2048, max: 8192}
+```
+
+`min:` and `max:` are optional fields on **every** distribution type. Samples that fall outside the bounds are clamped (not redrawn), preventing wide-spread distributions from producing values that exceed your model's context window or go below meaningful minimums. Either or both may be specified; bounds compose with all other distribution fields without nesting.
+
 ## Real-World Workload Recipes
 
 ### Chatbot Traffic
 
-Short prompts with low variance. Most user queries are brief questions, with a small fraction of longer follow-ups.
+Short prompts with low variance. Most user queries are brief questions, with a small fraction of longer follow-ups. Think time between turns is right-skewed, so it is modeled with a lognormal.
 
 ```yaml
 benchmark:
@@ -224,10 +181,10 @@ benchmark:
       type: synthetic
       entries: 1000
       prompts:
-        isl: {type: normal, mean: 64, stddev: 15}
-        osl: {type: normal, mean: 128, stddev: 30}
-      turns: {type: normal, mean: 2, stddev: 1}
-      turn_delay: {type: exponential, mean: 3000} # 3s avg think time
+        isl: {mean: 64, stddev: 15}
+        osl: {mean: 128, stddev: 30}
+      turns: {mean: 2, stddev: 1}
+      turn_delay: {mean: 3000, median: 2000} # ~3s avg, right-skewed think time
 ```
 
 ### RAG Pipeline
@@ -241,8 +198,8 @@ benchmark:
       type: synthetic
       entries: 500
       prompts:
-        isl: {type: lognormal, mean: 1024, sigma: 0.6}
-        osl: {type: normal, mean: 256, stddev: 50}
+        isl: {mean: 1024, median: 820}
+        osl: {mean: 256, stddev: 50}
 ```
 
 ### Summarization Service
@@ -256,13 +213,13 @@ benchmark:
       type: synthetic
       entries: 500
       prompts:
-        isl: {type: lognormal, mean: 4096, sigma: 0.5, min: 1024, max: 16384}
-        osl: {type: normal, mean: 256, stddev: 80, min: 64, max: 512}
+        isl: {mean: 4096, median: 3600, min: 1024, max: 16384}
+        osl: {mean: 256, stddev: 80, min: 64, max: 512}
 ```
 
 ### Production Traffic Replay (Bimodal)
 
-Two distinct user populations hit the same endpoint: interactive chat (high volume, short) and batch analysis (lower volume, long). The mixture captures both modes.
+Two distinct user populations hit the same endpoint: interactive chat (high volume, short) and batch analysis (lower volume, long). The multimodal peaks capture both modes.
 
 ```yaml
 benchmark:
@@ -272,19 +229,13 @@ benchmark:
       entries: 2000
       prompts:
         isl:
-          type: mixture
-          components:
-            - distribution: {type: normal, mean: 128, stddev: 30}
-              weight: 65
-            - distribution: {type: lognormal, mean: 2048, sigma: 0.4}
-              weight: 35
+          peaks:
+            - {mean: 128, stddev: 30, weight: 65}
+            - {mean: 2048, median: 1600, weight: 35}
         osl:
-          type: mixture
-          components:
-            - distribution: {type: normal, mean: 96, stddev: 20}
-              weight: 65
-            - distribution: {type: normal, mean: 512, stddev: 100}
-              weight: 35
+          peaks:
+            - {mean: 96, stddev: 20, weight: 65}
+            - {mean: 512, stddev: 100, weight: 35}
 ```
 
 ### Multi-Tier Service (Empirical from Production Data)
@@ -299,7 +250,6 @@ benchmark:
       entries: 2000
       prompts:
         isl:
-          type: empirical
           points:
             - {value: 64, weight: 15}  # health checks and pings
             - {value: 256, weight: 30}  # mobile app short queries
@@ -308,7 +258,6 @@ benchmark:
             - {value: 2048, weight: 10} # internal batch jobs
             - {value: 8192, weight: 5}  # document processing
         osl:
-          type: empirical
           points:
             - {value: 32, weight: 15}
             - {value: 128, weight: 35}
@@ -319,7 +268,7 @@ benchmark:
 
 ## Where Distributions Are Used
 
-Every config field listed below accepts a `SamplingDistribution` -- meaning any of the 9 distribution types, or a bare scalar.
+Every config field listed below accepts a distribution -- meaning any of the five distribution types, or a bare scalar.
 
 ### Token Lengths
 
@@ -356,21 +305,13 @@ Every config field listed below accepts a `SamplingDistribution` -- meaning any 
 | `passage_tokens` | `datasets.<name>.rankings.passage_tokens` | Token length per passage |
 | `query_tokens` | `datasets.<name>.rankings.query_tokens` | Token length for the query |
 
-### Augmentation (Composed Datasets)
-
-| Field | Path | Description |
-|-------|------|-------------|
-| `osl` | `datasets.<name>.augment.osl` | Output sequence length for augmented records |
-| `prefix length` | `datasets.<name>.augment.prefix.length` | Token length of synthetic prefix |
-| `suffix length` | `datasets.<name>.augment.suffix.length` | Token length of synthetic suffix |
-
 ## Distributions and Sweeps
 
 Sweep variables use dot-notation paths to override any config field, including distribution parameters. This lets you systematically explore how workload shape affects server performance.
 
 ### Grid Sweep over ISL Distribution Mean
 
-Sweep the mean of a lognormal ISL distribution while holding all other parameters constant:
+Sweep the mean of a normal ISL distribution while holding the spread (`stddev`) constant:
 
 ```yaml
 benchmark:
@@ -379,8 +320,8 @@ benchmark:
       type: synthetic
       entries: 500
       prompts:
-        isl: {type: lognormal, mean: 512, sigma: 0.5}
-        osl: {type: normal, mean: 256, stddev: 50}
+        isl: {mean: 512, stddev: 100}
+        osl: {mean: 256, stddev: 50}
 
   phases:
     - name: profiling
@@ -395,7 +336,9 @@ sweep:
     benchmark.datasets.profiling.prompts.isl.mean: [128, 512, 2048, 8192]
 ```
 
-This produces 4 benchmark runs, each with a different ISL mean. The lognormal shape (`sigma: 0.5`) is preserved across all runs.
+This produces 4 benchmark runs, each with a different ISL mean. The `stddev: 100` spread is preserved across all runs.
+
+> **Sweeping a lognormal:** because a lognormal requires `median <= mean`, sweeping only `.mean` below the fixed `median` fails validation. To sweep a lognormal's location while holding its shape, sweep `.mean` and `.median` together in lockstep with a `zip` sweep.
 
 ### Scenario Sweep with Different Distribution Shapes
 
@@ -433,14 +376,14 @@ sweep:
         datasets:
           - name: profiling
             prompts:
-              isl: {type: normal, mean: 512, stddev: 100}
+              isl: {mean: 512, stddev: 100}
 
     - name: lognormal_skewed
       benchmark:
         datasets:
           - name: profiling
             prompts:
-              isl: {type: lognormal, mean: 512, sigma: 0.8}
+              isl: {mean: 512, median: 300}
 
     - name: bimodal_production
       benchmark:
@@ -448,15 +391,12 @@ sweep:
           - name: profiling
             prompts:
               isl:
-                type: mixture
-                components:
-                  - distribution: {type: normal, mean: 128, stddev: 30}
-                    weight: 70
-                  - distribution: {type: normal, mean: 2048, stddev: 200}
-                    weight: 30
+                peaks:
+                  - {mean: 128, stddev: 30, weight: 70}
+                  - {mean: 2048, stddev: 200, weight: 30}
 ```
 
-All four scenarios target similar average ISL, but the variance and shape differ. Comparing results reveals how your server handles workload variance.
+All four scenarios target a similar average ISL, but the variance and shape differ. Comparing results reveals how your server handles workload variance.
 
 ## Sampling and Reproducibility
 
@@ -473,8 +413,8 @@ benchmark:
       type: synthetic
       entries: 500
       prompts:
-        isl: {type: lognormal, mean: 512, sigma: 0.5}
-        osl: {type: normal, mean: 256, stddev: 50}
+        isl: {mean: 512, median: 400}
+        osl: {mean: 256, stddev: 50}
 ```
 
 Running this config twice produces the same set of 500 (ISL, OSL) pairs both times, assuming no other configuration changes.
@@ -493,7 +433,7 @@ benchmark:
       entries: 500
       random_seed: 100 # Always the same
       prompts:
-        isl: {type: normal, mean: 512, stddev: 100}
+        isl: {mean: 512, stddev: 100}
         osl: 128
 
     - name: variable_workload
@@ -501,8 +441,8 @@ benchmark:
       entries: 500
     # Uses global seed (42) -- same across runs with same config
       prompts:
-        isl: {type: lognormal, mean: 1024, sigma: 0.6}
-        osl: {type: normal, mean: 256, stddev: 50}
+        isl: {mean: 1024, median: 800}
+        osl: {mean: 256, stddev: 50}
 ```
 
 ### Deterministic Benchmarks
@@ -518,8 +458,8 @@ benchmark:
       type: synthetic
       entries: 1000
       prompts:
-        isl: {type: lognormal, mean: 512, sigma: 0.5}
-        osl: {type: normal, mean: 256, stddev: 50}
+        isl: {mean: 512, median: 400}
+        osl: {mean: 256, stddev: 50}
 
 multi_run:
   num_runs: 5
