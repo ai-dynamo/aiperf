@@ -59,9 +59,10 @@ app = App(name="plugins")
 @app.default
 def plugins(*, validate: bool = False) -> None:
     """Explore and validate AIPerf plugins."""
-    from aiperf.plugin.cli import run  # heavy import deferred
+    if validate:
+        from aiperf.plugin.cli import run_validate  # heavy import deferred
 
-    run(validate=validate)
+        run_validate()
 ```
 
 **Conventions:**
@@ -70,7 +71,7 @@ def plugins(*, validate: bool = False) -> None:
 - Keep module-level imports minimal; heavy deps go inside the function body.
 - Import modules, not individual functions. Call functions on the module
   alias: `from aiperf.kubernetes import cli_helpers` then
-  `cli_helpers.resolve_jobset(...)`. Use aliases when the module name
+  `cli_helpers.resolve_job(...)`. Use aliases when the module name
   conflicts with the current scope:
   `from aiperf.kubernetes import console as kube_console`.
 - Use `Parameter(name=..., help="...")` for both aliasing and user-visible
@@ -119,7 +120,7 @@ Hoist related flags flat with a modality prefix (`image_batch_size`,
 
 **2. Ensure a destination on `AIPerfConfig`.** Every flag lands on a field of
 the validated envelope (`AIPerfConfig` / `BenchmarkConfig` and its section
-models: `endpoint`, `input`, `phases`, …). If the destination field does not
+models: `endpoint`, `datasets`, `phases`, …). If the destination field does not
 exist yet, add it there with its own `Field(description=...)` and any domain
 validators — that layer is where "concurrency cannot exceed request_count"
 style checks belong.
@@ -383,21 +384,30 @@ def configure_workers(config: AIPerfConfig) -> WorkerSettings:
 For functions that only need the body (no envelope-level access), narrow the parameter type:
 
 ```python
-def render_dataset_prompt(bench: BenchmarkConfig, idx: int) -> str:
-    return bench.datasets[0].prompts.template.format(idx=idx)
+def first_dataset_name(bench: BenchmarkConfig) -> str:
+    return bench.datasets[0].name
 ```
 
 ## Message Pattern
 
-Messages require `message_type` field and handler decorator:
+`Message` is a tagged `msgspec.Struct` union (`tag_field="message_type"`), not a
+Pydantic model. The `message_type` discriminator is set via the `tag=` class
+kwarg — never declared as a field — and `kw_only=True` must be repeated on every
+subclass (msgspec does not propagate it). Use plain type annotations, no
+`Field(...)`. Service-emitted messages usually extend `BaseServiceMessage`
+(which carries `service_id`) rather than `Message` directly:
 
 ```python
-from aiperf.common.messages import Message
+from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
+from aiperf.common.messages import Message
 
-class MyMsg(Message):
-    message_type: MessageType = MessageType.MY_MSG
-    data: list[Record] = Field(description="Records to process")
+
+class MyMsg(Message, kw_only=True, tag=MessageType.MY_MSG.value):
+    """Records to process."""
+
+    data: list[Record]
+
 
 # In service class:
 @on_message(MessageType.MY_MSG)
@@ -448,7 +458,7 @@ Named, plugin-registered presets that bundle a search space + objective +
 optional SLA constraints + optional post-process step into a single
 `--search-recipe <name>` CLI selector. Recipes implement the
 `SearchRecipe` Protocol in `aiperf.search_recipes._base` and expand to a
-populated `AdaptiveSearchSweep` (BO) or `sweep_variables` dict (grid) in the
+populated `AdaptiveSearchSweep` (BO) or `sweep_parameters` dict (grid) in the
 converter (`aiperf.config.flags.converter` + `_converter_optionals`); the
 recipe NAME never reaches `AIPerfConfig`.
 
@@ -458,8 +468,8 @@ from typing import ClassVar
 
 from aiperf.common.enums import OptimizationDirection
 from aiperf.config.sweep import (
-    AdaptiveObjective,
     AdaptiveSearchSweep,
+    Objective,
     SearchSpaceDimension,
 )
 from aiperf.search_recipes._base import (
@@ -484,18 +494,19 @@ class MaxThroughputUnderTTFTSLA(SearchRecipe):
             )
         return SearchRecipeOutput(
             adaptive_search=AdaptiveSearchSweep(
-                algorithm="bayes",
                 search_space=[
                     SearchSpaceDimension(
                         path="phases.profiling.concurrency",
                         lo=1, hi=1000, kind="int",
                     ),
                 ],
-                objective=AdaptiveObjective(
-                    metric="output_token_throughput",
-                    stat="avg",
-                    direction=OptimizationDirection.MAXIMIZE,
-                ),
+                objectives=[
+                    Objective(
+                        metric="output_token_throughput",
+                        stat="avg",
+                        direction=OptimizationDirection.MAXIMIZE,
+                    ),
+                ],
                 max_iterations=30,
                 n_initial_points=5,
             ),
@@ -523,7 +534,7 @@ search_recipe:
       sweep_path: phases.profiling.concurrency
 ```
 
-Grid recipes return `sweep_variables` (and optionally a `PostProcessSpec`)
+Grid recipes return `sweep_parameters` (and optionally a `PostProcessSpec`)
 instead of `adaptive_search`; post-process handlers register under the
 `search_recipe_post_process` plugin category and run after
 `SweepAnalyzer.compute()`. See `docs/sweeping/search-recipes.md` for the
@@ -644,10 +655,10 @@ Two router shapes coexist:
    ```python
    from fastapi import APIRouter
 
-   router = APIRouter(prefix="/results", tags=["results"])
+   results_router = APIRouter(tags=["Results"])
 
-   @router.get("/")
-   async def list_results() -> ResultsListResponse:
+   @results_router.get("/api/results/list", response_model=ResultsListResponse)
+   async def list_results(component: ResultsDep) -> ResultsListResponse:
        ...
    ```
 
@@ -656,12 +667,24 @@ Two router shapes coexist:
    resource). Used in `src/aiperf/operator/routers/jobs.py`:
 
    ```python
-   def create_jobs_router(progress_cache: ProgressCache) -> APIRouter:
-       router = APIRouter(prefix="/jobs", tags=["jobs"])
+   def create_jobs_router(
+       api_holder: list[ApiClient | None] | None = None,
+       results_dir: Path | None = None,
+       mutating_dependencies: Sequence[DependsParam] = (),
+   ) -> APIRouter:
+       _holder = api_holder if api_holder is not None else [None]
+       _results_dir = results_dir or Path("/data")
+       router = APIRouter(prefix="/api/v1", tags=["jobs"])
 
-       @router.get("/")
+       def _require_api() -> ApiClient:
+           api = _holder[0]
+           if api is None:
+               raise HTTPException(503, "Kubernetes client not initialised")
+           return api
+
+       @router.get("/jobs", response_model=ActiveJobListResponse)
        async def list_jobs() -> ActiveJobListResponse:
-           return await progress_cache.list()
+           return await _list_jobs_impl(_require_api(), _results_dir)
 
        return router
    ```
@@ -669,10 +692,12 @@ Two router shapes coexist:
 **When to use which:**
 - Module-level: handlers depend only on per-request dependencies (query
   params, request body, `Depends(...)` on stateless factories).
-- Factory: handlers must share an object created by the application's
-  lifespan — e.g. a `ProgressCache`, an `ApiClient` holder, a task queue.
-  Registering at app-startup time with `app.include_router(create_xxx_router(cache))`
-  threads the dependency through without a global.
+- Factory: handlers must share state created by the application's lifespan —
+  e.g. the `ApiClient` holder (a mutable single-element list populated during
+  lifespan startup), the results-PVC directory, or gating `Depends(...)` for
+  mutating routes. Registering at app-startup time with
+  `app.include_router(create_jobs_router(api_holder, results_dir))` threads the
+  dependency through without a global.
 
 Reference file: `src/aiperf/operator/routers/jobs.py`.
 
@@ -717,7 +742,7 @@ All kube-CLI user output goes through `aiperf.kubernetes.console` imported as `k
 from aiperf.kubernetes import console as kube_console
 
 kube_console.print_info("AIPerfJob CRD detected, using operator mode")
-kube_console.print_step(1, 4, "Rendering JobSet manifest")
+kube_console.print_step("Rendering JobSet manifest", step=1, total=4)
 ...
 kube_console.print_detach_info(name, namespace, name=kube_options.name)
 kube_console.save_last_benchmark(name, namespace, name=kube_options.name)
@@ -757,16 +782,16 @@ async def preflight(
         json_output = orjson.dumps(
             results.to_dict(), option=orjson.OPT_INDENT_2
         ).decode()
-        kube_console.console.print(json_output, highlight=False)
-    else:
-        results.render()   # rich text via kube_console
+        print(json_output)  # bare print: raw JSON, no Rich markup on stdout
 
+    # In text mode the checks render live via kube_console during
+    # run_all_checks(); there is no separate render step here.
     if not results.passed:
         raise SystemExit(1)
 ```
 
 **Conventions:**
-- Result dataclass is a frozen `CheckResult`/`PreflightResults`/`ValidationResult` with fields `name`, `status`, `message`, `details`, `hints`, `duration_ms`; `to_dict()` produces the machine-readable form — the TypedDict schema is the public contract.
+- Result dataclass is a `CheckResult`/`PreflightResults`/`ValidationResult` with fields `name`, `status`, `message`, `details`, `hints`, `duration_ms`; `to_dict()` produces the machine-readable form — the TypedDict schema is the public contract.
 - JSON mode **must** suppress the default logger (otherwise INFO lines leak onto stdout and break CI pipes). Use a `try/finally` so the level is restored even if the check raises.
 - Non-zero exit uses `raise SystemExit(1)` when `results.passed is False`. Do not call `sys.exit()` from handler bodies.
 
