@@ -13,7 +13,7 @@
 # =======================
 # Collects per-GPU metrics (power, utilization, memory, temperature, clocks,
 # XID errors) alongside inference latency. Exports a separate
-# `gpu_telemetry_export.json` next to the standard profile export.
+# `gpu_telemetry_export.jsonl` next to the standard profile export.
 #
 # Two collector backends:
 #   - dcgm   : scrapes DCGM exporter Prometheus endpoints (works across nodes)

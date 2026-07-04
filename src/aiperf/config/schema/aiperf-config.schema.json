@@ -9333,7 +9333,7 @@
             }
           ],
           "default": null,
-          "description": "List of input modalities this model supports. Used with modality_aware selection strategy. Valid values: 'text', 'image', 'audio', 'video'.",
+          "description": "List of input modalities this model supports. Informational today: no selection strategy consumes it yet. Valid values: 'text', 'image', 'audio', 'video'.",
           "title": "Modalities"
         },
         "tokenizer": {
@@ -9367,12 +9367,12 @@
     },
     "ModelsAdvanced": {
       "additionalProperties": false,
-      "description": "Advanced models configuration with selection strategy and item details.\n\nUse this format when you need weighted routing, LoRA adapters,\nmodality-aware selection, or per-model tokenizer overrides.",
+      "description": "Advanced models configuration with selection strategy and item details.\n\nUse this format when you need weighted routing, LoRA adapters,\nor per-model tokenizer overrides.",
       "properties": {
         "strategy": {
           "$ref": "#/$defs/ModelSelectionStrategy",
           "default": "round_robin",
-          "description": "Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights, modality_aware routes by input type."
+          "description": "Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights."
         },
         "items": {
           "description": "List of model configurations. At least one model required.",

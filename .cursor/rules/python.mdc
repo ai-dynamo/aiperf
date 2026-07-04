@@ -88,7 +88,7 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 ## Adding a New Message
 
 1. Add enum value to `MessageType` in `common/enums/enums.py`
-2. Create message class in `messages/` inheriting from `Message` with `message_type` field set
+2. Create message class in `messages/` as a tagged `msgspec.Struct`: subclass `Message` (or `BaseServiceMessage` for service-emitted messages) with `kw_only=True, tag=MessageType.X.value` — the discriminator comes from the `tag=` class kwarg, never a declared field. See `docs/dev/patterns.md` § "Message Pattern".
 3. Add `@on_message(MessageType.X)` handler in the receiving service
 4. Auto-subscription happens during `@on_init` phase
 

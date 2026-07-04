@@ -3,9 +3,9 @@
 """RunExecutor interface for MultiRunOrchestrator.
 
 A RunExecutor takes a fully-built BenchmarkRun and executes it to produce
-a RunResult. Current implementation: LocalSubprocessExecutor (forks a
-subprocess). A K8sChildJobExecutor that creates an AIPerfJob CR in the
-sweep-controller pod is planned but not yet implemented.
+a RunResult. Implementations: LocalSubprocessExecutor (forks a subprocess)
+and K8sChildJobExecutor (creates an AIPerfJob CR from the sweep-controller
+pod; see aiperf.sweep_controller.k8s_executor).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ class RunExecutor(ABC):
 
         Implementations:
             - LocalSubprocessExecutor: fork subprocess of aiperf.orchestrator.subprocess_runner
-            - K8sChildJobExecutor (planned): create AIPerfJob CR via kubernetes_asyncio, watch to terminal
+            - K8sChildJobExecutor: create AIPerfJob CR via kubernetes_asyncio, watch to terminal
 
         Args:
             run: Fully-built BenchmarkRun (config + variation + trial + label).

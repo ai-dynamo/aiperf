@@ -75,7 +75,7 @@ class ModelItem(BaseConfig):
         Field(
             default=None,
             description="List of input modalities this model supports. "
-            "Used with modality_aware selection strategy. "
+            "Informational today: no selection strategy consumes it yet. "
             "Valid values: 'text', 'image', 'audio', 'video'.",
         ),
     ]
@@ -95,7 +95,7 @@ class ModelsAdvanced(BaseConfig):
     Advanced models configuration with selection strategy and item details.
 
     Use this format when you need weighted routing, LoRA adapters,
-    modality-aware selection, or per-model tokenizer overrides.
+    or per-model tokenizer overrides.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -106,7 +106,7 @@ class ModelsAdvanced(BaseConfig):
             default=ModelSelectionStrategy.ROUND_ROBIN,
             description="Strategy for selecting models when multiple are configured. "
             "round_robin cycles through models, random selects randomly, "
-            "weighted uses configured weights, modality_aware routes by input type.",
+            "weighted uses configured weights.",
         ),
     ]
 
