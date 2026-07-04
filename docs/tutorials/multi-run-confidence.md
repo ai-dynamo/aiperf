@@ -96,7 +96,7 @@ Run the same benchmark 5 times:
 ```bash
 aiperf profile \
   --model llama-3-8b \
-  --endpoint-type openai_chat \
+  --endpoint-type chat \
   --url http://localhost:8000/v1/chat/completions \
   --num-profile-runs 5 \
   --concurrency 10 \
@@ -110,7 +110,7 @@ Use 99% confidence intervals instead of the default 95%:
 ```bash
 aiperf profile \
   --model llama-3-8b \
-  --endpoint-type openai_chat \
+  --endpoint-type chat \
   --url http://localhost:8000/v1/chat/completions \
   --num-profile-runs 5 \
   --confidence-level 0.99 \
@@ -125,7 +125,7 @@ Add a 10-second cooldown between runs to reduce correlation:
 ```bash
 aiperf profile \
   --model llama-3-8b \
-  --endpoint-type openai_chat \
+  --endpoint-type chat \
   --url http://localhost:8000/v1/chat/completions \
   --num-profile-runs 5 \
   --profile-run-cooldown-seconds 10.0 \
@@ -141,14 +141,14 @@ When `--num-profile-runs > 1`, AIPerf creates a hierarchical output structure wi
 artifacts/
   llama-3-8b-openai-chat-concurrency_10/
     profile_runs/
-      trial_0001/
+      run_0001/
         profile_export_aiperf.json
         profile_export_aiperf.csv
         profile_export.jsonl
         inputs.json
-      trial_0002/
+      run_0002/
         ...
-      trial_0005/
+      run_0005/
         ...
     aggregate/
       profile_export_aiperf_aggregate.json
@@ -170,7 +170,7 @@ Examples:
 
 ### Per-Run Artifacts
 
-Each run's artifacts are stored in separate directories (`trial_0001`, `trial_0002`, etc.) and include:
+Each run's artifacts are stored in separate directories (`run_0001`, `run_0002`, etc.) and include:
 - `profile_export_aiperf.json` - Complete metrics for that run
 - `profile_export_aiperf.csv` - CSV export for that run
 - `profile_export.jsonl` - Per-request records
@@ -209,7 +209,7 @@ For each metric, the aggregate output includes:
     "num_profile_runs": 5,
     "num_successful_runs": 5,
     "confidence_level": 0.95,
-    "run_labels": ["trial_0001", "trial_0002", "trial_0003", "trial_0004", "trial_0005"]
+    "run_labels": ["run_0001", "run_0002", "run_0003", "run_0004", "run_0005"]
   },
   "metrics": {
     "request_throughput_avg": {
@@ -569,7 +569,7 @@ If some runs fail, AIPerf will:
     "num_profile_runs": 5,
     "num_successful_runs": 4,
     "failed_runs": [
-      {"label": "trial_0003", "error": "Connection timeout"}
+      {"label": "run_0003", "error": "Connection timeout"}
     ]
   }
 }
@@ -715,7 +715,7 @@ Note: distribution mode converges when KS p-value > threshold
 |---|---|---|
 | `--convergence-metric` | Target metric name (e.g., `request_latency`, `time_to_first_token`) | None (disabled) |
 | `--convergence-mode` | Statistical method: `ci_width`, `cv`, or `distribution` | `ci_width` |
-| `--convergence-threshold` | Convergence threshold (0–1) | `0.10` |
+| `--convergence-threshold` | Convergence threshold (0–1) | None (mode-specific: ci_width 0.10, cv 0.05, distribution 0.05) |
 | `--convergence-stat` | Statistic to evaluate: `avg`, `p50`, `p90`, `p95`, `p99`, `min`, `max` | `avg` |
 
 All convergence flags require `--num-profile-runs > 1`. The `--convergence-stat` flag applies to `ci_width` and `cv` modes only (not `distribution`).
@@ -812,7 +812,7 @@ Multi-run works with all AIPerf features:
 ```bash
 aiperf profile \
   --num-profile-runs 5 \
-  --gpu-telemetry-url http://localhost:9400/metrics \
+  --gpu-telemetry http://localhost:9400/metrics \
   ...
 ```
 
@@ -820,7 +820,7 @@ aiperf profile \
 ```bash
 aiperf profile \
   --num-profile-runs 5 \
-  --server-metrics-url http://localhost:8000/metrics \
+  --server-metrics http://localhost:9090/metrics \
   ...
 ```
 
@@ -828,7 +828,7 @@ aiperf profile \
 ```bash
 aiperf profile \
   --num-profile-runs 5 \
-  --trace-file my_trace.jsonl \
+  --input-file my_trace.jsonl \
   ...
 ```
 
