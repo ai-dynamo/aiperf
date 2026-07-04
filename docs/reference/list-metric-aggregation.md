@@ -10,7 +10,12 @@ Some record metrics carry a `list[...]` value per request rather than a single s
 
 At the run level the records-manager has to summarize across all per-request lists into a single set of stats (`avg`, `min`, `max`, `std`, `p50`, `p90`, `p99`, …). Naïvely concatenating the lists into a flat array gives exact stats but linear memory: `records × samples_per_record × 8 B`. For a long-context streaming benchmark (1 M requests × ~5 K chunks/request) that reaches **~37 GB** on the records-manager pod alone — the original cause of an OOM at ramp scale.
 
-To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest sketch** + **five running side-channel scalars**.
+The aggregation backend for list-valued record metrics is selectable via the `AIPERF_METRICS_LIST_BACKEND` environment variable (`Environment.METRICS.LIST_BACKEND`):
+
+- **`ragged`** (**default**) — keeps every value, so run-level percentiles are **exact** and ICL-aware throughput / tokens-in-flight sweep curves stay available. Memory scales with total sample count (the OOM risk above).
+- **`tdigest`** — a bounded-memory [`crick.TDigest`](https://github.com/dask/crick) sketch (~4 KB regardless of sample count) plus **six running side-channel scalars** (`count`, `sum`, `min`, `max`, and Welford's `mean` + `M2`). Percentiles become approximate (<=0.05% relative error at default compression) and ICL-aware sweep curves silently fall back to their request-level equivalents. Choose this when records-manager pod memory at 1M+ request scale is the binding constraint.
+
+The rest of this page describes the **`tdigest`** backend.
 
 ## What stays exact, what becomes approximate
 
@@ -23,7 +28,7 @@ To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest 
 | `std` | Welford online M2 | bit-exact (population std, matches `np.std`) |
 | `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
-Memory cost of the side-channel scalars is **40 bytes** regardless of sample count. T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
+Memory cost of the six side-channel scalars is **~48 bytes** regardless of sample count. T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
 
 ## Empirical accuracy
 
@@ -41,7 +46,7 @@ The compression parameter is exposed as `AIPERF_METRICS_TDIGEST_COMPRESSION` (de
 
 ## Per-record values are unchanged
 
-The aggregation described above is **only** at the run-level. The per-record JSONL (`profile_export.jsonl`) preserves each request's full `list` value verbatim — exact, byte-for-byte, ready for downstream tooling like `aiperf plot` to compute its own per-request stats.
+The aggregation described above is **only** at the run-level. The per-record JSONL (`profile_export.jsonl`) can preserve each request's full `list` value verbatim — exact, byte-for-byte, ready for downstream tooling like `aiperf plot` to compute its own per-request stats — **but only when `--per-chunk-data` is passed**. By default (`per_chunk_data=False`, `src/aiperf/config/artifacts.py:233`), list-valued per-chunk metrics are **stripped** from the JSONL to keep export size bounded (`src/aiperf/post_processors/record_export_jsonl_writer.py:89-95`).
 
 ## What this means for benchmark output
 
@@ -49,13 +54,14 @@ For ICL specifically:
 
 - The numbers in `profile_export_aiperf.{json,csv}` come from the t-digest aggregator. Percentile values typically match a direct numpy computation to within 0.05% relative error on benchmark-scale runs; tail percentiles (p1, p99) at small N exhibit slightly more rank-jitter but stay well under the 0.5% band.
 - `count`, `sum`, `min`, `max`, `avg`, `std` are computed exactly and match what an exact array would produce.
-- Per-request ICL lists in `profile_export.jsonl` are unchanged — anything that needs sample-level precision can read those.
+- Per-request ICL lists in `profile_export.jsonl` are preserved only when `--per-chunk-data` is passed; by default they are stripped (see above). When present, they are exact and sample-level precise regardless of the run-level backend.
 
-For all other metrics: **no change**. Scalar record metrics still use the exact-storage `MetricArray` path. Aggregate metrics (`inter_token_latency`, `request_latency`, etc.) compute through their own existing aggregator; t-digest is not in their path.
+For all other metrics: **no change**. Scalar record metrics (e.g. `inter_token_latency`, `request_latency` — both `BaseRecordMetric`) still use the exact-storage `MetricArray` path. Aggregate metrics (`request_count`, `error_request_count`, etc.) compute through their own existing aggregator; t-digest is not in their path.
 
 ## Where it lives
 
 - Aggregator class: [`src/aiperf/metrics/list_metric_aggregation.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/list_metric_aggregation.py) — `TDigestListMetricAggregator`.
 - Selection site: [`src/aiperf/post_processors/metric_results_processor.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/post_processors/metric_results_processor.py) — first-touch dispatch by `isinstance(value, list)`.
+- Backend selector: `Environment.METRICS.LIST_BACKEND` (env: `AIPERF_METRICS_LIST_BACKEND`, values `ragged` (default) | `tdigest`).
 - Compression knob: `Environment.METRICS.TDIGEST_COMPRESSION` (env: `AIPERF_METRICS_TDIGEST_COMPRESSION`, default 500).
 - Dependency: [`crick~=0.0.8`](https://pypi.org/project/crick/) (Cython/C-backed t-digest, BSD-3, dask-org maintained).

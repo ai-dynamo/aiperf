@@ -14,17 +14,30 @@ The router classes that back these routes live under [`src/aiperf/api/routers/`]
 
 ## Endpoints
 
+Paths written with `{filename:path}` / `{name:path}` / `{asset:path}` use FastAPI's `:path` converter, so the parameter matches nested relative paths containing `/` (e.g. `checkpoints/run_0001/profile_export.json`) rather than a single segment.
+
 | Method | Path | Response shape | Description |
 |---|---|---|---|
 | `GET` | `/api/config` | `BenchmarkConfig` | Declarative benchmark configuration for the current run. `endpoint.api_key` is excluded. Run-identity fields (`benchmark_id`, `cli_command`, etc.) live on `/api/run`, not here. |
 | `GET` | `/api/run` | `RunInfo` | Run-identity metadata: `benchmark_id`, `sweep_id`, `trial`, `random_seed`, `run_label`, `variation_*`, and the redacted `cli_command`. Same shape as the `run_info` block in `profile_export_aiperf.json`. |
 | `GET` | `/api/metrics` | `MetricsResponse` | Live metric values (JSON). Updated as the benchmark progresses. |
 | `GET` | `/metrics` | `text/plain` | Prometheus exposition format. Scrape target for Prometheus and compatible collectors. |
+| `GET` | `/api/server-metrics` | JSON (`endpoint_summaries` map) | Real-time inference-server Prometheus metrics (queue depth, cache usage, latency, throughput) collected during the run. Returns `{"endpoint_summaries": {}, "message": ...}` until the first scrape lands. |
 | `GET` | `/api/progress` | `ProgressResponse` | Per-phase credit/request progress. |
 | `GET` | `/api/workers` | `WorkersResponse` | Per-worker stats (request counts, errors, lifecycle state). |
 | `GET` | `/api/results` | `BenchmarkResultsResponse` | Final benchmark results once profiling has completed. |
 | `GET` | `/api/results/list` | `ResultsListResponse` | List of result artifact files under the artifact directory. |
-| `GET` | `/api/results/files/{filename}` | file stream | Download an individual artifact file by relative path. |
+| `GET` | `/api/results/files/{filename:path}` | file stream | Download an individual artifact file by relative path. |
+| `POST` | `/api/results/upload/{filename:path}` | `201` | Upload an artifact file into the artifact directory (used by the cluster results-sidecar / harvest path). |
+| `GET` | `/api/dataset/data` | JSON (zstd-encodable) | The materialized dataset payload for the run. Honors `Accept-Encoding: zstd`. |
+| `GET` | `/api/dataset/index` | JSON (zstd-encodable) | The dataset index. Honors `Accept-Encoding: zstd`. |
+| `GET` | `/api/dataset/state` | `DatasetStateResponse` | Dataset preparation / loading state. |
+| `GET` | `/api/tokenizer/{name:path}/bundle` | stream (bundle bytes) | Download a materialized tokenizer bundle by name (used by group-managed worker warmup). Not in the OpenAPI schema. |
+| `GET` | `/api/debug/pod-states` | JSON | Debug snapshot of per-pod states. |
+| `GET` | `/api/debug/worker-startup-states` | JSON | Debug snapshot of per-worker startup states. |
+| `POST` | `/api/shutdown` | JSON `{status}` | Request a graceful shutdown of the run. |
+| `WEBSOCKET` | `/ws` | JSON messages | Real-time message streaming — subscribe by message type; supports `ping`/`pong`. Connection-capped. |
+| `GET` | `/`, `/dashboard`, `/dashboard-v2`, `/dashboard-v2/{asset:path}` | HTML / static assets | Bundled web dashboards. `/` is the index page, `/dashboard` the legacy single-file dashboard, and `/dashboard-v2` the v2 SPA (redirects to `/dashboard-v2/`; assets served under that prefix). Not in the OpenAPI schema. |
 | `GET` | `/healthz` | `text/plain` (`ok` / `unhealthy`) | Kubernetes liveness probe. 503 when the service is in `FAILED` state. |
 | `GET` | `/readyz` | `text/plain` (`ok` / `not ready`) | Kubernetes readiness probe. 200 only when the service is `RUNNING`. |
 | `GET` | `/docs`, `/redoc`, `/openapi.json` | (FastAPI defaults) | Auto-generated OpenAPI documentation. |

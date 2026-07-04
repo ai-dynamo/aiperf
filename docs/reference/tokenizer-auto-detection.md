@@ -56,7 +56,7 @@ When a HuggingFace tokenizer has been previously downloaded, AIPerf detects it i
 1. **Local paths**: Absolute, `./`, `../`, or existing directories are used as-is.
 2. **Cached locally**: If the model directory exists in the HF cache, the name is used as-is (no network).
 3. **Offline mode**: If `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE` is set, names are used as-is.
-4. **Direct lookup**: `model_info()` API call. Returns canonical `model.id` if found.
+4. **Direct lookup**: `model_info()` API call. If it succeeds, the **original name** is kept as-is (not `model.id`) so `transformers` handles any HF redirect internally and caches under the original name (`src/aiperf/common/tokenizer.py:277-283`).
 5. **Search fallback**: If direct lookup fails (`RepositoryNotFoundError` or `HfHubHTTPError`), searches with `list_models(search=name, limit=50)`:
    - **Exact match**: Result ID matches input (case-insensitive).
    - **Suffix match**: Result ends with `/<name>`, picks highest downloads.
@@ -68,8 +68,8 @@ Set `HF_TOKEN` for gated or private models.
 
 **Successful resolution:**
 ```
-INFO     ✓ Tokenizer Qwen/Qwen3-0.6B detected for qwen3-0.6b
-INFO     1 tokenizer validated • 1 resolved • 0.3s
+INFO     [OK] Tokenizer Qwen/Qwen3-0.6B detected for qwen3-0.6b
+INFO     1 tokenizer validated | 1 resolved | 0.3s
 ```
 
 **Ambiguous name:**

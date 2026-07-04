@@ -75,7 +75,7 @@ estimated_clock_skew = offset - estimated_one_way
 
 Before sending `WorkerDispatchable`, each worker sends 5 `TimePing` probes on the credit DEALER/ROUTER socket and waits for `TimePong` echoes. The minimum RTT becomes `baseline_rtt_ns`. This follows Cristian's algorithm with the improvement of taking multiple probes and selecting the minimum for tighter bounds.
 
-RTT measurement runs once at startup in both local and Kubernetes modes, on the exact same DEALER/ROUTER path that credits travel.
+RTT measurement is gated on **non-group-managed** startup only. `Worker._send_worker_ready_message` (`src/aiperf/workers/worker.py:315-338`) returns *before* calling `_measure_baseline_rtt()` when the worker is group-managed (`uses_worker_group_manager`, true for both the default `multiprocessing` runtime and `kubernetes` — see `src/aiperf/config/runtime.py:42-55`). So the pre-flight RTT decomposition is skipped in normal multiprocessing and Kubernetes runs; it executes only in the single-process / `FakeCommunication` mode where workers are not group-managed. The credit-based one-way offset tracking (below) runs in **every** mode regardless — only the RTT decomposition into clock-skew-vs-transit is skipped.
 
 ## Timestamp Correction
 

@@ -43,6 +43,7 @@ Default for:
 - Multi-turn JSONL
 - ShareGPT
 - Mooncake traces with `hash_ids`
+- DAG JSONL (`dag_jsonl` loader)
 
 ### `deltas_with_responses`
 
@@ -91,7 +92,8 @@ Request 3: sends Turn 3 as-is
 Each turn is sent exactly as it appears in the dataset.
 
 Default for:
-- Mooncake traces with pre-built `messages` arrays
+- Mooncake traces with pre-built, self-contained `messages` arrays
+- Raw-payload loaders — `inputs_json` and `raw_payload` (both inherit the `BaseRawPayloadLoader` default)
 
 ### `message_array_without_responses`
 

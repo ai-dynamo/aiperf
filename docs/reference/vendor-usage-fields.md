@@ -42,7 +42,7 @@ The verification work behind this document was performed by inspecting each prov
 
 ## How AIPerf normalizes these shapes
 
-AIPerf wraps every API-reported usage dict in a `Usage` class ([`src/aiperf/common/models/usage_models.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/usage_models.py)). On construction, two recognized vendor envelopes are unwrapped to the top level so all properties read from a single flat dict:
+AIPerf wraps every API-reported usage dict in a `Usage` class ([`src/aiperf/common/models/usage_models.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/usage_models.py)). On construction, three recognized vendor envelopes are unwrapped to the top level so all properties read from a single flat dict:
 
 - **Gemini** `usageMetadata` → top-level (lifts `promptTokenCount`, `candidatesTokenCount`, etc.).
 - **Cohere v1** `meta` → top-level (lifts `meta.tokens.{input,output}_tokens`, `meta.cached_tokens`).

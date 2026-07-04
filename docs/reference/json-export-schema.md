@@ -8,7 +8,7 @@ sidebar-title: JSON Export Schema
 
 After every `aiperf profile` run, AIPerf writes a summary JSON file (default name `profile_export_aiperf.json`) under the artifact directory. Each top-level metric entry holds a stats block; this page documents which fields appear in that block, when they appear, and how the schema is versioned.
 
-The on-disk shape is produced by `JsonMetricResult` in [`src/aiperf/common/models/export_models.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/export_models.py). Fields that are unset are omitted from the JSON output (`exclude_none=True`), so the field set per metric varies by metric type — this page is the source of truth for which fields to expect where.
+The on-disk document is a `JsonExportData` model whose per-metric entries are `JsonMetricResult` blocks (both in [`src/aiperf/common/models/export_models.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/export_models.py)). It is serialized with `exclude_unset=True` and `exclude_none=True` (`src/aiperf/exporters/metrics_json_exporter.py:109-111`), so unset/`None` fields are omitted — the field set per metric varies by metric type, and this page is the source of truth for which fields to expect where.
 
 ## Per-metric stats fields
 
@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.3",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -64,13 +64,15 @@ The current schema version is exported as the top-level `schema_version` field o
 |---|---|
 | `1.0` | Initial shape: `unit`, `avg`, `min`, `max`, `std`, `p1`–`p99`. |
 | `1.1` | Added `count` and `sum` to per-metric stats blocks. Backward-compatible for readers that ignore unknown fields; the new fields are present only on record-type metrics, omitted on derived/aggregate. |
+| `1.2` | Added the per-metric `better` (optimization-direction) field and an `archetypes` array to the document. |
+| `1.3` | Added top-level run-metadata fields: `run_info`, `was_cancelled`, `branch_stats` (DAG-shaped runs only), `start_time`, and `end_time`. This is the current schema version (`JsonExportData.SCHEMA_VERSION = "1.3"`). |
 
 ### Other JSON exports use independent schema versions
 
-`aiperf` writes additional JSON files when `--num-profile-runs >= 2`:
+`aiperf` writes additional JSON files when a multi-run plan produces at least two successful runs (`len(successful_runs) >= 2`, `src/aiperf/cli_runner/_multi_run.py:270` — the gate is successful-run count, not the raw `--num-profile-runs` value):
 
-- `profile_export_aiperf_aggregate.json` — confidence aggregation across runs. Per-metric blocks have a different shape (`mean`, `std`, `cv`, `se`, `ci_low`, `ci_high`, `t_critical`, `unit`) and own their own `schema_version` (`AggregateConfidenceJsonExporter.SCHEMA_VERSION`, currently `"1.0"`).
-- `profile_export_aiperf_collated.json` — pools per-request values from all runs into a single population, then emits combined percentiles (`mean`, `std`, `p50`, `p90`, `p95`, `p99`, `count`) under a `combined` key plus a `per_run` list of run-level summaries. Uses its own `schema_version` (`"1.0.0"`).
+- `profile_export_aiperf_aggregate.json` — confidence aggregation across runs. Per-metric blocks have a different shape (`mean`, `std`, `min`, `max`, `cv`, `se`, `ci_low`, `ci_high`, `t_critical`, `unit`) and own their own `schema_version` (`AggregateConfidenceJsonExporter.SCHEMA_VERSION`, currently `"1.0"`).
+- `profile_export_aiperf_collated.json` — written **only for adaptive-search (BO) runs** (`plan.use_adaptive`, `src/aiperf/cli_runner/_aggregate.py:93`), not for plain multi-run or grid sweeps. Pools per-request values from all runs into a single population, then emits combined percentiles (`mean`, `std`, `p50`, `p90`, `p95`, `p99`, `count`) under a `combined` key plus a `per_run` list of run-level summaries. Uses its own `schema_version` (`"1.0.0"`).
 
 The `schema_version` documented on this page applies only to `profile_export_aiperf.json`. The other files evolve on their own cadence.
 
