@@ -67,21 +67,22 @@ speculatively.
 |---|---|---|---|---|
 | `apiextensions.k8s.io` | `customresourcedefinitions` | `get, list, watch` | kopf CRD discovery at startup | `clusterrole.yaml:12-14` |
 | `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status`, `aiperfjobs/finalizers` | `get, list, watch, create, update, patch, delete` | Reconcile AIPerfJob CRs, patch status/phase, manage finalizers | `clusterrole.yaml:17-19` |
-| `jobset.x-k8s.io` | `jobsets` | `create, delete, get, list, patch, update, watch` | Create/own the controller + worker JobSet for each AIPerfJob | `clusterrole.yaml:22-24` |
-| `jobset.x-k8s.io` | `jobsets/status` | `get, list, watch` | Observe JobSet readiness and roll it up to AIPerfJob status | `clusterrole.yaml:25-27` |
-| `kueue.x-k8s.io` | `workloads` | `get, list, watch` | Surface Kueue admission state on the AIPerfJob status | `clusterrole.yaml:30-32` |
-| `batch` | `jobs` | `get, list, watch` | Monitor the Jobs that JobSet creates under the hood | `clusterrole.yaml:35-37` |
-| `apps` | `deployments` | `get, list, watch` | Preflight checks for the JobSet controller and Kueue controller | `clusterrole.yaml:40-42` |
-| `""` (core) | `serviceaccounts`, `resourcequotas`, `secrets` | `get, list, watch` | Preflight verifies custom SA, ResourceQuota headroom, and imagePullSecrets | `clusterrole.yaml:47-49` |
-| `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml:52-54` |
-| `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Create `run_config.json` ConfigMap consumed by every benchmark pod | `clusterrole.yaml:57-59` |
-| `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:62-64` |
-| `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml:67-69` |
-| `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml:72-74` |
-| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs` | `clusterrole.yaml:77-79` |
-| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:82-84` |
-| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events and let benchmark pods read them for UI display | `clusterrole.yaml:87-89` |
-| `coordination.k8s.io` | `leases` | `create, delete, get, list, patch, update, watch` | kopf leader election when running more than one operator replica | `clusterrole.yaml:92-94` |
+| `aiperf.nvidia.com` | `aiperfsweeps`, `aiperfsweeps/status`, `aiperfsweeps/finalizers` | `get, list, watch, create, update, patch, delete` | Reconcile AIPerfSweep CRs, patch status, manage finalizers | `clusterrole.yaml:22-24` |
+| `jobset.x-k8s.io` | `jobsets` | `create, delete, get, list, patch, update, watch` | Create/own the controller + worker JobSet for each AIPerfJob | `clusterrole.yaml:27-29` |
+| `jobset.x-k8s.io` | `jobsets/status` | `get, list, watch` | Observe JobSet readiness and roll it up to AIPerfJob status | `clusterrole.yaml:30-32` |
+| `kueue.x-k8s.io` | `workloads` | `get, list, watch` | Surface Kueue admission state on the AIPerfJob status | `clusterrole.yaml:35-37` |
+| `batch` | `jobs` | `get, list, watch` | Monitor the Jobs that JobSet creates under the hood | `clusterrole.yaml:40-42` |
+| `apps` | `deployments` | `get, list, watch` | Preflight checks for the JobSet controller and Kueue controller | `clusterrole.yaml:45-47` |
+| `""` (core) | `serviceaccounts` | `get, list, watch, create` | Preflight verifies custom SA; sweep handler creates a per-sweep SA | `clusterrole.yaml:55-57` |
+| `""` (core) | `resourcequotas`, `secrets` | `get, list, watch` | Preflight inspects ResourceQuota headroom and referenced imagePullSecrets / env secrets | `clusterrole.yaml:58-60` |
+| `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml:63-65` |
+| `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Store benchmark configuration ConfigMap consumed by every benchmark pod | `clusterrole.yaml:68-70` |
+| `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:73-75` |
+| `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml:78-80` |
+| `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml:83-85` |
+| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs` | `clusterrole.yaml:88-90` |
+| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:93-95` |
+| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events and let benchmark pods read them for UI display | `clusterrole.yaml:98-100` |
 
 The binding
 (`deploy/helm/aiperf-operator/templates/clusterrolebinding.yaml:8-17`) connects
@@ -98,9 +99,9 @@ need a custom SA.
 
 | API group | Resources | Verbs | Purpose | Source |
 |---|---|---|---|---|
-| `""` (core) | `pods` | `get, list, watch` | Workers discover controller and peer record processors via pod labels | `benchmark-rbac.yaml:17-19` |
-| `jobset.x-k8s.io` | `jobsets` | `get, list, watch, patch, update` | Controller patches JobSet status to signal graceful completion | `benchmark-rbac.yaml:22-24` |
-| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch, update` | Controller reads AIPerfJob spec and patches per-phase progress fields | `benchmark-rbac.yaml:27-29` |
+| `""` (core) | `pods` | `get, list, watch` | Workers discover controller and peer record processors via pod labels | `benchmark-rbac.yaml:22-24` |
+| `jobset.x-k8s.io` | `jobsets` | `get, list, watch, patch, update` | Controller patches JobSet status to signal graceful completion | `benchmark-rbac.yaml:27-29` |
+| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch, update` | Controller reads AIPerfJob spec and patches per-phase progress fields | `benchmark-rbac.yaml:32-34` |
 
 Notice that benchmark pods have no create/delete permission on any
 resource, no access to Secrets, no cross-namespace visibility, and no access
@@ -229,15 +230,15 @@ securityContext:
 This context is applied to:
 
 - The five control-plane containers in the controller pod
-  (`jobset_builder.py:181`)
-- The event-bus proxy sidecar (`jobset_builder.py:229`)
-- The results-serving sidecar (`jobset_builder.py:256`)
+  (`jobset_builder.py:185`)
+- The event-bus proxy sidecar (`jobset_builder.py:236`)
+- The results-serving sidecar (`jobset_builder.py:263`)
 - Each worker and record-processor container
 
 ### Overriding via `podTemplate.containerSecurityContext`
 
 The CRD schema at
-`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml:177-180` exposes
+`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml:837-840` exposes
 `spec.podTemplate.containerSecurityContext` as a free-form object. Keys
 supplied there merge on top of the base context. `capabilities` is merged
 shallowly (user keys update the drop/add lists); all other keys are replaced.
@@ -270,15 +271,16 @@ spec:
 
 ### What `readOnlyRootFilesystem: true` requires
 
-The root filesystem is read-only. AIPerf writes to four locations, which
+The root filesystem is read-only. AIPerf writes to five locations, which
 must be provided as writable volumes (the JobSet builder already mounts
 these as `emptyDir` volumes on every container via
 `build_shared_volumes()` in `src/aiperf/kubernetes/jobset_helpers.py`):
 
 - `/aiperf/ipc` — ZMQ IPC socket files (controller mode)
 - `/aiperf/datasets` — shared dataset mmap files (dataset-manager writes, API serves to workers)
+- `/aiperf/hf_home` — HuggingFace cache (`tokenizer-cache` volume; `HF_HOME` points here)
 - `/results` — exported metrics, profile artifacts
-- `/tmp` — general scratch (HuggingFace cache, tempfile)
+- `/tmp` — general scratch (tempfile, matplotlib config)
 
 If you supply an alternate `podTemplate.volumeMounts`, ensure each of these
 paths is covered by a writable volume. Otherwise the controller will fail
@@ -299,7 +301,7 @@ in the benchmark namespace, allow:
 
 | Source | Destination | Ports | Reason |
 |---|---|---|---|
-| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668). See `src/aiperf/config/comm/tcp.py:85-130` (and the dual-bind variant in `src/aiperf/config/comm/dual_bind.py:161-200`). |
+| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668, 5669 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668), credit-return PUSH/PULL fan-in (5669). See `src/aiperf/config/comm/tcp.py:109-178`. |
 | All benchmark pods | Controller pod | 8080-8088 (TCP) | Health and readiness probes (`src/aiperf/kubernetes/environment.py:180-215`) |
 | Client / ingress | API service | 9090 (TCP) | UI dispatch, progress streaming (`environment.py:195-196`) |
 | Client / ingress | Results sidecar | 9091 (TCP) | Post-run result downloads (`environment.py:197-203`) |
@@ -336,6 +338,7 @@ spec:
     - {protocol: TCP, port: 5666}
     - {protocol: TCP, port: 5667}
     - {protocol: TCP, port: 5668}
+    - {protocol: TCP, port: 5669}
   - from: []
     ports:
     - {protocol: TCP, port: 9090}
@@ -443,7 +446,7 @@ A hardened rollout checklist:
 8. **NetworkPolicy default-deny + allow-list** — apply the sample above
    and lock the LLM endpoint egress to a CIDR or selector.
 9. **ResourceQuota on the benchmark namespace** — AIPerf preflight reads
-   quotas (`clusterrole.yaml:47-49`) and will fail fast if headroom is
+   quotas (`clusterrole.yaml:58-60`) and will fail fast if headroom is
    insufficient.
 10. **Audit logging** — enable Kubernetes audit logging on the
     `aiperf.nvidia.com` and `jobset.x-k8s.io` API groups. Operator
