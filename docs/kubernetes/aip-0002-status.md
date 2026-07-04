@@ -106,8 +106,8 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 | `aiperf list` (incl. `--all-namespaces`) | 🌟 | `aiperf kube list` with `-A` (`cli_commands/kube/list_.py:19-103`) lists **AIPerfJob CRs** plus JobSet fallback — richer than JobSet-only listing (CRs carry status, progress, cancel signalling). |
 | `aiperf attach --job-id` (reconnect + progress) | 🔵 | `aiperf kube attach [job_id]` with positional + port-forward + WebSocket (`cli_commands/kube/attach.py:17-76`). |
 | `aiperf results --job-id` | 🌟 | `aiperf kube results [job_id]` with `--from-pods`, `--summary-only`, `--shutdown` (`cli_commands/kube/results.py:17-60`) — more retrieval modes than the spec's single download. |
-| `aiperf cancel --job-id` | 🔵 | No dedicated subcommand, but cancellation flows via `spec.cancel=true` on the AIPerfJob CR (`operator/models.py:288`, `operator/handlers/lifecycle.py:62-120`) and `POST /jobs/{ns}/{name}/cancel` (`operator/routers/jobs.py:407`). Triggerable by `aiperf kube results --shutdown` or `kubectl edit aiperfjob`. |
-| `aiperf cleanup --job-id` | 🌟 | `kubectl delete aiperfjob` cascades via `ownerReferences` GC (JobSet + ConfigMap + Role reaped automatically, `handlers/lifecycle.py:35-59`); separate time-based results TTL (`handlers/cleanup.py:31-66`, `models.py:282-286` `resultsTtlDays`). Richer than a per-job flag. |
+| `aiperf cancel --job-id` | 🔵 | No dedicated subcommand, but cancellation flows via `spec.cancel=true` on the AIPerfJob CR (`config/deployment.py:216`, inherited by both kinds; `operator/handlers/lifecycle.py:62-120`) and `POST /jobs/{ns}/{name}/cancel` (`operator/routers/jobs.py:407`). Triggerable by `aiperf kube results --shutdown` or `kubectl edit aiperfjob`. |
+| `aiperf cleanup --job-id` | 🌟 | `kubectl delete aiperfjob` cascades via `ownerReferences` GC (JobSet + ConfigMap + Role reaped automatically, `handlers/lifecycle.py:35-59`); separate time-based results TTL (`handlers/cleanup.py:31-66`, `config/deployment.py:206` `results_ttl_days`). Richer than a per-job flag. |
 | `aiperf preflight` standalone | 🔵 | Exists as `aiperf kube preflight` (`cli_commands/kube/preflight.py:16-67`). |
 | Ctrl+C cancellation with graceful termination (M6) | ✅ | `cancel_aiperf_job` sets `spec.cancel=true` (`kubernetes/client_jobs.py:231`); operator tears down (`handlers/monitor.py`, `completion.py:85,147`); CLI entry points catch KeyboardInterrupt; `watch_orchestrator.py:142` installs SIGINT/SIGTERM; integration test `tests/integration/test_ctrl_c_cancellation.py`. |
 
@@ -201,7 +201,7 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 | `--no-results-pvc` (emptyDir only) | 🔵 | EmptyDir is the only mode in JobSet today — implicit always-on, not a flag. |
 | ConfigMap `profile_export_aiperf.json` (always written) | 🌟 | Operator PVC persists summaries at `jobs/<ns>/<id>/profile_export_aiperf.json` (`operator/routers/jobs.py:209`); cross-job retention, no 1 MiB ConfigMap cap, recoverable after CR deletion — strictly richer than ConfigMap summary for standard install/upgrade/cleanup lifecycles. |
 | Incremental progress persistence (to ConfigMap) | 🌟 | `RecordsManager._write_partial_checkpoint_task` (`records/records_manager.py:413`) writes periodic checkpoints to PVC; operator **recovers** from partial checkpoints (`operator/handlers/monitor.py:1042`). More robust than ConfigMap (size-limit free, restart-resistant). |
-| TTL auto-cleanup (JobSet + owned PVC) | 🌟 | JobSet `ttlSecondsAfterFinished` default 300 (`environment.py:231`, `jobset.py:262`) cascades to pods. Operator PVC is cluster-lifecycle (not owned by JobSet) — richer than per-job PVC GC because results survive across jobs. Separate days-based results-TTL (`operator/main.py:148`, `operator/models.py:286`) reaps stale result dirs. Direct-mode default 28800s. |
+| TTL auto-cleanup (JobSet + owned PVC) | 🌟 | JobSet `ttlSecondsAfterFinished` default 300 (`environment.py:231`, `jobset.py:262`) cascades to pods. Operator PVC is cluster-lifecycle (not owned by JobSet) — richer than per-job PVC GC because results survive across jobs. Separate days-based results-TTL (`operator/main.py:148`, `config/deployment.py:206` `results_ttl_days`) reaps stale result dirs. Direct-mode default 28800s. |
 
 ---
 
@@ -238,7 +238,7 @@ Status tracker for [AIP-0002 Kubernetes Deployment Enhancement](https://raw.gith
 |---|---|---|
 | CLI progress stream (real-time error counts) | ✅ | `watch_pollers.py:130,165` emits `error_count`; rendered in `watch_render_rich.py:181`, `watch_render_text.py:83`; `progress_stream.py` streams via websocket. |
 | `/api/progress` error counts + samples | 🟡 | **Planned work**: `/api/progress` exists and exposes `request_errors` (`progress_tracker_mixin.py:53,72,123`); "recent error samples" ring-buffer not yet implemented. |
-| ConfigMap aggregated error summary | 🟡 | **Planned: add sample error-message payloads to AIPerfJob `.status`** (counts already surface via `records/error_tracker.py:25` `get_error_summary()` → operator PVC + CRD `.status` `requests_errors`/`error_rate` at `operator/models.py:103,126,189,229` + Prometheus `/metrics`; sample messages missing). |
+| ConfigMap aggregated error summary | 🟡 | **Planned: add sample error-message payloads to AIPerfJob `.status`** (counts already surface via `records/error_tracker.py:25` `get_error_summary()` → operator PVC + CRD `.status` `requests_errors` (`operator/models.py:107`) and derived `error_rate` (`operator/models.py:359`) + Prometheus `/metrics`; sample messages missing). |
 | Pod logs (via `kubectl logs`) | ✅ | `cli_commands/kube/logs.py` + `kubernetes/logs.py`. |
 
 ---
