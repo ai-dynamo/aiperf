@@ -68,7 +68,7 @@ This configures 15 simulated users with sessions averaging 20 turns:
 |-----------|-------------|
 | `--user-centric-rate` | Target requests per second (QPS) across all users (enables user-centric mode) |
 | `--num-users` | Number of concurrent simulated users |
-| `--session-turns-mean` | Mean number of conversation turns per user (must be >= 2) |
+| `--session-turns-mean` | Mean number of conversation turns per user (must be >= 1; set > 1 for multi-turn sessions) |
 
 ## Why This Mode Enables Accurate KV Cache Measurement
 

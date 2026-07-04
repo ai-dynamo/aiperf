@@ -155,7 +155,7 @@ For non-standard APIs where no built-in endpoint matches, use `--endpoint-type r
 | `--endpoint-type` | No | `chat` | Any endpoint type works; `raw` available for non-standard APIs |
 | `--custom-dataset-type` | No | Auto-detected | Set to `raw_payload` to force this loader |
 | `--streaming` | No | `false` | Enable streaming responses |
-| `--url` | No | `localhost:8000` | Server base URL (endpoint type appends the API path) |
+| `--url` | No | `http://localhost:8000` | Server base URL (endpoint type appends the API path) |
 | `--concurrency` | No | -- | Number of concurrent users |
 | `--dataset-sampling-strategy` | No | `sequential` | `sequential`, `random`, or `shuffle` |
 

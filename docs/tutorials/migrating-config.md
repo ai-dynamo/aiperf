@@ -73,7 +73,7 @@ The auto-migration is intended as a transitional safety net; new configs and com
 
 ## Body fields (move under `benchmark:`)
 
-`models`, `endpoint`, `datasets`, `phases`, `artifacts`, `slos`, `tokenizer`, `gpu_telemetry`, `server_metrics`, `runtime`, `logging`, `metrics`, `accuracy`.
+`models`, `endpoint`, `datasets`, `phases`, `artifacts`, `slos`, `tokenizer`, `gpu_telemetry`, `server_metrics`, `runtime`, `logging`, `metrics`, `accuracy`, `otel`, `mlflow`, `wandb`.
 
 ## Envelope fields (stay at top level)
 
@@ -101,6 +101,6 @@ The envelope shape mirrors how AIPerfSweep CRDs are structured on the K8s side: 
 
 ## Common gotchas
 
-- **Scenario `runs[i]` body keys must be wrapped under `benchmark:`.** A run carrying `phases:` directly raises `unknown field 'phases' in sweep run [0]; allowed: name, variables, benchmark`. Use `runs: [{benchmark: {phases: [...]}}]`.
+- **Scenario `runs[i]` body keys must be wrapped under `benchmark:`.** A run carrying `phases:` directly raises `sweep run [0]: unknown field(s) ['phases']; allowed: ['benchmark', 'name', 'values', 'variables'].` Use `runs: [{benchmark: {phases: [...]}}]`.
 - **Grid `sweep.variables` paths must be envelope-rooted.** `phases.profiling.rate: [...]` raises `non-sweepable subtree`. Use `benchmark.phases.profiling.rate`.
 - **`AIPerfJob` CRDs no longer carry sweep blocks inside `spec.benchmark`.** For sweeps on Kubernetes, use `AIPerfSweep`.

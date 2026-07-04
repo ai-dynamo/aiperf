@@ -112,7 +112,7 @@ benchmark:
 `path:` and `records:` are mutually exclusive. Setting both, or neither, raises a Pydantic `ValidationError` at config load with this message:
 
 ```text
-FileDataset requires exactly one source: set either `path:` (load from disk) or `records:` (embed in YAML), not both. Got path=<...>, records=<...>.
+FileDataset requires exactly one source: set either `path:` (load from disk) or `records:` (embed in YAML), not both. Got path=<path>, records=<set>.
 ```
 
 ## Soft size limit

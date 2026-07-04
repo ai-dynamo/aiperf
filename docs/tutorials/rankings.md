@@ -115,7 +115,7 @@ docker run --gpus all -p 8080:8000 \
 
 ```bash
 # Verify the server
-curl -s http://localhost:8080/v1/rerank \
+curl -s http://localhost:8080/v2/rerank \
   -H "Content-Type: application/json" \
   -d '{"query":"What is AI?","documents":["Artificial intelligence overview","Bananas are yellow"]}' | jq
 ```

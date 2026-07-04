@@ -226,23 +226,21 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 
 ## Common Validation Errors
 
-| Error | Cause | Solution |
+Each message below is quoted by its leading sentence; the actual error also
+includes an actionable hint on how to fix it.
+
+| Error (leading text) | Cause | Solution |
 |-------|-------|----------|
-| `--user-centric-rate cannot be used together with --request-rate or --arrival-pattern` | Conflicting options | Use only one scheduling option |
-| `--user-centric-rate requires --num-users to be set` | Missing required option | Add `--num-users` |
-| `--user-centric-rate requires multi-turn conversations (--session-turns-mean >= 2)` | Single-turn with `--user-centric-rate` | Use `--request-rate` for single-turn or increase `--session-turns-mean` |
-| `--benchmark-grace-period can only be used with duration-based benchmarking` | Grace period without duration | Add `--benchmark-duration` |
-| `--warmup-grace-period can only be used when warmup is enabled` | Warmup grace without warmup | Add `--warmup-request-count`, `--warmup-duration`, or `--num-warmup-sessions` |
-| `--prefill-concurrency requires --streaming to be enabled` | Prefill without streaming | Add `--streaming` |
-| `--arrival-smoothness can only be used with --arrival-pattern gamma` | Wrong arrival pattern | Change to `--arrival-pattern gamma` |
-| `Dataset sampling strategy is not compatible with fixed schedule mode` | Sampling with `--fixed-schedule` | Remove `--dataset-sampling-strategy` |
-| `Both a request-count and number of conversations are set` | Conflicting stop conditions | Use only one of `--request-count` or `--num-sessions` |
-| `Both --warmup-request-count and --num-warmup-sessions are set` | Conflicting warmup stop conditions | Use only one of `--warmup-request-count` or `--num-warmup-sessions` |
-| `--num-users can only be used with --user-centric-rate` | `--num-users` without `--user-centric-rate` | Add `--user-centric-rate` or remove `--num-users` |
-| `--request-cancellation-delay can only be used with --request-cancellation-rate` | Delay without cancellation rate | Add `--request-cancellation-rate` or remove `--request-cancellation-delay` |
-| `--fixed-schedule-* can only be used with --fixed-schedule` | Fixed schedule options without `--fixed-schedule` | Add `--fixed-schedule` or remove the offset options |
-| `--request-rate-ramp-duration cannot be used with --user-centric-rate` | Rate ramping with `--user-centric-rate` | Remove `--request-rate-ramp-duration` |
-| `--request-rate-ramp-duration cannot be used with --fixed-schedule` | Rate ramping with `--fixed-schedule` | Remove `--request-rate-ramp-duration` |
+| `--num-users requires --user-centric-rate.` | `--num-users` set without user-centric mode | Add `--user-centric-rate`, or drop `--num-users` |
+| `User-centric rate mode requires --session-turns-mean >= 2.` | Single-turn with `--user-centric-rate` | Use `--request-rate` for single-turn, or raise `--session-turns-mean` |
+| `--benchmark-grace-period requires --benchmark-duration to be set.` | Grace period without duration | Add `--benchmark-duration` |
+| `--warmup-grace-period requires --warmup-duration;` | Warmup grace on a non-duration warmup | Add `--warmup-duration`, or drop `--warmup-grace-period` |
+| `Phase '<name>': prefill_concurrency requires endpoint.streaming=true` | Prefill concurrency without streaming | Add `--streaming` |
+| `--arrival-smoothness is only supported with --arrival-pattern gamma.` | Smoothness on a non-gamma pattern | Change to `--arrival-pattern gamma` |
+| `Phase '<name>' uses <type> which requires sequential sampling, but dataset '<name>' uses '<strategy>' sampling` | Non-sequential sampling with a mode that needs it (e.g. fixed schedule) | Use `--dataset-sampling-strategy sequential` |
+| `--request-cancellation-delay requires --request-cancellation-rate to be set` | Delay without cancellation rate | Add `--request-cancellation-rate`, or drop `--request-cancellation-delay` |
+| `--fixed-schedule-{auto,start,end}-offset requires --fixed-schedule.` | Fixed-schedule offsets without `--fixed-schedule` | Add `--fixed-schedule`, or drop the offset flags |
+| `--request-rate-ramp-duration can only be used with rate-controlled scheduling (--request-rate or --user-centric-rate).` | Rate ramping on a non-rate-controlled phase (e.g. concurrency or fixed-schedule) | Use `--request-rate` / `--user-centric-rate`, or drop `--request-rate-ramp-duration` |
 
 ---
 
