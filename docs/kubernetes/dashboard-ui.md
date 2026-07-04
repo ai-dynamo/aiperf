@@ -89,288 +89,215 @@ Do not expose this port via an unauthenticated Ingress.
 
 ## Navigation
 
-The UI is organized as a **two-tier router**:
-
-- **Cross-namespace tier** (unprefixed): `/`, `/analysis`, `/log`. These views
-  give situational awareness across every namespace the operator has observed
-  jobs in, and host analytics that benefit from a wider lens.
-- **Per-namespace tier** (`/ns/<name>/...`): every operational view —
-  overview, launch, archive, single run, single epoch. The namespace segment
-  in the URL is the **authoritative scope** for the read-only launch helper:
-  YAML copied from `/ns/foo/launch` is pre-scoped to namespace `foo` and must
-  be applied from an authenticated terminal.
+The UI is a **flat, tabbed single-page app** — there is no namespace-picker
+landing page and no per-namespace URL tier. Namespace is only ever a path
+parameter (`:ns`) on a job/sweep detail route or a `?ns=` query filter on the
+list pages; it is never a routing gate, and nothing about the last namespace is
+persisted.
 
 Routes are hash-based, so reloading any page works without server-side route
-configuration. The full route table:
+configuration. The full route table (`src/aiperf/operator/ui/app.js:51-83`):
 
-| Route | Purpose |
-|---|---|
-| `/` | Cross-namespace picker — one tile per namespace observed in the operator's job list, with mini-status chips (running / failed-recent / completed counts) and a left-edge state tint. Click a tile to enter that namespace. |
-| `/ns/:ns` | Per-namespace overview — stats hero, active runs strip, recent runs table, all scoped to one namespace. Empty namespaces show a "Launch in `<ns>`" CTA. |
-| `/ns/:ns/launch` | Read-only launch helper for `:ns`. The YAML is auto-filled from the URL, browser submission is disabled, and the user copies the manifest for `kubectl apply` or a GitOps review path. |
-| `/ns/:ns/archive` | Namespace history — flat list of past runs in `:ns`. |
-| `/ns/:ns/run/:name` | Single-run workbench. |
-| `/ns/:ns/run/:name/runs/:epoch` | Single-run epoch view. |
-| `/analysis` | Cross-namespace comparison view (cluster-key driven). |
-| `/log` | Durable run log (cross-namespace). |
+| Route | Page | Purpose |
+|---|---|---|
+| `/` | `Dashboard` | Cluster-wide overview: cluster-stats banner, active-jobs cards, throughput-vs-latency scatter, KPI tiles, recent-jobs table. |
+| `/jobs` | `Jobs` | Filterable/sortable table of every AIPerfJob (phase tabs, search, model/endpoint/namespace filters — all synced to the URL query). |
+| `/jobs/:ns/:name` | `JobDetail` | Single-run workbench (see below). |
+| `/jobs/:ns/:name/runs/:epoch` | `JobDetail` | Same workbench pinned to one epoch of a multi-epoch run. |
+| `/sweeps` | `Sweeps` | Filterable/sortable table of every AIPerfSweep. |
+| `/sweeps/:ns/:name` | `SweepDetail` | Sweep workbench (variation curves, Pareto, children). |
+| `/sweeps/:ns/:name/runs/:epoch` | `SweepDetail` | Sweep workbench pinned to one sweep epoch. |
+| `/leaderboard` | `Leaderboard` | Cross-run ranking for a chosen metric. |
+| `/compare` | `Compare` | Multi-run comparison (metric table, bar/Pareto charts). |
+| `/compare/:ns/:name/:epochA/:epochB` | `CompareEpochs` | Two-epoch diff of one run. |
+| `/history` | `History` | A metric's value over time across runs. |
+| `/launch` | `Launch` | Read-only YAML helper (copy-only; see below). |
+
+Any other path renders a "Not Found" stub.
 
 ```mermaid
 flowchart TB
-    root["/"] --> Picker["Namespace picker"]
-    Picker -->|click tile| nsRoot["/ns/:ns"]
-    nsRoot --> Overview["Namespace overview"]
-    Overview -->|Launch| launch["/ns/:ns/launch"]
-    Overview -->|Archive| archive["/ns/:ns/archive"]
-    Overview -->|click run| run["/ns/:ns/run/:name"]
-    run --> epoch["/ns/:ns/run/:name/runs/:epoch"]
-    analysis["/analysis"] --> Analysis["Cross-namespace analysis"]
-    log["/log"] --> Log["Durable run log"]
+    dash["/"] --> Dashboard
+    jobs["/jobs"] --> JobDetail["/jobs/:ns/:name(/runs/:epoch)"]
+    sweeps["/sweeps"] --> SweepDetail["/sweeps/:ns/:name(/runs/:epoch)"]
+    lb["/leaderboard"]
+    cmp["/compare"] --> CompareEpochs["/compare/:ns/:name/:a/:b"]
+    hist["/history"]
+    launch["/launch"]
 ```
 
-### Sticky last-namespace
+### Top navigation bar
 
-When the app mounts at `/`, the router checks
-`localStorage.aiperf.ui.lastNamespace`. If that value is set **and** the
-namespace currently has at least one observed job in the operator's job list,
-the app redirects to `/ns/<last>`. Otherwise the picker renders. New users —
-and anyone whose last-used namespace has no current or historical jobs —
-always see the picker on first load.
+`TopNav` (`components/top-nav.js:6-21`) renders two tab groups separated by a
+divider:
 
-### Breadcrumb-pill switcher
+- **Primary:** Dashboard, Jobs, Sweeps, Launch.
+- **Analytics:** Leaderboard, Compare, History.
 
-On every `/ns/...` route the breadcrumb starts with a clickable pill
-`[ns: <name> ▾]`. Clicking it opens a compact dropdown listing every
-namespace with at least one observed job (search-filterable). Selecting a
-namespace navigates to `/ns/<chosen>`. A "View all namespaces" footer item
-returns to `/`.
+When `/api/v1/config/features` reports `dashboard_enabled: true`, a third group
+adds an external **"Plots ↗"** link (see below). The right side of the bar
+holds the theme toggle and the search (Ctrl+K) button.
 
-This is the canonical way to switch namespaces — including when you want the
-launch helper to render YAML for a different namespace.
+### Breadcrumb
+
+Below the top bar, `Breadcrumb` (`components/breadcrumb.js`) renders a
+**route-path** breadcrumb derived from the current hash — e.g. `Jobs / <ns> /
+<name> / runs / <epoch>` on a job-epoch route. It is a plain path trail with
+clickable ancestors; there is **no** namespace dropdown or namespace switcher.
 
 ### Read-only launch helper
 
-The URL is the source of truth for the namespace stamped into launch YAML. On
-`/ns/:ns/launch`, the editor auto-fills `namespace: <ns>` and treats browser
-creation as disabled: the dashboard has no safe bearer-token delivery path for
-mutating routes. Copy the YAML, save it locally, review it, then apply it from
-an authenticated terminal:
+`/launch` (`pages/launch.js`) is a YAML editor with template pills. Browser
+job submission is **hard-disabled** — `lib/api.js` sets
+`DASHBOARD_MUTATIONS_ENABLED = false`, so `api.createJob()` throws and the
+"Launch" button stays disabled; the working action is **Copy**. Copy the YAML,
+then apply it from an authenticated terminal:
 
 ```bash
 kubectl apply -f benchmark.yaml
 ```
 
-To launch into a different namespace, switch namespaces via the breadcrumb
-pill (which navigates to `/ns/<other>/launch`) before copying the YAML. This
-keeps the URL bar, rendered YAML, and authenticated `kubectl apply` target in
-sync.
-
-### Picker visibility caveat
-
-The `/` picker only renders namespaces with **at least one observed job**
-(current or historical). Empty-but-deployable namespaces are not surfaced.
-To prepare YAML for a namespace the operator has never seen, navigate to
-`/ns/<name>/launch` directly — the launch helper works regardless of whether
-the namespace appears in the picker. After the first job lands via `kubectl
-apply` or GitOps, the namespace will appear on subsequent picker visits.
+The page can be pre-filled from a completed run via the "Re-launch" button on
+the job workbench (handed off through `sessionStorage`, not a POST).
 
 ### External Plots link
 
-A "Plots" link in the top bar points at `/dashboard/` — a Plotly Dash app
-built by `aiperf.operator.dashboard_mount.build_dashboard` and mounted on
-the FastAPI results server via `WSGIMiddleware(DashboardProxy(...))`. When
-no runs exist on the PVC yet the route is served by a small WSGI stub that
-returns `503` until the first run lands, so the link is always present and
-friendly.
+The "Plots ↗" link points at `/dashboard/` — the optional Plotly Dash sidecar.
+The results server mounts an **httpx reverse-proxy router**
+(`operator/routers/dashboard_proxy.py`, wired in `results_server.py:219-223`)
+that forwards `/dashboard/*` to the dashboard sidecar. The link is gated by
+`/api/v1/config/features`'s `dashboard_enabled` flag, and the proxy returns
+`503` when the sidecar is disabled or unreachable. (The Dash app itself uses
+`WSGIMiddleware` inside the sidecar's own `dashboard_server.py`, not on the
+results server.)
 
 ---
 
 ## Pages
 
-### Namespace picker (`/`)
+### Dashboard (`/`)
 
-The landing view for new sessions and anyone whose sticky-namespace pointer
-no longer resolves to an active namespace.
-
-**What it shows:**
-
-- One **tile per namespace** that has at least one observed job in the
-  operator's job list (current or historical).
-- Per tile: the namespace name, mini-status chips (running / failed-recent /
-  completed counts), and a left-edge state tint (green if anything is
-  running, red if anything failed in the recent window, neutral otherwise).
-- A search field for filtering the tile grid.
-
-**Interactions:**
-
-- Click a tile → navigate to `/ns/<name>`.
-- Empty-state copy ("No namespaces yet — deploy a job into any namespace and
-  it will appear here") when the operator's job list is empty.
-
-**Endpoints consumed:**
-
-- `GET /api/v1/jobs` — polled every 5s; the namespace tile set is the
-  distinct `metadata.namespace` values across that list.
-
-### Namespace overview (`/ns/:ns`)
-
-Per-namespace landing page. Everything on this view is scoped to the single
-namespace in the URL.
+The cluster-wide landing view (`pages/dashboard.js`).
 
 **What it shows:**
 
-- **Stats hero** — running / completed / failed counts, total GPUs and nodes
-  in jobs from this namespace, peak request throughput observed.
-- **Active runs strip** — one card per running/initializing/pending job with
-  model, backend, elapsed time, GPU config, live throughput, and progress
-  bar. Click a card to open the run workbench.
-- **Recent runs table** — completed and failed jobs in this namespace,
-  newest first, with phase badge, model, duration, and headline metrics.
-- **Empty state** — namespaces with no current jobs but past history show
-  the recent runs table only. Namespaces with no history at all show a
-  prominent "Launch in `<ns>`" CTA.
+- **Cluster-stats banner** — GPUs used/total + free, utilization %, GPU-node
+  breakdown, and a Kubernetes/cluster tile.
+- **Active-jobs cards** — one card per running/initializing/pending job with a
+  live metric strip (TTFT, output tok/s, P99, ITL, requests, error %) and a
+  progress bar. Click a card to open the workbench.
+- **Throughput-vs-latency scatter** — completed jobs, with TPS/P99, TPS/TTFT,
+  tok-s/P99 axis toggles and a log-scale toggle.
+- **KPI tiles** — Running, Completed, Peak Throughput, Best TTFT, Token
+  Throughput.
+- **Recent-jobs table** — newest completed/failed runs with headline metrics.
 
-**Endpoints consumed:**
+**Endpoints consumed:** `GET /api/v1/jobs` (5s), `GET /api/v1/cluster` (10s),
+`GET /api/v1/analytics/leaderboard` + per-entry
+`GET /api/v1/analytics/summary/{ns}/{jobId}` (15s).
 
-- `GET /api/v1/jobs` — polled every 5s, filtered client-side to `:ns`
-- `GET /api/v1/cluster` — polled every 10s
+### Jobs (`/jobs`)
 
-### Launch (`/ns/:ns/launch`)
+Filterable, sortable table of every AIPerfJob (`pages/jobs.js`). Phase tabs
+(All / Running / Completed / Failed), free-text search, and model / endpoint /
+namespace filters — all persisted to the URL query string. `GET /api/v1/jobs`
+polled every 5s. Clicking a row opens the workbench.
 
-Read-only YAML helper for preparing a new AIPerfJob manifest scoped to `:ns`.
-The browser does not create cluster resources from this page.
+### Job workbench (`/jobs/:ns/:name`)
 
-**Behavior:**
+The deepest page, scoped to one AIPerfJob (`pages/job-detail.js`). Sections
+depend on whether the run is live or finished.
 
-- The `namespace:` field of the YAML is **auto-filled** from the URL.
-- Browser submission is disabled by default because the static SPA cannot
-  safely hold the bearer token required for mutating results-server routes.
-- Templates and schema validation still help draft a valid manifest.
-- To launch, copy the YAML, save it as `benchmark.yaml`, then apply it from an
-  authenticated terminal:
+**Always visible:** header (name, phase badge, namespace/model pills, epoch
+selector), conditions, a `PhaseBar` (Phases), record-processing, and a
+`PodsBar` (per-pod JobSet status).
 
-  ```bash
-  kubectl apply -f benchmark.yaml
-  ```
+**While running:** a live-throughput line chart, a latency-distribution
+histogram, a realtime KPI grid, and a diagnostics panel (Events / Logs /
+Conditions / Pods tabs). A per-job WebSocket feeds live data. A cancel button
+exists but is **disabled** (`DASHBOARD_MUTATIONS_ENABLED = false`); it renders a
+read-only notice pointing to `aiperf kube` / `kubectl`.
 
-- For generated manifests and GitOps flows, use `aiperf kube generate --operator`
-  or commit the copied YAML for review before applying it.
+**After completion:** SLA compliance, server metrics, job configuration (with a
+View-YAML modal), run metadata, per-record analysis (from
+`profile_export.jsonl`), concurrency-vs-throughput, latency-percentile and
+latency-timeline charts, ISL distribution, a full metrics-breakdown table, and
+a result-files card.
 
-**Endpoints consumed:** none. The actual mutating HTTP route for API clients is
-`POST /api/v1/jobs`, protected by mutating-route bearer-token auth; the
-dashboard does not call it by default.
+**Endpoints consumed:** `GET /api/v1/jobs/{ns}/{name}[?epoch=]` (3s),
+`.../epochs`, `GET /api/v1/config/{ns}/{name}`,
+`GET /api/v1/results/{ns}/{name}/runs/{epoch}/...` (file listing +
+`server_metrics_export.json` + `profile_export.jsonl`), and a per-job
+WebSocket.
 
-### Archive (`/ns/:ns/archive`)
+### Job epoch view (`/jobs/:ns/:name/runs/:epoch`)
 
-Flat list of past runs in `:ns` — completed, failed, cancelled, and any run
-whose CR was deleted but whose results remain on the PVC.
+The same workbench pinned to a specific epoch of a multi-epoch run
+(concurrency/request-rate sweeps). Header widgets walk epochs and update the
+URL; a no-epoch URL auto-redirects to the resolved current epoch.
 
-**Filters:**
+### Sweeps (`/sweeps`)
 
-- Phase tabs: All / Completed / Failed / Cancelled (with live counts).
-- Free-text search on name.
-- Model and Endpoint dropdowns (populated from the distinct sets in this
-  namespace's history).
+Filterable, sortable table of every AIPerfSweep (`pages/sweeps.js`) — phase
+tabs, progress, failed count, variation count, model, source, and age.
+`GET /api/v1/sweeps` polled every 5s. Row click → sweep detail.
 
-Clicking a row navigates to the run workbench. The list re-polls
-`GET /api/v1/results?ns=:ns` every 15s.
+### Sweep detail (`/sweeps/:ns/:name`)
 
-### Run workbench (`/ns/:ns/run/:name`)
+One AIPerfSweep workbench (`pages/sweep-detail.js`): header (phase, model,
+epoch selector, live "variation X/Y · trial Z"), conditions, a KPI row
+(variations / completed / failed plus headline peak metrics), a winner summary
+at terminal, an aggregate-artifacts card, a live trial board while running, a
+variation curve (metric selector + chart + table), a Pareto card, a children
+table, and a diagnostics panel while live.
 
-The deepest page, scoped to one AIPerfJob. Sections shown depend on whether
-the job is still running or has finished.
+**Endpoints consumed:** `GET /api/v1/sweeps/{ns}/{name}[?epoch=]` (5s),
+`.../cells`, `.../epochs`, `.../children`,
+`.../epochs/{epoch}/artifacts`, and per-child `GET /api/v1/jobs/{ns}/{name}`.
 
-**Always visible:**
+### Leaderboard (`/leaderboard`)
 
-- **Header** — name, namespace, phase badge, model, backend, start time,
-  elapsed. Mutating controls are hidden or disabled when browser mutations are
-  disabled; a read-only notice points users to authenticated terminal actions
-  for cancellation.
-- **Conditions** — kopf condition list (Ready, Progressing, Completed, …).
-- **Phases** — `PhaseBar` showing which benchmark phase (warmup, measurement,
-  cooldown) the job is in.
-- **Pods** — `PodsBar` with per-pod status across the JobSet (controller,
-  workers, timing manager, records manager).
+Cross-run ranking for a chosen metric + stat (`pages/leaderboard.js`): a
+top-10 horizontal bar chart plus a ranked table, with namespace / model /
+endpoint cross-filters. `GET /api/v1/analytics/leaderboard?metric=&stat=&limit=1000`
+(fetched per selection, not polled). Rows link to the run workbench.
 
-**While running:**
+### Compare (`/compare`)
 
-- **Live Throughput** — rolling line chart (last 60 samples).
-- **Latency Distribution** — live histogram.
-- **SLO hero strip** — live pass/fail against configured SLOs.
+Multi-run comparison (`pages/compare.js`). Left: a job selector with search,
+namespace/model/endpoint facet chips, and quick-pick buttons. Right: a
+metric-comparison table (direction-aware best-value highlight), a grouped bar
+chart, and throughput/latency Pareto scatters. Loads the run list from
+`GET /api/v1/results`, then `GET /api/v1/analytics/compare?jobs=...` on compare.
+Deep-linkable via a `?cluster=` query param. Requires ≥2 selections.
 
-**After completion (or once partial results exist):**
+### Compare epochs (`/compare/:ns/:name/:epochA/:epochB`)
 
-- **Full Metrics Breakdown** — collapsible tables grouped by Throughput,
-  Latency, Sequence Lengths, and HTTP, each with `avg / p50 / p90 / p95 /
-  p99 / min / max` columns where applicable.
-- **Request Latency Percentiles** — bar chart of `p1 … p99`.
-- **Concurrency vs Throughput** — curve across the sweep, if the job ran
-  multiple concurrency levels.
-- **Input Sequence Length Distribution** — histogram from the per-request
-  parquet.
-- **SLA Compliance** — pass/fail against configured SLOs.
-- **Job Configuration** — the original CR `spec`, pretty-printed.
-- **Run Metadata** — git SHA, container image, run ID, timestamps.
-- **Server Metrics** — GPU utilization, KV cache, tokens-in-flight (when the
-  backend exposed them).
-- **Per-Record Analysis** — sortable per-request table (collapsed by
-  default, showing first 50 rows; "Expand" reveals all).
-- **Artifacts** — raw files on the PVC (`profile_export.json`,
-  `profile_export_genai_perf.csv`, `aiperf_log.jsonl`, …) with per-file
-  Download buttons and a "Download All" bulk action. Modal viewers preview
-  JSON, CSV, and plain text inline before download.
+A fixed nine-metric diff of two epoch-pinned run summaries of a single run
+(`pages/compare-epochs.js`) — columns Metric / Run A / Run B / Δ.
+`GET /api/v1/results/{ns}/{name}/runs/{epoch}/profile_export_aiperf.json` for
+each side.
 
-**Archived state.** When the CR has been deleted but results remain on the
-PVC, a banner flags the missing cluster resource; KPIs, Phases, and Job
-Configuration are synthesized from `profile_export_aiperf.json`. Pods are
-omitted.
+### History (`/history`)
 
-**Endpoints consumed:**
+One metric's value over time across runs (`pages/history.js`): a line chart
+plus a data-points table, with namespace / model / endpoint filters synced to
+the URL. `GET /api/v1/analytics/history?metric=&stat=`.
 
-- `GET /api/v1/jobs/{ns}/{name}` (polled for live data; the summary block
-  is extracted from `status.liveSummary` / `status.summary` on this response)
-- `GET /api/v1/config/{ns}/{name}`
-- `GET /api/v1/results/{ns}/{name}` (file listing)
-- `GET /api/v1/results/{ns}/{name}/{filename}` (downloads, plus direct
-  fetches of `server_metrics_export.json` and `profile_export.jsonl`)
+### Launch (`/launch`)
 
-Mutating routes such as `POST /api/v1/jobs/{ns}/{name}/cancel` exist for
-authenticated API/CLI clients, but the dashboard does not wire browser cancel
-controls by default.
+Read-only YAML helper — see [Read-only launch helper](#read-only-launch-helper)
+under Navigation. Copy-only; browser submission is disabled.
 
-### Run epoch view (`/ns/:ns/run/:name/runs/:epoch`)
+### Log strip (bottom bar)
 
-The same workbench, pinned to a specific historical epoch of a multi-epoch
-run (concurrency sweeps, request-rate sweeps). Navigation widgets in the
-header let you walk forward and back through epochs without leaving the
-page; the URL updates as you navigate.
-
-### Cross-namespace analysis (`/analysis`)
-
-Side-by-side diff of two or more completed runs **across any namespaces**.
-
-- **Left panel** — searchable checklist of every stored job (from
-  `GET /api/v1/results`), grouped by namespace. Tick 2+ jobs, press
-  "Compare".
-- **Right panel** —
-  - **Metric Comparison** — table of every common metric × stat, with
-    per-metric best-value highlighting (direction-aware: minimum for
-    latency, maximum for throughput).
-  - **Visual Comparison** — grouped bar chart, one group per metric, one
-    colored bar per selected job.
-- **Cluster-key driven** — when comparing runs that share the same
-  `clusterKey` (model + backend + key tunables) the view promotes the
-  varying dimension into a per-axis selector.
-
-**Endpoints:** `GET /api/v1/analytics/compare?jobs=id1&jobs=id2&...`.
-
-### Durable run log (`/log`)
-
-Append-only audit feed of every run the operator has observed, across all
-namespaces — submitted, started, completed, failed, cancelled, deleted —
-with timestamps. Useful for "what happened in the cluster yesterday?"
-forensics.
-
-**Endpoints:** `GET /api/v1/analytics/history`.
+`LogStrip` (`components/log-strip.js`) is an always-on strip pinned to the
+bottom of every page. It derives lifecycle events **client-side** by diffing
+successive `/api/v1/jobs` snapshots (new run detected, phase transition,
+worker-ready change) — it consumes **no** endpoint of its own and keeps only an
+in-memory ring buffer of the last 120 events, so its history is lost on reload.
+Filter tabs: All / Warn / Error. Each entry links to the run workbench. It is
+**not** a durable cross-namespace audit log.
 
 ---
 
@@ -379,45 +306,43 @@ forensics.
 Press **`Ctrl+K`** (or `Cmd+K` on macOS) to open the command palette. The
 search icon in the top-right corner of the navigation bar opens the same modal.
 
-The palette indexes:
+The palette (`components/command-palette.js:6-14`) indexes:
 
-- The cross-namespace nav pages: Picker (`/`), Analysis (`/analysis`), Log
-  (`/log`) — sub-label "Page".
-- For the namespace currently in the URL (when on a `/ns/...` route): the
-  per-namespace views — Overview, Launch, Archive — sub-label "Namespace".
-- Every namespace with at least one observed job — sub-label "Namespace",
-  selecting navigates to `/ns/<name>`.
-- Every AIPerfJob from the current `jobs` signal — sub-label `<namespace>`,
-  selecting navigates to `/ns/<ns>/run/<name>`.
+- The seven nav pages — Dashboard, Jobs, Sweeps, Launch, Leaderboard, Compare,
+  History — each with the sub-label "Page".
+- Every AIPerfJob from the current `jobs` signal — sub-label `ns: <namespace>`,
+  selecting navigates to that job's workbench (`/jobs/<ns>/<name>`, pinned to
+  its epoch when known).
 
-Type to fuzzy-match either the label or the sub-label; matching is
-in-order-character, not substring. Navigation:
+There are no namespace entries. Type to fuzzy-match either the label or the
+sub-label; matching is in-order-character, not substring. Navigation:
 
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move highlight |
+| `Home` / `End` | Jump to first / last |
 | `Enter` | Select the highlighted item |
 | `Escape` or backdrop click | Close |
 | Mouse hover | Move highlight |
-
-Selecting a page navigates to its route; selecting a namespace navigates to
-`/ns/<name>`; selecting a job navigates to `/ns/<ns>/run/<name>`.
 
 ---
 
 ## Theme and Layout
 
-The dashboard ships with a **single dark theme** tuned to the NVIDIA design
-system (neutral grays, `#76b900` green accent). There is no light/dark toggle
-and nothing is persisted to `localStorage` — the palette is defined
-statically in `src/aiperf/operator/ui/lib/theme.js`. Model colors in charts
-are assigned deterministically from a hash of the model name, so the same
-model keeps the same color across pages and reloads.
+The dashboard has a **three-way theme toggle** — auto / light / dark — in the
+top-right of the navigation bar (`lib/theme-switch.js`, rendered by
+`top-nav.js`). Clicking it cycles auto → light → dark and persists the choice
+to `localStorage['aiperfTheme']`; `auto` follows the OS `prefers-color-scheme`
+and updates live. The resolved theme is applied via
+`document.documentElement.dataset.theme`, and the color tokens live in
+`src/aiperf/operator/ui/lib/theme.js` / `style.css`. Model colors in charts are
+assigned deterministically from a hash of the model name, so the same model
+keeps the same color across pages and reloads.
 
 The layout is a single column with a fixed top navigation bar, a breadcrumb
-row, an optional global error banner, and the current page below. The SPA is
-responsive down to tablet widths; very narrow viewports are not a supported
-target.
+row, an ALPHA banner, an optional global error banner, the current page, and a
+persistent log strip at the bottom. The SPA is responsive down to tablet
+widths; very narrow viewports are not a supported target.
 
 ---
 
@@ -445,20 +370,20 @@ missing, the live job and cluster endpoints will stay unavailable even after
 the analytics engine comes up. The Dashboard page surfaces this as a
 "Cluster endpoint unavailable — data may be stale" banner.
 
-### Namespace overview is missing throughput numbers
+### Dashboard KPI tiles show "—" for throughput
 
-The overview's metric tiles only populate from **completed** jobs that have
-the relevant fields present in their summary. If your runs never finished,
-or the summary lacks `request_throughput.avg`, the overview falls back to
-"—". Open the run workbench from the recent-runs table to inspect individual
-runs instead.
+The Dashboard's KPI tiles (Peak Throughput, Best TTFT, Token Throughput) and
+the throughput-vs-latency scatter only populate from **completed** jobs whose
+summary carries the relevant fields (e.g. `request_throughput.avg`). If your
+runs never finished, the tiles fall back to "—". Open the run workbench from
+the recent-jobs table to inspect individual runs instead.
 
 ### Port-forward drops during operator rollout
 
-`aiperf kube dashboard` holds a single port-forward; a rollout that
-terminates the operator pod will drop the connection. Re-run the command
-once the new pod is Ready, or use a managed auto-reconnecting forward (see
-the `aiperf kube watch` command for an example).
+`aiperf kube dashboard` **auto-reconnects with backoff** and pins the local
+port across reconnects, so an open browser tab keeps working after a rollout
+that terminates the operator pod — no need to re-run the command. Press
+`Ctrl+C` to stop the forward.
 
 ### Mutating action is unavailable from the dashboard
 
