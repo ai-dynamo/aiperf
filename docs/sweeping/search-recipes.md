@@ -235,7 +235,7 @@ That whole pipeline — Protocol dispatch, mutual-exclusion checking, model_dump
 | `concurrency-ramp` | Grid + post-process | "Where does p99 latency degrade by >N%?" | `--degradation-threshold` | `sweep_aggregate/degradation_knee.json` |
 | `prefill-ttft-curve` | Grid + post-process | "TTFT(ISL) curve" | `--isl-min`, `--isl-max` | `sweep_aggregate/prefill_curve.json` |
 | `decode-itl-curve` | Grid + post-process | "ITL(concurrency, OSL) as-measured grid" | optional bounds | `sweep_aggregate/decode_itl_surface.json` |
-| `pareto-sweep` | Scenarios + post-process | "Pareto frontier across paired ISL/OSL workloads × concurrency" | `--isl-osl-pairs`, optional `--concurrency 1,2,4,8` | `sweep_aggregate/pareto_sweep.json` with `pareto_optimal` flag per cell (axes: `time_to_first_token`/`p95` vs `output_token_throughput`/`avg`) |
+| `pareto-sweep` | Scenarios + post-process | "Pareto frontier across paired ISL/OSL workloads × concurrency" | `--isl-osl-pairs`, optional `--concurrency 1,4,16,64,256` | `sweep_aggregate/pareto_sweep.json` with `pareto_optimal` flag per cell (axes: `time_to_first_token`/`p95` vs `output_token_throughput`/`avg`) |
 
 All recipes whose metric is streaming-only (TTFT, ITL) require `--streaming`; the recipe rejects non-streaming endpoints at expand time with a message naming the recipe and the missing flag. `max-concurrency-under-sla` checks streaming only when a streaming-only SLA filter (`--ttft-sla-ms` / `--tpot-sla-ms` / `--itl-sla-ms`) is configured; `--e2e-sla-ms`-only and `--error-rate-sla`-only runs do not require streaming.
 
@@ -308,7 +308,7 @@ aiperf profile --model my-model --url http://infer.example.com --streaming \
   --search-recipe prefill-ttft-curve --isl-min 256 --isl-max 32768
 ```
 
-Output: `sweep_aggregate/prefill_curve.json` with `fit_form` (`linear` | `quadratic`), `coefficients`, `r_squared`, `r_squared_floor`, and the raw `(isl, ttft_ms)` points.
+Output: `sweep_aggregate/prefill_curve.json` with `fit_form` (`linear` | `quadratic`), `coefficients`, `r_squared`, `below_floor` (low-confidence flag), `r_squared_floor` (the refit threshold), and the raw `(isl, ttft_ms)` points.
 
 ### `decode-itl-curve`
 

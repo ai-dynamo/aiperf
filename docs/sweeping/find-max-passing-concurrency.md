@@ -74,23 +74,26 @@ Malformed `--search-sla` values raise `TypeError` naming the offending flag. Unk
 | `smooth_isotonic` (default) | PAVA-denoised isotonic regression + PCHIP root-find on per-SLO margin curves | ~13–25 on `[1, 1000]` at 5% precision (more with replicates) | Most-accurate boundary location under noise; reports `boundary_type` (smooth or cliff), `binding_constraint`, optional bootstrap CI |
 | `monotonic` | Exponential probe + bisection on `[lo, hi]` | ~10 on `[1, 1000]` at 5% precision | Cheapest path; margin-magnitude-blind so a single noisy probe at the boundary can pull the verdict |
 | `bo` | Penalty-BO with `output_token_throughput` as objective | ~30 (see [BO doc](bayesian-optimization.md)) | Optimizing throughput WITHIN the feasibility region, not just naming the boundary |
+| `optuna` | Same penalty-BO formulation via the `OptunaSearchPlanner` (TPE / GP / BoTorch samplers) | ~30 | Same as `bo`, but on the Optuna backend; BoTorch samplers require the optional `botorch` extra |
 | `grid` | 8 log-spaced points + `sla_breach_knee` post-process | 8 fixed | Plotting / visualization with a reproducible artifact |
 
 ```mermaid
 flowchart LR
-    cli["aiperf profile<br/>--search-recipe max-concurrency-under-sla<br/>--search-style {smooth_isotonic|monotonic|bo|grid}<br/>--ttft-sla-ms 200"] --> conv["cli/assemble"]
+    cli["aiperf profile<br/>--search-recipe max-concurrency-under-sla<br/>--search-style {smooth_isotonic|monotonic|bo|optuna|grid}<br/>--ttft-sla-ms 200"] --> conv["cli/assemble"]
     conv -->|smooth_isotonic| SI["SmoothIsotonicSLAPlanner<br/>PAVA + PCHIP + replicates"]
     conv -->|monotonic| MON["MonotonicSLASearchPlanner<br/>exponential probe + bisection"]
     conv -->|bo| BO["BayesianSearchPlanner<br/>penalty-merit BO"]
+    conv -->|optuna| OPT["OptunaSearchPlanner<br/>penalty-BO (TPE/GP/BoTorch)"]
     conv -->|grid| GRID["log-spaced 8-step grid<br/>+ sla_breach_knee handler"]
     SI --> hist["search_history.json<br/>+ boundary_summary"]
     MON --> hist
     BO --> hist
+    OPT --> hist
     GRID --> SLA["sweep_aggregate/<br/>sla_breach.json"]
 
     classDef planner fill:#cce5ff,stroke:#0066cc;
     classDef artifact fill:#d4edda,stroke:#28a745;
-    class SI,MON,BO,GRID planner;
+    class SI,MON,BO,OPT,GRID planner;
     class hist,SLA artifact;
 ```
 
@@ -104,15 +107,15 @@ The algorithm runs in five phases:
 
 1. **Bracket** — exponential probe (`x = x_min, 2·x_min, 4·x_min, …`) until the first SLO breach, identical to `monotonic`. Output: `[x_lo, x_hi]`.
 2. **Smooth-isotonic fit** — three internal probes inside `[x_lo, x_hi]`, then for each per-SLO margin series: PAVA (`scipy.optimize.isotonic_regression`) denoises by pooling adjacent violators into a monotone step function, then PCHIP (`scipy.interpolate.PchipInterpolator`) interpolates the **denoised** points to give a smooth, monotone, root-findable curve. Solve `m̂(x*) = 0` per SLO and aggregate via σ-normalized max-of-margins to pick the candidate boundary. PAVA-then-PCHIP composition fixes both PCHIP's noise-fragility (vLLM's deleted `serve_sla.py` pattern) and isotonic regression's piecewise-constant ambiguous-root problem.
-3. **Replicates (opt-in)** — when `--sla-replicates N > 0` (or the auto-budget formula triggers `N ≥ 3`), re-run the candidate `x*` `N` times under Common Random Numbers (same `BenchmarkConfig` + same `random_seed`) to estimate per-replicate margin variance. Bootstrap CI on the binding margin → if CI brackets zero, expand to `x* ± δ` and refit; otherwise terminate. Capped at 20 replicates to bound runaway under noisy degenerate constraints.
+3. **Replicates (opt-in)** — when `sla_replicates: N > 0` in YAML (or the auto-budget formula triggers `N ≥ 3`), re-run the candidate `x*` `N` times under Common Random Numbers (same `BenchmarkConfig` + same `random_seed`) to estimate per-replicate margin variance. Bootstrap CI on the binding margin → if CI brackets zero, expand to `x* ± δ` and refit; otherwise terminate. Capped at 20 replicates to bound runaway under noisy degenerate constraints.
 4. **Cliff guard** — PAVA-residual changepoint detection. If the most-recent probe's residual `|m_observed - m̂|` exceeds `3·σ_local` AND the bracket gap exceeds `precision · x_hi`, the planner declares `boundary_type: "cliff"` and reports `(boundary_low, boundary_high)` instead of pretending the curve is smooth across a discontinuity. Otherwise `boundary_type: "smooth"`. Catches the prefill-prioritizing-server pattern documented in Sarathi-Serve.
 5. **Termination** — bootstrap CI on `x*` narrower than `precision · x*`, OR consecutive iterations move `x*` by less than that, OR `--search-max-iterations` exhausted.
 
-Power-user knobs (all optional; the defaults are sized for typical LLM-serving workloads):
+Power-user knobs (all optional; the defaults are sized for typical LLM-serving workloads). These are **YAML-only** fields on the `AdaptiveSearchSweep` schema (`src/aiperf/config/sweep/config.py`); they are not exposed as CLI flags. Set them under a `sweep:` block in your AIPerf YAML config:
 
-- `--sla-replicates N` — Phase-3 replicate count override. Default `0` (auto). Set to a fixed integer to override the auto budget.
-- `--sla-precision tight|normal|coarse` — Per-probe sample budget. Maps to `n_requests_per_probe ∈ {10000, 1000, 300}`. Default `normal` → p99 CI ≈ ±10%.
-- `--sla-warmup-seconds N` — Per-probe warmup discard before computing margins. Default auto (`max(30s, 3 × inter-batch-time)`).
+- `sla_replicates: N` — Phase-3 replicate count override. Default `0` (auto). Set to a fixed integer to override the auto budget.
+- `sla_precision: tight|normal|coarse` — Per-probe sample budget. Maps to `n_requests_per_probe ∈ {10000, 1000, 300}`. Default `normal` → p99 CI ≈ ±10%.
+- `sla_warmup_seconds: N` — Per-probe warmup discard before computing margins. Default `None` → 30s flat floor (`AIPERF_SEARCH_PLANNER_DEFAULT_WARMUP_SECONDS`). The first probe at each swept value is floored at 60s (`FIRST_PROBE_WARMUP_FLOOR`); replicate probes at 15s (`REPLICATE_WARMUP_FLOOR`).
 
 The `boundary_summary` block in `search_history.json` carries three new optional fields when `smooth_isotonic` ran: `boundary_type` (`"smooth"` or `"cliff"`), `binding_constraint` (the SLO key with the worst σ-normalized margin at termination), and `boundary_ci` (`{lo, hi}` bootstrap CI on the binding margin) when Phase-3 replicates ran. See [Search History API Reference](../api/search-history.md#boundary_summary).
 
