@@ -70,10 +70,10 @@ Defaults are set in `_K8sEnvironment.EVENT_BUS_PROXY`:
 
 | Setting        | Default | Env var                                |
 |----------------|---------|----------------------------------------|
-| CPU request    | 2000m   | `AIPERF_K8S_EVENT_BUS_PROXY_CPU`       |
-| Memory request | 1Gi     | `AIPERF_K8S_EVENT_BUS_PROXY_MEMORY`    |
+| CPU request    | 50m     | `AIPERF_K8S_EVENT_BUS_PROXY_CPU`       |
+| Memory request | 64Mi    | `AIPERF_K8S_EVENT_BUS_PROXY_MEMORY`    |
 
-The 2-core default is deliberate: the proxy is pure socket I/O forwarding, but at large fan-ins (hundreds of simultaneous PUB/SUB connections from workers and record processors during startup) it can briefly saturate a single core during the initial subscription storm. Giving it its own CPU envelope was the fix for several "SystemController heartbeat timeout during initialization" incidents seen at 500k+ concurrency.
+The default request is small because the proxy is pure socket I/O forwarding. Isolating it in its own container (rather than in the SystemController event loop) is what fixed several "SystemController heartbeat timeout during initialization" incidents at 500k+ concurrency: even a brief single-core saturation during the initial subscription storm no longer starves the control plane. If you observe the proxy pegging its core at very large fan-ins, raise `AIPERF_K8S_EVENT_BUS_PROXY_CPU`.
 
 ### Startup ordering
 
@@ -180,16 +180,16 @@ If neither path returns the files, results can only be recovered from operator-s
 
 | Env var                                | Default | Notes                                                                     |
 |----------------------------------------|---------|---------------------------------------------------------------------------|
-| `AIPERF_K8S_EVENT_BUS_PROXY_CPU`       | `2000m` | Raise if the proxy pegs one core at >1M concurrency                       |
-| `AIPERF_K8S_EVENT_BUS_PROXY_MEMORY`    | `1Gi`   | Rarely the bottleneck                                                     |
+| `AIPERF_K8S_EVENT_BUS_PROXY_CPU`       | `50m`   | Raise if the proxy pegs one core at >1M concurrency                       |
+| `AIPERF_K8S_EVENT_BUS_PROXY_MEMORY`    | `64Mi`  | Rarely the bottleneck                                                     |
 | `AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED` | `true`  | `false` only for bisecting regressions against the pre-sidecar code path  |
 
 ### Results sidecar
 
 | Env var                              | Default | Notes                                                               |
 |--------------------------------------|---------|---------------------------------------------------------------------|
-| `AIPERF_K8S_RESULTS_SIDECAR_CPU`     | `250m`  | Adequate; streaming is compression-bound not CPU-bound              |
-| `AIPERF_K8S_RESULTS_SIDECAR_MEMORY`  | `512Mi` | Adequate                                                            |
+| `AIPERF_K8S_RESULTS_SIDECAR_CPU`     | `25m`   | Adequate; streaming is compression-bound not CPU-bound              |
+| `AIPERF_K8S_RESULTS_SIDECAR_MEMORY`  | `192Mi` | Adequate                                                            |
 | `AIPERF_RESULTS_DIR`                 | `/results` | Volume mount path; do not change unless remounting the PVC        |
 | `AIPERF_RESULTS_SIDECAR_PORT`        | `9091`  | Container port; set by the JobSet builder to match `PORTS.RESULTS_SIDECAR` |
 | `AIPERF_RESULTS_SIDECAR_LOG_LEVEL`   | `info`  | uvicorn log level                                                   |

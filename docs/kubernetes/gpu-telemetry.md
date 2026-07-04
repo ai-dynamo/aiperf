@@ -84,8 +84,8 @@ It runs the `GPUTelemetryManager` service from
 | Container name | `gpu-telemetry-manager` | `Containers.GPU_TELEMETRY_MANAGER` |
 | Service type | `gpu_telemetry_manager` | plugin registry (`plugins.yaml`) |
 | Health port | `8086` (`GPU_TELEMETRY_MANAGER_HEALTH`) | `_PortSettings` |
-| Default CPU request/limit | `250m` | `_K8sEnvironment.GPU_TELEMETRY_MANAGER` |
-| Default memory request/limit | `512Mi` | `_K8sEnvironment.GPU_TELEMETRY_MANAGER` |
+| Default CPU request/limit | `25m` | `_K8sEnvironment.GPU_TELEMETRY_MANAGER` |
+| Default memory request/limit | `192Mi` | `_K8sEnvironment.GPU_TELEMETRY_MANAGER` |
 | Collection interval | `333ms` (~3Hz) | `Environment.GPU.COLLECTION_INTERVAL` |
 
 Override resource limits with environment variables on the operator (or on

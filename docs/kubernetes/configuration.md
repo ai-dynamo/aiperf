@@ -147,7 +147,7 @@ phases:
 | `timeoutSeconds` | int | 0 | Benchmark timeout in seconds (0 = no timeout) |
 | `cancel` | bool | `false` | Set to `true` to cancel a running benchmark |
 | `keepFailedPods` | bool | `false` | Preserve pods on failure for debugging (overrides `ttlSecondsAfterFinished`) |
-| `resultsTtlDays` | int | - | Override operator-level `AIPERF_K8S_RESULTS_TTL_DAYS` for this job only |
+| `resultsTtlDays` | int | - | Override operator-level `AIPERF_RESULTS_TTL_DAYS` for this job only |
 | `skipEndpointCheck` | bool | `false` | Skip the operator-side endpoint reachability probe before deploying |
 
 ### Pod Template (`spec.podTemplate`)
@@ -251,18 +251,16 @@ A sidecar that serves stored results via HTTP (used by `aiperf kube results` by 
 ```yaml
 resultsServer:
   port: 8081
-  mutatingRoutes:
-    enabled: false
-    tokenSecretName: ""
-    tokenSecretKey: token
   resources:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: 500m, memory: 1Gi }
 ```
 
-`resultsServer.mutatingRoutes.enabled` controls POST routes on the results-server that create or cancel `AIPerfJob` resources or rebuild mutable operator indexes. It defaults to `false`, so exposing the results-server for read-only APIs does not also grant clients write access through the operator ServiceAccount.
+The `resultsServer` chart block only exposes `port` and `resources` today.
 
-To enable these routes, create a Kubernetes Secret containing the bearer token and set `resultsServer.mutatingRoutes.tokenSecretName` plus `tokenSecretKey`. The chart projects those values into the results-server as `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`; clients must send `Authorization: Bearer <token>` on protected POST requests. For `aiperf kube index rebuild`, export the same token in the caller's environment as `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`. The browser dashboard does not receive this secret and keeps create/cancel controls disabled; use `aiperf kube` or `kubectl` from an authenticated terminal for those mutations.
+The results-server also hosts optional POST routes that mutate Kubernetes state — create/cancel `AIPerfJob` resources and rebuild the operator index. These are governed by two environment variables read on the results-server container: `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED` (default `false`) and `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN` (default empty — fails closed). When disabled, the read-only APIs stay exposed while every mutating POST returns 403, so serving the results-server does not grant write access through the operator ServiceAccount.
+
+The bundled chart does **not** template these two variables (there is no `resultsServer.mutatingRoutes` value and no token-secret projection). To turn the routes on, set both env vars directly on the `results-server` container — e.g. via a deployment patch or a customized chart template — then have clients send `Authorization: Bearer <token>` on protected POST requests. For `aiperf kube index rebuild`, export the same token in the caller's environment as `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`. The browser dashboard never receives this token and keeps create/cancel controls disabled; use `aiperf kube` or `kubectl` from an authenticated terminal for those mutations.
 
 ### `dashboard`
 
@@ -291,9 +289,15 @@ The default image used for benchmark jobs if not specified in the CR:
 
 ```yaml
 defaults:
-  image: "nvcr.io/nvidia/aiperf:latest"
+  image: "" # empty = "<image.repository>:<image.tag|Chart.AppVersion>"
   imagePullPolicy: "IfNotPresent"
 ```
+
+When `defaults.image` is empty (the chart default), the chart computes the
+benchmark image as `<image.repository>:<image.tag | Chart.AppVersion>`, so
+overriding `image.tag` automatically propagates to benchmark pods. Set
+`defaults.image` explicitly to decouple the benchmark image from the operator
+image.
 
 ### Ingress
 
@@ -430,15 +434,15 @@ Every control-plane container, the event-bus proxy sidecar, the results sidecar,
 
 | Variable | Default | Applies to |
 |---|---|---|
-| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` / `_MEMORY` | `75m` / `128Mi` | SystemController container |
-| `AIPERF_K8S_WORKER_MANAGER_CPU` / `_MEMORY` | `50m` / `128Mi` | WorkerManager container |
-| `AIPERF_K8S_TIMING_MANAGER_CPU` / `_MEMORY` | `50m` / `128Mi` | TimingManager container |
-| `AIPERF_K8S_DATASET_MANAGER_CPU` / `_MEMORY` | `50m` / `128Mi` | DatasetManager container |
-| `AIPERF_K8S_RECORDS_MANAGER_CPU` / `_MEMORY` | `75m` / `128Mi` | RecordsManager container (raise to 4000m+ for >500k concurrency) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` / `_MEMORY` | `75m` / `192Mi` | SystemController container |
+| `AIPERF_K8S_WORKER_MANAGER_CPU` / `_MEMORY` | `50m` / `192Mi` | WorkerManager container |
+| `AIPERF_K8S_TIMING_MANAGER_CPU` / `_MEMORY` | `50m` / `192Mi` | TimingManager container |
+| `AIPERF_K8S_DATASET_MANAGER_CPU` / `_MEMORY` | `50m` / `256Mi` | DatasetManager container |
+| `AIPERF_K8S_RECORDS_MANAGER_CPU` / `_MEMORY` | `75m` / `256Mi` | RecordsManager container (raise to 4000m+ for >500k concurrency) |
 | `AIPERF_K8S_API_CPU` / `_MEMORY` | `75m` / `256Mi` | API container (WebSocket + HTTP) |
-| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` / `_MEMORY` | `25m` / `64Mi` | GPU telemetry container |
-| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` / `_MEMORY` | `25m` / `64Mi` | Server-metrics container |
-| `AIPERF_K8S_RESULTS_SIDECAR_CPU` / `_MEMORY` | `25m` / `64Mi` | Results sidecar (fallback retrieval path) |
+| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` / `_MEMORY` | `25m` / `192Mi` | GPU telemetry container |
+| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` / `_MEMORY` | `25m` / `192Mi` | Server-metrics container |
+| `AIPERF_K8S_RESULTS_SIDECAR_CPU` / `_MEMORY` | `25m` / `192Mi` | Results sidecar (fallback retrieval path) |
 | `AIPERF_K8S_EVENT_BUS_PROXY_CPU` / `_MEMORY` | `50m` / `64Mi` | Event-bus XPUB/XSUB proxy sidecar |
 | `AIPERF_K8S_WORKER_POD_CPU` / `_MEMORY` | `150m` / `4Gi` | Worker pod (workers + record processors + WPM) |
 

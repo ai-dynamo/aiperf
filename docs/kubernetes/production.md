@@ -364,7 +364,7 @@ spec:
     env:
       - name: AIPERF_HTTP_CONNECTION_LIMIT
         value: "200"
-      - name: AIPERF_HTTP_TIMEOUT
+      - name: AIPERF_HTTP_KEEPALIVE_TIMEOUT
         value: "120"
       - name: AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS
         value: "30"
@@ -372,7 +372,10 @@ spec:
         value: "60"
 ```
 
-See the [Environment Variables Reference](../environment-variables.md) for the full list.
+There is no `AIPERF_HTTP_TIMEOUT` variable; set the per-request timeout with
+the `--request-timeout-seconds` CLI flag (or `request_timeout_seconds` in the
+benchmark config) instead. See the
+[Environment Variables Reference](../environment-variables.md) for the full list.
 
 ---
 

@@ -102,11 +102,14 @@ fields — `base_mib`, `variable_mib`, `peak_mib`, and a derived
 
 Two universal baselines ride along on every process:
 
-- `_PYTHON_SUBPROCESS_BASE_MIB = 35` — fresh interpreter + stdlib + GC arenas
-  for control-plane subprocesses forked from `SystemController`.
-- `_PYTHON_CHILD_SUBPROCESS_BASE_MIB = 18` — Worker/RP subprocesses forked from
-  the WorkerProcessManager share module pages via copy-on-write; effective
-  private RSS is about half of a fresh process.
+- `_PYTHON_SUBPROCESS_BASE_MIB = 150` — interpreter + core libs + GC + every
+  module an AIPerf service loads (numpy, pandas, msgspec, pydantic, orjson,
+  aiohttp, ZMQ, asyncio). Calibrated from a real-cluster ISL/OSL sweep
+  (2026-04-30) to a ~150 MiB common baseline per container.
+- `_PYTHON_CHILD_SUBPROCESS_BASE_MIB = 150` — Worker/RP subprocesses are modeled
+  the same as the parent. Copy-on-write does not materially shrink the measured
+  working set (`container_memory_working_set_bytes` is per-container, and each
+  process's heap diverges quickly once it allocates per-task state).
 
 Each service adds a per-service overhead from `_SERVICE_BASE_MIB` (e.g.
 `records_manager: 40`, `dataset_manager: 30`, `worker: 12`,
@@ -120,13 +123,15 @@ The dominant cost is one `GrowableArray` per metric tag, each holding one
 
 Source: `_estimate_records_manager`, `components.py`.
 
-$$\text{variable\_mib} = \text{num\_metrics} \times \text{ceil\_pow2}(\text{total\_requests}) \times 8\text{B} \times 1.3$$
+$$\text{variable\_mib} = \text{num\_metrics} \times \text{ceil\_pow2}(\text{total\_requests}) \times 8\text{B} \times 1.05$$
 
 Key constants:
 
 - `_FLOAT64_BYTES = 8` — numpy element width.
-- `_GROWABLE_ARRAY_OVERHEAD = 1.3` — calibrated doubling waste factor
-  (measured 1.05x–1.64x across scales).
+- `_GROWABLE_ARRAY_OVERHEAD = 1.05` — wrapper-class overhead atop the
+  numpy-backed array. The doubling-allocator waste is now captured separately
+  by `ceil_pow2(N)` in the capacity term, so this multiplier only covers the
+  ~0–2% wrapper overhead (dict of metric names, bucket tuple, sum tracker).
 - `_DEFAULT_NUM_STANDARD_METRICS = 25` — TTFT, TPOT, ITL, E2E, throughput, etc.
 - `ceil_pow2` rounds capacity up to the next power of two (the doubling
   allocator's actual footprint, not the logical request count).
@@ -172,11 +177,11 @@ so the two stay consistent.
 
 Per in-flight request:
 
-$$\text{per\_request} = \underbrace{1600}_{\text{record base}} + \underbrace{(400 + \text{ISL} \times 4)}_{\text{turn}} + \text{response}$$
+$$\text{per\_request} = \underbrace{504}_{\text{record base}} + \underbrace{(408 + \text{ISL} \times 4)}_{\text{turn}} + \text{response}$$
 
 Response depends on streaming mode:
 
-$$\text{response}_{\text{SSE}} = 200 + \text{OSL} \times 200 \qquad \text{response}_{\text{text}} = 400 + \text{OSL} \times 4$$
+$$\text{response}_{\text{SSE}} = 136 + \text{OSL} \times 152 \qquad \text{response}_{\text{text}} = 152 + \text{OSL} \times 4$$
 
 Pod-level:
 
@@ -184,12 +189,13 @@ $$\text{variable} = \text{pool} + \text{concurrency\_per\_worker} \times \text{p
 
 Key constants (`constants.py`):
 
-- `_REQUEST_RECORD_BASE_BYTES = 1600` — Pydantic `RequestRecord` shell.
-- `_TURN_BASE_BYTES = 400`, `_TURN_BYTES_PER_TOKEN = 4`.
-- `_SSE_MESSAGE_BASE_BYTES = 200`, `_SSE_BYTES_PER_CHUNK = 200` — SSE per-token
-  cost is ~50x buffered text because every chunk is a dataclass object plus a
-  short JSON string.
-- `_TEXT_RESPONSE_BASE_BYTES = 400`, `_TEXT_RESPONSE_BYTES_PER_TOKEN = 4`.
+- `_REQUEST_RECORD_BASE_BYTES = 504` — `msgspec.Struct` `RequestRecord` shell
+  (pympler-measured deep size of an empty record).
+- `_TURN_BASE_BYTES = 408`, `_TURN_BYTES_PER_TOKEN = 4`.
+- `_SSE_MESSAGE_BASE_BYTES = 136`, `_SSE_BYTES_PER_CHUNK = 152` — SSE per-token
+  cost is ~38x buffered text (152 B/chunk vs 4 B/token) because every chunk is
+  an `SSEField` object plus a short JSON string.
+- `_TEXT_RESPONSE_BASE_BYTES = 152`, `_TEXT_RESPONSE_BYTES_PER_TOKEN = 4`.
 - `_BYTES_PER_CONNECTION = 1024` — aiohttp per-connection kernel + userspace
   buffers.
 
@@ -242,7 +248,7 @@ Source: `_estimate_server_metrics`, `components.py`.
 
 $$\text{scalar\_bytes} = \text{scalar\_count} \times \text{ceil\_pow2}(\text{n\_scrapes}) \times 16\text{B}$$
 $$\text{hist\_bytes} = \text{hist\_count} \times \text{ceil\_pow2}(\text{n\_scrapes}) \times (24 + \text{buckets} \times 8)\text{B}$$
-$$\text{variable} = \text{num\_endpoints} \times (\text{scalar} + \text{hist} + \text{fetch}) \times 1.3$$
+$$\text{variable} = \text{num\_endpoints} \times (\text{scalar} + \text{hist} + \text{fetch}) \times 1.05$$
 
 Key constants (`constants.py`):
 
@@ -263,7 +269,7 @@ DCGM samples held as columnar numpy arrays, one per metric per GPU.
 Source: `_estimate_gpu_telemetry`, `components.py`.
 
 $$\text{per\_gpu\_bytes} = \text{ceil\_pow2}(\text{n\_samples}) \times 8 + \text{num\_metrics} \times \text{ceil\_pow2}(\text{n\_samples}) \times 8$$
-$$\text{variable} = \text{num\_gpus} \times \text{per\_gpu\_bytes} \times 1.3$$
+$$\text{variable} = \text{num\_gpus} \times \text{per\_gpu\_bytes} \times 1.05$$
 
 Key constants:
 
@@ -401,8 +407,8 @@ namespace's available quota.
 1. Run `aiperf kube profile` and look at the `RecordsManager` row in the
    Controller Pod table.
 2. If `RecordsManager uses N% of controller limit` appears in warnings, the
-   growable arrays are the cause. At 500k requests × 25 metrics × 8 bytes × 1.3
-   overhead × `ceil_pow2(500_000) = 524_288`, expect roughly 130 MiB just for
+   growable arrays are the cause. At 500k requests × 25 metrics × 8 bytes × 1.05
+   overhead × `ceil_pow2(500_000) = 524_288`, expect roughly 105 MiB just for
    metric arrays — plus base, dataset manager, server metrics, etc.
 3. Bump `AIPERF_K8S_RECORDS_MANAGER_MEMORY` (and its CPU sibling) on the
    operator to at least `recommended_limit_mib`. Controller resource keys are
