@@ -28,7 +28,7 @@ aiperf kube logs [JOB_ID] [OPTIONS]
 | Flag / argument | Type | Default | Description |
 |---|---|---|---|
 | `JOB_ID` (positional) | `str` | last-deployed job | AIPerfJob ID to pull logs from. If omitted, falls back to the job ID stored on disk by the most recent `aiperf kube profile` / `generate` invocation. |
-| `-c`, `--container` | `str` | *(all containers on every pod)* | Restrict to a single container name. See the [container catalog](#container-catalog) below. |
+| `--container` | `str` | *(all containers on every pod)* | Restrict to a single container name. See the [container catalog](#container-catalog) below. |
 | `-f`, `--follow` | flag | `false` | Stream logs in real time. Only one target can be followed at a time; see [follow semantics](#follow-semantics). |
 | `--tail` | `int` | *(full log)* | Return only the last N lines. Combine with `-f` to start a stream at the tail. |
 | `-o`, `--output` | `Path` | *(stdout)* | Write logs to a directory instead of printing. See [bulk dump](#bulk-dump-to-disk). |
@@ -46,10 +46,12 @@ the cached namespace.
 
 ## Container catalog
 
-AIPerf pods run one process per container. The names below are the 12
-canonical values declared on `aiperf.kubernetes.constants.Containers`
-(see `src/aiperf/kubernetes/constants.py`); feed them to `--container`
-verbatim.
+AIPerf pods run one process per container. Most names below are among the
+11 canonical container-name constants declared on
+`aiperf.kubernetes.constants.Containers` (see
+`src/aiperf/kubernetes/constants.py`); the `worker-<N>` and
+`record-processor-<N>` names are formed at runtime by indexing and are **not**
+declared constants. Feed any of them to `--container` verbatim.
 
 ### Controller pod
 
@@ -199,7 +201,7 @@ matched nothing in the namespace. Usually one of:
 - The job ID is wrong (typo, stale cache). Run `aiperf kube list` to
   see live jobs.
 - The JobSet has already been garbage-collected by TTL. Check the
-  AIPerfJob CR phase with `aiperf kube list -o wide`; once the CR and
+  AIPerfJob CR phase with `aiperf kube list -w`; once the CR and
   its JobSet are removed, pod logs are gone from the API server.
 - `--namespace` points at the wrong namespace. The default is
   `aiperf-benchmarks`.

@@ -53,7 +53,7 @@ aiperf kube attach [JOB_ID] [OPTIONS]
 |---|---|---|
 | `JOB_ID` (positional) | last deployed job | The `AIPerfJob` CR name to attach to. If omitted, the CLI reads `~/.aiperf/last_kube_benchmark.json`. |
 | `-p`, `--port` | `0` | Local port for the `kubectl port-forward` tunnel. `0` asks the kernel for an ephemeral port, which avoids conflicts with other `aiperf kube` sessions on the same machine. |
-| `--namespace` | last-benchmark namespace, else `aiperf-bench` | Kubernetes namespace containing the `AIPerfJob`. |
+| `--namespace` | last-benchmark namespace, else `aiperf-benchmarks` | Kubernetes namespace containing the `AIPerfJob`. |
 | `--kubeconfig` | unset | Path to a kubeconfig file. When unset, the CLI first tries in-cluster config, then the default kubeconfig resolution. |
 | `--kube-context` | unset | Context name to select inside the kubeconfig. |
 

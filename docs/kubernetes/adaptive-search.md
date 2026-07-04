@@ -243,12 +243,12 @@ name, and the sweep run-epoch:
           sweep_aggregate/             # mode-agnostic per-combination aggregate
             profile_export_aiperf_sweep.json
             profile_export_aiperf_sweep.csv
-    <sweep-name>-v00-t1/               # per-iteration child AIPerfJob
+    <sweep-name>-v00-t0/               # per-iteration child AIPerfJob
       <child-run-epoch>/
         profile_export_aiperf.json     # full per-trial artifacts
         ...
-    <sweep-name>-v00-t2/
-    <sweep-name>-v01-t1/
+    <sweep-name>-v00-t1/
+    <sweep-name>-v01-t0/
     ...
 ```
 

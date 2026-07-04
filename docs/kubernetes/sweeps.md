@@ -58,7 +58,7 @@ aiperf kube sweep --config sweep.yaml --image aiperf:latest --workers-max 64
 
 ## Mode: independent vs repeated
 
-`spec.multiRun.mode` (or `--parameter-sweep-mode` for in-process runs)
+`spec.sweep.iterationOrder` (or `--parameter-sweep-mode` for in-process runs)
 selects the iteration order of variations and trials. Both produce the
 same total runs and the same `sweep_aggregate/` output — only the artifact
 path layout and submit order differ.

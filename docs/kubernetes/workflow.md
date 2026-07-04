@@ -229,11 +229,13 @@ aiperf kube watch
 aiperf kube watch --output text --interval 5
 
 # NDJSON for scripts and AI agents (one JSON object per interval)
-aiperf kube watch --output json --follow-logs
-
-# Watch every running job across all namespaces
-aiperf kube watch --all
+aiperf kube watch --output json
 ```
+
+The `--all` (multi-namespace) and `--follow-logs` (inline log tail) flags
+are reserved for future use and currently fail fast with a "not implemented
+yet" error; to tail logs alongside a watch, run `aiperf kube logs --follow`
+in a separate terminal.
 
 `watch` shares the `last_kube_benchmark.json` default-resolution behavior
 with `attach`. The diagnosis layer is the same engine `aiperf kube debug`
@@ -360,7 +362,7 @@ staging and `results` is reading from prod" is an easy way to chase a ghost.
 | `kube profile` | no | **yes** (on successful submit) | Both operator and direct paths write the file. |
 | `kube generate` | no | no | Prints manifests; never hits cluster state. |
 | `kube attach` | yes (if `job_id` omitted) | no | |
-| `kube watch` | yes (if `job_id` omitted) | no | `--all` ignores the file. |
+| `kube watch` | yes (if `job_id` omitted) | no | `--all` is reserved for future use (fails fast). |
 | `kube results` | yes (if `job_id` omitted) | no | |
 | `kube logs` | yes (if `job_id` omitted) | no | |
 | `kube debug` | yes (if `-j` and `-n` both omitted and `-A` not set) | no | |
@@ -412,7 +414,7 @@ aiperf kube profile \
     --config long.yaml \
     --image aiperf:latest \
     --namespace bench-alice \
-    --kueue-local-queue aiperf-local-queue \
+    --queue-name aiperf-local-queue \
     --detach
 aiperf kube watch --namespace bench-alice
 aiperf kube results --namespace bench-alice

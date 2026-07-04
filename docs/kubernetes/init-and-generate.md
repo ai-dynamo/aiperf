@@ -32,10 +32,20 @@ sections as commented-out blocks so you can uncomment what you need.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
+| `-t`, `--template` | `str` | `minimal` | Template name to render (e.g. `minimal`, `goodput_slo`). Run with `--list` to see all bundled templates. |
+| `-l`, `--list` | flag | `false` | List all available templates grouped by category. |
+| `-s`, `--search` | `str` | `None` | Search templates by keyword (matches name, description, tags, features). |
+| `-c`, `--category` | `str` | `None` | Filter template listings by category (substring match). |
+| `-v`, `--verbose` | flag | `false` | Show tags, features, and difficulty in template listings. |
+| `--model` | `str` | `None` | Override the model name in the generated config. |
+| `--url` | `str` | `None` | Override the endpoint URL in the generated config. |
 | `-o`, `--output` | path | `None` (stdout) | Output file path. When set, writes to disk; prompts before overwriting an existing file. |
+| `--job-name` | `str` | `my-benchmark` | Value for `metadata.name` on the generated `AIPerfJob`. |
 
-That is the only flag. `init` is deliberately a single-purpose scaffold
-command — all customization happens by editing the written file.
+With no arguments, `init` renders the `minimal` template (bundled in
+`src/aiperf/config/templates/`) wrapped in an `AIPerfJob` CR shell. Use
+`--list` / `--search` / `--category` to browse the other bundled templates
+and `--template` to pick one.
 
 ### Examples
 
@@ -73,42 +83,41 @@ kind: AIPerfJob
 metadata:
   name: my-benchmark
 spec:
-  # === Benchmark Configuration ===
+  #
+  # Minimal Configuration
+  # =====================
+  # The fastest way to benchmark a model. Uses shorthand forms that AIPerf
+  # auto-expands:
+  #   model:   -> models.items[0].name  (single string becomes a model list)
+  #   dataset: -> datasets[0]            (singular becomes a one-entry list named "default")
+  #   phases:  -> phases[0]              (single flat config becomes a one-entry list)
+  #
+  # Both snake_case and camelCase keys are accepted in all config files.
+  #
+  # Run: aiperf profile --config minimal.yaml
+
+  schemaVersion: "2.0"
+
   benchmark:
-    # Model name(s) served by the endpoint
-    models:
-      - "your-model-name"
+    # "model:" is shorthand for models: { items: [{ name: ... }] }
+    model: meta-llama/Llama-3.1-8B-Instruct
 
-    # Endpoint to benchmark (list of URLs)
     endpoint:
-      urls:
-        - "http://your-server:8000"
-      streaming: true
+      url: http://localhost:8000 # Path auto-detected from endpoint type (chat -> /v1/chat/completions)
 
-    # Dataset configuration
-    datasets:
-      - name: main
-        type: synthetic
-        entries: 1000
-        prompts:
-          isl:
-            mean: 512
-            stddev: 0
-          osl:
-            mean: 128
-            stddev: 0
+    # "dataset:" (singular) is shorthand for datasets: [{name: default, ...}]
+    dataset:
+      type: synthetic
+      entries: 100
+      prompts:
+        isl: 512
+        osl: 128
 
-    # Load phases
+    # Flat "phases:" with a "type:" key is shorthand for phases: [{name: profiling, ...}]
     phases:
-      - name: warmup
-        type: concurrency
-        concurrency: 10
-        requests: 10
-        exclude_from_results: true
-      - name: profiling
-        type: concurrency
-        concurrency: 50
-        requests: 500
+      type: concurrency
+      concurrency: 8
+      requests: 100
 
   # === Deployment Options ===
   # ttlSecondsAfterFinished: 300
@@ -142,19 +151,22 @@ spec:
   #   priorityClass: high-priority
 ```
 
-Replace `your-model-name` and `http://your-server:8000` with real
-values before running anything else. A realistic starting point looks
-like:
+The `minimal` template uses AIPerf's shorthand forms — `model:` (scalar),
+`endpoint.url:`, `dataset:` (singular), and a flat `phases:` block — which
+AIPerf auto-expands to their canonical list forms at load time. Point
+`model:` and `endpoint.url:` at your real model and server before running
+anything else. A realistic edit looks like:
 
 ```yaml
 benchmark:
-  models:
-    - "meta-llama/Llama-3.1-8B-Instruct"
+  model: meta-llama/Llama-3.1-8B-Instruct
   endpoint:
-    urls:
-      - "http://llm-service.default.svc:8000/v1"
-    streaming: true
+    url: http://llm-service.default.svc:8000/v1
 ```
+
+To scaffold a different starting point (goodput SLOs, multi-phase load,
+etc.), pick another bundled template with `aiperf kube init --list` and
+`--template <name>`.
 
 ### Relationship with other commands
 
