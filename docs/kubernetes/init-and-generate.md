@@ -96,8 +96,6 @@ spec:
   #
   # Run: aiperf profile --config minimal.yaml
 
-  schemaVersion: "2.0"
-
   benchmark:
     # "model:" is shorthand for models: { items: [{ name: ... }] }
     model: meta-llama/Llama-3.1-8B-Instruct

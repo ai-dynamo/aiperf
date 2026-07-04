@@ -88,6 +88,30 @@ class TestWrapAsAIPerfJobEnvelopeShape:
         assert spec["variables"] == {"region": "us-west"}
         assert spec["random_seed"] == 42
 
+    def test_envelope_schema_version_stripped_from_spec(self) -> None:
+        """File-envelope ``schemaVersion`` must not land at ``spec.<key>``.
+
+        Local config files carry ``schemaVersion: "2.0"`` at the top level,
+        but AIPerfJobSpec rejects it as an unknown spec field — inside a CR
+        that role belongs to ``apiVersion``. A ``schema_version`` nested
+        under ``benchmark:`` is a valid AIPerfConfig field and must survive.
+        """
+        body_yaml = yaml.safe_dump(
+            {
+                "schemaVersion": "2.0",
+                "benchmark": {**_VALID_BODY, "schema_version": "2.0"},
+            },
+            sort_keys=False,
+        )
+
+        wrapped = wrap_as_aiperf_job(body_yaml, job_name="run-1")
+        parsed = _yaml_strip_comments(wrapped)
+
+        spec = parsed["spec"]
+        assert "schemaVersion" not in spec
+        assert "schema_version" not in spec
+        assert spec["benchmark"]["schema_version"] == "2.0"
+
     def test_envelope_input_round_trips_through_aiperfjob_spec(self) -> None:
         from aiperf.operator.models import AIPerfJobSpec
 

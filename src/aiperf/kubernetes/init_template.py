@@ -126,6 +126,23 @@ def _strip_leading_meta_headers(content: str) -> str:
     return "".join(out)
 
 
+def _strip_file_envelope_keys(content: str) -> str:
+    """Drop top-level keys that belong to local config FILES, not CR specs.
+
+    ``schemaVersion`` versions the on-disk config-file format; inside an
+    AIPerfJob CR that role is carried by ``apiVersion``, and AIPerfJobSpec
+    rejects it as an unknown spec field (``aiperf kube validate`` warns,
+    the strict test validator errors). Only exact top-level occurrences are
+    removed — an indented ``schemaVersion`` under ``benchmark:`` is valid
+    (AIPerfConfig.schema_version) and preserved.
+    """
+    return "".join(
+        line
+        for line in content.splitlines(keepends=True)
+        if not line.startswith(("schemaVersion:", "schema_version:"))
+    )
+
+
 def _is_envelope_shape(content: str) -> bool:
     """Return True if ``content`` parses to a dict with a top-level ``benchmark`` key.
 
@@ -176,6 +193,8 @@ def wrap_as_aiperf_job(
     if _is_envelope_shape(cleaned):
         # Envelope-shape: body keys (including the inner ``benchmark:``)
         # live one level below ``spec:``, so two-space indent is correct.
+        # File-envelope keys like schemaVersion must not land at spec.<key>.
+        cleaned = _strip_file_envelope_keys(cleaned).rstrip("\n")
         indented = textwrap.indent(cleaned, "  ")
         header = _HEADER_ENVELOPE
     else:
