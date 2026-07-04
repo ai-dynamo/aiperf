@@ -241,15 +241,15 @@ Each phase can have its own ramp settings. Warmup uses `--warmup-*` prefixed opt
 aiperf profile \
     --model your-model \
     --url localhost:8000 \
-    # Warmup phase: ramp to 50 concurrency over 10 seconds
     --warmup-concurrency 50 \
     --warmup-concurrency-ramp-duration 10 \
     --warmup-request-count 500 \
-    # Profiling phase: ramp to 200 concurrency over 30 seconds
     --concurrency 200 \
     --concurrency-ramp-duration 30 \
     --request-count 2000
 ```
+
+The warmup phase ramps to 50 concurrency over 10 seconds; the profiling phase then ramps to 200 concurrency over 30 seconds.
 
 ## Common Scenarios
 

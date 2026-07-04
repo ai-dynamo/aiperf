@@ -163,10 +163,11 @@ aiperf profile \
     --request-rate 100 \
     --arrival-pattern constant \
     --benchmark-duration 60 \
-    --output-dir results/constant
+    --artifact-dir results/constant
+```
 
 **Expected Output (Run 1):**
-```
+```text
 INFO     Starting AIPerf System
 INFO     Using Request_Rate strategy with constant arrival pattern
 INFO     AIPerf System is PROFILING
@@ -187,7 +188,9 @@ INFO     Results saved to: results/constant/
 └────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
 
 JSON Export: results/constant/profile_export_aiperf.json
-```text
+```
+
+```bash
 # Run 2: Poisson (realistic)
 aiperf profile \
     --model your-model \
@@ -197,7 +200,7 @@ aiperf profile \
     --request-rate 100 \
     --arrival-pattern poisson \
     --benchmark-duration 60 \
-    --output-dir results/poisson
+    --artifact-dir results/poisson
 ```
 
 **Expected Output (Run 2):**
@@ -325,7 +328,7 @@ for smoothness in 2.0 1.0 0.7 0.5 0.3; do
         --arrival-pattern gamma \
         --arrival-smoothness $smoothness \
         --benchmark-duration 60 \
-        --output-dir results/smoothness_$smoothness
+        --artifact-dir results/smoothness_$smoothness
 done
 ```
 
