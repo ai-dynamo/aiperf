@@ -221,6 +221,12 @@ def _request_extra_body(attributes: dict[str, Any]) -> dict[str, Any] | None:
     return extra_body or None
 
 
+def _is_replayable_span(span: dict[str, Any], attributes: dict[str, Any]) -> bool:
+    return span.get("type") == "llm_call" or (
+        span.get("type") is None and attributes.get("gen_ai.operation.name") == "chat"
+    )
+
+
 class ExgenticDatasetLoader(BaseHFDatasetLoader):
     """Replay complete Exgentic LLM request snapshots as AIPerf sessions."""
 
@@ -318,10 +324,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         stats: Counter[str],
     ) -> tuple[float, int, float, Turn] | None:
         attributes = span.get("attributes") or {}
-        if span.get("type") != "llm_call" and (
-            span.get("type") is not None
-            or attributes.get("gen_ai.operation.name") != "chat"
-        ):
+        if not _is_replayable_span(span, attributes):
             stats["non_llm"] += 1
             return None
         if (span.get("status") or {}).get("code") == 2:
