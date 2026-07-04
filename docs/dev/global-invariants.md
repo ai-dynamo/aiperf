@@ -72,7 +72,10 @@ rejected at review.
 
 ### `test_every_metric_field_is_finite_or_optional`
 
-Imports every Pydantic model under `src/aiperf/`, inspects each
+Imports every importable Pydantic model under `src/aiperf/` (skipping a few
+known-broken import paths — `aiperf.kubernetes`,
+`aiperf.dataset.agentic_code_gen.reporting`, `aiperf.cli_commands._generated`,
+so the K8s CRD models are out of scope for this test), inspects each
 `float`/`float | None` field, and checks whether the field name
 matches a metric-suggestive pattern (`*_p99`, `*_mean`, `latency_*`,
 `ttft_*`, `itl_*`, `throughput_*`, ...). Metric-named fields must be
@@ -80,20 +83,22 @@ annotated `FiniteFloat` or `FiniteFloat | None`.
 
 **Existing debt** is captured in
 [`_metric_field_baseline.txt`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/_metric_field_baseline.txt)
-as `Module.ClassName.field_name` lines. The baseline is a one-way
+as `ClassName.field_name: <reason>` lines (no module prefix). The baseline is a one-way
 ratchet — fields can leave (when fixed) but new fields cannot enter
 without an explicit code-review carve-out.
 
 ### `test_every_numeric_field_has_bounds`
 
-For every numeric Pydantic field on every model under
-`src/aiperf/`, the test requires at least one of: `ge`, `gt`, `le`,
-`lt`, the `FiniteFloat` type, or a custom `AfterValidator`. Raw `int`
-or `float` fields with no constraint are rejected.
+For every numeric Pydantic field on every importable model under
+`src/aiperf/` (same skip list as above), the test requires at least one of:
+`ge`, `gt`, `le`, `lt`, or the `FiniteFloat` type (detected via its
+`_check_finite` `AfterValidator`). A generic `AfterValidator` does **not**
+satisfy the rule — only the finite one counts. Raw `int` or `float` fields with
+no constraint are rejected.
 
 **Existing debt** lives in
 [`_numeric_bounds_baseline.txt`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/_numeric_bounds_baseline.txt)
-(currently ~390 entries). Same ratchet rules apply.
+(currently 377 entries). Same ratchet rules apply.
 
 ### `test_dump_config_roundtrip` (parametrized over all bundled templates)
 
@@ -123,10 +128,10 @@ Adversarial input strategies live in
 [`_strategies.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/_strategies.py)
 and intentionally include NaN, +/-inf, very-large/small floats, empty
 and very-long strings, control characters, negative ints, dotted-path
-nonsense, and unhashable choices.
+nonsense, and mixed-type choice lists (all hashable primitives).
 
-Currently fuzzes 19 models including `SamplingDimension`,
-`SearchSpaceDimension`, `SLAFilter`, `AdaptiveObjective`, the currently targeted sweep
+Currently fuzzes 18 models including `SamplingDimension`,
+`SearchSpaceDimension`, `SLAFilter`, `Objective`, the currently targeted sweep
 envelope variants (`GridSweep`, `ScenarioSweep`, `SobolSweep`,
 `LatinHypercubeSweep`, `AdaptiveSearchSweep`; `ZipSweep` is not yet
 fuzzed), all distribution types
@@ -184,9 +189,11 @@ run.
 ### Adding a new YAML template
 
 The `test_dump_config_roundtrip` parametrization auto-discovers
-`src/aiperf/config/templates/**/*.yaml`. If your template intentionally cannot
-round-trip (e.g. depends on runtime context), skip it via the
-existing skip-decorator with a documented reason.
+`src/aiperf/config/templates/*.yaml` (non-recursive `glob`). Every discovered
+template is round-tripped — there is no per-template skip decorator. If a
+template cannot round-trip verbatim, extend the `_normalize()` helper (currently
+a pass-through applied to both sides before comparison) to canonicalize the
+diverging field, with a documented reason.
 
 ## Running locally
 

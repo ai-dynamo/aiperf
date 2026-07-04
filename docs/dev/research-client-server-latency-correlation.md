@@ -121,7 +121,7 @@ The key metrics computed from these timestamps:
 
 | Metric | Formula | Unit | Source |
 |--------|---------|------|--------|
-| `credit_drop_latency` | `request_start_ns - credit_drop_received_ns` | ns | Worker internal |
+| `credit_drop_latency` | `request_start_ns - credit_received_ns` | ns | Worker internal (precomputed on `record.request.credit_drop_latency`) |
 | `stream_setup_latency` | `recv_start_perf_ns - start_perf_ns` | ns | HTTP response header arrival |
 | `stream_prefill_latency` | `TTFT - stream_setup_latency` | ns | Derived |
 | `time_to_first_token` | `first_content_response.perf_ns - start_perf_ns` | ns | First token arrival |
@@ -728,7 +728,8 @@ due to a preemption:
 - Server histogram includes the 100ms observation directly
 
 AIPerf does have access to per-token timing via the `response_chunks` in
-`TraceData`, which records `(timestamp_ns, size_bytes)` for each SSE chunk.
+`BaseTraceData` (and its `AioHttpTraceData` subclass), which records
+`(timestamp_ns, size_bytes)` for each SSE chunk.
 The RaggedSeries in ColumnStore stores variable-length per-request data.
 Future work could extract per-chunk inter-arrival times to produce a
 client-side ITL distribution with the same granularity as the server histogram.
@@ -1349,7 +1350,7 @@ The existing `SummaryContext` dataclass already bundles accumulator references:
 ```python
 @dataclass
 class SummaryContext:
-    accumulators: dict[str, Any]
+    accumulators: dict[AccumulatorType, Any]
     accumulator_outputs: dict[str, Any]
     start_ns: int
     end_ns: int

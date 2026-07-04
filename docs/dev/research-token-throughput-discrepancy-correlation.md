@@ -90,42 +90,41 @@ flowchart LR
         DL -->|DatasetConfiguredNotification<br/>conversations carry<br/>accuracy_ground_truth + accuracy_task| BUS{ZMQ event bus}
     end
     subgraph RPS[RecordProcessorService process]
-        ARP[AccuracyRecordProcessor<br/>SubProcessorProtocol<br/>supported_record_types= ParsedResponseRecord]
+        ARP[AccuracyRecordProcessor<br/>record_processor plugin<br/>AIPerfLifecycleMixin]
         ARP -.on_dataset_configured.-> ARP
         BUS --> ARP
         ARP -->|MetricRecordDict<br/>'accuracy.correct': 0/1<br/>'accuracy.unparsed': 0/1| MERGE[MetricRecordProcessor<br/>merges into record metrics]
     end
     subgraph RM[RecordsManager process]
-        AA[AccuracyAccumulator<br/>AccumulatorProtocol<br/>accumulator_type=ACCURACY<br/>supported_record_types= MetricRecordsData]
-        AA -.on_dataset_configured.-> AA
-        BUS --> AA
-        MERGE -->|MetricRecordsData| ROUTER[RecordRouter dispatch]
-        ROUTER --> AA
-        AA -->|summarize| RES[AccuracyAccumulatorResult]
-        RES --> JSON[to_json_export]
-        RES --> CSV[to_csv_rows]
+        ARES[AccuracyResultsProcessor<br/>results_processor plugin<br/>AIPerfLifecycleMixin]
+        ARES -.on_dataset_configured.-> ARES
+        BUS --> ARES
+        MERGE -->|MetricRecordsData| ARES
+        ARES -->|summarize| RES[list of MetricResult]
     end
     subgraph EXP[ResultsExporter collector]
-        JSON -->|merged into profile_export.json| OUT1[(profile_export.json)]
-        CSV -->|merged into profile_export.csv| OUT2[(profile_export.csv)]
+        RES -->|merged into profile_export.json| OUT1[(profile_export.json)]
+        RES -->|merged into profile_export.csv| OUT2[(profile_export.csv)]
     end
 
 ```
 
   Concrete shapes:
 
-  class AccuracyRecordProcessor(SubProcessorProtocol):
-      processor_type = SubProcessorType.ACCURACY
-      supported_record_types = (ParsedResponseRecord,)
-      required_accumulators = set()                      # standalone — doesn't query other accumulators
-
-      def __init__(self, *, user_config: UserConfig, **kw): ...
-      def on_dataset_configured(self, metadata): self._ground_truths = [...]
-      async def process_record(self, record) -> MetricRecordDict:
+  class AccuracyRecordProcessor(AIPerfLifecycleMixin):       # record_processor plugin
+      def __init__(self, run: BenchmarkRun, service_id: str | None = None, **kw): ...
+      def on_dataset_configured(self, metadata: DatasetMetadata): self._ground_truths = [...]
+      async def process_record(self, record: ParsedResponseRecord,
+                               metadata: MetricRecordMetadata) -> MetricRecordDict:
           gt = self._ground_truths[record.session_num % len(self._ground_truths)]
           result = await self.grader.grade(record.response_text, gt)
           return MetricRecordDict({"accuracy.correct": float(result.correct),
                                    "accuracy.unparsed": float(result.unparsed)})
+
+  class AccuracyResultsProcessor(AIPerfLifecycleMixin):      # results_processor plugin
+      def on_dataset_configured(self, metadata: DatasetMetadata): ...
+      async def process_result(self, record_data: MetricRecordsData) -> None: ...
+      async def summarize(self) -> list[MetricResult]: ...    # overall accuracy MetricResults
 
 
 
@@ -1261,7 +1260,7 @@ which counts requests satisfying all configured SLO thresholds
 (`--goodput "time_to_first_token:100 inter_token_latency:3.40"`).
 
 **Effective throughput**: Time-weighted instantaneous throughput from sweep-line
-analysis (`effective_throughput` in `SweepMetricSpec`).
+analysis (`effective_throughput` in `SweepLineMetricSpec`).
 
 ### 10.2 The Goodput-Throughput Gap
 
@@ -1754,6 +1753,6 @@ DISCREPANCY_PROFILES = [
 11. `src/aiperf/metrics/types/usage_diff_metrics.py` — Usage discrepancy detector
 12. `src/aiperf/server_metrics/accumulator.py` — Server metrics accumulator
 13. `src/aiperf/server_metrics/data_collector.py` — Prometheus collection
-14. `src/aiperf/analysis/sweep.py` — Sweep-line throughput algorithms
+14. `src/aiperf/analysis/sweepline.py` — Sweep-line throughput algorithms
 15. `src/aiperf/metrics/types/goodput_metric.py` — Goodput metric
 16. `docs/server_metrics/server_metrics_reference.md` — Server metric definitions

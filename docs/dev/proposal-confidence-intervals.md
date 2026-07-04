@@ -103,26 +103,17 @@ class ConfidenceInterval:
 ### MetricResult Extension
 
 ```python
-class MetricResult(AIPerfBaseModel):
+# MetricResult is a @dataclass(slots=True, kw_only=True), not a Pydantic model,
+# so new fields use plain defaults (no Field(...)).
+@dataclass(slots=True, kw_only=True)
+class MetricResult:
     # ... existing fields ...
 
     # Confidence intervals (None when not computable)
-    ci_mean: ConfidenceInterval | None = Field(
-        default=None,
-        description="Confidence interval for the mean"
-    )
-    ci_p50: ConfidenceInterval | None = Field(
-        default=None,
-        description="Confidence interval for the median"
-    )
-    ci_p99: ConfidenceInterval | None = Field(
-        default=None,
-        description="Confidence interval for p99"
-    )
-    ci_p999: ConfidenceInterval | None = Field(
-        default=None,
-        description="Confidence interval for p99.9"
-    )
+    ci_mean: ConfidenceInterval | None = None
+    ci_p50: ConfidenceInterval | None = None
+    ci_p99: ConfidenceInterval | None = None
+    ci_p999: ConfidenceInterval | None = None
 ```
 
 ### Export Format

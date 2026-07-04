@@ -172,7 +172,7 @@ anti-correlated, composite compliance could be as low as 98%.
 AIPerf already implements per-request SLO compliance via `--goodput`:
 
 ```bash
-aiperf benchmark \
+aiperf profile \
     --goodput "time_to_first_token:500 inter_token_latency:50"
 ```
 
@@ -1986,7 +1986,7 @@ significance tests are too liberal (too many false positives).
 | Source | Resolution | Timestamp Type | Alignment Strategy |
 |--------|-----------|---------------|-------------------|
 | Client metrics (per-request) | ~10-100ms between requests | `start_ns`, `end_ns` per request | Bin by time window, take median per bin |
-| Client sweep metrics | Event-driven (on request start/end) | Nanosecond timestamps on events | Time-weighted average per bin (already implemented in sweep.py) |
+| Client sweep metrics | Event-driven (on request start/end) | Nanosecond timestamps on events | Time-weighted average per bin (already implemented in sweepline.py) |
 | Server metrics (Prometheus) | 1-15s polling interval | Scrape timestamp | Sample-and-hold interpolation to common grid |
 | GPU telemetry (DCGM) | 1-5s polling interval | DCGM timestamp | Linear interpolation to common grid |
 

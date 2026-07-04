@@ -17,7 +17,7 @@ proposes concrete next steps.
 | Capability | Implementation | Strength |
 |---|---|---|
 | **SLA-based Goodput** | `--goodput "time_to_first_token:100 inter_token_latency:3.40"` — per-metric thresholds with directionality and unit conversion (DistServe definition) | Research-grade |
-| **Sweep-line algorithms** | 10 vectorized sweep functions producing 9 SWEEP_METRIC_SPECS: concurrency, throughput, prefill throughput, ICL-aware, tokens-in-flight, total, per-user throughput, per-user prefill throughput, generation concurrency, prefill concurrency | Ahead of industry |
+| **Sweep-line algorithms** | 10 vectorized sweep-line functions (including ICL-aware variants) producing the 9 `SWEEP_LINE_METRIC_SPECS`: effective concurrency, effective throughput, effective prefill throughput, effective generation concurrency, effective prefill concurrency, effective total throughput, per-user throughput, per-user prefill throughput, tokens-in-flight | Ahead of industry |
 | **Multi-signal steady-state detection** | 4-signal CUSUM + MSER-5 (concurrency, latency, TTFT, throughput) | Research-grade |
 | **Polynomial histogram percentiles** | ~2.5x more accurate than Prometheus linear interpolation for server-side metrics | Novel |
 | **Bootstrap confidence intervals** | Circular block resampling preserving temporal correlation | Research-grade |

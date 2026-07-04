@@ -343,17 +343,17 @@ non-steady-state behavior.
 
 ### 4.1 Available Signals in AIPerf
 
-AIPerf's sweep-line framework (see `src/aiperf/analysis/sweep.py`) computes
+AIPerf's sweep-line framework (see `src/aiperf/analysis/sweepline.py`) computes
 exact instantaneous step functions for phase-specific concurrency and throughput.
 The relevant signals for interference analysis are:
 
 | Signal | Sweep Function | Type | Unit |
 |---|---|---|---|
-| `effective_prefill_concurrency(t)` | `concurrency_sweep(start_ns, generation_start_ns)` | Step function | requests |
-| `effective_generation_concurrency(t)` | `concurrency_sweep(generation_start_ns, end_ns)` | Step function | requests |
-| `effective_prefill_throughput(t)` | `prefill_throughput_sweep(start_ns, gen_start_ns, ISL)` | Step function | tokens/s |
-| `effective_throughput(t)` | `throughput_sweep(gen_start_ns, end_ns, OSL)` | Step function | tokens/s |
-| `tokens_in_flight(t)` | `tokens_in_flight_sweep(...)` | Step function | tokens |
+| `effective_prefill_concurrency(t)` | `concurrency_sweep_line(start_ns, generation_start_ns)` | Step function | requests |
+| `effective_generation_concurrency(t)` | `concurrency_sweep_line(generation_start_ns, end_ns)` | Step function | requests |
+| `effective_prefill_throughput(t)` | `prefill_throughput_sweep_line(start_ns, gen_start_ns, ISL)` | Step function | tokens/s |
+| `effective_throughput(t)` | `throughput_sweep_line(gen_start_ns, end_ns, OSL)` | Step function | tokens/s |
+| `tokens_in_flight(t)` | `tokens_in_flight_sweep_line(...)` | Step function | tokens |
 
 Per-request metrics available in ColumnStore:
 
@@ -663,8 +663,8 @@ AIPerf's sweep-line framework, R(t) can be computed using the existing
 ```python
 # Using existing sweep infrastructure
 phase_ratio_ts, phase_ratio = divide_step_functions(
-    pre_conc_ts, pre_conc,    # from concurrency_sweep(start_ns, generation_start_ns)
-    gen_conc_ts, gen_conc,    # from concurrency_sweep(generation_start_ns, end_ns)
+    pre_conc_ts, pre_conc,    # from concurrency_sweep_line(start_ns, generation_start_ns)
+    gen_conc_ts, gen_conc,    # from concurrency_sweep_line(generation_start_ns, end_ns)
 )
 ```
 
@@ -809,7 +809,7 @@ fundamentally different correlation structures:
 ```
 Detection Algorithm:
 
-1. Compute prefill_concurrency(t) via concurrency_sweep(start_ns, generation_start_ns)
+1. Compute prefill_concurrency(t) via concurrency_sweep_line(start_ns, generation_start_ns)
 2. For each decode token, look up prefill_concurrency at token generation time
 3. Compute Pearson correlation: r = Corr(prefill_concurrency, ITL)
 
@@ -1263,8 +1263,8 @@ Output:
 Steps:
 
 1. Extract sweep signals:
-   pre_conc_ts, pre_conc = concurrency_sweep(start_ns, generation_start_ns)
-   gen_conc_ts, gen_conc = concurrency_sweep(generation_start_ns, end_ns)
+   pre_conc_ts, pre_conc = concurrency_sweep_line(start_ns, generation_start_ns)
+   gen_conc_ts, gen_conc = concurrency_sweep_line(generation_start_ns, end_ns)
 
 2. Extract per-token ITL observations with timestamps:
    itl_ragged = store.ragged("inter_token_latency")
@@ -1445,7 +1445,7 @@ Algorithm: classify_scheduling_policy
 
 Input:
   store: ColumnStore
-  sweep_curves: SweepCurves (from MetricsAccumulator)
+  sweep_curves: SweepLineCurves (from MetricsAccumulator)
   window_start, window_end: float
   interference_result: InterferenceResult
 
@@ -1517,7 +1517,7 @@ RETURN SchedulingClassification(
 Algorithm: compute_phase_ratio_throughput_curve
 
 Input:
-  sweep_curves: SweepCurves
+  sweep_curves: SweepLineCurves
   window_start, window_end: float
   n_bins: int = 20
 
@@ -1531,7 +1531,7 @@ Steps:
      pre_conc_ts, pre_conc, gen_conc_ts, gen_conc
    )
 
-2. Compute total throughput step function (already in SweepCurves):
+2. Compute total throughput step function (already in SweepLineCurves):
    total_ts = sweep_curves.total_throughput_ts
    total_vals = sweep_curves.total_throughput
 
@@ -1578,7 +1578,7 @@ plugin, following the same pattern as `SteadyStateAnalyzer`:
 ```
 src/aiperf/
 ├── analysis/
-│   ├── sweep.py                   # Existing sweep-line algorithms
+│   ├── sweepline.py                   # Existing sweep-line algorithms
 │   ├── ramp_detection.py          # Existing CUSUM + MSER-5
 │   ├── stationarity.py            # Existing trend testing
 │   ├── interference.py            # NEW: interference computation functions
@@ -1732,7 +1732,7 @@ store.numeric("stream_prefill_latency")
 store.ragged("inter_token_latency")  # RaggedSeries for per-token ITL
 ```
 
-**Sweep curves**: The `SweepCurves` dataclass (from `sweep.py`) already contains
+**Sweep curves**: The `SweepLineCurves` dataclass (from `sweepline.py`) already contains
 all necessary step functions. The interference analyzer consumes these rather
 than recomputing them:
 
@@ -2102,11 +2102,11 @@ Edge Case 6: Multi-model serving (different models on same GPU)
 
 | Symbol | Definition | Source |
 |---|---|---|
-| `PFC(t)` | effective_prefill_concurrency at time t | `concurrency_sweep(start_ns, generation_start_ns)` |
-| `GC(t)` | effective_generation_concurrency at time t | `concurrency_sweep(generation_start_ns, end_ns)` |
-| `PT(t)` | effective_prefill_throughput at time t | `prefill_throughput_sweep(start_ns, gen_start, ISL)` |
-| `GT(t)` | effective_throughput (generation) at time t | `throughput_sweep(gen_start, end_ns, OSL)` |
-| `TIF(t)` | tokens_in_flight at time t | `tokens_in_flight_sweep(...)` |
+| `PFC(t)` | effective_prefill_concurrency at time t | `concurrency_sweep_line(start_ns, generation_start_ns)` |
+| `GC(t)` | effective_generation_concurrency at time t | `concurrency_sweep_line(generation_start_ns, end_ns)` |
+| `PT(t)` | effective_prefill_throughput at time t | `prefill_throughput_sweep_line(start_ns, gen_start, ISL)` |
+| `GT(t)` | effective_throughput (generation) at time t | `throughput_sweep_line(gen_start, end_ns, OSL)` |
+| `TIF(t)` | tokens_in_flight at time t | `tokens_in_flight_sweep_line(...)` |
 | `R(t)` | phase ratio = PFC(t) / GC(t) | `divide_step_functions(PFC, GC)` |
 | `ITL(r,j)` | inter-token latency of request r, token j | ColumnStore ragged `inter_token_latency` |
 | `IF` | interference factor | `E[ITL|PFC>0] / E[ITL|PFC=0] - 1` |
@@ -2116,7 +2116,7 @@ Edge Case 6: Multi-model serving (different models on same GPU)
 ## Appendix B: Relationship to Existing AIPerf Sweep Metrics
 
 The interference analysis builds on top of — but does not modify — the existing
-9 sweep metrics defined in `SWEEP_METRIC_SPECS`:
+9 sweep metrics defined in `SWEEP_LINE_METRIC_SPECS`:
 
 ```
 Existing (consumed as inputs):
@@ -2137,7 +2137,7 @@ New (computed by interference analysis):
   13. interference_by_isl              — per-ISL-bin factor breakdown
 ```
 
-The new metrics are NOT added to `SWEEP_METRIC_SPECS` because they are analysis
+The new metrics are NOT added to `SWEEP_LINE_METRIC_SPECS` because they are analysis
 outputs, not time-weighted sweep statistics. They are reported in the
 `InterferenceSummary` returned by the `InterferenceAnalyzer`.
 

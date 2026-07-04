@@ -320,7 +320,7 @@ throughput quantifies this relationship:
 ```
 
 Where `R` is the throttle rate series and `T` is the throughput sweep series
-(from `throughput_sweep()` in `src/aiperf/analysis/sweep.py`).
+(from `throughput_sweep_line()` in `src/aiperf/analysis/sweepline.py`).
 
 **Cross-correlation with lag**: Power throttling may have a delayed effect on
 throughput due to request queuing and batching. The cross-correlation function
@@ -1250,7 +1250,7 @@ where:
 
 AIPerf's sweep metrics already decompose concurrency into prefill and decode
 phases via `effective_prefill_concurrency` and `effective_generation_concurrency`
-(from `src/aiperf/analysis/sweep.py`). The cross-correlation with power reveals
+(from `src/aiperf/analysis/sweepline.py`). The cross-correlation with power reveals
 the workload structure:
 
 ```python
@@ -1549,7 +1549,7 @@ normalizing it by the time window duration.
 **Integration with existing counter handling:**
 
 The `to_metric_result_filtered()` method in
-`src/aiperf/common/models/telemetry_models.py` already handles counter deltas.
+`src/aiperf/common/models/telemetry_timeseries.py` already handles counter deltas.
 The throttle rate is:
 
 ```python
@@ -1580,7 +1580,7 @@ client-side metric time series. This requires either:
 
 Option (b) is preferred — keeps the analyzer focused on computation rather
 than data access, consistent with `SteadyStateAnalyzer`'s pattern of
-receiving `SweepCurves` from `MetricsAccumulator`.
+receiving `SweepLineCurves` from `MetricsAccumulator`.
 
 **Output:** A `ThermalCorrelationSummary` containing:
 - Throttle regime classification

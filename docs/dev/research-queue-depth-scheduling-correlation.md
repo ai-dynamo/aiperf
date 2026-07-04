@@ -163,7 +163,7 @@ in `ServerMetricsHierarchy` with per-endpoint, per-metric time series.
 
 | Metric | Source | Semantics |
 |--------|--------|-----------|
-| `effective_concurrency` | `concurrency_sweep()` | Time-weighted concurrent requests from the client's perspective. Counts requests between `request_start_ns` and `request_end_ns`. |
+| `effective_concurrency` | `concurrency_sweep_line()` | Time-weighted concurrent requests from the client's perspective. Counts requests between `request_start_ns` and `request_end_ns`. |
 | `effective_prefill_concurrency` | Sweep-line | Requests between `request_start_ns` and `request_ack_ns` (first token). Approximates the server's prefill load. |
 | `effective_generation_concurrency` | Sweep-line | Requests between `request_ack_ns` and `request_end_ns`. Approximates the server's decode load. |
 | `request_throughput` | Derived | Requests per second (count / duration). |
@@ -333,7 +333,7 @@ quantization noise.
 
 ```python
 def littles_law_residual(
-    concurrency_ts: NDArray[np.float64],      # from concurrency_sweep
+    concurrency_ts: NDArray[np.float64],      # from concurrency_sweep_line
     concurrency: NDArray[np.float64],
     request_end_ns: NDArray[np.float64],       # from ColumnStore
     request_latency_ns: NDArray[np.float64],   # from ColumnStore
@@ -1187,7 +1187,7 @@ IntervalGenerator protocol:
 | Poisson (`--request-rate N --arrival-pattern poisson`) | Exponential inter-arrivals (mean 1/N) | M/G/1 |
 | Gamma (`--request-rate N --arrival-pattern gamma`) | Gamma-distributed inter-arrivals | G/G/1 |
 | Concurrency-limited (`--concurrency N`) | Closed-loop: new request on completion | Closed system |
-| Rate ramp (`--ramp-start-rate ... --ramp-end-rate`) | Time-varying deterministic | Non-stationary |
+| Rate ramp (`--request-rate N --request-rate-ramp-duration T`) | Time-varying deterministic | Non-stationary |
 
 Each pattern creates fundamentally different queue dynamics.
 
@@ -1446,7 +1446,7 @@ The correlation analysis builds on three existing AIPerf subsystems:
 │  Reads from:                                            │
 │  ┌─────────────────┐  ┌──────────────────────────────┐  │
 │  │ MetricsAccumulator│ │ ServerMetricsAccumulator     │  │
-│  │   .column_store  │  │   .hierarchy                 │  │
+│  │   .column_store  │  │   .get_hierarchy_for_export()│  │
 │  │   .sweep_curves  │  │   (gauge/histogram series)   │  │
 │  └─────────────────┘  └──────────────────────────────┘  │
 │                                                         │
@@ -2162,7 +2162,7 @@ Client-side metrics mapping:
 
 | AIPerf Metric | Sweep/ColumnStore | This Document |
 |--------------|-------------------|---------------|
-| `effective_concurrency` | `concurrency_sweep()` → SweepCurves | L_client |
+| `effective_concurrency` | `concurrency_sweep_line()` → SweepLineCurves | L_client |
 | `effective_prefill_concurrency` | Sweep-line | L_prefill |
 | `effective_generation_concurrency` | Sweep-line | L_decode |
 | `request_throughput` | Derived (count / duration) | lambda_client |

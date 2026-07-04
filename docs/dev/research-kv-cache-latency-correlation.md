@@ -526,11 +526,11 @@ episodes.
 ### 5.1 What tokens_in_flight Measures
 
 The `tokens_in_flight` sweep metric (implemented in `src/aiperf/analysis/
-sweep.py`) computes the instantaneous total tokens held in KV cache across all
+sweepline.py`) computes the instantaneous total tokens held in KV cache across all
 active requests, as observed from the client side:
 
 ```python
-# From tokens_in_flight_sweep():
+# From tokens_in_flight_sweep_line():
 # Events per request (up to 3):
 #   +input_tokens            at start_ns         (prefill loads KV cache)
 #   +output_tokens           at generation_start  (output tokens join KV)
@@ -1202,7 +1202,7 @@ architecture:
 │           │                          │                   │
 │           ▼                          ▼                   │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │ SweepCurves (from MetricsAccumulator)            │   │
+│  │ SweepLineCurves (from MetricsAccumulator)            │   │
 │  │ ├─ effective_concurrency                         │   │
 │  │ ├─ effective_throughput                          │   │
 │  │ └─ tokens_in_flight                             │   │
@@ -1213,8 +1213,8 @@ architecture:
 │  │ KVCacheCorrelationAnalyzer (AnalyzerProtocol)    │   │
 │  │                                                   │   │
 │  │ Inputs:                                           │   │
-│  │   - SweepCurves.tokens_in_flight                  │   │
-│  │   - SweepCurves.effective_concurrency             │   │
+│  │   - SweepLineCurves.tokens_in_flight                  │   │
+│  │   - SweepLineCurves.effective_concurrency             │   │
 │  │   - ColumnStore (latency, TTFT, ISL, OSL)         │   │
 │  │   - ServerMetricsTimeSeries (KV %, preemptions)   │   │
 │  │                                                   │   │
@@ -2105,7 +2105,7 @@ of correlation between the two time series at the given lag.
 4. Console warnings for detected KV pressure
 5. JSON export of correlation results
 
-**Dependencies:** Existing MetricsAccumulator, ServerMetricsAccumulator, SweepCurves.
+**Dependencies:** Existing MetricsAccumulator, ServerMetricsAccumulator, SweepLineCurves.
 
 ### Phase 2: Advanced Correlation
 

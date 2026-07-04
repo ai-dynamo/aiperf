@@ -40,7 +40,7 @@ _PERCENTILE_QS = np.array([1, 5, 10, 25, 50, 75, 90, 95, 99], dtype=np.float64)
 _PERCENTILE_QS = np.array([1, 5, 10, 25, 50, 75, 90, 95, 99, 99.9, 99.99], dtype=np.float64)
 ```
 
-**File:** `src/aiperf/common/models/record_models.py` (MetricResult)
+**File:** `src/aiperf/common/models/metric_result_models.py` (MetricResult; `record_models.py` only re-exports it)
 
 Add fields:
 - `p999: float | None` — 99.9th percentile (None when count < 1000)
@@ -132,22 +132,19 @@ after building the MetricResult from a record array. For each RECORD metric:
 
 ### 5. MetricResult Metadata Extension
 
-**File:** `src/aiperf/common/models/record_models.py`
+**File:** `src/aiperf/common/models/metric_result_models.py`
 
 ```python
-class MetricResult(AIPerfBaseModel):
+# MetricResult is a @dataclass(slots=True, kw_only=True), not a Pydantic model,
+# so new fields use plain defaults (no Field(...)).
+@dataclass(slots=True, kw_only=True)
+class MetricResult:
     # ... existing fields ...
-    p999: float | None = Field(default=None, description="99.9th percentile")
-    p9999: float | None = Field(default=None, description="99.99th percentile")
-    tail_ratio_99_50: float | None = Field(default=None, description="p99/p50 ratio")
-    lag1_autocorrelation: float | None = Field(
-        default=None,
-        description="Lag-1 autocorrelation of time-ordered values"
-    )
-    effective_sample_size: float | None = Field(
-        default=None,
-        description="Sample size adjusted for serial correlation"
-    )
+    p999: float | None = None  # 99.9th percentile
+    p9999: float | None = None  # 99.99th percentile
+    tail_ratio_99_50: float | None = None  # p99/p50 ratio
+    lag1_autocorrelation: float | None = None  # lag-1 autocorrelation of time-ordered values
+    effective_sample_size: float | None = None  # sample size adjusted for serial correlation
 ```
 
 These fields are nullable to avoid bloating results for AGGREGATE/DERIVED
@@ -168,7 +165,7 @@ metrics where they don't apply.
 
 ### Sweep-line statistics
 - `compute_time_weighted_stats()` already returns p50, p90, p95, p99
-- Extend SweepStats to include p999, p9999
+- Extend SweepLineStats to include p999, p9999
 - Same duration-weighted CDF approach, just two more searchsorted lookups
 
 ## Performance Impact

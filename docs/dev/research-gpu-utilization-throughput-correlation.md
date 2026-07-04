@@ -1507,7 +1507,7 @@ metrics is that they live in different time domains:
 |----------|--------------------|-----------------------|
 | **Time representation** | Float64 nanoseconds | Int64 nanoseconds |
 | **Sampling** | Event-driven (per request boundary) | Periodic (fixed interval) |
-| **Data structure** | Step functions (SweepCurves) | Point samples (GpuMetricTimeSeries) |
+| **Data structure** | Step functions (SweepLineCurves) | Point samples (GpuMetricTimeSeries) |
 | **Resolution** | Sub-microsecond (nanosecond events) | 100ms-1s (DCGM scrape interval) |
 | **Storage** | ColumnStore (session-indexed) | TelemetryHierarchy (GPU-indexed) |
 | **Time source** | Client clock (may differ from server) | Server/GPU clock |
@@ -1524,7 +1524,7 @@ The alignment must:
 
 The sweep-line outputs are step functions: value `v[i]` holds from `ts[i]`
 to `ts[i+1]`. We can evaluate them at any timestamp using binary search
-(this is exactly `_step_lookup` from `sweep.py`):
+(this is exactly `_step_lookup` from `sweepline.py`):
 
 ```python
 def align_sweep_to_telemetry(
@@ -1579,7 +1579,7 @@ class AlignedCorrelationData:
 
 
 def build_aligned_data(
-    sweeps: SweepCurves,
+    sweeps: SweepLineCurves,
     telemetry_data: GpuMetricTimeSeries,
     window_start_ns: int | None = None,
     window_end_ns: int | None = None,
@@ -1821,7 +1821,7 @@ The analyzer would:
   MetricsAccumulator            GPUTelemetryAccumulator
        │                               │
        │  ColumnStore                   │  TelemetryHierarchy
-       │  SweepCurves                   │  GpuMetricTimeSeries
+       │  SweepLineCurves                   │  GpuMetricTimeSeries
        │                               │
        └──────────┐     ┌──────────────┘
                   │     │
