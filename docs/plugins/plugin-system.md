@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 37 plugin categories organized by function:
+AIPerf supports 35 plugin categories organized by function:
 
 ### Timing Categories
 
@@ -119,6 +119,7 @@ AIPerf supports 37 plugin categories organized by function:
 | `dataset_sampler` | `DatasetSamplingStrategy` | Sampling strategies (random, sequential, shuffle) |
 | `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
 | `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
+| `public_dataset_loader` | `PublicDatasetType` | Public dataset loaders that fetch shared benchmark datasets without a local file |
 
 ### Endpoint and Transport Categories
 
@@ -132,6 +133,9 @@ AIPerf supports 37 plugin categories organized by function:
 | Category | Enum | Description |
 |----------|------|-------------|
 | `record_processor` | `RecordProcessorType` | Per-record metric computation |
+| `results_processor` | `ResultsProcessorType` | Aggregate results from record processors and compute derived metrics |
+| `server_metrics_processor` | `ServerMetricsProcessorType` | Aggregate and export Prometheus server metrics |
+| `analyzer` | `AnalyzerType` | Single-input analyzers that derive results from one accumulator |
 | `accumulator` | `AccumulatorType` | Record ingestion, time-range queries, and summarization |
 | `stream_exporter` | `StreamExporterType` | Streaming record export (e.g. JSONL files) |
 | `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
@@ -166,6 +170,7 @@ AIPerf supports 37 plugin categories organized by function:
 |----------|------|-------------|
 | `service` | `ServiceType` | Core AIPerf services |
 | `service_manager` | `ServiceRunType` | Service orchestration (multiprocessing, Kubernetes) |
+| `api_router` | `APIRouterType` | Lifecycle-managed HTTP API routers that extend `BaseRouter` |
 
 ### Visualization and Telemetry Categories
 
@@ -378,16 +383,20 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `chat` | `ChatEndpoint` | OpenAI Chat Completions API |
 | `chat_embeddings` | `ChatEmbeddingsEndpoint` | vLLM multimodal embeddings via chat API |
 | `completions` | `CompletionsEndpoint` | OpenAI Completions API |
+| `responses` | `ResponsesEndpoint` | OpenAI Responses API (multi-modal inputs) |
 | `cohere_rankings` | `CohereRankingsEndpoint` | Cohere Reranking API |
 | `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
 | `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
 | `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
+| `image_edit` | `ImageEditEndpoint` | OpenAI Image Edit (image-to-image) API |
+| `image_retrieval` | `ImageRetrievalEndpoint` | NIM Image Retrieval |
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |
 | `solido_rag` | `SolidoEndpoint` | Solido RAG Pipeline |
 | `template` | `TemplateEndpoint` | Template for custom endpoints |
 | `video_generation` | `VideoGenerationEndpoint` | Text-to-video generation API |
+| `raw` | `RawEndpoint` | Fallback for non-standard APIs (no payload formatting) |
 
 ### Timing Strategies
 
@@ -396,6 +405,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `fixed_schedule` | `FixedScheduleStrategy` | Send requests at exact timestamps |
 | `request_rate` | `RequestRateStrategy` | Send requests at specified rate |
 | `user_centric_rate` | `UserCentricStrategy` | Each session acts as separate user |
+| `adaptive_scale` | `AdaptiveScaleStrategy` | Single-run adaptive controller that discovers and sustains an SLA boundary |
 
 ### Arrival Patterns
 
@@ -413,6 +423,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `synthetic` | `SyntheticDatasetComposer` | Generate synthetic conversations |
 | `custom` | `CustomDatasetComposer` | Load from JSONL files |
 | `synthetic_rankings` | `SyntheticRankingsDatasetComposer` | Generate ranking tasks |
+| `public` | `PublicDatasetComposer` | Load benchmark datasets from remote/public sources |
 
 ### UI Types
 
@@ -433,6 +444,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `hellaswag` | `HellaSwagBenchmark` | HellaSwag commonsense reasoning |
 | `bigbench` | `BigBenchBenchmark` | BIG-Bench benchmark tasks |
 | `math_500` | `Math500Benchmark` | MATH-500 problem set |
+| `gsm8k` | `GSM8KBenchmark` | GSM8K grade-school math word problems |
 | `gpqa_diamond` | `GPQADiamondBenchmark` | GPQA Diamond graduate-level science |
 | `lcb_codegeneration` | `LCBCodeGenerationBenchmark` | LiveCodeBench code generation |
 
@@ -444,6 +456,10 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `math` | `MathGrader` | Mathematical expression evaluation |
 | `multiple_choice` | `MultipleChoiceGrader` | Multiple choice answer extraction |
 | `code_execution` | `CodeExecutionGrader` | Code execution and output comparison |
+| `lighteval_expr` | `LightevalExprGrader` | Lighteval `expr_gold_metric` (AIME24/AIME25) |
+| `lighteval_latex` | `LightevalLatexGrader` | Lighteval `latex_gold_metric` (MATH-500) |
+| `lighteval_gpqa` | `LightevalGPQAGrader` | Lighteval `gpqa_metric` (GPQA-Diamond) |
+| `lighteval_gsm8k` | `LightevalGSM8KGrader` | Lighteval `quasi_exact_match_gsm8k` (GSM8K) |
 
 ## Troubleshooting
 

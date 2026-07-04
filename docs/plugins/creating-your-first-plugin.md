@@ -155,7 +155,7 @@ class EchoEndpoint(BaseEndpoint):
     # ─────────────────────────────────────────────────────────────────────────
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         turn = request_info.turns[-1]
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = self.model_endpoint
         texts = [content for text in turn.texts for content in text.contents if content]
         return {
             "text": texts[0] if texts else "",

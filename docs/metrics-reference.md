@@ -51,6 +51,15 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Usage Completion Tokens](#usage-completion-tokens)
     - [Usage Total Tokens](#usage-total-tokens)
     - [Usage Reasoning Tokens](#usage-reasoning-tokens)
+    - [Usage Prompt Cache Read Tokens](#usage-prompt-cache-read-tokens)
+    - [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens)
+    - [Usage Prompt Audio Tokens](#usage-prompt-audio-tokens)
+    - [Usage Completion Audio Tokens](#usage-completion-audio-tokens)
+    - [Usage Accepted Prediction Tokens](#usage-accepted-prediction-tokens)
+    - [Usage Rejected Prediction Tokens](#usage-rejected-prediction-tokens)
+    - [Usage Prompt Cache Miss Tokens](#usage-prompt-cache-miss-tokens)
+    - [Usage Tool Use Prompt Tokens](#usage-tool-use-prompt-tokens)
+    - [Usage Prompt Audio Seconds](#usage-prompt-audio-seconds)
     - [Total Usage Prompt Tokens](#total-usage-prompt-tokens)
     - [Total Usage Completion Tokens](#total-usage-completion-tokens)
     - [Total Usage Total Tokens](#total-usage-total-tokens)
@@ -216,8 +225,9 @@ Calculates the time elapsed from request start to the first non-reasoning output
 **Formula:**
 ```python
 # nanoseconds
-# First non-reasoning token: TextResponseData with non-empty text, or
-# ReasoningResponseData with non-empty content field
+# First non-reasoning token: TextResponseData with non-empty text,
+# ReasoningResponseData with non-empty content field, or
+# ToolCallResponseData with non-empty tool_call_text
 ttfo_ns = first_non_reasoning_token_perf_ns - request.start_perf_ns
 
 # Convert to milliseconds for display
@@ -226,7 +236,7 @@ ttfo_ms = ttfo_ns / 1e6
 
 **Notes:**
 - TTFO vs TTFT: Time to First Output (TTFO) measures time to the first non-reasoning token, while Time to First Token (TTFT) measures time to any first token including reasoning tokens. For models without reasoning, TTFO and TTFT are equivalent.
-- Non-reasoning tokens include TextResponseData with non-empty text, or ReasoningResponseData with non-empty content field (regardless of reasoning field).
+- Non-reasoning tokens include TextResponseData with non-empty text, ReasoningResponseData with non-empty content field (regardless of reasoning field), or ToolCallResponseData with non-empty tool_call_text.
 - Requires at least one non-empty non-reasoning response chunk.
 
 ---
@@ -495,7 +505,7 @@ num_images = sum(len(image.contents) for turn in request.turns for image in turn
 
 **Notes:**
 - Requires at least one image in at least one turn.
-- Not displayed in console output (`NO_CONSOLE` flag).
+- Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
 ---
 
@@ -644,7 +654,7 @@ total_reasoning_tokens = sum(r.reasoning_token_count for r in records if r.valid
 ## Usage Field Metrics
 
 > [!NOTE]
-> All metrics in this section track API-reported token counts from the `usage` field in API responses. These are **not displayed in console output** but are available in exports. These metrics are useful for comparing client-side token counts with server-reported counts to detect discrepancies.
+> All metrics in this section track API-reported token counts from the `usage` field in API responses. These are grouped into a separate **`Usage`** console section (via `console_group = MetricConsoleGroup.USAGE`) rather than the default table, and are available in exports. (Only the Usage *Discrepancy* diff metrics use `MetricConsoleGroup.NONE` and stay off the console entirely.) These metrics are useful for comparing client-side token counts with server-reported counts to detect discrepancies.
 
 ### Usage Prompt Tokens
 
@@ -1551,7 +1561,7 @@ http_req_chunks_sent = trace.request_chunks_count
 ```
 
 **Notes:**
-- Not displayed in console output (`NO_CONSOLE` flag).
+- Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
 ---
 
@@ -1567,7 +1577,7 @@ http_req_chunks_received = trace.response_chunks_count
 ```
 
 **Notes:**
-- Not displayed in console output (`NO_CONSOLE` flag).
+- Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
 ---
 
@@ -1647,7 +1657,6 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-streaming-only"></a>`STREAMING_ONLY` | Only computed for streaming responses | Requires Server-Sent Events (SSE) with multiple response chunks; skipped for non-streaming requests |
 | <a id="flag-error-only"></a>`ERROR_ONLY` | Only computed for error requests | Tracks error-specific information; computed only for invalid/failed requests |
 | <a id="flag-produces-tokens-only"></a>`PRODUCES_TOKENS_ONLY` | Only computed for token-producing endpoints | Requires endpoints that return text/token content; skipped for embeddings and non-generative endpoints |
-| <a id="flag-no-console"></a>`NO_CONSOLE` | Not displayed in console output | Metric computed but excluded from terminal display; available in JSON/CSV/JSONL exports and used by other metrics |
 | <a id="flag-larger-is-better"></a>`LARGER_IS_BETTER` | Higher values indicate better performance | Used for throughput and count metrics to indicate optimization direction |
 | <a id="flag-internal"></a>`INTERNAL` | Internal AIPerf metric | Used for AIPerf system diagnostics; not displayed in console or exported without developer mode |
 | <a id="flag-supports-audio-only"></a>`SUPPORTS_AUDIO_ONLY` | Only computed for audio endpoints | Requires audio-capable endpoints; skipped for other endpoint types |
@@ -1661,6 +1670,9 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-supports-video-only"></a>`SUPPORTS_VIDEO_ONLY` | Only computed for video endpoints | Requires video-capable endpoints; skipped for other endpoint types |
 | <a id="flag-usage-diff-only"></a>`USAGE_DIFF_ONLY` | Only computed when usage field data is available | Requires API responses to include usage field with token counts for comparison with client-computed values |
 | <a id="flag-produces-video-only"></a>`PRODUCES_VIDEO_ONLY` | Only computed for video-producing endpoints | Requires endpoints that produce video output (e.g., SGLang video generation) |
+| <a id="flag-percentile-includes-failed-requests"></a>`PERCENTILE_INCLUDES_FAILED_REQUESTS` | Emit failure-adjusted percentiles alongside the standard ones | Produces additional `adj_*` percentiles that treat failed requests as `+inf` latency (set on `RequestLatencyMetric`) |
+
+> **Console visibility is not a flag.** There is no `NO_CONSOLE` flag — it was replaced by the `console_group` class attribute. Set `console_group = MetricConsoleGroup.NONE` to hide a metric from the console table, or one of `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}` to render it in a dedicated console section. The default is `MetricConsoleGroup.DEFAULT`.
 
 ## Composite Flags
 
