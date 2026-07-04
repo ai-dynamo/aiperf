@@ -21,17 +21,18 @@ The v2 envelope is partway between single-config and the multi-phase / multi-dat
 
 What works today:
 
-- **Multi-model selection is wired.** `benchmark.models` is a `ModelsAdvanced` block (`src/aiperf/config/models.py:113`) with `items: list[ModelItem]` and a `strategy` field — `round_robin`, `random`, or `weighted`. `modality_aware` is roadmap-only and is not accepted by the current validator. The singular `model:` shorthand is normalized into the items list (`src/aiperf/config/loader/normalizers.py:79-89`). Multi-model in one run is a real feature, not a roadmap item.
+- **Multi-model selection is wired.** `benchmark.models` is a `ModelsAdvanced` block (`src/aiperf/config/_models_core.py:93`; `src/aiperf/config/models.py` is a re-export shim) with `items: list[ModelItem]` and a `strategy` field — `round_robin`, `random`, or `weighted`. `modality_aware` is roadmap-only: the `ModelSelectionStrategy` enum (`src/aiperf/common/enums/enums.py:397-407`) defines only the three above, so it is not accepted by the current validator. The singular `model:` shorthand is normalized into the items list (`src/aiperf/config/loader/normalizers.py:79-89`). Multi-model in one run is a real feature, not a roadmap item.
+- **Free-form, unique phase names.** `BasePhaseConfig.name` is a plain `str` (`min_length=1`), not a `Literal` (`src/aiperf/config/phases.py:72-80`). Any identifier is allowed and `validate_phase_names_unique` (`src/aiperf/config/config.py:438-449`) rejects duplicates. Names are used for result-file naming, sweep targeting, and status/logs.
 - **`benchmark.phases: [...]`** is a list, validated as a discriminated union over phase types. The singular `phases: { type: ..., ... }` shorthand is normalized to a one-entry list named `profiling` (`src/aiperf/config/loader/normalizers.py:99-103`). Top-level `warmup:` / `profiling:` shorthand is normalized to a `[warmup, profiling]` list.
-- **Singular `dataset:`** is auto-promoted to a one-entry list with `name: "default"` (`src/aiperf/config/loader/normalizers.py:92-97`).
-- **Sweep parameter paths** address phases and datasets by name. Path keying logic lives in `src/aiperf/config/sweep/expand.py`; see the `phases.profiling.<X>` special case at `expand.py:472-477`.
+- **`phase.dataset` exists and is read.** `BasePhaseConfig.dataset: str | None` (`src/aiperf/config/phases.py:99-106`) names the dataset for that phase; the fixed-schedule timing resolver already reads it (`getattr(phase, "dataset", None) or run.cfg.get_default_dataset_name()`, `src/aiperf/config/resolution/resolvers.py:358-360`).
+- **Multiple datasets are accepted.** `BenchmarkConfig.datasets` is `list[DatasetConfig]` with only `min_length=1` — no `max_length` cap (`src/aiperf/config/config.py:199-209`). Singular `dataset:` is auto-promoted to a one-entry list with `name: "default"` (`src/aiperf/config/loader/normalizers.py:92-97`).
+- **Sweep parameter paths** address phases and datasets by name. Path keying logic lives in `src/aiperf/config/sweep/expand.py`; see the `phases.profiling.<X>` special case at `expand.py:495-499` and `_find_phase_or_recipe_alias` at `expand.py:554-567`.
 
 What does **not** yet hold end-to-end:
 
-- **Phase names are fixed.** `BasePhaseConfig.name` is typed as `Literal["warmup", "profiling"]` (`src/aiperf/config/phases.py:71-80`). Multiple phases of the same kind are allowed, but they must reuse one of those two canonical names. Truly user-named phases are not plumbed through credit issuance, the timing manager, the records pipeline, or the report layout.
-- **`benchmark.datasets` is hard-capped at one entry.** The field is `list[DatasetConfig]` with `min_length=1, max_length=1` (`src/aiperf/config/config.py:166-177`). The list shape exists only so the same schema can be shared between YAML and the `AIPerfSweep` CRD; the field's own description states "the runtime currently loads exactly one dataset." Multiple-dataset input is rejected at validation time, not at runtime.
-- **Per-phase dataset selection is half-scaffolded.** `TimingResolver._validate_fixed_schedule_timing` reads a per-phase dataset via `getattr(phase, "dataset", None) or run.cfg.get_default_dataset_name()` (`src/aiperf/config/resolution/resolvers.py:353-355`), but no `dataset:` field exists on `BasePhaseConfig` yet, so the lookup always falls through to the default. The seam is anticipating a feature that hasn't landed.
-- **A phase-vs-dataset compatibility checker exists, but only along two axes.** `check_phase_dataset_compatibility` (`src/aiperf/config/resolution/predicates.py:201-243`) currently rejects only two combinations: a phase that `requires_sequential_sampling` (today, just `fixed_schedule`) against a file dataset that doesn't use sequential sampling, and a phase that `requires_multi_turn` (today, just `user_centric`) against a non-multi-turn file dataset. Other compatibility axes — synthetic-vs-trace for `fixed_schedule`, dataset format mismatches — are not yet enforced here.
+- **No explicit `kind` field; warmup vs. profiling is still name-derived.** There is no `kind:` discriminator. The warmup/profiling distinction comes from string equality on the phase `name`: `_validate_phase_constraints` (`src/aiperf/config/phases.py:244-259`) forces `exclude_from_results=True` for a phase named `warmup` and `False` for one named `profiling`, and rejects an inconsistent explicit value. A phase with any other name defaults to `exclude_from_results=False` (included). So while names are free-form, the *semantics* of "this is a warmup" still hinge on the literal string `warmup` rather than an explicit kind.
+- **Per-phase dataset routing is partial.** `phase.dataset` exists and the fixed-schedule timing resolver reads it, but `validate_phase_dataset_compatibility` (`src/aiperf/config/config.py:509-525`) checks each phase against `get_default_dataset()` — the *default* dataset only, not the phase's own `phase.dataset`. Full per-phase routing (compatibility checked against the referenced dataset, plus multi-dataset preloading in the dataset manager) has not landed.
+- **A phase-vs-dataset compatibility checker exists, but only along two axes.** `check_phase_dataset_compatibility` (`src/aiperf/config/resolution/predicates.py:208-250`) currently rejects only two combinations: a phase that `requires_sequential_sampling` (today, just `fixed_schedule`) against a file dataset that doesn't use sequential sampling, and a phase that `requires_multi_turn` (today, just `user_centric`) against a non-multi-turn file dataset. Other compatibility axes — synthetic-vs-trace for `fixed_schedule`, dataset format mismatches — are not yet enforced here.
 
 The roadmap items below describe how each of those gaps closes.
 
@@ -90,7 +91,7 @@ Key changes:
 
 End-to-end naming touches roughly five layers:
 
-1. `src/aiperf/config/phases.py` — `BasePhaseConfig.name: str`, new `kind: Literal["warmup", "profiling"]` field with name-based defaults.
+1. `src/aiperf/config/phases.py` — `BasePhaseConfig.name` is already a free-form `str`; what remains is a new `kind: Literal["warmup", "profiling"]` field with name-based defaults so warmup semantics stop hinging on the literal string `warmup`.
 2. Credit issuer (`PhaseRunner` and `CreditIssuer`) — index phases by name rather than by `is_warmup` boolean.
 3. Records manager / metrics rollups — bucket per-phase results under the user-given name; prevent cross-phase aggregation across distinct names per the existing project rule.
 4. Reports and artifacts — per-phase JSON/Parquet/CSV files use the phase name as a filename component.
@@ -98,7 +99,7 @@ End-to-end naming touches roughly five layers:
 
 ## Multiple datasets, real-world
 
-`datasets:` is a one-element list today: the field declares `min_length=1, max_length=1` so the schema can be shared with the `AIPerfSweep` CRD without forking. Lifting the cap is the prerequisite for every workload below.
+`datasets:` already accepts multiple entries — the field is `list[DatasetConfig]` with only `min_length=1` (no `max_length` cap), and `phase.dataset` already names the per-phase dataset. What remains is wiring those references through validation and runtime loading so the workloads below become expressible.
 
 ### Motivating workloads
 
@@ -150,12 +151,12 @@ benchmark:
 
 ### Required wiring
 
-1. **Lift the `max_length=1` cap on `BenchmarkConfig.datasets`** in `src/aiperf/config/config.py:166-177`, replacing the schema-share comment with a real multi-dataset contract.
-2. **Add `dataset: <name>` to `BasePhaseConfig`** so the partial scaffolding at `src/aiperf/config/resolution/resolvers.py:353-355` becomes a real read instead of always falling through to `get_default_dataset_name()`.
-3. **Validate that every `phase.dataset` resolves** to an entry in `benchmark.datasets`. Use the existing "did you mean?" hinting infrastructure for typos.
-4. **Extend `check_phase_dataset_compatibility`** (`src/aiperf/config/resolution/predicates.py:201-243`). Today it only checks `requires_sequential_sampling` (file-dataset sampling strategy) and `requires_multi_turn` (file-dataset format). Add: synthetic-vs-trace mismatches for `fixed_schedule`, dataset-format compatibility per phase type, and any rules that fall out of multi-dataset semantics. The fixed-schedule timing-data check in `TimingResolver._validate_fixed_schedule_timing` (`src/aiperf/config/resolution/resolvers.py:347-362`) can move here once it has a real `phase.dataset` to read.
-5. **Dataset preloading.** Today, the dataset manager prepares one dataset. With multiple datasets in play, prepare each up-front, key shared resources (tokenizer, prompt cache) by dataset name, and stream the right one to the credit issuer per phase.
-6. **Reporting.** Per-phase JSON exports already partition by phase; once phases reference distinct datasets, include the dataset name in each phase's metadata block so downstream tools can group by it without re-deriving from the config.
+> **Recently landed.** Two foundational pieces already shipped: the `datasets` field carries no `max_length` cap (`src/aiperf/config/config.py:199-209`), and `BasePhaseConfig.dataset: str | None` exists and is read by the fixed-schedule timing resolver (`src/aiperf/config/resolution/resolvers.py:358-360`). The remaining items below turn those seams into full per-phase routing.
+
+1. **Validate that every `phase.dataset` resolves** to an entry in `benchmark.datasets`. Today `validate_phase_dataset_compatibility` (`src/aiperf/config/config.py:509-525`) still checks each phase against `get_default_dataset()` only; extend it to resolve and check `phase.dataset`, using the existing "did you mean?" hinting infrastructure for typos.
+2. **Extend `check_phase_dataset_compatibility`** (`src/aiperf/config/resolution/predicates.py:208-250`). Today it only checks `requires_sequential_sampling` (file-dataset sampling strategy) and `requires_multi_turn` (file-dataset format). Add: synthetic-vs-trace mismatches for `fixed_schedule`, dataset-format compatibility per phase type, and any rules that fall out of multi-dataset semantics. The fixed-schedule timing-data check in `TimingResolver._validate_fixed_schedule_timing` (`src/aiperf/config/resolution/resolvers.py:353-372`) can move here once compatibility resolves against the phase's own dataset.
+3. **Dataset preloading.** Today, the dataset manager prepares one dataset. With multiple datasets in play, prepare each up-front, key shared resources (tokenizer, prompt cache) by dataset name, and stream the right one to the credit issuer per phase.
+4. **Reporting.** Per-phase JSON exports already partition by phase; once phases reference distinct datasets, include the dataset name in each phase's metadata block so downstream tools can group by it without re-deriving from the config.
 
 ### Compatibility matrix (planned)
 
