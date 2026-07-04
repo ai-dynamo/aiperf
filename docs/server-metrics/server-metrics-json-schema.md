@@ -156,7 +156,7 @@ Each metric entry has this structure:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Prometheus metric type: [`gauge`](#gauge-metrics), [`counter`](#counter-metrics), or [`histogram`](#histogram-metrics) |
+| `type` | string | Prometheus metric type: [`gauge`](#gauge-metrics), [`counter`](#counter-metrics), [`histogram`](#histogram-metrics), or `unknown` (unrecognized Prometheus type) |
 | `description` | string | Human-readable description from Prometheus HELP text |
 | `unit` | string or null | Unit inferred from metric name suffix. See [Unit Inference](#unit-inference) for complete mapping of suffixes to unit values. |
 | `series` | array | Statistics for each unique endpoint + label combination |
@@ -752,7 +752,7 @@ Histograms are cumulative in Prometheus—both bucket counts and sum only increa
 
 ### Timeslice Normalization
 
-When `--slice-duration` is configured (default: 2 seconds), the collection period is divided into fixed-duration windows. Each timeslice contains:
+When `--slice-duration` is configured (default: `None`, i.e. timeslicing is off), the collection period is divided into fixed-duration windows. Each timeslice contains:
 
 - **Gauges**: `avg`, `min`, `max` for that window
 - **Counters**: `total` (delta) and `rate` for that window

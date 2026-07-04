@@ -132,7 +132,7 @@ Contains aggregated metrics for each parameter combination. This is a list where
           "t_critical": 2.776,
           "unit": "requests/sec"
         },
-        "ttft_p99_ms": {
+        "time_to_first_token_p99": {
           "mean": 120.5,
           "std": 8.1,
           "min": 110.2,
@@ -216,7 +216,7 @@ Identifies the parameter combinations that achieved the best performance for key
 **Available Configurations:**
 
 - `best_throughput`: Highest `request_throughput_avg`
-- `best_latency_p99`: Lowest `ttft_p99_ms` (or `request_latency_p99` as fallback)
+- `best_latency_p99`: Lowest `time_to_first_token_p99` (or `request_latency_p99` as fallback)
 
 ### Pareto Optimal Section
 
@@ -234,7 +234,7 @@ Lists parameter combinations that are Pareto optimal - configurations where no o
 
 **Default Objectives:**
 - Maximize: `request_throughput_avg` (throughput)
-- Minimize: `ttft_p99_ms` (latency)
+- Minimize: `time_to_first_token_p99` (latency)
 
 A configuration is Pareto optimal if:
 - No other configuration has both higher throughput AND lower latency
@@ -280,7 +280,7 @@ The CSV file contains multiple sections separated by blank lines:
 The first section is a wide-format table with one row per parameter combination:
 
 ```csv
-concurrency,request_throughput_avg_mean,request_throughput_avg_std,request_throughput_avg_min,request_throughput_avg_max,request_throughput_avg_cv,ttft_p99_ms_mean,ttft_p99_ms_std,ttft_p99_ms_min,ttft_p99_ms_max,ttft_p99_ms_cv
+concurrency,request_throughput_avg_mean,request_throughput_avg_std,request_throughput_avg_min,request_throughput_avg_max,request_throughput_avg_cv,time_to_first_token_p99_mean,time_to_first_token_p99_std,time_to_first_token_p99_min,time_to_first_token_p99_max,time_to_first_token_p99_cv
 10,100.50,5.20,95.00,108.00,0.0520,120.50,8.10,110.20,132.80,0.0672
 20,180.30,8.50,170.00,195.00,0.0471,135.20,9.30,125.00,148.00,0.0688
 30,270.80,12.10,255.00,290.00,0.0447,155.80,11.20,142.00,172.00,0.0719
@@ -562,7 +562,7 @@ for combo in per_combination_metrics:
     if params in pareto_optimal:
         metrics = combo["metrics"]
         throughput = metrics["request_throughput_avg"]["mean"]
-        latency = metrics["ttft_p99_ms"]["mean"]
+        latency = metrics["time_to_first_token_p99"]["mean"]
         print(f"  {params}: {throughput:.1f} req/s, {latency:.1f} ms p99")
 ```
 
@@ -629,7 +629,7 @@ param_names = [p["name"] for p in sweep_data["metadata"]["sweep_parameters"]]
 df = df.sort_values(param_names)
 
 # Analyze
-print(df[[*param_names, "request_throughput_avg_mean", "ttft_p99_ms_mean"]])
+print(df[[*param_names, "request_throughput_avg_mean", "time_to_first_token_p99_mean"]])
 
 # Export
 df.to_csv("sweep_analysis.csv", index=False)
@@ -703,7 +703,7 @@ weights = {
 # Extract all throughputs and latencies
 combinations = sweep_data["per_combination_metrics"]
 throughputs = [c["metrics"]["request_throughput_avg"]["mean"] for c in combinations]
-latencies = [c["metrics"]["ttft_p99_ms"]["mean"] for c in combinations]
+latencies = [c["metrics"]["time_to_first_token_p99"]["mean"] for c in combinations]
 
 max_tp = max(throughputs)
 min_lat = min(latencies)
@@ -712,7 +712,7 @@ max_lat = max(latencies)
 scores = []
 for combo in combinations:
     tp = combo["metrics"]["request_throughput_avg"]["mean"]
-    lat = combo["metrics"]["ttft_p99_ms"]["mean"]
+    lat = combo["metrics"]["time_to_first_token_p99"]["mean"]
 
     # Normalize: higher is better for both
     tp_score = tp / max_tp

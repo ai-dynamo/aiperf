@@ -79,7 +79,7 @@ system message).
 | `math_500` | `lighteval_latex` | 0 | `HuggingFaceH4/MATH-500` (trt-llm/lighteval reference, gold is full solution containing `\boxed{answer}`, `latex_gold_metric`) |
 | `gpqa_diamond` | `lighteval_gpqa` | 0 | `Idavidrein/gpqa` subset `gpqa_diamond` (trt-llm/lighteval reference, simple-evals template with SHA-256-seeded deterministic A/B/C/D shuffling, `gpqa_metric`) |
 | `lcb_codegeneration` | `code_execution` | 0 | `livecodebench/code_generation_lite` (trt-llm/lighteval reference; LCB test-case payload serialized into `BenchmarkProblem.ground_truth` as an orjson blob; `code_execution` grader runs the generated code against the bundled test cases via lighteval's `codegen_metrics`) |
-| `gsm8k` | `lighteval_gsm8k` | 0 | `gsm8k` subset `main` (trt-llm/lighteval reference, `gsm8k_leaderboard` config; prompt `"Question: {question}\nAnswer:"`, gold is the raw answer ending in `#### <number>`, `quasi_exact_match_gsm8k`) |
+| `gsm8k` | `lighteval_gsm8k` | 0 | `openai/gsm8k` subset `main` (trt-llm/lighteval reference, `gsm8k_leaderboard` config; prompt `"Question: {question}\nAnswer:"`, gold is the raw answer ending in `#### <number>`, `quasi_exact_match_gsm8k`) |
 
 ### LiveCodeBench (lcb_codegeneration) version pinning
 
@@ -93,8 +93,9 @@ LCB task treats as its base). Override at runtime via:
 export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or any published subset
 ```
 
-The env var is read at every `load_problems` call (no module-reload needed)
-and is passed as the positional `name` arg to
+The env var is read once at import time (`Environment` is a module-level
+singleton built from `AIPERF_*` env vars at instantiation, not per access) and
+its value is passed as the positional `name` arg to
 `load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)` —
 the standard HF config-name selector, matching lighteval's `hf_subset=`
 usage. `trust_remote_code=True` is set by the loader so LCB's
@@ -136,7 +137,7 @@ without reading the source.
 | `--accuracy-benchmark` | Benchmark name (`mmlu`, `aime`, `hellaswag`, ...) | — |
 | `--accuracy-tasks` | Specific subtasks (e.g., MMLU subjects). Accepts comma-separated values (`abstract_algebra,anatomy`) or repeated flags. Omit for all. | all |
 | `--accuracy-n-shots` | Few-shot example count (0–32). `None` uses the benchmark default (e.g. MMLU=5). | benchmark default |
-| `--accuracy-enable-cot` | Enable chain-of-thought prompting | false |
+| `--accuracy-enable-cot` | Enable chain-of-thought prompting | benchmark default (unset resolves to the benchmark's `default_enable_cot`, e.g. AIME=True) |
 | `--accuracy-grader` | Override default grader (`multiple_choice`, `exact_match`, ...) | auto |
 | `--accuracy-system-prompt` | Custom system prompt | — |
 | `--accuracy-verbose` | Show per-problem grading details | false |
@@ -197,15 +198,17 @@ aiperf profile my-model --url http://localhost:8000 \
 Accuracy results are displayed in the console and exported to CSV:
 
 ```text
-                  Accuracy Benchmark Results
-┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┓
-┃ Task                    ┃ Correct ┃ Total ┃ Accuracy ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━┩
-│ abstract_algebra        │      35 │   100 │   35.00% │
-│ ...                     │     ... │   ... │      ... │
-│ OVERALL                 │    8368 │ 14042 │   59.59% │
-└─────────────────────────┴─────────┴───────┴──────────┘
+                       Accuracy Benchmark Results
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Task                    ┃ Correct ┃ Total ┃ Unparsed ┃ Accuracy ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ abstract_algebra        │      35 │   100 │        0 │   35.00% │
+│ ...                     │     ... │   ... │      ... │      ... │
+│ OVERALL                 │    8368 │ 14042 │       12 │   59.59% │
+└─────────────────────────┴─────────┴───────┴──────────┴──────────┘
 ```
+
+The `Unparsed` column counts responses whose answer could not be extracted by the grader; the CSV mirrors this with header `task,correct,total,unparsed,accuracy`.
 
 CSV file: `<artifact_dir>/accuracy_results.csv`
 

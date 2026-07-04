@@ -58,7 +58,10 @@ The cluster path layout matches [`docs/kubernetes/sweeps.md`](../kubernetes/swee
   "config": { ... },
   "iterations": [ ... ],
   "best": { ... } | null,
-  "convergence_reason": "max_iterations" | "improvement_patience" | "plateau_cv" | null
+  "best_trials": [ ... ] | null,
+  "boundary_summary": { ... } | null,
+  "recipe": "max-concurrency-under-sla" | null,
+  "convergence_reason": "max_iterations" | "improvement_patience" | "plateau_cv" | "posterior_regret_bound" | "emmr" | "cancelled" | "aborted" | "unknown" | null
 }
 ```
 
@@ -66,22 +69,30 @@ The cluster path layout matches [`docs/kubernetes/sweeps.md`](../kubernetes/swee
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `config` | object | yes | Frozen subset of the BO configuration used to drive this run. The on-disk JSON keeps a flat `objective_metric` / `objective_stat` / `objective_direction` triple (NOT the nested `objective` block in the in-memory `AdaptiveSearchSweep` shape) for back-compat with archived run data. |
+| `config` | object | yes | Frozen subset of the search configuration used to drive this run. Includes BOTH the flat `objective_metric` / `objective_stat` / `objective_direction` triple (for back-compat with archived run data) AND the full nested `objectives[]` list. See [`config` Section](#config-section). |
 | `iterations` | array&lt;object&gt; | yes | Per-iteration trajectory entries, in the order the planner proposed them. May be empty on the first write. |
-| `best` | object \| null | yes | Argmax (MAXIMIZE) or argmin (MINIMIZE) over iterations whose `objective_value` is non-null. `null` until at least one iteration has produced a usable objective. |
-| `convergence_reason` | string \| null | yes | Why the loop stopped, or `null` while the run is mid-flight or terminated abnormally. See [Convergence Reasons](#convergence-reasons). |
+| `best` | object \| null | yes | Feasibility-first scalar best over iterations whose `objective_value` is non-null (argmax for MAXIMIZE, argmin for MINIMIZE). `null` until at least one iteration has produced a usable objective. |
+| `best_trials` | array&lt;object&gt; \| null | yes | Length-1 list holding the single scalar best (single-objective runs), or the full non-dominated Pareto front (multi-objective runs). Every member carries `pareto_rank`. `null` only when the entire history is unscored. |
+| `boundary_summary` | object \| null | yes | Empirical SLA-feasibility boundary for 1D searches. `null` for multi-dim searches or empty history. See [`boundary_summary`](#boundary_summary). |
+| `recipe` | string \| null | yes | The `--search-recipe` name this sweep expanded from, or `null` when the run was specified directly. |
+| `convergence_reason` | string \| null | yes | Why the loop stopped, or `null` while the run is mid-flight. Terminal writes also use `"cancelled"` / `"aborted"` / `"unknown"`. See [Convergence Reasons](#convergence-reasons). |
 
 ### `config` Section
 
-A snapshot of the BO configuration sufficient to reproduce or audit the run. The writer records every field of the in-memory `AdaptiveSearchSweep` (`src/aiperf/config/sweep/config.py`) that influences planner behavior — `random_seed`, `n_initial_points`, `improvement_patience`, `plateau_window`, and `plateau_threshold` are all serialized so the trajectory is fully reproducible from the file alone. The objective triple is written FLAT here (`objective_metric` / `objective_stat` / `objective_direction`) even though the in-memory shape nests them under `objective:` — this is the stable on-disk wire format, intentionally preserved across the schema-2.0 redesign so old tooling can still parse new files.
+A snapshot of the search configuration sufficient to reproduce or audit the run, built by `_build_config_block` (`src/aiperf/exporters/search_history.py`). The writer records every field of the in-memory `AdaptiveSearchSweep` (`src/aiperf/config/sweep/config.py`) that influences planner behavior — `random_seed`, `n_initial_points`, `improvement_patience`, `plateau_window`, and `plateau_threshold` are all serialized so the trajectory is fully reproducible from the file alone. The primary objective is written BOTH as a flat `objective_metric` / `objective_stat` / `objective_direction` triple (back-compat) AND as the full nested `objectives[]` list (which carries every objective for multi-objective/Pareto runs). `outcome_constraints` and `sla_filters` are serialized too.
 
 ```json
 {
   "config": {
-    "algorithm": "bayes",
+    "algorithm": "bayesian",
+    "planner": "bayesian",
     "objective_metric": "output_token_throughput",
     "objective_stat": "avg",
-    "objective_direction": "maximize",
+    "objective_direction": "MAXIMIZE",
+    "objectives": [
+      {"metric": "output_token_throughput", "stat": "avg", "direction": "MAXIMIZE", "threshold": null}
+    ],
+    "outcome_constraints": [],
     "max_iterations": 30,
     "n_initial_points": 5,
     "random_seed": 42,
@@ -90,7 +101,8 @@ A snapshot of the BO configuration sufficient to reproduce or audit the run. The
     "plateau_threshold": 0.01,
     "search_space": [
       {"path": "phases.profiling.concurrency", "lo": 1, "hi": 1000, "kind": "int"}
-    ]
+    ],
+    "sla_filters": []
   }
 }
 ```
@@ -99,17 +111,21 @@ A snapshot of the BO configuration sufficient to reproduce or audit the run. The
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `algorithm` | string | yes | Search algorithm. v1 only emits `"bayes"`. |
-| `objective_metric` | string | yes | Metric tag being optimized (e.g. `"output_token_throughput"`). Matches a key in `RunResult.summary_metrics`. |
-| `objective_stat` | string | yes | Statistic on the metric: one of `"avg"`, `"p50"`, `"p90"`, `"p95"`, `"p99"`. |
-| `objective_direction` | string | yes | Either `"maximize"` or `"minimize"` (lowercase, from `OptimizationDirection`). |
+| `algorithm` | string | yes | `str(cfg.planner)` — the planner plugin name: `"bayesian"` (default), `"optuna"`, `"monotonic_sla"`, or `"smooth_isotonic"`. (Kept for back-compat; identical to `planner`.) |
+| `planner` | string | yes | Same value as `algorithm`; the canonical planner-name field. |
+| `objective_metric` | string | yes | Primary metric tag being optimized (e.g. `"output_token_throughput"`). Matches a key in `RunResult.summary_metrics`. Mirrors `objectives[0].metric`. |
+| `objective_stat` | string | yes | Statistic on the primary metric: one of `"avg"`, `"p50"`, `"p90"`, `"p95"`, `"p99"`. |
+| `objective_direction` | string | yes | `"MAXIMIZE"` or `"MINIMIZE"` — **uppercase** (`str(direction).upper()`). |
+| `objectives` | array&lt;object&gt; | yes | Full objective list. Each entry: `metric`, `stat`, `direction` (uppercase), `threshold` (Pareto reference point or `null`). Length 1 = single-objective; length N = Pareto BO. |
+| `outcome_constraints` | array&lt;object&gt; | yes | Feasibility gates on non-optimized metrics (`metric`, `op`, `bound`). Empty list when none. |
 | `max_iterations` | int | yes | Iteration budget. The loop also stops earlier on convergence. |
-| `n_initial_points` | int | yes | Sobol-random points before skopt fits the GP. Always `< max_iterations`. |
-| `random_seed` | int \| null | yes | `random_state` passed to `skopt.Optimizer` for reproducibility. `null` when the run was unseeded. |
+| `n_initial_points` | int | yes | Sobol-random points before the GP fits. Always `< max_iterations` for `bayesian`/`optuna`. |
+| `random_seed` | int \| null | yes | Seed passed to the planner backend for reproducibility. `null` when the run was unseeded. |
 | `improvement_patience` | int | yes | Stop after this many consecutive iterations with no improvement over the running best objective. Drives the `"improvement_patience"` convergence reason. |
 | `plateau_window` | int | yes | Number of recent iterations inspected for plateau detection. |
 | `plateau_threshold` | float | yes | Coefficient-of-variation threshold (relative; scale-free) for the plateau test. Drives the `"plateau_cv"` convergence reason. |
 | `search_space` | array&lt;object&gt; | yes | Original search-space spec, one entry per dimension. Min length 1. |
+| `sla_filters` | array&lt;object&gt; | yes | Configured SLA filters (`metric_tag`, `stat`, `op`, `threshold`). Empty list when none. |
 
 #### `search_space` Element Fields:
 
@@ -130,17 +146,26 @@ One entry per BO iteration, in submission order. `iteration_idx` is dense and ze
     {
       "iteration_idx": 0,
       "variation_values": {"phases.profiling.concurrency": 142},
-      "objective_value": 8421.7
+      "objective_value": 8421.7,
+      "objective_values": [8421.7],
+      "feasible": true,
+      "non_monotonic_warning": false
     },
     {
       "iteration_idx": 1,
       "variation_values": {"phases.profiling.concurrency": 256},
-      "objective_value": 9512.3
+      "objective_value": 9512.3,
+      "objective_values": [9512.3],
+      "feasible": true,
+      "non_monotonic_warning": false
     },
     {
       "iteration_idx": 2,
       "variation_values": {"phases.profiling.concurrency": 64},
-      "objective_value": null
+      "objective_value": null,
+      "objective_values": null,
+      "feasible": false,
+      "non_monotonic_warning": false
     }
   ]
 }
@@ -152,20 +177,25 @@ One entry per BO iteration, in submission order. `iteration_idx` is dense and ze
 |-------|------|----------|-------------|
 | `iteration_idx` | int | yes | Zero-based, dense iteration counter. Matches `SweepVariation.index` for the iteration. |
 | `variation_values` | object | yes | Map of dotted path to proposed value (one entry per `search_space` dimension). Values are plain Python `int` or `float` per dimension `kind`. |
-| `objective_value` | float \| null | yes | Arithmetic mean of `objective_metric.objective_stat` across the iteration's trials. `null` when every trial failed or the configured metric/stat was missing — in that case the planner internally tells skopt a fallback loss to keep the optimizer's ask/tell pairing consistent, but the fallback is NOT persisted here. |
+| `objective_value` | float \| null | yes | Reduced primary-objective value for the iteration (mean of per-trial values, or a pooled percentile when `objective_pooling="pooled"`). Mirrors `objective_values[0]`. `null` when every trial failed or the configured metric/stat was missing — in that case the planner tells Optuna a synthetic worse-than-worst sentinel to keep the ask/tell pairing consistent, but the sentinel is NOT persisted here. |
+| `objective_values` | array&lt;float&gt; \| null | yes | Vector form of the objective (one entry per configured objective). `[objective_value]` for single-objective runs; the full vector for multi-objective/Pareto runs. `null` on a failed iteration. |
+| `feasible` | bool | yes | Whether the iteration satisfied every configured SLA filter (and had no unmeasurable constraint). `true` when no SLA filters are configured. Drives feasibility-first best selection. |
+| `non_monotonic_warning` | bool | yes | Set by the 1D SLA planners when the iteration's verdict revealed a non-monotonic feasibility boundary. `false` for BO/Optuna planners. |
 
-> **Note:** `objective_value` is the arithmetic mean across trials. The GP itself observes per-trial values (see the [Objective Semantics](../sweeping/bayesian-optimization.md) section of the BO guide); the trajectory log records the summary. The `SearchIteration.results` per-trial list held in memory by the planner is intentionally NOT serialized — read the per-trial `profile_export_aiperf.json` files under each iteration's variation directory if you need the spread.
+> **Note:** `objective_value` is the per-iteration reduction across trials, not a raw per-trial value. The `SearchIteration.results` per-trial list held in memory by the planner is intentionally NOT serialized — read the per-trial `profile_export_aiperf.json` files under each iteration's variation directory if you need the spread.
 
 ### `best` Section
 
-The argmax (when `objective_direction == "maximize"`) or argmin (when `"minimize"`) over iterations with a non-null `objective_value`. `null` until at least one iteration has produced a usable objective.
+The feasibility-first best over iterations with a non-null `objective_value`: when any iteration passed every SLA filter, the winner is chosen from the feasible subset (argmax for MAXIMIZE, argmin for MINIMIZE); otherwise selection falls back to the full scored pool with `feasible_count == 0` so the reader can tell the two cases apart. `null` until at least one iteration has produced a usable objective.
 
 ```json
 {
   "best": {
     "iteration_idx": 1,
     "objective_value": 9512.3,
-    "variation_values": {"phases.profiling.concurrency": 256}
+    "variation_values": {"phases.profiling.concurrency": 256},
+    "feasible": true,
+    "feasible_count": 2
   }
 }
 ```
@@ -177,19 +207,56 @@ The argmax (when `objective_direction == "maximize"`) or argmin (when `"minimize
 | `iteration_idx` | int | yes | Index of the winning iteration. |
 | `objective_value` | float | yes | The best observed value (always non-null when `best` itself is non-null). |
 | `variation_values` | object | yes | Proposed values that produced the best objective. Same shape as `iterations[i].variation_values`. |
+| `feasible` | bool | yes | Whether the winning iteration was itself feasible. |
+| `feasible_count` | int | yes | Number of feasible iterations in the whole history. `0` means selection fell back to the full pool (no feasible iteration existed). |
 
 > **Caveat:** `best` is "best of observed iterations," not "true argmax of the search space." Early termination (any `convergence_reason`) means the planner stopped before exhausting the budget; a higher (or lower) point may exist outside the explored region.
 
+### `best_trials` Section
+
+A length-1 list holding the single scalar best for single-objective runs, or the full non-dominated (Pareto) front for multi-objective runs. Same feasibility-first pool selection as `best`. `null` only when the entire history is unscored.
+
+```json
+{
+  "best_trials": [
+    {
+      "iteration_idx": 1,
+      "objective_value": 9512.3,
+      "objective_values": [9512.3],
+      "variation_values": {"phases.profiling.concurrency": 256},
+      "feasible": true,
+      "feasible_count": 2,
+      "pareto_rank": 0
+    }
+  ]
+}
+```
+
+Each entry adds `objective_values` (always the vector form) and `pareto_rank` (`0` for every front member; the front is unranked) to the `best` shape.
+
 ### Convergence Reasons
 
-`convergence_reason` takes one of four values. The full set is defined by `BayesianSearchPlanner.convergence_reason()` in [`src/aiperf/orchestrator/search_planner/bayesian.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/orchestrator/search_planner/bayesian.py).
+The three shared reasons are defined by the base `SearchPlanner.convergence_reason()` contract; `OptunaSearchPlanner` (and its `BayesianSearchPlanner` subclass) add two more, and the 1D SLA planners add their own. The orchestrator also writes three terminal reasons that no planner emits.
+
+**Shared (all planners), from the three-signal convergence check:**
 
 | Value | Meaning |
 |-------|---------|
-| `null` | Run is still in progress (mid-loop write), OR terminated abnormally (cancelled, crashed, or aborted cell — the orchestrator only records a non-null reason after `planner.ask()` returns `None`). |
+| `null` | Run is still in progress (mid-loop write). |
 | `"max_iterations"` | Budget exhausted: the loop ran `config.max_iterations` iterations. |
-| `"improvement_patience"` | No improvement-over-best for `improvement_patience` consecutive iterations (skopt's `HollowIterationsStopper` / Hyperopt's `no_progress_loss` idiom). |
+| `"improvement_patience"` | No improvement-over-best for `improvement_patience` consecutive iterations (Hyperopt's `no_progress_loss` idiom). |
 | `"plateau_cv"` | Coefficient of variation (sample stddev / abs(mean)) on the last `plateau_window` iterations fell below `plateau_threshold`. |
+
+**`optuna` / `bayesian` only (optional posterior-regret terminator, `--optuna-terminator`):**
+
+| Value | Meaning |
+|-------|---------|
+| `"posterior_regret_bound"` | Optuna `RegretBoundEvaluator` fired (Makarova 2022). |
+| `"emmr"` | Optuna `EMMREvaluator` fired (Ishibashi 2023). |
+
+**`monotonic_sla` / `smooth_isotonic` only:** `"monotonic_precision_reached"`, `"monotonic_no_pass_in_range"`, `"monotonic_no_failure_in_range"`, and the `"smooth_isotonic_*"` family.
+
+**Terminal reasons written by the orchestrator (not the planner):** `"cancelled"` (cooperative cancellation), `"aborted"` (cell failure threshold tripped), `"unknown"` (`ask()` returned `None` but the planner exposed no reason).
 
 The first signal to fire wins; later iterations are not run. See the BO guide's [convergence section](../sweeping/bayesian-optimization.md) for tuning advice.
 
@@ -292,7 +359,7 @@ To compute the mean and stddev across the trajectory (e.g. to plot a learning cu
 - **Schema is not yet stable across versions.** v1 emits the subset above; future releases may add fields (e.g. per-iteration timestamps, GP posterior summaries). Pin your `aiperf` version when building dashboards or downstream tooling against this artifact.
 - **`objective_value` is the arithmetic mean across trials.** It is not the GP's observed loss (which sees per-trial values directly), and it is not a percentile of the pooled per-trial samples. If you need per-trial spread, read the per-trial `profile_export_aiperf.json` files at `<base_dir>/<variation>/profile_runs/trial_NNNN/` (in-process) or under each child `AIPerfJob`'s artifact path (cluster).
 - **`convergence_reason: "plateau_cv"` can fire as early as iteration `plateau_window`.** When the random-Sobol initial points happen to land in a flat region of the objective, the coefficient-of-variation test trips immediately. This is correct, not a bug — increase `plateau_window` or tighten `plateau_threshold` if the run terminates too eagerly.
-- **`config.search_space` is the original spec, not what skopt sampled.** Skopt's `Optimizer` may explore the dimension's range non-uniformly (Sobol initial points, then GP-driven exploitation). Use `iterations[i].variation_values` to see the actual samples; use `config.search_space` only to reproduce the original CLI/CRD invocation.
+- **`config.search_space` is the original spec, not what the sampler explored.** Optuna's sampler explores the dimension's range non-uniformly (Sobol initial points, then GP/TPE-driven exploitation). Use `iterations[i].variation_values` to see the actual samples; use `config.search_space` only to reproduce the original CLI/CRD invocation.
 
 ---
 

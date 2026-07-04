@@ -162,7 +162,7 @@ Key equivalent metrics across backends:
 - Example: `vllm:num_requests_waiting` with `stats.max` = worst-case queue depth
 
 **Histogram** (distribution):
-- `stats.total` = Total count of observations
+- `stats.count` = Total count of observations
 - `stats.sum` = Sum of all observed values
 - `stats.avg` = Mean (sum/count)
 - `stats.p50_estimate`, `stats.p90_estimate`, `stats.p95_estimate`, `stats.p99_estimate` = Estimated percentiles from buckets

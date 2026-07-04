@@ -160,7 +160,7 @@ AIPerf automatically:
 6. Exports selected formats (default: JSON + CSV):
    - `server_metrics_export.json` - Aggregated statistics (profiling period only)
    - `server_metrics_export.csv` - Tabular format (profiling period only)
-   - `server_metrics_export.jsonl` - Time-series data (all scrapes, opt-in only)
+   - `server_metrics_export.jsonl` - Time-series data (all scrapes except consecutive duplicates, which are deduped; opt-in only)
    - `server_metrics_export.parquet` - Raw time-series with delta calculations (opt-in only)
 
 > [!NOTE]
@@ -174,7 +174,7 @@ AIPerf automatically:
 > # Produces the same files (the .json extension is stripped automatically)
 > ```
 
-**Time filtering:** Statistics in JSON/CSV exports exclude the warmup period, showing only metrics from the profiling phase. The JSONL file contains all scrapes (including warmup) for complete time-series analysis.
+**Time filtering:** Statistics in JSON/CSV exports exclude the warmup period, showing only metrics from the profiling phase. The JSONL file contains scrapes across the whole run (including warmup) for complete time-series analysis, except that scrapes flagged `is_duplicate` (unchanged since the previous scrape) are skipped by the writer.
 
 **Format selection:** By default, only JSON and CSV formats are generated to avoid large JSONL files. To include JSONL for time-series analysis:
 ```bash
@@ -291,7 +291,7 @@ Aggregated statistics from profiling period. Metrics from all endpoints are merg
 ```json
 {
   "schema_version": "1.0",
-  "aiperf_version": "0.3.0",
+  "aiperf_version": "0.11.0",
   "benchmark_id": "2900a136-3c1a-4520-adaa-5719822b729b",
   "summary": {
     "endpoints_configured": ["http://localhost:8000/metrics"],
@@ -415,7 +415,7 @@ Raw time-series data with delta calculations applied. Uses a normalized schema (
 |--------|------|-------------|
 | `endpoint_url` | string | Source Prometheus endpoint |
 | `metric_name` | string | Metric name |
-| `metric_type` | string | `gauge`, `counter`, or `histogram` |
+| `metric_type` | string | `gauge`, `counter`, `histogram`, or `unknown` |
 | `timestamp_ns` | int64 | Collection timestamp (nanoseconds) |
 | `value` | float64 | Gauge/counter value (delta for counters) |
 | `sum`, `count` | float64 | Histogram sum/count deltas |

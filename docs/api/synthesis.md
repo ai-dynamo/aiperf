@@ -127,7 +127,7 @@ RadixNode(
     node_id: int,
     label: int | None = None,
     visit_count: int = 0,
-    children: dict[int, RadixNode] | None = None,
+    children: dict[int, RadixNode] = field(default_factory=dict),
     parent: RadixNode | None = None
 ) -> None
 ```
@@ -356,6 +356,7 @@ Parameters for synthetic trace generation.
 - `max_isl: int | None = None` - Maximum input sequence length filter
 - `max_osl: int | None = None` - Maximum output sequence length cap
 - `block_size: int = 512` - KV cache page size (ge 1)
+- `renormalize_hash_ids: bool = False` - Whether to apply rolling-hash renormalization to output hash_ids (round-trip testing only; rehashing is expensive and the output hash_ids are already valid)
 
 **Class Methods:**
 - `from_synthesis_config(config: SynthesisConfig, block_size: int = 512) -> SynthesisParams` - Create from SynthesisConfig
@@ -485,6 +486,7 @@ aiperf profile \
 **Via SynthesisConfig:**
 ```python
 from aiperf.config import SynthesisConfig
+from aiperf.config.dataset.trace import synthesis_should_apply
 
 config = SynthesisConfig(
     speedup_ratio=2.0,
@@ -494,7 +496,7 @@ config = SynthesisConfig(
 )
 
 # Check if synthesis would be triggered
-if config.should_synthesize():
+if synthesis_should_apply(config):
     print("Synthesis will be applied")
 ```
 
