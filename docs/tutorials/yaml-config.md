@@ -55,7 +55,7 @@ benchmark:
 
 sweep:
   type: grid
-  parameters:
+  variables:
     concurrency: [8, 16, 32, 64]
 ```
 
@@ -214,7 +214,7 @@ If your editor already has a workspace mapping for `**/aiperf-config.yaml` or `*
 Top-level envelope keys reject unknown names with a "did you mean" hint. Writing `sweeps:` instead of `sweep:` produces:
 
 ```text
-Unknown top-level envelope key(s): 'sweeps' (did you mean 'sweep'?). Known keys: ['benchmark', 'multiRun', 'multi_run', 'noSweepTable', 'no_sweep_table', 'plot', 'randomSeed', 'random_seed', 'schemaVersion', 'schema_version', 'sweep', 'variables']
+Extra top-level envelope key(s) not permitted: 'sweeps' (did you mean 'sweep'?). Known keys: ['benchmark', 'multiRun', 'multi_run', 'noSweepTable', 'no_sweep_table', 'plot', 'randomSeed', 'random_seed', 'schemaVersion', 'schema_version', 'sweep', 'variables']
 ```
 
 Inside the `benchmark:` body and inside sweep parameter paths, every section is set to reject unknown fields outright. A typo'd sweep parameter like `phases.profiling.concurency` (one `r`) is caught at validate time — `aiperf config validate` runs the same sweep-expansion pipeline `profile` does and surfaces the error before any compute is spent:
@@ -431,7 +431,7 @@ schemaVersion: "2.0"
 
 sweep:
   type: grid
-  parameters:
+  variables:
     datasets.default.prompts.isl: [128, 512, 2048]
     rate: [10.0, 30.0, 50.0]
 
@@ -439,10 +439,11 @@ benchmark:
   model: meta-llama/Llama-3.1-8B-Instruct
   endpoint:
     url: http://localhost:8000/v1/chat/completions
-  dataset:
-    type: synthetic
-    entries: 500
-    prompts: {isl: 512, osl: 128}      # isl is overridden by the sweep
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 500
+      prompts: {isl: 512, osl: 128}    # isl is overridden by the sweep
   phases:
     - name: profiling
       type: poisson
@@ -450,10 +451,12 @@ benchmark:
       duration: 120
 ```
 
-The `parameters:` keys are dot-paths into the `benchmark:` body. For lists, the second segment is the entry's `name`:
+The `variables:` keys are dot-paths into the `benchmark:` body. For lists, the second segment is the entry's `name`:
 
 - `phases.profiling.rate` → the phase named `profiling`, field `rate`
-- `datasets.default.prompts.isl` → the dataset named `default` (the singular `dataset:` shorthand auto-names it `default`)
+- `datasets.default.prompts.isl` → the dataset named `default`
+
+Sweep paths address datasets through the plural `datasets.<name>` form, so declare the dataset under `datasets:` with an explicit `name` (as above) rather than the singular `dataset:` shorthand when you sweep a dataset field.
 
 The 12 most-swept phase fields also have bare-name sugar: `concurrency`, `prefill_concurrency`, `rate`, `requests`, `duration`, `sessions`, `users`, `smoothness`, `grace_period`, `concurrency_ramp`, `prefill_ramp`, `rate_ramp`. Each expands to `phases.profiling.<name>` (resolves to the unique non-warmup phase). The two forms are equivalent — see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields).
 
