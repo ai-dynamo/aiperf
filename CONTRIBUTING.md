@@ -81,14 +81,17 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 - `detect-private-key` - Prevent committing private keys
 - `check-added-large-files` - Fail if files > 5MB added
 - `check-case-conflict` - Detect case-insensitive filename conflicts
+- `check-executables-have-shebangs` - Ensure executable files have shebangs
 - `check-merge-conflict` - Detect merge conflict markers
 - `check-json` - Validate JSON syntax
 - `check-toml` - Validate TOML syntax
 - `check-yaml` - Validate YAML syntax
+- `check-shebang-scripts-are-executable` - Ensure shebang scripts are executable
 - `end-of-file-fixer` - Ensure files end with newline
 - `trailing-whitespace` - Remove trailing whitespace
 - `mixed-line-ending` - Enforce consistent line endings
 - `no-commit-to-branch` - Prevent direct commits to main
+- `requirements-txt-fixer` - Sort and dedupe requirements files
 
 **Code quality hooks:**
 - `codespell` - Spell checking
@@ -101,7 +104,17 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 - `generate-env-vars-docs` - Regenerate env var docs when environment.py changes
 - `generate-plugin-artifacts` - Regenerate plugin enums/overloads/schemas
 - `validate-plugin-schemas` - Validate plugin YAML against schemas
+- `validate-template-metadata` - Validate config template metadata
+- `validate-config-examples` - Validate config examples parse and resolve
+- `generate-config-schema` - Regenerate the config JSON schema
+- `generate-crd` - Regenerate operator CRDs from Pydantic models
+- `helm-lint` - Lint the aiperf-operator Helm chart
+- `check-chart-consistency` - Verify Helm values match operator env defaults
 - `test-imports` - Verify all modules can be imported
+- `check-agent-files-sync` - Verify CLAUDE.md/AGENTS.md/copilot/cursor stay in sync
+- `check-docs-index` - Verify every docs/ markdown is listed in docs/index.yml
+- `check-ergonomics` - Run custom LLM-ergonomics AST checks
+- `check-ruff-baselined` - Enforce baselined ruff rules (no new violations)
 
 Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
 

@@ -117,7 +117,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ## Features
 
-- Scalable multiprocess architecture with 10 services communicating via ZMQ
+- Scalable multiprocess architecture with 12 services communicating via ZMQ
 - 3 UI modes: `dashboard` (real-time TUI), `simple` (progress bars), `none` (headless)
 - Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md)
 - Extensible plugin system for endpoints, datasets, transports, and metrics
