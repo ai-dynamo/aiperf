@@ -32,7 +32,7 @@ Fixed schedule files use JSONL format with timestamp-based entries:
 **Field Descriptions:**
 - `timestamp`: Milliseconds from schedule start when request should be sent
 - `input_length`: Number of tokens in the input prompt
-- `input_text`: Exact text to send in the request (provided instead of input_length)
+- `text_input`: Exact text to send in the request (provided instead of input_length)
 - `output_length`: Maximum number of tokens in the response (optional)
 - `hash_ids`: Hash block identifiers to simulate text reuse with 512-token blocks (optional)
 

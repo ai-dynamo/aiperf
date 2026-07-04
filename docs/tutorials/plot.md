@@ -34,12 +34,11 @@ aiperf plot <single_run_name>
 ```
 INFO     Loading single-run data from: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 INFO     Detected mode: SINGLE_RUN
-INFO     Generating 4 time series plots
+INFO     Generating 3 time series plots
 INFO     Creating plot: ttft_over_time.png
-INFO     Creating plot: itl_over_time.png
-INFO     Creating plot: latency_over_time.png
-INFO     Creating plot: dispersed_throughput_over_time.png
-INFO     Successfully generated 4 plots
+INFO     Creating plot: ttft_timeline.png
+INFO     Creating plot: timeslices_ttft.png
+INFO     Successfully generated 3 plots
 INFO     Plots saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/plots/
 ```
 
@@ -51,11 +50,12 @@ aiperf plot <run_directory>
 INFO     Loading multi-run data from: artifacts/sweep_qwen/
 INFO     Detected mode: MULTI_RUN
 INFO     Found 3 runs to compare
-INFO     Generating 3 comparison plots
+INFO     Generating 4 comparison plots
+INFO     Creating plot: throughput_vs_latency.png
+INFO     Creating plot: ttft_p99_vs_throughput.png
 INFO     Creating plot: ttft_vs_throughput.png
-INFO     Creating plot: pareto_curve_throughput_per_gpu_vs_latency.png
-INFO     Creating plot: pareto_curve_throughput_per_gpu_vs_interactivity.png
-INFO     Successfully generated 3 plots
+INFO     Creating plot: latency_throughput_uncertainty.png
+INFO     Successfully generated 4 plots
 INFO     Plots saved to: artifacts/sweep_qwen/plots/
 ```
 
@@ -92,8 +92,8 @@ INFO     Loading data from: artifacts/sweep_qwen/
 INFO     Detected mode: MULTI_RUN
 INFO     Using dark theme
 INFO     Found 3 runs to compare
-INFO     Generating 3 comparison plots
-INFO     Successfully generated 3 plots
+INFO     Generating 4 comparison plots
+INFO     Successfully generated 4 plots
 INFO     Plots saved to: artifacts/sweep_qwen/plots/
 ```
 ```
@@ -125,10 +125,13 @@ artifacts/sweep_qwen/
 └── Qwen3-0.6B-concurrency4/
 ```
 
-**Default plots (3):**
-1. **TTFT vs Throughput** - Time to first token vs request throughput
-2. **Token Throughput per GPU vs Latency** - GPU efficiency vs latency (requires GPU telemetry)
-3. **Token Throughput per GPU vs Interactivity** - GPU efficiency vs TTFT (requires GPU telemetry)
+**Default plots (4):**
+1. **Throughput vs Latency** (`throughput_vs_latency`) - Classic throughput/latency trade-off frontier; works on any run that records request metrics
+2. **TTFT p99 vs Throughput** (`ttft_p99_vs_throughput`) - Tail time-to-first-token against request throughput
+3. **TTFT vs Throughput** (`ttft_vs_throughput`) - Average time to first token vs request throughput
+4. **Latency/Throughput Uncertainty** (`latency_throughput_uncertainty`) - Latency-vs-throughput with per-point uncertainty bands
+
+The GPU-efficiency Pareto plots (`pareto_curve_throughput_per_gpu_vs_latency`, `pareto_curve_throughput_per_gpu_vs_interactivity`, shown below) are defined but not in the default set; enable them via a plot config when GPU telemetry is available.
 
 > [!TIP]
 > Use [Experiment Classification](#experiment-classification) to assign semantic colors (grey for baselines, green for treatments) for clearer visual distinction.
@@ -160,11 +163,12 @@ artifacts/single_run/
 └── profile_export.jsonl
 ```
 
-**Default plots (4+):**
-1. **TTFT Over Time** - Time to first token per request
-2. **Inter-Token Latency Over Time** - ITL per request
-3. **Request Latency Over Time** - End-to-end latency progression
-4. **Dispersed Throughput Over Time** - Continuous token generation rate
+**Default plots (3):**
+1. **TTFT Over Time** (`ttft_over_time`) - Time to first token per request
+2. **TTFT Timeline** (`ttft_timeline`) - Time-to-first-token timeline across the run
+3. **TTFT Timeslices** (`timeslices_ttft`) - Per-timeslice TTFT summary
+
+Other single-run plots (`itl_over_time`, `latency_over_time`, `dispersed_throughput_over_time`, additional timeslice plots, and `gpu_utilization_and_throughput_over_time`) are defined but commented out of the defaults; enable them via a plot config when the run has the required metrics.
 
 **Additional plots (when data available):**
 - Timeslice plots (when `--slice-duration` used during profiling)
@@ -372,7 +376,7 @@ aiperf plot path/to/runs --dashboard
 The dashboard automatically detects visualization mode (multi-run comparison or single-run analysis) and displays appropriate tabs and controls. Press Ctrl+C in the terminal to stop the server.
 
 > [!TIP]
-> The dashboard runs on localhost only and requires no authentication. For remote access via SSH, use port forwarding: `ssh -L 8080:localhost:8080 user@remote-host`
+> The dashboard runs on localhost only and requires no authentication. For remote access via SSH, use port forwarding: `ssh -L 8050:localhost:8050 user@remote-host` (the dashboard defaults to port 8050)
 
 > [!NOTE]
 > Dashboard mode and PNG mode are separate. To generate both static PNGs and launch the dashboard, run the commands separately.

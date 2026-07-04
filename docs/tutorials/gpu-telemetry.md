@@ -192,7 +192,7 @@ INFO     Benchmark completed successfully
 
 CLI Command: aiperf profile --model "Qwen/Qwen3-0.6B" --endpoint-type "chat" ...
 JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency4/profile_export_aiperf.json
-GPU Telemetry: artifacts/Qwen_Qwen3-0.6B-chat-concurrency4/gpu_telemetry_export.json
+GPU Telemetry: artifacts/Qwen_Qwen3-0.6B-chat-concurrency4/gpu_telemetry_export.jsonl
 ```
 
 The GPU telemetry table displays real-time metrics collected from DCGM during the benchmark. Each GPU is shown with its metrics aggregated across the benchmark duration.

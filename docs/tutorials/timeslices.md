@@ -89,24 +89,25 @@ When time slicing is enabled, AIPerf generates additional output files:
 The CSV uses a "tidy" (long) format optimized for data analysis:
 
 ```csv
-Timeslice,Metric,Unit,Stat,Value
-0,Time to First Token,ms,avg,45.23
-0,Time to First Token,ms,min,32.10
-0,Time to First Token,ms,max,78.45
-0,Time to First Token,ms,p50,44.20
-0,Time to First Token,ms,p90,65.30
-0,Time to First Token,ms,p95,70.15
-0,Time to First Token,ms,p99,76.80
-0,Inter Token Latency,ms,avg,12.34
-0,Inter Token Latency,ms,min,8.50
+Timeslice,Start_NS,End_NS,Metric,Unit,Stat,Value
+0,1759813200000000000,1759813201000000000,Time to First Token,ms,avg,45.23
+0,1759813200000000000,1759813201000000000,Time to First Token,ms,min,32.10
+0,1759813200000000000,1759813201000000000,Time to First Token,ms,max,78.45
+0,1759813200000000000,1759813201000000000,Time to First Token,ms,p50,44.20
+0,1759813200000000000,1759813201000000000,Time to First Token,ms,p90,65.30
+0,1759813200000000000,1759813201000000000,Time to First Token,ms,p95,70.15
+0,1759813200000000000,1759813201000000000,Time to First Token,ms,p99,76.80
+0,1759813200000000000,1759813201000000000,Inter Token Latency,ms,avg,12.34
+0,1759813200000000000,1759813201000000000,Inter Token Latency,ms,min,8.50
 ...
-1,Time to First Token,ms,avg,46.78
-1,Time to First Token,ms,min,33.20
+1,1759813201000000000,1759813202000000000,Time to First Token,ms,avg,46.78
+1,1759813201000000000,1759813202000000000,Time to First Token,ms,min,33.20
 ...
 ```
 
 **Format Details**:
 - **Timeslice**: Zero-indexed slice number (0, 1, 2, ...)
+- **Start_NS** / **End_NS**: Slice window start/end timestamps in nanoseconds
 - **Metric**: Human-readable metric name (e.g., "Time to First Token")
 - **Unit**: Measurement unit (ms, tokens/sec, etc.)
 - **Stat**: Statistical measure (avg, min, max, p50, p90, p95, p99)
@@ -122,7 +123,8 @@ The JSON provides a hierarchical structure with all timeslices in a single file:
 {
   "timeslices": [
     {
-      "timeslice_index": 0,
+      "start_ns": 1759813200000000000,
+      "end_ns": 1759813201000000000,
       "time_to_first_token": {
         "unit": "ms",
         "avg": 45.23,
@@ -146,7 +148,8 @@ The JSON provides a hierarchical structure with all timeslices in a single file:
       ...
     },
     {
-      "timeslice_index": 1,
+      "start_ns": 1759813201000000000,
+      "end_ns": 1759813202000000000,
       "time_to_first_token": {
         "unit": "ms",
         "avg": 46.78,
@@ -164,8 +167,9 @@ The JSON provides a hierarchical structure with all timeslices in a single file:
 ```
 
 **Key Fields**:
-- `timeslices`: Array of slice objects, ordered by time
-- `timeslice_index`: Zero-indexed slice identifier
+- `timeslices`: Array of slice objects, ordered by time — a slice's position in the array is its index (there is no explicit `timeslice_index` field)
+- `start_ns` / `end_ns`: Slice window start/end timestamps in nanoseconds
+- `is_complete`: Present and `false` for a partial final slice (omitted when the slice is complete); partial slices should be excluded from aggregate statistics
 - Each metric contains `unit` and available statistics
 - `input_config`: Benchmark configuration for reproducibility
 
