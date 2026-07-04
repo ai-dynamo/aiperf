@@ -7,7 +7,7 @@
 # category: Sweep & Multi-Run
 # tags: sweep, grid, speed-bench, speculative-decoding, server-metrics
 # difficulty: intermediate
-# features: grid sweep, public dataset, server metrics
+# features: grid sweep, prepared JSONL dataset, server metrics
 #
 # SPEED-Bench Per-Category Sweep
 # ==============================
@@ -17,22 +17,32 @@
 # `server_metrics_export.json` from which the report extracts per-category
 # acceptance length / acceptance rate / throughput.
 #
+# PREREQUISITE — prepare the dataset first. The raw nvidia/SPEED-Bench hub data
+# is parquet with a license-placeholder schema and cannot be benchmarked
+# directly. Prepare the local JSONL splits (see docs/tutorials/speed-bench.md):
+#   SPEED_BENCH_DIR="./datasets/speed-bench"
+#   curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py \
+#     | python3 - --output_dir $SPEED_BENCH_DIR
+# Then point SPEED_BENCH_FILE at the prepared file (default: qualitative.jsonl).
+#
 # Output layout (one variation per category):
 #   ./artifacts/speed_bench_sweep/
-#     datasets.main.dataset=speed_bench_coding/profile_runs/run_0001/
-#     datasets.main.dataset=speed_bench_humanities/profile_runs/run_0001/
+#     datasets.main.format=speed_bench_coding/profile_runs/run_0001/
+#     datasets.main.format=speed_bench_humanities/profile_runs/run_0001/
 #     ...
-#     datasets.main.dataset=speed_bench_writing/profile_runs/run_0001/
+#     datasets.main.format=speed_bench_writing/profile_runs/run_0001/
 #
 # Run:
-#   aiperf profile --config speed_bench_sweep.yaml
+#   SPEED_BENCH_FILE=./datasets/speed-bench/qualitative.jsonl \
+#     aiperf profile --config speed_bench_sweep.yaml
 #   aiperf speed-bench-report \
-#       ./artifacts/speed_bench_sweep/datasets.main.dataset=speed_bench_*/profile_runs/run_0001 \
+#       ./artifacts/speed_bench_sweep/datasets.main.format=speed_bench_*/profile_runs/run_0001 \
 #       --format both
 #
-# For the throughput-tier matrix at a fixed ISL, replace the parameter list with
-# one of the throughput tier triples, e.g.:
-#   datasets.main.dataset:
+# For the throughput-tier matrix at a fixed ISL, prepare the matching
+# throughput_<ISL>.jsonl split, point SPEED_BENCH_FILE at it, and replace the
+# parameter list with one of the throughput tier triples, e.g.:
+#   datasets.main.format:
 #     - speed_bench_throughput_1k_low_entropy
 #     - speed_bench_throughput_1k_mixed
 #     - speed_bench_throughput_1k_high_entropy
@@ -48,8 +58,10 @@ sweep:
   type: grid
   variables:
     # Body-rooted dot-path. Second segment matches the dataset's `name` in the
-    # `datasets:` list below; the leaf `dataset` is the public-dataset enum.
-    datasets.main.dataset:
+    # `datasets:` list below; the leaf `format` is the custom-dataset selector
+    # (the same value you would pass to `--custom-dataset-type`). Each category
+    # filters the shared prepared JSONL to its rows.
+    datasets.main.format:
       - speed_bench_coding
       - speed_bench_humanities
       - speed_bench_math
@@ -70,17 +82,19 @@ benchmark:
     type: chat
     streaming: true
     timeout: 600.0
-    # PublicDataset has no `prompts:` block, so OSL caps and sampling params
-    # ride on the request body via `extra` instead. Drop `temperature` for
-    # reasoning models and follow the model card.
+    # Drop `temperature` for reasoning models and follow the model card.
     extra:
       temperature: 0
-      max_completion_tokens: 4096
 
   datasets:
     - name: main
-      type: public
-      dataset: speed_bench_coding  # overridden by sweep
+      type: file
+      # All 11 qualitative categories live in one prepared file; the sweep
+      # swaps `format` to filter to each category's rows.
+      path: ${SPEED_BENCH_FILE:./datasets/speed-bench/qualitative.jsonl}
+      format: speed_bench_coding  # overridden by sweep
+      # OSL cap for non-reasoning models; raise/adjust per the model card.
+      osl: 4096
 
   phases:
     - name: warmup

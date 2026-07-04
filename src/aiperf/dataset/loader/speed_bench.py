@@ -3,15 +3,18 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field, ValidationError, model_validator
 
-from aiperf.common.models import AIPerfBaseModel, Conversation, Text, Turn
-from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+from aiperf.common.models import AIPerfBaseModel
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
+from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
 if TYPE_CHECKING:
-    from aiperf.config import BenchmarkRun
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 
 class SpeedBenchRow(AIPerfBaseModel):
@@ -24,11 +27,14 @@ class SpeedBenchRow(AIPerfBaseModel):
     ``source``, ``src_id``, ``difficulty``, ``multiturn``) are tolerated but
     unused.
 
-    The public ``nvidia/SPEED-Bench`` dataset ships placeholder content; the
-    real prompts must be fetched from the source with ``specdec_bench``.
-    ``validate_messages_structure`` rejects the placeholder sentinel so a
-    benchmark against un-fetched data fails loudly instead of silently
-    measuring against sentinel text.
+    The public ``nvidia/SPEED-Bench`` HuggingFace hub repo ships parquet with a
+    ``turns`` schema whose rows are ~42-56% license placeholders; that raw data
+    can never satisfy this model. The real prompts must be prepared locally with
+    the ``nemo_skills`` ``prepare.py`` script (see
+    ``docs/tutorials/speed-bench.md``), which writes JSONL in the ``messages``
+    schema this loader consumes. ``validate_messages_structure`` rejects the
+    placeholder sentinel so a benchmark against un-prepared data fails loudly
+    instead of silently measuring against sentinel text.
     """
 
     TURNS_PLACEHOLDER: ClassVar[str] = (
@@ -48,7 +54,7 @@ class SpeedBenchRow(AIPerfBaseModel):
     def validate_messages_structure(self) -> SpeedBenchRow:
         """Require every message to be a dict with non-empty string role/content.
 
-        Rejects the ``TURNS_PLACEHOLDER`` sentinel so un-fetched public rows
+        Rejects the ``TURNS_PLACEHOLDER`` sentinel so un-prepared public rows
         cannot pass validation.
         """
         if not all(
@@ -90,56 +96,59 @@ def is_speed_bench_row(data: object) -> bool:
         return False
 
 
-class SpeedBenchLoader(BaseHFDatasetLoader):
-    """HuggingFace dataset loader for nvidia/SPEED-Bench.
+class SpeedBenchLoader(MultiTurnDatasetLoader):
+    """File-based multi-turn loader for prepared SPEED-Bench JSONL.
 
     SPEED-Bench (SPEculative Evaluation Dataset) provides prompts for
     benchmarking speculative decoding across diverse semantic domains and
-    input sequence lengths. Each row is a :class:`SpeedBenchRow` with a
-    ``question_id``, a ``category``, and a ``messages`` array of OpenAI-style
-    ``role``/``content`` dictionaries. Per-message roles are preserved onto the
-    resulting :class:`~aiperf.common.models.Turn` objects so the chat endpoint
-    dispatches each message under its authored role.
+    input sequence lengths. Each JSONL row is a :class:`SpeedBenchRow` with a
+    ``question_id``, a ``category`` naming the semantic domain or entropy tier,
+    and a ``messages`` array of OpenAI-style ``role``/``content`` dictionaries.
+    Per-message roles are preserved onto the resulting
+    :class:`~aiperf.dataset.loader.models.SingleTurn` objects so the chat
+    endpoint dispatches each message under its authored role.
+
+    The raw ``nvidia/SPEED-Bench`` hub data cannot be consumed directly (it is
+    parquet with a ``turns`` schema, ~42-56% license placeholders). Prepare it
+    locally first with the ``nemo_skills`` ``prepare.py`` script, then point
+    ``--input-file`` at the emitted JSONL (see ``docs/tutorials/speed-bench.md``).
 
     By default (``multi_turn=True``) all messages become turns; with
-    ``multi_turn=False`` only the first message is used. ``multi_turn`` is wired
-    through the public-dataset loader-metadata mechanism
-    (``composer/public.py``), so it can be flipped per plugin entry.
+    ``multi_turn=False`` only the first message is used.
 
     When ``category`` is set in plugin metadata, only rows matching that
     category are loaded. This enables per-category acceptance-rate measurement
     by running one category at a time against a speculative-decoding-enabled
-    server. Splits are selected via ``hf_subset`` (qualitative,
-    throughput_{1,2,8,16,32}k) in plugin metadata rather than by filename.
+    server. Splits are selected by ``--input-file`` (the prepared
+    qualitative / throughput_{1,2,8,16,32}k JSONL) rather than a hub subset.
 
-    **Qualitative subset categories** (80 samples each):
+    **Qualitative split categories** (80 samples each):
     coding, humanities, math, multilingual, qa, rag, reasoning, roleplay,
     stem, summarization, writing
 
-    **Throughput subset categories** (512 samples each per ISL bucket):
+    **Throughput split categories** (512 samples each per ISL bucket):
     low_entropy, mixed, high_entropy
 
     Example plugins.yaml entries::
 
         speed_bench_qualitative:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
-          metadata:
-            hf_dataset_name: nvidia/SPEED-Bench
-            hf_split: test
-            hf_subset: qualitative
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
 
         speed_bench_coding:
-          class: aiperf.dataset.loader.speed_bench:SpeedBenchLoader
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
           metadata:
-            hf_dataset_name: nvidia/SPEED-Bench
-            hf_split: test
-            hf_subset: qualitative
             category: coding
+
+        speed_bench_throughput_1k_mixed:
+          class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KLoader
+          metadata:
+            category: mixed
     """
 
     def __init__(
         self,
-        run: BenchmarkRun,
+        filename: str | Path | None = None,
+        run: BenchmarkRun | None = None,
         category: str | None = None,
         *,
         multi_turn: bool = True,
@@ -147,18 +156,35 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
     ) -> None:
         self.category = category
         self.multi_turn = multi_turn
-        super().__init__(run=run, **kwargs)
+        super().__init__(filename=filename, run=run, **kwargs)
 
-    async def convert_to_conversations(
-        self, data: dict[str, Any]
-    ) -> list[Conversation]:
-        """Convert validated SPEED-Bench rows into role-tagged conversations.
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        """Return whether a JSON object matches the SPEED-Bench JSONL shape."""
+        return is_speed_bench_row(data)
 
-        Each row maps to one :class:`~aiperf.common.models.Conversation` whose
-        ``session_id`` is the row's ``question_id`` and whose turns preserve the
-        per-message ``role``. When ``self.category`` is set, non-matching rows
-        are skipped; when ``self.multi_turn`` is False, only the first message
-        is used.
+    def load_dataset(self) -> dict[str, list[MultiTurn]]:
+        """Load SPEED-Bench multi-turn data from a JSONL file.
+
+        Each line is validated as a :class:`SpeedBenchRow`, then mapped to a
+        :class:`~aiperf.dataset.loader.models.MultiTurn` whose ``session_id`` is
+        the row's ``question_id`` and whose ``turns`` are built from the
+        ``messages`` array by converting each ``{"role", "content"}`` entry into
+        a ``SingleTurn(role=..., text=...)``.
+
+        When ``self.category`` is set, rows whose ``category`` field does not
+        match are skipped. If the filter eliminates every row, a warning is
+        emitted to surface a likely category/file mismatch rather than silently
+        returning an empty dataset.
+
+        When ``self.multi_turn`` is True, all messages in the row become turns;
+        otherwise only the first message is used.
+
+        Returns:
+            A dictionary mapping ``session_id`` (the SPEED-Bench ``question_id``)
+            to a list of :class:`~aiperf.dataset.loader.models.MultiTurn` objects.
 
         Raises:
             pydantic.ValidationError: If any row fails :class:`SpeedBenchRow`
@@ -166,47 +192,91 @@ class SpeedBenchLoader(BaseHFDatasetLoader):
                 is intentional: benchmarking against sentinel text is worse than
                 a hard error.
         """
-        dataset = data["dataset"]
-        conversations: list[Conversation] = []
-        max_conversations = self._max_conversations()
+        data: dict[str, list[MultiTurn]] = defaultdict(list)
 
-        for row in dataset:
-            if (
-                max_conversations is not None
-                and len(conversations) >= max_conversations
-            ):
-                break
+        for row in self._iter_record_dicts():
+            loaded_line = SpeedBenchRow.model_validate(row)
 
-            speed_bench_row = SpeedBenchRow.model_validate(row)
-
-            if self.category and speed_bench_row.category != self.category:
+            if self.category and loaded_line.category != self.category:
                 continue
 
             messages = (
-                speed_bench_row.messages
-                if self.multi_turn
-                else speed_bench_row.messages[:1]
+                loaded_line.messages if self.multi_turn else loaded_line.messages[:1]
             )
 
-            conversations.append(
-                Conversation(
-                    session_id=speed_bench_row.question_id,
-                    turns=[
-                        Turn(
-                            texts=[Text(contents=[message["content"]])],
-                            role=message["role"],
-                        )
-                        for message in messages
-                    ],
-                )
+            multi_turn_data = MultiTurn(
+                session_id=loaded_line.question_id,
+                turns=[
+                    SingleTurn(text=message["content"], role=message["role"])
+                    for message in messages
+                ],
             )
 
-        if self.category and not conversations:
+            data[multi_turn_data.session_id].append(multi_turn_data)
+
+        if self.category and not data:
             self.warning(
                 lambda: (
-                    f"SPEED-Bench category filter {self.category!r} matched no rows. "
-                    f"Verify the configured category exists in this subset."
+                    f"SPEED-Bench category filter {self.category!r} matched no rows "
+                    f"in {self.filename}. Verify the configured category exists in "
+                    f"this dataset."
                 )
             )
 
-        return conversations
+        return data
+
+
+class SpeedBenchSplitLoader(SpeedBenchLoader):
+    """Base loader for a concrete SPEED-Bench JSONL split.
+
+    Adds a filename gate on top of :meth:`SpeedBenchLoader.can_load` so
+    structural auto-detection routes each prepared split file to its matching
+    loader (e.g. ``qualitative.jsonl`` never resolves to a throughput loader).
+    """
+
+    split_filename: ClassVar[str]
+
+    @classmethod
+    def can_load(
+        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> bool:
+        if filename is None or Path(filename).name != cls.split_filename:
+            return False
+
+        return super().can_load(data, filename)
+
+
+class SpeedBenchQualitativeLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench qualitative split."""
+
+    split_filename = "qualitative.jsonl"
+
+
+class SpeedBenchThroughput1KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 1K split."""
+
+    split_filename = "throughput_1k.jsonl"
+
+
+class SpeedBenchThroughput2KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 2K split."""
+
+    split_filename = "throughput_2k.jsonl"
+
+
+class SpeedBenchThroughput8KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 8K split."""
+
+    split_filename = "throughput_8k.jsonl"
+
+
+class SpeedBenchThroughput16KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 16K split."""
+
+    split_filename = "throughput_16k.jsonl"
+
+
+class SpeedBenchThroughput32KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 32K split."""
+
+    split_filename = "throughput_32k.jsonl"

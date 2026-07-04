@@ -135,17 +135,18 @@ class TestBuildLoaderKwargs:
         assert kwargs["multi_turn"] is True
 
     def test_category_forwarded_to_loader(self, aimo_run):
-        """Public loaders that disambiguate a shared hf_subset by category
-        (e.g. the SPEED-Bench per-category / entropy-tier datasets) rely on the
-        composer forwarding metadata.category to the loader ctor. Without it
-        every per-category entry silently loads the full subset."""
+        """Public loaders that disambiguate a shared hf_subset by category rely
+        on the composer forwarding metadata.category to the loader ctor. Without
+        it every per-category entry silently loads the full subset. (SPEED-Bench
+        now takes the file-based custom-dataset path; this covers the generic
+        public-composer capability for any future per-category HF dataset.)"""
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
         composer = PublicDatasetComposer(aimo_run, None)
         with patch(
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=PublicDatasetLoaderMetadata(
-                hf_dataset_name="nvidia/SPEED-Bench",
+                hf_dataset_name="example/per-category-dataset",
                 hf_split="test",
                 hf_subset="qualitative",
                 category="coding",

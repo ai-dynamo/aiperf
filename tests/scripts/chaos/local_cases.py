@@ -43,8 +43,8 @@ def build_cases(ctx: Context) -> list[Case]:
         json.dumps(
             {
                 "input_config": {
-                    "endpoint": {"model_names": ["mock-model"]},
-                    "input": {"public_dataset": "speed_bench_coding"},
+                    "models": {"items": [{"name": "mock-model"}]},
+                    "datasets": [{"name": "main", "format": "speed_bench_coding"}],
                 },
                 "output_token_throughput": {"avg": 42.0},
             }

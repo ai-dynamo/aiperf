@@ -1,15 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Behavior coverage for the SPEED-Bench HuggingFace loader.
+"""Behavior coverage for the file-based SPEED-Bench JSONL loader.
 
-SPEED-Bench ships JSONL rows of ``{question_id, category, messages}`` where
-``messages`` is an OpenAI-style ``role``/``content`` array. The loader is
-selected by name through the public-dataset composer (HF-hub transport), so
-these tests exercise ``convert_to_conversations({"dataset": [...]})`` directly
-with in-memory rows rather than hitting HuggingFace.
+SPEED-Bench prompts are prepared locally (see ``docs/tutorials/speed-bench.md``)
+into JSONL rows of ``{question_id, category, messages}`` where ``messages`` is an
+OpenAI-style ``role``/``content`` array. The loader is selected by
+``--custom-dataset-type speed_bench_*`` and reads the file pointed at by
+``--input-file``, so these tests build real JSONL files on disk and exercise
+``load_dataset()`` / ``convert_to_conversations()`` directly.
 """
 
+import json
+import logging
 from typing import Any
 
 import pytest
@@ -18,13 +21,20 @@ from pytest import param
 
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.dataset.loader.models import MultiTurn
 from aiperf.dataset.loader.speed_bench import (
     SpeedBenchLoader,
+    SpeedBenchQualitativeLoader,
     SpeedBenchRow,
+    SpeedBenchThroughput1KLoader,
     is_speed_bench_row,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from tests.unit.conftest import make_run_from_cli
+
+
+def _make_run():
+    return make_run_from_cli(CLIConfig(model_names=["test-model"]))
 
 
 def _qid(label: str) -> str:
@@ -32,7 +42,7 @@ def _qid(label: str) -> str:
     return label.ljust(32, "0")
 
 
-def _make_row(
+def _make_speed_bench_row(
     question_id: str | None = None,
     category: str = "coding",
     messages: list[dict[str, Any]] | None = None,
@@ -42,6 +52,7 @@ def _make_row(
         question_id = _qid("speed-coding-1")
     if messages is None:
         messages = [{"role": "user", "content": "Implement binary search."}]
+
     return {
         "question_id": question_id,
         "category": category,
@@ -54,30 +65,31 @@ def _make_row(
     }
 
 
-def _make_loader(
-    category: str | None = None, multi_turn: bool = True
-) -> SpeedBenchLoader:
-    """Construct a loader; must be called inside a running event loop."""
-    return SpeedBenchLoader(
-        run=make_run_from_cli(CLIConfig(model_names=["test-model"])),
-        hf_dataset_name="nvidia/SPEED-Bench",
-        hf_split="test",
+def _write_speed_bench_file(create_jsonl_file, rows: list[dict[str, Any]]) -> str:
+    return create_jsonl_file([json.dumps(row) for row in rows])
+
+
+def _load_speed_bench_file(
+    create_jsonl_file,
+    rows: list[dict[str, Any]],
+    category: str | None = None,
+    multi_turn: bool = True,
+):
+    filename = _write_speed_bench_file(create_jsonl_file, rows)
+    loader = SpeedBenchLoader(
+        run=_make_run(),
+        filename=filename,
         category=category,
         multi_turn=multi_turn,
     )
-
-
-async def _convert(
-    loader: SpeedBenchLoader, rows: list[dict[str, Any]]
-) -> list[Conversation]:
-    return await loader.convert_to_conversations({"dataset": rows})
+    return loader, loader.load_dataset()
 
 
 class TestSpeedBenchRow:
     """Strict per-row schema validation (question_id/category/messages)."""
 
     def test_valid_row_parses(self):
-        row = SpeedBenchRow.model_validate(_make_row())
+        row = SpeedBenchRow.model_validate(_make_speed_bench_row())
         assert row.question_id == _qid("speed-coding-1")
         assert row.category == "coding"
         assert row.messages[0]["role"] == "user"
@@ -99,55 +111,55 @@ class TestSpeedBenchRow:
                 id="missing_question_id",
             ),
             param(
-                _make_row(question_id="tooshort"),
+                _make_speed_bench_row(question_id="tooshort"),
                 id="question_id_too_short",
             ),
             param(
-                _make_row(question_id="x" * 33),
+                _make_speed_bench_row(question_id="x" * 33),
                 id="question_id_too_long",
             ),
             param(
-                _make_row(category=""),
+                _make_speed_bench_row(category=""),
                 id="empty_category",
             ),
             param(
-                _make_row(messages=[]),
+                _make_speed_bench_row(messages=[]),
                 id="empty_messages",
             ),
             param(
-                _make_row(messages=["not-a-dict"]),
+                _make_speed_bench_row(messages=["not-a-dict"]),
                 id="message_not_a_dict",
             ),
             param(
-                _make_row(messages=[{"content": "Hi"}]),
+                _make_speed_bench_row(messages=[{"content": "Hi"}]),
                 id="message_missing_role",
             ),
             param(
-                _make_row(messages=[{"role": "", "content": "Hi"}]),
+                _make_speed_bench_row(messages=[{"role": "", "content": "Hi"}]),
                 id="message_empty_role",
             ),
             param(
-                _make_row(messages=[{"role": "   ", "content": "Hi"}]),
+                _make_speed_bench_row(messages=[{"role": "   ", "content": "Hi"}]),
                 id="message_whitespace_role",
             ),
             param(
-                _make_row(messages=[{"role": 7, "content": "Hi"}]),
+                _make_speed_bench_row(messages=[{"role": 7, "content": "Hi"}]),
                 id="message_role_not_str",
             ),
             param(
-                _make_row(messages=[{"role": "user"}]),
+                _make_speed_bench_row(messages=[{"role": "user"}]),
                 id="message_missing_content",
             ),
             param(
-                _make_row(messages=[{"role": "user", "content": ""}]),
+                _make_speed_bench_row(messages=[{"role": "user", "content": ""}]),
                 id="message_empty_content",
             ),
             param(
-                _make_row(messages=[{"role": "user", "content": "   "}]),
+                _make_speed_bench_row(messages=[{"role": "user", "content": "   "}]),
                 id="message_whitespace_content",
             ),
             param(
-                _make_row(messages=[{"role": "user", "content": 42}]),
+                _make_speed_bench_row(messages=[{"role": "user", "content": 42}]),
                 id="message_content_not_str",
             ),
         ],
@@ -157,7 +169,7 @@ class TestSpeedBenchRow:
             SpeedBenchRow.model_validate(row)
 
     def test_placeholder_content_raises_naming_placeholder(self):
-        row = _make_row(
+        row = _make_speed_bench_row(
             messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}]
         )
         with pytest.raises(ValidationError, match="placeholder"):
@@ -173,7 +185,7 @@ class TestIsSpeedBenchRow:
     """Auto-detection helper mirrors SpeedBenchRow validity."""
 
     def test_valid_row_detected(self):
-        assert is_speed_bench_row(_make_row()) is True
+        assert is_speed_bench_row(_make_speed_bench_row()) is True
 
     @pytest.mark.parametrize(
         "value",
@@ -184,7 +196,7 @@ class TestIsSpeedBenchRow:
             param([{"role": "user", "content": "Hi"}], id="list"),
             param({"category": "coding"}, id="missing_required_fields"),
             param(
-                _make_row(
+                _make_speed_bench_row(
                     messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}]
                 ),
                 id="placeholder_content",
@@ -195,59 +207,87 @@ class TestIsSpeedBenchRow:
         assert is_speed_bench_row(value) is False
 
 
-@pytest.mark.asyncio
+class TestSpeedBenchCanLoad:
+    """can_load auto-detection: base is content-only, splits gate on filename."""
+
+    def test_base_loader_matches_by_content_any_filename(self):
+        assert SpeedBenchLoader.can_load(_make_speed_bench_row(), "anything.jsonl")
+        assert SpeedBenchLoader.can_load(_make_speed_bench_row(), None)
+
+    def test_base_loader_rejects_non_speed_bench(self):
+        assert not SpeedBenchLoader.can_load({"session_id": "x", "turns": []})
+
+    def test_split_loader_requires_matching_filename(self):
+        row = _make_speed_bench_row()
+        assert SpeedBenchQualitativeLoader.can_load(row, "qualitative.jsonl")
+        assert SpeedBenchQualitativeLoader.can_load(row, "/data/qualitative.jsonl")
+        assert not SpeedBenchQualitativeLoader.can_load(row, "throughput_1k.jsonl")
+        assert not SpeedBenchQualitativeLoader.can_load(row, None)
+
+    def test_split_loader_rejects_non_speed_bench_even_with_matching_name(self):
+        assert not SpeedBenchThroughput1KLoader.can_load(
+            {"session_id": "x", "turns": []}, "throughput_1k.jsonl"
+        )
+
+
 class TestSpeedBenchLoader:
-    async def test_preferred_sampling_strategy_is_sequential(self):
+    def test_preferred_sampling_strategy_is_sequential(self):
         assert (
             SpeedBenchLoader.get_preferred_sampling_strategy()
             == DatasetSamplingStrategy.SEQUENTIAL
         )
 
-    async def test_constructor_stores_category_and_multi_turn(self):
-        loader = _make_loader(category="coding", multi_turn=False)
+    def test_constructor_stores_category_and_multi_turn(self, create_jsonl_file):
+        filename = _write_speed_bench_file(create_jsonl_file, [_make_speed_bench_row()])
+        loader = SpeedBenchLoader(
+            run=_make_run(), filename=filename, category="coding", multi_turn=False
+        )
         assert loader.category == "coding"
         assert loader.multi_turn is False
 
-    async def test_multi_turn_defaults_true(self):
-        assert _make_loader().multi_turn is True
+    def test_multi_turn_defaults_true(self, create_jsonl_file):
+        filename = _write_speed_bench_file(create_jsonl_file, [_make_speed_bench_row()])
+        loader = SpeedBenchLoader(run=_make_run(), filename=filename)
+        assert loader.multi_turn is True
 
-    async def test_loads_single_row_preserving_id_and_role(self):
-        loader = _make_loader()
-        conversations = await _convert(
-            loader,
+    def test_loads_single_speed_bench_jsonl_row(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"),
+                    category="coding",
                     messages=[
                         {
                             "role": "user",
-                            "content": "Write a Python function that flips case.",
+                            "content": "Write a Python function that flips letter case.",
                         }
                     ],
                 )
             ],
         )
 
-        assert len(conversations) == 1
-        conversation = conversations[0]
-        assert conversation.session_id == _qid("speed-coding-1")
-        assert len(conversation.turns) == 1
-        assert conversation.turns[0].role == "user"
-        assert conversation.turns[0].texts[0].contents == [
-            "Write a Python function that flips case."
-        ]
+        assert set(dataset) == {_qid("speed-coding-1")}
 
-    async def test_each_row_becomes_separate_conversation(self):
-        loader = _make_loader()
-        conversations = await _convert(
-            loader,
+        multi_turn = dataset[_qid("speed-coding-1")][0]
+        assert isinstance(multi_turn, MultiTurn)
+        assert multi_turn.session_id == _qid("speed-coding-1")
+        assert len(multi_turn.turns) == 1
+        assert multi_turn.turns[0].role == "user"
+        assert multi_turn.turns[0].text == (
+            "Write a Python function that flips letter case."
+        )
+
+    def test_loads_each_jsonl_row_as_separate_session(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"),
                     category="coding",
                     messages=[{"role": "user", "content": "Implement merge sort."}],
                 ),
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-math-1"),
                     category="math",
                     messages=[{"role": "user", "content": "Find the factors of 84."}],
@@ -255,21 +295,21 @@ class TestSpeedBenchLoader:
             ],
         )
 
-        by_id = {c.session_id: c for c in conversations}
-        assert set(by_id) == {_qid("speed-coding-1"), _qid("speed-math-1")}
-        assert by_id[_qid("speed-coding-1")].turns[0].texts[0].contents == [
-            "Implement merge sort."
-        ]
-        assert by_id[_qid("speed-math-1")].turns[0].texts[0].contents == [
-            "Find the factors of 84."
-        ]
+        assert set(dataset) == {_qid("speed-coding-1"), _qid("speed-math-1")}
+        assert dataset[_qid("speed-coding-1")][0].session_id == _qid("speed-coding-1")
+        assert dataset[_qid("speed-math-1")][0].session_id == _qid("speed-math-1")
+        assert (
+            dataset[_qid("speed-coding-1")][0].turns[0].text == "Implement merge sort."
+        )
+        assert (
+            dataset[_qid("speed-math-1")][0].turns[0].text == "Find the factors of 84."
+        )
 
-    async def test_preserves_all_messages_and_roles_in_order(self):
-        loader = _make_loader()
-        conversations = await _convert(
-            loader,
+    def test_loads_all_messages_in_order(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-chat-1"),
                     category="qa",
                     messages=[
@@ -280,119 +320,219 @@ class TestSpeedBenchLoader:
             ],
         )
 
-        turns = conversations[0].turns
+        turns = dataset[_qid("speed-chat-1")][0].turns
         assert [turn.role for turn in turns] == ["system", "user"]
-        assert [turn.texts[0].contents[0] for turn in turns] == [
-            "Answer tersely.",
-            "What is Python?",
+        assert [turn.text for turn in turns] == ["Answer tersely.", "What is Python?"]
+
+    def test_blank_lines_are_skipped(self, create_jsonl_file):
+        row = _make_speed_bench_row(question_id=_qid("speed-coding-1"))
+        filename = create_jsonl_file(["", json.dumps(row), "   "])
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
+
+        dataset = loader.load_dataset()
+
+        assert set(dataset) == {_qid("speed-coding-1")}
+
+    def test_empty_file_returns_empty_dataset(self, create_jsonl_file):
+        filename = create_jsonl_file([])
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
+
+        assert dict(loader.load_dataset()) == {}
+
+    def test_converts_loaded_dataset_to_conversations(self, create_jsonl_file):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-chat-1"),
+                    category="qa",
+                    messages=[
+                        {"role": "system", "content": "Answer tersely."},
+                        {"role": "user", "content": "What is Python?"},
+                    ],
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"),
+                    category="coding",
+                    messages=[{"role": "user", "content": "Implement quicksort."}],
+                ),
+            ],
+        )
+
+        conversations = loader.convert_to_conversations(dataset)
+
+        assert len(conversations) == 2
+        assert all(
+            isinstance(conversation, Conversation) for conversation in conversations
+        )
+
+        conversations_by_id = {
+            conversation.session_id: conversation for conversation in conversations
+        }
+        chat_conversation = conversations_by_id[_qid("speed-chat-1")]
+        assert len(chat_conversation.turns) == 2
+        assert chat_conversation.turns[0].role == "system"
+        assert chat_conversation.turns[0].texts[0].contents == ["Answer tersely."]
+        assert chat_conversation.turns[1].role == "user"
+        assert chat_conversation.turns[1].texts[0].contents == ["What is Python?"]
+
+        coding_conversation = conversations_by_id[_qid("speed-coding-1")]
+        assert len(coding_conversation.turns) == 1
+        assert coding_conversation.turns[0].role == "user"
+        assert coding_conversation.turns[0].texts[0].contents == [
+            "Implement quicksort."
         ]
 
-    async def test_empty_dataset_returns_empty_list(self):
-        loader = _make_loader()
-        assert await _convert(loader, []) == []
 
-
-@pytest.mark.asyncio
 class TestSpeedBenchLoaderCategoryFiltering:
-    async def test_no_category_returns_all_rows(self):
-        loader = _make_loader()
-        conversations = await _convert(
-            loader,
+    def test_no_category_returns_all_rows(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(question_id=_qid("speed-coding-1"), category="coding"),
-                _make_row(question_id=_qid("speed-math-1"), category="math"),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"), category="math"
+                ),
             ],
         )
-        assert {c.session_id for c in conversations} == {
-            _qid("speed-coding-1"),
-            _qid("speed-math-1"),
-        }
 
-    async def test_category_filter_returns_matching_rows(self):
-        loader = _make_loader(category="coding")
-        conversations = await _convert(
-            loader,
+        assert set(dataset) == {_qid("speed-coding-1"), _qid("speed-math-1")}
+
+    def test_category_filter_returns_matching_rows(self, create_jsonl_file):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(question_id=_qid("speed-coding-1"), category="coding"),
-                _make_row(question_id=_qid("speed-math-1"), category="math"),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"), category="math"
+                ),
+            ],
+            category="coding",
+        )
+
+        assert loader.category == "coding"
+        assert set(dataset) == {_qid("speed-coding-1")}
+        assert (
+            dataset[_qid("speed-coding-1")][0].turns[0].text
+            == "Implement binary search."
+        )
+
+    def test_category_filter_no_matches_returns_empty(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"), category="math"
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-stem-1"), category="stem"
+                ),
+            ],
+            category="coding",
+        )
+
+        assert dict(dataset) == {}
+
+    def test_category_filter_no_matches_warns(self, create_jsonl_file, caplog):
+        filename = _write_speed_bench_file(
+            create_jsonl_file,
+            [_make_speed_bench_row(question_id=_qid("speed-math-1"), category="math")],
+        )
+        loader = SpeedBenchLoader(run=_make_run(), filename=filename, category="coding")
+
+        with caplog.at_level(logging.WARNING):
+            dataset = loader.load_dataset()
+
+        assert dict(dataset) == {}
+        assert any("matched no rows" in record.message for record in caplog.records), (
+            f"expected empty-match warning, got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_category_stored_on_loader(self, create_jsonl_file):
+        unfiltered_loader, _ = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                )
             ],
         )
-        assert {c.session_id for c in conversations} == {_qid("speed-coding-1")}
-
-    async def test_category_filter_no_matches_returns_empty(self):
-        loader = _make_loader(category="coding")
-        conversations = await _convert(
-            loader,
+        filtered_loader, _ = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(question_id=_qid("speed-math-1"), category="math"),
-                _make_row(question_id=_qid("speed-stem-1"), category="stem"),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                )
             ],
+            category="coding",
         )
-        assert conversations == []
 
-    async def test_throughput_entropy_tier_filtering(self):
-        loader = _make_loader(category="low_entropy")
-        conversations = await _convert(
-            loader,
+        assert unfiltered_loader.category is None
+        assert filtered_loader.category == "coding"
+
+    def test_throughput_entropy_tier_filtering(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(
-                    question_id=_qid("speed-low-1"),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-low-entropy-1"),
                     category="low_entropy",
                     messages=[{"role": "user", "content": "Complete the code sample."}],
                 ),
-                _make_row(
-                    question_id=_qid("speed-high-1"),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-high-entropy-1"),
                     category="high_entropy",
                     messages=[
                         {"role": "user", "content": "Continue this novel excerpt."}
                     ],
                 ),
             ],
+            category="low_entropy",
         )
-        assert {c.session_id for c in conversations} == {_qid("speed-low-1")}
-        assert conversations[0].turns[0].texts[0].contents == [
+
+        assert set(dataset) == {_qid("speed-low-entropy-1")}
+        assert dataset[_qid("speed-low-entropy-1")][0].turns[0].text == (
             "Complete the code sample."
-        ]
+        )
 
 
-@pytest.mark.asyncio
 class TestSpeedBenchLoaderRowValidation:
-    async def test_convert_rejects_placeholder_content(self):
-        loader = _make_loader()
-        with pytest.raises(ValidationError, match="placeholder"):
-            await _convert(
-                loader,
-                [
-                    _make_row(
-                        messages=[
-                            {"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}
-                        ]
-                    )
-                ],
-            )
+    def test_load_dataset_missing_question_id_raises_validation_error_naming_field(
+        self, create_jsonl_file
+    ):
+        malformed_row = {
+            "category": "coding",
+            "messages": [{"role": "user", "content": "Implement binary search."}],
+        }
+        filename = _write_speed_bench_file(create_jsonl_file, [malformed_row])
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
 
-    async def test_convert_missing_question_id_raises_naming_field(self):
-        loader = _make_loader()
         with pytest.raises(ValidationError, match="question_id"):
-            await _convert(
-                loader,
-                [
-                    {
-                        "category": "coding",
-                        "messages": [{"role": "user", "content": "Hi"}],
-                    }
-                ],
-            )
+            loader.load_dataset()
+
+    def test_load_dataset_rejects_placeholder_content(self, create_jsonl_file):
+        placeholder_row = _make_speed_bench_row(
+            question_id="0123456789abcdef0123456789abcdef",
+            category="coding",
+            messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}],
+        )
+        filename = _write_speed_bench_file(create_jsonl_file, [placeholder_row])
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
+
+        with pytest.raises(ValidationError, match="placeholder"):
+            loader.load_dataset()
 
 
-@pytest.mark.asyncio
 class TestSpeedBenchLoaderMultiTurn:
-    async def test_multi_turn_produces_all_messages(self):
-        loader = _make_loader(multi_turn=True)
-        conversations = await _convert(
-            loader,
+    def test_multi_turn_produces_all_messages(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-chat-1"),
                     messages=[
                         {"role": "user", "content": "First turn"},
@@ -401,21 +541,23 @@ class TestSpeedBenchLoaderMultiTurn:
                     ],
                 )
             ],
+            multi_turn=True,
         )
-        turns = conversations[0].turns
+
+        turns = dataset[_qid("speed-chat-1")][0].turns
+        assert len(turns) == 3
         assert [turn.role for turn in turns] == ["user", "assistant", "user"]
-        assert [turn.texts[0].contents[0] for turn in turns] == [
+        assert [turn.text for turn in turns] == [
             "First turn",
             "Second turn",
             "Third turn",
         ]
 
-    async def test_multi_turn_false_loads_first_message_only(self):
-        loader = _make_loader(multi_turn=False)
-        conversations = await _convert(
-            loader,
+    def test_multi_turn_false_loads_first_message_only(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-chat-1"),
                     messages=[
                         {"role": "user", "content": "First turn"},
@@ -423,18 +565,19 @@ class TestSpeedBenchLoaderMultiTurn:
                     ],
                 )
             ],
+            multi_turn=False,
         )
-        turns = conversations[0].turns
+
+        turns = dataset[_qid("speed-chat-1")][0].turns
         assert len(turns) == 1
         assert turns[0].role == "user"
-        assert turns[0].texts[0].contents == ["First turn"]
+        assert turns[0].text == "First turn"
 
-    async def test_multi_turn_with_category_filter(self):
-        loader = _make_loader(category="coding", multi_turn=True)
-        conversations = await _convert(
-            loader,
+    def test_multi_turn_with_category_filter(self, create_jsonl_file):
+        _, dataset = _load_speed_bench_file(
+            create_jsonl_file,
             [
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-coding-1"),
                     category="coding",
                     messages=[
@@ -442,13 +585,17 @@ class TestSpeedBenchLoaderMultiTurn:
                         {"role": "user", "content": "Code Q2"},
                     ],
                 ),
-                _make_row(
+                _make_speed_bench_row(
                     question_id=_qid("speed-math-1"),
                     category="math",
                     messages=[{"role": "user", "content": "Math Q1"}],
                 ),
             ],
+            category="coding",
+            multi_turn=True,
         )
-        assert {c.session_id for c in conversations} == {_qid("speed-coding-1")}
-        turns = conversations[0].turns
-        assert [turn.texts[0].contents[0] for turn in turns] == ["Code Q1", "Code Q2"]
+
+        assert set(dataset) == {_qid("speed-coding-1")}
+        turns = dataset[_qid("speed-coding-1")][0].turns
+        assert len(turns) == 2
+        assert [turn.text for turn in turns] == ["Code Q1", "Code Q2"]

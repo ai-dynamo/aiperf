@@ -108,8 +108,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
                     "does not support the 'multi_turn' metadata flag. Remove "
                     "'multi_turn: true' from this loader's plugin metadata, or "
                     "use a loader that declares 'multi_turn' on its constructor "
-                    "(e.g. HFConversationDatasetLoader, SpeedBenchLoader, "
-                    "SpecBenchLoader)."
+                    "(e.g. HFConversationDatasetLoader, SpecBenchLoader)."
                 )
             kwargs["multi_turn"] = True
 
