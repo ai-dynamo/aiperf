@@ -7,9 +7,12 @@ sidebar-title: Config Validation
 # Config Validation
 
 `aiperf kube validate` performs **client-side** validation of one or more
-`AIPerfJob` YAML files against the full CRD schema, the `AIPerfConfig` model,
-and Kubernetes resource-naming rules. It does not contact the cluster — making
-it safe to run in CI, pre-commit hooks, and local editors.
+`AIPerfJob` **or** `AIPerfSweep` YAML files against the full CRD schema, the
+Pydantic spec models, and Kubernetes resource-naming rules. It dispatches per
+document on the `kind:` field (`validate.py` `SUPPORTED_KINDS = {AIPerfJob,
+AIPerfSweep}`), routing to `AIPerfJobSpec` or `AIPerfSweepSpec`. It does not
+contact the cluster — making it safe to run in CI, pre-commit hooks, and local
+editors.
 
 > **Two layers, same rules.** `aiperf kube validate` runs the same structural
 > checks the apiserver enforces at `kubectl apply`. For the catalog of CEL
@@ -50,7 +53,7 @@ aiperf kube validate <files...> [--strict] [--output text|json]
 
 | Flag | Short | Type | Default | Description |
 |---|---|---|---|---|
-| `files` | — | `Path...` (positional, one or more) | — | Paths to `AIPerfJob` YAML files. Globs are expanded by the shell. |
+| `files` | — | `Path...` (positional, one or more) | — | Paths to `AIPerfJob` or `AIPerfSweep` YAML files. Globs are expanded by the shell. |
 | `--strict` | `-s` | bool | `false` | Treat warnings (unknown spec fields) as errors. |
 | `--output` | `-o` | `text` \| `json` | `text` | Output format. `text` prints a coloured per-file summary; `json` prints a machine-parseable array. |
 
@@ -88,7 +91,9 @@ skipped for that file only).
 3. **Required top-level fields**:
    - `apiVersion` must equal the current operator API version
      (`aiperf.nvidia.com/v1alpha1`).
-   - `kind` must equal `AIPerfJob`.
+   - `kind` must be one of `AIPerfJob` or `AIPerfSweep`. The kind selects
+     which spec model the document is validated against; an `AIPerfJob` must
+     omit `spec.sweep` while an `AIPerfSweep` requires it.
    - `metadata` must be a mapping with a `name` field.
    - `spec` must be a mapping.
    - `spec.benchmark` must be a mapping containing at least one of `models` or
@@ -99,16 +104,19 @@ skipped for that file only).
      (lowercase alphanumerics and hyphens; must start and end with an
      alphanumeric).
 5. **Unknown field detection** (warning by default, error with `--strict`):
-   - **Top-level `spec`** is compared against the deployment schema. Known keys
-     are: `image`, `imagePullPolicy`, `keepFailedPods`, `resourceMode`,
-     `connectionsPerWorker`, `timeoutSeconds`, `ttlSecondsAfterFinished`,
-     `resultsTtlDays`, `cancel`, `podTemplate`, `scheduling`,
-     `skipEndpointCheck`, plus the nested `benchmark` block. Stray
-     top-level keys often mean an `AIPerfConfig` field was placed at
-     `spec.<x>` instead of `spec.benchmark.<x>` — the warning message
-     says so explicitly.
-   - **`spec.benchmark`** is compared against the full set of
-     `AIPerfConfig.model_fields` (every field the Python config model accepts).
+   - **Top-level `spec`** is compared against `KNOWN_SPEC_FIELDS`
+     (`validate.py`) — the deployment fields `image`, `imagePullPolicy`,
+     `keepFailedPods`, `resourceMode`, `connectionsPerWorker`,
+     `timeoutSeconds`, `ttlSecondsAfterFinished`, `resultsTtlDays`, `cancel`,
+     `podTemplate`, `scheduling`, `skipEndpointCheck`, `failurePolicy`; the
+     envelope fields `sweep`, `multiRun`, `variables`, `randomSeed`,
+     `childMetadata`; plus the nested `benchmark` block. Stray top-level keys
+     often mean a benchmark-config field was placed at `spec.<x>` instead of
+     `spec.benchmark.<x>` — the warning message says so explicitly.
+   - **`spec.benchmark`** is compared against `CONFIG_FIELDS`
+     (`operator/spec_converter.py`): every `BenchmarkConfig` model field, its
+     serialization aliases, plus the shorthand keys `model`, `dataset`,
+     `warmup`, `profiling`.
 6. **`AIPerfConfig` construction** — `spec.benchmark` is fed through
    `AIPerfJobSpecConverter.to_aiperf_config()`, which performs the same env-var
    and Jinja2 expansion as a local CLI file load, then validates the result
@@ -123,9 +131,9 @@ skipped for that file only).
    `>= 1` given the current `concurrency`, `connectionsPerWorker`, and mode.
 
 > Note: `validate` is intentionally conservative about what it considers
-> "unknown". Any key present in `AIPerfConfig.model_fields` is accepted under
-> `spec.benchmark`, so newly added config fields do not require a docs update
-> to this page.
+> "unknown". Any key in `CONFIG_FIELDS` (every `BenchmarkConfig` field, its
+> aliases, and the shorthand keys) is accepted under `spec.benchmark`, so
+> newly added config fields do not require a docs update to this page.
 
 ## JSON output schema
 
@@ -164,7 +172,7 @@ corresponds to one input file, in the order given on the command line.
     "path": "recipes/broken.yaml",
     "passed": false,
     "errors": [
-      "kind: expected 'AIPerfJob', got 'AIPerfConfig'",
+      "kind: expected one of ['AIPerfJob', 'AIPerfSweep'], got 'AIPerfConfig'",
       "metadata.name: 'My_Benchmark' is not a valid Kubernetes resource name (must match [a-z0-9][a-z0-9-]*[a-z0-9])",
       "Unknown spec fields (did you mean to put these under spec.benchmark?): models, endpoint",
       "endpoint.urls: 'localhost:8000' must start with http:// or https://"

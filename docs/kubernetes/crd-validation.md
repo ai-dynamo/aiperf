@@ -23,9 +23,14 @@ for how to add new rules.
 
 ## Shorthand acceptance
 
-The structural `required` list on `spec.benchmark` is just `[endpoint]`. The
-canonical fields `models`, `datasets`, and `phases` each pair with a CEL
-OR-rule that also accepts a shorthand sibling. This means **kubectl apply
+The structural `required` list on `spec.benchmark` is just `[endpoint]`, and
+`spec.benchmark` carries an **empty** `x-kubernetes-validations: []` block — the
+canonical fields (`models`, `datasets`, `phases`) and their shorthand siblings
+(`model`, `dataset`, `warmup`, `profiling`) are all typeless
+preserve-unknown fields, so no CEL rule requires or excludes any of them. The
+apiserver accepts either idiom purely because none is `required` and unknown
+keys are preserved; the operator's before-validator does the actual
+shorthand↔canonical normalization on reconcile. This means **kubectl apply
 accepts the CLI-YAML idiom** without rewriting:
 
 ```yaml
@@ -61,100 +66,91 @@ spec:
 
 You **cannot** mix the two forms for the same slot — the operator's
 `normalize_before_validation` raises a Pydantic ``ValueError`` on reconcile
-(`status.phase=Failed` with `set 'datasets' (canonical) OR 'dataset'
-(shorthand), not both`). The check can't move to CEL because the shorthand
-fields are typeless preserve-unknown siblings — see the "Rules NOT enforced
-at apiserver level" table below.
+(`status.phase=Failed` with `'dataset' cannot be used with 'datasets'. Use
+'dataset' for a single dataset or 'datasets' for multiple named datasets.`).
+The check can't move to CEL because the shorthand fields are typeless
+preserve-unknown siblings — see the "Rules NOT enforced at apiserver level"
+table below.
 
 ## Rule catalog
 
-Each entry below names the CEL rule, the message users see on rejection, and
-the original Python validator the rule mirrors. Rules without a Python
-counterpart are new invariants the apiserver enforces at admission.
+The tables below list **only the CEL rules `tools/generate_crd.py` actually
+emits** (verified against the generated `crd-aiperfjob.yaml` /
+`crd-aiperfsweep.yaml`). Each entry gives the verbatim CEL expression and the
+message users see on rejection. Cross-field invariants that CEL cannot express
+are enforced by Pydantic on the operator side instead — see
+[Operator-side (Pydantic) invariants](#operator-side-pydantic-invariants) below.
 
-### Benchmark-level rules (apply to both `AIPerfJob.spec.benchmark` and `AIPerfSweep.spec.benchmark`)
+### Endpoint rules — `spec.benchmark.endpoint` (both kinds)
 
-| Tier | Rule | Mirrors |
-|---|---|---|
-| 2G | `parameterSweepSameSeed=true ⇒ randomSeed` | `validate_sweep_same_seed_requires_seed` |
-| 2I | `sweep ⇒ ui ≠ 'dashboard'` | `validate_sweep_no_dashboard_ui` |
+| CEL rule | Message |
+|---|---|
+| `!has(self.type) \|\| self.type != 'template' \|\| has(self.template)` | `endpoint.template is required when endpoint.type='template'` |
+| `!has(self.template) \|\| (has(self.type) && self.type == 'template')` | `endpoint.template is only used when endpoint.type='template'` |
+| `!has(self.requestContentType) \|\| self.requestContentType != 'multipart/form-data' \|\| (has(self.type) && self.type == 'video_generation')` | `requestContentType='multipart/form-data' is only supported on endpoint.type='video_generation' today` |
+| `!has(self.path) \|\| self.path.startsWith('/')` | `endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')` |
 
-### Endpoint-level rules
+### Runtime rules — `spec.benchmark.runtime` (both kinds)
 
-| Tier | Rule | Mirrors |
-|---|---|---|
-| 1B | `type='template' ⇒ template` | `_validate_template_required` |
-| 1B | `template ⇒ type='template'` | (new at apiserver layer) |
-| 2J | `requestContentType='multipart/form-data' ⇒ type='video_generation'` | `_validate_request_content_type` (subset) |
-| 4O | `urls.all(u, isURL(u))` | (new at apiserver layer) |
+| CEL rule | Message |
+|---|---|
+| `!has(self.apiHost) \|\| has(self.apiPort)` | `runtime.apiHost requires runtime.apiPort to be set` |
+| `!has(self.workersMin) \|\| !has(self.workers) \|\| self.workersMin <= self.workers` | `runtime.workersMin must be <= runtime.workers` |
 
-### Runtime-level rules
+### Artifacts rules — `spec.benchmark.artifacts` (both kinds)
 
-| Tier | Rule | Mirrors |
-|---|---|---|
-| 1F | `apiHost ⇒ apiPort` | `_validate_api_host_requires_port` |
-| 1F | `workersMin ≤ workers` | (new at apiserver layer) |
-
-### Multi-run rules
-
-| Tier | Rule | Mirrors |
-|---|---|---|
-| 2H | `convergenceMetric ⇒ mode ≠ 'repeated'` | documented in CLAUDE.md, now enforced |
-
-### Artifacts rules
-
-| Tier | Rule | Mirrors |
-|---|---|---|
-| 3K | `benchmarkId` immutable after first set | (new at apiserver layer) |
+| CEL rule | Message |
+|---|---|
+| `!has(oldSelf.benchmarkId) \|\| oldSelf.benchmarkId == self.benchmarkId` | `artifacts.benchmarkId is immutable once set; mutating it would orphan artifacts already keyed by the old id` |
 
 ### AIPerfJob spec-level rules
 
-| Tier | Rule | Mirrors |
+| CEL rule | Path | Message |
 |---|---|---|
-| 3N | `scheduling.queueName` immutable after first set | Kueue contract |
+| `!has(self.sweep)` | `spec` | `AIPerfJob.spec.sweep must be null/omitted. Use kind: AIPerfSweep for parameter sweeps.` |
+| `!has(oldSelf.queueName) \|\| oldSelf.queueName == self.queueName` | `spec.scheduling` | `scheduling.queueName is immutable once set (Kueue treats queueName as immutable after admission)` |
 
-### AIPerfSweep top-level rules
+### AIPerfSweep spec-level rules
 
-| Tier | Rule | Mirrors |
+| CEL rule | Path | Message |
 |---|---|---|
-| 1C | `has(sweep) || has(multiRun) || has(convergence)` | `_validate_axis_combination` |
-| 1C | `convergence ⇒ multiRun` | `_validate_axis_combination` |
-| 1C | `convergence ⇒ multiRun.trials unset` | `_validate_axis_combination` |
-| — | `sweep` immutable after creation | (existing) |
-| — | `multiRun` immutable after creation | (existing) |
-| — | `convergence` immutable after creation | (existing) |
+| `has(self.sweep)` | `spec` | `AIPerfSweep.spec.sweep is required. Use kind: AIPerfJob for single benchmarks.` |
+| `oldSelf == self` | `spec.sweep` | `spec.sweep is immutable after creation` |
+| `oldSelf == self` | `spec.multiRun` | `spec.multiRun is immutable after creation` |
 
-### AIPerfSweep template-level rules
+> The AIPerfSweep `spec.scheduling` immutability rule and the `spec.sweep`
+> absence rule are **AIPerfJob-only**; the AIPerfSweep CRD instead asserts
+> `spec.sweep` is present. `spec.benchmark` carries an empty
+> `x-kubernetes-validations: []` on both kinds.
 
-| Tier | Rule | Mirrors |
-|---|---|---|
-| 1D | `!has(self.sweep)` (on `spec.benchmark`) | `_validate_axis_combination` (forbidden_attrs) |
-| 1D | `!has(self.multiRun)` (on `spec.benchmark`) | `_validate_axis_combination` (forbidden_attrs) |
+## Operator-side (Pydantic) invariants
 
-### AIPerfSweep convergence rules
+Several cross-field invariants **cannot** be expressed in CEL — either the
+fields they reference are typeless preserve-unknown siblings (`model`,
+`dataset`, `warmup`, `profiling`), or the `phases[]` / `datasets[]` array items
+are emitted as opaque `x-kubernetes-preserve-unknown-fields` blobs (they are
+heterogeneous Pydantic discriminated unions). CEL `has(self.X)` won't compile
+against a typeless field, and opaque array items cannot be dereferenced. These
+checks stay in the operator's `@model_validator` decorators and surface only on
+reconcile (they are also run client-side by `aiperf kube validate`):
 
-| Tier | Rule | Mirrors |
-|---|---|---|
-| 1E | `minRuns ≤ maxRuns` | `_validate_run_bounds` |
-
-## Rules NOT enforced at apiserver level
-
-Some Pydantic validators **cannot** be moved to CEL because the array items
-they reference are emitted as opaque `x-kubernetes-preserve-unknown-fields`
-blobs (the `phases[]` and `datasets[]` items are heterogeneous Pydantic
-discriminated unions). These stay in the operator's `@model_validator`
-decorators and surface only on reconcile:
-
-| Python validator | Why CEL can't see it |
+| Python validator (`src/aiperf/config/config.py` unless noted) | What it enforces |
 |---|---|
-| `normalize_before_validation` (shorthand-or-canonical OR-requirement) | needs `has(self.model)` etc; shorthand siblings are typeless preserve-unknown fields |
-| `normalize_before_validation` (shorthand-and-canonical mutual exclusion) | same — typeless preserve-unknown fields |
-| `validate_phase_names_unique` | needs `phases[].name`; items are opaque |
-| `validate_datasets_unique_names` | needs `datasets[].name`; items are opaque |
-| `validate_dataset_references` | needs `phases[].dataset` and `datasets[].name` |
-| `validate_seamless_not_on_first_phase` | needs `phases[0].seamless` |
-| `validate_phase_dataset_compatibility` | walks plugin-provided dataset/phase metadata |
-| `validate_prefill_requires_streaming` | needs `phases[].prefill_concurrency` |
+| `normalize_before_validation` (via `normalizers._check_mutual_exclusivity`) | shorthand↔canonical mutual exclusion (`model`/`models`, `dataset`/`datasets`, `warmup`+`profiling`/`phases`) |
+| `parse_datasets` / `parse_datasets_input` (`loader/normalizers.py`) | each `datasets[]` entry is a mapping with a required `name` |
+| `validate_phase_names_unique` | duplicate phase names within `phases` |
+| `validate_profiling_phase_required` | at least one non-warmup profiling phase |
+| `validate_seamless_not_on_first_phase` | first phase may not set `seamless=true` |
+| `validate_phase_dataset_compatibility` | each phase is compatible with its resolved dataset |
+| `validate_prefill_requires_streaming` | a phase with `prefill_concurrency` requires `endpoint.streaming=true` |
+| `validate_sweep_no_dashboard_ui` | `sweep` set ⇒ `runtime.ui` is not `dashboard` |
+| `_apply_consistent_seed_default` | auto-fills a consistent random seed for cross-trial sweeps when none is given |
+| `_require_sweep_on_aiperfsweep` (`operator/models.py`) | AIPerfSweep requires a `sweep` block (mirrors the `has(self.sweep)` CEL rule) |
+| `_reject_non_finite_sweep_knobs` (`operator/models.py`) | rejects NaN/inf on sweep tuning knobs |
+
+> There is no `validate_datasets_unique_names` or `validate_dataset_references`
+> validator — dataset-name presence is checked by `parse_datasets_input` and
+> phase↔dataset coupling by `validate_phase_dataset_compatibility`.
 
 If you submit a CR that the apiserver accepts but the operator later rejects,
 the failure shows up as `status.phase=Failed` with the validation error in
@@ -166,24 +162,25 @@ Each CEL rejection names the rule that fired, so the failure points directly
 at what to fix.
 
 ```text
-$ kubectl apply -f bad.yaml
-The AIPerfJob "x" is invalid: spec.benchmark: Invalid value: "object":
-  set 'datasets' (canonical) OR 'dataset' (shorthand), not both
-
 $ kubectl apply -f bad-template.yaml
 The AIPerfJob "x" is invalid: spec.benchmark.endpoint: Invalid value: "object":
   endpoint.template is required when endpoint.type='template'
 
-$ kubectl apply -f no-axis-sweep.yaml
-The AIPerfSweep "x" is invalid: spec: Invalid value: "object":
-  AIPerfSweep requires at least one of sweep/multiRun/convergence;
-  for a single benchmark use AIPerfJob via `aiperf kube profile`
+$ kubectl apply -f sweep-as-job.yaml
+The AIPerfJob "x" is invalid: spec: Invalid value: "object":
+  AIPerfJob.spec.sweep must be null/omitted. Use kind: AIPerfSweep for
+  parameter sweeps.
 
-$ kubectl apply -f sweep-in-template.yaml
-The AIPerfSweep "x" is invalid: spec.benchmark: Invalid value: "object":
-  benchmark.sweep is forbidden — set spec.sweep at the
-  AIPerfSweep top level instead
+$ kubectl apply -f job-as-sweep.yaml
+The AIPerfSweep "x" is invalid: spec: Invalid value: "object":
+  AIPerfSweep.spec.sweep is required. Use kind: AIPerfJob for single
+  benchmarks.
 ```
+
+The shorthand↔canonical mutual-exclusion error is **not** a CEL rejection at
+`kubectl apply`; it surfaces on reconcile as `status.phase=Failed` with the
+Pydantic message `'dataset' cannot be used with 'datasets'. Use 'dataset' for
+a single dataset or 'datasets' for multiple named datasets.`
 
 ## Extending the rule set
 
