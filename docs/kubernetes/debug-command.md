@@ -55,9 +55,11 @@ All flags are optional. With no flags, `debug` resolves the current namespace th
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--namespace` | `-n` | current context namespace | Kubernetes namespace to inspect. |
-| `--job-id` | `-j` | (auto-resolve) | Specific AIPerf job ID to diagnose. If set, `debug` locates the JobSet across namespaces and restricts the report to pods labelled for that job. |
+| `--job-id` | `-j` | (auto-resolve) | AIPerf job ID **or AIPerfSweep name** to diagnose. If set, `debug` locates the JobSet across namespaces and restricts the report to pods labelled for that job. |
 | `--all-namespaces` | `-A` | `false` | Inspect every namespace that contains at least one AIPerf JobSet. |
 | `--verbose` | `-v` | `false` | Fetch logs from problem pods and show all recent events (not just `Warning`s). |
+| `--variation` | | (unset) | When `--job-id` is an AIPerfSweep name, target child variation index (00..99); resolves to `<sweep>-v<idx:02d>[-t<trial>]`. `-v` is reserved for `--verbose`, so use the long form. |
+| `--trial` | `-t` | (unset) | Trial index (0..9) within a sweep variation. Requires `--variation`. |
 | `--kubeconfig` | | `$KUBECONFIG` | Path to kubeconfig file. |
 | `--kube-context` | | current context | Kubernetes context to use. |
 
@@ -78,7 +80,7 @@ For each target namespace, `debug` gathers four independent slices of cluster st
 
 ### 1. Pod problem map
 
-Every AIPerf pod in the namespace (selected by the `app.kubernetes.io/part-of=aiperf` label, or a narrower per-job selector when `-j` is set) is walked for container-status problems. See [`_extract_pod_info`](../../src/aiperf/cli_commands/kube/_debug_extract.py) — each container status is classified into one of:
+Every AIPerf pod in the namespace (selected by the `app=aiperf` label — `AIPerfLabels.SELECTOR` in `src/aiperf/kubernetes/constants.py` — or a narrower per-job selector when `-j` is set) is walked for container-status problems. See [`_extract_pod_info`](../../src/aiperf/cli_commands/kube/_debug_extract.py) — each container status is classified into one of:
 
 | State | Severity | Suggested action |
 |---|---|---|

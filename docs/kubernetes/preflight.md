@@ -53,7 +53,7 @@ collected regardless of individual failures — users see every problem in one p
 rather than fix-and-retry whack-a-mole.
 
 The whole sequence is bounded by `AIPERF_PREFLIGHT_TIMEOUT` (default 30 s,
-`src/aiperf/operator/environment.py:114`). A timeout is reported as a synthetic
+`src/aiperf/operator/environment.py:310`). A timeout is reported as a synthetic
 `Preflight Timeout` check with status `FAIL`.
 
 ## Operator vs. CLI invocation
@@ -310,7 +310,10 @@ See `OperatorPreflightChecker._resource_mode_skip`.
   - `warn` — aggregate shortfall. Message includes required vs. available CPU/mem.
   - `fail` (CLI only) — no single node can fit any one pod.
 - **Fix**: reduce worker count, add nodes, or right-size the pods via
-  `AIPERF_K8S_WORKER_POD_*` and `AIPERF_K8S_CONTROLLER_POD_*` environment variables.
+  `AIPERF_K8S_WORKER_POD_*` and the per-container control-plane resource vars
+  (`AIPERF_K8S_SYSTEM_CONTROLLER_*`, `AIPERF_K8S_RECORDS_MANAGER_*`, etc.).
+  There is no `AIPERF_K8S_CONTROLLER_POD_*` variable — `AIPERF_CONTROLLER_POD`
+  is only a boolean marker that tells a pod it is running the controller role.
 
 ### Node Selector Match (operator only)
 
@@ -470,9 +473,9 @@ aiperf kube profile --model Qwen/Qwen3-0.6B \
     --skip-endpoint-check
 ```
 
-Source: `src/aiperf/cli_commands/kube/profile.py:178`,
-`src/aiperf/operator/models.py:289` (`skip_endpoint_check` field on
-`AIPerfJobSpec`), `src/aiperf/operator/handlers/create.py:86`
+Source: `src/aiperf/cli_commands/kube/profile.py:45`,
+`src/aiperf/operator/models.py:411` (`skip_endpoint_check` field on
+`AIPerfWorkloadSpec`), `src/aiperf/operator/handlers/create.py:88`
 (`_check_endpoint_reachable`).
 
 ### `spec.resourceMode=none`
@@ -506,7 +509,7 @@ export AIPERF_PREFLIGHT_TIMEOUT=90
 ```
 
 Default: 30 s. Range: 0 (exclusive) to 120 s. Set on the operator pod's
-environment — not on the CLI. See `src/aiperf/operator/environment.py:114`.
+environment — not on the CLI. See `src/aiperf/operator/environment.py:310`.
 
 ## Exit codes
 

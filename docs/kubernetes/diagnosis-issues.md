@@ -59,7 +59,7 @@ Every `DiagnosisIssue` has the same shape: `id`, `severity`, `title`, `detail`, 
 | **Threshold** | One OOM event is enough |
 | **Source** | `PodSnapshot.oom_killed`, built from `status.containerStatuses[*].lastState.terminated.reason` |
 | **Health impact** | Sets health to `degraded` if no higher-priority issue fires |
-| **Fix** | Increase memory limits in the deployment config. For the operator, raise `AIPERF_K8S_WORKER_MEMORY` or the per-service memory knobs documented in `docs/environment-variables.md`. |
+| **Fix** | Increase memory limits in the deployment config. For the operator, raise `AIPERF_K8S_WORKER_POD_MEMORY` or the per-service memory knobs documented in `docs/environment-variables.md`. |
 
 ### `crash_loop`
 
@@ -212,7 +212,9 @@ A GitHub Action step wiring this up:
 - name: Run AIPerf benchmark and gate on critical diagnosis
   run: |
     set -o pipefail
-    aiperf kube profile --config bench.yaml --output json | tee watch.ndjson
+    # profile has no --output flag; deploy detached, then stream NDJSON via watch.
+    aiperf kube profile --config bench.yaml --image aiperf:latest --detach
+    aiperf kube watch --output json | tee watch.ndjson
     tail -n 1 watch.ndjson > final.json
     jq -e '
       .diagnosis.issues
