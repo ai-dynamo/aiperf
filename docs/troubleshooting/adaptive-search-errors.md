@@ -4,9 +4,12 @@ This guide resolves errors and warnings from AIPerf's adaptive-search
 feature — `aiperf profile --search-space ... --search-metric ...
 --search-direction ... --search-max-iterations ...` and the Kubernetes
 equivalent (`AIPerfSweep` CR with `spec.sweep.type: adaptive_search`). AIPerf
-wraps `scikit-optimize` to drive a Bayesian-Optimization (BO) outer loop;
-most errors come from input validation and a small set of mutual-exclusion
-guards.
+drives an Optuna-based Bayesian-Optimization (BO) outer loop:
+`BayesianSearchPlanner` (in
+`src/aiperf/orchestrator/search_planner/bayesian.py`) subclasses
+`OptunaSearchPlanner` and defaults to BoTorch's Gaussian-process
+qLogNEI / qLogNEHVI acquisition. Most errors come from input validation
+and a small set of mutual-exclusion guards.
 
 For the deeper "why does BO behave this way," see
 [../sweeping/bayesian-optimization.md](../sweeping/bayesian-optimization.md).
@@ -15,29 +18,45 @@ For cluster-side specifics, see
 
 ---
 
-## 1. Missing Optional Dependency (`scikit-optimize` / `skopt`)
+## 1. Missing Optional Dependency (`botorch`)
 
 ### Error message
 
 ```text
-Bayesian Optimization requires the 'bo' extra: `uv pip install -e '.[bo]'`
-(or add scikit-optimize to your env). Underlying import error: <ImportError ...>
+BoTorch sampler requires the optional `botorch` extra. Install via `uv pip install -e '.[botorch]'`.
+```
+
+If you set `--optuna-acquisition` explicitly you may instead see:
+
+```text
+--optuna-acquisition requires the optional `botorch` extra.Install via `uv pip install -e '.[botorch]'`.
 ```
 
 ### Cause
 
-`BayesianSearchPlanner.__init__` lazy-imports `skopt`. The dependency
-lives in the `[bo]` optional extra (`pyproject.toml`:
-`bo = ["scikit-optimize>=0.10"]`) and is NOT pulled in by default — BO is
-opt-in to keep the base wheel small.
+`BayesianSearchPlanner.__init__` selects `optuna_sampler="botorch"` and an
+appropriate acquisition (`qlognei` single-objective / `qlognehvi`
+multi-objective), then delegates to `OptunaSearchPlanner`. The BoTorch
+sampler needs the optional `botorch` extra (`optuna-integration`,
+`botorch`, `gpytorch`, `torch`), which is NOT pulled in by default — the
+optimization stack is heavy, so BO is opt-in to keep the base wheel small.
+
+Note: there is no `bo` extra for the current engine. The `[bo]` extra
+installs `scikit-optimize`, which the current Optuna/BoTorch planner does
+NOT use — installing `[bo]` will not enable BO. Use `[botorch]` (or its
+alias `[optuna]`).
 
 ### Fix
 
 ```bash
-uv pip install -e ".[bo]"     # editable / dev install
-pip install "aiperf[bo]"      # from PyPI
-uv add scikit-optimize        # add to an existing env
+uv pip install -e ".[botorch]"    # editable / dev install
+pip install "aiperf[botorch]"     # from PyPI
 ```
+
+When the `botorch` default is implicit and the optional stack is
+unavailable, the planner warns and falls back to the dependency-light
+`tpe` (Tree-Parzen) sampler rather than failing hard. Install `[botorch]`
+to get the preferred GP path.
 
 ---
 
@@ -88,17 +107,17 @@ aiperf profile --search-space "phases.profiling.request_rate:0.5,50.0" ...
 ### Error message
 
 ```text
-sweep path '<path>': no entry named '<segment>' found (existing: [...]).
-Add the entry first or fix the typo.
+sweep path '<path>': no entry named '<segment>' found (existing: [...]). Add the entry first or fix the typo.
 ```
 
 ### Cause
 
 The dotted path is resolved by `_set_nested_value` in
-`src/aiperf/config/sweep/config.py` against the dict form of `BenchmarkConfig`.
-Named-list segments (e.g. `phases.profiling.*`) match on the entry's
-`name` field. Typos like `phase.profiling.concurrency` (no `s`) or
-`phases.profilling.concurrency` (extra `l`) error loudly rather than
+`src/aiperf/config/sweep/expand.py` (re-exported from
+`src/aiperf/config/sweep/config.py`) against the dict form of
+`BenchmarkConfig`. Named-list segments (e.g. `phases.profiling.*`) match on
+the entry's `name` field. Typos like `phase.profiling.concurrency` (no `s`)
+or `phases.profilling.concurrency` (extra `l`) error loudly rather than
 silently creating a phantom phase.
 
 ### Fix
@@ -124,10 +143,11 @@ The BO objective is the **bare metric tag** (e.g. `output_token_throughput`,
 `time_to_first_token`) — not the flattened `_avg` / `_p99` form that
 appears in CSV/JSON exports. The statistic is selected separately via
 `--search-stat` (one of `avg`, `p50`, `p90`, `p95`, `p99`; default `avg`).
-See `_extract_trial_objectives` in
-`src/aiperf/orchestrator/search_planner/bayesian.py` and
-`AdaptiveSearchSweep.objective.metric` in
-`src/aiperf/config/sweep/config.py`.
+See `_extract_objective_vector` in
+`src/aiperf/orchestrator/search_planner/optuna_planner.py` and each
+`objectives[*].metric` on `AdaptiveSearchSweep` in
+`src/aiperf/config/sweep/config.py` (`objectives` is a list — length-1 for
+single-objective BO, length-N for Pareto BO).
 
 ### Fix
 
@@ -150,18 +170,18 @@ for which metric tags are produced and how stats map to JSON fields.
 ### Warning message
 
 ```text
-Search iteration <N> at <values> produced no usable objective;
-telling skopt fallback loss=<loss> and continuing.
+Search iteration <N> at <values> produced no usable objective; telling Optuna fallback objective=<vec> and continuing.
 ```
 
 ### Cause
 
-`_extract_trial_objectives` keeps trials only if
-`r.summary_metrics[self._cfg.objective_metric]` is present. If the metric
-never appears (e.g. `time_to_first_token` against a non-streaming
-endpoint, or `inter_token_latency` for a single-token completion), every
-trial is filtered out, the iteration produces no usable objective, and a
-sentinel loss is fed to skopt — see entry 6 for sentinel mechanics.
+`_extract_objective_vector` keeps an objective only if the configured
+metric/stat is present and finite across the iteration's trials. If the
+metric never appears (e.g. `time_to_first_token` against a non-streaming
+endpoint, or `inter_token_latency` for a single-token completion), the
+projection returns `None`, the iteration produces no usable objective, and
+a per-direction sentinel vector is fed to Optuna — see entry 6 for sentinel
+mechanics.
 
 ### Fix
 
@@ -169,7 +189,7 @@ Confirm the metric is produced before driving a long BO run:
 
 ```bash
 aiperf profile --model meta-llama/Llama-3.1-8B-Instruct --concurrency 10 \
-  --output-dir /tmp/aiperf-probe ...
+  --artifact-dir /tmp/aiperf-probe ...
 cat /tmp/aiperf-probe/profile_export_aiperf.json | jq '.summary_metrics | keys'
 ```
 
@@ -187,19 +207,23 @@ Same as entry 5. The corresponding entry in `search_history.json` has
 
 ### Cause
 
-When every trial fails, `_failed_iteration_loss` in
-`src/aiperf/orchestrator/search_planner/bayesian.py` synthesizes a
-sentinel loss in skopt's loss space:
+When an iteration yields no usable objective, `_failure_sentinel_vector`
+in `src/aiperf/orchestrator/search_planner/optuna_planner.py` synthesizes a
+per-objective sentinel vector to `study.tell`:
 
-- With prior successful iterations: worst-seen loss plus a
-  10%-or-1.0-absolute margin. Keeps the GP kernel matrix well-posed
-  while telling skopt this point is unambiguously worse than anywhere it
-  has succeeded.
-- With no prior data: constant `_NO_DATA_SENTINEL_LOSS = 1.0e6`. BO is
-  essentially random until the first successful iteration.
+- With prior successful iterations for that objective: worst-seen value
+  plus a 10%-or-1.0-absolute margin, in that objective's *worse* direction.
+  Keeps the GP posterior well-posed while telling Optuna this point is
+  unambiguously worse than anywhere it has succeeded.
+- With no prior data for that objective: `+/- NO_DATA_SENTINEL_LOSS`
+  (module constant `NO_DATA_SENTINEL_LOSS = 1.0e6`), sign chosen by the
+  objective's direction. BO is essentially random until the first
+  successful iteration.
 
-This keeps the ask/tell loop consistent with skopt (which cannot accept
-`None`) and lets the loop continue rather than aborting.
+One sentinel per configured objective — multi-objective `tell` expects a
+vector, and each direction has its own sense of "worse". This keeps the
+ask/tell loop consistent (Optuna cannot accept `None`) and lets the loop
+continue rather than aborting.
 
 ### Fix
 
@@ -219,67 +243,51 @@ or narrow the search-space bounds before re-running. See
 
 ---
 
-## 7. Mutual Exclusion: `--search-*` + Magic-List Flag
+## 7. Mutual Exclusion: Adaptive Search + an Enumerated Sweep
 
-### Error message
+### What you'll see
 
-```text
-sweep block and --search-* flags are mutually exclusive: BO drives
-variation choice adaptively, while sweep enumerates them up-front.
-Drop the sweep block to use BO, or drop the --search-* flags.
-```
+A Pydantic validation error, e.g. `Extra inputs are not permitted` on
+`sweep.adaptive_search.variables` (or a discriminator error on `sweep.type`)
+when a single config would carry both an adaptive-search sweep and an
+enumerated (grid/zip) sweep.
 
 ### Cause
 
-Magic-list flags (`--concurrency 10,20,30`) are promoted to a top-level
-`sweep:` block by `_promote_magic_lists_to_sweep_block` in
-`src/aiperf/config/flags/converter.py`. The plan-builder (`build_benchmark_plan`
-in `src/aiperf/config/loader/plan.py`) then rejects the combination — BO
-chooses iterations adaptively from continuous ranges, while a magic-list
-expects you to enumerate the discrete points up front.
+`sweep.type` is a single **discriminated union**
+(`grid | zip | scenarios | adaptive_search | sobol | latin_hypercube`), so a
+config holds exactly **one** sweep block. Three inputs all resolve to that
+one block:
+
+- `--search-*` flags synthesize `sweep.type: adaptive_search`.
+- Magic-list flags (`--concurrency 10,20,30`) synthesize `sweep.type: grid`
+  with a `variables:` map (via `_promote_magic_lists_to_sweep_block` in
+  `src/aiperf/config/flags/converter.py`).
+- An explicit `sweep:` block in a YAML config file.
+
+BO chooses iterations adaptively from continuous ranges, while a grid/zip
+sweep enumerates discrete points up front — the two cannot coexist. The
+plan-builder (`build_benchmark_plan` in
+`src/aiperf/config/loader/plan.py`) documents this: by the time it runs,
+`config.sweep` is either absent, a grid/scenario sweep, or an
+adaptive_search sweep — never both.
 
 ### Fix
 
-```bash
-# Wrong — magic-list AND --search-space
-aiperf profile --concurrency 10,20,30 \
-  --search-space "phases.profiling.concurrency:1,1000:int" ...
+Pick one strategy:
 
-# Correct — BO over a continuous range
+```bash
+# BO over a continuous range (no magic-lists, no sweep: YAML block)
 aiperf profile --search-space "phases.profiling.concurrency:1,1000:int" \
   --search-metric output_token_throughput \
   --search-direction maximize --search-max-iterations 30 ...
 
-# Correct — explicit grid sweep
+# Explicit grid sweep instead
 aiperf profile --concurrency 10,20,30 ...
 ```
 
-See the "grid vs BO" decision matrix in
-[../sweeping/bayesian-optimization.md](../sweeping/bayesian-optimization.md).
-
----
-
-## 8. Mutual Exclusion: `--search-*` + Explicit `sweep:` YAML Block
-
-### Error message
-
-```text
-sweep block and --search-* flags are mutually exclusive: BO drives
-variation choice adaptively, while sweep enumerates them up-front.
-Drop the sweep block to use BO, or drop the --search-* flags.
-```
-
-### Cause
-
-Same guard as entry 7 (`build_benchmark_plan` in
-`src/aiperf/config/loader/plan.py`). Triggered when an `aiperf-config.yaml`
-contains a top-level `sweep:` block AND the CLI invocation passes
-`--search-*` flags.
-
-### Fix
-
-Drop one or the other. If your config carries a leftover `sweep:` block
-from an earlier experiment, remove it before adding `--search-*`:
+If your config file carries a leftover `sweep:` block from an earlier
+experiment, remove it before adding `--search-*`:
 
 ```yaml
 # aiperf-config.yaml — drop this block when using BO
@@ -289,9 +297,12 @@ sweep:
     phases.profiling.concurrency: [10, 20, 30]
 ```
 
+See the "grid vs BO" decision matrix in
+[../sweeping/bayesian-optimization.md](../sweeping/bayesian-optimization.md).
+
 ---
 
-## 9. Mutual Exclusion: `--search-*` + `--convergence-metric`
+## 8. Mutual Exclusion: `--search-*` + `--convergence-metric`
 
 ### Error message
 
@@ -300,23 +311,23 @@ sweep:
 ```
 
 Raised as `TypeError` from the CLI assembly pipeline in
-`src/aiperf/config/flags/_converter_optionals.py` when both
-`--search-space` (with its companion `--search-*` flags) and
-`--convergence-metric` are set on the same `aiperf profile` invocation.
+`src/aiperf/config/flags/_converter_optionals.py` when both `--search-space`
+(with its companion `--search-*` flags) and `--convergence-metric` are set
+on the same `aiperf profile` invocation.
 
 ### Cause
 
 `--convergence-metric` is a **trial-level** adaptive stop (stop trials at
 a single benchmark point once the metric stabilizes); `--search-*` is an
 **outer-loop** adaptive search (choose the next benchmark point). The two
-are conceptually orthogonal but their composition is not yet well-defined:
-which loss to feed skopt under early-stop, and whether to count
-convergence-stopped trials toward the per-iteration trial budget, both
-need explicit semantics.
+are conceptually orthogonal but their composition is not designed: the BO
+orchestrator path silently ignores `convergence_metric`, so the guard
+rejects the combination explicitly rather than letting the user believe
+trial-level convergence is doing anything during a BO run.
 
 ### Fix
 
-Pick one until composition is supported:
+Pick one:
 
 ```bash
 # Outer-loop only
@@ -330,7 +341,7 @@ aiperf profile --concurrency 100 --convergence-metric output_token_throughput ..
 
 ---
 
-## 10. `--search-initial-points` >= `--search-max-iterations`
+## 9. `--search-initial-points` >= `--search-max-iterations`
 
 ### Error message
 
@@ -341,9 +352,10 @@ n_initial_points (<n>) must be < max_iterations (<m>); otherwise the GP never fi
 ### Cause
 
 `AdaptiveSearchSweep._check_initial_points_below_max_iterations` in
-`src/aiperf/config/sweep/config.py` rejects the configuration. BO needs
-at least one iteration **after** the random Sobol-seeded initial points so
-skopt can fit the GP and propose informed points. Defaults: `5` and `30`.
+`src/aiperf/config/sweep/config.py` rejects the configuration for the
+`bayesian` / `optuna` planners. BO needs at least one iteration **after**
+the Sobol-seeded initial points so the GP can fit and propose informed
+points. Defaults: `5` initial points, `30` max iterations.
 
 ### Fix
 
@@ -356,15 +368,17 @@ aiperf profile --search-max-iterations 30 --search-initial-points 5 ...
 
 ### Why this rule exists
 
-skopt's Sobol-random phase exists to seed the GP with diverse points
-before it can fit a meaningful posterior. If the entire iteration budget
-is consumed by the random phase, the run is just expensive uniform
-sampling — there's no BO-shaped value left to extract. The strict `<`
-ensures at least one GP-driven iteration runs.
+The Sobol-random phase exists to seed the GP with diverse points before
+it can fit a meaningful posterior. If the entire iteration budget is
+consumed by the random phase, the run is just expensive uniform sampling —
+there's no BO-shaped value left to extract. The strict `<` ensures at
+least one GP-driven iteration runs. (The gate only applies to `bayesian`
+and `optuna` planners; 1-D SLA planners drive their own probe sequence and
+ignore `n_initial_points`.)
 
 ---
 
-## 11. "In-Process Sweep Rejected Under Operator" — False-Positive Concern
+## 10. "In-Process Sweep Rejected Under Operator" — False-Positive Concern
 
 ### Concern
 
@@ -385,13 +399,10 @@ drop the comma in --concurrency / other magic-list flags.
 `_reject_in_process_sweep_under_operator` (in `src/aiperf/cli_runner/_multi_run.py`)
 only fires when `plan.is_sweep` is true. Adaptive-search plans set
 `plan.is_adaptive_search` and have a single placeholder variation in
-`plan.configs` — `plan.is_sweep` is **false**. The guard's docstring calls
-this out:
-
-> Adaptive outer loops, in contrast, run inside the controller pod itself
-> via `BayesianSearchPlanner` — the controller proposes each variation
-> one at a time, so the in-process adaptive path is allowed under the
-> operator and is not blocked here.
+`plan.configs` — `plan.is_sweep` is **false**. Adaptive outer loops run
+inside the controller pod itself via `BayesianSearchPlanner`: the
+controller proposes each variation one at a time, so the in-process
+adaptive path is allowed under the operator and is not blocked here.
 
 The cardinality contract is preserved: one `AIPerfJob` (one controller
 pod) per `AIPerfSweep` invocation, with the controller pod synthesizing

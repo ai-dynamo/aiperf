@@ -1,253 +1,225 @@
 # Parameter Sweeping Error Troubleshooting Guide
 
-This guide helps you resolve common errors when using AIPerf's parameter sweeping feature.
+This guide helps you resolve common errors when using AIPerf's parameter
+sweeping feature. Benchmarking runs under the `aiperf profile` subcommand;
+a sweep is triggered by passing a comma-separated magic-list value
+(`--concurrency 10,20,30`), which is promoted to a top-level `sweep:` block
+(`type: grid` by default), or by an explicit `sweep:` block in a YAML config.
 
 ## Common Errors and Solutions
 
-### 1. Invalid Concurrency Value
+### 1. Non-Numeric Concurrency Value or List
 
 **Error Message:**
 ```text
-Invalid concurrency value: 'abc'. Must be a positive integer (>= 1).
-Examples: --concurrency 10, --concurrency 20
+concurrency
+  Value error, invalid literal for int() with base 10: 'abc' [type=value_error, ...]
 ```
 
-**Cause:** You provided a non-numeric value for concurrency.
+**Cause:** A concurrency value (single or one element of a comma-separated
+list) is not an integer.
 
 **Solution:**
 ```bash
 # Wrong
-aiperf --concurrency abc ...
+aiperf profile -m my-model --url localhost:8000 --concurrency abc ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,abc,30 ...
 
 # Correct
-aiperf --concurrency 10 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 ...
 ```
 
 ---
 
-### 2. Invalid Concurrency List
+### 2. Zero or Negative Concurrency Values
 
 **Error Message:**
 ```text
-Invalid concurrency list: '10,abc,30'. Failed to parse value: 'abc'.
-All values must be positive integers (>= 1).
-Examples: --concurrency 10,20,30 or --concurrency 5,10,15,20
+benchmark.phases.0.concurrency.concurrency
+  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, ...]
 ```
 
-**Cause:** One or more values in your concurrency list is not a valid integer.
+**Cause:** Concurrency represents the number of concurrent requests, so
+every value in the list must be `>= 1`. A single non-numeric or negative
+value fails the whole invocation.
 
 **Solution:**
 ```bash
 # Wrong
-aiperf --concurrency 10,abc,30 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,-5,30 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 0,10,20 ...
 
 # Correct
-aiperf --concurrency 10,20,30 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,5,30 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 1,10,20 ...
 ```
 
 ---
 
-### 3. Negative or Zero Concurrency Values
+### 3. Negative Cooldown Duration
 
 **Error Message:**
 ```text
-Invalid concurrency values at position(s) [2]: [-5].
-All concurrency values must be at least 1 (cannot have zero or negative concurrent requests).
-Current list: [10, -5, 30].
-Example fix: --concurrency 10,1,30
+parameter_sweep_cooldown_seconds
+  Input should be greater than or equal to 0 [type=greater_than_equal, input_value='-10', ...]
 ```
 
-**Cause:** You provided zero or negative values in your concurrency list.
+**Cause:** `--parameter-sweep-cooldown-seconds` (and
+`--profile-run-cooldown-seconds`) must be non-negative. Use `0` for no
+cooldown.
 
 **Solution:**
 ```bash
 # Wrong
-aiperf --concurrency 10,-5,30 ...
-aiperf --concurrency 0,10,20 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 \
+  --parameter-sweep-cooldown-seconds -10 ...
+
+# Correct — no cooldown
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 \
+  --parameter-sweep-cooldown-seconds 0 ...
+
+# Correct — 10-second pause between variations
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 \
+  --parameter-sweep-cooldown-seconds 10 ...
+```
+
+---
+
+### 4. Empty Sweep Parameter List (YAML)
+
+**Error Message:**
+```text
+Value error, grid sweep parameter 'phases.profiling.concurrency': value list must be non-empty.
+```
+
+**Cause:** A `sweep.variables` entry in a YAML config has an empty list.
+An empty list would silently produce zero variations, so it is rejected at
+config-load time.
+
+**Solution:**
+```yaml
+# Wrong
+sweep:
+  type: grid
+  variables:
+    phases.profiling.concurrency: []
 
 # Correct
-aiperf --concurrency 10,5,30 ...
-aiperf --concurrency 1,10,20 ...
+sweep:
+  type: grid
+  variables:
+    phases.profiling.concurrency: [10, 20, 30]
 ```
-
-**Why:** Concurrency represents the number of concurrent requests. You cannot have zero or negative concurrent requests.
 
 ---
 
-### 4. Using Sweep Parameters Without a Sweep
+### 5. Zip Sweep With Unequal-Length Lists (YAML)
 
 **Error Message:**
 ```text
---parameter-sweep-mode only applies when sweeping parameters (e.g., --concurrency 10,20,30).
-This parameter controls whether to run the full sweep repeatedly (repeated mode)
-or run all trials at each value independently (independent mode).
-Either remove --parameter-sweep-mode or provide a comma-separated list: --concurrency 10,20,30
+Value error, zip sweep variables must all have equal length; got {'phases.profiling.concurrency': 3, 'phases.profiling.request_count': 2}.
 ```
 
-**Cause:** You specified sweep-specific parameters but didn't provide a list of values to sweep.
+**Cause:** A `zip` sweep pairs variables element-wise (lockstep), so every
+variable list must have the same length. Use `grid` if you want the full
+Cartesian product instead.
 
 **Solution:**
-```bash
-# Wrong - sweep parameter without sweep
-aiperf --concurrency 10 --parameter-sweep-mode repeated ...
+```yaml
+# Wrong — lengths 3 and 2
+sweep:
+  type: zip
+  variables:
+    phases.profiling.concurrency: [10, 20, 30]
+    phases.profiling.request_count: [100, 200]
 
-# Correct - remove sweep parameter
-aiperf --concurrency 10 ...
-
-# Or - add sweep values
-aiperf --concurrency 10,20,30 --parameter-sweep-mode repeated ...
+# Correct — equal length
+sweep:
+  type: zip
+  variables:
+    phases.profiling.concurrency: [10, 20, 30]
+    phases.profiling.request_count: [100, 200, 300]
 ```
-
-**Applies to:**
-- `--parameter-sweep-mode`
-- `--parameter-sweep-cooldown-seconds`
-- `--parameter-sweep-same-seed`
 
 ---
 
-### 5. Using Multi-Run Parameters Without Multi-Run
+### 6. Sweep Path Doesn't Resolve
 
 **Error Message:**
 ```text
---confidence-level only applies when running multiple trials (--num-profile-runs > 1).
-Confidence intervals require at least 2 runs to compute.
-Either remove --confidence-level or add --num-profile-runs 5 (or higher).
+sweep path '<path>': no entry named '<segment>' found (existing: [...]). Add the entry first or fix the typo.
 ```
 
-**Cause:** You specified multi-run parameters but only running a single trial.
+**Cause:** A dotted sweep path references a named-list entry that does not
+exist (e.g. a typo like `phase.profiling.concurrency` missing the `s`, or
+`phases.profilling.concurrency` with an extra `l`). Named segments
+(`phases.<name>.*`) match on the entry's `name` field. Resolved by
+`_set_nested_value` in `src/aiperf/config/sweep/expand.py`.
 
 **Solution:**
-```bash
-# Wrong - multi-run parameter without multi-run
-aiperf --concurrency 10 --confidence-level 0.99 ...
+```yaml
+# Wrong — 'phase' should be 'phases'
+sweep:
+  type: grid
+  variables:
+    phase.profiling.concurrency: [10, 20, 30]
 
-# Correct - remove multi-run parameter
-aiperf --concurrency 10 ...
-
-# Or - add multiple runs
-aiperf --concurrency 10 --num-profile-runs 5 --confidence-level 0.99 ...
+# Correct
+sweep:
+  type: grid
+  variables:
+    phases.profiling.concurrency: [10, 20, 30]
 ```
-
-**Applies to:**
-- `--confidence-level`
-- `--profile-run-cooldown-seconds`
-- `--profile-run-disable-warmup-after-first`
-- `--set-consistent-seed`
 
 ---
 
-### 6. Dashboard UI with Parameter Sweeps
+### 7. Dashboard UI with Parameter Sweeps
 
 **Error Message:**
 ```text
-Dashboard UI (--ui dashboard) is not supported with parameter sweeps
-due to terminal control limitations when running multiple sequential benchmarks.
-Use --ui simple (recommended, shows progress bars) or --ui none (no UI output).
-Example: aiperf --concurrency 10,20,30 --ui simple ...
+Dashboard UI is incompatible with parameter sweeps; sweep results would
+overwrite each other in the live console. Use --ui simple or --ui none with
+--concurrency <list> / any sweep configuration.
 ```
 
-**Cause:** Dashboard UI cannot handle multiple sequential benchmark runs.
-
-**Solution:**
-```bash
-# Wrong
-aiperf --concurrency 10,20,30 --ui dashboard ...
-
-# Correct - use simple UI (recommended)
-aiperf --concurrency 10,20,30 --ui simple ...
-
-# Or - use no UI
-aiperf --concurrency 10,20,30 --ui none ...
-```
-
-**Why:** The dashboard UI requires exclusive terminal control, which conflicts with running multiple sequential benchmarks.
-
----
-
-### 7. Dashboard UI with Multi-Run
-
-**Error Message:**
-```text
-Dashboard UI (--ui dashboard) is not supported with multi-run mode (--num-profile-runs > 1)
-due to terminal control limitations when running multiple sequential benchmarks.
-Use --ui simple (recommended, shows progress bars) or --ui none (no UI output).
-Example: aiperf --num-profile-runs 5 --ui simple ...
-```
-
-**Cause:** Same as above - dashboard UI cannot handle multiple sequential runs.
+**Cause:** The dashboard UI requires exclusive terminal control, which
+conflicts with running multiple sequential benchmarks. Raised at
+config-validation time (`src/aiperf/config/config.py`) when a `sweep:`
+block is present and `--ui dashboard` is explicitly set.
 
 **Solution:**
 ```bash
 # Wrong
-aiperf --num-profile-runs 5 --ui dashboard ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 --ui dashboard ...
 
-# Correct - use simple UI (recommended)
-aiperf --num-profile-runs 5 --ui simple ...
+# Correct — simple UI (recommended, shows progress bars)
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 --ui simple ...
 
-# Or - use no UI
-aiperf --num-profile-runs 5 --ui none ...
+# Or — no UI
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 --ui none ...
 ```
 
 ---
 
-### 8. Invalid Cooldown Duration
+### 8. Dashboard UI with Multi-Run
 
 **Error Message:**
 ```text
-Invalid cooldown duration: -10 seconds.
-Cooldown must be non-negative (0 or greater).
-Use 0 for no cooldown, or a positive value like 10 for a 10-second pause between runs.
+Dashboard UI is not supported with sweep/multi-run mode. Please use '--ui simple' or '--ui none' instead.
 ```
 
-**Cause:** You provided a negative cooldown value.
+**Cause:** Same terminal-control limitation as above, raised from the
+multi-run runner (`src/aiperf/cli_runner/_multi_run.py`) when
+`--num-profile-runs > 1` is combined with `--ui dashboard`.
 
 **Solution:**
 ```bash
 # Wrong
-aiperf --concurrency 10,20,30 --parameter-sweep-cooldown-seconds -10 ...
+aiperf profile -m my-model --url localhost:8000 --num-profile-runs 5 --ui dashboard ...
 
-# Correct - no cooldown
-aiperf --concurrency 10,20,30 --parameter-sweep-cooldown-seconds 0 ...
-
-# Or - positive cooldown
-aiperf --concurrency 10,20,30 --parameter-sweep-cooldown-seconds 10 ...
-```
-
----
-
-### 9. Empty Parameter Values
-
-**Error Message:**
-```text
-Parameter sweep requires at least one value to test.
-Provide a comma-separated list of values: --concurrency 10,20,30.
-For a single value, use: --concurrency 10 (no comma).
-```
-
-**Cause:** Internal error - this shouldn't normally happen. May indicate a bug.
-
-**Solution:** Report this as a bug with your command line.
-
----
-
-### 10. Insufficient Successful Runs for Aggregation
-
-**Warning Message:**
-```text
-Skipping aggregate statistics for concurrency=20:
-only 1 successful run(s), need at least 2 for confidence intervals.
-Consider increasing --num-profile-runs or investigating why runs failed.
-```
-
-**Cause:** Not enough successful runs at a specific concurrency value to compute confidence statistics.
-
-**Solution:**
-```bash
-# Increase number of runs
-aiperf --concurrency 10,20,30 --num-profile-runs 5 ...
-
-# Or investigate why runs are failing
-# Check logs for error messages at the failing concurrency value
+# Correct
+aiperf profile -m my-model --url localhost:8000 --num-profile-runs 5 --ui simple ...
 ```
 
 ---
@@ -257,34 +229,37 @@ aiperf --concurrency 10,20,30 --num-profile-runs 5 ...
 ### Single Concurrency (No Sweep)
 ```bash
 # Basic
-aiperf --concurrency 10 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10 ...
 
 # With multi-run confidence reporting
-aiperf --concurrency 10 --num-profile-runs 5 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10 --num-profile-runs 5 ...
 ```
 
 ### Parameter Sweep (No Confidence)
 ```bash
 # Basic sweep
-aiperf --concurrency 10,20,30 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 ...
 
 # With cooldown between values
-aiperf --concurrency 10,20,30 --parameter-sweep-cooldown-seconds 10 ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 \
+  --parameter-sweep-cooldown-seconds 10 ...
 
 # With same seed across all values
-aiperf --concurrency 10,20,30 --parameter-sweep-same-seed ...
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 \
+  --parameter-sweep-same-seed ...
 ```
 
 ### Parameter Sweep + Confidence Reporting
 ```bash
-# Repeated mode (default) - full sweep N times
-aiperf --concurrency 10,20,30 --num-profile-runs 5 ...
+# Repeated mode (default) — full sweep N times
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 --num-profile-runs 5 ...
 
-# Independent mode - N trials at each value
-aiperf --concurrency 10,20,30 --num-profile-runs 5 --parameter-sweep-mode independent ...
+# Independent mode — N trials at each value
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 \
+  --num-profile-runs 5 --parameter-sweep-mode independent ...
 
 # With cooldowns at both levels
-aiperf --concurrency 10,20,30 --num-profile-runs 5 \
+aiperf profile -m my-model --url localhost:8000 --concurrency 10,20,30 --num-profile-runs 5 \
   --parameter-sweep-cooldown-seconds 10 \
   --profile-run-cooldown-seconds 5 ...
 ```
@@ -295,23 +270,16 @@ aiperf --concurrency 10,20,30 --num-profile-runs 5 \
 
 If you encounter an error not covered in this guide:
 
-1. **Check the error message carefully** - it should include:
-   - What went wrong
-   - Why it's a problem
-   - How to fix it
-   - An example of correct usage
+1. **Check the error message carefully** — the Pydantic validation errors
+   name the exact field path (e.g. `benchmark.phases.0.concurrency.concurrency`)
+   and the constraint that failed.
 
 2. **Review the documentation**:
    - [Parameter Sweeping Tutorial](../tutorials/parameter-sweeping.md)
+   - [Adaptive Search Errors](./adaptive-search-errors.md) — for `--search-*` (Bayesian Optimization) runs
    - [CLI Options Reference](../cli-options.md)
 
-3. **Report a bug** if:
-   - The error message is unclear or unhelpful
-   - You believe the error is incorrect
-   - The suggested fix doesn't work
-
-Include in your bug report:
-- Full command line you ran
-- Complete error message
-- AIPerf version (`aiperf --version`)
-- What you expected to happen
+3. **Report a bug** if the error message is unclear, incorrect, or the
+   suggested fix doesn't work. Include the full command line, complete
+   error message, AIPerf version (`aiperf --version`), and what you
+   expected to happen.
