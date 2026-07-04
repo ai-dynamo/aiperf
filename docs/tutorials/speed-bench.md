@@ -59,21 +59,26 @@ Where `{ISL}` is one of: `1k`, `2k`, `8k`, `16k`, `32k`.
 
 ---
 
-## Prepare the Dataset
+## Dataset Access and Licensing
 
-NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agreement](https://huggingface.co/datasets/nvidia/SPEED-Bench/blob/main/License.pdf). For each dataset a user elects to use, the user is responsible for checking if the dataset license is fit for the intended purpose. The prepare data script below automatically fetches data from all the source datasets.
+NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agreement](https://huggingface.co/datasets/nvidia/SPEED-Bench/blob/main/License.pdf). For each dataset a user elects to use, the user is responsible for checking if the dataset license is fit for the intended purpose.
 
-You should first download and prepare the dataset using the following one liner:
+AIPerf loads every `speed_bench_*` variant as a **public dataset** that is
+auto-downloaded from HuggingFace (`nvidia/SPEED-Bench`) at runtime — select
+one with `--public-dataset <name>`. There is no separate AIPerf prepare/JSONL
+step; the split is chosen internally by each variant's registered HF subset
+and (for the per-category variants) a category filter.
 
-```bash
-SPEED_BENCH_DIR="./datasets/speed-bench"
-curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py | python3 - --output_dir $SPEED_BENCH_DIR
-```
-
-This will download all splits into the working directory as JSONL files. Other supported options of the prepare script:
-
-* `--config`: select which config to prepare, can be one of the splits in the dataset (e.g., `qualitative`, `throughput_2k`) or `all` to prepare all of the configs.
-* `--output_dir`: select different output directory to download the dataset to.
+> **Placeholder content caveat.** The public `nvidia/SPEED-Bench` repository
+> ships *placeholder* prompt content — the real prompts must be fetched from
+> the source (via `specdec_bench`) as described on the dataset's HuggingFace
+> page. AIPerf's `SpeedBenchLoader` rejects the placeholder sentinel loudly
+> rather than silently benchmarking against it, so a run against un-fetched
+> data fails with:
+> `messages must be a non-empty list of dictionaries with role and content fields, and the content must not be the placeholder string`.
+> Ensure the real SPEED-Bench prompts are present in the dataset you load
+> before running the workflows below. The `spec_al_*` datasets further below
+> ship real content and work out of the box.
 
 ---
 
@@ -120,8 +125,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_coding \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+    --public-dataset speed_bench_coding \
     --osl 4096 \
     --extra-inputs temperature:0 \
     --concurrency 16
@@ -147,8 +151,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_coding \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+    --public-dataset speed_bench_coding \
     --server-metrics http://localhost:8000/metrics \
     --osl 4096 \
     --extra-inputs temperature:0 \
@@ -171,8 +174,7 @@ for cat in $CATEGORIES; do
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
-      --custom-dataset-type speed_bench_${cat} \
-      --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+      --public-dataset speed_bench_${cat} \
       --server-metrics http://localhost:8000/metrics \
       --osl 4096 \
       --extra-inputs temperature:0 \
@@ -221,7 +223,7 @@ The speculative-decoding literature overwhelmingly reports acceptance length aga
 | `spec_al_mbpp` | `google-research-datasets/mbpp` (`full`, `test`) | 500 | single | CC-BY-4.0 |
 | `spec_al_mtbench` | `HuggingFaceH4/mt_bench_prompts` (`train`) | 80 | two-turn | Apache-2.0 |
 
-Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. Note that `--osl` does not apply to public datasets, so cap generation with `--extra-inputs max_tokens:N` instead. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them - size it with `--num-conversations` rather than `--request-count` (see below).
+Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. To cap generation, either set `--osl N` (public datasets honor it via the composer's max-tokens finalization) or pass `--extra-inputs max_tokens:N`; the examples below use `max_tokens` to mirror the literature's per-request cap. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them - size it with `--num-conversations` rather than `--request-count` (see below).
 
 ### Run All Five with a Matrix Report
 
@@ -270,8 +272,8 @@ aiperf speed-bench-report "$ART" --metric accept_length --format both
 > to 10 requests. Single-turn datasets use `--request-count`; the multi-turn
 > `spec_al_mtbench` uses `--num-conversations 80` (one run per conversation),
 > since `--request-count` recycles its 80 sessions to reach the count. Cap
-> generation with `--extra-inputs max_tokens:N` (`--osl` is ignored for public
-> datasets), and keep these runs in their own artifacts directory so
+> generation with `--extra-inputs max_tokens:N` (or `--osl N`, which public
+> datasets also honor), and keep these runs in their own artifacts directory so
 > `speed-bench-report` does not average them into an unrelated `speed_bench_*`
 > matrix.
 
@@ -300,8 +302,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_qualitative \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+    --public-dataset speed_bench_qualitative \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 16
 ```
@@ -318,8 +319,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_throughput_1k \
-    --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
+    --public-dataset speed_bench_throughput_1k \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 64 \
     --benchmark-duration 120
@@ -339,8 +339,7 @@ for tier in low_entropy mixed high_entropy; do
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
-      --custom-dataset-type "speed_bench_throughput_1k_${tier}" \
-      --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
+      --public-dataset "speed_bench_throughput_1k_${tier}" \
       --server-metrics http://localhost:8000/metrics \
       --concurrency 64 \
       --benchmark-duration 60
@@ -359,8 +358,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_qualitative \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+    --public-dataset speed_bench_qualitative \
     --no-server-metrics \
     --concurrency 16
 ```
