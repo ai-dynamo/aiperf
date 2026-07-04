@@ -33,7 +33,7 @@ The whole flow uses about a dozen types. If you know these, you can read any swe
 
 - **`AIPerfConfig`** — top-level envelope. Holds a `BenchmarkConfig` body plus envelope-level knobs: `sweep`, `multi_run`, `variables`, `random_seed`.
 - **`BenchmarkConfig`** — the actual benchmark settings (models, endpoint, datasets, phases, artifacts, …). The unit of "what to benchmark."
-- **`SweepConfig`** — discriminated union: `GridSweep` (cartesian over `variables`), `ScenarioSweep` (deep-merge `runs[i]`), or `AdaptiveSearchSweep` (BO / monotonic).
+- **`SweepConfig`** — discriminated union (six variants, discriminated on `type`): `GridSweep` (cartesian over `variables`), `ZipSweep` (variables zipped in lockstep), `ScenarioSweep` (deep-merge `runs[i]`), `AdaptiveSearchSweep` (BO / monotonic), `SobolSweep`, and `LatinHypercubeSweep` (quasi-Monte-Carlo samplers over `dimensions`).
 - **`MultiRunConfig`** — trial mechanics: `num_runs` (= trials per variation), cooldown, optional `convergence: ConvergenceConfig`.
 - **`SweepVariation`** — `{index, label, values}`. One per variation; carries the parameter values that differ from base.
 - **`BenchmarkPlan`** — the "expanded" form: `configs[N]`, `variations[N]`, `trials=M`, plus the originating `sweep` + `multi_run`. Output of `build_benchmark_plan`.
@@ -71,7 +71,7 @@ flowchart TD
         re["RunExecutor"]
         loc["LocalSubprocessExecutor<br/>(forks subprocess_runner)"]
         k8s["K8sChildJobExecutor<br/>(stamps child AIPerfJob,<br/>waits for terminal phase)"]
-        run["aiperf workload runs:<br/>SystemController +<br/>Worker / TimingManager /<br/>CreditIssuer / DatasetManager /<br/>RecordsManager / ResultsManager"]
+        run["aiperf workload runs:<br/>SystemController +<br/>Worker / TimingManager /<br/>CreditIssuer / DatasetManager /<br/>RecordProcessor / RecordsManager"]
         rr["RunResult"]
     end
 
@@ -102,7 +102,7 @@ The flow is identical regardless of where it runs. Local: the subprocess at step
 
 ## What happens between runs (per-cell loop)
 
-A "cell" is one `(variation, trial)` slot. Inside a cell, an `ExecutionStrategy` decides whether to keep going. `FixedTrialsStrategy` stops after M trials. `ConvergenceStrategy` keeps going until convergence criteria are met (or a hard cap). Around each `executor.execute(run)`, the orchestrator threads cancel-checking, sweep-wide failure thresholds, and inter-run cooldowns.
+A "cell" is one `(variation, trial)` slot. Inside a cell, an `ExecutionStrategy` decides whether to keep going. `FixedTrialsStrategy` stops after M trials. `AdaptiveStrategy` keeps going until its `ConvergenceCriterion` is met (or a hard cap). Around each `executor.execute(run)`, the orchestrator threads cancel-checking, sweep-wide failure thresholds, and inter-run cooldowns.
 
 ```mermaid
 %%{init: {'flowchart': {'nodeSpacing': 50, 'rankSpacing': 60, 'padding': 14, 'htmlLabels': true, 'curve': 'basis'}, 'themeVariables': {'fontSize': '15px'}}}%%
@@ -175,9 +175,9 @@ Adaptive search is the same pipeline with one swap: instead of "expand a fixed g
 - The sweep block is `AdaptiveSearchSweep` (`type: adaptive_search`) instead of `GridSweep` / `ScenarioSweep`.
 - `BenchmarkPlan.configs` starts with one seed config; the planner extends it as it asks.
 - `MultiRunOrchestrator` dispatches to `execute_adaptive_search`, which runs `planner.ask() → execute trials → planner.tell(results)` until `planner.ask()` returns `None` (or cancellation / abort).
-- Three planner plugins ship: `BayesianSearchPlanner` (skopt), `MonotonicSLASearchPlanner` (1D probe + bisection), `OptunaSearchPlanner`.
+- Four planner plugins ship: `BayesianSearchPlanner` (curated Optuna+BoTorch preset, subclass of `OptunaSearchPlanner`), `OptunaSearchPlanner` (Optuna TPE / GP / BoTorch backends), `MonotonicSLASearchPlanner` (1D probe + bisection), and `SmoothIsotonicSLAPlanner` (1D PAVA + PCHIP isotonic regression).
 - Optional `search_recipe` plugins build the whole `AdaptiveSearchSweep` from a higher-level recipe (e.g. `max-concurrency-under-sla`, `prefill-ttft-curve`).
-- An optional `post_process` handler (`degradation_knee`, `ttft_curve_fit`, `itl_surface_fit`, `sla_breach_knee`) runs after the final iteration.
+- An optional `post_process` handler (`degradation_knee_detect`, `ttft_curve_fit`, `itl_surface_fit`, `sla_breach_knee`) runs after the final iteration.
 - Cluster sweeps and adaptive search compose naturally: the sweep-controller pod's orchestrator drives the planner, and each `ask()` becomes a stamped child `AIPerfJob`.
 
 ```mermaid
@@ -228,7 +228,7 @@ flowchart LR
 
     subgraph TRIALS["trials per variation"]
         m_fixed["M = multi_run.num_runs<br/>(FixedTrialsStrategy)"]
-        m_conv["M = until convergence<br/>(ConvergenceStrategy,<br/>capped by num_runs)"]
+        m_conv["M = until convergence<br/>(AdaptiveStrategy + ConvergenceCriterion,<br/>capped by num_runs)"]
     end
 
     cells["N × M × BenchmarkRun<br/>= N × M × RunResult"]
@@ -311,7 +311,8 @@ Two things that surprise people:
 
 | Concept | File |
 |---|---|
-| Envelope, body, multi-run | `src/aiperf/config/{config,benchmark,multi_run}.py` |
+| Envelope + body (`AIPerfConfig`, `BenchmarkConfig`) | `src/aiperf/config/config.py` |
+| Multi-run / trials (`MultiRunConfig`) | `src/aiperf/config/sweep/multi_run.py` |
 | Sweep variants + expansion | `src/aiperf/config/sweep/{config,expand}.py` |
 | Plan loader (CLI/YAML → plan) | `src/aiperf/config/loader/plan.py` |
 | Orchestrator | `src/aiperf/orchestrator/orchestrator.py` |

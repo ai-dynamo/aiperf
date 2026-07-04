@@ -253,8 +253,8 @@ flowchart LR
     end
 
     subgraph DATA["data"]
+        rp["RecordProcessor"]
         rm["RecordsManager"]
-        res["ResultsManager"]
         art["artifacts:<br/>profile_export_aiperf.{json,csv}<br/>profile_export_aiperf_records.parquet"]
     end
 
@@ -266,16 +266,16 @@ flowchart LR
     bus --> dm
     bus --> w
     bus --> rm
-    bus --> res
+    bus --> rp
 
     ci -->|credits| tm
     tm -->|gated turns| w
     dm -->|conversation payload| w
     w -->|HTTP / SSE| llm
     llm -->|chunks| w
-    w -->|RequestRecord| rm
-    rm -->|aggregated| res
-    res --> art
+    w -->|raw results| rp
+    rp -->|metric records| rm
+    rm -->|aggregated export| art
 
     style CONTROL fill:transparent,stroke:#1976d2,stroke-width:2px,stroke-dasharray:0
     style LOAD fill:transparent,stroke:#ef6c00,stroke-width:2px,stroke-dasharray:0
@@ -442,7 +442,8 @@ classDiagram
     }
     class SweepConfig {
         <<discriminated union>>
-        type: grid | scenarios | adaptive_search
+        type: grid | zip | scenarios |
+        adaptive_search | sobol | latin_hypercube
     }
     class GridSweep {
         type: "grid"
@@ -452,6 +453,10 @@ classDiagram
         cooldown_seconds, sla_filters,
         post_process
     }
+    class ZipSweep {
+        type: "zip"
+        variables: dict[str, list]  (zipped in lockstep)
+    }
     class ScenarioSweep {
         type: "scenarios"
         runs: list[dict]
@@ -459,12 +464,23 @@ classDiagram
         cooldown_seconds, sla_filters,
         post_process
     }
+    class SobolSweep {
+        type: "sobol"
+        dimensions: list[SamplingDimension]
+        samples: int
+        scramble: bool
+    }
+    class LatinHypercubeSweep {
+        type: "latin_hypercube"
+        dimensions: list[SamplingDimension]
+        samples: int
+        optimization
+    }
     class AdaptiveSearchSweep {
         type: "adaptive_search"
-        algorithm: "bayes"
         planner: SearchPlannerType
         search_space: list[SearchSpaceDimension]
-        objective: AdaptiveObjective
+        objectives: list[Objective]
         max_iterations, n_initial_points
         plateau_window, plateau_threshold
         improvement_patience, random_seed
@@ -554,8 +570,11 @@ classDiagram
     AIPerfConfig --> MultiRunConfig : multi_run
     MultiRunConfig --> ConvergenceConfig : convergence
     SweepConfig <|-- GridSweep
+    SweepConfig <|-- ZipSweep
     SweepConfig <|-- ScenarioSweep
     SweepConfig <|-- AdaptiveSearchSweep
+    SweepConfig <|-- SobolSweep
+    SweepConfig <|-- LatinHypercubeSweep
 
     BenchmarkPlan --> BenchmarkConfig : configs[]
     BenchmarkPlan --> SweepVariation : variations[]
@@ -619,7 +638,8 @@ sequenceDiagram
 | `AIPerfConfig` envelope, `BenchmarkConfig` body | `src/aiperf/config/config.py` |
 | `BenchmarkPlan`, `BenchmarkRun`, `ResolvedConfig` | `src/aiperf/config/resolution/plan.py` |
 | `MultiRunConfig`, `ConvergenceConfig` | `src/aiperf/config/sweep/multi_run.py` |
-| `SweepConfig` union / `GridSweep` / `ScenarioSweep` / `AdaptiveSearchSweep` / `AdaptiveObjective` / `SweepVariation` | `src/aiperf/config/sweep/config.py` |
+| `SweepConfig` union / `GridSweep` / `ZipSweep` / `ScenarioSweep` / `AdaptiveSearchSweep` / `Objective` / `SweepVariation` | `src/aiperf/config/sweep/config.py` |
+| `SobolSweep` / `LatinHypercubeSweep` / `SamplingDimension` (union members) | `src/aiperf/config/sweep/sampling.py` |
 | `expand_sweep` (definition) | `src/aiperf/config/sweep/expand.py` (re-exported from the `sweep` package) |
 | `SearchSpaceDimension`, `SLAFilter` | `src/aiperf/config/sweep/adaptive.py` |
 | `PostProcessSpec`, `SearchRecipe`, `SearchRecipeContext`, `SearchRecipeOutput` | `src/aiperf/search_recipes/_base.py` |
@@ -644,7 +664,7 @@ sequenceDiagram
 | AIPerfJob create / monitor / completion handlers | `src/aiperf/operator/handlers/{create,monitor,completion}.py` |
 | JobSet terminal-condition + pod-restart watchers | `src/aiperf/operator/handlers/{jobset_terminal,pod_restarts}.py` |
 | AIPerfSweep handlers (stamp children, rollup, aggregate fetch, lifecycle) | `src/aiperf/operator/handlers/sweep/{create,child_rollup,_aggregate_fetch,lifecycle,_child_runs}.py` |
-| Plugin registry + categories | `src/aiperf/plugin/{_registry,categories.yaml,metadata.py,plugins.py}` |
+| Plugin registry + categories | `src/aiperf/plugin/{_registry,categories.yaml,types.py,plugins.py}` |
 
 ## 14. Plugin system — registration & lookup
 
@@ -661,8 +681,8 @@ flowchart LR
     subgraph CORE["registry"]
         loader["plugin/_loader.py"]
         cats["categories.yaml<br/>(category schemas)"]
-        meta["metadata.py<br/>(typed accessors)"]
-        reg[("PluginRegistry<br/>(singleton)")]
+        meta["types.py + plugins.py<br/>(typed accessors)"]
+        reg[("_PluginRegistry<br/>(singleton)")]
     end
 
     subgraph LOOKUP["resolve at runtime"]
@@ -772,7 +792,7 @@ flowchart TB
     style PLATFORM fill:transparent,stroke:#2e7d32,stroke-width:2px
 ```
 
-The full registry has 37 categories (see `src/aiperf/plugin/categories.yaml`). All are reachable via `plugins.get_class(PluginType.X, name)`; per-category typed metadata via `get_typed_metadata(category, name)` is available for `endpoint`, `transport`, `plot`, `service`, `custom_dataset_loader`, `convergence_criterion`, `search_planner` (others fall back to the raw metadata dict).
+The full registry has 35 categories (see `src/aiperf/plugin/categories.yaml`). All are reachable via `plugins.get_class(PluginType.X, name)`; per-category typed metadata via `get_typed_metadata(category, name)` is available for `endpoint`, `transport`, `plot`, `service`, `custom_dataset_loader`, `convergence_criterion`, `search_planner` (others fall back to the raw metadata dict).
 
 ## 16. ABC hierarchy — orchestrator-side
 
@@ -790,15 +810,15 @@ flowchart TB
     end
 
     subgraph STRAT["per-cell control"]
-        es["ExecutionStrategy (ABC)<br/>validate_config / should_continue / record_result"]
+        es["ExecutionStrategy (ABC)<br/>should_continue / get_next_config / get_run_label /<br/>get_cooldown_seconds / get_run_path / get_aggregate_path"]
         ft["FixedTrialsStrategy"]
-        cv["ConvergenceStrategy"]
+        ads["AdaptiveStrategy"]
         es --> ft
-        es --> cv
+        es --> ads
     end
 
     subgraph CONV["convergence"]
-        cc["ConvergenceCriterion (ABC)<br/>from_plan / update / converged"]
+        cc["ConvergenceCriterion (ABC)<br/>from_plan / is_converged"]
         ci["CIWidthConvergence"]
         cvc["CVConvergence"]
         dc["DistributionConvergence"]
@@ -808,19 +828,28 @@ flowchart TB
     end
 
     subgraph SEARCH["adaptive search"]
-        sp["SearchPlanner (ABC)<br/>propose_next / record / converged"]
-        bo["BayesianSearchPlanner<br/>(skopt)"]
-        sp --> bo
+        sp["SearchPlanner (ABC)<br/>ask / tell / is_converged / history"]
+        opt["OptunaSearchPlanner"]
+        bo["BayesianSearchPlanner<br/>(curated Optuna+BoTorch preset)"]
+        msla["MonotonicSLASearchPlanner"]
+        siso["SmoothIsotonicSLAPlanner"]
+        sp --> opt
+        opt --> bo
+        sp --> msla
+        sp --> siso
     end
 
     subgraph AGG["aggregation"]
-        as["AggregationStrategy (ABC)<br/>aggregate / metric_keys"]
-        sa["SweepAnalyzer<br/>(post-hoc analyzer)"]
-        as --> sa
+        as["AggregationStrategy (ABC)<br/>aggregate / get_aggregation_type"]
+        ca["ConfidenceAggregation"]
+        da["DetailedAggregation"]
+        as --> ca
+        as --> da
+        sa["SweepAnalyzer<br/>(plain post-hoc analyzer, not an AggregationStrategy)"]
     end
 
     subgraph DATAS["dataset"]
-        bds["BaseDatasetSampler (ABC)<br/>sample"]
+        bds["BaseDatasetSampler (ABC)<br/>next_conversation_id"]
         bds --> rng["RandomSampler / SeqSampler / …"]
     end
 
@@ -866,12 +895,12 @@ flowchart TB
         ci["CreditIssuer<br/>(plain class, not a service)"]
         dm["DatasetManager"]
         rm["RecordsManager"]
-        rs["ResultsManager"]
+        rp["RecordProcessor"]
         bcs --> wk
         bcs --> ti
         bcs --> dm
         bcs --> rm
-        bcs --> rs
+        bcs --> rp
     end
 
     lc --> bs
@@ -963,7 +992,7 @@ How a registered plugin gets instantiated at run time. Same flow regardless of w
 sequenceDiagram
     autonumber
     participant Caller as Caller<br/>(e.g. cli_runner)
-    participant Reg as PluginRegistry
+    participant Reg as _PluginRegistry
     participant Cat as categories.yaml
     participant Ent as PluginEntry
     participant Cls as Plugin class
@@ -976,7 +1005,7 @@ sequenceDiagram
     Reg-->>Caller: cls
     Caller->>Cls: cls.from_plan(plan) /<br/>cls(...)
     Cls-->>Caller: instance
-    Caller->>Cls: invoke (e.g. converged?,<br/>propose_next, execute)
+    Caller->>Cls: invoke (e.g. is_converged,<br/>ask / tell, execute)
 ```
 
 ## 20. Plugin → ABC/Protocol cross-reference
@@ -1006,7 +1035,7 @@ flowchart LR
     subgraph IF["interface (ABC or Protocol)"]
         a1["ConvergenceCriterion (ABC)"]
         a2["SearchPlanner (ABC)"]
-        a3["BaseDatasetSampler (ABC)"]
+        a3["DatasetSamplingStrategyProtocol"]
         p1["CustomDatasetLoaderProtocol"]
         p2["PublicDatasetLoaderProtocol"]
         p3["DataExporterProtocol"]
@@ -1016,7 +1045,7 @@ flowchart LR
         p7["GPUTelemetryCollectorProtocol"]
         p8["ServerMetricsProcessorProtocol"]
         b1["BaseComponentService (ABC)"]
-        a4["IntervalGeneratorProtocol"]
+        a4["TimingStrategyProtocol"]
         r1["FastAPI APIRouter (factory fn)"]
     end
 
@@ -1049,7 +1078,7 @@ flowchart TB
     subgraph CFG["envelope (1)"]
         a["AIPerfConfig<br/>schema_version / benchmark / sweep /<br/>multi_run / variables / random_seed"]
         bc["BenchmarkConfig<br/>(envelope.benchmark, body type)"]
-        sw["SweepConfig (Annotated union)<br/>GridSweep | ScenarioSweep |<br/>AdaptiveSearchSweep"]
+        sw["SweepConfig (Annotated union)<br/>GridSweep | ZipSweep | ScenarioSweep |<br/>AdaptiveSearchSweep | SobolSweep | LatinHypercubeSweep"]
         mr["MultiRunConfig<br/>num_runs (→ plan.trials)<br/>cooldown_seconds, confidence_level,<br/>set_consistent_seed,<br/>disable_warmup_after_first,<br/>convergence: ConvergenceConfig | None"]
         a --> bc
         a --> sw
@@ -1145,10 +1174,11 @@ The adaptive search path layers atop the same `BenchmarkPlan` / `MultiRunOrchest
 classDiagram
     class AdaptiveSearchSweep {
         type: "adaptive_search"
-        algorithm: "bayes"
         planner: SearchPlannerType
+        (bayesian | optuna | monotonic_sla | smooth_isotonic)
         search_space: list[SearchSpaceDimension]
-        objective: AdaptiveObjective
+        objectives: list[Objective]
+        outcome_constraints: list[OutcomeConstraint]
         max_iterations: int
         n_initial_points: int
         plateau_window / plateau_threshold
@@ -1162,21 +1192,21 @@ classDiagram
         sla_filters: list[SLAFilter]
         post_process: PostProcessSpec | None
     }
-    class AdaptiveObjective {
+    class Objective {
         metric: str
         stat: avg | p50 | p90 | p95 | p99
         direction: OptimizationDirection
     }
     class SearchSpaceDimension {
         path: str  (envelope-rooted)
-        low / high
-        type: int | float
-        log: bool
+        lo / hi
+        kind: int | real
+        prior: uniform | log-uniform
     }
     class SLAFilter {
-        metric: str
+        metric_tag: str
         stat: avg | p50 | p90 | p95 | p99
-        op: lt | gt | le | ge
+        op: lt | le | gt | ge
         threshold: float
     }
     class PostProcessSpec {
@@ -1199,10 +1229,15 @@ classDiagram
         history() list[SearchIteration]
         convergence_reason() str | None  (default None, not abstract)
     }
+    class OptunaSearchPlanner {
+        sampler: gp | tpe | botorch
+        acquisition + constraint_mode
+    }
     class BayesianSearchPlanner {
-        skopt Optimizer (lazy import)
-        constraint_mode: penalty / eic
-        plateau / patience checks
+        curated Optuna preset
+        (subclass of OptunaSearchPlanner)
+        BoTorch qLogNEI / qLogNEHVI,
+        TPE fallback
     }
     class MonotonicSLASearchPlanner {
         1D exponential probe + bisection
@@ -1210,16 +1245,18 @@ classDiagram
         (feasible_max / infeasible_min /
         first_breach)
     }
-    class OptunaSearchPlanner {
-        sampler: gp | tpe | botorch
+    class SmoothIsotonicSLAPlanner {
+        1D PAVA + PCHIP isotonic regression
+        boundary_summary() dict
     }
     class SearchIteration {
         iteration_idx: int
         variation_values: dict[str, Any]
-        objective_value: float
-        results: list[RunResult]
+        objective_value: float | None
+        objective_values: list[float] | None
+        results: list[Any]
         feasible: bool
-        non_monotonic_warning: str | None
+        non_monotonic_warning: bool
     }
 
     class SearchRecipe {
@@ -1255,14 +1292,15 @@ classDiagram
         executor, planner, *, cancel_check)
     }
 
-    AdaptiveSearchSweep --> AdaptiveObjective : objective
+    AdaptiveSearchSweep --> Objective : objectives[]
     AdaptiveSearchSweep --> SearchSpaceDimension : search_space[]
     AdaptiveSearchSweep --> SLAFilter : sla_filters[]
     AdaptiveSearchSweep --> PostProcessSpec : post_process
     BenchmarkPlan --> AdaptiveSearchSweep : sweep
-    SearchPlanner <|-- BayesianSearchPlanner
-    SearchPlanner <|-- MonotonicSLASearchPlanner
     SearchPlanner <|-- OptunaSearchPlanner
+    OptunaSearchPlanner <|-- BayesianSearchPlanner
+    SearchPlanner <|-- MonotonicSLASearchPlanner
+    SearchPlanner <|-- SmoothIsotonicSLAPlanner
     SearchPlanner ..> SearchIteration : history
     SearchPlanner ..> AdaptiveSearchSweep : configured by
     SearchRecipe ..> SearchRecipeContext : reads
@@ -1287,7 +1325,7 @@ Built-in `search_recipe` plugins (`src/aiperf/search_recipes/`):
 - `prefill-ttft-curve`, `decode-itl-curve`
 - `max-goodput-under-slo`, `max-concurrency-under-sla`
 
-Built-in `search_recipe_post_process` plugins: `degradation_knee`, `ttft_curve_fit`, `itl_surface_fit`, `sla_breach_knee`.
+Built-in `search_recipe_post_process` plugins: `degradation_knee_detect`, `ttft_curve_fit`, `itl_surface_fit`, `sla_breach_knee`.
 
 ## 23. Adaptive search — execution flow
 
@@ -1355,7 +1393,7 @@ flowchart TB
         plan["AIPerfConfig.sweep<br/>= AdaptiveSearchSweep"]
         plan2["BenchmarkPlan.sweep<br/>(is_adaptive_search=True)"]
         sp["SearchPlanner plugin<br/>(BayesianSearchPlanner |<br/>MonotonicSLASearchPlanner |<br/>OptunaSearchPlanner)"]
-        pph["search_recipe_post_process plugin<br/>(degradation_knee, ttft_curve_fit,<br/>itl_surface_fit, sla_breach_knee)"]
+        pph["search_recipe_post_process plugin<br/>(degradation_knee_detect, ttft_curve_fit,<br/>itl_surface_fit, sla_breach_knee)"]
     end
 
     cli --> rc
