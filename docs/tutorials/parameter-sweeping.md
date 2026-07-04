@@ -27,29 +27,11 @@ This helps answer questions like:
 
 ## UI Behavior in Parameter Sweep Mode
 
-Parameter sweep mode automatically uses the `simple` UI by default for the best experience. The dashboard UI is not supported due to terminal control limitations.
-
-### Default UI Selection
-
-When using `--concurrency` with a list of values, AIPerf automatically sets `--ui simple` unless you explicitly specify a different UI:
-
-```bash
-# These are equivalent - simple UI is auto-selected
-```bash
-aiperf profile --concurrency 10,20,30,40 ...
-aiperf profile --concurrency 10,20,30,40 --ui simple ...
-```
-
-You'll see an informational message:
-```text
-Parameter sweep mode: UI automatically set to 'simple' (use '--ui none' to disable UI output)
-```
+Sweep mode rejects the dashboard UI — a live dashboard cannot multiplex multiple sequential benchmarks. Use `--ui simple` (progress bars per sweep value) or `--ui none` (minimal output, ideal for CI). With no explicit `--ui`, AIPerf falls back to its standard auto-selection rules.
 
 ### Supported UI Options
 
-**Simple UI (Default)**
-```bash
-aiperf profile \
+**Simple UI**
 ```bash
 aiperf profile \
   --concurrency 10,20,30,40 \
@@ -62,9 +44,6 @@ Shows progress bars for each sweep value - works well with parameter sweeps.
 ```bash
 aiperf profile \
   --concurrency 10,20,30,40 \
-```bash
-aiperf profile \
-  --concurrency 10,20,30,40 \
   --ui none \
   ...
 ```
@@ -72,15 +51,16 @@ Minimal output, fastest execution - ideal for automated runs or CI/CD pipelines.
 
 ### Dashboard UI Not Supported
 
-The dashboard UI (`--ui dashboard`) is incompatible with parameter sweep mode. If you explicitly try to use it, you'll get an error:
+The dashboard UI (`--ui dashboard`) is incompatible with parameter sweep mode. Setting it explicitly alongside a sweep raises a validation error:
 
 ```bash
 aiperf profile --concurrency 10,20,30,40 --ui dashboard ...
 ```
 
 ```text
-ValueError: Dashboard UI is not supported with parameter sweeps
-due to terminal control limitations. Please use '--ui simple' or '--ui none' instead.
+Dashboard UI is incompatible with parameter sweeps; sweep results would
+overwrite each other in the live console. Use --ui simple or --ui none with
+--concurrency <list> / any sweep configuration.
 ```
 
 ## Basic Usage

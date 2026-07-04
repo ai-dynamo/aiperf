@@ -151,7 +151,7 @@ If your alerting cared about hard failures only (operator/job errors, not user c
 There is no automated migration tool. Per the "zero backward compat" policy, regenerate CRs from your local `aiperf profile` config:
 
 ```bash
-aiperf kube generate -c config.yaml > new-cr.yaml
+aiperf kube generate -f config.yaml > new-cr.yaml
 ```
 
 The CLI emits the right `kind:` based on whether your local config has a sweep block, and writes the flat envelope.
