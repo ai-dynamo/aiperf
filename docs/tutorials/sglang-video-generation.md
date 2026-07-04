@@ -250,7 +250,7 @@ AIPerf automatically handles polling for video generation. Configure polling beh
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `--request-timeout-seconds` | Maximum wait time before timeout | `21600` (6 hours) |
-| `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | Seconds between status checks (0.1-60) | `0.1` |
+| `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | Seconds between status checks (0.001-10.0) | `0.1` |
 
 **Example with custom timeout and polling interval:**
 ```bash
