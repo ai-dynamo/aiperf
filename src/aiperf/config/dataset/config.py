@@ -259,6 +259,9 @@ class SyntheticDataset(BaseConfig):
         `SyntheticDataset.model_validate({...isl...})` callers (programmatic use).
         """
         if isinstance(data, dict):
+            # Copy first — mode="before" receives the caller's actual dict and
+            # the hoist pops keys; mutating in place leaks back to the caller.
+            data = dict(data)
             _hoist_synthetic_prompt_fields(data)
         return data
 

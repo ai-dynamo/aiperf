@@ -116,6 +116,11 @@ def normalize_benchmark_input(data: Any) -> Any:
     if not isinstance(data, dict):
         return data
 
+    # Shallow-copy first: as a mode="before" validator this receives the
+    # CALLER's actual dict, and normalizing in place leaks renamed keys back
+    # into caller state (e.g. kopf resource bodies, docs-snippet fixtures).
+    # Pydantic consumes the return value, so the copy is transparent.
+    data = dict(data)
     _check_mutual_exclusivity(data)
     _normalize_warmup_profiling_to_phases(data)
     _normalize_models(data)
@@ -158,6 +163,9 @@ def _normalize_single_dataset_listed(
             f"Each dataset entry needs a name (e.g. 'main', 'eval')."
         )
 
+    # Copy before hoisting: entries arrive from the caller's nested structures
+    # and in-place mutation would leak normalized keys back to the caller.
+    config = dict(config)
     _hoist_synthetic_prompt_fields(config)
 
     if "type" not in config:

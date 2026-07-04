@@ -217,6 +217,16 @@ def test_docs_kubernetes_aiperf_cr_snippet_declares_required_datasets_and_phases
     datasets = _sequence(benchmark.get("datasets"))
     phases = _sequence(benchmark.get("phases"))
 
+    # First-class shorthands (config/loader/normalizers.py) count as declared:
+    # a singular `dataset:` mapping expands to datasets=[{name: "default", ...}]
+    # and a flat `phases:` mapping expands to phases=[{name: "profiling", ...}].
+    # Asserted on the raw YAML because validation no longer mutates the
+    # snippet's dict in place (normalizers operate on copies).
+    if not datasets and _mapping(benchmark.get("dataset")):
+        datasets = [{"name": "default", **_mapping(benchmark.get("dataset"))}]
+    if not phases and _mapping(benchmark.get("phases")):
+        phases = [{"name": "profiling", **_mapping(benchmark.get("phases"))}]
+
     assert datasets, (
         f"{snippet.source_id}: spec.benchmark.datasets must be a non-empty list"
     )
