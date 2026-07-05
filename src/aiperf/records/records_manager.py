@@ -82,6 +82,7 @@ from aiperf.post_processors.protocols import (
     FlushableResultsProcessorProtocol,
     ResultsProcessorProtocol,
 )
+from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.server_metrics.protocols import (
@@ -148,6 +149,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._records_tracker = RecordsTracker()
         self._error_tracker = ErrorTracker()
+
+        # DatasetConfiguredNotification (SUB) and metric records (PULL) arrive on
+        # independent channels with no ordering guarantee. Gate record processing on
+        # this event so results processors are configured (e.g. accuracy task names)
+        # before any record is accumulated.
+        self._dataset_configured_event: asyncio.Event = asyncio.Event()
 
         self._previous_realtime_records: int | None = None
 
@@ -251,6 +258,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.METRIC_RECORDS)
     async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
         """Handle a metric records message."""
+        if not await await_dataset_configured(self, self._dataset_configured_event):
+            return
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
@@ -452,7 +461,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for results_processor in self._metric_results_processors:
             try:
                 await results_processor.process_result(record_data)
-            except Exception as exc:  # noqa: BLE001 - telemetry processor failure must not crash the run
+            # telemetry processor failure must not crash the run
+            except Exception as exc:
                 self.exception(
                     "Failed to process metric record in "
                     f"{results_processor.__class__.__name__}: {exc!r}"
@@ -585,6 +595,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for processor in self._metric_results_processors:
             if hasattr(processor, "on_dataset_configured"):
                 processor.on_dataset_configured(message.metadata)
+        self._dataset_configured_event.set()
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(

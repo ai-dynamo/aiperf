@@ -8,6 +8,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from prometheus_client.metrics_core import Metric
+from prometheus_client.openmetrics.parser import (
+    text_string_to_metric_families as openmetrics_text_string_to_metric_families,
+)
 from prometheus_client.parser import text_string_to_metric_families
 from pydantic import ValidationError
 
@@ -15,7 +18,10 @@ from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.mixins import BaseMetricsCollectorMixin
-from aiperf.common.mixins.base_metrics_collector_mixin import FetchResult
+from aiperf.common.mixins.base_metrics_collector_mixin import (
+    OPENMETRICS_CONTENT_TYPE_PREFIX,
+    FetchResult,
+)
 from aiperf.common.models import ErrorDetails
 from aiperf.common.models.server_metrics_models import (
     MetricFamily,
@@ -274,7 +280,9 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         metrics_dict: dict[str, MetricFamily] = {}
 
         try:
-            for family in text_string_to_metric_families(fetch_result.text):
+            for family in self._parse_families(
+                fetch_result.text, fetch_result.content_type
+            ):
                 # Skip _created metrics - these are timestamps indicating when the parent metric was created, not actual metric data
                 # or _uptime metrics - these are timestamps indicating how long the server has been running.
                 if (
@@ -340,6 +348,18 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
             is_duplicate=fetch_result.is_duplicate,
         )
 
+    def _parse_families(self, text: str, content_type: str | None) -> list[Metric]:
+        """Parse the body with the OpenMetrics parser for
+        ``application/openmetrics-text`` (classic mistypes its counters), falling
+        back to the classic parser if the stricter OpenMetrics parser rejects it.
+        """
+        if content_type and content_type.startswith(OPENMETRICS_CONTENT_TYPE_PREFIX):
+            try:
+                return list(openmetrics_text_string_to_metric_families(text))
+            except ValueError:
+                pass
+        return list(text_string_to_metric_families(text))
+
     def _warn_dropped_non_finite(self, metric_name: str, dropped_count: int) -> None:
         """Warn once per metric name when non-finite (NaN/Inf) samples are dropped.
 
@@ -400,6 +420,10 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         dropped_non_finite = 0
 
         for sample in family.samples:
+            # Skip OpenMetrics `_created` samples: they share the `_total` labels
+            # and would otherwise overwrite the real value in the de-dup below.
+            if sample.name.endswith("_created"):
+                continue
             if sample.value is None:
                 # Ordinary missing data — not a corruption signal, skip silently.
                 continue
