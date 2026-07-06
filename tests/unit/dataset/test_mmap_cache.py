@@ -946,16 +946,25 @@ class TestComputeCacheKeyRunGates:
     """Run-level gates that disable caching entirely (key is None)."""
 
     def test_accuracy_mode_disables_caching(self, tmp_path: Path) -> None:
-        from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+        """Accuracy mode must gate BEFORE the dataset-source checks: pair it
+        with a trace input file that would otherwise be cacheable."""
+        from aiperf.plugin.enums import AccuracyBenchmarkType, CustomDatasetType
 
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8, '
+            b'"output_length": 4}\n',
+        )
         run = make_run_from_cli(
             CLIConfig(
                 model_names=["test-model"],
-                endpoint_type=EndpointType.COMPLETIONS,
-                streaming=False,
-                benchmark=AccuracyBenchmarkType.MMLU,
+                input_file=str(trace),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                accuracy_benchmark=AccuracyBenchmarkType.MMLU,
             )
         )
+        assert run.cfg.accuracy is not None and run.cfg.accuracy.enabled is True
+
         assert mmap_cache.compute_cache_key_from_run(run) is None
 
     def test_synthetic_only_run_disables_caching(self) -> None:
