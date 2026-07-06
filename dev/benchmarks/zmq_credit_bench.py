@@ -391,7 +391,7 @@ async def _sub(mode, addr, count, result):
             socket=sub, recv_one=recv_one, dispatch=on_msg, batch_limit=YIELD_INTERVAL
         )
         reader.start()
-        with contextlib.suppress(asyncio.TimeoutError):
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(done.wait(), timeout=60)
         reader.stop()
     else:
