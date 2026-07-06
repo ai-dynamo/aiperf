@@ -62,7 +62,7 @@ def _walk_items_arrays(
     fallbacks should not also fire).
     """
     found = False
-    chat_messages: list[dict[str, str]] = []
+    chat_messages: list[dict[str, Any]] = []
     for items_field in ("messages", "input"):
         items = payload.get(items_field)
         if not isinstance(items, list) or not items:
@@ -90,7 +90,7 @@ def _walk_item(
     item: dict[str, Any],
     result: ExtractedPayload,
     type_to_media: dict[str, MediaType],
-    chat_messages: list[dict[str, str]],
+    chat_messages: list[dict[str, Any]],
 ) -> None:
     """Walk one chat/Responses item: content, tool_calls, function_call(_output).
 
@@ -105,7 +105,13 @@ def _walk_item(
         # Chat templates expect string content. Concatenate the text parts
         # of mixed-content messages; media parts are dropped here (they don't
         # templatize meaningfully and the media counts already captured them).
-        chat_messages.append({"role": role, "content": "".join(msg_text_parts)})
+        msg: dict[str, Any] = {"role": role, "content": "".join(msg_text_parts)}
+        # Pass replayed tool_calls through: chat templates render them, so
+        # dropping them would undercount the templated ISL for agent replays.
+        tool_calls = item.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            msg["tool_calls"] = tool_calls
+        chat_messages.append(msg)
 
 
 def _walk_item_content(
