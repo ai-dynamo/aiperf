@@ -53,6 +53,11 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
       <td>Recorded agent sessions from <a href="https://huggingface.co/datasets/Exgentic/agent-llm-traces"><code>--public-dataset exgentic</code></a></td>
     </tr>
     <tr>
+      <td><strong>Exgentic v2</strong></td>
+      <td style="text-align: center;">✅</td>
+      <td>Expanded recorded agent sessions from <a href="https://huggingface.co/datasets/Exgentic/agent-llm-traces-v2"><code>--public-dataset exgentic_v2</code></a></td>
+    </tr>
+    <tr>
       <td><strong>Agentic Code</strong></td>
       <td style="text-align: center;">✅</td>
       <td>Synthetic multi-turn coding-agent traces with shared prompt layers, repository context, and cache-aware turn growth. Generated via <a href="tutorials/agentic-code-generator.md"><code>aiperf synthesize agentic-code</code></a> and replayed as a Mooncake trace.</td>
@@ -62,7 +67,7 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
 
 ## Exgentic Agent Trace Replay
 
-The Exgentic loader streams recorded agent sessions directly from Hugging Face at revision `70036b93a04e61b0ea2706a68b962f4f26774587`. It replays each successful, positive-token `llm_call` as a self-contained request snapshot. Recorded messages, tool definitions, tool calls and results, output-token limits, and call start times are preserved. Tools are not executed, and live responses are not added to later requests. Every request carries the source session as `x-dynamo-session-id` for Dynamo agentic tracing while AIPerf retains its own request correlation ID.
+The Exgentic loaders stream recorded agent sessions directly from Hugging Face. `exgentic` is pinned to v1 revision `70036b93a04e61b0ea2706a68b962f4f26774587`; `exgentic_v2` is independently pinned to v2 revision `4b8ad4ab198438e5a170f9171c19c6a2cf7c1814`. Each replays successful, positive-token chat call snapshots. Recorded messages, system instructions, tool definitions, output-token limits, request controls, and call start times are preserved. Tools are not executed, and live responses are not added to later requests. Every request carries the source session as `x-dynamo-session-id` for Dynamo agentic tracing while AIPerf retains its own request correlation ID.
 
 Provide a finite materialization bound through `--num-conversations`, `--num-dataset-entries`, or `--request-count`. `--benchmark-duration` limits request issuance, not dataset setup.
 
@@ -73,14 +78,15 @@ aiperf profile \
   --model TARGET_MODEL \
   --url http://localhost:8000/v1/chat/completions \
   --endpoint-type chat \
-  --public-dataset exgentic \
-  --dataset-filter harness=tool_calling_with_shortlisting \
+  --public-dataset exgentic_v2 \
+  --dataset-filter benchmark=swebench \
+  --dataset-filter harness=tool_calling \
   --dataset-filter source_model=Kimi-K2.5 \
   --num-conversations 1 \
   --fixed-schedule
 ```
 
-`source_model` selects the model that produced the trace; `--model` selects the target model receiving the replay. Invalid filters report the available harness/model combinations. The dataset currently contains 22 combinations across five harnesses and six canonical source models.
+`source_model` selects the model that produced the trace; `--model` selects the target model receiving the replay. `benchmark` selects an Exgentic v2 workload. Invalid filters report the available harness/model combinations. The v1 dataset contains 22 combinations across five harnesses and six canonical source models.
 
 Fixed-schedule mode emits each recorded call as an independently scheduled one-turn request using its start offset from the source session. Calls that overlapped in the trace therefore overlap during replay. Selected source sessions start together at offset zero. Without `--fixed-schedule`, each source session remains a closed-loop multi-turn conversation: AIPerf waits for one live response before applying the recorded residual delay and sending the next request.
 
