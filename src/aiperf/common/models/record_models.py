@@ -1174,8 +1174,13 @@ class MediaCounts:
     """
 
     images: int = 0
+    """Count of image content parts in the wire payload."""
+
     audios: int = 0
+    """Count of audio content parts in the wire payload."""
+
     videos: int = 0
+    """Count of video content parts in the wire payload."""
 
 
 @dataclass

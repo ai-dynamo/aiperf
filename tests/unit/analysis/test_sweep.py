@@ -1105,6 +1105,71 @@ class TestTokensInFlightSweepIcl:
         assert np.all(tif >= 0.0)
         assert tif[-1] == pytest.approx(0.0)
 
+    def test_nan_gen_start_record_no_unbalanced_subtraction(self) -> None:
+        """A record whose chunks are all invalid (NaN gen_start) must not
+        take the end-of-request subtraction path.
+
+        Its chunks fail chunk_valid and TTFT emits nothing, so if has_icl
+        still flagged it, end_with_icl_only would subtract output_tokens
+        with no matching additions, leaving a permanent negative offset.
+        """
+        start = np.array([0.0, np.nan])
+        gen_start = np.array([10.0, np.nan])
+        end = np.array([110.0, 120.0])
+        input_tok = np.array([100.0, np.nan])
+        output_tok = np.array([20.0, 40.0])
+
+        # req0: 2 chunks of 50ns; req1 has ICL entries but NaN gen_start
+        icl_vals = np.array([50.0, 50.0, 30.0, 30.0], dtype=np.float64)
+        icl_rec = np.array([0, 0, 1, 1], dtype=np.int32)
+        icl_off = np.array([0, 2], dtype=np.int64)
+
+        ts, tif = tokens_in_flight_sweep_line_icl(
+            start,
+            gen_start,
+            end,
+            input_tok,
+            output_tokens=output_tok,
+            icl_values=icl_vals,
+            icl_record_indices=icl_rec,
+            icl_offsets=icl_off,
+        )
+
+        assert np.all(np.isfinite(tif))
+        assert np.all(tif >= 0.0)
+        assert tif[-1] == pytest.approx(0.0)
+
+    def test_nan_output_tokens_record_does_not_poison_cumsum(self) -> None:
+        """NaN output_tokens on one record must not inject NaN into the curve.
+
+        Pre-fix, a record with valid prefill but NaN output_tokens routed to
+        end_with_input_and_icl and appended -(input + NaN), corrupting every
+        value after that timestamp.
+        """
+        start = np.array([0.0, 5.0])
+        gen_start = np.array([10.0, 15.0])
+        end = np.array([110.0, 120.0])
+        input_tok = np.array([100.0, 50.0])
+        output_tok = np.array([20.0, np.nan])
+
+        icl_vals = np.array([50.0, 50.0, 30.0, 30.0], dtype=np.float64)
+        icl_rec = np.array([0, 0, 1, 1], dtype=np.int32)
+        icl_off = np.array([0, 2], dtype=np.int64)
+
+        ts, tif = tokens_in_flight_sweep_line_icl(
+            start,
+            gen_start,
+            end,
+            input_tok,
+            output_tokens=output_tok,
+            icl_values=icl_vals,
+            icl_record_indices=icl_rec,
+            icl_offsets=icl_off,
+        )
+
+        assert np.all(np.isfinite(tif))
+        assert tif[-1] == pytest.approx(0.0)
+
 
 class TestComputeActiveWeightedStats:
     """Stats restricted to segments where a mask curve is positive."""

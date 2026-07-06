@@ -1162,7 +1162,7 @@ class _UISettings(BaseSettings):
     REALTIME_METRICS_INTERVAL: float | None = Field(
         ge=0.0,
         le=1000.0,
-        default=5.0,
+        default=None,
         description=(
             "Interval in seconds between real-time metrics messages (and the "
             "per-tick stats log block). 0 disables the log block; dashboards "

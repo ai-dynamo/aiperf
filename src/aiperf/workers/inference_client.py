@@ -215,6 +215,15 @@ class InferenceClient(AIPerfLifecycleMixin):
         record.model_name = (
             request_info.turns[-1].model or self.model_endpoint.primary_model_name
         )
+        # Hoist per-turn scalars onto the RecordContext so the record
+        # processor's metrics (requested_osl, audio_duration) can read them
+        # without walking turns: max_tokens from the dispatch turn,
+        # audio_duration_seconds from the first turn (ASR requests are
+        # single-turn; mirrors the pre-hoist turns[0] read).
+        request_info.max_tokens = request_info.turns[-1].max_tokens
+        request_info.audio_duration_seconds = request_info.turns[
+            0
+        ].audio_duration_seconds
         self._enrich_request_record(record, request_info)
 
         # Copy turns with stripped multimodal data to avoid mutating original session

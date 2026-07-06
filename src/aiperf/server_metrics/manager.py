@@ -269,9 +269,17 @@ class ServerMetricsManager(BaseComponentService):
                             f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
                         )
             finally:
-                self._active_phase = previous_phase
+                # Compare-and-set: message handlers run as independent tasks,
+                # so CREDIT_PHASE_START(PROFILING) can land while the scrapes
+                # above are awaited. Blindly restoring/clearing would clobber
+                # the newer phase and tag the whole profiling run as None.
+                if self._active_phase == CreditPhase.WARMUP:
+                    self._active_phase = previous_phase
 
-        if message.stats.phase != CreditPhase.PROFILING:
+        if (
+            message.stats.phase != CreditPhase.PROFILING
+            and self._active_phase == message.stats.phase
+        ):
             self._active_phase = None
 
     @on_command(CommandType.PROFILE_COMPLETE)
