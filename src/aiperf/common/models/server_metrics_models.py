@@ -3,10 +3,9 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import ClassVar, Self
 
 from pydantic import Field, SerializeAsAny, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.finite import FiniteFloat

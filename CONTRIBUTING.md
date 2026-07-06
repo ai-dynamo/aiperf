@@ -11,7 +11,7 @@ For technical architecture, see [`docs/architecture.md`](docs/architecture.md). 
 
 ### Prerequisites
 
-- **Python 3.10+**
+- **Python 3.11+**
 - **uv**: Package manager (installed automatically by `make first-time-setup`)
 - **pre-commit**: For automated code quality checks
 

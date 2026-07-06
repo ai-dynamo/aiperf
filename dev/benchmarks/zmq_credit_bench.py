@@ -403,7 +403,7 @@ async def _sub(mode, addr, count, result):
                 n += 1
                 if n % YIELD_INTERVAL == 0:
                     await asyncio.sleep(0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
     elapsed = (times["last"] - times["first"]) / 1e9
     result["count"] = len(lat)
