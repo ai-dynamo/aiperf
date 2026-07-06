@@ -213,16 +213,25 @@ def _check_prereqs(
 def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
     """Reject any cycle in the spawn graph.
 
-    Each branch's ``child_conversation_ids`` are directed edges (the declaring
-    conversation -> each child conversation). The v1 orchestrator spawns
-    children recursively at ``agent_depth + 1`` with no cycle guard, so a
-    self-spawn (``r -> r``) or any spawn cycle (``r -> c -> r``) would recurse
-    without bound at replay time. Detected here at load time via an iterative
-    DFS so a deep acyclic chain cannot overflow the stack.
+    A turn-declared branch's ``child_conversation_ids`` are directed edges
+    (the declaring conversation -> each child conversation). The v1
+    orchestrator spawns children recursively at ``agent_depth + 1`` with no
+    cycle guard, so a self-spawn (``r -> r``) or any spawn cycle
+    (``r -> c -> r``) would recurse without bound at replay time. Detected
+    here at load time via an iterative DFS so a deep acyclic chain cannot
+    overflow the stack.
+
+    Descriptors whose ``branch_id`` no turn declares are excluded: both
+    orchestrator dispatch paths (``get_branch_ids`` and pre-session dispatch)
+    gate on ``turn.branch_ids`` membership, so an undeclared descriptor never
+    spawns and its children are not runtime edges.
     """
     spawn_edges: dict[str, set[str]] = {}
     for conv in metadata.conversations:
+        declared = {b_id for turn in conv.turns for b_id in turn.branch_ids}
         for branch in conv.branches:
+            if branch.branch_id not in declared:
+                continue
             spawn_edges.setdefault(conv.conversation_id, set()).update(
                 branch.child_conversation_ids
             )

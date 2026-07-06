@@ -775,6 +775,32 @@ def test_spawn_cycle_downstream_of_dfs_start_rejected():
     assert "(a -> b -> a)" in str(exc.value)
 
 
+def test_undeclared_descriptor_back_edge_not_reported_as_cycle():
+    """A ConversationBranchInfo that no turn's branch_ids declares is never
+    dispatched (both orchestrator dispatch paths gate on turn membership), so
+    its child_conversation_ids are not runtime spawn edges: an apparent cycle
+    through an undeclared descriptor (r -> c declared, c -> r undeclared)
+    must validate cleanly rather than be misreported as a spawn cycle."""
+    md = DatasetMetadata(
+        conversations=[
+            _spawning_conv("r", "c"),
+            ConversationMetadata(
+                conversation_id="c",
+                turns=[TurnMetadata()],
+                branches=[
+                    ConversationBranchInfo(
+                        branch_id="c:undeclared",
+                        child_conversation_ids=["r"],
+                        mode=ConversationBranchMode.SPAWN,
+                    )
+                ],
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    validate_for_orchestrator_v1(md)
+
+
 # ---------------------------------------------------------------------------
 # 38. Duplicate ConversationBranchInfo descriptors sharing one branch_id
 # ---------------------------------------------------------------------------
