@@ -4,8 +4,9 @@
 
 import orjson
 import pytest
+from pytest import param
 
-from aiperf.common.models import Text, Turn
+from aiperf.common.models import ExtractedPayload, Text, Turn
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     SSEField,
@@ -13,7 +14,12 @@ from aiperf.common.models.record_models import (
     TextResponseData,
     ToolCallResponseData,
 )
-from aiperf.endpoints.anthropic_messages import MessagesEndpoint
+from aiperf.endpoints.anthropic_messages import (
+    MessagesEndpoint,
+    _walk_system,
+    _walk_tool_blocks,
+    _walk_tool_schemas,
+)
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
@@ -1345,3 +1351,431 @@ class TestAnthropicMessagesSplitUsageMerge:
         parsed = endpoint.extract_response_data(record)
 
         assert [p.usage for p in parsed if p.usage][-1].prompt_tokens == 10
+
+
+class TestAnthropicMessagesDefensiveBranches:
+    """Malformed and edge-shape inputs must be skipped, never crash.
+
+    One test per defensive branch in the payload walks, the replay
+    accumulators, and the parse dispatch.
+    """
+
+    @pytest.fixture
+    def endpoint(self):
+        return create_endpoint_with_mock_transport(
+            MessagesEndpoint,
+            create_model_endpoint(EndpointType.MESSAGES),
+        )
+
+    @staticmethod
+    def _record(events: list[dict]):
+        from aiperf.common.models import RequestRecord, TextResponse
+
+        responses = [
+            TextResponse(
+                perf_ns=ns,
+                text=orjson.dumps(event).decode(),
+                content_type="application/json",
+            )
+            for ns, event in enumerate(events, start=1)
+        ]
+        return RequestRecord(
+            responses=responses,
+            start_perf_ns=0,
+            end_perf_ns=len(events) + 1,
+        )
+
+    # --- payload-input walk helpers -------------------------------------
+
+    def test_walk_system_accepts_plain_string_parts(self):
+        result = ExtractedPayload()
+        _walk_system(
+            {"system": ["plain part", "", {"type": "text", "text": "typed part"}]},
+            result,
+        )
+        assert result.texts == ["plain part", "typed part"]
+
+    def test_walk_tool_schemas_skips_non_dict_tools(self):
+        result = ExtractedPayload()
+        _walk_tool_schemas(
+            {
+                "tools": [
+                    "not-a-dict",
+                    {"name": "t", "input_schema": {"type": "object"}},
+                ]
+            },
+            result,
+        )
+        assert len(result.texts) == 1
+        assert "object" in result.texts[0]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            param({}, id="messages_absent"),
+            param({"messages": "not-a-list"}, id="messages_not_list"),
+            param({"messages": [42]}, id="message_not_dict"),
+            param({"messages": [{"role": "user", "content": [42]}]}, id="part_not_dict"),
+        ],
+    )  # fmt: skip
+    def test_walk_tool_blocks_tolerates_malformed_shapes(self, payload):
+        result = ExtractedPayload()
+        _walk_tool_blocks(payload, result)
+        assert result.texts == []
+
+    def test_tool_result_content_non_string_non_list_skipped(self):
+        result = ExtractedPayload()
+        _walk_tool_blocks(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "content": 42}],
+                    }
+                ]
+            },
+            result,
+        )
+        assert result.texts == []
+
+    def test_tool_result_content_list_skips_non_dict_subblocks(self):
+        result = ExtractedPayload()
+        _walk_tool_blocks(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "content": [42, {"type": "text", "text": "ok"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            result,
+        )
+        assert result.texts == ["ok"]
+
+    # --- format_payload conversation-level fields ------------------------
+
+    def test_raw_tools_passthrough(self, endpoint):
+        model_endpoint = create_model_endpoint(EndpointType.MESSAGES)
+        tools = [{"name": "calc", "input_schema": {"type": "object"}}]
+        turn = Turn(
+            texts=[Text(contents=["hi"])],
+            model="claude-sonnet-4-20250514",
+            raw_tools=tools,
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert payload["tools"] == tools
+
+    def test_extra_body_merged_last(self, endpoint):
+        model_endpoint = create_model_endpoint(EndpointType.MESSAGES)
+        turn = Turn(
+            texts=[Text(contents=["hi"])],
+            model="claude-sonnet-4-20250514",
+            extra_body={"temperature": 0.5},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert payload["temperature"] == 0.5
+
+    # --- replay accumulators ---------------------------------------------
+
+    def test_absorb_message_skips_non_dict_blocks(self, endpoint):
+        record = self._record(
+            [
+                {
+                    "type": "message",
+                    "content": [
+                        42,
+                        {"type": "tool_use", "id": "t1", "name": "calc", "input": {}},
+                    ],
+                }
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        assert turn is not None
+        blocks = turn.raw_messages[0]["content"]
+        assert [b["type"] for b in blocks] == ["tool_use"]
+
+    def test_delta_without_index_is_dropped(self, endpoint):
+        record = self._record(
+            [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "thinking"},
+                },
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "thinking_delta", "thinking": "lost"},
+                },
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        thinking_block = turn.raw_messages[0]["content"][0]
+        assert thinking_block["thinking"] == ""
+
+    def test_delta_for_unopened_index_is_dropped(self, endpoint):
+        record = self._record(
+            [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "tool_use", "id": "t1", "name": "calc"},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 7,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": '{"lost": 1}',
+                    },
+                },
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        tool_block = turn.raw_messages[0]["content"][0]
+        assert tool_block["input"] == {}
+
+    def test_non_string_delta_fragment_is_dropped(self, endpoint):
+        record = self._record(
+            [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "thinking"},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "thinking_delta", "thinking": 42},
+                },
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        assert turn.raw_messages[0]["content"][0]["thinking"] == ""
+
+    def test_malformed_streamed_tool_json_preserved_as_string(self, endpoint):
+        record = self._record(
+            [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "tool_use", "id": "t1", "name": "calc"},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": "not{json"},
+                },
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        assert turn.raw_messages[0]["content"][0]["input"] == "not{json"
+
+    def test_tool_use_without_input_deltas_gets_empty_input(self, endpoint):
+        record = self._record(
+            [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "tool_use", "id": "t1", "name": "calc"},
+                }
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        assert turn.raw_messages[0]["content"][0]["input"] == {}
+
+    def test_empty_json_responses_skipped_during_replay(self, endpoint):
+        record = self._record(
+            [
+                {},
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "tool_use", "id": "t1", "name": "calc", "input": {}}
+                    ],
+                },
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        assert turn.raw_messages[0]["content"][0]["type"] == "tool_use"
+
+    # --- parse dispatch edge shapes ---------------------------------------
+
+    @pytest.mark.parametrize(
+        "json_obj",
+        [
+            param({"foo": "bar"}, id="no_type_key"),
+            param({"type": "message", "content": []}, id="message_no_data_no_usage"),
+            param({"type": "message_start", "message": {}}, id="message_start_no_usage"),
+            param({"type": "message_delta", "delta": {"stop_reason": "end_turn"}}, id="message_delta_no_usage"),
+            param({"type": "weird_event"}, id="unknown_event_type"),
+            param({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": ""}}, id="empty_text_delta"),
+            param({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": ""}}, id="empty_thinking_delta"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_returns_none_for_contentless_shapes(
+        self, endpoint, json_obj
+    ):
+        assert endpoint.parse_response(_make_sse_response(json_obj)) is None
+
+    def test_non_dict_content_blocks_skipped_in_extraction(self, endpoint):
+        parsed = endpoint.parse_response(
+            create_mock_response(
+                1,
+                {
+                    "type": "message",
+                    "content": [42, {"type": "text", "text": "hi"}],
+                },
+            )
+        )
+        assert isinstance(parsed.data, TextResponseData)
+        assert parsed.data.text == "hi"
+
+
+class TestAnthropicMessagesFalsyFieldBranches:
+    """Blocks with empty or wrongly-typed field values contribute nothing.
+
+    Complements TestAnthropicMessagesDefensiveBranches: those tests cover
+    wrong container shapes; these cover falsy/non-string leaf values.
+    """
+
+    @pytest.fixture
+    def endpoint(self):
+        return create_endpoint_with_mock_transport(
+            MessagesEndpoint,
+            create_model_endpoint(EndpointType.MESSAGES),
+        )
+
+    def test_walk_system_empty_string_ignored(self):
+        result = ExtractedPayload()
+        _walk_system({"system": ""}, result)
+        assert result.texts == []
+
+    def test_walk_system_list_skips_empty_and_non_string_text(self):
+        result = ExtractedPayload()
+        _walk_system(
+            {
+                "system": [
+                    {"type": "text", "text": ""},
+                    {"type": "text", "text": 42},
+                    {"type": "text", "text": "kept"},
+                ]
+            },
+            result,
+        )
+        assert result.texts == ["kept"]
+
+    def test_walk_tool_schemas_skips_tools_without_schema(self):
+        result = ExtractedPayload()
+        _walk_tool_schemas({"tools": [{"name": "schemaless"}]}, result)
+        assert result.texts == []
+
+    def test_tool_use_without_name_and_non_dict_input_contributes_nothing(self):
+        result = ExtractedPayload()
+        _walk_tool_blocks(
+            {
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "input": "not-a-dict"}],
+                    }
+                ]
+            },
+            result,
+        )
+        assert result.texts == []
+
+    def test_tool_result_empty_string_content_ignored(self):
+        result = ExtractedPayload()
+        _walk_tool_blocks(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "content": ""}],
+                    }
+                ]
+            },
+            result,
+        )
+        assert result.texts == []
+
+    def test_tool_result_list_skips_non_text_and_empty_subblocks(self):
+        result = ExtractedPayload()
+        _walk_tool_blocks(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "content": [
+                                    {"type": "other"},
+                                    {"type": "text", "text": ""},
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+            result,
+        )
+        assert result.texts == []
+
+    def test_replay_ignores_structural_and_wrongly_typed_events(self, endpoint):
+        record = TestAnthropicMessagesDefensiveBranches._record(
+            [
+                {"type": "ping"},
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text"},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": 42},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "unknown_delta", "x": 1},
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "text", "text": 42},
+                        {"type": "unknown_block"},
+                        {"type": "tool_use", "id": "t1", "name": "calc", "input": {}},
+                    ],
+                },
+            ]
+        )
+        turn = endpoint.build_assistant_turn(record)
+        blocks = turn.raw_messages[0]["content"]
+        assert [b["type"] for b in blocks] == ["tool_use"]
+
+    def test_extraction_skips_blocks_with_falsy_or_missing_fields(self, endpoint):
+        parsed = endpoint.parse_response(
+            create_mock_response(
+                1,
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "text", "text": ""},
+                        {"type": "thinking", "thinking": ""},
+                        {"type": "unknown_block"},
+                        {"type": "tool_use"},
+                    ],
+                },
+            )
+        )
+        assert parsed is None
