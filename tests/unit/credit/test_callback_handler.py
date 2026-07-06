@@ -200,13 +200,13 @@ class TestCreditReturnBasicFlow:
         )
 
     async def test_on_credit_return_notifies_result_aware_strategy(
-        self,
-        callback_handler,
-        mock_progress,
-        mock_lifecycle,
-        mock_stop_checker,
-        mock_strategy,
-    ):
+        self: "TestCreditReturnBasicFlow",
+        callback_handler: CreditCallbackHandler,
+        mock_progress: MagicMock,
+        mock_lifecycle: MagicMock,
+        mock_stop_checker: MagicMock,
+        mock_strategy: MagicMock,
+    ) -> None:
         """Strategies with a result hook should receive full return status."""
         mock_strategy.handle_credit_result = AsyncMock()
         callback_handler.register_phase(
@@ -226,8 +226,10 @@ class TestCreditReturnBasicFlow:
         mock_strategy.handle_credit_result.assert_awaited_once_with(credit_return)
 
     async def test_result_hook_is_cached_at_phase_registration(
-        self, registered_handler, mock_strategy
-    ):
+        self: "TestCreditReturnBasicFlow",
+        registered_handler: CreditCallbackHandler,
+        mock_strategy: MagicMock,
+    ) -> None:
         """Credit returns should not rediscover optional hooks on the hot path."""
         late_hook = AsyncMock()
         mock_strategy.handle_credit_result = late_hook

@@ -42,12 +42,14 @@ from aiperf.common.models import (
     Conversation,
     ErrorDetails,
     ModelEndpointInfo,
+    ParsedResponse,
     ProcessHealth,
     RequestInfo,
     RequestRecord,
     SSEMessage,
     WorkerTaskStats,
 )
+from aiperf.common.models.record_models import find_last_non_empty_usage
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
@@ -363,6 +365,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
             request_latency_ns=credit_context.request_latency_ns,
+            inter_token_latency_ns=credit_context.inter_token_latency_ns,
+            output_sequence_length=credit_context.output_sequence_length,
             worker_id=self.service_id,
         )
         self.execute_async(self.credit_return_push_client.send(credit_return))
@@ -420,6 +424,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
                 request_latency_ns=credit_context.request_latency_ns,
+                inter_token_latency_ns=credit_context.inter_token_latency_ns,
+                output_sequence_length=credit_context.output_sequence_length,
                 worker_id=self.service_id,
             )
             await self.credit_return_push_client.send(credit_return)
@@ -509,9 +515,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
             )
-            credit_context.request_latency_ns = self._request_latency_ns_for_record(
-                record
-            )
             await self._send_inference_result_message(record)
 
             # Copy request-level errors to credit context for CreditReturn tracking
@@ -522,6 +525,25 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
             ):
                 session.store_response(resp_turn)
+
+            parsed_responses = self._parsed_responses_for_record(record)
+            content_perf_ns = self._content_response_perf_ns_for_record(
+                record, parsed_responses
+            )
+            credit_context.request_latency_ns = self._request_latency_ns_for_record(
+                record, content_perf_ns
+            )
+            credit_context.output_sequence_length = (
+                self._output_sequence_length_for_responses(parsed_responses)
+            )
+            credit_context.inter_token_latency_ns = (
+                self._inter_token_latency_ns_for_record(
+                    record,
+                    content_perf_ns,
+                    parsed_responses,
+                    credit_context.output_sequence_length,
+                )
+            )
 
         except asyncio.CancelledError:
             # Mark cancelled before re-raising so finally can evict session
@@ -535,18 +557,74 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self._release_and_evict_for_terminal(credit, x_correlation_id)
 
-    def _request_latency_ns_for_record(self, record: RequestRecord) -> int | None:
-        """Return the same latency sample used by RequestLatencyMetric."""
-        final_response_perf_ns = None
+    def _parsed_responses_for_record(
+        self, record: RequestRecord
+    ) -> list[ParsedResponse]:
+        parsed_responses: list[ParsedResponse] = []
         for response in record.responses:
             parsed = self.inference_client.endpoint.parse_response(response)
-            if parsed is not None and parsed.data:
-                final_response_perf_ns = parsed.perf_ns
-        if final_response_perf_ns is None:
+            if parsed is not None:
+                parsed_responses.append(parsed)
+        return parsed_responses
+
+    def _content_response_perf_ns_for_record(
+        self,
+        record: RequestRecord,
+        parsed_responses: list[ParsedResponse] | None = None,
+    ) -> list[int]:
+        """Return perf timestamps for parsed responses with meaningful content."""
+        if parsed_responses is None:
+            parsed_responses = self._parsed_responses_for_record(record)
+        return [parsed.perf_ns for parsed in parsed_responses if parsed.data]
+
+    def _request_latency_ns_for_record(
+        self, record: RequestRecord, content_perf_ns: list[int] | None = None
+    ) -> int | None:
+        """Return the same latency sample used by RequestLatencyMetric."""
+        if content_perf_ns is None:
+            content_perf_ns = self._content_response_perf_ns_for_record(record)
+        if not content_perf_ns:
             return None
+        final_response_perf_ns = content_perf_ns[-1]
         if final_response_perf_ns < record.start_perf_ns:
             return None
         return final_response_perf_ns - record.start_perf_ns
+
+    def _output_sequence_length_for_responses(
+        self, parsed_responses: list[ParsedResponse]
+    ) -> int | None:
+        usage = find_last_non_empty_usage(parsed_responses)
+        if usage is None or usage.completion_tokens is None:
+            return None
+        return usage.completion_tokens
+
+    def _inter_token_latency_ns_for_record(
+        self,
+        record: RequestRecord,
+        content_perf_ns: list[int] | None = None,
+        parsed_responses: list[ParsedResponse] | None = None,
+        output_sequence_length: int | None = None,
+    ) -> float | None:
+        """Return ITL using the records-pipeline output sequence formula."""
+        if parsed_responses is None:
+            parsed_responses = self._parsed_responses_for_record(record)
+        if content_perf_ns is None:
+            content_perf_ns = self._content_response_perf_ns_for_record(
+                record, parsed_responses
+            )
+        if output_sequence_length is None:
+            output_sequence_length = self._output_sequence_length_for_responses(
+                parsed_responses
+            )
+        if len(content_perf_ns) < 2 or output_sequence_length is None:
+            return None
+        if output_sequence_length < 2:
+            return None
+        request_latency_ns = content_perf_ns[-1] - record.start_perf_ns
+        ttft_ns = content_perf_ns[0] - record.start_perf_ns
+        if request_latency_ns < 0 or ttft_ns < 0:
+            return None
+        return (request_latency_ns - ttft_ns) / (output_sequence_length - 1)
 
     def _pin_parent_if_fork_child(self, credit: Credit, x_correlation_id: str) -> None:
         """FORK child seed: pin the parent so its session stays resident in
