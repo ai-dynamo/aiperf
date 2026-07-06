@@ -310,6 +310,8 @@ jobs:
     name: Unit Tests
     needs: [prepare-nightly]
     runs-on: ubuntu-latest
+    env:
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -321,8 +323,17 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Cache tiktoken encodings
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TIKTOKEN_CACHE_DIR }}
+          key: tiktoken-encodings-v1
+
       - name: Install dependencies
         run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Warm tiktoken encoding cache
+        run: . .venv/bin/activate && python tools/warm_tiktoken_cache.py
 
       - name: Run unit and component integration tests
         run: make test-ci PYTHON_VERSION=3.12
@@ -331,6 +342,8 @@ jobs:
     name: Integration Tests
     needs: [prepare-nightly]
     runs-on: ubuntu-latest
+    env:
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -342,8 +355,17 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Cache tiktoken encodings
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TIKTOKEN_CACHE_DIR }}
+          key: tiktoken-encodings-v1
+
       - name: Install dependencies
         run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Warm tiktoken encoding cache
+        run: . .venv/bin/activate && python tools/warm_tiktoken_cache.py
 
       - name: Run integration tests
         run: make integration-tests-ci PYTHON_VERSION=3.12
