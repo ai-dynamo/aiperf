@@ -20,8 +20,11 @@ from aiperf.common.models import (
     MetricResult,
     ProcessRecordsResult,
     ProfileResults,
+    TelemetryMetrics,
+    TelemetryRecord,
 )
 from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.common.types import MetricTagT
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -33,7 +36,10 @@ from aiperf.credit.messages import (
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
 from aiperf.plugin.enums import AccumulatorType, TimingMode
-from aiperf.records.records_manager import RecordsManager
+from aiperf.post_processors.metric_results_processor import (
+    MetricResultsProcessor as CanonicalMetricResultsProcessor,
+)
+from aiperf.records.records_manager import ErrorTrackingState, RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
 from tests.harness import mock_plugin
@@ -1236,3 +1242,166 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         mock_self._send_results_to_results_processors.assert_not_called()
+
+
+def _fake_pull_client_init(self, run, **kwargs) -> None:
+    """Minimal PullClientMixin.__init__ stand-in so RecordsManager.__init__
+    can run its plugin-loading + accumulator-gating logic in isolation."""
+    self.run = run
+    self.cfg = run.cfg
+    self.service_id = kwargs.get("service_id") or "records_manager"
+    self.pub_client = MagicMock()
+    self.attach_child_lifecycle = MagicMock()
+    self.debug = MagicMock()
+    self.info = MagicMock()
+    self.error = MagicMock()
+    self.exception = MagicMock()
+
+
+class TestAccumulatorGateExactType:
+    """The accumulator gate must remove exactly the built-in
+    ``MetricResultsProcessor`` by type identity — NOT any processor whose
+    class merely happens to be NAMED ``MetricResultsProcessor`` (e.g. an
+    external plugin subclassing the built-in without renaming it)."""
+
+    def test_gate_removes_canonical_metric_results_processor(
+        self, benchmark_run
+    ) -> None:
+        with patch(
+            "aiperf.records.records_manager.PullClientMixin.__init__",
+            new=_fake_pull_client_init,
+        ):
+            manager = RecordsManager(run=benchmark_run)
+
+        # Gate precondition: the accumulator engine is driving the summary.
+        assert AccumulatorType.METRIC_RESULTS in manager._accumulators
+        assert all(
+            type(p) is not CanonicalMetricResultsProcessor
+            for p in manager._metric_results_processors
+        )
+
+    def test_gate_keeps_same_name_subclass_active(self, benchmark_run) -> None:
+        class MetricResultsProcessor(CanonicalMetricResultsProcessor):
+            """Override plugin subclassing the built-in without renaming."""
+
+        with (
+            patch(
+                "aiperf.records.records_manager.PullClientMixin.__init__",
+                new=_fake_pull_client_init,
+            ),
+            mock_plugin("results_processor", "metric_results", MetricResultsProcessor),
+        ):
+            manager = RecordsManager(run=benchmark_run)
+
+        assert AccumulatorType.METRIC_RESULTS in manager._accumulators
+        survivor_types = [type(p) for p in manager._metric_results_processors]
+        assert MetricResultsProcessor in survivor_types
+
+
+class _CancellingExporter:
+    """Stream exporter whose process_record raises CancelledError."""
+
+    async def process_record(self, record) -> None:
+        raise asyncio.CancelledError
+
+
+class _FailingExporter:
+    """Stream exporter whose process_record raises a plain Exception."""
+
+    async def process_record(self, record) -> None:
+        raise ValueError("exporter exploded")
+
+
+class _RecordingExporter:
+    """Stream exporter that records everything it is given."""
+
+    def __init__(self) -> None:
+        self.records: list = []
+
+    async def process_record(self, record) -> None:
+        self.records.append(record)
+
+
+class TestStreamExporterFanOutErrorHandling:
+    """The stream-exporter fan-out loops must swallow only ``Exception``:
+    ``asyncio.CancelledError`` is a ``BaseException`` and must propagate so
+    task cancellation is never eaten by a best-effort exporter."""
+
+    def _server_metrics_record(self) -> ServerMetricsRecord:
+        return ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            metrics={},
+        )
+
+    def _telemetry_record(self) -> TelemetryRecord:
+        return TelemetryRecord(
+            timestamp_ns=1_000_000,
+            dcgm_url="http://localhost:9400/metrics",
+            gpu_index=0,
+            gpu_uuid="GPU-123",
+            gpu_model_name="Test GPU",
+            telemetry_data=TelemetryMetrics(gpu_power_usage=100.0),
+        )
+
+    def _manager_for_server_metrics(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+        manager.exception = MagicMock()
+        manager._server_metrics_state = ErrorTrackingState()
+        manager._server_metrics_processors = []
+        return manager
+
+    def _manager_for_telemetry(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+        manager.exception = MagicMock()
+        manager._telemetry_state = ErrorTrackingState()
+        manager._gpu_telemetry_processors = []
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_send_server_metrics_cancelled_error_propagates(self) -> None:
+        manager = self._manager_for_server_metrics()
+        manager._server_metrics_stream_exporters = [_CancellingExporter()]
+
+        with pytest.raises(asyncio.CancelledError):
+            await manager._send_server_metrics_to_results_processors(
+                self._server_metrics_record()
+            )
+
+    @pytest.mark.asyncio
+    async def test_send_server_metrics_exception_swallowed_and_logged(self) -> None:
+        manager = self._manager_for_server_metrics()
+        recording = _RecordingExporter()
+        manager._server_metrics_stream_exporters = [_FailingExporter(), recording]
+        record = self._server_metrics_record()
+
+        await manager._send_server_metrics_to_results_processors(record)
+
+        manager.error.assert_called_once()
+        assert "exporter exploded" in manager.error.call_args.args[0]
+        assert recording.records == [record]
+
+    @pytest.mark.asyncio
+    async def test_send_telemetry_cancelled_error_propagates(self) -> None:
+        manager = self._manager_for_telemetry()
+        manager._gpu_telemetry_stream_exporters = [_CancellingExporter()]
+
+        with pytest.raises(asyncio.CancelledError):
+            await manager._send_telemetry_to_results_processors(
+                [self._telemetry_record()]
+            )
+
+    @pytest.mark.asyncio
+    async def test_send_telemetry_exception_swallowed_and_logged(self) -> None:
+        manager = self._manager_for_telemetry()
+        recording = _RecordingExporter()
+        manager._gpu_telemetry_stream_exporters = [_FailingExporter(), recording]
+        record = self._telemetry_record()
+
+        await manager._send_telemetry_to_results_processors([record])
+
+        manager.error.assert_called_once()
+        assert "exporter exploded" in manager.error.call_args.args[0]
+        assert recording.records == [record]

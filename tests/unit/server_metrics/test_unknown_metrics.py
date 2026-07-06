@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -46,8 +47,10 @@ from aiperf.common.models.server_metrics_models import (
     MetricSample,
     ServerMetricsEndpointInfo,
     ServerMetricsEndpointSummary,
+    ServerMetricsExportData,
     ServerMetricsRecord,
     ServerMetricsResults,
+    ServerMetricsSummary,
     TimeRangeFilter,
     UnknownMetricData,
 )
@@ -267,6 +270,25 @@ class TestUnknownJsonRoundTrip:
         exporter = ServerMetricsJsonExporter(exporter_config)
         export_data, _ = exporter._build_hybrid_metrics(results.endpoint_summaries)
         entry = export_data["node_netstat_Icmp_InErrors"]
+        assert isinstance(entry, UnknownMetricData)
+        assert entry.model_dump(mode="json")["type"] == "unknown"
+
+    def test_export_data_accepts_unknown_in_warmup_metrics(self) -> None:
+        """``warmup_metrics`` must admit ``UnknownMetricData`` like ``metrics``
+        does — ``_build_hybrid_metrics`` emits it for both phases."""
+        umd = UnknownMetricData(description="Statistic IcmpInErrors.")
+        export_data = ServerMetricsExportData(
+            summary=ServerMetricsSummary(
+                endpoints_configured=["node-exporter:9100"],
+                endpoints_successful=["node-exporter:9100"],
+                start_time=datetime.fromtimestamp(0),
+                end_time=datetime.fromtimestamp(1),
+            ),
+            metrics={"node_netstat_Icmp_InErrors": umd},
+            warmup_metrics={"node_netstat_Icmp_InErrors": umd},
+        )
+        assert export_data.warmup_metrics is not None
+        entry = export_data.warmup_metrics["node_netstat_Icmp_InErrors"]
         assert isinstance(entry, UnknownMetricData)
         assert entry.model_dump(mode="json")["type"] == "unknown"
 
