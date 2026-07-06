@@ -1,5 +1,5 @@
 {
-  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations \u2014 prefer fixing the underlying code over extending the list.",
+  "_comment": "Out-of-band ruff baseline for tools/ruff_baselined.py. Key: (rule, file, identifier). Regenerate with: python tools/ruff_baselined.py --regenerate-baseline. Entries here are grandfathered violations — prefer fixing the underlying code over extending the list.",
   "rules": [
     "PLR0915",
     "PLR0912",
@@ -295,6 +295,11 @@
     [
       "BLE001",
       "src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py",
+      "BufferedJSONLWriterMixin._flush_buffer_periodically"
+    ],
+    [
+      "BLE001",
+      "src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py",
       "BufferedJSONLWriterMixin.buffered_write"
     ],
     [
@@ -559,6 +564,11 @@
     ],
     [
       "BLE001",
+      "src/aiperf/post_processors/raw_record_writer_processor.py",
+      "RawRecordWriterProcessor.buffered_write"
+    ],
+    [
+      "BLE001",
       "src/aiperf/post_processors/record_export_results_processor.py",
       "RecordExportResultsProcessor.process_result"
     ],
@@ -719,11 +729,6 @@
     ],
     [
       "BLE001",
-      "src/aiperf/zmq/pull_client.py",
-      "ZMQPullClient._pull_receiver"
-    ],
-    [
-      "BLE001",
       "src/aiperf/zmq/router_reply_client.py",
       "ZMQRouterReplyClient._handle_request"
     ],
@@ -739,23 +744,8 @@
     ],
     [
       "BLE001",
-      "src/aiperf/zmq/streaming_dealer_client.py",
-      "ZMQStreamingDealerClient._streaming_dealer_receiver"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/zmq/streaming_router_client.py",
-      "ZMQStreamingRouterClient._streaming_router_receiver"
-    ],
-    [
-      "BLE001",
       "src/aiperf/zmq/sub_client.py",
       "ZMQSubClient._handle_message"
-    ],
-    [
-      "BLE001",
-      "src/aiperf/zmq/sub_client.py",
-      "ZMQSubClient._sub_receiver"
     ],
     [
       "BLE001",
@@ -1005,12 +995,7 @@
     [
       "C901",
       "src/aiperf/records/records_manager.py",
-      "RecordsManager.__init__"
-    ],
-    [
-      "C901",
-      "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
+      "_render_realtime_block"
     ],
     [
       "C901",
@@ -1026,6 +1011,11 @@
       "C901",
       "src/aiperf/server_metrics/export_stats.py",
       "_compute_histogram_stats"
+    ],
+    [
+      "C901",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_timeslices"
     ],
     [
       "C901",
@@ -1254,8 +1244,18 @@
     ],
     [
       "PLR0912",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
+    ],
+    [
+      "PLR0912",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_stats"
     ],
     [
       "PLR0912",
@@ -1420,7 +1420,7 @@
     [
       "PLR0915",
       "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
+      "_render_realtime_block"
     ],
     [
       "PLR0915",

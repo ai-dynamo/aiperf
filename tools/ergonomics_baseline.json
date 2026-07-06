@@ -18,6 +18,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/analysis/sweepline.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/cli_runner/_sweep_aggregate.py",
       ""
     ],
@@ -183,6 +188,11 @@
     ],
     [
       "file-size",
+      "src/aiperf/endpoints/openai_responses.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/exporters/mlflow_data_exporter.py",
       ""
     ],
@@ -199,6 +209,16 @@
     [
       "file-size",
       "src/aiperf/gpu_telemetry/manager.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/metrics/accumulator.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/metrics/column_store.py",
       ""
     ],
     [
@@ -293,12 +313,22 @@
     ],
     [
       "file-size",
+      "src/aiperf/records/inference_result_parser.py",
+      ""
+    ],
+    [
+      "file-size",
       "src/aiperf/records/records_manager.py",
       ""
     ],
     [
       "file-size",
       "src/aiperf/search_recipes/builtins.py",
+      ""
+    ],
+    [
+      "file-size",
+      "src/aiperf/server_metrics/accumulator.py",
       ""
     ],
     [
@@ -355,6 +385,16 @@
       "function-size",
       "src/aiperf/accuracy/graders/_math_strip.py",
       "strip_string"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "function-size",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
     ],
     [
       "function-size",
@@ -460,6 +500,11 @@
       "function-size",
       "src/aiperf/gpu_telemetry/pynvml_collector.py",
       "PyNVMLTelemetryCollector._collect_gpu_metrics"
+    ],
+    [
+      "function-size",
+      "src/aiperf/metrics/accumulator.py",
+      "MetricsAccumulator._compute_timeslices"
     ],
     [
       "function-size",
@@ -878,6 +923,11 @@
     ],
     [
       "function-size",
+      "src/aiperf/records/records_manager.py",
+      "_render_realtime_block"
+    ],
+    [
+      "function-size",
       "src/aiperf/search_recipes/_itl_surface_fit.py",
       "_extract_2d_points"
     ],
@@ -1030,6 +1080,21 @@
       "function-size",
       "src/aiperf/workers/worker.py",
       "Worker._process_credit"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_stats.py",
+      "compute_active_weighted_stats"
     ],
     [
       "keyword-only-args",
