@@ -14,6 +14,7 @@ from typing import Any
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import MetricResult, ProfileResults
@@ -41,6 +42,7 @@ def _make_mlflow_cfg(
     run_name: str | None = None,
     tags: str | None = None,
     artifact_globs: list[str] | None = None,
+    profiling: dict[str, Any] | None = None,
 ) -> BenchmarkConfig:
     return BenchmarkConfig(
         model="test-model",
@@ -49,7 +51,7 @@ def _make_mlflow_cfg(
             type=EndpointType.CHAT,
         ),
         dataset={"type": "synthetic"},
-        profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+        profiling=profiling or {"type": "concurrency", "requests": 1, "concurrency": 1},
         artifacts=ArtifactsConfig(dir=tmp_path),
         mlflow=MLflowConfig(
             tracking_uri=tracking_uri,
@@ -233,6 +235,36 @@ class TestMLflowDataExporter:
         )
         with pytest.raises(DataExporterDisabled, match="no profile results"):
             MLflowDataExporter(config)
+
+    @pytest.mark.parametrize(
+        ("profiling", "expected_rate"),
+        [
+            param({"type": "poisson", "rate": 5.0, "requests": 10}, "5.0", id="poisson"),
+            param({"type": "constant", "rate": 2.5, "requests": 5}, "2.5", id="constant"),
+            param({"type": "concurrency", "requests": 1, "concurrency": 1}, None, id="concurrency_has_no_rate"),
+        ],
+    )  # fmt: skip
+    def test_build_param_payload_rate_phase_emits_request_rate(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        profiling: dict[str, Any],
+        expected_rate: str | None,
+    ) -> None:
+        config = ExporterConfig(
+            results=sample_results,
+            cfg=_make_mlflow_cfg(tmp_path, profiling=profiling),
+            telemetry_results=None,
+        )
+        exporter = MLflowDataExporter(config)
+
+        params = exporter._build_param_payload()
+
+        assert params["timing.mode"] == profiling["type"]
+        if expected_rate is None:
+            assert "loadgen.request_rate" not in params
+        else:
+            assert params["loadgen.request_rate"] == expected_rate
 
     @pytest.mark.asyncio
     async def test_export_uploads_batch_and_artifacts(
