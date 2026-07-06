@@ -320,6 +320,26 @@ class TestChatMessagesField:
         assert result.messages == [{"role": "user", "content": "describe this image"}]
         assert result.image_count == 1
 
+    def test_tool_call_only_assistant_turn_preserves_tool_calls(self):
+        tool_calls = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": '{"city": "SF"}'},
+            }
+        ]
+        payload = {
+            "messages": [
+                {"role": "user", "content": "weather?"},
+                {"role": "assistant", "tool_calls": tool_calls},
+            ]
+        }
+        result = _chat().extract_payload_inputs(payload)
+        assert result.messages == [
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": "", "tool_calls": tool_calls},
+        ]
+
     def test_flat_shapes_leave_messages_none(self):
         for payload in (
             {"prompt": "hi"},
