@@ -85,6 +85,40 @@ def test_auth_middleware_accepts_configured_header_on_protected_path() -> None:
     assert response.status_code == 200
 
 
+def test_auth_middleware_accepts_bearer_form_on_authorization_header() -> None:
+    client = _auth_test_client(MockServerConfig(api_key="secret-key"))
+
+    response = client.post(
+        "/v1/chat/completions", headers={"Authorization": "Bearer secret-key"}
+    )
+
+    assert response.status_code == 200
+
+
+def test_auth_middleware_rejects_bearer_form_on_custom_header() -> None:
+    client = _auth_test_client(
+        MockServerConfig(api_key="secret-key", auth_header_name="X-API-Key")
+    )
+
+    response = client.post(
+        "/v1/chat/completions", headers={"X-API-Key": "Bearer secret-key"}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+def test_auth_middleware_rejects_bearer_form_with_wrong_key() -> None:
+    client = _auth_test_client(MockServerConfig(api_key="secret-key"))
+
+    response = client.post(
+        "/v1/chat/completions", headers={"Authorization": "Bearer wrong"}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
 def test_auth_middleware_leaves_non_inference_path_open() -> None:
     client = _auth_test_client(MockServerConfig(api_key="secret-key"))
 

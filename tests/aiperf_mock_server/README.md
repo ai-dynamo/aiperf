@@ -214,10 +214,10 @@ aiperf-mock-server
 ### Optional Inference Authentication
 
 ```bash
-MOCK_SERVER_API_KEY=secret-key aiperf-mock-server
+MOCK_SERVER_API_KEY=<your-mock-api-key> aiperf-mock-server
 
 curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Authorization: secret-key" \
+  -H "Authorization: Bearer <your-mock-api-key>" \
   -H "Content-Type: application/json" \
   -d '{"model":"mock-model","messages":[{"role":"user","content":"Hello"}]}'
 ```

@@ -257,8 +257,14 @@ class InferenceAuthMiddleware:
             and _is_auth_protected_path(path)
         ):
             headers = _asgi_headers(scope.get("headers"))
-            header_value = headers.get(self.config.auth_header_name.lower())
-            if header_value != self.config.api_key:
+            header_name = self.config.auth_header_name.lower()
+            header_value = headers.get(header_name)
+            # aiperf --api-key sends "Authorization: Bearer <api_key>"
+            authorized = header_value == self.config.api_key or (
+                header_name == "authorization"
+                and header_value == f"Bearer {self.config.api_key}"
+            )
+            if not authorized:
                 body = orjson.dumps({"error": "Unauthorized"})
                 await send(
                     {
