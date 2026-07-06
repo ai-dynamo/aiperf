@@ -115,6 +115,9 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 test: #? run the tests using pytest-xdist.
 	$(activate_venv) && pytest tests/unit -n auto -m 'not integration and not performance and not component_integration and not slow' $(args)
 
+test-zmq: #? run the real-socket zmq transport tests (real libzmq, no looptime).
+	$(activate_venv) && pytest tests/zmq --no-looptime $(args)
+
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
 	$(activate_venv) && pytest tests/unit -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance and not component_integration and not slow'
 
@@ -127,13 +130,13 @@ test-imports-src: #? verify all modules in src/aiperf can be imported.
 test-imports-tests: #? verify all modules in tests/ can be imported.
 	$(activate_venv) && pytest tests/unit/test_imports.py::test_all_test_modules_can_be_imported -q $(args)
 
-check-ergonomics: #? run LLM-ergonomics checks (file/function size, nesting, module state, duplicate classes, wide sigs, pydantic fields, stdlib-json).
+check-ergonomics: #? run LLM-ergonomics checks (nesting, wide sigs, module state, duplicate classes, pydantic fields, stdlib-json, exception messages).
 	$(activate_venv) && python tools/check_ergonomics.py $(args)
 
 regenerate-ergonomics-baseline: #? overwrite tools/ergonomics_baseline.json with current violations.
 	$(activate_venv) && python tools/check_ergonomics.py --regenerate-baseline
 
-check-ruff-baselined: #? run ruff for the LLM-ergonomics rules (PLR0915/PLR0912/C901/TID251) via the out-of-band baseline wrapper.
+check-ruff-baselined: #? run ruff for the LLM-ergonomics rules (C901/TID251/S110/S112/ANN201/D103) via the out-of-band baseline wrapper.
 	$(activate_venv) && python tools/ruff_baselined.py $(args)
 
 regenerate-ruff-baseline: #? overwrite tools/ruff_baseline.json with current ruff violations (grandfather them).
@@ -245,6 +248,9 @@ test-ci: #? run the tests using pytest-xdist for CI.
 	@# Run unit tests first with coverage
 	@printf "$(bold)$(blue)Running unit tests...$(reset)\n"
 	@$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report= -m 'not performance and not stress and not slow' --tb=short $(args) || exit_code=$$?; \
+	# Run real-socket zmq transport tests (real time + real sockets, no looptime) regardless of unit result \
+	printf "$(bold)$(blue)Running zmq real-transport tests...$(reset)\n"; \
+	$(activate_venv) && pytest tests/zmq --cov=src/aiperf --cov-branch --cov-append --cov-report= -m 'not performance and not stress and not slow' --no-looptime --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
 	# Run component integration tests with coverage append regardless of unit test result \
 	printf "$(bold)$(blue)Running component integration tests...$(reset)\n"; \
 	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration -n auto --cov=src/aiperf --cov-branch --cov-append --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' -v --tb=short $(args) || exit_code=$$((exit_code + $$?)); \

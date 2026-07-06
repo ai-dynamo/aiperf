@@ -87,7 +87,7 @@ COMPOSITE_ENUMS = {
             },
             {
                 "category": "timing_strategy",
-                "excludes": {"request_rate"},  # Internal implementation detail
+                "excludes": {"adaptive_scale", "request_rate"},
                 "renames": {"user_centric_rate": "user_centric"},
             },
         ],
@@ -388,7 +388,7 @@ def _generate_composite_enum_py(
 
         # Add exclusion check if needed
         if excludes:
-            excludes_repr = repr(excludes)
+            excludes_repr = repr(tuple(sorted(excludes)))
             lines.append(f"        if entry.name in {excludes_repr}:")
             lines.append("            continue")
 

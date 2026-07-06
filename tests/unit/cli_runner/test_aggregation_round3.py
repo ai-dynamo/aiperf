@@ -328,3 +328,22 @@ def test_strict_zip_in_aggregator_raises_on_length_mismatch() -> None:
         "strict=False zip(plan.configs, plan.variations) reintroduced; "
         "see round-2 R2-L7."
     )
+
+
+def test_scenario_sweep_nested_dict_values_group_without_typeerror() -> None:
+    """Scenario sweeps put nested override dicts in variation_values;
+    grouping used to crash with ``TypeError: unhashable type: 'dict'``.
+    """
+    override_a = {"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}
+    override_b = {"benchmark": {"dataset": {"prompts": {"isl": {"mean": 10000}}}}}
+    results = [
+        _result("r1", variation_label="aa-1k", variation_values=override_a),
+        _result("r2", variation_label="aa-1k", variation_values=override_a),
+        _result("r3", variation_label="aa-10k", variation_values=override_b),
+    ]
+
+    groups = _group_results_by_variation(results)
+
+    assert len(groups) == 2
+    sizes = sorted(len(g) for g in groups.values())
+    assert sizes == [1, 2]

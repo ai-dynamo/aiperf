@@ -42,6 +42,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
     {
         # ----- top-level input flat fields -----
         "custom_dataset_type",
+        "dataset_filters",
         "dataset_sampling_strategy",
         "extra_inputs",
         "input_file",
@@ -82,6 +83,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "image_batch_size",
         "image_format",
         "image_source",
+        "image_source_sampling",
         # ----- audio modality -----
         "audio_batch_size",
         "audio_length_mean",
@@ -144,6 +146,10 @@ TOKENIZER_FIELDS: frozenset[str] = frozenset(
 
 LOADGEN_FIELDS: frozenset[str] = frozenset(
     {
+        "adaptive_assessment_period",
+        "adaptive_scale",
+        "adaptive_scale_sla",
+        "adaptive_sustain_duration",
         "arrival_pattern",
         "arrival_smoothness",
         "benchmark_duration",
@@ -216,6 +222,7 @@ SWEEPING_FIELDS: frozenset[str] = frozenset(
         "search_random_seed",
         "search_recipe",
         "search_sla",
+        "search_sla_tier",
         "search_space",
         "search_stat",
         "search_style",

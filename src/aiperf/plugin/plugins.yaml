@@ -52,6 +52,17 @@ service:
       required: false
       auto_start: true
 
+  network_latency_manager:
+    class: aiperf.network_latency.manager:NetworkLatencyManager
+    description: |
+      Network latency calibration service. Probes the endpoint's TCP-handshake
+      RTT throughout the profiling phase so the mean network round-trip can be
+      subtracted from latency metrics. Only spawned when network latency
+      calibration is enabled with active probing (no mean_ms).
+    metadata:
+      required: false
+      auto_start: true
+
   record_processor:
     class: aiperf.records.record_processor_service:RecordProcessor
     description: |
@@ -861,6 +872,11 @@ timing_strategy:
       A mode where the TimingManager will send requests using a request rate generator based on various modes.
       Optionally, a max concurrency limit can be specified as well.
 
+  adaptive_scale:
+    class: aiperf.timing.strategies.adaptive_scale:AdaptiveScaleStrategy
+    description: |
+      Single-run adaptive scale controller that discovers and sustains an SLA boundary.
+
   user_centric_rate:
     class: aiperf.timing.strategies.user_centric_rate:UserCentricStrategy
     description: |
@@ -987,6 +1003,13 @@ results_processor:
       aggregates results from all record processors. Final stage of metrics
       pipeline. Always loaded.
 
+  network_latency_jsonl_writer:
+    class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter
+    description: |
+      Network latency JSONL writer that exports per-sample TCP-handshake RTT
+      probes to a JSONL file. Enabled when network latency calibration is
+      actively probing (no mean_ms).
+
   otel_metrics_streamer:
     class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
     description: |
@@ -1097,6 +1120,13 @@ data_exporter:
       MLflow post-run exporter that uploads benchmark params, metrics, tags,
       and generated artifacts (including plots) to an MLflow Tracking server.
       Enabled when --mlflow-tracking-uri is configured.
+
+  wandb:
+    class: aiperf.exporters.wandb_data_exporter:WandbDataExporter
+    description: |
+      Weights & Biases post-run exporter that uploads benchmark config, metrics,
+      tags, and generated artifacts to a wandb project.
+      Enabled when --wandb-project is configured.
 
   raw_record_aggregator:
     class: aiperf.post_processors.raw_record_writer_processor:RawRecordAggregator
@@ -1425,6 +1455,15 @@ accuracy_grader:
       ``IndicesExtractionConfig(prefix_for_extraction="NativeLetters")``
       to find the chosen A/B/C/D letter in both gold and prediction.
 
+  lighteval_gsm8k:
+    class: aiperf.accuracy.graders.gsm8k_grader:LightevalGSM8KGrader
+    description: |
+      Lighteval ``quasi_exact_match_gsm8k`` grader — used by GSM8K. Extracts
+      the number after "####" from the gold answer using gsm8k_normalizer,
+      and extracts the last number from the model prediction (preferring a
+      "####" marker when present). Compares numerically so "24" and "24.0"
+      match. Pure-regex; no lighteval install required.
+
 # =============================================================================
 # Accuracy Benchmarks
 # =============================================================================
@@ -1514,6 +1553,19 @@ accuracy_benchmark:
       default_grader: lighteval_latex
       default_n_shots: 0
 
+  gsm8k:
+    class: aiperf.accuracy.benchmarks.gsm8k:GSM8KBenchmark
+    description: |
+      GSM8K (Grade School Math 8K) benchmark. Grade-school math word
+      problems requiring multi-step reasoning. Aligned with lighteval's
+      ``gsm8k_leaderboard`` task config (gsm8k/main test split, prompt
+      ``"Question: {question}\nAnswer:"``, ``generation_size=256``).
+      Gold is the raw ``answer`` field ending in ``#### <number>``;
+      ``LightevalGSM8KGrader`` extracts the number at grade time.
+    metadata:
+      default_grader: lighteval_gsm8k
+      default_n_shots: 0
+
   gpqa_diamond:
     class: aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark
     description: |
@@ -1529,12 +1581,17 @@ accuracy_benchmark:
   lcb_codegeneration:
     class: aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark
     description: |
-      LiveCodeBench code generation benchmark for evaluating code synthesis
-      capabilities with test-case-based validation.
+      LiveCodeBench code generation benchmark, aligned with the trt-llm
+      benchmark recipe's lighteval-backed configuration
+      (livecodebench/code_generation_lite + lighteval ``codegen_metrics``).
+      Serializes the LCB-style test-case payload (starter_code,
+      public_test_cases, private_test_cases, upstream metadata) into
+      ``BenchmarkProblem.ground_truth`` as an orjson blob so
+      ``CodeExecutionGrader`` can run the generated code against the
+      bundled public + private test cases.
     metadata:
       default_grader: code_execution
       default_n_shots: 0
-      is_implemented: false
 
 # =============================================================================
 # Communication Backends
@@ -1611,6 +1668,19 @@ communication_client:
       ZMQ ROUTER client for streaming messaging pattern. Receives high-throughput
       streams with identity-based routing and connection management.
 
+  streaming_push:
+    class: aiperf.zmq.streaming_push_client:ZMQStreamingPushClient
+    description: |
+      ZMQ PUSH client that sends typed msgpack structs (the credit-channel wire,
+      no Message-bus envelope). Send-only fan-out leg of the typed PUSH/PULL
+      credit-return channel.
+
+  streaming_pull:
+    class: aiperf.zmq.streaming_pull_client:ZMQStreamingPullClient
+    description: |
+      ZMQ PULL client that decodes typed WorkerToRouterMessage structs. Recv-only
+      fan-in leg of the typed PUSH/PULL credit-return channel.
+
   sub:
     class: aiperf.zmq.sub_client:ZMQSubClient
     description: |
@@ -1624,6 +1694,30 @@ communication_client:
 # local file. Selected via --public-dataset configuration option.
 # =============================================================================
 public_dataset_loader:
+  exgentic_v2:
+    class: aiperf.dataset.loader.exgentic_v2:ExgenticV2DatasetLoader
+    description: |
+      Exgentic v2 agent LLM traces from HuggingFace. Replays complete recorded
+      message and tool snapshots with source request controls and timing.
+    metadata:
+      hf_dataset_name: Exgentic/agent-llm-traces-v2
+      hf_split: train
+      streaming: true
+      has_timing_data: true
+
+  exgentic:
+    class: aiperf.dataset.loader.exgentic:ExgenticDatasetLoader
+    description: |
+      Exgentic agent LLM traces from HuggingFace. Replays complete recorded
+      message and tool snapshots with recorded output limits. Fixed-schedule
+      mode preserves call timestamps and overlaps; other modes replay sessions
+      closed-loop with recorded inter-turn delays.
+    metadata:
+      hf_dataset_name: Exgentic/agent-llm-traces
+      hf_split: train
+      streaming: true
+      has_timing_data: true
+
   sharegpt:
     class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
     description: |
@@ -1726,6 +1820,74 @@ public_dataset_loader:
     description: |
       SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
       Loads single-turn questions for evaluating speculative decoding methods.
+
+  # ---------------------------------------------------------------------------
+  # Speculative-decoding acceptance-length benchmarks (auto-downloaded from HF).
+  # These are the datasets the spec-decode literature reports acceptance length
+  # against (GSM8K, MT-Bench, MATH-500, HumanEval, MBPP). Run each with
+  # `--public-dataset spec_al_<name>` then `aiperf speed-bench-report ...
+  # --metric accept_length`. Prompts are emitted bare; set greedy decoding with
+  # `--extra-inputs temperature:0` to match the literature's headline numbers.
+  # ---------------------------------------------------------------------------
+  spec_al_gsm8k:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      GSM8K grade-school math word problems from HuggingFace (openai/gsm8k, main
+      config, test split, 1319 prompts). Single-turn prompts for speculative
+      decoding acceptance-length measurement. License: MIT.
+    metadata:
+      hf_dataset_name: openai/gsm8k
+      hf_subset: main
+      hf_split: test
+      prompt_column: question
+
+  spec_al_math500:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MATH-500 competition math problems from HuggingFace (HuggingFaceH4/MATH-500,
+      test split, 500 prompts). Single-turn prompts for speculative decoding
+      acceptance-length measurement. License: MIT (inherited from Hendrycks MATH).
+    metadata:
+      hf_dataset_name: HuggingFaceH4/MATH-500
+      hf_split: test
+      prompt_column: problem
+
+  spec_al_humaneval:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      HumanEval Python code-completion prompts from HuggingFace
+      (openai/openai_humaneval, test split, 164 prompts). Single-turn prompts for
+      speculative decoding acceptance-length measurement. The literature runs
+      HumanEval as raw text completion; serving it through a chat template here
+      shifts acceptance length away from the papers' headline numbers (MBPP shares
+      this caveat to a lesser degree). License: MIT.
+    metadata:
+      hf_dataset_name: openai/openai_humaneval
+      hf_split: test
+      prompt_column: prompt
+
+  spec_al_mbpp:
+    class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
+    description: |
+      MBPP basic Python programming tasks from HuggingFace
+      (google-research-datasets/mbpp, full config, test split, 500 prompts).
+      Single-turn prompts for speculative decoding acceptance-length measurement.
+      License: CC-BY-4.0.
+    metadata:
+      hf_dataset_name: google-research-datasets/mbpp
+      hf_subset: full
+      hf_split: test
+      prompt_column: text
+
+  spec_al_mtbench:
+    class: aiperf.dataset.loader.mt_bench:MTBenchDatasetLoader
+    description: |
+      MT-Bench two-turn chat prompts from HuggingFace (HuggingFaceH4/mt_bench_prompts,
+      train split, 80 prompts). Multi-turn conversations for speculative decoding
+      acceptance-length measurement. License: Apache-2.0.
+    metadata:
+      hf_dataset_name: HuggingFaceH4/mt_bench_prompts
+      hf_split: train
 
   instruct_coder:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader

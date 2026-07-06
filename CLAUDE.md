@@ -4,7 +4,7 @@
 -->
 # AIPerf
 
-Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
+Python 3.11+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
 
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns

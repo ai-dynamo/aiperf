@@ -435,6 +435,10 @@ class PublicDatasetLoaderMetadata(BaseModel):
             "Use false (default) for small datasets to leverage HF caching and len() support."
         ),
     )
+    has_timing_data: bool = Field(
+        default=False,
+        description="Whether the loader emits timestamps suitable for fixed-schedule replay.",
+    )
     prompt_template: str | None = Field(
         default=None,
         description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",

@@ -30,6 +30,14 @@ CLI runner post-run callback behavior. Controls whether OnComplete callback exce
 |----------------------|---------|-------------|-------------|
 | `AIPERF_RAISE_ON_CALLBACK_ERROR` | `False` | — | When true, re-raise the first OnComplete callback exception after running all remaining callbacks but before os._exit. Provides a strict-mode contract where a callback raise propagates out of the runner. When false (default) the exception is logged with full traceback, the exit code is forced non-zero, and the process still terminates via os._exit so leftover ZMQ/multiprocessing state cannot hang the interpreter. |
 
+## ACCURACY
+
+Accuracy benchmark settings. Tunables for the accuracy benchmark loaders. Currently only pins the LiveCodeBench dataset release so accuracy numbers are reproducible across runs without requiring source edits.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_ACCURACY_LCB_RELEASE_TAG` | `'v4_v5'` | — | LiveCodeBench dataset subset (HF config name) passed as the positional ``name`` arg to ``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. Pins which monthly snapshot LCB serves so accuracy numbers are reproducible across runs and branches. Default ``v4_v5`` matches lighteval's base subset; bump (e.g. to ``v6``) when the team rebaselines against a newer snapshot. The loader always passes ``trust_remote_code=True`` so LCB's dataset-loading script can execute on ``datasets`` v4+ (mirrors lighteval's reference opt-in). Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``. |
+
 ## APISERVER
 
 API server settings. Controls the host and port of the API server.
@@ -141,6 +149,18 @@ MLflow export configuration. Controls timeout behavior for post-run MLflow artif
 |----------------------|---------|-------------|-------------|
 | `AIPERF_MLFLOW_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run MLflow export operation. If the MLflow tracking server is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. |
 
+## NETWORKLATENCY
+
+Network latency calibration configuration. Controls the TCP-handshake RTT probes used to estimate the client-to-endpoint network round-trip time so it can be subtracted from latency metrics. Probes run throughout the profiling phase. Enable with `--network-latency-automatic`.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_NETWORK_LATENCY_DEFAULT_PROBE_INTERVAL` | `1.0` | ≥ 0.001, ≤ 300.0 | Default seconds between RTT probes when --network-latency-ping-interval is unset (default: 1.0s, ~1Hz) |
+| `AIPERF_NETWORK_LATENCY_MIN_SAMPLES` | `5` | ≥ 1, ≤ 100000 | Minimum number of successful RTT samples to collect; extra probes are issued at profile completion if a short run did not reach this floor |
+| `AIPERF_NETWORK_LATENCY_CONNECT_TIMEOUT` | `5.0` | ≥ 0.001, ≤ 300.0 | Timeout in seconds for a single TCP-handshake RTT probe |
+| `AIPERF_NETWORK_LATENCY_COMPLETE_TOPUP_TIMEOUT` | `3.0` | ≥ 0.0, ≤ 30.0 | Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes at PROFILE_COMPLETE, kept well under the command-response budget so a slow endpoint cannot stall completion |
+| `AIPERF_NETWORK_LATENCY_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for the network latency jsonl writer export results processor |
+
 ## OTEL
 
 OpenTelemetry metrics streaming configuration. Controls buffering and flush behavior for OTLP metric streaming.
@@ -249,6 +269,14 @@ User interface and dashboard configuration. Controls refresh rates, update thres
 | `AIPERF_UI_REALTIME_METRICS_INTERVAL` | `5.0` | ≥ 1.0, ≤ 1000.0 | Interval in seconds between real-time metrics messages |
 | `AIPERF_UI_REALTIME_METRICS_ENABLED` | `False` | — | Enable real-time metrics collection and reporting despite UI type |
 | `AIPERF_UI_SPINNER_REFRESH_RATE` | `0.1` | ≥ 0.1, ≤ 100.0 | Progress spinner refresh rate in seconds (default: 10 FPS) |
+
+## WANDB
+
+Weights & Biases export configuration. Controls timeout behavior for the post-run W&B upload.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_WANDB_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run Weights & Biases export operation. If the W&B backend is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. |
 
 ## WORKER
 

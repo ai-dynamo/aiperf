@@ -6,10 +6,9 @@ All over-the-wire structs use tag_field="t" for efficient polymorphic decoding v
 Tag values are short strings for minimal wire overhead.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from msgspec import Struct
-from typing_extensions import Self
 
 from aiperf.common.enums import ConversationBranchMode, CreditPhase
 
@@ -87,6 +86,8 @@ class CreditContext(
         returned: True if the credit was returned after completion.
         first_token_sent: True if the first token was sent before this return.
         error: The error message if the request failed (None on success).
+        request_latency_ns: Request latency in nanoseconds using records-pipeline
+            semantics.
     """
 
     credit: Credit
@@ -95,6 +96,7 @@ class CreditContext(
     returned: bool = False
     first_token_sent: bool = False
     error: str | None = None
+    request_latency_ns: int | None = None
 
 
 # =============================================================================

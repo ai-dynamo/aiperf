@@ -68,12 +68,11 @@ class TestStreamingRouterClientSendTo:
 
         await client.send_to("worker-42", sample_credit)
 
-        # Verify multipart message with correct envelope
-        mock_zmq_socket.send_multipart.assert_called_once()
-        call_args = mock_zmq_socket.send_multipart.call_args[0][0]
-
-        assert call_args[0] == b"worker-42"  # Identity
-        decoded = msgspec.msgpack.decode(call_args[1], type=Credit)
+        # FD path frames the message as two sync sends: identity + payload.
+        assert mock_zmq_socket._sync_send.call_count == 2
+        calls = mock_zmq_socket._sync_send.call_args_list
+        assert calls[0][0][0] == b"worker-42"  # Identity
+        decoded = msgspec.msgpack.decode(calls[1][0][0], type=Credit)
         assert decoded.id == sample_credit.id
 
     @pytest.mark.asyncio
@@ -90,7 +89,7 @@ class TestStreamingRouterClientReceiver:
 
     @pytest.mark.asyncio
     async def test_receives_worker_ready_and_calls_handler(
-        self, mock_zmq_context, sample_worker_ready, wait_for_background_task
+        self, mock_zmq_socket, mock_zmq_context, sample_worker_ready, fd_enqueue
     ):
         """Should receive messages from DEALERs and call registered handler."""
         handler_called = asyncio.Event()
@@ -103,27 +102,11 @@ class TestStreamingRouterClientReceiver:
             received_message = message
             handler_called.set()
 
-        # Setup mock socket to return one message
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.send_multipart = AsyncMock()
-
-        # Return message in ROUTER format: [identity, message_bytes]
-        call_count = 0
-
-        async def recv_multipart_handler():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                await asyncio.sleep(0.01)  # Small delay
-                return [b"worker-1", msgspec.msgpack.encode(sample_worker_ready)]
-            else:
-                # Block forever on subsequent calls
-                await asyncio.Future()
-
-        mock_socket.recv_multipart = recv_multipart_handler
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+        # Queue one ROUTER message [identity, payload] for the FD drain.
+        fd_enqueue(
+            mock_zmq_socket,
+            frames=[b"worker-1", msgspec.msgpack.encode(sample_worker_ready)],
+        )
 
         client = ZMQStreamingRouterClient(address="tcp://*:5555", bind=True)
         client.register_receiver(handler)
@@ -211,9 +194,9 @@ class TestStreamingDealerClientSend:
 
         await client.send(sample_worker_ready)
 
-        # Verify message was sent (DEALER uses send, not send_multipart)
-        mock_zmq_socket.send.assert_called_once()
-        call_args = mock_zmq_socket.send.call_args[0][0]
+        # DEALER FD path uses a single sync send (no async send_multipart).
+        mock_zmq_socket._sync_send.assert_called_once()
+        call_args = mock_zmq_socket._sync_send.call_args[0][0]
 
         decoded = msgspec.msgpack.decode(call_args, type=WorkerReady)
         assert decoded.worker_id == sample_worker_ready.worker_id
@@ -236,7 +219,7 @@ class TestStreamingDealerClientReceiver:
 
     @pytest.mark.asyncio
     async def test_receives_credits_and_calls_handler(
-        self, mock_zmq_context, sample_credit, wait_for_background_task
+        self, mock_zmq_socket, mock_zmq_context, sample_credit, fd_enqueue
     ):
         """Should receive credits from ROUTER and call registered handler."""
         handler_called = asyncio.Event()
@@ -247,27 +230,8 @@ class TestStreamingDealerClientReceiver:
             received_message = message
             handler_called.set()
 
-        # Setup mock socket to return one message
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.connect = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.send = AsyncMock()
-
-        # DEALER receives using recv() not recv_multipart()
-        call_count = 0
-
-        async def recv_handler():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                await asyncio.sleep(0.01)
-                return msgspec.msgpack.encode(sample_credit)
-            else:
-                await asyncio.Future()
-
-        mock_socket.recv = recv_handler
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+        # Queue one DEALER frame (the credit) for the FD drain.
+        fd_enqueue(mock_zmq_socket, messages=[msgspec.msgpack.encode(sample_credit)])
 
         client = ZMQStreamingDealerClient(
             address="tcp://localhost:5555", identity="worker-1"
@@ -285,7 +249,7 @@ class TestStreamingDealerClientReceiver:
 
     @pytest.mark.asyncio
     async def test_receives_credit_with_msgpack_framing(
-        self, mock_zmq_context, sample_credit, wait_for_background_task
+        self, mock_zmq_socket, mock_zmq_context, sample_credit, fd_enqueue
     ):
         """Should handle msgpack encoded credits (DEALER uses recv, framing handled by ZMQ)."""
         handler_called = asyncio.Event()
@@ -296,26 +260,7 @@ class TestStreamingDealerClientReceiver:
             received_message = message
             handler_called.set()
 
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.connect = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.send = AsyncMock()
-
-        # DEALER uses recv() - ZMQ handles framing automatically
-        call_count = 0
-
-        async def recv_handler():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                await asyncio.sleep(0.01)
-                return msgspec.msgpack.encode(sample_credit)
-            else:
-                await asyncio.Future()
-
-        mock_socket.recv = recv_handler
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+        fd_enqueue(mock_zmq_socket, messages=[msgspec.msgpack.encode(sample_credit)])
 
         client = ZMQStreamingDealerClient(
             address="tcp://localhost:5555", identity="worker-1"

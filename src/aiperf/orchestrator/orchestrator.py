@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aiperf.orchestrator.models import RunResult
+from aiperf.orchestrator.models import RunResult, _variation_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -156,7 +156,10 @@ class MultiRunOrchestrator:
             base_dir: Base directory for all artifacts.
             cell_callback: Optional per-cell observer fired after each variation
                 finishes its trials. Receives ``(variation_key, cell)`` where
-                ``variation_key`` is ``(label, tuple(sorted(values.items())))``
+                ``variation_key`` is the hashable
+                :func:`aiperf.orchestrator.models._variation_key` output
+                ``(label, sorted_values_tuple)`` (nested override values are
+                canonicalized to JSON strings so the key stays hashable)
                 and ``cell`` is the dict produced by
                 :func:`aiperf.cli_runner._pareto._aggregate_one_cell`.
                 Useful for live observers (e.g. a streaming Pareto tracker).
@@ -200,12 +203,11 @@ class MultiRunOrchestrator:
                     "pareto_optimal": False,
                 }
             cell["_cell_results"] = cell_results  # opaque pass-through for consumers
-            variation_key = (
-                getattr(variation, "label", None) or "",
-                tuple(sorted(variation.values.items())),
+            variation_key = _variation_key(
+                getattr(variation, "label", None) or "", variation.values
             )
             self._cell_callback(variation_key, cell)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("cell_callback raised; suppressing", exc_info=True)
 
     def _maybe_write_sampling_design(self, plan: BenchmarkPlan) -> None:
@@ -715,4 +717,5 @@ class MultiRunOrchestrator:
         if run.variation is not None:
             result.variation_label = run.variation.label
             result.variation_values = dict(run.variation.values)
+            result.variation_index = run.variation.index
         result.trial_index = trial_index

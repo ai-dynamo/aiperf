@@ -3,6 +3,8 @@
 
 import platform as _platform
 
+from aiperf.common.enums.enums import CreditPhase
+
 # Platform detection — evaluated once at import time.
 IS_WINDOWS: bool = _platform.system() == "Windows"
 IS_MACOS: bool = _platform.system() == "Darwin"
@@ -12,6 +14,7 @@ NANOS_PER_SECOND = 1_000_000_000
 NANOS_PER_MILLIS = 1_000_000
 MILLIS_PER_SECOND = 1000
 BYTES_PER_MIB = 1024 * 1024
+WARMUP_SYSTEM_MESSAGE_PREFIX = CreditPhase.WARMUP
 
 STAT_KEYS = [
     "avg",

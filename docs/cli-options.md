@@ -32,7 +32,7 @@ Validate an AIPerf config file.
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
 
 ### [`plot`](#aiperf-plot)
 
@@ -46,7 +46,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 
 Run an AIPerf service in a single process.
 
-[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
 
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
@@ -359,11 +359,15 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--dataset-filter` `<list>`
+
+Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
 
 #### `--custom-dataset-type` `<str>`
 
@@ -621,8 +625,20 @@ Image file format for generated images. Choose `png` for lossless compression (l
 
 #### `--image-source` `<str>`
 
-Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
+Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and lazily loads them at the requested dimensions. A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
 <br/>_Default: `noise`_
+
+#### `--image-source-sampling` `<str>`
+
+How source images are selected from finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random-with-replacement` draws each source image independently; repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `random-with-replacement` | _default_ | Draw each source image independently; repeats may occur immediately. |
+| `shuffle-cycle` |  | Draw every source image once per shuffled cycle; reshuffle after exhaustion. |
+| `sequential-cycle` |  | Walk source images in sorted load order; wrap after exhaustion. |
 
 ### Video Input
 
@@ -845,6 +861,25 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
+#### `--adaptive-scale`
+
+Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+<br/>_Flag (no value required)_
+
+#### `--adaptive-sustain-duration` `<float>`
+
+Duration in seconds to sustain load near the discovered adaptive scale boundary.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-assessment-period`, `--adaptive-scale-assessment-period` `<float>`
+
+Duration in seconds for each adaptive scale SLA assessment window.
+<br/>_Constraints: ≥ 1.0_
+
+#### `--adaptive-scale-sla` `<list>`
+
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -1002,6 +1037,22 @@ Optional MLflow parent run ID.
 
 Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
 
+#### `--wandb-project` `<str>`
+
+Weights & Biases project name. Setting this enables wandb export.
+
+#### `--wandb-entity` `<str>`
+
+Weights & Biases entity (team or user). Defaults to the API key's default entity.
+
+#### `--wandb-run-name` `<str>`
+
+Weights & Biases run name.
+
+#### `--wandb-tag` `<list>`
+
+Additional Weights & Biases run tags to attach on upload. Can be specified multiple times or as a comma-separated list.
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -1036,6 +1087,23 @@ Specify which output formats to generate for server metrics. Multiple formats ca
 | `csv` | _default_ | Export aggregated statistics in CSV tabular format organized by metric type. Best for: Spreadsheet analysis, Excel/Google Sheets, pandas DataFrames. |
 | `jsonl` |  | Export raw time-series records in line-delimited JSON format. Best for: Time-series analysis, debugging, visualizing metric evolution. Warning: Can generate very large files for long-running benchmarks. |
 | `parquet` |  | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
+
+### Network Latency
+
+#### `--network-latency-automatic`
+
+Automatically measure network latency (DISABLED BY DEFAULT). Opens a fresh TCP connection to the endpoint throughout the run, measures the handshake RTT, and subtracts the mean from request-start-anchored latency metrics (request_latency, time_to_first_token, time_to_first_output_token). Raw metrics are preserved; adjusted values are emitted as separate network_adjusted_* metrics plus a network_rtt summary. Mutually exclusive with --network-latency-mean.
+<br/>_Flag (no value required)_
+
+#### `--network-latency-mean` `<float>`
+
+Set a fixed mean network RTT in milliseconds to subtract, bypassing active probing. Implicitly enables network latency adjustment. Mutually exclusive with --network-latency-automatic.
+<br/>_Constraints: ≥ 0.0_
+
+#### `--network-latency-ping-interval` `<float>`
+
+Seconds between TCP-handshake RTT probes during profiling (default: 1.0s). Only applies with --network-latency-automatic.
+<br/>_Constraints: > 0.0_
 
 ### GPU Telemetry
 
@@ -1197,7 +1265,11 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 #### `--search-sla` `<list>`
 
-SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+
+#### `--search-sla-tier` `<list>`
+
+Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or 'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). Requires 2-10 invocations. Example: --search-sla-tier 'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' --search-sla-tier 'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. When used, all --search-sla filters are still parsed and compose with tier definitions.
 
 #### `--search-recipe` `<str>`
 
@@ -1304,7 +1376,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -1323,7 +1395,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
 
 #### `--accuracy-system-prompt` `<str>`
 
@@ -1516,7 +1588,7 @@ For standard single-node benchmarking, use the `aiperf profile` command instead.
 #### `--type` `<str>` _(Required)_
 
 Service type to run.
-<br/>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
+<br/>_Choices: [`api`, `dataset_manager`, `gpu_telemetry_manager`, `network_latency_manager`, `record_processor`, `records_manager`, `server_metrics_manager`, `system_controller`, `timing_manager`, `worker`, `worker_manager`]_
 
 #### `--service-id` `<str>`
 
@@ -1684,11 +1756,15 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--dataset-filter` `<list>`
+
+Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
 
 #### `--custom-dataset-type` `<str>`
 
@@ -1946,8 +2022,20 @@ Image file format for generated images. Choose `png` for lossless compression (l
 
 #### `--image-source` `<str>`
 
-Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and resizes them to the requested dimensions. A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
+Source image generation mode (default `noise`). `noise` generates random noise images on the fly at the requested dimensions — no files on disk required, and the pool is effectively unbounded so servers cannot dedupe on identical inputs. `assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) and lazily loads them at the requested dimensions. A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.
 <br/>_Default: `noise`_
+
+#### `--image-source-sampling` `<str>`
+
+How source images are selected from finite image sources selected by `--image-source assets` or `--image-source <directory>`. `random-with-replacement` draws each source image independently; repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `random-with-replacement` | _default_ | Draw each source image independently; repeats may occur immediately. |
+| `shuffle-cycle` |  | Draw every source image once per shuffled cycle; reshuffle after exhaustion. |
+| `sequential-cycle` |  | Walk source images in sorted load order; wrap after exhaustion. |
 
 ### Video Input
 
@@ -2170,6 +2258,25 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 Duration in seconds to ramp request rate from a proportional minimum to target. Start rate is calculated as target * (update_interval / duration), ensuring correct behavior for target rates below 1 QPS. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
+#### `--adaptive-scale`
+
+Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+<br/>_Flag (no value required)_
+
+#### `--adaptive-sustain-duration` `<float>`
+
+Duration in seconds to sustain load near the discovered adaptive scale boundary.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-assessment-period`, `--adaptive-scale-assessment-period` `<float>`
+
+Duration in seconds for each adaptive scale SLA assessment window.
+<br/>_Constraints: ≥ 1.0_
+
+#### `--adaptive-scale-sla` `<list>`
+
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -2327,6 +2434,22 @@ Optional MLflow parent run ID.
 
 Artifact glob overrides for MLflow upload. Can be specified multiple times or as a comma-separated list.
 
+#### `--wandb-project` `<str>`
+
+Weights & Biases project name. Setting this enables wandb export.
+
+#### `--wandb-entity` `<str>`
+
+Weights & Biases entity (team or user). Defaults to the API key's default entity.
+
+#### `--wandb-run-name` `<str>`
+
+Weights & Biases run name.
+
+#### `--wandb-tag` `<list>`
+
+Additional Weights & Biases run tags to attach on upload. Can be specified multiple times or as a comma-separated list.
+
 ### HTTP Trace
 
 #### `--export-http-trace`
@@ -2361,6 +2484,23 @@ Specify which output formats to generate for server metrics. Multiple formats ca
 | `csv` | _default_ | Export aggregated statistics in CSV tabular format organized by metric type. Best for: Spreadsheet analysis, Excel/Google Sheets, pandas DataFrames. |
 | `jsonl` |  | Export raw time-series records in line-delimited JSON format. Best for: Time-series analysis, debugging, visualizing metric evolution. Warning: Can generate very large files for long-running benchmarks. |
 | `parquet` |  | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
+
+### Network Latency
+
+#### `--network-latency-automatic`
+
+Automatically measure network latency (DISABLED BY DEFAULT). Opens a fresh TCP connection to the endpoint throughout the run, measures the handshake RTT, and subtracts the mean from request-start-anchored latency metrics (request_latency, time_to_first_token, time_to_first_output_token). Raw metrics are preserved; adjusted values are emitted as separate network_adjusted_* metrics plus a network_rtt summary. Mutually exclusive with --network-latency-mean.
+<br/>_Flag (no value required)_
+
+#### `--network-latency-mean` `<float>`
+
+Set a fixed mean network RTT in milliseconds to subtract, bypassing active probing. Implicitly enables network latency adjustment. Mutually exclusive with --network-latency-automatic.
+<br/>_Constraints: ≥ 0.0_
+
+#### `--network-latency-ping-interval` `<float>`
+
+Seconds between TCP-handshake RTT probes during profiling (default: 1.0s). Only applies with --network-latency-automatic.
+<br/>_Constraints: > 0.0_
 
 ### GPU Telemetry
 
@@ -2522,7 +2662,11 @@ Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=
 
 #### `--search-sla` `<list>`
 
-SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+SLA filter to attach to the adaptive-search or grid path. Format: 'metric_tag:stat:op:threshold'. Stat in {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --search-sla 'time_to_first_token:p95:lt:200' --search-sla 'request_error_rate:p99:lt:0.05'. Composes with recipe-named SLA flags (--ttft-sla-ms etc.); the final filter list is recipe filters first, then --search-sla filters in CLI order.
+
+#### `--search-sla-tier` `<list>`
+
+Multi-tier SLO grouping flag. Each invocation defines one tier of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or 'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). Requires 2-10 invocations. Example: --search-sla-tier 'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' --search-sla-tier 'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. When used, all --search-sla filters are still parsed and compose with tier definitions.
 
 #### `--search-recipe` `<str>`
 
@@ -2629,7 +2773,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -2648,7 +2792,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

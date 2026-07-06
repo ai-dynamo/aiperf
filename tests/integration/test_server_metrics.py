@@ -7,7 +7,9 @@ including scraping from multiple mock server endpoints and validating
 the exported data (JSON, JSONL, CSV).
 """
 
+import asyncio
 import platform
+import textwrap
 
 import pytest
 
@@ -261,6 +263,68 @@ class TestServerMetrics:
         assert result.has_server_metrics_csv
         csv_lines = result.server_metrics_csv.strip().split("\n")
         assert len(csv_lines) > 1  # Header + data rows
+
+    async def test_config_file_cli_server_metrics_formats_generates_jsonl(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, tmp_path
+    ):
+        """Config-v2 honors CLI --server-metrics-formats jsonl override."""
+        cfg_file = tmp_path / "server_metrics_config_v2.yaml"
+        yaml = textwrap.dedent(
+            f"""\
+            schemaVersion: "2.0"
+
+            benchmark:
+              model: nvidia/llama-3.1-nemotron-70b-instruct
+              endpoint:
+                url: {aiperf_mock_server.url}/v1/chat/completions
+                type: chat
+                streaming: true
+              dataset:
+                type: synthetic
+                entries: 20
+                prompts:
+                  isl: 128
+                  osl: 64
+              phases:
+                type: concurrency
+                requests: 20
+                concurrency: 2
+              server_metrics:
+                enabled: true
+                urls:
+                  - {aiperf_mock_server.server_metrics_urls["vllm"]}
+                formats:
+                  - json
+                  - csv
+            """
+        )
+        await asyncio.to_thread(
+            cfg_file.write_text,
+            yaml,
+            encoding="utf-8",
+        )
+
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --config "{cfg_file}" \
+                --tokenizer builtin \
+                --server-metrics-formats json csv jsonl
+            """
+        )
+
+        assert result.server_metrics_json is not None
+        assert result.has_server_metrics_csv
+        assert result.server_metrics_jsonl is not None
+        assert len(result.server_metrics_jsonl) > 0
+        jsonl_file = result.artifacts_dir / "server_metrics_export.jsonl"
+        assert jsonl_file.exists()
+        jsonl_content = await asyncio.to_thread(
+            jsonl_file.read_text,
+            encoding="utf-8",
+        )
+        jsonl_lines = [line for line in jsonl_content.splitlines() if line]
+        assert len(jsonl_lines) >= len(result.server_metrics_jsonl)
 
     async def test_server_metrics_jsonl_records(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer

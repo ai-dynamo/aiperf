@@ -18,7 +18,11 @@ from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 
-def make_fetch_result(metrics_text: str, latency_ns: int = 1_000_000) -> FetchResult:
+def make_fetch_result(
+    metrics_text: str,
+    latency_ns: int = 1_000_000,
+    content_type: str | None = None,
+) -> FetchResult:
     """Create a FetchResult for testing."""
     return FetchResult(
         text=metrics_text,
@@ -29,6 +33,7 @@ def make_fetch_result(metrics_text: str, latency_ns: int = 1_000_000) -> FetchRe
             end_perf_ns=latency_ns,
         ),
         is_duplicate=False,
+        content_type=content_type,
     )
 
 
@@ -62,6 +67,29 @@ class TestServerMetricsDataCollectorInitialization:
 
 class TestPrometheusMetricParsing:
     """Test Prometheus metric parsing functionality."""
+
+    @pytest.fixture(autouse=True)
+    def _normalize_collector_logger(self):
+        """Normalize the process-shared ``server_metrics_collector`` logger.
+
+        The collector logs to that top-level (non-``aiperf``) logger. Under
+        xdist another test can leave its level raised or ``propagate=False``,
+        which silently suppresses the warnings the warn-once tests assert on
+        (observed as a CI flake: the warning was captured 0 times). Reset to a
+        known-good state per test and restore afterward so this fixture does
+        not itself leak state.
+        """
+        import logging
+
+        lg = logging.getLogger("server_metrics_collector")
+        prev_level, prev_propagate = lg.level, lg.propagate
+        lg.setLevel(logging.NOTSET)
+        lg.propagate = True
+        try:
+            yield
+        finally:
+            lg.setLevel(prev_level)
+            lg.propagate = prev_propagate
 
     def test_parse_counter_metrics(self):
         """Test parsing simple counter metrics."""
@@ -177,6 +205,56 @@ histogram_seconds_created 1704067200.0
         assert "requests_created" not in record.metrics
         assert "histogram_seconds" in record.metrics
         assert "histogram_seconds_created" not in record.metrics
+
+    def test_openmetrics_counter_created_sample_does_not_overwrite_total(self) -> None:
+        """OpenMetrics keeps `foo_created` alongside `foo_total` under family
+        `foo` with the same labels, so without skipping it the creation
+        timestamp would win the last-value de-dup and replace the real value."""
+        metrics_text = """# TYPE foo counter
+# HELP foo Test counter
+foo_total{label="a"} 5.0
+foo_created{label="a"} 123.0
+# EOF
+"""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+        record = collector._parse_metrics_to_records(
+            make_fetch_result(
+                metrics_text,
+                content_type="application/openmetrics-text; version=1.0.0; charset=utf-8",
+            )
+        )
+
+        assert record is not None
+        assert "foo" in record.metrics
+        assert record.metrics["foo"].type == PrometheusMetricType.COUNTER
+        samples = record.metrics["foo"].samples
+        assert len(samples) == 1
+        assert samples[0].value == 5.0
+
+    def test_openmetrics_content_type_without_eof_falls_back_to_classic_parser(
+        self,
+    ) -> None:
+        """A body advertised as OpenMetrics but missing the strict `# EOF` trailer
+        makes the OpenMetrics parser raise; the collector must fall back to the
+        lenient classic parser instead of raising (which would disable all
+        server-metrics collection for the run)."""
+        metrics_text = """# TYPE foo counter
+# HELP foo Test counter
+foo_total{label="a"} 5.0
+"""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+        record = collector._parse_metrics_to_records(
+            make_fetch_result(
+                metrics_text,
+                content_type="application/openmetrics-text; version=1.0.0; charset=utf-8",
+            )
+        )
+
+        # Classic fallback mistypes the counter into an `unknown` family named
+        # `foo_total`, but collection stays alive rather than disabling.
+        assert record is not None
+        assert "foo_total" in record.metrics
+        assert record.metrics["foo_total"].samples[0].value == 5.0
 
     def test_parse_metrics_with_labels(self):
         """Test parsing metrics with multiple label combinations."""
@@ -336,7 +414,7 @@ sglang:fwd_occupancy{rank="0"} NaN
 """
         collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
 
-        with caplog.at_level(logging.WARNING, logger="aiperf"):
+        with caplog.at_level(logging.WARNING):
             # Scrape twice — both produce NaN for the same metric.
             collector._parse_metrics_to_records(make_fetch_result(metrics_text))
             collector._parse_metrics_to_records(make_fetch_result(metrics_text))
@@ -385,7 +463,7 @@ my_gauge{which="good"} 2.0
         monkeypatch.setattr(dc_mod, "MetricSample", selective_metric_sample)
 
         collector = dc_mod.ServerMetricsDataCollector("http://localhost:8081/metrics")
-        with caplog.at_level(logging.WARNING, logger="aiperf"):
+        with caplog.at_level(logging.WARNING):
             # Scrape twice to verify warn-once.
             record = collector._parse_metrics_to_records(
                 make_fetch_result(metrics_text)
@@ -445,7 +523,7 @@ my_histogram_count{which="good"} 7.0
         monkeypatch.setattr(dc_mod, "MetricSample", selective_metric_sample)
 
         collector = dc_mod.ServerMetricsDataCollector("http://localhost:8081/metrics")
-        with caplog.at_level(logging.WARNING, logger="aiperf"):
+        with caplog.at_level(logging.WARNING):
             record = collector._parse_metrics_to_records(
                 make_fetch_result(metrics_text)
             )

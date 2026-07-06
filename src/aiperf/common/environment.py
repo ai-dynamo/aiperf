@@ -7,6 +7,7 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.ACCURACY.*       - Accuracy benchmark settings
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
@@ -24,6 +25,7 @@ Structure:
     Environment.TIMING.*         - Timing manager settings
     Environment.TOKENIZER.*      - Tokenizer pre-warm and loading
     Environment.UI.*             - User interface settings
+    Environment.WANDB.*          - Weights & Biases export settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
 
@@ -38,11 +40,10 @@ Examples:
 """
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
@@ -55,6 +56,32 @@ from aiperf.plugin.enums import ServiceType
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
+
+
+class _AccuracySettings(BaseSettings):
+    """Accuracy benchmark settings.
+
+    Tunables for the accuracy benchmark loaders. Currently only pins the
+    LiveCodeBench dataset release so accuracy numbers are reproducible
+    across runs without requiring source edits.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
+
+    LCB_RELEASE_TAG: str = Field(
+        default="v4_v5",
+        description="LiveCodeBench dataset subset (HF config name) "
+        "passed as the positional ``name`` arg to "
+        '``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. '
+        "Pins which monthly snapshot LCB serves so accuracy numbers "
+        "are reproducible across runs and branches. Default "
+        "``v4_v5`` matches lighteval's base subset; bump (e.g. to "
+        "``v6``) when the team rebaselines against a newer snapshot. "
+        "The loader always passes ``trust_remote_code=True`` so LCB's "
+        "dataset-loading script can execute on ``datasets`` v4+ "
+        "(mirrors lighteval's reference opt-in). Consumed by "
+        "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
 
 
 class _APIServerSettings(BaseSettings):
@@ -732,6 +759,54 @@ class _ServerMetricsSettings(BaseSettings):
     )
 
 
+class _NetworkLatencySettings(BaseSettings):
+    """Network latency calibration configuration.
+
+    Controls the TCP-handshake RTT probes used to estimate the client-to-endpoint
+    network round-trip time so it can be subtracted from latency metrics. Probes run
+    throughout the profiling phase. Enable with `--network-latency-automatic`.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_NETWORK_LATENCY_",
+        env_parse_enums=True,
+    )
+
+    DEFAULT_PROBE_INTERVAL: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=1.0,
+        description="Default seconds between RTT probes when --network-latency-ping-interval is unset (default: 1.0s, ~1Hz)",
+    )
+    MIN_SAMPLES: int = Field(
+        ge=1,
+        le=100000,
+        default=5,
+        description="Minimum number of successful RTT samples to collect; extra probes are issued at "
+        "profile completion if a short run did not reach this floor",
+    )
+    CONNECT_TIMEOUT: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=5.0,
+        description="Timeout in seconds for a single TCP-handshake RTT probe",
+    )
+    COMPLETE_TOPUP_TIMEOUT: float = Field(
+        ge=0.0,
+        le=30.0,
+        default=3.0,
+        description="Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes "
+        "at PROFILE_COMPLETE, kept well under the command-response budget so a slow "
+        "endpoint cannot stall completion",
+    )
+    EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=100,
+        description="Batch size for the network latency jsonl writer export results processor",
+    )
+
+
 class _TimingSettings(BaseSettings):
     """Timing manager configuration.
 
@@ -1007,6 +1082,26 @@ class _TokenizerSettings(BaseSettings):
     )
 
 
+class _WandbSettings(BaseSettings):
+    """Weights & Biases export configuration.
+
+    Controls timeout behavior for the post-run W&B upload.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_WANDB_",
+    )
+
+    EXPORT_TIMEOUT_SECONDS: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Timeout in seconds for the post-run Weights & Biases export operation. "
+        "If the W&B backend is unreachable, the export will be abandoned "
+        "after this duration rather than blocking indefinitely.",
+    )
+
+
 class _UISettings(BaseSettings):
     """User interface and dashboard configuration.
 
@@ -1273,6 +1368,10 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    ACCURACY: _AccuracySettings = Field(
+        default_factory=_AccuracySettings,
+        description="Accuracy benchmark settings (dataset version pins, etc.)",
+    )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
@@ -1329,6 +1428,10 @@ class _Environment(BaseSettings):
         default_factory=_SearchPlannerSettings,
         description="Adaptive-search planner tunables",
     )
+    NETWORK_LATENCY: _NetworkLatencySettings = Field(
+        default_factory=_NetworkLatencySettings,
+        description="Network latency calibration settings",
+    )
     SERVER_METRICS: _ServerMetricsSettings = Field(
         default_factory=_ServerMetricsSettings,
         description="Server metrics collection settings",
@@ -1348,6 +1451,10 @@ class _Environment(BaseSettings):
     UI: _UISettings = Field(
         default_factory=_UISettings,
         description="User interface and dashboard settings",
+    )
+    WANDB: _WandbSettings = Field(
+        default_factory=_WandbSettings,
+        description="Weights & Biases export settings",
     )
     WORKER: _WorkerSettings = Field(
         default_factory=_WorkerSettings,

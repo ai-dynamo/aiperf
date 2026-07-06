@@ -123,12 +123,14 @@ def make_credit_return(
     credit: Credit,
     cancelled: bool = False,
     first_token_sent: bool = True,
+    error: str | None = None,
 ) -> CreditReturn:
     """Create a CreditReturn for testing."""
     return CreditReturn(
         credit=credit,
         cancelled=cancelled,
         first_token_sent=first_token_sent,
+        error=error,
     )
 
 
@@ -196,6 +198,45 @@ class TestCreditReturnBasicFlow:
             True,  # cancelled=True
             errored=False,
         )
+
+    async def test_on_credit_return_notifies_result_aware_strategy(
+        self,
+        callback_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        mock_strategy,
+    ):
+        """Strategies with a result hook should receive full return status."""
+        mock_strategy.handle_credit_result = AsyncMock()
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=mock_strategy,
+        )
+        credit = make_credit()
+        credit_return = make_credit_return(
+            credit, cancelled=True, error="worker failed"
+        )
+
+        await callback_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.handle_credit_result.assert_awaited_once_with(credit_return)
+
+    async def test_result_hook_is_cached_at_phase_registration(
+        self, registered_handler, mock_strategy
+    ):
+        """Credit returns should not rediscover optional hooks on the hot path."""
+        late_hook = AsyncMock()
+        mock_strategy.handle_credit_result = late_hook
+        credit = make_credit()
+        credit_return = make_credit_return(credit)
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        late_hook.assert_not_awaited()
 
     async def test_on_credit_return_releases_session_slot_on_final_turn(
         self, registered_handler, mock_concurrency
