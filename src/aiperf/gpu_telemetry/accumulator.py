@@ -134,8 +134,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         wake the task via ``START_REALTIME_TELEMETRY`` (sent by the dashboard
         when the telemetry pane is toggled on).
 
-        ``--stats-interval 0`` disables realtime reporting by short-circuiting
-        here before the loop, mirroring the records-manager task; otherwise the
+        ``AIPERF_UI_REALTIME_METRICS_INTERVAL=0`` disables realtime reporting
+        by short-circuiting here before the loop; otherwise the
         ``asyncio.sleep(0)`` tail would busy-spin re-summarizing every tick.
         """
         interval = Environment.UI.realtime_metrics_interval(self.run.cfg.runtime.ui)

@@ -1029,6 +1029,11 @@
     ],
     [
       "C901",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_timeslices"
+    ],
+    [
+      "C901",
       "src/aiperf/server_metrics/histogram_percentiles.py",
       "_generate_observations_with_sum_constraint"
     ],
@@ -1256,6 +1261,11 @@
       "PLR0912",
       "src/aiperf/server_metrics/data_collector.py",
       "ServerMetricsDataCollector._parse_metrics_to_records"
+    ],
+    [
+      "PLR0912",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_stats"
     ],
     [
       "PLR0912",

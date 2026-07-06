@@ -52,7 +52,7 @@ from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
 )
-from aiperf.plugin.enums import ServiceType
+from aiperf.plugin.enums import ServiceType, UIType
 
 _logger = AIPerfLogger(__name__)
 
@@ -1132,16 +1132,27 @@ class _UISettings(BaseSettings):
         default=3,
         description="Duration in seconds to display UI notifications before auto-dismissing",
     )
-    REALTIME_METRICS_INTERVAL: float = Field(
-        ge=1.0,
+    REALTIME_METRICS_INTERVAL: float | None = Field(
+        ge=0.0,
         le=1000.0,
         default=5.0,
-        description="Interval in seconds between real-time metrics messages",
+        description=(
+            "Interval in seconds between real-time metrics messages. 0 disables "
+            "realtime reporting. When None, ``realtime_metrics_interval(ui_type)`` "
+            "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
+        ),
     )
     REALTIME_METRICS_ENABLED: bool = Field(
         default=False,
         description="Enable real-time metrics collection and reporting despite UI type",
     )
+
+    def realtime_metrics_interval(self, ui_type: UIType) -> float:
+        """Resolve the realtime metrics tick interval, applying the auto-default by UI type."""
+        if self.REALTIME_METRICS_INTERVAL is not None:
+            return self.REALTIME_METRICS_INTERVAL
+        return 5.0 if ui_type == UIType.DASHBOARD else 30.0
+
     SPINNER_REFRESH_RATE: float = Field(
         ge=0.1,
         le=100.0,
