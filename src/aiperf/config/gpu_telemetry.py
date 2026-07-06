@@ -10,10 +10,9 @@ GPU Telemetry - Live or replayed GPU metrics collection configuration.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 from pydantic import ConfigDict, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.config.base import BaseConfig

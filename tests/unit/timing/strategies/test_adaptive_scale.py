@@ -1463,3 +1463,92 @@ def test_missing_ttft_sample_fails_lower_is_better_sla() -> None:
 
     assert observed[evaluator.key(sla)] == float("inf")
     assert not evaluator.passes([sla], observed)
+
+
+
+def test_sla_evaluator_zero_total_rates_and_output_token_stat_errors() -> None:
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+    empty_stats = WindowStats(samples=[], errors=0, cancelled=0, elapsed_sec=1.0)
+
+    assert evaluator.value(
+        SLAFilter(metric_tag="success_rate", stat="avg", op="ge", threshold=0),
+        empty_stats,
+    ) == 0.0
+    assert evaluator.value(
+        SLAFilter(metric_tag="error_rate", stat="min", op="le", threshold=1),
+        empty_stats,
+    ) == 0.0
+    assert evaluator.value(
+        SLAFilter(metric_tag="cancellation_rate", stat="max", op="le", threshold=1),
+        empty_stats,
+    ) == 0.0
+    assert evaluator.value(
+        SLAFilter(
+            metric_tag="output_token_throughput",
+            stat="avg",
+            op="ge",
+            threshold=0,
+        ),
+        WindowStats(
+            samples=[1],
+            errors=0,
+            elapsed_sec=2.0,
+            successful_requests=[WindowRequestSample(1, output_sequence_length=8)],
+        ),
+    ) == pytest.approx(4.0)
+
+    with pytest.raises(ValueError, match="Unsupported output_token_throughput"):
+        evaluator.value(
+            SLAFilter.model_construct(
+                metric_tag="output_token_throughput",
+                stat="p95",
+                op="ge",
+                threshold=1,
+            ),
+            empty_stats,
+        )
+
+
+def test_build_backend_rejects_invalid_bounds_and_unknown_variable(tmp_path) -> None:
+    from aiperf.timing.strategies.adaptive_scale_backends import (
+        build_adaptive_control_backend,
+    )
+
+    base = dict(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.ADAPTIVE_SCALE,
+        expected_duration_sec=60.0,
+        concurrency=10,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        adaptive_sustain_duration_sec=10.0,
+        adaptive_assessment_period_sec=1.0,
+        adaptive_sla_filters=[
+            SLAFilter(
+                metric_tag="request_latency", stat="p95", op="le", threshold=100.0
+            )
+        ],
+        artifact_dir=tmp_path,
+    )
+
+    with pytest.raises(Exception, match="must be > min"):
+        build_adaptive_control_backend(
+            strategy=MagicMock(),
+            concurrency_manager=MagicMock(),
+            config=CreditPhaseConfig(
+                **base,
+                adaptive_control_variable="concurrency",
+                adaptive_control_min=10,
+                adaptive_control_max=10,
+            ),
+        )
+
+    config = MagicMock(adaptive_control_variable="tokens")
+
+    with pytest.raises(ValueError, match="unsupported adaptive control variable"):
+        build_adaptive_control_backend(
+            strategy=MagicMock(),
+            concurrency_manager=MagicMock(),
+            config=config,
+        )
