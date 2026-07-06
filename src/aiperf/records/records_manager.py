@@ -747,9 +747,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ``interval=None`` semantics (run body once and break) don't permanently
         kill the task when the gate is currently False — see
         ``task_manager_mixin.py`` rule for ``interval=None``.
+
+        ``AIPERF_UI_REALTIME_METRICS_INTERVAL=0`` disables realtime reporting
+        by short-circuiting here before the loop; otherwise the
+        ``asyncio.sleep(0)`` tail would busy-spin re-checking the gate.
         """
+        interval = Environment.UI.realtime_metrics_interval(self.run.cfg.runtime.ui)
+        if interval == 0:
+            return
         while not self.stop_requested:
-            await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
+            await asyncio.sleep(interval)
 
             if (
                 self.run.cfg.runtime.ui != UIType.DASHBOARD
