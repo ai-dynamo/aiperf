@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
@@ -32,7 +33,7 @@ from aiperf.credit.messages import (
     CreditsCompleteMessage,
 )
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
-from aiperf.plugin.enums import TimingMode
+from aiperf.plugin.enums import TimingMode, UIType
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
@@ -1224,3 +1225,76 @@ class TestProcessServerMetricsResults:
         result = await manager._process_server_metrics_results()
 
         assert result.results is None
+
+
+def _create_manager_for_realtime_task(ui: UIType) -> RecordsManager:
+    """Minimal RecordsManager wired for the realtime inference metrics task.
+
+    SimpleNamespace (not MagicMock) for ``run`` so a wrong attribute path
+    raises instead of silently auto-creating.
+    """
+    manager = RecordsManager.__new__(RecordsManager)
+    manager._stop_requested_event = asyncio.Event()
+    manager.run = SimpleNamespace(cfg=SimpleNamespace(runtime=SimpleNamespace(ui=ui)))
+    manager._records_tracker = MagicMock()
+    manager._records_tracker.create_stats_for_phase.return_value = SimpleNamespace(
+        total_records=1
+    )
+    manager._previous_realtime_records = None
+    manager._report_realtime_metrics = AsyncMock()
+    return manager
+
+
+class TestRecordsManagerRealtimeInferenceMetricsTask:
+    """Interval resolution and zero-guard for _report_realtime_inference_metrics_task."""
+
+    @pytest.mark.asyncio
+    async def test_report_realtime_inference_metrics_task_zero_interval_returns_without_publishing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Interval 0 short-circuits before the loop: no sleep(0) spin, no publish."""
+        manager = _create_manager_for_realtime_task(UIType.DASHBOARD)
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 0.0)
+
+        sleep_mock = AsyncMock(
+            side_effect=lambda _delay: setattr(manager, "stop_requested", True)
+        )
+        with patch("asyncio.sleep", sleep_mock):
+            await manager._report_realtime_inference_metrics_task()
+
+        sleep_mock.assert_not_awaited()
+        manager._report_realtime_metrics.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_report_realtime_inference_metrics_task_none_interval_sleeps_on_resolved_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Interval None resolves via realtime_metrics_interval() (5.0 for dashboard), never sleep(None)."""
+        manager = _create_manager_for_realtime_task(UIType.DASHBOARD)
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", None)
+
+        sleep_mock = AsyncMock(
+            side_effect=lambda _delay: setattr(manager, "stop_requested", True)
+        )
+        with patch("asyncio.sleep", sleep_mock):
+            await manager._report_realtime_inference_metrics_task()
+
+        sleep_mock.assert_awaited_once_with(5.0)
+        manager._report_realtime_metrics.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_report_realtime_inference_metrics_task_nonzero_interval_sleeps_on_interval(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit nonzero interval is what the loop sleeps on each tick."""
+        manager = _create_manager_for_realtime_task(UIType.DASHBOARD)
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 2.5)
+
+        sleep_mock = AsyncMock(
+            side_effect=lambda _delay: setattr(manager, "stop_requested", True)
+        )
+        with patch("asyncio.sleep", sleep_mock):
+            await manager._report_realtime_inference_metrics_task()
+
+        sleep_mock.assert_awaited_once_with(2.5)
+        manager._report_realtime_metrics.assert_awaited_once()
