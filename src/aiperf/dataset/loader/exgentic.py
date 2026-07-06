@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from math import isfinite
 from typing import Any
 
@@ -55,9 +55,9 @@ def _validated_row_lists(
 
 
 def _timestamp_ms(value: str) -> float:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.timestamp() * 1000.0
 
 
