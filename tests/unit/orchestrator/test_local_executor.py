@@ -151,6 +151,25 @@ def test_extract_summary_metrics_carries_was_cancelled(tmp_path):
     assert was_cancelled is True
 
 
+def test_extract_summary_metrics_unparsable_file_returns_empty(tmp_path):
+    """A corrupt/unparsable export file must degrade to ``({}, False)`` —
+    never crash the orchestrator or mark the run cancelled."""
+    cfg = _benchmark_config()
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="corrupt",
+    )
+    (tmp_path / "profile_export_aiperf.json").write_bytes(b"{not valid json")
+
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+    metrics, was_cancelled = executor._extract_summary_metrics(run)
+
+    assert metrics == {}
+    assert was_cancelled is False
+
+
 def test_build_result_from_metrics_propagates_was_cancelled(tmp_path):
     """The success-path RunResult carries the ``was_cancelled`` flag through."""
     from aiperf.common.models.export_models import JsonMetricResult

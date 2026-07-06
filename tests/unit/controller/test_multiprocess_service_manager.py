@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 from multiprocessing import Process
 from unittest.mock import MagicMock
 
@@ -162,6 +163,29 @@ class TestMultiProcessServiceManager:
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(), timeout_seconds=1.0
             )
+
+    @pytest.mark.asyncio
+    async def test_run_service_passes_controller_pid_for_pdeathsig_guard(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Every child Process must receive the controller's PID so bootstrap
+        can arm the PR_SET_PDEATHSIG parent-death guard against it (and detect
+        the reparent race where the controller died before the guard armed)."""
+        mock_process_cls = MagicMock(return_value=MagicMock(spec=Process))
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.Process",
+            mock_process_cls,
+        )
+
+        await service_manager.run_service(ServiceType.DATASET_MANAGER)
+
+        mock_process_cls.assert_called_once()
+        launch_kwargs = mock_process_cls.call_args.kwargs
+        assert launch_kwargs["daemon"] is True
+        assert launch_kwargs["kwargs"]["controller_pid"] == os.getpid()
+        mock_process_cls.return_value.start.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_optional_dead_drops_and_continues(
