@@ -1465,25 +1465,33 @@ def test_missing_ttft_sample_fails_lower_is_better_sla() -> None:
     assert not evaluator.passes([sla], observed)
 
 
-
 def test_sla_evaluator_zero_total_rates_and_output_token_stat_errors() -> None:
     from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
 
     evaluator = AdaptiveScaleSLAEvaluator()
     empty_stats = WindowStats(samples=[], errors=0, cancelled=0, elapsed_sec=1.0)
 
-    assert evaluator.value(
-        SLAFilter(metric_tag="success_rate", stat="avg", op="ge", threshold=0),
-        empty_stats,
-    ) == 0.0
-    assert evaluator.value(
-        SLAFilter(metric_tag="error_rate", stat="min", op="le", threshold=1),
-        empty_stats,
-    ) == 0.0
-    assert evaluator.value(
-        SLAFilter(metric_tag="cancellation_rate", stat="max", op="le", threshold=1),
-        empty_stats,
-    ) == 0.0
+    assert (
+        evaluator.value(
+            SLAFilter(metric_tag="success_rate", stat="avg", op="ge", threshold=0),
+            empty_stats,
+        )
+        == 0.0
+    )
+    assert (
+        evaluator.value(
+            SLAFilter(metric_tag="error_rate", stat="min", op="le", threshold=1),
+            empty_stats,
+        )
+        == 0.0
+    )
+    assert (
+        evaluator.value(
+            SLAFilter(metric_tag="cancellation_rate", stat="max", op="le", threshold=1),
+            empty_stats,
+        )
+        == 0.0
+    )
     assert evaluator.value(
         SLAFilter(
             metric_tag="output_token_throughput",
