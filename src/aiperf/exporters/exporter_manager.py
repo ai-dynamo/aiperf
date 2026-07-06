@@ -174,21 +174,21 @@ class ExporterManager(AIPerfLoggerMixin):
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
-        self._write_console_txt(recording_console)
+        await self._write_console_txt(recording_console)
 
-        styled = recording_console.export_text(styles=True)
+        styled = recording_console.export_text(styles=console.is_terminal)
         if styled.strip():
             console.file.write(styled)
             console.file.flush()
 
         self.debug("Exporting console data completed")
 
-    def _write_console_txt(self, recording_console: Console) -> None:
+    async def _write_console_txt(self, recording_console: Console) -> None:
         """Write the recorded console output to a plain-text file."""
         try:
             txt_path = self._run.cfg.artifacts.profile_export_console_txt_file
             plain_text = recording_console.export_text(styles=False, clear=False)
-            txt_path.write_text(plain_text, encoding="utf-8")
+            await asyncio.to_thread(txt_path.write_text, plain_text, encoding="utf-8")
             self.debug(f"Console export written to {txt_path}")
         except (OSError, ValueError) as e:
             self.warning(f"Failed to write console export file: {e}")
