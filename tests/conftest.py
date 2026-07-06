@@ -151,13 +151,15 @@ def _read_cgroup_cpu_capacity(
 
 
 def _detect_pytest_cpu_capacity() -> float:
-    cgroup_capacity = _read_cgroup_cpu_capacity()
-    if cgroup_capacity is not None:
-        return cgroup_capacity
-
     affinity_cpu_count = None
     with suppress(AttributeError, OSError):
         affinity_cpu_count = len(os.sched_getaffinity(0))
+
+    cgroup_capacity = _read_cgroup_cpu_capacity()
+    if cgroup_capacity is not None:
+        if affinity_cpu_count is not None and affinity_cpu_count > 0:
+            return min(cgroup_capacity, float(affinity_cpu_count))
+        return cgroup_capacity
 
     physical_cpu_count = psutil.cpu_count(logical=False)
     if physical_cpu_count is not None and physical_cpu_count > 0:

@@ -202,6 +202,30 @@ def test_cgroup_capacity_takes_precedence_over_psutil_physical_cores(
     assert conftest._detect_pytest_cpu_capacity() == 2.5
 
 
+def test_cgroup_capacity_is_capped_by_restricted_affinity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(conftest, "_read_cgroup_cpu_capacity", lambda: 16.0)
+    monkeypatch.setattr(conftest.psutil, "cpu_count", lambda logical=False: 24)
+    monkeypatch.setattr(
+        conftest.os, "sched_getaffinity", lambda pid: set(range(4)), raising=False
+    )
+
+    assert conftest._detect_pytest_cpu_capacity() == 4.0
+
+
+def test_cgroup_capacity_used_when_affinity_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_oserror(pid: int) -> set[int]:
+        raise OSError("sched_getaffinity unavailable")
+
+    monkeypatch.setattr(conftest, "_read_cgroup_cpu_capacity", lambda: 16.0)
+    monkeypatch.setattr(conftest.os, "sched_getaffinity", raise_oserror, raising=False)
+
+    assert conftest._detect_pytest_cpu_capacity() == 16.0
+
+
 def test_psutil_physical_cores_precede_larger_logical_affinity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
