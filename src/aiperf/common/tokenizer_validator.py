@@ -144,7 +144,7 @@ def _prefetch_tokenizers(
             try:
                 _, elapsed = future.result()
                 logger.info(f"  Cached {name} ({elapsed:.2f}s)")
-            except Exception as e:  # noqa: BLE001 - tokenizer prefetch may raise arbitrary HF/network/subprocess errors; surface via rich panel
+            except Exception as e:  # tokenizer prefetch may raise arbitrary HF/network/subprocess errors; surface via rich panel
                 # Print the raw traceback to stderr above the panel; the panel
                 # gives a curated message but the chained traceback is what's
                 # needed when the failure is in a less-common HF/repo path.
@@ -197,7 +197,7 @@ def _resolve_aliases(
     for name in names:
         try:
             result = Tokenizer.resolve_alias(name)
-        except Exception as e:  # noqa: BLE001 - validator must surface any HF/network failure to the user as a startup error
+        except Exception as e:  # validator must surface any HF/network failure to the user as a startup error
             logger.error(f"Failed to validate tokenizer '{name}': {e}")
             sys.exit(1)
 
@@ -368,7 +368,7 @@ def _prefetch_one(
             resolve_alias=False,
         )
         return (name, None)
-    except Exception as e:  # noqa: BLE001 - HF/tiktoken/network surface arbitrary errors; serialize and let the parent log per-name
+    except Exception as e:  # HF/tiktoken/network surface arbitrary errors; serialize and let the parent log per-name
         return (name, f"{type(e).__name__}: {e}")
 
 

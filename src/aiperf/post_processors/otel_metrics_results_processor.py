@@ -220,7 +220,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 daemon=True,
             )
             await asyncio.to_thread(process.start)
-        except Exception as exc:  # noqa: BLE001 - multiprocessing startup can raise OS/resource errors
+        except Exception as exc:  # multiprocessing startup can raise OS/resource errors
             self.warning(f"Failed to start telemetry fanout process. Error={exc!r}")
             with suppress(Exception):
                 if "queue" in locals():
@@ -271,7 +271,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         """Final flush before shutdown and close SDK resources."""
         try:
             await self.flush(force=True)
-        except Exception as exc:  # noqa: BLE001 - flush must not crash shutdown sequence
+        except Exception as exc:  # flush must not crash shutdown sequence
             self.warning(f"Failed to flush metrics: {exc!r}")
         finally:
             await self._stop_fanout_process()
@@ -389,7 +389,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             self._fanout_queue.get_nowait()
         except Empty:
             return False
-        except Exception as exc:  # noqa: BLE001 - queue ops may raise OS errors; telemetry must not crash hot path
+        # queue ops may raise OS errors; telemetry must not crash hot path
+        except Exception as exc:
             self.warning(f"Failed to drop oldest OTel fanout event: {exc!r}")
             return False
 
@@ -417,7 +418,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             self._record_fanout_drop(
                 "OTel fanout queue remained full; dropping newest event"
             )
-        except Exception as exc:  # noqa: BLE001 - queue/OS errors must not block the benchmarking event loop
+        # queue/OS errors must not block the benchmarking event loop
+        except Exception as exc:
             self.warning(f"Failed to enqueue OTel fanout event: {exc!r}")
 
     @staticmethod

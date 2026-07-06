@@ -332,7 +332,7 @@ class CreditCallbackHandler:
         try:
             if self._branch_orchestrator.get_branch_ids(credit):
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
         return False
 
@@ -368,7 +368,7 @@ class CreditCallbackHandler:
                 await self._branch_orchestrator.on_child_leaf_reached(
                     credit.x_correlation_id
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _logger.warning(
                 lambda exc=exc: f"BranchOrchestrator child-completion "
                 f"hook failed for x_correlation_id="
@@ -386,7 +386,7 @@ class CreditCallbackHandler:
             return False
         try:
             return await self._branch_orchestrator.intercept(credit)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _logger.warning(
                 lambda exc=exc: f"BranchOrchestrator intercept failed for "
                 f"credit {credit.id}: {exc}"
