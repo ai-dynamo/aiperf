@@ -269,3 +269,197 @@ class TestDatasetManagerCacheRoundtrip:
         assert dm._cache_hit_used is True
         assert not target.exists()
         await dm.stop()
+
+
+class TestDatasetManagerCacheEdgeCases:
+    """Error paths and guards around the cache lookup / populate pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_hit_under_lock_after_stale_initial_miss(
+        self, tmp_path: Path, mock_tokenizer
+    ) -> None:
+        """A waiter whose pre-lock lookup missed must re-check under the lock
+        and adopt the entry the winner populated meanwhile."""
+        trace = _write_trace(tmp_path)
+        run1 = _make_run(file_path=trace, benchmark_id="lock-run-1")
+        dm1 = await _run_configure(run1)
+        await dm1.stop()
+        calls_after_populate = mock_tokenizer.call_count
+
+        run2 = _make_run(file_path=trace, benchmark_id="lock-run-2")
+        key = mmap_cache.compute_cache_key_from_run(run2)
+        assert key is not None
+
+        def miss_but_keep_key(self: DatasetManager):
+            # Simulate the race: the pre-lock lookup ran before the winner
+            # committed, but the key is retained for the under-lock re-check.
+            self._cache_key_for_run = key
+            return None
+
+        with patch.object(DatasetManager, "_try_cache_lookup", miss_but_keep_key):
+            dm2 = await _run_configure(run2)
+
+        assert dm2._cache_hit_used is True
+        assert mock_tokenizer.call_count == calls_after_populate, (
+            "hit-under-lock must skip the tokenizer"
+        )
+        await dm2.stop()
+
+    @pytest.mark.asyncio
+    async def test_lookup_under_lock_failure_returns_none(self, tmp_path: Path) -> None:
+        trace = _write_trace(tmp_path)
+        dm = DatasetManager(
+            run=_make_run(file_path=trace, benchmark_id="ul-fail"),
+            service_id="dm-test",
+        )
+        dm._cache_key_for_run = "somekey"
+
+        with patch(
+            "aiperf.dataset.dataset_manager.mmap_cache.lookup",
+            side_effect=OSError("disk unplugged"),
+        ):
+            assert dm._lookup_under_lock() is None
+
+    @pytest.mark.asyncio
+    async def test_try_cache_lookup_key_failure_disables_cache(
+        self, tmp_path: Path
+    ) -> None:
+        """A key-computation crash must degrade to MISS, never fail the run."""
+        trace = _write_trace(tmp_path)
+        dm = DatasetManager(
+            run=_make_run(file_path=trace, benchmark_id="key-fail"),
+            service_id="dm-test",
+        )
+
+        with patch(
+            "aiperf.dataset.dataset_manager.mmap_cache.compute_cache_key_from_run",
+            side_effect=RuntimeError("unserializable config"),
+        ):
+            assert dm._try_cache_lookup() is None
+        assert dm._cache_key_for_run is None, "no key -> no post-run populate"
+
+    @pytest.mark.asyncio
+    async def test_try_cache_lookup_lookup_failure_keeps_key(
+        self, tmp_path: Path
+    ) -> None:
+        """A lookup crash is a MISS, but the key survives so the post-run
+        populate still writes the entry."""
+        trace = _write_trace(tmp_path)
+        dm = DatasetManager(
+            run=_make_run(file_path=trace, benchmark_id="lookup-fail"),
+            service_id="dm-test",
+        )
+
+        with patch(
+            "aiperf.dataset.dataset_manager.mmap_cache.lookup",
+            side_effect=ValueError("corrupt entry"),
+        ):
+            assert dm._try_cache_lookup() is None
+        assert dm._cache_key_for_run is not None
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_with_corrupt_metadata_falls_back_to_full_configure(
+        self, tmp_path: Path, mock_tokenizer
+    ) -> None:
+        """A HIT whose manifest dataset_metadata_json fails validation must be
+        treated as a MISS: restored files removed, full pipeline re-run."""
+        import orjson
+
+        trace = _write_trace(tmp_path)
+        run1 = _make_run(file_path=trace, benchmark_id="corrupt-1")
+        dm1 = await _run_configure(run1)
+        await dm1.stop()
+        key = mmap_cache.compute_cache_key_from_run(run1)
+        assert key is not None
+
+        manifest_path = mmap_cache.cache_dir() / key / mmap_cache.MANIFEST_FILENAME
+        raw = orjson.loads(manifest_path.read_bytes())
+        raw["dataset_metadata_json"] = "certainly not json"
+        manifest_path.write_bytes(orjson.dumps(raw))
+        calls_before = mock_tokenizer.call_count
+
+        run2 = _make_run(file_path=trace, benchmark_id="corrupt-2")
+        dm2 = await _run_configure(run2)
+
+        assert dm2._cache_hit_used is False
+        assert mock_tokenizer.call_count > calls_before, (
+            "corrupt HIT must fall back to the full tokenize path"
+        )
+        # The run still completed: metadata was rebuilt by the full pipeline.
+        assert dm2.dataset_metadata is not None
+        assert len(dm2.dataset_metadata.conversations) == 2
+        await dm2.stop()
+
+    @pytest.mark.asyncio
+    async def test_populate_cache_after_run_guards(self, tmp_path: Path) -> None:
+        """Every early-return guard leaves the cache untouched."""
+        trace = _write_trace(tmp_path)
+        dm = DatasetManager(
+            run=_make_run(file_path=trace, benchmark_id="guards"),
+            service_id="dm-test",
+        )
+        cache_root = mmap_cache.cache_dir()
+
+        # Guard 1: HIT used -> nothing to write back.
+        dm._cache_hit_used = True
+        dm._populate_cache_after_run()
+
+        # Guard 2: no key / no backing store.
+        dm._cache_hit_used = False
+        dm._cache_key_for_run = None
+        dm._populate_cache_after_run()
+        dm._cache_key_for_run = "guardkey"
+        dm._backing_store = None
+        dm._populate_cache_after_run()
+
+        # Guard 3: no dataset metadata.
+        dm._backing_store = object()  # never dereferenced past the guard
+        dm.dataset_metadata = None
+        dm._populate_cache_after_run()
+
+        assert not (cache_root / "guardkey").exists()
+
+    @pytest.mark.asyncio
+    async def test_populate_cache_after_run_missing_files_skips(
+        self, tmp_path: Path, mock_tokenizer
+    ) -> None:
+        """Backing store finalized but run files vanished -> guard, no crash."""
+        trace = _write_trace(tmp_path)
+        run = _make_run(file_path=trace, benchmark_id="vanished")
+        dm = await _run_configure(run)
+        key = dm._cache_key_for_run
+        assert key is not None
+
+        # Wipe the cache AND the run mmap files, then re-run the populate.
+        import shutil
+
+        shutil.rmtree(mmap_cache.cache_dir())
+        data_p, index_p = dm._run_mmap_paths()
+        data_p.unlink(missing_ok=True)
+        index_p.unlink(missing_ok=True)
+
+        dm._cache_hit_used = False
+        dm._populate_cache_after_run()
+
+        assert not (mmap_cache.cache_dir() / key).exists()
+        await dm.stop()
+
+    @pytest.mark.asyncio
+    async def test_populate_failure_does_not_fail_the_run(
+        self, tmp_path: Path, mock_tokenizer
+    ) -> None:
+        """mmap_cache.populate crashing must be swallowed with a warning."""
+        trace = _write_trace(tmp_path)
+        run = _make_run(file_path=trace, benchmark_id="popfail")
+
+        with patch(
+            "aiperf.dataset.dataset_manager.mmap_cache.populate",
+            side_effect=OSError("disk full"),
+        ):
+            dm = await _run_configure(run)
+
+        assert dm.dataset_metadata is not None
+        key = dm._cache_key_for_run
+        assert key is not None
+        assert mmap_cache.lookup(key, compressed=False) is None
+        await dm.stop()

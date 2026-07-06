@@ -95,6 +95,35 @@ class TestDatasetManagerPublishesFailureNotification:
         assert "synthetic prompt generator exploded" in failure_notes[0].error
         assert failure_notes[0].service_id == dataset_manager.service_id
 
+    @pytest.mark.asyncio
+    async def test_publish_failure_still_reraises_original_error(
+        self, base_run
+    ) -> None:
+        """If the failure-notification publish itself crashes (e.g. the bus is
+        already torn down), the ORIGINAL configure error must still propagate."""
+        dataset_manager = DatasetManager(run=base_run, service_id="test_service")
+        await dataset_manager.initialize()
+
+        dataset_manager.publish = AsyncMock(side_effect=ConnectionError("bus is gone"))
+
+        async def raise_sentinel(*args, **kwargs):
+            raise RuntimeError("composer exploded")
+
+        with (
+            patch.object(
+                dataset_manager, "_do_profile_configure", side_effect=raise_sentinel
+            ),
+            pytest.raises(RuntimeError, match="composer exploded"),
+        ):
+            await asyncio.wait_for(
+                dataset_manager._profile_configure_command(
+                    ProfileConfigureCommand(service_id="test_service")
+                ),
+                timeout=5.0,
+            )
+
+        dataset_manager.publish.assert_awaited_once()
+
 
 class TestTimingManagerAbortsOnDatasetFailure:
     """TimingManager._profile_configure_command must abort within milliseconds
