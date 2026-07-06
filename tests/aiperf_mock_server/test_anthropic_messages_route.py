@@ -202,3 +202,53 @@ async def test_streaming_tool_use_chunks_input_json_delta(client):
     assert reassembled == {"arg": "value"}
     delta = next(e for e in events if e["type"] == "message_delta")
     assert delta["delta"]["stop_reason"] == "tool_use"
+
+
+async def test_streaming_thinking_budget_emits_thinking_and_signature_deltas(client):
+    body = _body(
+        stream=True,
+        thinking={"type": "enabled", "budget_tokens": 8},
+    )
+    resp = await client.post("/v1/messages", json=body, headers=HEADERS)
+    events = _sse_events(resp.text)
+    starts = [e for e in events if e["type"] == "content_block_start"]
+    assert starts[0]["content_block"]["type"] == "thinking"
+    thinking_fragments = [
+        e["delta"]["thinking"]
+        for e in events
+        if e["type"] == "content_block_delta"
+        and e["delta"].get("type") == "thinking_delta"
+    ]
+    assert thinking_fragments, "thinking budget requested but no thinking_delta"
+    signature_fragments = [
+        e["delta"]["signature"]
+        for e in events
+        if e["type"] == "content_block_delta"
+        and e["delta"].get("type") == "signature_delta"
+    ]
+    assert signature_fragments, "thinking block closed without a signature_delta"
+    text_fragments = [
+        e["delta"]["text"]
+        for e in events
+        if e["type"] == "content_block_delta" and e["delta"].get("type") == "text_delta"
+    ]
+    assert text_fragments, "thinking must leave budget for the text block"
+
+
+async def test_non_streaming_thinking_budget_emits_thinking_block(client):
+    body = _body(thinking={"type": "enabled", "budget_tokens": 8})
+    resp = await client.post("/v1/messages", json=body, headers=HEADERS)
+    payload = resp.json()
+    block_types = [block["type"] for block in payload["content"]]
+    assert block_types[0] == "thinking"
+    assert "text" in block_types
+    thinking_block = payload["content"][0]
+    assert thinking_block["thinking"]
+
+
+async def test_thinking_disabled_or_absent_emits_no_thinking(client):
+    for body in (_body(), _body(thinking={"type": "disabled"})):
+        resp = await client.post("/v1/messages", json=body, headers=HEADERS)
+        payload = resp.json()
+        block_types = [block["type"] for block in payload["content"]]
+        assert "thinking" not in block_types

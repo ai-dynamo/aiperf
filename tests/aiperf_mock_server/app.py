@@ -307,11 +307,14 @@ def _should_emit_tool_use(req: AnthropicMessagesRequest) -> dict[str, Any] | Non
     """Return the synthesised tool_use block to emit, or None if tools aren't
     declared on the request.
 
-    Triggered whenever the request declares ``tools`` and ``tool_choice`` is
-    either absent OR explicitly opts in (``{"type":"any"}`` /
-    ``{"type":"tool",...}``). Picks the first declared tool's ``name`` and
-    fabricates an ``input`` dict so a FORK-mode replay sees the parent's
-    tool_use round-trip through ``build_assistant_turn``.
+    Triggered whenever the request declares ``tools`` unless ``tool_choice``
+    is ``{"type":"none"}``. ``{"type":"auto"}`` synthesises too — deliberately:
+    absent ``tool_choice`` defaults to ``auto`` on the real API, so the two
+    must behave identically, and a deterministic mock that always exercises
+    the tool path beats probabilistic realism for benchmarking. Picks the
+    first declared tool's ``name`` and fabricates an ``input`` dict so a
+    FORK-mode replay sees the parent's tool_use round-trip through
+    ``build_assistant_turn``.
     """
     tools = req.tools
     if not tools:

@@ -652,6 +652,9 @@ def anthropic_stop_reason(finish_reason: str) -> str:
 
 # Prompt-cache simulation state: (model, prefix_hash) entries seen so far.
 # Server-lifetime persistence, like a real prefix cache without TTL expiry.
+# Process-local: with --workers > 1 identical requests can land on different
+# processes and miss unpredictably — run cache benchmarks with --workers 1
+# (the default).
 _ANTHROPIC_PREFIX_CACHE: set[tuple[str, str]] = set()
 
 

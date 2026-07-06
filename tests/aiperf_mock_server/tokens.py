@@ -274,12 +274,20 @@ def _calculate_budget(
 
 
 def _generate_reasoning_tokens(
-    request: ChatCompletionRequest | CompletionRequest | TGIGenerateRequest,
+    request: ChatCompletionRequest
+    | CompletionRequest
+    | TGIGenerateRequest
+    | AnthropicMessagesRequest,
     prompt_tokens: list[str],
     prompt_token_count: int,
     max_tokens: int | None,
 ) -> _ReasoningResult:
     """Generate reasoning tokens if model supports it, managing budget."""
+    if isinstance(request, AnthropicMessagesRequest):
+        return _generate_anthropic_thinking_tokens(
+            request, prompt_tokens, prompt_token_count, max_tokens
+        )
+
     # Only chat completions support reasoning (per OpenAI API spec)
     if not isinstance(request, ChatCompletionRequest):
         return _ReasoningResult(
@@ -314,6 +322,38 @@ def _generate_reasoning_tokens(
         token_count=actual_reasoning_tokens,
         content_tokens=reasoning_content_tokens,
         remaining_budget=total_budget - actual_reasoning_tokens,
+    )
+
+
+def _generate_anthropic_thinking_tokens(
+    request: AnthropicMessagesRequest,
+    prompt_tokens: list[str],
+    prompt_token_count: int,
+    max_tokens: int | None,
+) -> _ReasoningResult:
+    """Generate thinking tokens for an Anthropic Messages request.
+
+    Anthropic thinking is opt-in per request via the ``thinking`` param
+    (``{"type": "enabled", "budget_tokens": N}``) — not by model name like
+    the OpenAI reasoning path. ``budget_tokens`` caps thinking output, and
+    the real API requires it to be strictly less than ``max_tokens``, so at
+    least one token is always reserved for the text block that follows.
+    """
+    thinking = request.thinking if isinstance(request.thinking, dict) else {}
+    budget_tokens = thinking.get("budget_tokens")
+    if not isinstance(budget_tokens, int) or budget_tokens <= 0:
+        return _ReasoningResult(
+            token_count=0, content_tokens=[], remaining_budget=max_tokens
+        )
+
+    total_budget = (
+        max_tokens if max_tokens is not None else max(prompt_token_count * 2, 16)
+    )
+    actual_thinking_tokens = min(budget_tokens, max(total_budget - 1, 0))
+    return _ReasoningResult(
+        token_count=actual_thinking_tokens,
+        content_tokens=_cycle_tokens_reversed(prompt_tokens, actual_thinking_tokens),
+        remaining_budget=total_budget - actual_thinking_tokens,
     )
 
 

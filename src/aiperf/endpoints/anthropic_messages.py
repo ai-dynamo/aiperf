@@ -379,6 +379,35 @@ def _finalise_tool_use(accumulator: dict[str, Any]) -> dict[str, Any]:
     return block
 
 
+def _accumulate_content_block(
+    block: dict[str, Any],
+    text_parts: list[str],
+    thinking_parts: list[str],
+    tool_call_parts: list[str],
+) -> None:
+    """Sort one non-streaming content block into the per-kind accumulators.
+
+    ``tool_use`` blocks contribute their ``name`` plus serialised ``input`` —
+    tokens the model generated that ``usage.output_tokens`` counts.
+    """
+    block_type = block.get("type")
+    if block_type == ContentBlockType.TEXT:
+        text_val = block.get("text")
+        if text_val:
+            text_parts.append(text_val)
+    elif block_type == ContentBlockType.THINKING:
+        thinking_val = block.get("thinking")
+        if thinking_val:
+            thinking_parts.append(thinking_val)
+    elif block_type == ContentBlockType.TOOL_USE:
+        name = block.get("name")
+        if isinstance(name, str) and name:
+            tool_call_parts.append(name)
+        tool_input = block.get("input")
+        if tool_input:
+            tool_call_parts.append(orjson.dumps(tool_input).decode())
+
+
 class MessagesEndpoint(BaseEndpoint):
     """Anthropic Messages endpoint.
 
@@ -699,22 +728,9 @@ class MessagesEndpoint(BaseEndpoint):
         for block in content_blocks:
             if not isinstance(block, dict):
                 continue
-            block_type = block.get("type")
-            if block_type == ContentBlockType.TEXT:
-                text_val = block.get("text")
-                if text_val:
-                    text_parts.append(text_val)
-            elif block_type == ContentBlockType.THINKING:
-                thinking_val = block.get("thinking")
-                if thinking_val:
-                    thinking_parts.append(thinking_val)
-            elif block_type == ContentBlockType.TOOL_USE:
-                name = block.get("name")
-                if isinstance(name, str) and name:
-                    tool_call_parts.append(name)
-                tool_input = block.get("input")
-                if tool_input:
-                    tool_call_parts.append(orjson.dumps(tool_input).decode())
+            _accumulate_content_block(
+                block, text_parts, thinking_parts, tool_call_parts
+            )
 
         text = "".join(text_parts) or None
         thinking = "".join(thinking_parts) or None

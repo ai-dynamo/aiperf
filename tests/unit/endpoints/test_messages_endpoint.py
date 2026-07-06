@@ -353,7 +353,7 @@ class TestAnthropicMessagesParseResponseNonStreaming:
         assert parsed is None
 
 
-def _make_sse_response(json_data: dict, perf_ns: int = 123456789):
+def _make_sse_response(json_data: dict, perf_ns: int = 123456789) -> SSEMessage:
     """Helper to create an SSEMessage from a JSON payload."""
     return SSEMessage(
         perf_ns=perf_ns,

@@ -367,9 +367,9 @@ To opt in, set `raw_system` on a `Turn` to a list of content blocks. The endpoin
 
 Notes:
 
-- Latest-non-`None` turn wins — a FORK-mode DAG child that does not re-declare `raw_system` still inherits the parent's value.
+- Latest-non-`None` turn wins — a FORK-mode DAG child that does not redeclare `raw_system` still inherits the parent's value.
 - The field is Anthropic-specific. Other endpoints (`chat`, `responses`, ...) ignore it.
-- Block contents flow into ISL accounting via the `walk_system` override; see [Input token accounting (ISL)](#input-token-accounting-isl) below.
+- Block contents flow into ISL accounting via the endpoint's system-prompt walk; see [Input token accounting (ISL)](#input-token-accounting-isl) below.
 - `raw_system` is currently populated by trace-replay loaders that ingest Anthropic-shaped traces; programmatic callers building `Turn` objects directly can set it as well.
 
 ### Audio and video are unsupported
@@ -389,13 +389,13 @@ This is intentional. If your dataset has audio or video, route it to an endpoint
 
 ### Input token accounting (ISL)
 
-When you set `--synthetic-input-tokens-mean`, AIPerf needs an accurate count of the input tokens it just placed in the request payload to hit your target. The base endpoint walks `messages` content parts dispatched via `PART_TYPES`. Anthropic's `extract_payload_inputs` extends that walk in three places (see `_anthropic_internals.py`):
+When you set `--synthetic-input-tokens-mean`, AIPerf needs an accurate count of the input tokens it just placed in the request payload to hit your target. The base endpoint walks `messages` content parts dispatched via `PART_TYPES`. Anthropic's `extract_payload_inputs` extends that walk in three places (helpers in `anthropic_messages.py`):
 
 | Helper | What it harvests | Why it matters |
 |---|---|---|
-| `walk_system` | Top-level `system` (string OR list of `{"type":"text","text":...}` blocks) | Otherwise the system prompt — often the largest input — is invisible to ISL accounting |
-| `walk_tool_schemas` | `tools[*].input_schema` (serialised as JSON) | Anthropic's schema field is `input_schema`, not OpenAI's `parameters`; the base walk already harvests `name` and `description` |
-| `walk_tool_blocks` | `tool_use` `name` + `input`, and `tool_result` `content` (string or list of text blocks) | The server tokenises these on agentic-history replay; the base walk drops them because they are not in `PART_TYPES` |
+| `_walk_system` | Top-level `system` (string OR list of `{"type":"text","text":...}` blocks) | Otherwise the system prompt — often the largest input — is invisible to ISL accounting |
+| `_walk_tool_schemas` | `tools[*].input_schema` (serialised as JSON) | Anthropic's schema field is `input_schema`, not OpenAI's `parameters`; the base walk already harvests `name` and `description` |
+| `_walk_tool_blocks` | `tool_use` `name` + `input`, and `tool_result` `content` (string or list of text blocks) | The server tokenises these on agentic-history replay; the base walk drops them because they are not in `PART_TYPES` |
 
 The endpoint also overrides `PART_TYPES` itself: `IMAGE` is the bare string `image` (Anthropic's shape) rather than OpenAI's `image_url`, and `AUDIO` and `VIDEO` are explicitly empty sets so the walk does not miscount parts that happen to share OpenAI's type names.
 
@@ -407,7 +407,7 @@ For DAG datasets (`dag_jsonl`) where a child turn forks from a parent's history,
 
 ```mermaid
 flowchart LR
-    A[record.responses<br/>SSE events or<br/>non-streaming message] --> B[absorb_event<br/>per response]
+    A[record.responses<br/>SSE events or<br/>non-streaming message] --> B[_absorb_event<br/>per response]
     B --> C[text_parts]
     B --> D[thinking_blocks_by_index]
     B --> E[tool_uses_by_index]
@@ -417,7 +417,7 @@ flowchart LR
     F --> G[Turn.raw_messages =<br/>assistant content array]
 ```
 
-Reassembly rules (`_anthropic_internals.py`):
+Reassembly rules (`anthropic_messages.py`):
 
 - **Text** — accumulated from `content_block_delta` events with `delta.type == "text_delta"`.
 - **Thinking** — keyed by SSE `index`; `thinking_delta` fragments append to `thinking`, `signature_delta` fragments append to `signature`. Both round-trip — the server requires the matching signature to accept a thinking block on replay.
