@@ -11,6 +11,11 @@ on:
 jobs:
   integration-tests:
     runs-on: ${{ matrix.os }}
+    env:
+      # tiktoken encoding files are fetched from openaipublic CDN on first
+      # use with no retries; point its disk cache at a persisted directory
+      # so tests never depend on the CDN (see tools/warm_tiktoken_cache.py).
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     strategy:
       fail-fast: false
       matrix:
@@ -25,9 +30,19 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Cache tiktoken encodings
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.TIKTOKEN_CACHE_DIR }}
+        key: tiktoken-encodings-v1
+
     - name: Install dependencies
       run: |
         make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
+
+    - name: Warm tiktoken encoding cache
+      run: |
+        . .venv/bin/activate && python tools/warm_tiktoken_cache.py
 
     - name: Run integration tests
       run: |

@@ -12,6 +12,11 @@ jobs:
   build:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      # tiktoken encoding files are fetched from openaipublic CDN on first
+      # use with no retries; point its disk cache at a persisted directory
+      # so tests never depend on the CDN (see tools/warm_tiktoken_cache.py).
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +41,13 @@ jobs:
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
+    - name: Cache tiktoken encodings
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.TIKTOKEN_CACHE_DIR }}
+        # The BPE files are immutable per URL; bump the suffix if the
+        # encoding set in tools/warm_tiktoken_cache.py ever changes.
+        key: tiktoken-encodings-v1
     # Windows has no `make`. Call uv directly to install the project +
     # mock server. POSIX runners stay on the make-based path so existing
     # CI behavior is unchanged.
@@ -66,6 +78,10 @@ jobs:
         uv run python -c "import aiperf_mock_server"
         uv run python tools/generate_plugin_artifacts.py --enums
         uv run python tools/generate_plugin_artifacts.py --overloads
+    # No-op disk read on a tiktoken cache hit; on a miss, downloads the
+    # encodings once with retries/backoff instead of mid-test with none.
+    - name: Warm tiktoken encoding cache
+      run: uv run python tools/warm_tiktoken_cache.py
     # Windows runs the same two tiers as macOS — unit + component_integration
     # — by invoking pytest directly (no `make` available on Windows). Integration
     # tests remain Linux-only (run-integration-tests.yml) which mirrors the
