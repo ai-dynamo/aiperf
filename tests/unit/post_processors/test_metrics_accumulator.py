@@ -1819,3 +1819,101 @@ class TestErrorAdjustedPercentiles:
         assert rl.p95 == pytest.approx(100.0)
         # No adj_* MetricResult emitted when there are no errors to inflate.
         assert "adj_request_latency" not in results
+
+
+class TestPhaseScopedExportCoarseClock:
+    """Phase-scoped exports must not drop records on coarse-clock boundary ties.
+
+    Windows ``time.time_ns()`` before Python 3.13 advances in ~0.5-15.6ms
+    ticks, so a straggler request that completes right as the phase ends can
+    be stamped with ``request_start_ns == requests_end_ns``. The final export
+    window is phase-scoped; the credit-phase tag alone must select records.
+    """
+
+    PHASE_START_NS = 1_783_362_364_086_542_600
+    REQUESTS_END_NS = 1_783_362_364_094_539_300
+
+    def _accumulator(self, mock_run) -> MetricsAccumulator:
+        processor = MetricsAccumulator(mock_run)
+        processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
+        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric}
+        return processor
+
+    async def _ingest(
+        self,
+        processor: MetricsAccumulator,
+        starts: list[int],
+        phase: CreditPhase = CreditPhase.PROFILING,
+    ) -> None:
+        for i, start_ns in enumerate(starts):
+            msg = create_metric_records_message(
+                session_num=i,
+                benchmark_phase=phase,
+                request_start_ns=start_ns,
+                request_end_ns=start_ns + 1_000_000,
+                results=[{RequestCountMetric.tag: 1}],
+            )
+            await processor.process_record(msg.to_data())
+
+    @pytest.mark.asyncio
+    async def test_export_results_straggler_stamped_at_window_end_included(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """A record with start_ns == requests_end_ns counts in the phase export."""
+        processor = self._accumulator(mock_run)
+        starts = [
+            self.PHASE_START_NS,  # coarse clock: same tick as phase start
+            self.PHASE_START_NS + 120_000,
+            self.PHASE_START_NS + 150_000,
+            self.PHASE_START_NS + 200_000,
+            self.REQUESTS_END_NS,  # coarse clock: same tick as phase end
+        ]
+        await self._ingest(processor, starts)
+
+        summary = await processor.export_results(
+            ExportContext(
+                start_ns=self.PHASE_START_NS,
+                end_ns=self.REQUESTS_END_NS,
+                phase=CreditPhase.PROFILING,
+            )
+        )
+        assert summary.results[RequestCountMetric.tag].avg == 5
+
+    @pytest.mark.asyncio
+    async def test_export_results_phase_tag_still_excludes_other_phases(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """Dropping the time bounds must not leak other phases into the export."""
+        processor = self._accumulator(mock_run)
+        await self._ingest(
+            processor, [self.PHASE_START_NS - 5_000_000], phase=CreditPhase.WARMUP
+        )
+        await self._ingest(processor, [self.PHASE_START_NS + 100_000])
+
+        summary = await processor.export_results(
+            ExportContext(
+                start_ns=self.PHASE_START_NS,
+                end_ns=self.REQUESTS_END_NS,
+                phase=CreditPhase.PROFILING,
+            )
+        )
+        assert summary.results[RequestCountMetric.tag].avg == 1
+
+    @pytest.mark.asyncio
+    async def test_phaseless_window_keeps_half_open_end_semantics(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """Realtime rolling windows (no phase) stay [start, end) — no overlap."""
+        processor = self._accumulator(mock_run)
+        starts = [
+            self.PHASE_START_NS,
+            self.PHASE_START_NS + 120_000,
+            self.REQUESTS_END_NS,  # on the window end boundary: excluded
+        ]
+        await self._ingest(processor, starts)
+
+        mask = processor._mask_for_export_context(
+            ExportContext(start_ns=self.PHASE_START_NS, end_ns=self.REQUESTS_END_NS)
+        )
+        assert mask is not None
+        assert int(mask.sum()) == 2
