@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import orjson
 import pytest
@@ -702,3 +703,441 @@ class TestTraceVerbatimGate:
             )
         )
         assert mmap_cache.compute_cache_key_from_run(run) is not None
+
+
+class TestHashDirContents:
+    """Directory inputs are hashed by relative path + bytes so two corpora
+    with the same directory name but different contents get distinct keys."""
+
+    def _make_corpus(self, root: Path) -> Path:
+        corpus = root / "corpus"
+        (corpus / "nested").mkdir(parents=True)
+        (corpus / "a.jsonl").write_bytes(b'{"x": 1}\n')
+        (corpus / "nested" / "b.jsonl").write_bytes(b'{"y": 2}\n')
+        return corpus
+
+    def test_digest_is_deterministic(self, tmp_path: Path) -> None:
+        corpus = self._make_corpus(tmp_path)
+        assert mmap_cache.hash_dir_contents(corpus) == mmap_cache.hash_dir_contents(
+            corpus
+        )
+
+    def test_digest_changes_when_file_bytes_change(self, tmp_path: Path) -> None:
+        corpus = self._make_corpus(tmp_path)
+        before = mmap_cache.hash_dir_contents(corpus)
+        (corpus / "a.jsonl").write_bytes(b'{"x": 999}\n')
+        assert mmap_cache.hash_dir_contents(corpus) != before
+
+    def test_digest_changes_when_file_renamed(self, tmp_path: Path) -> None:
+        corpus = self._make_corpus(tmp_path)
+        before = mmap_cache.hash_dir_contents(corpus)
+        (corpus / "a.jsonl").rename(corpus / "renamed.jsonl")
+        assert mmap_cache.hash_dir_contents(corpus) != before
+
+    def test_empty_subdirectories_do_not_affect_digest(self, tmp_path: Path) -> None:
+        corpus = self._make_corpus(tmp_path)
+        before = mmap_cache.hash_dir_contents(corpus)
+        (corpus / "empty_dir").mkdir()
+        assert mmap_cache.hash_dir_contents(corpus) == before
+
+    def test_hash_input_path_routes_dir_and_file(self, tmp_path: Path) -> None:
+        corpus = self._make_corpus(tmp_path)
+        single = corpus / "a.jsonl"
+        assert mmap_cache._hash_input_path(corpus) == mmap_cache.hash_dir_contents(
+            corpus
+        )
+        assert mmap_cache._hash_input_path(single) == mmap_cache.hash_file_bytes(single)
+
+    def test_compute_cache_key_accepts_directory_input(self, tmp_path: Path) -> None:
+        corpus_a = self._make_corpus(tmp_path)
+        key_a = mmap_cache.compute_cache_key(
+            input_file=corpus_a,
+            public_dataset=None,
+            custom_dataset_type="mooncake_trace",
+            tokenizer_identity=_stable_tokenizer(),
+            settings_payload=_stable_settings(),
+        )
+        (corpus_a / "a.jsonl").write_bytes(b'{"x": 42}\n')
+        key_b = mmap_cache.compute_cache_key(
+            input_file=corpus_a,
+            public_dataset=None,
+            custom_dataset_type="mooncake_trace",
+            tokenizer_identity=_stable_tokenizer(),
+            settings_payload=_stable_settings(),
+        )
+        assert key_a != key_b
+
+
+def _make_manifest(
+    cache_key: str, *, compressed: bool = False
+) -> mmap_cache.CacheManifest:
+    return mmap_cache.CacheManifest(
+        cache_key=cache_key,
+        created_at=time.time(),
+        num_conversations=1,
+        total_size_bytes=4,
+        compressed=compressed,
+        compressed_size_bytes=4 if compressed else 0,
+        mmap_format="conversation",
+        dataset_metadata_json='{"conversations": [], "sampling_strategy": "random"}',
+    )
+
+
+class TestPopulateEdgeCases:
+    """Failure and race paths of :func:`mmap_cache.populate`."""
+
+    def _write_sources(self, tmp_path: Path) -> tuple[Path, Path]:
+        data_p = tmp_path / "src_dataset.dat"
+        idx_p = tmp_path / "src_index.dat"
+        data_p.write_bytes(b"DATA")
+        idx_p.write_bytes(b"IDX")
+        return data_p, idx_p
+
+    def test_populate_winner_stays_on_existing_entry(self, tmp_path: Path) -> None:
+        cache_root = mmap_cache.cache_dir()
+        _populate_entry(cache_root, cache_key="winner", data_bytes=b"FIRST")
+        data_p, idx_p = self._write_sources(tmp_path)
+
+        out = mmap_cache.populate(
+            cache_key="winner",
+            run_data_path=data_p,
+            run_index_path=idx_p,
+            manifest=_make_manifest("winner"),
+        )
+
+        assert out == cache_root / "winner"
+        # First writer's bytes stay; the second populate is a no-op.
+        assert (cache_root / "winner" / "dataset.dat").read_bytes() == b"FIRST"
+
+    def test_populate_cleans_leftover_tmp_dir(self, tmp_path: Path) -> None:
+        cache_root = mmap_cache.cache_dir()
+        cache_root.mkdir(parents=True, exist_ok=True)
+        leftover = cache_root / f".leftover.tmp.{os.getpid()}"
+        leftover.mkdir()
+        (leftover / "stale.dat").write_bytes(b"STALE")
+        data_p, idx_p = self._write_sources(tmp_path)
+
+        out = mmap_cache.populate(
+            cache_key="leftover",
+            run_data_path=data_p,
+            run_index_path=idx_p,
+            manifest=_make_manifest("leftover"),
+        )
+
+        assert out == cache_root / "leftover"
+        assert not leftover.exists()
+        assert mmap_cache.lookup("leftover", compressed=False) is not None
+
+    def test_populate_missing_source_returns_none(self, tmp_path: Path) -> None:
+        out = mmap_cache.populate(
+            cache_key="nosrc",
+            run_data_path=tmp_path / "does_not_exist.dat",
+            run_index_path=tmp_path / "also_missing.dat",
+            manifest=_make_manifest("nosrc"),
+        )
+        assert out is None
+        # The tmp dir must not be left behind.
+        assert not any(mmap_cache.cache_dir().glob(".nosrc.tmp.*"))
+
+    def test_populate_replace_race_returns_existing_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """os.replace loses to a concurrent writer -> their entry is returned."""
+        cache_root = mmap_cache.cache_dir()
+        data_p, idx_p = self._write_sources(tmp_path)
+
+        final_dir = cache_root / "race"
+
+        def replace_and_lose(src: str | Path, dst: str | Path) -> None:
+            # Simulate the concurrent winner committing first, then our
+            # rename failing (non-empty destination on POSIX).
+            final_dir.mkdir(parents=True, exist_ok=True)
+            (final_dir / "dataset.dat").write_bytes(b"WINNER")
+            raise OSError("Directory not empty")
+
+        monkeypatch.setattr(mmap_cache.os, "replace", replace_and_lose)
+
+        out = mmap_cache.populate(
+            cache_key="race",
+            run_data_path=data_p,
+            run_index_path=idx_p,
+            manifest=_make_manifest("race"),
+        )
+
+        assert out == final_dir
+        assert (final_dir / "dataset.dat").read_bytes() == b"WINNER"
+        assert not any(cache_root.glob(".race.tmp.*"))
+
+    def test_populate_replace_failure_without_winner_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data_p, idx_p = self._write_sources(tmp_path)
+
+        def always_fail(src: str | Path, dst: str | Path) -> None:
+            raise OSError("EXDEV")
+
+        monkeypatch.setattr(mmap_cache.os, "replace", always_fail)
+
+        out = mmap_cache.populate(
+            cache_key="orphan",
+            run_data_path=data_p,
+            run_index_path=idx_p,
+            manifest=_make_manifest("orphan"),
+        )
+
+        assert out is None
+        assert not (mmap_cache.cache_dir() / "orphan").exists()
+
+
+class TestLookupPartialEntries:
+    """A manifest without its sibling data files is a partial entry -> MISS."""
+
+    def test_lookup_missing_dataset_file_returns_none(self, tmp_path: Path) -> None:
+        cache_root = mmap_cache.cache_dir()
+        _populate_entry(cache_root, cache_key="nodata")
+        (cache_root / "nodata" / "dataset.dat").unlink()
+        assert mmap_cache.lookup("nodata", compressed=False) is None
+
+    def test_lookup_missing_index_file_returns_none(self, tmp_path: Path) -> None:
+        cache_root = mmap_cache.cache_dir()
+        _populate_entry(cache_root, cache_key="noindex")
+        (cache_root / "noindex" / "index.dat").unlink()
+        assert mmap_cache.lookup("noindex", compressed=False) is None
+
+    def test_lookup_legacy_inputs_json_entry_resolves_path(
+        self, tmp_path: Path
+    ) -> None:
+        """A legacy entry with has_inputs_json=True resolves the sibling path."""
+        cache_root = mmap_cache.cache_dir()
+        entry = cache_root / "legacy"
+        entry.mkdir(parents=True)
+        (entry / "dataset.dat").write_bytes(b"DATA")
+        (entry / "index.dat").write_bytes(b"IDX")
+        (entry / mmap_cache.INPUTS_JSON_FILENAME).write_bytes(b'{"data": []}')
+        manifest = _make_manifest("legacy")
+        manifest.has_inputs_json = True
+        (entry / mmap_cache.MANIFEST_FILENAME).write_bytes(
+            orjson.dumps(manifest.model_dump(mode="json"))
+        )
+
+        hit = mmap_cache.lookup("legacy", compressed=False)
+        assert hit is not None
+        assert hit.inputs_json_path == entry / mmap_cache.INPUTS_JSON_FILENAME
+
+    def test_lookup_legacy_inputs_json_flag_without_file(self, tmp_path: Path) -> None:
+        """has_inputs_json=True but the blob is gone -> HIT with path=None."""
+        cache_root = mmap_cache.cache_dir()
+        entry = cache_root / "legacy-gone"
+        entry.mkdir(parents=True)
+        (entry / "dataset.dat").write_bytes(b"DATA")
+        (entry / "index.dat").write_bytes(b"IDX")
+        manifest = _make_manifest("legacy-gone")
+        manifest.has_inputs_json = True
+        (entry / mmap_cache.MANIFEST_FILENAME).write_bytes(
+            orjson.dumps(manifest.model_dump(mode="json"))
+        )
+
+        hit = mmap_cache.lookup("legacy-gone", compressed=False)
+        assert hit is not None
+        assert hit.inputs_json_path is None
+
+
+class TestComputeCacheKeyRunGates:
+    """Run-level gates that disable caching entirely (key is None)."""
+
+    def test_accuracy_mode_disables_caching(self, tmp_path: Path) -> None:
+        from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.COMPLETIONS,
+                streaming=False,
+                benchmark=AccuracyBenchmarkType.MMLU,
+            )
+        )
+        assert mmap_cache.compute_cache_key_from_run(run) is None
+
+    def test_synthetic_only_run_disables_caching(self) -> None:
+        run = make_run_from_cli(CLIConfig(model_names=["test-model"]))
+        assert mmap_cache.compute_cache_key_from_run(run) is None
+
+
+class TestSettingsPayloadFromRun:
+    """Field extraction from the resolved run into the cache-key payload."""
+
+    def test_prompt_dump_excludes_cache_bust(self) -> None:
+        run = make_run_from_cli(CLIConfig(model_names=["test-model"]))
+        payload = mmap_cache._settings_payload_from_run(run)
+        assert isinstance(payload["prompt"], dict)
+        assert payload["prompt"], "synthetic run should carry a prompt config"
+        assert "cache_bust" not in payload["prompt"]
+
+    def test_public_dataset_source_plugin_only(self) -> None:
+        """A public dataset without an HF source reduces to its plugin name."""
+        from aiperf.plugin.enums import PublicDatasetType
+
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                public_dataset=PublicDatasetType.SHAREGPT,
+            )
+        )
+        assert mmap_cache._public_dataset_source_from_run(run) == {"plugin": "sharegpt"}
+
+    def test_public_dataset_source_includes_hf_identity(self) -> None:
+        """An HF-backed public dataset keys on the resolved HF source."""
+        from aiperf.plugin.enums import PublicDatasetType
+
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                public_dataset=PublicDatasetType.MMSTAR,
+            )
+        )
+        source = mmap_cache._public_dataset_source_from_run(run)
+        assert source is not None
+        assert source["hf_dataset_name"] == "Lin-Chen/MMStar"
+        assert "hf_split" in source
+
+    def test_public_dataset_source_none_for_file_dataset(self, tmp_path: Path) -> None:
+        from aiperf.plugin.enums import CustomDatasetType
+
+        f = _write_input_file(tmp_path, b'{"text": "hello"}\n')
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                input_file=str(f),
+                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+            )
+        )
+        assert mmap_cache._public_dataset_source_from_run(run) is None
+
+
+class TestAcquireCacheLockBypassAndFallback:
+    """Stale-lock bypass, SoftFileLock fallback, and release robustness."""
+
+    @pytest.mark.asyncio
+    async def test_manifest_presence_skips_lock_acquire(self) -> None:
+        """A complete cache entry bypasses the lock entirely (SIGKILLed
+        populator tombstone must not wedge waiters)."""
+        cache_root = mmap_cache.cache_dir()
+        entry = cache_root / "prepopulated"
+        entry.mkdir(parents=True)
+        (entry / mmap_cache.MANIFEST_FILENAME).write_bytes(b"{}")
+
+        async with mmap_cache.acquire_cache_lock("prepopulated", timeout=1.0):
+            pass
+
+        assert not (cache_root / "prepopulated.lock").exists()
+
+    def test_blocking_acquire_bypasses_when_cache_complete(
+        self, tmp_path: Path
+    ) -> None:
+        from filelock import FileLock
+
+        from aiperf.dataset import mmap_cache_lock
+
+        lock_path = tmp_path / "key.lock"
+        lock = FileLock(str(lock_path), thread_local=False)
+
+        acquired = mmap_cache_lock._blocking_acquire(
+            lock, 5.0, lock_path, cache_complete_check=lambda: True
+        )
+
+        assert acquired is False
+        assert not lock.is_locked
+
+    def test_blocking_acquire_bypasses_between_retries(self, tmp_path: Path) -> None:
+        """The bypass also unwedges a waiter mid-retry once the cache lands."""
+        from filelock import FileLock
+
+        from aiperf.dataset import mmap_cache_lock
+
+        lock_path = tmp_path / "key.lock"
+        holder = FileLock(str(lock_path), thread_local=False)
+        holder.acquire(timeout=1.0)
+        try:
+            checks = iter([False, True])
+            waiter = FileLock(str(lock_path), thread_local=False)
+
+            with patch.object(mmap_cache_lock, "_LOCK_LOG_EVERY_SECONDS", 0.05):
+                acquired = mmap_cache_lock._blocking_acquire(
+                    waiter,
+                    5.0,
+                    lock_path,
+                    cache_complete_check=lambda: next(checks),
+                )
+
+            assert acquired is False
+            assert not waiter.is_locked
+        finally:
+            holder.release()
+
+    @pytest.mark.asyncio
+    async def test_soft_file_lock_fallback_on_flock_unsupported(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from filelock import FileLock, SoftFileLock
+
+        from aiperf.dataset import mmap_cache_lock
+
+        attempted: list[type] = []
+        real_blocking = mmap_cache_lock._blocking_acquire
+
+        def flock_then_soft(lock, timeout, lock_path, cache_complete_check=None):
+            attempted.append(type(lock))
+            if len(attempted) == 1:
+                raise NotImplementedError(
+                    "FileLock is unavailable, use SoftFileLock instead"
+                )
+            return real_blocking(lock, timeout, lock_path, cache_complete_check)
+
+        monkeypatch.setattr(mmap_cache_lock, "_blocking_acquire", flock_then_soft)
+
+        async with mmap_cache.acquire_cache_lock("softlock", timeout=5.0):
+            pass
+
+        assert attempted == [FileLock, SoftFileLock]
+
+    @pytest.mark.asyncio
+    async def test_unrelated_not_implemented_error_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.dataset import mmap_cache_lock
+
+        def explode(lock, timeout, lock_path, cache_complete_check=None):
+            raise NotImplementedError("something else entirely")
+
+        monkeypatch.setattr(mmap_cache_lock, "_blocking_acquire", explode)
+
+        with pytest.raises(NotImplementedError, match="something else"):
+            async with mmap_cache.acquire_cache_lock("hardfail", timeout=5.0):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_release_oserror_is_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A release() failing (e.g. lock file unlinked externally) must not
+        propagate out of the context manager."""
+        from filelock import FileLock
+
+        real_release = FileLock.release
+        raised = False
+
+        def bad_release(self, *args, **kwargs):
+            # Raise only on the context-manager release; delegate afterwards so
+            # FileLock.__del__ at GC time doesn't emit an unraisable error.
+            nonlocal raised
+            if not raised:
+                raised = True
+                raise OSError("lock file vanished")
+            return real_release(self, *args, **kwargs)
+
+        monkeypatch.setattr(FileLock, "release", bad_release)
+
+        async with mmap_cache.acquire_cache_lock("badrelease", timeout=5.0):
+            pass
+
+        assert raised

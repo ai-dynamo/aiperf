@@ -21,7 +21,7 @@ the transport verbatim.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import orjson
 import pytest
@@ -403,3 +403,24 @@ async def test_multipart_endpoint_keeps_dict_payload_for_transport(
     assert wire_payload == payload
     # payload_bytes (records / raw-export) still carries the JSON-encoded form.
     assert info.payload_bytes == orjson.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_send_request_trace_logging_skips_turn_dump_with_empty_turns(
+    inference_client, model_endpoint
+):
+    """With TRACE enabled and no turns (payload-bytes path), the per-turn trace
+    dump must be skipped instead of crashing on ``turns[-1]``."""
+    info = _make_request_info(model_endpoint, turns=[], payload_bytes=b'{"a":1}')
+    inference_client.transport.send_request = AsyncMock(
+        return_value=RequestRecord(request_info=info)
+    )
+
+    with patch.object(
+        type(inference_client), "is_trace_enabled", PropertyMock(return_value=True)
+    ):
+        record = await inference_client.send_request(info)
+
+    assert record is not None
+    call_args = inference_client.transport.send_request.call_args
+    assert call_args.kwargs["payload"] == b'{"a":1}'

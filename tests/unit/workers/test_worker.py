@@ -8,6 +8,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
+    ErrorDetails,
     ParsedResponse,
     RequestRecord,
     SSEMessage,
@@ -288,3 +289,146 @@ class TestRetrieveConversation:
 
         assert result == expected_conversation
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
+
+
+# --- Payload Bytes Fast Path Tests ---
+
+
+@pytest.mark.asyncio
+class TestPayloadBytesFastPath:
+    """Branch coverage for Worker._try_payload_bytes_fast_path."""
+
+    async def test_returns_false_when_not_payload_bytes(
+        self, mock_worker, sample_credit_context
+    ):
+        mock_worker._is_payload_bytes = False
+        mock_worker._dataset_client = AsyncMock()
+
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            sample_credit_context, "x-req-1", None
+        )
+
+        assert handled is False
+        mock_worker._dataset_client.get_payload_bytes.assert_not_called()
+
+    async def test_returns_false_for_dag_descendants(self, mock_worker):
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        credit_context = CreditContext(
+            credit=Credit(
+                id=2,
+                phase=CreditPhase.PROFILING,
+                conversation_id="conv-dag",
+                x_correlation_id="corr-dag",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=1000000,
+                agent_depth=1,
+                parent_correlation_id="parent-corr",
+            ),
+            drop_perf_ns=2000000,
+        )
+
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            credit_context, "x-req-2", None
+        )
+
+        assert handled is False
+        mock_worker._dataset_client.get_payload_bytes.assert_not_called()
+
+    async def test_returns_false_when_no_payload_for_turn(
+        self, mock_worker, sample_credit_context
+    ):
+        """A missing per-turn payload defers to the normal session path."""
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        mock_worker._dataset_client.get_payload_bytes.return_value = None
+
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            sample_credit_context, "x-req-3", None
+        )
+
+        assert handled is False
+        mock_worker._dataset_client.get_payload_bytes.assert_awaited_once_with(
+            "test-conv-123", 0
+        )
+
+    async def test_request_error_is_recorded_on_credit_context(
+        self, mock_worker, sample_credit_context
+    ):
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        mock_worker._dataset_client.get_payload_bytes.return_value = b'{"p": 1}'
+
+        error_record = RequestRecord(
+            timestamp_ns=1,
+            start_perf_ns=1,
+            end_perf_ns=2,
+            error=ErrorDetails(message="boom", type="TestError"),
+        )
+        mock_worker.inference_client.send_request = AsyncMock(return_value=error_record)
+        mock_worker._send_inference_result_message = AsyncMock()
+
+        handled = await mock_worker._try_payload_bytes_fast_path(
+            sample_credit_context, "x-req-4", None
+        )
+
+        assert handled is True
+        assert sample_credit_context.error == error_record.error
+        mock_worker._send_inference_result_message.assert_awaited_once_with(
+            error_record
+        )
+        sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
+        assert sent_request_info.payload_bytes == b'{"p": 1}'
+
+
+# --- First Token Callback Factory Tests ---
+
+
+@pytest.mark.asyncio
+class TestMakeFirstTokenCallback:
+    """Coverage for the REAL Worker._make_first_token_callback factory."""
+
+    async def test_returns_none_when_prefill_concurrency_disabled(
+        self, mock_worker, sample_credit_context
+    ):
+        mock_worker._prefill_concurrency_enabled = False
+        assert mock_worker._make_first_token_callback(sample_credit_context) is None
+
+    async def test_callback_skips_meaningless_content(
+        self, monkeypatch, mock_worker, sample_credit_context
+    ):
+        mock_worker._prefill_concurrency_enabled = True
+        mock_worker.credit_return_push_client = AsyncMock()
+        setup_mock_endpoint(mock_worker, monkeypatch, None)
+
+        callback = mock_worker._make_first_token_callback(sample_credit_context)
+        assert callback is not None
+
+        result = await callback(50_000_000, SSEMessage(perf_ns=100_000_000))
+
+        assert result is False
+        assert sample_credit_context.first_token_sent is False
+        mock_worker.credit_return_push_client.send.assert_not_called()
+
+    async def test_callback_sends_first_token_on_meaningful_content(
+        self, monkeypatch, mock_worker, sample_credit_context
+    ):
+        mock_worker._prefill_concurrency_enabled = True
+        mock_worker.credit_return_push_client = AsyncMock()
+        setup_mock_endpoint(
+            mock_worker,
+            monkeypatch,
+            ParsedResponse(perf_ns=100_000_000, data=TextResponseData(text="hi")),
+        )
+
+        callback = mock_worker._make_first_token_callback(sample_credit_context)
+        assert callback is not None
+
+        result = await callback(50_000_000, SSEMessage(perf_ns=100_000_000))
+
+        assert result is True
+        assert sample_credit_context.first_token_sent is True
+        sent = mock_worker.credit_return_push_client.send.call_args.args[0]
+        assert sent.credit_id == sample_credit_context.credit.id
+        assert sent.ttft_ns == 50_000_000

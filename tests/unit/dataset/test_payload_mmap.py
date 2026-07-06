@@ -158,3 +158,81 @@ async def test_payload_bytes_format_multi_conversation(tmp_path, monkeypatch):
 
     client.close()
     await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_raises_for_payload_bytes_format(tmp_path, monkeypatch):
+    """PAYLOAD_BYTES stores cannot serve full Conversations."""
+    from aiperf.common.exceptions import MemoryMapSerializationError
+
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_conv_raises", format=MemoryMapFormat.PAYLOAD_BYTES
+    )
+    await store.initialize()
+    conv = _make_raw_conversation("conv-1", [{"messages": []}])
+    await store.add_conversation("conv-1", conv)
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(
+        metadata.data_file_path,
+        metadata.index_file_path,
+    )
+
+    with pytest.raises(MemoryMapSerializationError, match="payload_bytes"):
+        client.get_conversation("conv-1")
+
+    client.close()
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_client_store_get_payload_bytes_requires_initialize(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_uninit", format=MemoryMapFormat.PAYLOAD_BYTES
+    )
+    await store.initialize()
+    conv = _make_raw_conversation("conv-1", [{"messages": []}])
+    await store.add_conversation("conv-1", conv)
+    await store.finalize()
+
+    client_store = MemoryMapDatasetClientStore(
+        client_metadata=store.get_client_metadata()
+    )
+    # initialize() intentionally NOT called.
+    with pytest.raises(RuntimeError, match="not initialized"):
+        await client_store.get_payload_bytes("conv-1", 0)
+
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_adopt_existing_files_rejects_double_adoption(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(benchmark_id="test_adopt_twice")
+    store._data_path.parent.mkdir(parents=True, exist_ok=True)
+    store._data_path.write_bytes(b"DATA")
+    store._index_path.write_bytes(b"IDX")
+
+    store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)
+    with pytest.raises(RuntimeError, match="already-finalized"):
+        store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)
+
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_adopt_existing_files_requires_files_on_disk(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(benchmark_id="test_adopt_missing")
+
+    with pytest.raises(FileNotFoundError, match="requires both files"):
+        store.adopt_existing_files(session_ids=["s1"], total_size_bytes=4)
