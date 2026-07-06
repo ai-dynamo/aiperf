@@ -27,6 +27,7 @@ from aiperf.common.enums import (
     MessageType,
 )
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import MemoryMapSerializationError
 from aiperf.common.hooks import on_command, on_request, on_stop
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -45,6 +46,7 @@ from aiperf.common.models import (
     InputsFile,
     ModelEndpointInfo,
     SessionPayloads,
+    Turn,
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
@@ -935,14 +937,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "Dataset client is not initialized. Dataset must be configured before handling requests.",
             )
 
-        try:
-            conversation = await self._dataset_client.get_conversation(
-                message.conversation_id
-            )
-        except KeyError:
-            raise self._service_error(
-                f"Conversation {message.conversation_id} not found in dataset.",
-            ) from None
+        conversation = await self._get_conversation_for_serving(message.conversation_id)
 
         self.trace_or_debug(
             lambda: f"Sending conversation response: {conversation}",
@@ -952,6 +947,58 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             service_id=self.service_id,
             request_id=message.request_id,
             conversation=conversation,
+        )
+
+    async def _get_conversation_for_serving(self, conversation_id: str) -> Conversation:
+        """Fetch a Conversation for the fallback request path.
+
+        PAYLOAD_BYTES stores persist only pre-encoded wire bytes, so their
+        ``get_conversation`` raises MemoryMapSerializationError; reconstruct a
+        minimal Conversation from the per-turn payload bytes instead. This
+        keeps the fallback server usable for workers whose local mmap client
+        is not ready yet (e.g. a worker that subscribed after the cache-HIT
+        configure broadcast) -- the reconstructed turns carry the verbatim
+        ``raw_payload``, so the session path still replays the authored bytes.
+        """
+        assert self._dataset_client is not None
+        try:
+            return await self._dataset_client.get_conversation(conversation_id)
+        except KeyError:
+            raise self._service_error(
+                f"Conversation {conversation_id} not found in dataset.",
+            ) from None
+        except MemoryMapSerializationError:
+            conversation = await self._conversation_from_payload_bytes(conversation_id)
+            if conversation is None:
+                raise self._service_error(
+                    f"Conversation {conversation_id} not found in dataset.",
+                ) from None
+            return conversation
+
+    async def _conversation_from_payload_bytes(
+        self, conversation_id: str
+    ) -> Conversation | None:
+        """Rebuild a minimal Conversation from per-turn payload bytes.
+
+        Returns None when the client store has no payload-bytes API or the
+        conversation has no payload turns (caller reports not-found).
+        """
+        get_payload_bytes = getattr(self._dataset_client, "get_payload_bytes", None)
+        if get_payload_bytes is None:
+            return None
+        turns: list[Turn] = []
+        turn_index = 0
+        while (
+            payload_bytes := await get_payload_bytes(conversation_id, turn_index)
+        ) is not None:
+            turns.append(Turn(role="user", raw_payload=orjson.loads(payload_bytes)))
+            turn_index += 1
+        if not turns:
+            return None
+        return Conversation(
+            session_id=conversation_id,
+            turns=turns,
+            context_mode=self._default_context_mode,
         )
 
     @on_request(MessageType.CONVERSATION_TURN_REQUEST)
@@ -973,14 +1020,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "Dataset client is not initialized. Dataset must be configured before handling requests.",
             )
 
-        try:
-            conversation = await self._dataset_client.get_conversation(
-                message.conversation_id
-            )
-        except KeyError as e:
-            raise self._service_error(
-                f"Conversation {message.conversation_id} not found in dataset.",
-            ) from e
+        conversation = await self._get_conversation_for_serving(message.conversation_id)
 
         if message.turn_index >= len(conversation.turns):
             raise self._service_error(
