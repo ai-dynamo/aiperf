@@ -177,7 +177,18 @@ class MetricsAccumulator(BaseMetricsProcessor):
         return ~np.isnan(ts) & (ts >= start_ns) & (ts < end_ns)
 
     def _mask_for_export_context(self, ctx: ExportContext | None) -> BoolArray | None:
-        """Build a record mask for the requested export phase/window."""
+        """Build a record mask for the requested export phase/window.
+
+        Phase-scoped contexts select by the per-record credit-phase tag alone:
+        the tag is authoritative for phase membership, so the wall-clock bounds
+        are only redundant with it. Applying the half-open time window on top
+        drops legitimate boundary records on coarse clocks — Windows
+        ``time.time_ns()`` before Python 3.13 updates in ~0.5-15.6ms ticks, so a
+        straggler's ``request_start_ns`` can equal the phase's
+        ``requests_end_ns`` and fail a strict ``start_ns < end_ns`` check.
+        Phase-less contexts (realtime rolling windows) keep the half-open
+        ``[start_ns, end_ns)`` semantics so adjacent windows never overlap.
+        """
         if ctx is None:
             return None
         n = self._column_store.count
@@ -190,6 +201,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
             mask &= self._column_store.mask_for_categorical(
                 "benchmark_phase", phase_value
             )
+            return mask
         if ctx.start_ns is not None:
             mask &= self._column_store.start_ns[:n] >= ctx.start_ns
         if ctx.end_ns is not None:
