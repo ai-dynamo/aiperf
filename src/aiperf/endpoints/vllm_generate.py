@@ -22,8 +22,8 @@ class VllmGenerateEndpoint(BaseEndpoint):
     """Send and measure vLLM ``GenerateRequest`` token arrays.
 
     The endpoint is intentionally non-streaming so the same payload works with
-    vLLM and Dynamo's vLLM-compatible engine API. Use ``--endpoint-path`` to
-    select Dynamo's ``/v1/engines/vllm/inference/v1/generate`` route.
+    vLLM and Dynamo's vLLM-compatible engine API. Use ``--endpoint-path`` only
+    when the server mounts the API at a custom path.
     """
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
