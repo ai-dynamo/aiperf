@@ -22,6 +22,7 @@ from aiperf.common.models import (
     ProfileResults,
 )
 from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import MetricTagT
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -1313,3 +1314,53 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         mock_self._send_results_to_results_processors.assert_not_called()
+
+
+class TestProcessServerMetricsResults:
+    """Warmup-bound plumbing for the server metrics export path."""
+
+    def _manager_with_accumulator(self) -> RecordsManager:
+        manager = _create_manager_for_timing_dispatch()
+        manager._server_metrics_state = MagicMock()
+        manager._server_metrics_state.error_counts = {}
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_export_receives_profiling_and_warmup_bounds(self) -> None:
+        manager = self._manager_with_accumulator()
+        profiling_stats = MagicMock(
+            start_ns=10_000_000_000, requests_end_ns=20_000_000_000
+        )
+        warmup_stats = MagicMock(start_ns=1_000_000_000, requests_end_ns=5_000_000_000)
+        manager._records_tracker.create_stats_for_phase.side_effect = (
+            lambda phase: profiling_stats
+            if phase == CreditPhase.PROFILING
+            else warmup_stats
+        )
+        exported = ServerMetricsResults(
+            start_ns=10_000_000_000,
+            end_ns=20_000_000_000,
+            warmup_start_ns=1_000_000_000,
+            warmup_end_ns=5_000_000_000,
+        )
+        accumulator = MagicMock()
+        accumulator.export_results = AsyncMock(return_value=exported)
+        manager._server_metrics_accumulator = accumulator
+
+        result = await manager._process_server_metrics_results()
+
+        kwargs = accumulator.export_results.await_args.kwargs
+        assert kwargs["start_ns"] == 10_000_000_000
+        assert kwargs["end_ns"] == 20_000_000_000
+        assert kwargs["warmup_start_ns"] == 1_000_000_000
+        assert kwargs["warmup_end_ns"] == 5_000_000_000
+        assert result.results is exported
+
+    @pytest.mark.asyncio
+    async def test_no_accumulator_returns_empty_results(self) -> None:
+        manager = self._manager_with_accumulator()
+        manager._server_metrics_accumulator = None
+
+        result = await manager._process_server_metrics_results()
+
+        assert result.results is None
