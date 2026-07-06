@@ -14,6 +14,7 @@ from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
+from aiperf.config.phases import get_phase_rate
 from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.server_metrics.storage import (
     HistogramTimeSeries,
@@ -322,7 +323,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             getattr(head_phase, "concurrency", None)
         ).encode("utf-8")
 
-        request_rate = getattr(head_phase, "rate", None)
+        request_rate = get_phase_rate(head_phase)
         if request_rate is not None:
             metadata[b"aiperf.request_rate"] = str(request_rate).encode("utf-8")
 
