@@ -1159,7 +1159,7 @@ class TestRecordsManagerDatasetConfiguredBarrier:
 
         async def _raise_timeout(coro, *args, **kwargs):
             coro.close()  # avoid "coroutine was never awaited" warning
-            raise asyncio.TimeoutError
+            raise TimeoutError
 
         monkeypatch.setattr(
             "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout

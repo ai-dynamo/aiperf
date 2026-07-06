@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 

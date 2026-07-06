@@ -1694,6 +1694,17 @@ communication_client:
 # local file. Selected via --public-dataset configuration option.
 # =============================================================================
 public_dataset_loader:
+  exgentic_v2:
+    class: aiperf.dataset.loader.exgentic_v2:ExgenticV2DatasetLoader
+    description: |
+      Exgentic v2 agent LLM traces from HuggingFace. Replays complete recorded
+      message and tool snapshots with source request controls and timing.
+    metadata:
+      hf_dataset_name: Exgentic/agent-llm-traces-v2
+      hf_split: train
+      streaming: true
+      has_timing_data: true
+
   exgentic:
     class: aiperf.dataset.loader.exgentic:ExgenticDatasetLoader
     description: |

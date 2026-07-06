@@ -514,7 +514,7 @@ async def _run_prefetch_pool(
         ]
         try:
             return await asyncio.wait_for(asyncio.gather(*futures), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if logger:
                 logger.warning(
                     f"Tokenizer preload exceeded "

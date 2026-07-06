@@ -10,7 +10,7 @@ making invalid states unrepresentable.
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import (
     ConfigDict,
@@ -18,7 +18,6 @@ from pydantic import (
     Field,
     model_validator,
 )
-from typing_extensions import Self
 
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
 from aiperf.config.base import BaseConfig
