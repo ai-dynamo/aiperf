@@ -17,6 +17,9 @@ edge-of-envelope shapes the loader's shorthand cannot author:
 - Background-not-gated rule.
 - child_conversation_ids referencing non-existent conversations.
 - Duplicate branch_ids on the same turn.
+- Self-spawn / cyclic spawn graphs (would recurse without bound at replay).
+- Duplicate ConversationBranchInfo descriptors sharing one branch_id.
+- Dangling turn branch_ids with no matching branch descriptor.
 - Empty dataset graceful handling.
 - JSON round-trip idempotency with validation.
 """
@@ -701,3 +704,189 @@ def test_complex_dataset_metadata_round_trip_then_validate():
     blob2 = md2.model_dump(mode="json")
     assert blob == blob2
     validate_for_orchestrator_v1(md2)
+
+
+# ---------------------------------------------------------------------------
+# 37. Self-spawn / cyclic spawn graphs
+# ---------------------------------------------------------------------------
+
+
+def _spawning_conv(cid: str, child_id: str) -> ConversationMetadata:
+    """Conversation ``cid`` whose turn 0 spawns ``child_id`` (one edge in the
+    spawn graph). Every other aspect is valid so cycle rejection is the sole
+    violation in the shapes below."""
+    return ConversationMetadata(
+        conversation_id=cid,
+        turns=[TurnMetadata(branch_ids=[f"{cid}:0"]), TurnMetadata()],
+        branches=[
+            ConversationBranchInfo(
+                branch_id=f"{cid}:0",
+                child_conversation_ids=[child_id],
+                mode=ConversationBranchMode.SPAWN,
+            )
+        ],
+    )
+
+
+def test_self_spawn_cycle_rejected():
+    """A conversation spawning itself (r -> r) is the minimal spawn cycle;
+    the v1 orchestrator would recurse on it without bound at replay time."""
+    md = DatasetMetadata(
+        conversations=[_spawning_conv("r", "r")],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    with pytest.raises(
+        NotImplementedError, match="spawn graph contains a cycle"
+    ) as exc:
+        validate_for_orchestrator_v1(md)
+    assert "(r -> r)" in str(exc.value)
+
+
+def test_two_node_spawn_cycle_rejected():
+    """Mutual spawn (r -> c -> r) is rejected with the full cycle path in the
+    error message."""
+    md = DatasetMetadata(
+        conversations=[_spawning_conv("r", "c"), _spawning_conv("c", "r")],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    with pytest.raises(
+        NotImplementedError, match="spawn graph contains a cycle"
+    ) as exc:
+        validate_for_orchestrator_v1(md)
+    assert "(r -> c -> r)" in str(exc.value)
+
+
+def test_spawn_cycle_downstream_of_dfs_start_rejected():
+    """A cycle that does not include the DFS start node (r -> a -> b -> a) is
+    still detected, and the reported path is the cycle itself (a -> b -> a),
+    not the acyclic lead-in from r."""
+    md = DatasetMetadata(
+        conversations=[
+            _spawning_conv("r", "a"),
+            _spawning_conv("a", "b"),
+            _spawning_conv("b", "a"),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    with pytest.raises(
+        NotImplementedError, match="spawn graph contains a cycle"
+    ) as exc:
+        validate_for_orchestrator_v1(md)
+    assert "(a -> b -> a)" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 38. Duplicate ConversationBranchInfo descriptors sharing one branch_id
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_branch_descriptor_rejected():
+    """Two ConversationBranchInfo objects on one conversation sharing a
+    branch_id would silently collapse under the orchestrator's dict-by-id,
+    dropping the first descriptor's children; rejected at load time."""
+    md = _md(
+        [
+            ConversationBranchInfo(
+                branch_id="r:0",
+                child_conversation_ids=["c"],
+                mode=ConversationBranchMode.SPAWN,
+            ),
+            ConversationBranchInfo(
+                branch_id="r:0",
+                child_conversation_ids=["c2"],
+                mode=ConversationBranchMode.SPAWN,
+            ),
+        ],
+        [TurnMetadata(branch_ids=["r:0"]), TurnMetadata()],
+    )
+    with pytest.raises(
+        NotImplementedError, match="declared by multiple ConversationBranchInfo"
+    ) as exc:
+        validate_for_orchestrator_v1(md)
+    assert "conversation 'r'" in str(exc.value)
+    assert "'r:0'" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 39. Dangling turn branch_id with no matching branch descriptor
+# ---------------------------------------------------------------------------
+
+
+def test_dangling_branch_id_with_no_descriptors_rejected():
+    """A turn declaring a branch_id when the conversation has no branch
+    descriptors at all would make the orchestrator's lookup return None and
+    the authored branch silently never spawn; rejected at load time."""
+    md = _md(None, [TurnMetadata(branch_ids=["ghost"]), TurnMetadata()])
+    with pytest.raises(
+        NotImplementedError, match="has no matching ConversationBranchInfo"
+    ) as exc:
+        validate_for_orchestrator_v1(md)
+    assert "conversation 'r' turn 0" in str(exc.value)
+    assert "'ghost'" in str(exc.value)
+
+
+def test_dangling_branch_id_on_later_turn_amid_valid_branch_rejected():
+    """One resolvable branch does not mask a dangling branch_id on a later
+    turn; the error pinpoints the declaring turn."""
+    md = _md(
+        [
+            ConversationBranchInfo(
+                branch_id="r:0",
+                child_conversation_ids=["c"],
+                mode=ConversationBranchMode.SPAWN,
+            )
+        ],
+        [
+            TurnMetadata(branch_ids=["r:0"]),
+            TurnMetadata(branch_ids=["ghost"]),
+            TurnMetadata(),
+        ],
+    )
+    with pytest.raises(
+        NotImplementedError, match="has no matching ConversationBranchInfo"
+    ) as exc:
+        validate_for_orchestrator_v1(md)
+    assert "conversation 'r' turn 1" in str(exc.value)
+    assert "'ghost'" in str(exc.value)
+
+
+def test_acyclic_spawn_chain_with_shared_visited_node_accepted():
+    """An acyclic chain (r -> c -> d) where a later DFS start (c) was already
+    fully explored by an earlier one (r) validates cleanly; the DFS must skip
+    already-explored start nodes instead of re-walking (or worse, misreporting
+    a cycle on) them."""
+    md = DatasetMetadata(
+        conversations=[
+            _spawning_conv("r", "c"),
+            _spawning_conv("c", "d"),
+            ConversationMetadata(conversation_id="d", turns=[TurnMetadata()]),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    validate_for_orchestrator_v1(md)
+
+
+# ---------------------------------------------------------------------------
+# 40. SPAWN_JOIN referencing a branch descriptor no turn declares
+# ---------------------------------------------------------------------------
+
+
+def test_prereq_referencing_undeclared_branch_descriptor_rejected():
+    """A SPAWN_JOIN whose branch_id resolves to a ConversationBranchInfo that
+    no turn's branch_ids declares can never be gated at runtime (the branch
+    never spawns); rejected with the not-declared-on-any-turn message."""
+    md = _md(
+        [_ok_branch()],  # descriptor exists but no turn declares "r:0"
+        [
+            TurnMetadata(),
+            TurnMetadata(
+                prerequisites=[
+                    TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="r:0")
+                ]
+            ),
+        ],
+    )
+    with pytest.raises(NotImplementedError, match="is not declared on any turn") as exc:
+        validate_for_orchestrator_v1(md)
+    assert "conversation 'r' turn 1" in str(exc.value)
+    assert "'r:0'" in str(exc.value)
