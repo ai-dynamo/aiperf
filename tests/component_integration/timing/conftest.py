@@ -370,8 +370,10 @@ def assert_concurrency_limit_hit(
     simultaneously in flight, which is probabilistic under stochastic arrival
     patterns (Poisson/gamma) and on slower CI runners (e.g. Windows). A peak of
     ``limit - 1`` still proves the cap was meaningfully exercised; an
-    artificially-low config (peak well below the cap) still fails. The
-    never-exceed invariant is checked separately by
+    artificially-low config (peak well below the cap) still fails. Limits of 2
+    or less must be hit exactly, and larger limits never accept a peak below 2,
+    so the assertion always proves at least two requests actually overlapped.
+    The never-exceed invariant is checked separately by
     ``assert_concurrency_limit_respected``.
 
     Args:
@@ -387,9 +389,10 @@ def assert_concurrency_limit_hit(
         else analyzer.get_max_concurrent()
     )
     limit_type = "prefill" if prefill else "total"
-    assert max_concurrent >= limit - tolerance, (
+    required = max(limit - tolerance, min(limit, 2))
+    assert max_concurrent >= required, (
         f"Max {limit_type} concurrency {max_concurrent} did not approach limit "
-        f"{limit} (tolerance {tolerance}). "
+        f"{limit} (required >= {required}, tolerance {tolerance}). "
         f"Test configuration may be incorrect (QPS too low, not enough sessions, etc.)"
     )
 
