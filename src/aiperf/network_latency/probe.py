@@ -153,7 +153,7 @@ class NetworkLatencyProbeCollector(AIPerfLifecycleMixin):
                     lambda err=close_error: f"Error closing probe connection to "
                     f"{self._target_host}:{self._target_port}: {err!r}"
                 )
-        except (OSError, asyncio.TimeoutError) as e:
+        except OSError as e:
             error = ErrorDetails.from_exception(e)
 
         if success:

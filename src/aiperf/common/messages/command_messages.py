@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import uuid
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import (
     CommandResponseStatus,

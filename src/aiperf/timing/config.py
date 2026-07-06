@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel

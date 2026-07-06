@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 from enum import Enum
 from functools import cached_property
+from typing import Self
 
 from pydantic import BaseModel, Field
-from typing_extensions import Self
 
 
 def _normalize_name(value: str) -> str:

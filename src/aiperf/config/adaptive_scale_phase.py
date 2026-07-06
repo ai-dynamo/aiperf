@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
-from typing_extensions import Self
 
 from aiperf.config.sweep.adaptive import SLAFilter
 
