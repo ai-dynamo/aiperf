@@ -266,6 +266,30 @@ class TestMLflowDataExporter:
         else:
             assert params["loadgen.request_rate"] == expected_rate
 
+    def test_build_param_payload_stray_rate_attr_on_non_rate_phase_omits_rate(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+    ) -> None:
+        """The exporter must read the rate via get_phase_rate (isinstance-gated),
+        not attribute probing: a rate-shaped attribute on a concurrency phase
+        must not emit loadgen.request_rate."""
+        config = ExporterConfig(
+            results=sample_results,
+            cfg=_make_mlflow_cfg(
+                tmp_path,
+                profiling={"type": "concurrency", "requests": 1, "concurrency": 1},
+            ),
+            telemetry_results=None,
+        )
+        exporter = MLflowDataExporter(config)
+        phase = exporter._cfg.get_profiling_phases()[0]
+        object.__setattr__(phase, "rate", 7.5)
+
+        params = exporter._build_param_payload()
+
+        assert "loadgen.request_rate" not in params
+
     @pytest.mark.asyncio
     async def test_export_uploads_batch_and_artifacts(
         self,

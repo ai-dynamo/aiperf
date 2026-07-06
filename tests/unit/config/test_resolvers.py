@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from aiperf.config import BenchmarkConfig
 from aiperf.config.gpu_telemetry import GpuTelemetryConfig
+from aiperf.config.phases import ConcurrencyPhase
 from aiperf.config.resolution.plan import BenchmarkRun, ResolvedConfig
 from aiperf.config.resolution.resolvers import (
     ArtifactDirResolver,
@@ -25,9 +26,11 @@ from aiperf.config.resolution.resolvers import (
     TimingResolver,
     TokenizerResolver,
     _describe_phase,
+    _describe_rate_phase,
     build_default_resolver_chain,
 )
 from aiperf.config.tokenizer import TokenizerConfig
+from aiperf.plugin.enums import PhaseType
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -847,3 +850,13 @@ class TestRatePhaseDescriptor:
         phase = self._rate_phase(25.0)
         assert phase.rate == 25.0
         assert "request_rate25.0" in _describe_phase(phase)
+
+    def test_describe_rate_phase_stray_rate_attr_on_non_rate_phase_omits_rate(self):
+        """The descriptor must delegate to get_phase_rate (isinstance-gated):
+        a rate-shaped attribute on a non-rate phase type must not render a
+        request_rate slug token, as raw getattr probing would."""
+        phase = ConcurrencyPhase(
+            name="profiling", type=PhaseType.CONCURRENCY, concurrency=4, requests=10
+        )
+        object.__setattr__(phase, "rate", 7.5)
+        assert _describe_rate_phase(phase) == "concurrency4"
