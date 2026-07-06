@@ -880,6 +880,24 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    open_loop_replay: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Replay every recorded request at its absolute (speedup-scaled) "
+            "timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When "
+            "set, all turns retain their absolute timestamp and fire on the fixed "
+            "schedule regardless of prior-turn completion, rather than continuation turns "
+            "replaying closed-loop via inter-turn delays. Use for replaying recordings "
+            "whose sessions are already-determined event logs. Routes onto the active "
+            "FileDataset's ``open_loop_replay`` field at config-resolution time.",
+        ),
+        CLIParameter(
+            name=("--open-loop-replay",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = False
+
     ##############################################################################
     # Prompt
     ##############################################################################

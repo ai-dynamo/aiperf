@@ -467,6 +467,21 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; the loader reports the clamp count at end of load. Routes onto the active FileDataset's ``inter_turn_delay_cap_seconds`` field at config-resolution time.
 <br/>_Constraints: ≥ 0.0_
 
+#### `--max-idle-gap-cap-seconds` `<float>`
+
+Collapse global idle gaps in a trace replay schedule to at most this many seconds. After whole-session sampling a sparse trace otherwise replays across the original wall-clock span with long dead-air stretches that stall fixed-schedule replay. ``None`` disables the cap. Routes onto the active FileDataset's ``max_idle_gap_cap_seconds`` field at config-resolution time.
+<br/>_Constraints: ≥ 0.0_
+
+#### `--replay-speedup` `<float>`
+
+Wall-clock compression factor for trace replay (e.g. 10 = replay 10x faster than recorded). Divides all normalized timestamps and inter-turn delays so a ~2h trace replays in minutes. ``None`` = real time. Does NOT touch hash_ids (unlike synthesis speedup_ratio). Routes onto the active FileDataset's ``replay_speedup`` at config-resolution time.
+<br/>_Constraints: > 0.0_
+
+#### `--open-loop-replay`
+
+Replay every recorded request at its absolute (speedup-scaled) timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When set, all turns retain their absolute timestamp and fire on the fixed schedule regardless of prior-turn completion, rather than continuation turns replaying closed-loop via inter-turn delays. Use for replaying recordings whose sessions are already-determined event logs. Routes onto the active FileDataset's ``open_loop_replay`` field at config-resolution time.
+<br/>_Flag (no value required)_
+
 ### Prompt
 
 #### `-b`, `--prompt-batch-size`, `--batch-size-text`, `--batch-size` `<int>`
@@ -1816,6 +1831,21 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; the loader reports the clamp count at end of load. Routes onto the active FileDataset's ``inter_turn_delay_cap_seconds`` field at config-resolution time.
 <br/>_Constraints: ≥ 0.0_
+
+#### `--max-idle-gap-cap-seconds` `<float>`
+
+Collapse global idle gaps in a trace replay schedule to at most this many seconds. After whole-session sampling a sparse trace otherwise replays across the original wall-clock span with long dead-air stretches that stall fixed-schedule replay. ``None`` disables the cap. Routes onto the active FileDataset's ``max_idle_gap_cap_seconds`` field at config-resolution time.
+<br/>_Constraints: ≥ 0.0_
+
+#### `--replay-speedup` `<float>`
+
+Wall-clock compression factor for trace replay (e.g. 10 = replay 10x faster than recorded). Divides all normalized timestamps and inter-turn delays so a ~2h trace replays in minutes. ``None`` = real time. Does NOT touch hash_ids (unlike synthesis speedup_ratio). Routes onto the active FileDataset's ``replay_speedup`` at config-resolution time.
+<br/>_Constraints: > 0.0_
+
+#### `--open-loop-replay`
+
+Replay every recorded request at its absolute (speedup-scaled) timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When set, all turns retain their absolute timestamp and fire on the fixed schedule regardless of prior-turn completion, rather than continuation turns replaying closed-loop via inter-turn delays. Use for replaying recordings whose sessions are already-determined event logs. Routes onto the active FileDataset's ``open_loop_replay`` field at config-resolution time.
+<br/>_Flag (no value required)_
 
 ### Prompt
 

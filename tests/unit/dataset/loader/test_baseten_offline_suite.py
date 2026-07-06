@@ -304,6 +304,32 @@ class TestTimingNoHang:
         assert capped, "fixture should have continuation turns"
         assert all(t.delay is not None and t.delay <= 1000 for t in capped)
 
+    def test_open_loop_keeps_absolute_timestamps_no_delay(self, fixture_path):
+        # Open-loop ('no-mercy'): back-pressure is skipped, so EVERY turn across
+        # every session keeps its absolute timestamp and no delay is set.
+        loader, data = _load(fixture_path, open_loop_replay=True)
+        conversations = loader.convert_to_conversations(data)
+        assert conversations, "fixture should produce conversations"
+        all_turns = [turn for conv in conversations for turn in conv.turns]
+        assert any(len(conv.turns) > 1 for conv in conversations), (
+            "fixture should have a multi-turn session"
+        )
+        for turn in all_turns:
+            assert turn.timestamp is not None
+            assert turn.delay is None
+
+    def test_open_loop_default_off_continuation_turns_get_delay(self, fixture_path):
+        # Companion: with the default (open_loop_replay=False) continuation turns
+        # DO get a delay and drop their absolute timestamp -- proving the flag is
+        # what flips the behavior.
+        loader, data = _load(fixture_path)
+        multi = [c for c in loader.convert_to_conversations(data) if len(c.turns) > 1]
+        assert multi, "fixture should have a multi-turn session"
+        for conv in multi:
+            for turn in conv.turns[1:]:
+                assert turn.delay is not None
+                assert turn.timestamp is None
+
 
 class TestFidelityCarryThrough:
     def test_recorded_outcomes_present(self, fixture_path):

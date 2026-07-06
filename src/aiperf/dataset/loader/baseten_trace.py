@@ -226,6 +226,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
+        self._open_loop = getattr(dataset, "open_loop_replay", False)
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
 
     @classmethod
@@ -501,8 +502,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         an absolute pre-recorded time. This keeps each session's prefix cached in
         order (faithful KV reuse) and is the correct model for this trace (~93%
         multi-turn). Turn 0 keeps its absolute arrival time (session start).
+        Open-loop ('no-mercy') replay skips back-pressure entirely: every turn
+        keeps its absolute (speedup-scaled) timestamp and fires on the schedule.
         """
-        self._apply_back_pressure(data)
+        if not self._open_loop:
+            self._apply_back_pressure(data)
         conversations = super().convert_to_conversations(data)
         self._delay_cap.log_summary(logger_name=__name__)
         return conversations
