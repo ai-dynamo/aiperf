@@ -63,7 +63,7 @@ CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "Custo
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.MMSTAR, PublicDatasetType.VOXPOPULI"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.LLAVA_ONEVISION, PublicDatasetType.VOXPOPULI"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
