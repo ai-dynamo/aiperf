@@ -97,6 +97,9 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
+  - [Network Latency Calibration Metrics](#network-latency-calibration-metrics)
+    - [Network RTT](#network-rtt)
+    - [Network-Adjusted Latency Metrics](#network-adjusted-latency-metrics)
   - [HTTP Trace Metrics](#http-trace-metrics)
     - [HTTP Blocked](#http-blocked)
     - [HTTP DNS Lookup](#http-dns-lookup)
@@ -112,6 +115,11 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [HTTP Connection Reused](#http-connection-reused)
     - [HTTP Chunks Sent](#http-chunks-sent)
     - [HTTP Chunks Received](#http-chunks-received)
+  - [GPU Power Efficiency Metrics](#gpu-power-efficiency-metrics)
+    - [Total GPU Power](#total-gpu-power)
+    - [Total GPU Energy](#total-gpu-energy)
+    - [Output Tokens per Joule](#output-tokens-per-joule)
+    - [Energy per User](#energy-per-user)
 - [Metric Flags Reference](#metric-flags-reference)
 
 ---
@@ -752,6 +760,7 @@ usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from 
 - Taken from the API response `usage` object, not computed by AIPerf.
 - OpenAI surfaces cache reads as `prompt_tokens_details.cached_tokens` (or `input_tokens_details.cached_tokens`); writes are transparent and not reported.
 - Anthropic surfaces cache reads at the top level as `cache_read_input_tokens`; writes are reported separately as [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens).
+- **Self-hosted servers gate this behind a flag:** vLLM needs `--enable-prompt-tokens-details` and SGLang needs `--enable-cache-report` (both default off); TRT-LLM emits `cached_tokens` by default. Without the flag these metrics read all-None even when the server is caching — see [Vendor Usage Field Reference](reference/vendor-usage-fields.md).
 - For streaming responses, uses the last non-None value reported.
 
 ---
@@ -1478,6 +1487,67 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 
 ---
 
+## Network Latency Calibration Metrics
+
+These metrics appear only when network latency calibration is enabled (with
+`--network-latency-automatic` or `--network-latency-mean`). They make benchmark runs
+taken from different client network locations comparable by removing the client-to-endpoint
+network round-trip from the reported latencies.
+
+With `--network-latency-automatic`, AIPerf opens a fresh TCP connection to the endpoint
+host:port on an interval throughout profiling (`--network-latency-ping-interval`, default 1s)
+and records the handshake RTT. The handshake is one network round-trip with no server compute,
+so it isolates the network leg and is immune to server load. Each probe is written to
+`profile_export_network_latency.jsonl`. The **mean** RTT over successful probes is then
+subtracted from the request-start-anchored latency metrics. Alternatively, a fixed mean RTT
+can be supplied with `--network-latency-mean <ms>` to skip probing (the two flags are
+mutually exclusive). The chosen RTT is logged at run completion.
+
+Subtracting a constant from a distribution shifts the mean and every percentile by that
+constant and leaves the standard deviation unchanged, so the adjustment is applied to the
+aggregated results (clamped at 0). The raw metrics are always preserved.
+
+### Network RTT
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The mean network RTT that was subtracted from the adjusted latency metrics (single value).
+
+**Notes:**
+- Measured via TCP handshakes throughout the run, or supplied directly via `--network-latency-mean`.
+- Full per-probe samples and per-target statistics are written to `profile_export_network_latency.jsonl`.
+
+---
+
+### Network-Adjusted Latency Metrics
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Non-destructive, RTT-corrected variants of the request-start-anchored latency metrics:
+
+| Metric | Tag | Source metric |
+|---|---|---|
+| Network-Adjusted Request Latency | `network_adjusted_request_latency` | Request Latency |
+| Network-Adjusted Time to First Token | `network_adjusted_time_to_first_token` | Time to First Token (TTFT) |
+| Network-Adjusted Time to First Output Token | `network_adjusted_time_to_first_output_token` | Time to First Output Token (TTFO) |
+
+**Formula:**
+```python
+# nanoseconds, applied to every aggregated statistic (avg, min, max, p1..p99)
+network_adjusted_ns = max(0, source_metric_ns - mean_network_rtt_ns)
+```
+
+**Notes:**
+- Only metrics whose interval starts at the client request-send timestamp are adjusted.
+  Time to Second Token (second_response - first_response), Inter Token Latency (ITL), and
+  Inter Chunk Latency (ICL) are intentionally **not** adjusted: they are intra-stream gaps
+  that do not include the connection RTT (and for ITL the RTT cancels in
+  `(request_latency - ttft)`), so they are already network-invariant.
+- Values are clamped at 0; if the subtracted RTT exceeds some measured latencies a warning
+  is logged (the RTT may be larger than the true network leg).
+
+---
+
 ## HTTP Trace Metrics
 
 > [!NOTE]
@@ -1728,6 +1798,105 @@ http_req_chunks_received = trace.response_chunks_count
 
 **Notes:**
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
+
+---
+
+## GPU Power Efficiency Metrics
+
+> [!NOTE]
+> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector (DCGM, pynvml, or amdsmi) to expose the relevant signal (`gpu_power_usage` and/or `energy_consumption`). They are computed once per profiling phase by `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the standard derivation walk — see the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern).
+
+Each metric's header surfaces the number of GPUs that contributed valid data (e.g. `Total GPU Power (8 GPUs)`), so a partial-cohort run (where one or more GPUs failed to report) is distinguishable from a full run. Tags are emitted in this order when present: `total_gpu_power`, `total_gpu_energy`, `output_tokens_per_joule`, `energy_per_user`. Each tag is independently omitted when its underlying signal is unavailable.
+
+### Total GPU Power
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Sum of average GPU power across all reporting GPUs during the profiling phase, in watts. Useful as a baseline for cross-run power comparisons.
+
+**Formula:**
+```python
+# Per GPU: average of gpu_power_usage gauge samples in the profiling window
+# (warmup excluded). Summed across all GPUs that reported valid samples.
+total_gpu_power_w = sum(
+    avg(gpu_power_usage[start_ns:end_ns])
+    for gpu in reporting_gpus
+)
+```
+
+**Notes:**
+- Unit: watts (`W`).
+- Time-filtered to the profiling-phase window; warmup samples are excluded.
+- Power is a gauge, so the window stays bounded — post-bench idle samples don't drag the average down.
+- Omitted when no GPU reports `gpu_power_usage` in the window.
+
+---
+
+### Total GPU Energy
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Sum of energy consumed across all reporting GPUs during the profiling phase, in joules. Computed as a counter delta (`final − baseline`) per GPU and summed.
+
+**Formula:**
+```python
+# Per GPU: delta of the energy_consumption monotonic counter over the
+# profiling window, widened on the end by FINAL_SCRAPE_GRACE_NS so the
+# trailing scrape that lands just after requests_end_ns is captured.
+grace_ns = Environment.GPU.FINAL_SCRAPE_GRACE_NS  # default 666_000_000 (~666 ms)
+total_gpu_energy_j = sum(
+    delta(energy_consumption[start_ns : end_ns + grace_ns])
+    for gpu in reporting_gpus
+)
+# Negative deltas are clamped to 0 to handle counter resets (DCGM restart).
+```
+
+**Notes:**
+- Unit: joules (`J`). Source samples are reported in megajoules and converted via `EnergyMetricUnit.MEGAJOULE.joules`.
+- The end-of-window grace is bounded (not open-ended) so cooldown samples and any subsequent-phase samples cannot leak into the delta. Tune via `AIPERF_GPU_FINAL_SCRAPE_GRACE_NS` if you also tune `AIPERF_GPU_COLLECTION_INTERVAL` — keep grace at roughly `2x` the collection cadence.
+- Per-GPU deltas use the nearest non-NaN baseline and the nearest non-NaN final sample; arrays containing transient NaN sensor failures still yield a meaningful delta.
+- Omitted when no GPU reports `energy_consumption` in the window.
+
+---
+
+### Output Tokens per Joule
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Inference energy efficiency: number of output tokens produced per joule of GPU energy consumed during the profiling phase. Higher is better.
+
+**Formula:**
+```python
+output_tokens_per_joule = total_output_tokens / total_gpu_energy
+```
+
+**Notes:**
+- Unit: `tokens/J`.
+- Flagged `LARGER_IS_BETTER | PRODUCES_TOKENS_ONLY`.
+- Numerator comes from the request records (`total_output_tokens`); denominator comes from the GPU telemetry counter delta above. The header reports the energy-side GPU count, since that's the cohort the metric depends on.
+- Omitted when `total_output_tokens` is absent from the records or aggregate `total_gpu_energy` is zero.
+
+---
+
+### Energy per User
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Per-user energy footprint during the profiling phase: total GPU energy consumed divided by the configured concurrency. Lower is better — a more efficient deployment serves the same load for less energy per concurrent user.
+
+**Formula:**
+```python
+# concurrency from the resolved profiling phase config
+# (run.cfg.get_profiling_phases()[0].concurrency).
+energy_per_user_j = total_gpu_energy / concurrency
+```
+
+**Notes:**
+- Unit: `joules/user`.
+- Flagged `MetricFlags.NONE` — smaller-is-better is the default for unflagged metrics.
+- Denominator is the profiling phase's configured `concurrency`. The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
+- Header reports the energy-side GPU count (the same cohort `total_gpu_energy` reports), e.g. `Energy per User (8 GPUs)`.
+- Omitted when concurrency is unset (e.g. pure `--request-rate` mode) or aggregate GPU energy is unavailable.
 
 ---
 

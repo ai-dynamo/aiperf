@@ -435,7 +435,9 @@ class TestPublicDatasetComposerHFSubsetOverride:
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=metadata,
         ):
-            kwargs = composer._build_loader_kwargs("aimo")
+            kwargs = composer._build_loader_kwargs(
+                "aimo", HFInstructionResponseDatasetLoader
+            )
 
         assert kwargs["hf_subset"] == "cli-subset"
 
@@ -448,7 +450,9 @@ class TestPublicDatasetComposerHFSubsetOverride:
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=metadata,
         ):
-            kwargs = composer._build_loader_kwargs("aimo")
+            kwargs = composer._build_loader_kwargs(
+                "aimo", HFInstructionResponseDatasetLoader
+            )
 
         assert kwargs["hf_subset"] == "plugin-subset"
 
@@ -461,7 +465,9 @@ class TestPublicDatasetComposerHFSubsetOverride:
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=metadata,
         ):
-            kwargs = composer._build_loader_kwargs("aimo")
+            kwargs = composer._build_loader_kwargs(
+                "aimo", HFInstructionResponseDatasetLoader
+            )
 
         assert "hf_subset" not in kwargs
 
@@ -478,7 +484,9 @@ class TestPublicDatasetComposerHFSubsetOverride:
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=metadata,
         ):
-            kwargs = composer._build_loader_kwargs("librispeech")
+            kwargs = composer._build_loader_kwargs(
+                "librispeech", HFInstructionResponseDatasetLoader
+            )
 
         assert kwargs["audio_column"] == "audio"
 
@@ -491,6 +499,8 @@ class TestPublicDatasetComposerHFSubsetOverride:
             "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
             return_value=metadata,
         ):
-            kwargs = composer._build_loader_kwargs("aimo")
+            kwargs = composer._build_loader_kwargs(
+                "aimo", HFInstructionResponseDatasetLoader
+            )
 
         assert "audio_column" not in kwargs

@@ -9,6 +9,22 @@ from pydantic import ConfigDict
 # Base Models (for request parsing only)
 # ============================================================================
 
+CompletionPrompt = str | list[int] | list[list[int]] | list[str]
+
+
+def flatten_completion_prompt_token_ids(prompt: CompletionPrompt) -> list[int] | None:
+    """Return raw token IDs when a completions prompt is already tokenized."""
+    if not isinstance(prompt, list):
+        return None
+    if all(isinstance(item, int) for item in prompt):
+        return [int(item) for item in prompt]
+    if all(
+        isinstance(item, list) and all(isinstance(token_id, int) for token_id in item)
+        for item in prompt
+    ):
+        return [int(token_id) for item in prompt for token_id in item]
+    return None
+
 
 class BaseModel(PydanticBaseModel):
     """Base model with common configuration for request parsing."""
@@ -60,12 +76,15 @@ class ChatCompletionRequest(BaseCompletionRequest):
 class CompletionRequest(BaseCompletionRequest):
     """Request model for text completion endpoints."""
 
-    prompt: str | list[str]
+    prompt: CompletionPrompt
     reasoning_effort: Literal["low", "medium", "high"] | None = None
 
     @property
     def prompt_text(self) -> str:
         """Convert prompt to single text string (join array with newlines)."""
+        prompt_token_ids = flatten_completion_prompt_token_ids(self.prompt)
+        if prompt_token_ids is not None:
+            return " ".join(str(token_id) for token_id in prompt_token_ids)
         if isinstance(self.prompt, str):
             return self.prompt
         return "\n".join(str(p) for p in self.prompt if p)

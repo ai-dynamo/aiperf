@@ -8,6 +8,7 @@ Spec: (deleted)
 
 from __future__ import annotations
 
+import logging
 import textwrap
 
 import pytest
@@ -38,12 +39,18 @@ class TestFlatShapeRejection:
               - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
         """).strip()
 
+        logging.getLogger(__name__).warning("unrelated flat shape setup noise")
+
         cfg = load_config_from_string(flat, substitute_env=False)
         assert cfg.benchmark.models.items[0].name == "test/model"
         # Deprecation warning should fire pointing at the migrate tool.
-        warnings = [r for r in caplog.records if "flat shape" in r.getMessage()]
+        warnings = [
+            r
+            for r in caplog.records
+            if "flat shape" in r.getMessage()
+            and "migrate_config_yaml.py" in r.getMessage()
+        ]
         assert warnings, "expected deprecation warning for flat-shape YAML"
-        assert "migrate_config_yaml.py" in warnings[0].getMessage()
 
     def test_envelope_shape_loads_cleanly(self):
         envelope = textwrap.dedent("""

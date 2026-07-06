@@ -80,6 +80,11 @@ on:
         description: 'Version tag to release (e.g., v0.9.0). Leave empty to sync dev docs.'
         required: false
         type: string
+      force_rebuild:
+        description: 'Overwrite an already-released version snapshot (manual dispatch only). Use with care: it replaces pages-$TAG and versions/$TAG.yml, reverting any out-of-band manual corrections.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -543,62 +548,84 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Processing version: $VERSION (tag: $TAG)"
 
+      - name: Checkout source at tag
+        uses: actions/checkout@v6
+        with:
+          # Explicit tag ref so workflow_dispatch (which runs on a branch)
+          # resolves the tag rather than the dispatch ref. Provides the tagged
+          # commit's docs/ (incl. docs/index.yml) and fern/md_to_mdx.py.
+          ref: ${{ steps.version.outputs.tag }}
+          path: source-checkout
+          fetch-depth: 1
+
       - name: Checkout docs-website branch
         uses: actions/checkout@v6
         with:
           ref: docs-website
+          path: docs-checkout
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check if version already exists
+        env:
+          # Empty on tag-push events; "true"/"false" only on workflow_dispatch.
+          FORCE_REBUILD: ${{ github.event.inputs.force_rebuild }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          if [ -d "fern/pages-$TAG" ]; then
-            echo "::error::Version $TAG already exists (fern/pages-$TAG directory found)"
-            exit 1
+          if [ -d "docs-checkout/fern/pages-$TAG" ] || [ -f "docs-checkout/fern/versions/$TAG.yml" ]; then
+            if [ "$FORCE_REBUILD" = "true" ]; then
+              echo "::warning::Version $TAG already exists; force_rebuild=true, overwriting its snapshot (any out-of-band manual corrections will be replaced)."
+            else
+              echo "::error::Version $TAG already exists. Re-run via workflow_dispatch with force_rebuild=true to overwrite it intentionally."
+              exit 1
+            fi
+          else
+            echo "Version $TAG does not exist yet, proceeding with release"
           fi
-
-          if [ -f "fern/versions/$TAG.yml" ]; then
-            echo "::error::Version $TAG already exists (fern/versions/$TAG.yml found)"
-            exit 1
-          fi
-
-          echo "Version $TAG does not exist yet, proceeding with release"
 
       - name: Setup Git
+        working-directory: docs-checkout
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create versioned pages directory
+      - name: Build versioned pages from tagged commit
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          echo "Creating fern/pages-$TAG/ from fern/pages-dev/..."
+          echo "Building docs-checkout/fern/pages-$TAG/ from source @ $TAG docs/..."
 
-          # Copy current pages-dev/ to pages-vX.Y.Z/
-          cp -r fern/pages-dev "fern/pages-$TAG"
+          # Build the snapshot from the tag's raw docs/, not from pages-dev.
+          # pages-dev tracks main and would capture the wrong content under a
+          # version label (tags are cut from release/X.Y.Z branches that diverge
+          # from main). Because the source is raw markdown (not already-converted
+          # MDX), the later md_to_mdx.py pass converts exactly once.
+          rm -rf "docs-checkout/fern/pages-$TAG"
+          mkdir -p "docs-checkout/fern/pages-$TAG"
+          rsync -a --exclude='index.yml' \
+            source-checkout/docs/ "docs-checkout/fern/pages-$TAG/"
 
-          echo "Created fern/pages-$TAG/"
-          ls -la "fern/pages-$TAG/" | head -20
+          echo "Created docs-checkout/fern/pages-$TAG/"
+          ls -la "docs-checkout/fern/pages-$TAG/" | head -20
 
       - name: Update GitHub links to version tag
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          echo "Updating GitHub links from 'tree/main' to 'tree/$TAG' in fern/pages-$TAG/..."
+          echo "Pinning GitHub links from main to $TAG in docs-checkout/fern/pages-$TAG/..."
 
-          # Find all markdown files and replace tree/main with tree/vX.Y.Z
-          find "fern/pages-$TAG" -name "*.md" -o -name "*.mdx" | while read file; do
+          # Pin tree/main and blob/main links to this version's tag, on raw
+          # markdown before MDX conversion.
+          find "docs-checkout/fern/pages-$TAG" -name "*.md" -o -name "*.mdx" | while read file; do
             if grep -q "github.com/ai-dynamo/aiperf/tree/main" "$file"; then
-              echo "Updating: $file"
+              echo "Updating tree links: $file"
               sed -i "s|github.com/ai-dynamo/aiperf/tree/main|github.com/ai-dynamo/aiperf/tree/$TAG|g" "$file"
             fi
           done
 
           # Also update blob/main references (for direct file links)
-          find "fern/pages-$TAG" -name "*.md" -o -name "*.mdx" | while read file; do
+          find "docs-checkout/fern/pages-$TAG" -name "*.md" -o -name "*.mdx" | while read file; do
             if grep -q "github.com/ai-dynamo/aiperf/blob/main" "$file"; then
               echo "Updating blob links: $file"
               sed -i "s|github.com/ai-dynamo/aiperf/blob/main|github.com/ai-dynamo/aiperf/blob/$TAG|g" "$file"
@@ -611,23 +638,27 @@ jobs:
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
-          echo "Converting GitHub Markdown to Fern MDX format in pages-$TAG/..."
-          python3 fern/md_to_mdx.py --dir "fern/pages-$TAG"
+          echo "Converting Markdown to Fern MDX in pages-$TAG/ with the tag's md_to_mdx.py..."
+          # Use the tagged commit's converter for fidelity to that release's
+          # pipeline (source is raw markdown, so this converts exactly once).
+          python3 source-checkout/fern/md_to_mdx.py --dir "docs-checkout/fern/pages-$TAG"
           echo "Conversion complete."
 
       - name: Create version config file
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          VERSION="${{ steps.version.outputs.version }}"
-          VERSION_FILE="fern/versions/$TAG.yml"
+          VERSION_FILE="docs-checkout/fern/versions/$TAG.yml"
 
-          echo "Creating version config: $VERSION_FILE"
+          echo "Creating version config from the tag's index.yml: $VERSION_FILE"
 
-          # Copy dev.yml as template
-          cp fern/versions/dev.yml "$VERSION_FILE"
+          # Navigation must come from the tag's index.yml so it references the
+          # pages that actually exist in pages-$TAG.
+          cp source-checkout/docs/index.yml "$VERSION_FILE"
 
-          # Update all page paths from ../pages-dev/ to ../pages-vX.Y.Z/
-          sed -i "s|path: \.\./pages-dev/|path: ../pages-$TAG/|g" "$VERSION_FILE"
+          # Transform paths for the docs-website layout, pinned to this version
+          # (same transform validate-and-publish applies to dev.yml, with the
+          # ../pages-$TAG/ prefix instead of ../pages-dev/).
+          yq -i '(.. | select(has("path")).path) |= sub("^([a-zA-Z])", "../pages-'"$TAG"'/${1}")' "$VERSION_FILE"
 
           echo "Created $VERSION_FILE"
           echo "First 30 lines:"
@@ -636,7 +667,7 @@ jobs:
       - name: Update docs.yml with new version
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          DOCS_FILE="fern/docs.yml"
+          DOCS_FILE="docs-checkout/fern/docs.yml"
 
           echo "Updating $DOCS_FILE to include $TAG..."
 
@@ -670,7 +701,26 @@ jobs:
           echo "Updated docs.yml products/versions section:"
           yq '.products[0].versions' "$DOCS_FILE"
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install Fern CLI
+        run: npm install -g fern-api@$(jq -r '.version' docs-checkout/fern/fern.config.json)
+
+      - name: Validate release snapshot (strict)
+        working-directory: docs-checkout
+        run: |
+          # Fail the release before commit/publish if the tag's converter
+          # produced output the site renderer rejects, or any link is broken.
+          # Validates the whole site (all versions); pre-existing broken
+          # snapshots must be clean (fixed manually) or the release is blocked.
+          fern check --warnings --strict-broken-links
+          fern docs broken-links
+
       - name: Commit and push changes
+        working-directory: docs-checkout
         run: |
           TAG="${{ steps.version.outputs.tag }}"
 
@@ -691,16 +741,8 @@ jobs:
 
           echo "Successfully released documentation for $TAG on docs-website branch"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-
-      - name: Install Fern CLI
-        run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
-
       - name: Publish Docs
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-        working-directory: ./fern
+        working-directory: docs-checkout/fern
         run: fern generate --docs

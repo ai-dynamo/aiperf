@@ -357,6 +357,19 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "(e.g. 16 for Bailian, 512 for Mooncake)."
         ),
     )
+    category: str | None = Field(
+        default=None,
+        description=(
+            "Filter dataset rows to a specific category value. Used by custom "
+            "loaders that support per-category subsets (e.g. SPEED-Bench)."
+        ),
+    )
+    multi_turn: bool = Field(
+        default=False,
+        description=(
+            "When true, each row becomes one Conversation with multiple Turn objects."
+        ),
+    )
 
 
 class PublicDatasetLoaderMetadata(BaseModel):
@@ -406,6 +419,14 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default="content",
         description="Key inside each message dict for the text content. Used with conversation_column (e.g. 'content', 'value').",
     )
+    multi_turn: bool = Field(
+        default=False,
+        description=(
+            "When true, each row becomes one Conversation with multiple Turn objects. "
+            "For HFConversationDatasetLoader: user→assistant (OpenAI roles) or human→gpt "
+            "(ShareGPT-style ``from`` fields) pairs."
+        ),
+    )
     streaming: bool = Field(
         default=False,
         description=(
@@ -414,9 +435,9 @@ class PublicDatasetLoaderMetadata(BaseModel):
             "Use false (default) for small datasets to leverage HF caching and len() support."
         ),
     )
-    category: str | None = Field(
-        default=None,
-        description="Filter dataset rows to a specific category value. Used by loaders that support per-category subsets (e.g. SPEED-Bench).",
+    has_timing_data: bool = Field(
+        default=False,
+        description="Whether the loader emits timestamps suitable for fixed-schedule replay.",
     )
     prompt_template: str | None = Field(
         default=None,

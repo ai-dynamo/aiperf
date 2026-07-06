@@ -335,9 +335,18 @@ class DataLoader(AIPerfLoggerMixin):
 
         if "input_config" in aggregated:
             input_config = aggregated["input_config"]
-            if "output" in input_config and "slice_duration" in input_config["output"]:
-                slice_duration = input_config["output"]["slice_duration"]
-                self.info(f"Extracted slice_duration: {slice_duration}s")
+            if isinstance(input_config, dict):
+                output_config = input_config.get("output")
+                artifacts_config = input_config.get("artifacts")
+                output_config = output_config if isinstance(output_config, dict) else {}
+                artifacts_config = (
+                    artifacts_config if isinstance(artifacts_config, dict) else {}
+                )
+                slice_duration = output_config.get("slice_duration")
+                if slice_duration is None:
+                    slice_duration = artifacts_config.get("slice_duration")
+                if slice_duration is not None:
+                    self.info(f"Extracted slice_duration: {slice_duration}s")
 
         metadata = self._extract_metadata(run_path, requests_df, aggregated)
 
@@ -1288,16 +1297,18 @@ class DataLoader(AIPerfLoggerMixin):
 
             # Build series key for grouping
             df_filtered["labels_json"] = df_filtered.apply(
-                lambda row: orjson.dumps(
-                    {
-                        k: row[k]
-                        for k in label_columns
-                        if pd.notna(row[k]) and row[k] != ""
-                    },
-                    option=orjson.OPT_SORT_KEYS,
-                ).decode()
-                if any(pd.notna(row[k]) and row[k] != "" for k in label_columns)
-                else "{}",
+                lambda row: (
+                    orjson.dumps(
+                        {
+                            k: row[k]
+                            for k in label_columns
+                            if pd.notna(row[k]) and row[k] != ""
+                        },
+                        option=orjson.OPT_SORT_KEYS,
+                    ).decode()
+                    if any(pd.notna(row[k]) and row[k] != "" for k in label_columns)
+                    else "{}"
+                ),
                 axis=1,
             )
 
@@ -1607,6 +1618,71 @@ class DataLoader(AIPerfLoggerMixin):
 
         return result
 
+    @staticmethod
+    def _extract_load_field(
+        config: dict[str, Any], v2_field: str, legacy_field: str
+    ) -> Any | None:
+        """Resolve a per-phase load characteristic across YAML v2 and legacy.
+
+        YAML v2 attaches per-phase fields (``concurrency``, ``requests``)
+        to entries under ``input_config.phases[]`` and leaves the flat
+        ``input_config.loadgen`` block as ``null``. Legacy artifacts put
+        the same values directly on ``loadgen`` under their old names
+        (``concurrency`` / ``request_count``).
+
+        Prefer the v2 value (read from the ``profiling`` phase when
+        present, else the first phase) so v2 artifacts resolve
+        deterministically. Fall back to ``loadgen[legacy_field]`` for
+        legacy artifacts, then to ``None``.
+        """
+        phases = config.get("phases")
+        if isinstance(phases, list) and phases:
+            profiling_phase = next(
+                (
+                    p
+                    for p in phases
+                    if isinstance(p, dict) and p.get("name") == "profiling"
+                ),
+                None,
+            )
+            candidate = profiling_phase or next(
+                (p for p in phases if isinstance(p, dict)), None
+            )
+            if candidate is not None and v2_field in candidate:
+                return candidate[v2_field]
+
+        loadgen = config.get("loadgen")
+        if isinstance(loadgen, dict) and legacy_field in loadgen:
+            return loadgen[legacy_field]
+        return None
+
+    @staticmethod
+    def _extract_model_name(config: dict[str, Any]) -> str | None:
+        """Resolve the model name from an ``input_config`` block.
+
+        YAML v2 stores it at ``models.items[].name``; legacy artifacts store
+        it at ``endpoint.model_names``. YAML v2 wins when both are present;
+        an empty/malformed ``models.items`` falls through to the legacy path.
+        """
+        models_block = config.get("models")
+        if isinstance(models_block, dict):
+            items = models_block.get("items")
+            if (
+                isinstance(items, list)
+                and items
+                and isinstance(items[0], dict)
+                and items[0].get("name")
+            ):
+                return items[0]["name"]
+
+        # Legacy: pre-YAML-v2 artifacts stored the model list on the endpoint block.
+        endpoint = config.get("endpoint")
+        if isinstance(endpoint, dict):
+            names = endpoint.get("model_names")
+            if names:
+                return names[0]
+        return None
+
     def _extract_metadata(
         self,
         run_path: Path,
@@ -1636,16 +1712,11 @@ class DataLoader(AIPerfLoggerMixin):
         if aggregated and "input_config" in aggregated:
             config = aggregated["input_config"]
 
-            if "endpoint" in config and "model_names" in config["endpoint"]:
-                models = config["endpoint"]["model_names"]
-                if models:
-                    model = models[0]
-
-            if "loadgen" in config and "concurrency" in config["loadgen"]:
-                concurrency = config["loadgen"]["concurrency"]
-
-            if "loadgen" in config and "request_count" in config["loadgen"]:
-                request_count = config["loadgen"]["request_count"]
+            model = self._extract_model_name(config)
+            concurrency = self._extract_load_field(config, "concurrency", "concurrency")
+            request_count = self._extract_load_field(
+                config, "requests", "request_count"
+            )
 
             if "endpoint" in config and "type" in config["endpoint"]:
                 endpoint_type = config["endpoint"]["type"]
@@ -1654,6 +1725,17 @@ class DataLoader(AIPerfLoggerMixin):
             start_time = aggregated.get("start_time")
             end_time = aggregated.get("end_time")
             was_cancelled = aggregated.get("was_cancelled", False)
+
+            # Aggregate-only runs (sweep cells) carry no ``input_config``; the
+            # sweep exporter stamps the resolved model into ``metadata.model``
+            # instead. See ``_resolve_model_name_for_variation`` in
+            # ``aiperf.cli_runner._sweep_aggregate``.
+            if model is None:
+                meta_block = aggregated.get("metadata")
+                if isinstance(meta_block, dict):
+                    stamped = meta_block.get("model")
+                    if isinstance(stamped, str) and stamped:
+                        model = stamped
 
         duration_seconds = None
         if (

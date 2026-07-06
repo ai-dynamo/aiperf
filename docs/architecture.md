@@ -159,8 +159,10 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Allows accurate measurement without artificial delays
 
 **Credit Distribution:**
-- Credits are routed to workers via ROUTER/DEALER pattern
+- Credits are dispatched to workers via a ROUTER/DEALER pattern (the Timing Manager's sticky ROUTER to each worker's DEALER)
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
+- Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch
+- The return channel carries no ZMQ envelope identity, so the returning worker id travels inside the message
 - No coordination required between workers
 - Scales to large numbers of workers without bottlenecks
 - Efficient message routing minimizes overhead
@@ -179,12 +181,13 @@ This section describes the end-to-end message flow during a benchmark run, showi
 - **Aggregated Results**: Final performance summary and per-request details
 
 **Message Flow:**
-1. Credit Router routes credits to workers via ROUTER/DEALER pattern
+1. Credit Router dispatches credits to workers via ROUTER/DEALER pattern
 2. Workers access dataset entries via memory-mapped files
 3. Workers send requests to Inference Server (external HTTP)
-4. Workers push raw results to Record Processors
-5. Record Processors push metric records to Records Manager
-6. Records Manager aggregates and exports final results
+4. Workers return completed credits to the Timing Manager over a dedicated PUSH/PULL fan-in channel
+5. Workers push raw results to Record Processors
+6. Record Processors push metric records to Records Manager
+7. Records Manager aggregates and exports final results
 
 ## Communication Architecture
 
@@ -205,8 +208,11 @@ AIPerf uses **ZMQ proxies** for message routing between services and workers:
 
 - Services publish strongly-typed messages to specific topics (Pub/Sub pattern)
 - Services subscribe to relevant message types
-- Router/Dealer patterns for credit distribution to workers
+- Router/Dealer pattern for credit dispatch to workers
+- PUSH/PULL fan-in for credit returns from workers back to the Timing Manager
 - Request/Reply patterns for synchronous operations
+
+For low event-loop overhead, the streaming credit sockets (the dispatch DEALER/ROUTER and the return PUSH/PULL) are driven directly off the raw ZMQ file descriptor with an edge-triggered, non-blocking batch drain rather than per-message `await` wrappers.
 
 ### State Management
 

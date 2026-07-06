@@ -151,8 +151,8 @@ class TestZMQStreamingDealerClientSend:
 
             await client.send(sample_worker_ready)
 
-            mock_socket.send.assert_called_once()
-            sent_data = mock_socket.send.call_args[0][0]
+            mock_socket._sync_send.assert_called_once()
+            sent_data = mock_socket._sync_send.call_args[0][0]
             decoded = msgspec.msgpack.decode(sent_data, type=WorkerReady)
             assert decoded.worker_id == sample_worker_ready.worker_id
 
@@ -168,7 +168,7 @@ class TestZMQStreamingDealerClientSend:
             for struct in structs:
                 await client.send(struct)
 
-            assert mock_socket.send.call_count == len(structs)
+            assert mock_socket._sync_send.call_count == len(structs)
 
     @pytest.mark.asyncio
     async def test_send_raises_when_not_initialized(
@@ -218,16 +218,10 @@ class TestZMQStreamingDealerClientReceiver:
         async def test_handler(message: RouterToWorkerMessage) -> None:
             await callback(message)
 
-        call_count = 0
-
-        async def mock_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return msgspec.msgpack.encode(sample_credit)
-            await asyncio.Future()  # Block forever after first call
-
-        streaming_dealer_test_helper.setup_mock_socket(recv_side_effect=mock_recv)
+        # FD path reads via the raw FD: enqueue the encoded credit as a frame.
+        streaming_dealer_test_helper.setup_mock_socket(
+            recv_side_effect=[msgspec.msgpack.encode(sample_credit)]
+        )
 
         async with streaming_dealer_test_helper.create_client() as client:
             # Register handler BEFORE starting to avoid race condition
@@ -246,16 +240,9 @@ class TestZMQStreamingDealerClientReceiver:
         self, streaming_dealer_test_helper, sample_credit, wait_for_background_task
     ):
         """Test that receiver logs warning when no handler is registered."""
-        call_count = 0
-
-        async def mock_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return msgspec.msgpack.encode(sample_credit)
-            await asyncio.Future()  # Block forever after first call
-
-        streaming_dealer_test_helper.setup_mock_socket(recv_side_effect=mock_recv)
+        streaming_dealer_test_helper.setup_mock_socket(
+            recv_side_effect=[msgspec.msgpack.encode(sample_credit)]
+        )
 
         async with streaming_dealer_test_helper.create_client(auto_start=True):
             # Don't register handler
@@ -275,25 +262,20 @@ class TestZMQStreamingDealerClientReceiver:
         streaming_dealer_test_helper,
         exception,
         iterations,
-        time_traveler,
     ):
-        """Test that receiver handles exceptions gracefully."""
-        call_count = 0
-        done_event = asyncio.Event()
+        """Test that the FD-driver surfaces a recv error without crashing.
 
-        async def mock_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count < iterations:
-                raise exception
-            done_event.set()
-            await asyncio.Future()  # Block forever after
+        Under the FD path a raising recv is reported via the driver's on_error
+        callback (generic error) or yields no data (zmq.Again); either way the
+        client stays RUNNING.
+        """
+        streaming_dealer_test_helper.setup_mock_socket(recv_side_effect=[exception])
 
-        streaming_dealer_test_helper.setup_mock_socket(recv_side_effect=mock_recv)
-
-        async with streaming_dealer_test_helper.create_client(auto_start=True):
-            await asyncio.wait_for(done_event.wait(), timeout=1.0)
-            assert call_count >= iterations
+        async with streaming_dealer_test_helper.create_client(
+            auto_start=True
+        ) as client:
+            await asyncio.sleep(0)
+            assert client.state == LifecycleState.RUNNING
 
     @pytest.mark.asyncio
     async def test_receiver_stops_on_cancelled_error(
@@ -380,7 +362,7 @@ class TestZMQStreamingDealerClientEdgeCases:
                 *[client.send(sample_worker_ready) for _ in range(num_structs)]
             )
 
-            assert mock_socket.send.call_count == num_structs
+            assert mock_socket._sync_send.call_count == num_structs
 
     @pytest.mark.asyncio
     async def test_different_struct_types(
@@ -394,7 +376,7 @@ class TestZMQStreamingDealerClientEdgeCases:
             for struct in structs:
                 await client.send(struct)
 
-            assert mock_socket.send.call_count == len(structs)
+            assert mock_socket._sync_send.call_count == len(structs)
 
     @pytest.mark.asyncio
     async def test_receiver_with_multiple_credits(
@@ -414,19 +396,12 @@ class TestZMQStreamingDealerClientEdgeCases:
             for i in range(3)
         ]
 
-        credit_index = 0
         received = []
         received_event = asyncio.Event()
 
-        async def mock_recv():
-            nonlocal credit_index
-            if credit_index < len(credits):
-                result = msgspec.msgpack.encode(credits[credit_index])
-                credit_index += 1
-                return result
-            await asyncio.Future()  # Block forever after all credits
-
-        streaming_dealer_test_helper.setup_mock_socket(recv_side_effect=mock_recv)
+        streaming_dealer_test_helper.setup_mock_socket(
+            recv_side_effect=[msgspec.msgpack.encode(c) for c in credits]
+        )
 
         async def test_handler(message: RouterToWorkerMessage) -> None:
             received.append(message)

@@ -5,6 +5,7 @@
 Tests for mode detection functionality.
 """
 
+import sys
 from pathlib import Path
 
 import orjson
@@ -15,6 +16,11 @@ from aiperf.plot.core.mode_detector import (
     VisualizationMode,
 )
 from aiperf.plot.exceptions import ModeDetectionError
+
+_skip_on_windows_symlink = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Symlink creation on Windows requires Developer Mode or admin privileges",
+)
 
 
 class TestModeDetection:
@@ -444,6 +450,7 @@ class TestVeryDeepNesting:
         assert len(runs) == 3
 
 
+@_skip_on_windows_symlink
 class TestSymlinkEdgeCases:
     """Tests for additional symlink edge cases."""
 

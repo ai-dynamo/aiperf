@@ -18,6 +18,7 @@ from aiperf.common.base_service import BaseService
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
+    LifecycleState,
     MessageType,
     ServiceRegistrationStatus,
 )
@@ -163,6 +164,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
+        self._api_enabled = False
         self._telemetry_endpoints_configured: list[str] = []
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
@@ -258,12 +260,17 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.info("Server metrics disabled via --no-server-metrics")
             self._should_wait_for_server_metrics = False
 
+        if self.run.cfg.network_latency.should_probe:
+            self.debug("Starting optional NetworkLatencyManager service")
+            await self.service_manager.run_service(ServiceType.NETWORK_LATENCY_MANAGER)
+
         # Start AIPerf API if enabled
         api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
         api_host = self.run.cfg.runtime.api_host or Environment.API_SERVER.HOST
         if api_port is not None and api_host is not None:
             self.info(f"Starting AIPerf API server at http://{api_host}:{api_port}/")
             await self.service_manager.run_service(ServiceType.API)
+            self._api_enabled = True
 
         async with self.try_operation_or_stop("Register Services"):
             await self.service_manager.wait_for_all_services_registration(
@@ -686,6 +693,40 @@ class SystemController(SignalHandlerMixin, BaseService):
             self._should_wait_for_server_metrics = False
             await self._check_and_trigger_shutdown()
 
+    def _is_api_service_alive(self) -> bool:
+        """Return True iff the API service is registered and its process is live.
+
+        Used to gate the POST_COMPLETE_GRACE extension at shutdown: if the API
+        never registered (startup failure) or has transitioned to FAILED/STOPPED,
+        there is no listener for clients to reach, so the extended wait would
+        only delay shutdown without serving anyone.
+
+        BaseComponentService._on_state_change suppresses StatusMessage publishes
+        once stop_requested is set, so service_map[ServiceType.API][*].state
+        stays frozen at RUNNING even after the API process self-stopped, crashed,
+        or transitioned to FAILED. On the multiprocess backend we cross-check
+        process.is_alive() as the authoritative signal; other backends fall back
+        to the registration/state check.
+        """
+        api_services = self.service_manager.service_map.get(ServiceType.API, [])
+        terminal_states = (LifecycleState.STOPPED, LifecycleState.FAILED)
+        registered = any(
+            info.registration_status == ServiceRegistrationStatus.REGISTERED
+            and info.state not in terminal_states
+            for info in api_services
+        )
+        if not registered:
+            return False
+        mp_info = getattr(self.service_manager, "multi_process_info", None)
+        if not isinstance(mp_info, list):
+            return True
+        return any(
+            rec.service_type == ServiceType.API
+            and rec.process is not None
+            and rec.process.is_alive()
+            for rec in mp_info
+        )
+
     async def _check_and_trigger_shutdown(self) -> None:
         """Check if all required results are received and trigger unified export + shutdown.
 
@@ -784,7 +825,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.print(
             Panel(
-                "[bold yellow]⚠️  BENCHMARK CANCELLED[/bold yellow]\n\n"
+                "[bold yellow]BENCHMARK CANCELLED[/bold yellow]\n\n"
                 "Stopping credit issuance and cancelling in-flight requests...\n"
                 "Results will be written to files.\n\n"
                 "[dim]Press Ctrl+C again to force quit immediately[/dim]\n"
@@ -809,7 +850,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.print(
             Panel(
-                "[bold red]🛑 FORCE QUIT[/bold red]\n\n"
+                "[bold red]FORCE QUIT[/bold red]\n\n"
                 "Terminating all processes immediately.\n"
                 "Results may be incomplete or not written to files.",
                 border_style="red",
@@ -912,7 +953,17 @@ class SystemController(SignalHandlerMixin, BaseService):
         # time to deliver the broadcast to every subscriber before we start joining
         # processes. 500ms is empirically sufficient under normal load and well
         # under the per-process join timeout in _wait_for_process.
-        await asyncio.sleep(0.5)
+        # When the API server is enabled AND still alive, extend the wait so the
+        # API process can honor its POST_COMPLETE_GRACE window before
+        # _wait_for_process SIGKILLs it. If the API never registered or has
+        # already failed/stopped, the extension would only delay shutdown without
+        # serving any client, so skip it.
+        delivery_grace = 0.5
+        if self._api_enabled and self._is_api_service_alive():
+            delivery_grace = max(
+                delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
+            )
+        await asyncio.sleep(delivery_grace)
 
         await self.service_manager.shutdown_all_services()
         await self.comms.stop()
@@ -923,14 +974,37 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.ui.wait_for_tasks()
         await asyncio.sleep(0.1)  # Give time for screen clear to finish
 
-        if not self._exit_errors:
-            await self._print_post_benchmark_info_and_metrics()
-        else:
-            self._print_exit_errors_and_log_file()
+        # Post-shutdown reporting must never prevent reaching os._exit(): by
+        # this point services/comms/UI are already stopped, so any unhandled
+        # raise here leaves the parent process alive with no work to do, and
+        # an integration runner waiting on process.communicate() blocks until
+        # its timeout. The concrete failure that motivated this guard was a
+        # UnicodeEncodeError from a Rich console.print() of a non-cp1252 char
+        # on Windows PIPE'd stdout — but any rendering bug has the same blast
+        # radius, so we catch broadly.
+        try:
+            if not self._exit_errors:
+                await self._print_post_benchmark_info_and_metrics()
+            else:
+                self._print_exit_errors_and_log_file()
 
-        if Environment.DEV.MODE:
-            # Print a warning message to the console if developer mode is enabled, on exit after results
-            print_developer_mode_warning()
+            if Environment.DEV.MODE:
+                # Print a warning message to the console if developer mode is enabled, on exit after results
+                print_developer_mode_warning()
+        except (UnicodeEncodeError, OSError) as e:
+            # Narrow catch: the observed failure modes are (1) Rich console
+            # UnicodeEncodeError on Windows piped stdout (cp1252 can't encode
+            # box-drawing chars) and (2) OSError from closed stdio file
+            # descriptors during shutdown. Broader ``except Exception`` would
+            # mask MemoryError, AssertionError from test injection, and any
+            # other real bugs in the reporting code path.
+            self.error(f"Post-shutdown reporting failed (continuing to exit): {e!r}")
+        except Exception:  # last-chance guard; logs full traceback
+            # Anything else: log full traceback to the file handler so the
+            # bug is recoverable instead of being reduced to a one-line repr.
+            self.exception(
+                "Unexpected post-shutdown reporting failure (continuing to exit)"
+            )
 
         # Clean up the global log queue to prevent semaphore leaks
         await cleanup_global_log_queue()

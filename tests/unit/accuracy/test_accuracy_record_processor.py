@@ -188,6 +188,62 @@ class TestAccuracyRecordProcessorSessionBounds:
             await processor.process_record(sample_parsed_record, metadata)
 
 
+class TestLogGradingDetail:
+    """``_log_grading_detail`` surfaces the grader's reasoning/extracted answer
+    that otherwise never reaches metrics — the diagnostic that turns a
+    "100% unparsed" report from a guess into a one-line answer."""
+
+    def _result(self) -> GradingResult:
+        return GradingResult(
+            correct=False,
+            unparsed=True,
+            confidence=0.0,
+            reasoning="LCB grader failed: sandboxed exec failed: daemonic ...",
+            extracted_answer="```python\nprint(1)\n```",
+            ground_truth="<lcb test cases>",
+        )
+
+    def test_verbose_logs_reason_at_info(self, monkeypatch) -> None:
+        processor = _make_processor(monkeypatch)
+        processor._verbose = True
+        logged: list[str] = []
+        monkeypatch.setattr(
+            processor, "info", lambda m: logged.append(m() if callable(m) else m)
+        )
+        processor._log_grading_detail(0, "some response", self._result())
+        assert len(logged) == 1
+        assert "sandboxed exec failed" in logged[0]
+        assert "unparsed=True" in logged[0]
+
+    def test_non_verbose_debug_disabled_is_noop(self, monkeypatch) -> None:
+        """No verbose flag and debug off → skip entirely (no info, no debug)."""
+        processor = _make_processor(monkeypatch)
+        processor._verbose = False
+        monkeypatch.setattr(
+            type(processor), "is_debug_enabled", property(lambda _s: False)
+        )
+        info_calls, debug_calls = [], []
+        monkeypatch.setattr(processor, "info", lambda m: info_calls.append(m))
+        monkeypatch.setattr(processor, "debug", lambda m: debug_calls.append(m))
+        processor._log_grading_detail(0, "some response", self._result())
+        assert info_calls == []
+        assert debug_calls == []
+
+    def test_non_verbose_debug_enabled_logs_at_debug(self, monkeypatch) -> None:
+        processor = _make_processor(monkeypatch)
+        processor._verbose = False
+        monkeypatch.setattr(
+            type(processor), "is_debug_enabled", property(lambda _s: True)
+        )
+        logged: list[str] = []
+        monkeypatch.setattr(
+            processor, "debug", lambda m: logged.append(m() if callable(m) else m)
+        )
+        processor._log_grading_detail(0, "some response", self._result())
+        assert len(logged) == 1
+        assert "sandboxed exec failed" in logged[0]
+
+
 class TestAccuracyResultsProcessorOnDatasetConfigured:
     def test_populates_tasks_from_metadata(self) -> None:
         processor = _make_results_processor()

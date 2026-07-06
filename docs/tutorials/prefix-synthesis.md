@@ -106,7 +106,8 @@ aiperf profile \
     --synthesis-speedup-ratio 1.0 \
     --synthesis-prefix-len-multiplier 1.0 \
     --synthesis-prefix-root-multiplier 1 \
-    --synthesis-prompt-len-multiplier 1.0
+    --synthesis-prompt-len-multiplier 1.0 \
+    --synthesis-output-len-multiplier 1.0
 ```
 
 This runs a benchmark using the original trace characteristics. Adjust the multipliers to scale different aspects.
@@ -115,7 +116,7 @@ This runs a benchmark using the original trace characteristics. Adjust the multi
 ```
 INFO     Starting AIPerf System
 INFO     Loaded mooncake trace with 10,000 requests
-INFO     Synthesis parameters: speedup=1.0, prefix_len=1.0, root=1, prompt_len=1.0
+INFO     Synthesis parameters: speedup=1.0, prefix_len=1.0, root=1, prompt_len=1.0, output_len=1.0
 INFO     AIPerf System is PROFILING
 
 Profiling: 10000/10000 |████████████████████████| 100% [15:34<00:00]
@@ -199,6 +200,23 @@ aiperf profile \
     --input-file traces/production.jsonl \
     --custom-dataset-type mooncake_trace \
     --synthesis-prompt-len-multiplier 0.7 \
+    ...
+```
+
+#### `--synthesis-output-len-multiplier` (default: 1.0)
+Scale requested output lengths:
+- `1.0`: No change
+- `2.0`: Double output lengths
+- `0.5`: Halve output lengths
+
+If `--synthesis-max-osl` is also set, output lengths are scaled first and then capped.
+
+Example: Simulate longer generated responses:
+```bash
+aiperf profile \
+    --input-file traces/production.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --synthesis-output-len-multiplier 2.0 \
     ...
 ```
 
@@ -401,4 +419,3 @@ Cache hit rate: 5.2%
 - Increasing `--synthesis-prefix-len-multiplier` to extend shared prefixes
 - Using `--synthesis-prefix-root-multiplier` to create more diverse patterns
 - Analyzing a different trace file that has more reuse
-

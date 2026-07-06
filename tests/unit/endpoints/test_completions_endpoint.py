@@ -3,6 +3,8 @@
 
 import pytest
 
+from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import Text, Turn
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -57,6 +59,27 @@ class TestCompletionsEndpoint:
 
         assert len(payload["prompt"]) == 3
         assert payload["prompt"] == ["Prompt 1", "Prompt 2", "Prompt 3"]
+
+    def test_format_payload_warmup_prefixes_prompts_with_warmup_marker(
+        self, endpoint, model_endpoint
+    ):
+        turn = Turn(
+            texts=[Text(contents=["Prompt 1", "Prompt 2"])],
+            model="completion-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            credit_phase=CreditPhase.WARMUP,
+            system_message="should not be used",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == [
+            f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nPrompt 1",
+            f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nPrompt 2",
+        ]
 
     def test_format_payload_filters_empty_prompts(self, endpoint, model_endpoint):
         """Test that empty strings are filtered from prompts."""

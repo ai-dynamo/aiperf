@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, Self
 
 from pydantic import Field, model_validator
-from typing_extensions import Self
 
 from aiperf.config.comm.base import BaseZMQCommunicationConfig, BaseZMQProxyConfig
 from aiperf.plugin.enums import CommunicationBackend
@@ -133,6 +132,15 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
             description="Port for credit return router (ROUTER-DEALER credit returns)",
         ),
     ] = 5668
+    credit_return_push_pull_port: Annotated[
+        int,
+        Field(
+            default=5669,
+            ge=1,
+            le=65535,
+            description="Port for credit return PUSH/PULL fan-in channel",
+        ),
+    ] = 5669
     control_port: Annotated[
         int,
         Field(
@@ -182,6 +190,11 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     def credit_return_router_address(self) -> str:
         """Get the credit return router address for dedicated return channel."""
         return f"tcp://{self.host}:{self.credit_return_router_port}"
+
+    @property
+    def credit_return_push_pull_address(self) -> str:
+        """Get the credit-return PUSH/PULL fan-in address."""
+        return f"tcp://{self.host}:{self.credit_return_push_pull_port}"
 
     @property
     def control_address(self) -> str:

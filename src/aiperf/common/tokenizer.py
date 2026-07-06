@@ -8,6 +8,7 @@ import inspect
 import io
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -274,10 +275,15 @@ def resolve_alias(name: str) -> AliasResolutionResult:
     Returns:
         AliasResolutionResult with resolved name and any suggestions.
     """
-    # Check if this looks like a local path
+    # Check if this looks like a local path. Use ``path.anchor`` instead of
+    # ``path.is_absolute()`` because the latter requires a drive letter on
+    # Windows (``WindowsPath("/home/user/foo").is_absolute() == False``;
+    # pinned by ``test_resolve_alias_treats_posix_absolute_path_as_local``).
+    # Anchor is truthy for any path with a drive AND/OR root, so a POSIX-style
+    # absolute path passed on Windows is correctly recognized as local.
     path = Path(name)
     is_local_path = (
-        path.is_absolute()
+        bool(path.anchor)
         or name.startswith("./")
         or name.startswith("../")
         or path.is_dir()
@@ -336,6 +342,38 @@ def resolve_alias(name: str) -> AliasResolutionResult:
     except Exception as e:
         _logger.debug(f"Alias resolution failed for '{name}': {e!r}")
         return AliasResolutionResult(resolved_name=name)
+
+
+# Emitted by transformers when ``tokenizer_config.json`` references a class not
+# registered in the installed transformers (e.g. ``TokenizersBackend`` is v5-only).
+# Same wording in 4.x and 5.x; if HF rewords it, the hint is silently dropped but
+# the original error is still raised.
+_MISSING_TOKENIZER_CLASS_RE = re.compile(
+    r"Tokenizer class (\S+) does not exist or is not currently imported"
+)
+
+
+def _missing_tokenizer_class_hint(error: Exception) -> str | None:
+    """Return an upgrade hint when *error* is HF's missing-class error, else None."""
+    match = _MISSING_TOKENIZER_CLASS_RE.search(str(error))
+    if match is None:
+        return None
+    missing = match.group(1)
+    try:
+        import transformers
+
+        version = transformers.__version__
+    except (ImportError, AttributeError):
+        version = "<unknown>"
+    suggestion = (
+        " Try: pip install -U 'transformers>=5'."
+        if version.split(".", 1)[0] == "4"
+        else ""
+    )
+    return (
+        f"Tokenizer class '{missing}' is not registered in your installed "
+        f"transformers {version}.{suggestion}"
+    )
 
 
 class Tokenizer:
@@ -422,8 +460,12 @@ class Tokenizer:
         except AmbiguousTokenizerNameError:
             raise
         except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            hint = _missing_tokenizer_class_hint(e)
+            if hint:
+                detail = f"{detail} {hint}"
             raise TokenizerError(
-                f"Failed to load tokenizer '{name}': {type(e).__name__}: {e}",
+                f"Failed to load tokenizer '{name}': {detail}",
                 tokenizer_name=name,
             ) from e
 

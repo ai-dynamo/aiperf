@@ -4,10 +4,9 @@
 from collections.abc import Callable
 from enum import Flag
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeAlias, TypeVar
 
 from pydantic import Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums.base_enums import (
     BasePydanticBackedStrEnum,
@@ -191,10 +190,12 @@ class GenericMetricUnit(BaseMetricUnit):
     ERRORS = _unit("errors")
     IMAGE = _unit("image")
     IMAGES = _unit("images")
+    JOULES_PER_USER = _unit("joules/user")
     PERCENT = _unit("%")
     RATIO = _unit("ratio")
     REQUESTS = _unit("requests")
     TOKENS = _unit("tokens")
+    TOKENS_PER_JOULE = _unit("tokens/J")
     USER = _unit("user")
     USERS = _unit("users")
     VIDEO = _unit("video")

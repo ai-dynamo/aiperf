@@ -32,10 +32,9 @@ Example Usage:
 from __future__ import annotations
 
 import difflib
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
-from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.accuracy import (
@@ -70,6 +69,9 @@ from aiperf.config.mlflow import (
 from aiperf.config.models import (
     ModelsAdvanced,
 )
+from aiperf.config.network_latency import (
+    NetworkLatencyConfig,
+)
 from aiperf.config.otel import (
     OTelConfig,
 )
@@ -91,6 +93,9 @@ from aiperf.config.sweep.multi_run import (
 )
 from aiperf.config.tokenizer import (
     TokenizerConfig,
+)
+from aiperf.config.wandb import (
+    WandbConfig,
 )
 
 _logger = AIPerfLogger(__name__)
@@ -315,6 +320,16 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    network_latency: Annotated[
+        NetworkLatencyConfig,
+        Field(
+            default_factory=NetworkLatencyConfig,
+            description="Network latency calibration configuration. Probes the endpoint "
+            "RTT during profiling and subtracts the mean from latency metrics, emitted as "
+            "separate network_adjusted_* metrics. Disabled by default.",
+        ),
+    ]
+
     otel: Annotated[
         OTelConfig,
         Field(
@@ -328,6 +343,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Field(
             default_factory=MLflowConfig,
             description="MLflow tracking and artifact-upload configuration.",
+        ),
+    ]
+
+    wandb: Annotated[
+        WandbConfig,
+        Field(
+            default_factory=WandbConfig,
+            description="Weights & Biases run-upload configuration.",
         ),
     ]
 

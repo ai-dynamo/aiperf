@@ -3,15 +3,19 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     RequestRecord,
+    TextResponse,
     TextResponseData,
     Usage,
 )
+from aiperf.endpoints.openai_chat import ChatEndpoint
 from tests.unit.records.conftest import create_invalid_record, create_test_request_info
 
 
@@ -490,3 +494,47 @@ class TestContextPromptISL:
 
         assert parsed_record.token_counts.input == 19
         assert parsed_record.responses == []
+
+
+@pytest.mark.asyncio
+class TestMalformedResponseEndToEnd:
+    """End-to-end: a malformed/error response body (server crash, proxy error)
+    must flow through the parser as a clean failed record, not crash the parser
+    or get mislabeled as a parser bug."""
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            param({"choices": [{"message": {"content": "hi"}}]}, id="missing-object"),
+            param(
+                {"object": "error", "message": "backend died", "code": 500},
+                id="vllm-error-object",
+            ),
+            param({"error": {"message": "Internal Server Error"}}, id="error-body"),
+        ],
+    )  # fmt: skip
+    async def test_malformed_response_recorded_as_failure_not_parser_crash(
+        self, inference_result_parser, sample_turn, body
+    ):
+        # Real ChatEndpoint (not a MagicMock) so the actual extraction path runs.
+        inference_result_parser.endpoint = ChatEndpoint(
+            model_endpoint=create_test_request_info().model_endpoint
+        )
+        inference_result_parser.disable_tokenization = True
+
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[sample_turn]),
+            turns=[sample_turn],
+            responses=[TextResponse(perf_ns=1000, text=orjson.dumps(body).decode())],
+        )
+
+        # Must not raise (pre-fix this crashed with ValueError in extraction).
+        result = await inference_result_parser.parse_request_record(record)
+
+        assert record.has_error
+        # Honest cause: "no content from server", NOT a parser-internal ValueError.
+        assert record.error.type == "InvalidInferenceResultError"
+        assert "No responses with actual content" in str(record.error)
+        assert "Unsupported OpenAI object type" not in str(record.error)
+        assert result.responses == []
