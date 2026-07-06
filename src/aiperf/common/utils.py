@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import inspect
+import multiprocessing as mp
 import os
 import sys
+import threading
 import types
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import orjson
@@ -142,6 +145,62 @@ def compute_time_ns(
     if perf_ns < start_perf_ns:
         raise ValueError(f"perf_ns {perf_ns} is before start_perf_ns {start_perf_ns}")
     return start_time_ns + (perf_ns - start_perf_ns)
+
+
+def _set_daemon(daemon: bool) -> None:
+    """Set the daemon flag on the current process."""
+    try:
+        mp.current_process().daemon = daemon
+    except AssertionError:
+        # Fallback to the internal _config dict when assertions are enabled.
+        mp.current_process()._config["daemon"] = daemon
+
+
+# Reentrancy/thread-safety for allow_daemon_children: the daemon flag is
+# process-global, but callers may enter concurrently — e.g. LCB grading pushes
+# codegen_metrics to asyncio.to_thread so multiple grade() calls fan out at
+# once. A naive clear/restore lets one caller restore daemon=True while another
+# is still spawning workers, intermittently reintroducing the very
+# "daemonic processes are not allowed to have children" crash. A lock-protected
+# depth counter clears on the first entry and restores only when the last
+# concurrent caller exits.
+_daemon_override_lock = threading.Lock()
+_daemon_override_depth = 0
+_daemon_override_was_daemon = False
+
+
+@contextmanager
+def allow_daemon_children() -> Iterator[None]:
+    """Temporarily clear the current process's daemon flag (reentrant, thread-safe).
+
+    Python's multiprocessing refuses to spawn children from daemon
+    processes, and AIPerf services run as daemons (see
+    ``multiprocess_service_manager.py``: every service is spawned with
+    ``daemon=True``). Any code that fans out with ``ProcessPoolExecutor``
+    or ``multiprocessing.Pool`` from inside a service must run under this
+    context, or it raises ``AssertionError: daemonic processes are not
+    allowed to have children``.
+
+    Safe under concurrent/nested use within a process: the flag is cleared
+    while any caller is active and restored to its original value only when the
+    outermost/last caller exits. The lock is held only around the flag
+    mutation, not during the wrapped work, so concurrent pools still run in
+    parallel.
+    """
+    global _daemon_override_depth, _daemon_override_was_daemon
+    with _daemon_override_lock:
+        if _daemon_override_depth == 0:
+            _daemon_override_was_daemon = mp.current_process().daemon
+            if _daemon_override_was_daemon:
+                _set_daemon(False)
+        _daemon_override_depth += 1
+    try:
+        yield
+    finally:
+        with _daemon_override_lock:
+            _daemon_override_depth -= 1
+            if _daemon_override_depth == 0 and _daemon_override_was_daemon:
+                _set_daemon(True)
 
 
 # This is used to identify the source file of the call_all_functions function

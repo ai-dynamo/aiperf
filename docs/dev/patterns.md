@@ -226,6 +226,35 @@ except Exception as e:
     await self.publish(ResultMsg(error=ErrorDetails.from_exception(e)))
 ```
 
+## Platform Branching
+
+Platform-conditional code MUST branch on `IS_WINDOWS` / `IS_MACOS` / `IS_LINUX`
+from `aiperf.common.constants` — never on `platform.system()` directly. The
+constants are evaluated once at import time, are uniformly greppable, and
+produce smaller diffs.
+
+```python
+# Yes — uniform pattern across the codebase
+from aiperf.common.constants import IS_WINDOWS, IS_MACOS
+
+if IS_WINDOWS:
+    ctypes.WinDLL("winmm").timeBeginPeriod(1)
+elif IS_MACOS:
+    _redirect_stdio_to_devnull()
+
+# No — re-imports `platform`, hits `platform.system()` per call, harder to grep
+import platform
+if platform.system() == "Windows":
+    ...
+```
+
+Canonical examples:
+- `src/aiperf/common/bootstrap.py` — event-loop policy switch, timer-resolution bump, stdio FD redirect (Windows + macOS branches)
+- `src/aiperf/config/comm/ipc.py` — `build_socket_address` (ipc:// on POSIX vs tcp:// loopback on Windows)
+- `src/aiperf/common/base_service.py` — force-kill path (`os._exit` on Windows vs SIGKILL on POSIX)
+
+For tests that exercise both branches from non-target hosts, patch the constant at its consumer site (not at the source) — see `tests/unit/common/test_bootstrap_windows.py` for the pattern.
+
 ## Logging Pattern
 
 Use lambda for expensive log messages:
@@ -401,9 +430,9 @@ GPU power and energy come from telemetry scrapes, not from request
 records, so their values must be injected by the accumulator that owns
 the sensor data rather than derived by the standard registry walk.
 
-Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](../../src/aiperf/metrics/types/power_efficiency_metrics.py).
+Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py).
 Injection site: `GPUTelemetryAccumulator.compute_efficiency_metrics`
-([`src/aiperf/gpu_telemetry/accumulator.py`](../../src/aiperf/gpu_telemetry/accumulator.py)).
+([`src/aiperf/gpu_telemetry/accumulator.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/accumulator.py)).
 
 ### The three-part contract
 
@@ -481,7 +510,7 @@ values are not overwritten.
 ### Test contract
 
 The error-message invariants are pinned by
-[`tests/unit/metrics/test_power_efficiency_metrics.py`](../../tests/unit/metrics/test_power_efficiency_metrics.py)
+[`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
 (parametrized over the three classes): every `_derive_value` call must
 raise `NoMetricValue` with a message that names the tag, the operation
 source (`MetricResultsDict`), and the injection site

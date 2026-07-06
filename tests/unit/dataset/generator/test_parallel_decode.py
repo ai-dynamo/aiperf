@@ -5,11 +5,12 @@
 
 import importlib
 import os
-from unittest.mock import MagicMock, call, patch
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.dataset.generator.parallel_decode import _set_daemon, parallel_decode
+from aiperf.dataset.generator.parallel_decode import parallel_decode
 
 # Import the module directly (not through __init__.py which exports the function)
 pd_module = importlib.import_module("aiperf.dataset.generator.parallel_decode")
@@ -99,92 +100,70 @@ class TestParallelDecode:
         assert call_kwargs["max_workers"] == 8
 
 
-class TestSetDaemon:
-    """Test suite for _set_daemon helper."""
-
-    def test_set_daemon_uses_property(self):
-        """_set_daemon sets daemon via the public property when possible."""
-        mock_proc = MagicMock()
-        mock_proc.daemon = True
-        with patch.object(pd_module.mp, "current_process", return_value=mock_proc):
-            _set_daemon(False)
-        assert mock_proc.daemon is False
-
-    def test_set_daemon_falls_back_to_config_on_assertion_error(self):
-        """_set_daemon falls back to _config when property raises AssertionError."""
-        mock_proc = MagicMock()
-        type(mock_proc).daemon = property(
-            fget=lambda self: self._config.get("daemon"),
-            fset=MagicMock(side_effect=AssertionError),
-        )
-        mock_proc._config = {"daemon": True}
-        with patch.object(pd_module.mp, "current_process", return_value=mock_proc):
-            _set_daemon(False)
-        assert mock_proc._config["daemon"] is False
-
-
 class TestParallelDecodeDaemonFlag:
-    """Test that parallel_decode properly manages the daemon flag."""
+    """parallel_decode delegates daemon-flag management to the shared
+    ``allow_daemon_children`` context manager (the daemon clear/restore
+    behavior itself is covered in ``tests/unit/common/test_utils.py``).
+    """
 
     @patch.object(pd_module, "ProcessPoolExecutor")
-    def test_daemon_flag_cleared_before_executor_and_restored_after(
-        self, mock_executor_class
-    ):
-        """Daemon flag is cleared before spawning and restored after."""
+    def test_runs_executor_inside_allow_daemon_children(self, mock_executor_class):
+        """The ProcessPoolExecutor is created inside the allow_daemon_children
+        context, so worker spawning happens with the daemon flag cleared."""
         mock_executor = MagicMock()
         mock_executor.__enter__ = MagicMock(return_value=mock_executor)
         mock_executor.__exit__ = MagicMock(return_value=False)
         mock_executor.map.return_value = ["decoded"] * 15
         mock_executor_class.return_value = mock_executor
 
-        mock_process = MagicMock()
-        mock_process.daemon = True
-        with (
-            patch.object(pd_module.mp, "current_process", return_value=mock_process),
-            patch.object(pd_module, "_set_daemon") as mock_set,
-        ):
+        order: list[str] = []
+
+        @contextmanager
+        def tracking_cm():
+            order.append("enter")
+            try:
+                yield
+            finally:
+                order.append("exit")
+
+        def record_executor(*_args, **_kwargs):
+            order.append("executor")
+            return mock_executor
+
+        mock_executor_class.side_effect = record_executor
+
+        with patch.object(pd_module, "allow_daemon_children", tracking_cm):
             parallel_decode([[i] for i in range(15)], "gpt2")
 
-        assert mock_set.call_args_list == [call(False), call(True)]
+        # Executor is created after entering and before exiting the context.
+        assert order == ["enter", "executor", "exit"]
 
     @patch.object(pd_module, "ProcessPoolExecutor")
-    def test_daemon_flag_not_toggled_for_non_daemon_process(self, mock_executor_class):
-        """Daemon flag is not toggled when the process is not a daemon."""
-        mock_executor = MagicMock()
-        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
-        mock_executor.__exit__ = MagicMock(return_value=False)
-        mock_executor.map.return_value = ["decoded"] * 15
-        mock_executor_class.return_value = mock_executor
-
-        mock_process = MagicMock()
-        mock_process.daemon = False
-        with (
-            patch.object(pd_module.mp, "current_process", return_value=mock_process),
-            patch.object(pd_module, "_set_daemon") as mock_set,
-        ):
-            parallel_decode([[i] for i in range(15)], "gpt2")
-
-        mock_set.assert_not_called()
-
-    @patch.object(pd_module, "ProcessPoolExecutor")
-    def test_daemon_flag_restored_on_executor_error(self, mock_executor_class):
-        """Daemon flag is restored even when the executor raises."""
+    def test_context_exited_on_executor_error(self, mock_executor_class):
+        """The daemon-restoring context is exited even when the executor
+        raises, so a failed decode never leaves the flag cleared."""
         mock_executor = MagicMock()
         mock_executor.__enter__ = MagicMock(return_value=mock_executor)
         mock_executor.__exit__ = MagicMock(return_value=False)
         mock_executor.map.side_effect = RuntimeError("boom")
         mock_executor_class.return_value = mock_executor
 
-        mock_process = MagicMock()
-        mock_process.daemon = True
+        exited = []
+
+        @contextmanager
+        def tracking_cm():
+            try:
+                yield
+            finally:
+                exited.append(True)
+
         with (
-            patch.object(pd_module.mp, "current_process", return_value=mock_process),
-            patch.object(pd_module, "_set_daemon") as mock_set,
+            patch.object(pd_module, "allow_daemon_children", tracking_cm),
             pytest.raises(RuntimeError, match="boom"),
         ):
             parallel_decode([[i] for i in range(15)], "gpt2")
 
-        assert mock_set.call_args_list == [call(False), call(True)]
+        assert exited == [True]
 
 
 class TestWorkerFunctions:

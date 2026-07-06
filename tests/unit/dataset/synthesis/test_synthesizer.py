@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import pytest
 
+from aiperf.config.dataset.trace import SynthesisConfig
 from aiperf.dataset.synthesis import Synthesizer
 from aiperf.dataset.synthesis.models import SynthesisParams
 
@@ -22,6 +23,14 @@ class TestSynthesizer:
         synthesizer = Synthesizer()
         assert synthesizer.params is not None
         assert synthesizer.params.speedup_ratio == 1.0
+
+    def test_params_from_synthesis_config_preserves_output_settings(self) -> None:
+        """Test SynthesisConfig output settings are copied to SynthesisParams."""
+        config = SynthesisConfig(output_len_multiplier=2.5, max_osl=160)
+        params = SynthesisParams.from_synthesis_config(config)
+
+        assert params.output_len_multiplier == 2.5
+        assert params.max_osl == 160
 
     def test_initialization_with_params(self) -> None:
         """Test Synthesizer initialization with custom params."""
@@ -85,6 +94,34 @@ class TestSynthesizer:
         synthetic = synthesizer.synthesize_traces(traces)
 
         assert synthetic[0].get("delay") == 1000
+
+    def test_output_len_multiplier_scales_output_length(self) -> None:
+        """Test that output_len_multiplier scales output_length."""
+        traces = [
+            {"input_length": 100, "output_length": 50},
+            {"input_length": 100, "output_length": 75},
+            {"input_length": 100},
+        ]
+        params = SynthesisParams(output_len_multiplier=2.5)
+        synthesizer = Synthesizer(params=params)
+        synthetic = synthesizer.synthesize_traces(traces)
+
+        assert synthetic[0]["output_length"] == 125
+        assert synthetic[1]["output_length"] == 188
+        assert "output_length" not in synthetic[2]
+
+    def test_output_len_multiplier_respects_max_osl(self) -> None:
+        """Test that max_osl caps scaled output_length."""
+        traces = [
+            {"input_length": 100, "output_length": 50},
+            {"input_length": 100, "output_length": 75},
+        ]
+        params = SynthesisParams(output_len_multiplier=2.5, max_osl=160)
+        synthesizer = Synthesizer(params=params)
+        synthetic = synthesizer.synthesize_traces(traces)
+
+        assert synthetic[0]["output_length"] == 125
+        assert synthetic[1]["output_length"] == 160
 
     # ============================================================================
     # Timestamp Scaling Tests

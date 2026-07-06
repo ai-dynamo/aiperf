@@ -208,7 +208,15 @@ class OptunaSearchPlanner(SearchPlanner):
                 v = trial.suggest_float(dim.path, dim.lo, dim.hi, log=log)
             values[dim.path] = v
 
-        cfg_dict = self._base.model_dump(mode="json", exclude_none=True)
+        # mode="python" + context={"include_secrets": True} so neither the
+        # when_used="json" credential redactors (api_key / headers) nor the
+        # unconditional _redact_urls serializer fire mid-pipeline. See
+        # smooth_isotonic._mutate_base for the full rationale.
+        cfg_dict = self._base.model_dump(
+            mode="python",
+            exclude_none=True,
+            context={"include_secrets": True},
+        )
         for path, val in values.items():
             _set_nested_value(cfg_dict, path, val)
         cfg = BenchmarkConfig.model_validate(cfg_dict)
@@ -314,7 +322,7 @@ class OptunaSearchPlanner(SearchPlanner):
                 if self._terminator.should_terminate(study=self._study):
                     self._convergence_reason = self._terminator_reason
                     return True
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # Optuna's terminator can raise mid-run when its GP fails to
                 # fit (e.g. degenerate observations); a stop-rule failure is
                 # not a planner failure -- log and fall through to "not
@@ -618,7 +626,7 @@ class OptunaSearchPlanner(SearchPlanner):
             return
         try:
             hv = compute_hypervolume(observed, self._cfg.objectives, ref_point)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(
                 "compute_hypervolume failed at iter %d: %r; skipping plateau update.",
                 self._iter,

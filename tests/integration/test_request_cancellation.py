@@ -4,6 +4,7 @@
 
 import pytest
 
+from aiperf.common.constants import IS_WINDOWS
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
 
@@ -17,6 +18,11 @@ class TestRequestCancellation:
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Request cancellation doesn't break pipeline."""
+        # Heavier per-stream throughput is required on Windows for the same
+        # workload (~3.5M tokens streamed across 35 surviving requests of 100k
+        # OSL each). The Linux 120s budget is too tight on Windows VDI even
+        # after the SO_SNDBUF Auto-Tuning fix — async I/O via the Proactor
+        # event loop runs ~2x slower under sustained streaming concurrency.
         result = await cli.run(
             f"""
             aiperf profile \
@@ -35,7 +41,7 @@ class TestRequestCancellation:
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """,
-            timeout=120.0,
+            timeout=300.0 if IS_WINDOWS else 120.0,
         )
         for request in result.jsonl:
             if request.metadata.was_cancelled:

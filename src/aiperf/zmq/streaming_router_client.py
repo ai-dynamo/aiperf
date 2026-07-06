@@ -3,7 +3,6 @@
 
 """Streaming ROUTER client for bidirectional communication with DEALER clients."""
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeAlias
 
@@ -13,8 +12,8 @@ from msgspec import Struct
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
-from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.messages import WorkerToRouterMessage
+from aiperf.zmq.fd_reader import FdEdgeReader
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 # Pre-created encoder/decoder for performance (caches schema)
@@ -124,6 +123,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         self._receiver_handler: WorkerToRouterHandler | None = None
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.STREAMING_ROUTER_YIELD_INTERVAL
+        self._fd_reader: FdEdgeReader | None = None
 
     def register_receiver(self, handler: WorkerToRouterHandler) -> None:
         """
@@ -143,7 +143,53 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     @on_stop
     async def _clear_receiver(self) -> None:
         """Clear receiver handler and callbacks on stop."""
+        if self._fd_reader is not None:
+            self._fd_reader.stop()
+            self._fd_reader = None
         self._receiver_handler = None
+
+    def _recv_one_router(self) -> tuple[str, WorkerToRouterMessage]:
+        """Synchronous NOBLOCK multipart recv + decode for the FD-reader drain.
+
+        ROUTER envelope: [identity, ..., message_bytes]. Assembled manually via the
+        direct base-class ``recv`` because ``recv_multipart`` delegates to
+        ``self.recv`` — which on a ``zmq.asyncio`` socket is the async override that
+        returns a Future. The first frame raises ``zmq.Again`` when drained;
+        subsequent frames (RCVMORE) are atomic and always immediately available.
+        """
+        identity = zmq.Socket.recv(self.socket, flags=zmq.NOBLOCK)
+        payload = identity
+        while self.socket.getsockopt(zmq.RCVMORE):
+            payload = zmq.Socket.recv(self.socket, flags=zmq.NOBLOCK)
+        return identity.decode("utf-8"), _decoder.decode(payload)
+
+    def _dispatch_router(self, item: tuple[str, WorkerToRouterMessage]) -> None:
+        identity, message = item
+        if self._receiver_handler is not None:
+            self.execute_async(self._receiver_handler(identity, message))
+        else:
+            self.warning(f"Received {type(message).__name__} but no handler registered")
+
+    def _send_one_router(self, frames: tuple[bytes, bytes]) -> None:
+        """Synchronous NOBLOCK multipart send for the FD-driver.
+
+        Framed manually (identity SNDMORE + payload) because ``send_multipart``
+        delegates to ``self.send`` -> the async override. With SNDHWM=0 neither
+        frame blocks, so the two-frame message stays atomic.
+
+        GUARDRAIL: this socket must keep ``SNDHWM=0``. ``FdEdgeReader.send`` buffers
+        and retries the whole ``(identity, payload)`` tuple as one unit, so if a
+        finite SNDHWM ever split the send (frame 1 sent, frame 2 -> ``zmq.Again``)
+        the retry would re-emit the identity frame and desync the ROUTER framing.
+        A finite SNDHWM here would first require making the send buffer per-frame
+        (track partial-multipart state). The single-frame DEALER/PUSH paths have no
+        such constraint.
+        """
+        identity, payload = frames
+        zmq.Socket.send(
+            self.socket, identity, flags=zmq.NOBLOCK | zmq.SNDMORE, copy=False
+        )
+        zmq.Socket.send(self.socket, payload, flags=zmq.NOBLOCK, copy=False)
 
     async def send_to(self, identity: str, struct: Struct) -> None:
         """
@@ -159,18 +205,16 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         """
         await self._check_initialized()
 
-        try:
-            # Send using routing envelope pattern (identity string → bytes)
-            await self.socket.send_multipart(
-                [identity.encode(), _encoder.encode(struct)]
-            )
-            if self.is_trace_enabled:
-                self.trace(f"Sent {type(struct).__name__} to {identity}: {struct}")
-        except Exception as e:
-            self.exception(
-                f"Failed to send to {identity} for client {self.client_id}: {e!r}"
-            )
-            raise
+        # copy=False avoids memcpy'ing the frames into libzmq on the event loop
+        # thread; both frames are freshly produced here and never reused.
+        frames = (identity.encode(), _encoder.encode(struct))
+        # FD-driver owns both directions; never touch zmq.asyncio send here.
+        if self._fd_reader is not None:
+            self._fd_reader.send(frames)
+        else:
+            self._send_one_router(frames)
+        if self.is_trace_enabled:
+            self.trace(f"Sent {type(struct).__name__} to {identity}: {struct}")
 
     @background_task(immediate=True, interval=None)
     async def _streaming_router_receiver(self) -> None:
@@ -182,48 +226,16 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         """
         self.debug("Streaming ROUTER receiver task started")
 
-        while not self.stop_requested:
-            try:
-                data = await self.socket.recv_multipart()
-                if self.is_trace_enabled:
-                    self.trace(f"Received message: {data}")
-
-                # ROUTER envelope: [identity, message_bytes]
-                identity = data[0].decode("utf-8")
-                message = _decoder.decode(data[-1])
-
-                if self.is_trace_enabled:
-                    self.trace(
-                        f"Received {type(message).__name__} from {identity}: {message}"
-                    )
-
-                if self._receiver_handler:
-                    self.execute_async(self._receiver_handler(identity, message))
-                    self._msg_count += 1
-                    # Yield periodically to allow scheduled handlers to run
-                    # and prevent event loop starvation during message bursts.
-                    if (
-                        self._yield_interval > 0
-                        and self._msg_count % self._yield_interval == 0
-                    ):
-                        await yield_to_event_loop()
-                else:
-                    self.warning(
-                        f"Received {type(message).__name__} but no handler registered"
-                    )
-
-            except zmq.Again:
-                self.debug("Router receiver task timed out")
-                await yield_to_event_loop()
-                continue
-            except (asyncio.CancelledError, zmq.ContextTerminated):
-                self.debug("Streaming ROUTER receiver task cancelled")
-                break
-            except Exception as e:
-                if not self.stop_requested:
-                    self.exception(
-                        f"Error in streaming ROUTER receiver for client {self.client_id}: {e!r}"
-                    )
-                await yield_to_event_loop()
-
-        self.debug("Streaming ROUTER receiver task stopped")
+        # Always drive the ROUTER off its raw FD: edge-triggered NOBLOCK multipart
+        # drain on recv, sync NOBLOCK on send (the driver owns both directions).
+        self._fd_reader = FdEdgeReader(
+            socket=self.socket,
+            recv_one=self._recv_one_router,
+            dispatch=self._dispatch_router,
+            batch_limit=self._yield_interval,
+            send_one=self._send_one_router,
+            on_error=lambda e: self.exception(
+                f"Exception draining router socket for {self.client_id}: {e!r}"
+            ),
+        )
+        self._fd_reader.start()

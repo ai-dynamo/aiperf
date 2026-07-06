@@ -352,7 +352,9 @@ Parameters for synthetic trace generation.
 - `prefix_len_multiplier: float = 1.0` - Core prefix length multiplier (ge 0.0)
 - `prefix_root_multiplier: int = 1` - Number of independent trees to distribute traces across (ge 1)
 - `prompt_len_multiplier: float = 1.0` - Leaf prompt length multiplier (ge 0.0)
+- `output_len_multiplier: float = 1.0` - Output length multiplier (ge 0.0)
 - `max_isl: int | None = None` - Maximum input sequence length filter
+- `max_osl: int | None = None` - Maximum output sequence length cap
 - `block_size: int = 512` - KV cache page size (ge 1)
 
 **Class Methods:**
@@ -474,6 +476,7 @@ aiperf profile \
     --custom-dataset-type mooncake_trace \
     --synthesis-speedup-ratio 2.0 \
     --synthesis-prefix-len-multiplier 1.5 \
+    --synthesis-output-len-multiplier 2.0 \
     --synthesis-max-isl 4096 \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat
@@ -486,6 +489,7 @@ from aiperf.config.flags._input import SynthesisConfig
 config = SynthesisConfig(
     speedup_ratio=2.0,
     prefix_len_multiplier=1.5,
+    output_len_multiplier=2.0,
     max_isl=4096,
 )
 
@@ -502,6 +506,7 @@ from aiperf.dataset.synthesis.models import SynthesisParams
 params = SynthesisParams(
     speedup_ratio=2.0,
     prefix_len_multiplier=1.5,
+    output_len_multiplier=2.0,
     max_isl=4096,
 )
 
@@ -522,11 +527,14 @@ aiperf profile \
     --custom-dataset-type mooncake_trace \
     --synthesis-speedup-ratio 2.0 \
     --synthesis-prefix-len-multiplier 1.5 \
+    --synthesis-output-len-multiplier 2.0 \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat
 ```
 
-Synthesis is triggered automatically when any `--synthesis-*` parameter differs from its default value.
+Synthesis is triggered automatically when a synthesis transformation parameter
+differs from its default value. `--synthesis-max-isl` and `--synthesis-max-osl`
+are filters/caps and do not trigger synthesis by themselves.
 
 ---
 

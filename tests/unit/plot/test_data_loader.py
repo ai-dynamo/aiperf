@@ -34,10 +34,44 @@ class TestDataLoaderLoadRun:
         assert "time_to_first_token" in run.requests.columns
         assert "request_latency" in run.requests.columns
 
-    def test_load_run_nonexistent_path(self) -> None:
-        """Test loading from nonexistent path raises error."""
+    def test_load_run_reads_slice_duration_from_artifacts_config(
+        self,
+        tmp_path: Path,
+        sample_jsonl_data: list[dict[str, Any]],
+        sample_aggregated_data: dict[str, Any],
+    ) -> None:
+        """Test loading slice_duration from the v2 artifacts config shape."""
+        run_dir = tmp_path / "test_run"
+        run_dir.mkdir()
+
+        jsonl_lines = [
+            orjson.dumps(record).decode("utf-8") for record in sample_jsonl_data
+        ]
+        (run_dir / "profile_export.jsonl").write_text("\n".join(jsonl_lines) + "\n")
+
+        input_config = {
+            **sample_aggregated_data["input_config"],
+            "artifacts": {"slice_duration": 60.0},
+        }
+        aggregated = {**sample_aggregated_data, "input_config": input_config}
+        (run_dir / "profile_export_aiperf.json").write_bytes(orjson.dumps(aggregated))
+
+        run = DataLoader().load_run(run_dir)
+
+        assert run.slice_duration == 60.0
+
+    def test_load_run_nonexistent_path(self, tmp_path: Path) -> None:
+        """Test loading from nonexistent path raises error.
+
+        Uses ``tmp_path / "nonexistent" / "path"`` instead of a hard-coded
+        ``"/nonexistent/path"`` so the path is guaranteed not to exist on
+        every platform. (On Windows, ``Path("/nonexistent/path")`` can
+        resolve to drive-relative paths whose parents may exist as
+        directories on the test machine, causing the ``is_dir()`` /
+        ``exists()`` checks in ``load_run`` to take an unexpected branch.)
+        """
         loader = DataLoader()
-        fake_path = Path("/nonexistent/path")
+        fake_path = tmp_path / "nonexistent" / "path"
 
         with pytest.raises(DataLoadError, match="does not exist"):
             loader.load_run(fake_path)

@@ -15,7 +15,7 @@ parse CLI input shapes (extra/headers tuples, goodput dict-from-string).
 """
 
 import tempfile
-from pathlib import PosixPath
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -55,7 +55,7 @@ def test_input_config_custom_values():
 
         assert config.extra_inputs == [("key", "value")]
         assert config.headers == [("Authorization", "Bearer token")]
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
         assert config.random_seed == 42
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
 
@@ -64,7 +64,7 @@ def test_input_config_file_validation():
     """File field accepts a path string but rejects non-string scalars."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = CLIConfig(input_file=temp_file.name)
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
 
     with pytest.raises(ValidationError):
         CLIConfig(input_file=12345)
@@ -87,14 +87,14 @@ def test_custom_dataset_type_with_file_succeeds():
             custom_dataset_type=CustomDatasetType.MULTI_TURN, input_file=temp_file.name
         )
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
 
 
 def test_file_without_custom_dataset_type_succeeds():
     """File without custom_dataset_type is allowed (auto-inference at runtime)."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = CLIConfig(input_file=temp_file.name, custom_dataset_type=None)
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
         assert config.custom_dataset_type is None
 
 
@@ -109,6 +109,17 @@ def test_synthesis_with_trace_dataset_succeeds():
         )
         assert config.synthesis_speedup_ratio == 2.0
         assert config.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
+
+
+def test_synthesis_output_len_with_trace_dataset_succeeds():
+    """Synthesis output length multiplier flows through unchanged at the DTO layer."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = CLIConfig(
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            input_file=temp_file.name,
+            synthesis_output_len_multiplier=2.0,
+        )
+        assert config.synthesis_output_len_multiplier == 2.0
 
 
 def test_synthesis_max_isl_with_trace_dataset_succeeds():

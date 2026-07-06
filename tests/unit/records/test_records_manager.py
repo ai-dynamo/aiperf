@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
     MetricRecordsMessage,
@@ -28,6 +30,7 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
 from aiperf.plugin.enums import TimingMode
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
@@ -316,6 +319,9 @@ def _create_credit_phase_stats() -> CreditPhaseStats:
 
 def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager = RecordsManager.__new__(RecordsManager)
+    # These tests exercise the post-configuration flow; release the barrier.
+    manager._dataset_configured_event = asyncio.Event()
+    manager._dataset_configured_event.set()
     manager._records_tracker = MagicMock()
     manager._error_tracker = MagicMock()
     manager._complete_credit_phases = set()
@@ -853,6 +859,7 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
+        manager.run.cfg.network_latency.enabled = False
 
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
@@ -934,6 +941,7 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
+        manager.run.cfg.network_latency.enabled = False
 
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
@@ -990,6 +998,7 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
+        manager.run.cfg.network_latency.enabled = False
 
         processor = MagicMock()
         processor.summarize = AsyncMock(return_value=[])
@@ -1052,3 +1061,115 @@ class TestRecordsManagerInitialization:
             "OTel metrics streamer is disabled and will not be used" in message
             for message in info_messages
         )
+
+
+class TestMidRunCacheReportingHint:
+    """RecordsManager warns once, mid-run, when token usage is reported but no
+    prompt-cache read tokens appear in the streamed records (detection logic
+    itself is covered in tests/unit/metrics/test_cache_reporting_hint.py)."""
+
+    def _manager(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.warning = MagicMock()
+        return manager
+
+    def test_warns_once_on_first_qualifying_record(self):
+        manager = self._manager()
+        record_data = SimpleNamespace(metrics={"usage_prompt_tokens": 1024})
+        manager._maybe_hint_missing_cache_reporting(record_data)
+        manager._maybe_hint_missing_cache_reporting(record_data)  # a later record
+        manager.warning.assert_called_once_with(CACHE_REPORTING_HINT)
+
+    def test_no_warning_when_cache_reported(self):
+        manager = self._manager()
+        record_data = SimpleNamespace(
+            metrics={"usage_prompt_tokens": 1024, "usage_prompt_cache_read_tokens": 0}
+        )
+        manager._maybe_hint_missing_cache_reporting(record_data)
+        manager.warning.assert_not_called()
+
+    def test_no_warning_when_usage_absent(self):
+        manager = self._manager()
+        record_data = SimpleNamespace(metrics={"output_sequence_length": 32})
+        manager._maybe_hint_missing_cache_reporting(record_data)
+        manager.warning.assert_not_called()
+
+
+class TestRecordsManagerDatasetConfiguredBarrier:
+    """The records manager must not run metric records through its results
+    processors until the DatasetConfiguredNotification has been applied.
+
+    Metric records (PULL socket) and the notification (SUB socket) arrive on
+    independent channels with no ordering guarantee, so processing must block
+    on an explicit barrier that _on_dataset_configured releases.
+    """
+
+    @pytest.mark.asyncio
+    async def test_on_dataset_configured_sets_event(self):
+        """_on_dataset_configured must release the barrier once processors are configured."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self._metric_results_processors = []
+
+        await RecordsManager._on_dataset_configured(mock_self, MagicMock())
+
+        assert mock_self._dataset_configured_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_on_metric_records_waits_for_dataset_configured(self):
+        """_on_metric_records must block until the dataset is configured, then proceed."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.is_trace_enabled = False
+        # First downstream step after the barrier; raising proves the barrier was passed.
+        mock_self._send_results_to_results_processors = AsyncMock(
+            side_effect=RuntimeError("REACHED_PROCESSING")
+        )
+        message = MagicMock()
+        message.metadata.benchmark_phase = CreditPhase.PROFILING
+
+        task = asyncio.create_task(
+            RecordsManager._on_metric_records(mock_self, message)
+        )
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        # Barrier not released: processing has not started.
+        assert not task.done()
+        assert not mock_self._send_results_to_results_processors.called
+
+        # Barrier released: processing proceeds past the wait.
+        mock_self._dataset_configured_event.set()
+        with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
+            await asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_on_metric_records_fails_run_on_config_timeout(self, monkeypatch):
+        """On dataset-config timeout, abort the run (report error + kill) rather
+        than process the record without a configured dataset."""
+        mock_self = MagicMock(spec=RecordsManager)
+        mock_self.service_id = "rm-test"
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self.is_trace_enabled = False
+        mock_self.publish = AsyncMock()
+        mock_self._kill = AsyncMock()
+        mock_self._send_results_to_results_processors = AsyncMock()
+        message = MagicMock()
+        message.metadata.benchmark_phase = CreditPhase.PROFILING
+
+        async def _raise_timeout(coro, *args, **kwargs):
+            coro.close()  # avoid "coroutine was never awaited" warning
+            raise TimeoutError
+
+        monkeypatch.setattr(
+            "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
+        )
+
+        await RecordsManager._on_metric_records(mock_self, message)
+
+        # Run is failed loudly ...
+        mock_self._kill.assert_awaited_once()
+        published = mock_self.publish.await_args.args[0]
+        assert isinstance(published, BaseServiceErrorMessage)
+        # ... and the record is not processed.
+        mock_self._send_results_to_results_processors.assert_not_called()

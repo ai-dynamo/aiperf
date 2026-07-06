@@ -8,11 +8,12 @@ import uuid
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.constants import BYTES_PER_MIB, WARMUP_SYSTEM_MESSAGE_PREFIX
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationBranchMode,
+    CreditPhase,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -51,6 +52,7 @@ from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
     StreamingDealerClientProtocol,
+    StreamingPushClientProtocol,
 )
 from aiperf.credit.messages import (
     CancelCredits,
@@ -184,6 +186,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
         self.credit_dealer_client.register_receiver(self._on_credit_message)
+
+        # Dual-channel returns: CreditReturn/FirstToken go out a dedicated typed
+        # PUSH -> router PULL fan-in instead of back on the bidirectional credit
+        # DEALER, so the dispatch DEALER is receive-only (no shared-FD send/recv
+        # contention). WorkerReady/WorkerShutdown still go on the DEALER so the
+        # ROUTER registers/tracks identity. Returns carry worker_id in-message
+        # since PUSH/PULL has no ZMQ envelope identity.
+        self.credit_return_push_client: StreamingPushClientProtocol = (
+            self.comms.create_streaming_push_client(
+                CommAddress.CREDIT_RETURN,
+                bind=False,
+            )
+        )
 
         self.memory_usage_before_profiling: float | None = None
 
@@ -347,8 +362,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
+            request_latency_ns=credit_context.request_latency_ns,
+            worker_id=self.service_id,
         )
-        self.execute_async(self.credit_dealer_client.send(credit_return))
+        self.execute_async(self.credit_return_push_client.send(credit_return))
         credit_context.returned = True
 
         # Explicitly clear references to help refcounting (GC is disabled on workers)
@@ -402,8 +419,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
+                request_latency_ns=credit_context.request_latency_ns,
+                worker_id=self.service_id,
             )
-            await self.credit_dealer_client.send(credit_return)
+            await self.credit_return_push_client.send(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
@@ -446,7 +465,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     return False  # Keep looking for meaningful content
 
                 # Meaningful content found - send FirstToken to router
-                await self.credit_dealer_client.send(
+                await self.credit_return_push_client.send(
                     FirstToken(
                         credit_id=credit.id,
                         phase=credit.phase,
@@ -481,11 +500,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 session=session,
                 credit_context=credit_context,
                 x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
+                system_message=self._system_message_for_phase(
+                    system_message=session.conversation.system_message,
+                    phase=credit.phase,
+                ),
                 user_context_message=session.conversation.user_context_message,
             )
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
+            )
+            credit_context.request_latency_ns = self._request_latency_ns_for_record(
+                record
             )
             await self._send_inference_result_message(record)
 
@@ -509,6 +534,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self._release_and_evict_for_terminal(credit, x_correlation_id)
+
+    def _request_latency_ns_for_record(self, record: RequestRecord) -> int | None:
+        """Return the same latency sample used by RequestLatencyMetric."""
+        final_response_perf_ns = None
+        for response in record.responses:
+            parsed = self.inference_client.endpoint.parse_response(response)
+            if parsed is not None and parsed.data:
+                final_response_perf_ns = parsed.perf_ns
+        if final_response_perf_ns is None:
+            return None
+        if final_response_perf_ns < record.start_perf_ns:
+            return None
+        return final_response_perf_ns - record.start_perf_ns
 
     def _pin_parent_if_fork_child(self, credit: Credit, x_correlation_id: str) -> None:
         """FORK child seed: pin the parent so its session stays resident in
@@ -627,6 +665,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )
+
+    @staticmethod
+    def _system_message_for_phase(
+        *, system_message: str | None, phase: CreditPhase
+    ) -> str | None:
+        if phase != CreditPhase.WARMUP:
+            return system_message
+        if not system_message:
+            return WARMUP_SYSTEM_MESSAGE_PREFIX
+        return f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{system_message}"
 
     async def _retrieve_conversation(
         self,

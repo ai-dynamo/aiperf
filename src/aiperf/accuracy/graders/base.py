@@ -23,6 +23,24 @@ class BaseGrader(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self.run = run
 
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if this grader's optional dependencies are missing.
+
+        Called from the main-process preflight (``cli_runner._preflight``)
+        BEFORE any service is spawned, so a missing optional dependency (e.g.
+        lighteval) surfaces as a clean ``ConfigurationError`` instead of
+        crashing the daemon record-processor mid-run — which prints a raw
+        multiprocessing traceback and hangs the parent waiting for records
+        that never arrive.
+
+        Default is a no-op: graders with no optional dependencies (the
+        hand-ported ``exact_match`` / ``multiple_choice`` / ``gsm8k`` / ``math``
+        graders) are always available. Graders backed by an optional package
+        override this to check their import flag.
+        """
+        return
+
     async def grade(
         self, response_text: str, ground_truth: str, **kwargs
     ) -> GradingResult:

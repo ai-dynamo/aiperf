@@ -32,9 +32,10 @@ def _load_cyclopts_parameter() -> type:
     raise ImportError("cyclopts.Parameter is not available in this cyclopts version")
 
 
+from typing import Self  # noqa: E402
+
 from pydantic import Field, model_validator  # noqa: E402
 from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
-from typing_extensions import Self  # noqa: E402
 
 Parameter = _load_cyclopts_parameter()
 

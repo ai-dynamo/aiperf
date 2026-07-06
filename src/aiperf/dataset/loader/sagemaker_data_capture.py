@@ -32,7 +32,7 @@ from aiperf.dataset.loader.models import SageMakerDataCaptureTrace
 
 def _parse_iso8601_to_ms(iso_str: str) -> float:
     """Convert ISO 8601 inferenceTime to milliseconds since epoch."""
-    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    dt = datetime.fromisoformat(iso_str)
     return dt.timestamp() * 1000.0
 
 

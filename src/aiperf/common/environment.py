@@ -7,6 +7,7 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.ACCURACY.*       - Accuracy benchmark settings
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
@@ -24,6 +25,7 @@ Structure:
     Environment.TIMING.*         - Timing manager settings
     Environment.TOKENIZER.*      - Tokenizer pre-warm and loading
     Environment.UI.*             - User interface settings
+    Environment.WANDB.*          - Weights & Biases export settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
 
@@ -37,15 +39,14 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
-import platform
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
@@ -55,6 +56,32 @@ from aiperf.plugin.enums import ServiceType
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
+
+
+class _AccuracySettings(BaseSettings):
+    """Accuracy benchmark settings.
+
+    Tunables for the accuracy benchmark loaders. Currently only pins the
+    LiveCodeBench dataset release so accuracy numbers are reproducible
+    across runs without requiring source edits.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
+
+    LCB_RELEASE_TAG: str = Field(
+        default="v4_v5",
+        description="LiveCodeBench dataset subset (HF config name) "
+        "passed as the positional ``name`` arg to "
+        '``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. '
+        "Pins which monthly snapshot LCB serves so accuracy numbers "
+        "are reproducible across runs and branches. Default "
+        "``v4_v5`` matches lighteval's base subset; bump (e.g. to "
+        "``v6``) when the team rebaselines against a newer snapshot. "
+        "The loader always passes ``trust_remote_code=True`` so LCB's "
+        "dataset-loading script can execute on ``datasets`` v4+ "
+        "(mirrors lighteval's reference opt-in). Consumed by "
+        "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
 
 
 class _APIServerSettings(BaseSettings):
@@ -732,6 +759,54 @@ class _ServerMetricsSettings(BaseSettings):
     )
 
 
+class _NetworkLatencySettings(BaseSettings):
+    """Network latency calibration configuration.
+
+    Controls the TCP-handshake RTT probes used to estimate the client-to-endpoint
+    network round-trip time so it can be subtracted from latency metrics. Probes run
+    throughout the profiling phase. Enable with `--network-latency-automatic`.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_NETWORK_LATENCY_",
+        env_parse_enums=True,
+    )
+
+    DEFAULT_PROBE_INTERVAL: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=1.0,
+        description="Default seconds between RTT probes when --network-latency-ping-interval is unset (default: 1.0s, ~1Hz)",
+    )
+    MIN_SAMPLES: int = Field(
+        ge=1,
+        le=100000,
+        default=5,
+        description="Minimum number of successful RTT samples to collect; extra probes are issued at "
+        "profile completion if a short run did not reach this floor",
+    )
+    CONNECT_TIMEOUT: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=5.0,
+        description="Timeout in seconds for a single TCP-handshake RTT probe",
+    )
+    COMPLETE_TOPUP_TIMEOUT: float = Field(
+        ge=0.0,
+        le=30.0,
+        default=3.0,
+        description="Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes "
+        "at PROFILE_COMPLETE, kept well under the command-response budget so a slow "
+        "endpoint cannot stall completion",
+    )
+    EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=100,
+        description="Batch size for the network latency jsonl writer export results processor",
+    )
+
+
 class _TimingSettings(BaseSettings):
     """Timing manager configuration.
 
@@ -847,7 +922,7 @@ class _ServiceSettings(BaseSettings):
         ge=1.0,
         le=100000.0,
         default=30.0,
-        description="Timeout in seconds for service start operations",
+        description="Timeout in seconds for service start operations. Also bounds the per-phase wait for the first worker to register with the credit router before credit issuance begins; exceeding it fails the phase.",
     )
     TASK_CANCEL_TIMEOUT_SHORT: float = Field(
         ge=1.0,
@@ -898,15 +973,77 @@ class _ServiceSettings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for reading health check HTTP requests.",
     )
+    # Windows-only: TCP-loopback fallback for ZMQ IPC sockets (pyzmq on
+    # Windows does not support ipc://). Per-endpoint ports are derived
+    # deterministically from the IPC path; these settings move or resize
+    # the port window if the default conflicts with another service or
+    # if a collision fires (see `_validate_no_port_collisions`).
+    WINDOWS_TCP_BASE_PORT: int = Field(
+        ge=1024,
+        le=65535,
+        default=28000,
+        description="Windows-only: starting port for the ZMQ IPC TCP-loopback "
+        "fallback range. Per-endpoint ports are derived as "
+        "``base + (sha256_hash mod range)``. No-op on POSIX where ipc:// "
+        "is used directly.",
+    )
+    WINDOWS_TCP_PORT_RANGE: int = Field(
+        ge=64,
+        le=60000,
+        default=20000,
+        description="Windows-only: size of the TCP-loopback port window for "
+        "the ZMQ IPC fallback. Birthday-paradox collision probability for "
+        "n sockets is ``1 - exp(-n*n/(2*range))``. Widen if AIPerf grows "
+        "to many more sockets per run, or relocate via "
+        "``AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT`` if 28000-48000 conflicts.",
+    )
 
     @model_validator(mode="after")
     def auto_disable_uvloop_on_windows(self) -> Self:
-        """Automatically disable uvloop on Windows as it's not supported."""
-        if platform.system() == "Windows" and not self.DISABLE_UVLOOP:
-            _logger.info(
-                "Windows detected: automatically disabling uvloop (not supported on Windows)"
-            )
+        """Automatically disable uvloop on Windows as it's not supported.
+
+        Validator fires on every ``_ServiceSettings()`` construction, which
+        runs once in the main process AND once per spawned child service.
+        Gate the log line to the main process so the user sees it once, not
+        ~9 times per aiperf run on Windows.
+        """
+        if IS_WINDOWS and not self.DISABLE_UVLOOP:
+            import multiprocessing
+
+            if multiprocessing.parent_process() is None:
+                _logger.info(
+                    "Windows detected: automatically disabling uvloop (not supported on Windows)"
+                )
             self.DISABLE_UVLOOP = True
+        return self
+
+    @model_validator(mode="after")
+    def validate_windows_port_window_fits_in_tcp_range(self) -> Self:
+        """Fail fast if the configured Windows TCP-fallback port window would
+        emit invalid ports above the TCP max (65535).
+
+        ``build_socket_address`` derives an endpoint port as
+        ``WINDOWS_TCP_BASE_PORT + (sha256_hash mod WINDOWS_TCP_PORT_RANGE)``.
+        With the two fields bounded independently, a config like base 65000
+        + range 20000 would silently produce ``tcp://127.0.0.1:84999`` —
+        invalid, and only blowing up later at ZMQ bind/connect time with a
+        misleading error. Validate the sum at config time so misconfigured
+        envs fail with a clear, actionable message.
+
+        No-op on POSIX where ipc:// is used and these fields are dead. The
+        check fires anyway because ``_ServiceSettings`` validation runs on
+        every platform — but the only cost is the addition, which is cheap.
+        """
+        max_port = self.WINDOWS_TCP_BASE_PORT + self.WINDOWS_TCP_PORT_RANGE - 1
+        if max_port > 65535:
+            raise ValueError(
+                f"AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT "
+                f"({self.WINDOWS_TCP_BASE_PORT}) + "
+                f"AIPERF_SERVICE_WINDOWS_TCP_PORT_RANGE "
+                f"({self.WINDOWS_TCP_PORT_RANGE}) - 1 = {max_port} exceeds "
+                f"the max TCP port (65535). Lower either value so the "
+                f"window stays within 1024-65535."
+            )
         return self
 
 
@@ -942,6 +1079,26 @@ class _TokenizerSettings(BaseSettings):
             "test harnesses that replace tokenizer loading and must avoid "
             "forked prefetch subprocesses. Production defaults to preloading."
         ),
+    )
+
+
+class _WandbSettings(BaseSettings):
+    """Weights & Biases export configuration.
+
+    Controls timeout behavior for the post-run W&B upload.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_WANDB_",
+    )
+
+    EXPORT_TIMEOUT_SECONDS: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Timeout in seconds for the post-run Weights & Biases export operation. "
+        "If the W&B backend is unreachable, the export will be abandoned "
+        "after this duration rather than blocking indefinitely.",
     )
 
 
@@ -1211,6 +1368,10 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    ACCURACY: _AccuracySettings = Field(
+        default_factory=_AccuracySettings,
+        description="Accuracy benchmark settings (dataset version pins, etc.)",
+    )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
@@ -1267,6 +1428,10 @@ class _Environment(BaseSettings):
         default_factory=_SearchPlannerSettings,
         description="Adaptive-search planner tunables",
     )
+    NETWORK_LATENCY: _NetworkLatencySettings = Field(
+        default_factory=_NetworkLatencySettings,
+        description="Network latency calibration settings",
+    )
     SERVER_METRICS: _ServerMetricsSettings = Field(
         default_factory=_ServerMetricsSettings,
         description="Server metrics collection settings",
@@ -1286,6 +1451,10 @@ class _Environment(BaseSettings):
     UI: _UISettings = Field(
         default_factory=_UISettings,
         description="User interface and dashboard settings",
+    )
+    WANDB: _WandbSettings = Field(
+        default_factory=_WandbSettings,
+        description="Weights & Biases export settings",
     )
     WORKER: _WorkerSettings = Field(
         default_factory=_WorkerSettings,

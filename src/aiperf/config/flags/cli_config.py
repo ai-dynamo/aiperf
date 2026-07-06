@@ -20,9 +20,9 @@ populated CLIConfig into the canonical AIPerfConfig.
 This file is intentionally large (~3200 LOC, ~200 fields) — every CLI flag
 is a top-level field by design, so size scales linearly with field count.
 The flat shape is the post-flatten architecture. Section dividers group
-fields by their CLIParameter ``Groups.X``. Both the file-size and
-pydantic-fields ergonomics checks have an explicit intentional exception
-for this file (see ``tools/check_ergonomics.py::INTENTIONAL_FILE_SIZE_EXEMPTIONS``).
+fields by their CLIParameter ``Groups.X``. The pydantic-fields
+ergonomics check has an explicit intentional exception for this file (see
+``tools/check_ergonomics.py::INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS``).
 
 See aiperf.config.flags.__init__ for the hard rules around adding new fields,
 and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.
@@ -45,6 +45,7 @@ from aiperf.common.enums import (
     GPUTelemetryMode,
     ImageFormat,
     ImageSource,
+    ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     RequestContentType,
     ServerMetricsFormat,
@@ -517,6 +518,20 @@ class CLIConfig(BaseConfig):
             group=Groups.INPUT,
         ),
     ] = None
+
+    dataset_filters: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Dataset-specific filter in key=value form. Repeat for multiple "
+            "filters. Only supported by public datasets that declare filter support.",
+        ),
+        CLIParameter(
+            name=("--dataset-filter",),
+            consume_multiple=True,
+            group=Groups.INPUT,
+        ),
+    ]
 
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
@@ -1252,9 +1267,9 @@ class CLIConfig(BaseConfig):
             description="Source image generation mode (default `noise`). "
             "`noise` generates random noise images on the fly at the requested dimensions — no files on disk required, "
             "and the pool is effectively unbounded so servers cannot dedupe on identical inputs. "
-            "`assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
-            "and resizes them to the requested dimensions. "
-            "A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). "
+            "`assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
+            "and lazily loads them at the requested dimensions. "
+            "A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). "
             "Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
         ),
         CLIParameter(
@@ -1262,6 +1277,21 @@ class CLIConfig(BaseConfig):
             group=Groups.IMAGE_INPUT,
         ),
     ]
+
+    image_source_sampling: Annotated[
+        ImageSourceSamplingStrategy,
+        Field(
+            description="How source images are selected from finite image sources selected by `--image-source assets` "
+            "or `--image-source <directory>`. `random-with-replacement` draws each source image independently; "
+            "repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, "
+            "reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps "
+            "after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.",
+        ),
+        CLIParameter(
+            name=("--image-source-sampling",),
+            group=Groups.IMAGE_INPUT,
+        ),
+    ] = ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
 
     ##############################################################################
     # Video Input
@@ -1574,6 +1604,18 @@ class CLIConfig(BaseConfig):
         ),
     ] = 1.0
 
+    synthesis_output_len_multiplier: Annotated[
+        float,
+        Field(
+            default=1.0,
+            ge=0.0,
+            description="Multiplier for output lengths in synthesized traces",
+        ),
+        CLIParameter(
+            name=("--synthesis-output-len-multiplier",), group=Groups.SYNTHESIS
+        ),
+    ] = 1.0
+
     synthesis_max_isl: Annotated[
         int | None,
         Field(
@@ -1762,6 +1804,56 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--request-rate-ramp-duration",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    adaptive_scale: Annotated[
+        bool,
+        Field(
+            description="Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.",
+        ),
+        CLIParameter(name=("--adaptive-scale",), group=Groups.LOAD_GENERATOR),
+    ] = False
+
+    adaptive_sustain_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+        ),
+        CLIParameter(
+            name=("--adaptive-sustain-duration",), group=Groups.LOAD_GENERATOR
+        ),
+    ] = None
+
+    adaptive_assessment_period: Annotated[
+        float | None,
+        Field(
+            ge=1.0,
+            description="Duration in seconds for each adaptive scale SLA assessment window.",
+        ),
+        CLIParameter(
+            name=("--adaptive-assessment-period", "--adaptive-scale-assessment-period"),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    adaptive_scale_sla: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "SLA filter for adaptive scale. Format: "
+                "'metric_tag:stat:op:threshold'. For request_latency, stat is one of "
+                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
+                "request throughput and goodput_ratio support {avg, min, max}. "
+                "op in {lt, le, gt, ge}; threshold is a float. Repeatable. "
+                "Example: --adaptive-scale-sla 'request_latency:p95:le:30000'."
+            ),
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-sla",),
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None
@@ -2194,6 +2286,47 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    wandb_project: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases project name. Setting this enables wandb export.",
+        ),
+        CLIParameter(name=("--wandb-project",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_entity: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases entity (team or user). Defaults to the API key's default entity.",
+        ),
+        CLIParameter(name=("--wandb-entity",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_run_name: Annotated[
+        str | None,
+        Field(default=None, description="Weights & Biases run name."),
+        CLIParameter(name=("--wandb-run-name",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_tags: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Additional Weights & Biases run tags to attach on upload. "
+                "Can be specified multiple times or as a comma-separated list."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--wandb-tag",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
     ##############################################################################
     # HTTP Trace
     ##############################################################################
@@ -2272,6 +2405,59 @@ class CLIConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = _DEFAULT_SERVER_METRICS_FORMATS
+
+    ##############################################################################
+    # Network Latency
+    ##############################################################################
+    network_latency_automatic: Annotated[
+        bool,
+        Field(
+            description=(
+                "Automatically measure network latency (DISABLED BY DEFAULT). "
+                "Opens a fresh TCP connection to the endpoint throughout the run, "
+                "measures the handshake RTT, and subtracts the mean from request-start-anchored "
+                "latency metrics (request_latency, time_to_first_token, "
+                "time_to_first_output_token). Raw metrics are preserved; adjusted values are "
+                "emitted as separate network_adjusted_* metrics plus a network_rtt summary. "
+                "Mutually exclusive with --network-latency-mean."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-automatic",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = False
+
+    network_latency_mean: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            description=(
+                "Set a fixed mean network RTT in milliseconds to subtract, bypassing active "
+                "probing. Implicitly enables network latency adjustment. Mutually exclusive "
+                "with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-mean",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
+
+    network_latency_ping_interval: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Seconds between TCP-handshake RTT probes during profiling "
+                "(default: 1.0s). Only applies with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-ping-interval",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
 
     ##############################################################################
     # GPU Telemetry
@@ -2861,7 +3047,8 @@ class CLIConfig(BaseConfig):
             description=(
                 "SLA filter to attach to the adaptive-search or grid path. "
                 "Format: 'metric_tag:stat:op:threshold'. Stat in "
-                "{avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is "
+                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
+                "op in {lt, le, gt, ge}; threshold is "
                 "a float. Repeatable. Example: --search-sla "
                 "'time_to_first_token:p95:lt:200' --search-sla "
                 "'request_error_rate:p99:lt:0.05'. Composes with recipe-named "
@@ -2871,6 +3058,28 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--search-sla",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_sla_tier: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Multi-tier SLO grouping flag. Each invocation defines one tier "
+                "of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or "
+                "'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). "
+                "Requires 2-10 invocations. Example: --search-sla-tier "
+                "'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' "
+                "--search-sla-tier "
+                "'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. "
+                "When used, all --search-sla filters are still parsed and compose "
+                "with tier definitions."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-sla-tier",),
             group=Groups.MULTI_RUN,
         ),
     ] = None

@@ -519,7 +519,17 @@ class TestIssuedAtTimestamp:
     """Tests for credit timestamp accuracy."""
 
     async def test_issued_at_ns_is_recent(self, credit_issuer, mock_router):
-        """Issued timestamp should be very recent (within 1 second)."""
+        """Issued timestamp should be very recent (within 1 second).
+
+        Production code derives ``issued_at_ns`` from ``started_at_ns +
+        (perf_counter_ns - started_at_perf_ns)`` — mixing wall clock with a
+        monotonic delta. On Windows the two clocks can drift by a few
+        microseconds, so allow a small slack window on either side instead
+        of strict ``before <= ts <= after``.
+        """
+        import sys
+
+        slack_ns = 50_000_000 if sys.platform == "win32" else 0  # 50ms on Windows
         before = time.time_ns()
         turn = make_turn()
 
@@ -528,7 +538,7 @@ class TestIssuedAtTimestamp:
         after = time.time_ns()
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
 
-        assert before <= sent_credit.issued_at_ns <= after
+        assert (before - slack_ns) <= sent_credit.issued_at_ns <= (after + slack_ns)
         # Should be within 1 second
         assert (after - sent_credit.issued_at_ns) < 1_000_000_000
 
