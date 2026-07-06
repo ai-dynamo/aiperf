@@ -371,6 +371,11 @@ class TestDatasetManagerCacheEdgeCases:
         key = dm._cache_key_for_run
         assert key is not None
 
+        # Stop FIRST so the client store's mmap handles are closed; Windows
+        # refuses to unlink files that still back an open memory map
+        # (PermissionError WinError 32).
+        await dm.stop()
+
         # Wipe the cache AND the run mmap files, then re-run the populate.
         import shutil
 
@@ -383,7 +388,6 @@ class TestDatasetManagerCacheEdgeCases:
         dm._populate_cache_after_run()
 
         assert not (mmap_cache.cache_dir() / key).exists()
-        await dm.stop()
 
     @pytest.mark.asyncio
     async def test_populate_failure_does_not_fail_the_run(
