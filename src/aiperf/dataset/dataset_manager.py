@@ -252,7 +252,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         await self._configure_dataset_client_and_free_memory()
 
         if self._cache_key_for_run is not None:
-            self._populate_cache_after_run()
+            await asyncio.to_thread(self._populate_cache_after_run)
 
         duration = time.perf_counter() - begin
         self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
@@ -756,7 +756,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         manifest, falls back to a MISS (``_cache_hit_used`` stays False).
         """
         run_data_path, run_index_path = self._run_mmap_paths()
-        mmap_cache.restore_to_run_dir(hit, run_data_path, run_index_path)
+        await asyncio.to_thread(
+            mmap_cache.restore_to_run_dir, hit, run_data_path, run_index_path
+        )
 
         manifest = hit.manifest
         try:
