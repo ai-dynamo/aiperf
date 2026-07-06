@@ -10,8 +10,11 @@ Verifies that:
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -467,3 +470,81 @@ class TestDatasetManagerCacheEdgeCases:
         assert key is not None
         assert mmap_cache.lookup(key, compressed=False) is None
         await dm.stop()
+
+
+class TestDatasetManagerCacheThreadOffload:
+    """The multi-GiB cache copyfile paths must run off the event loop.
+
+    Both the post-run populate and the HIT restore wrap their blocking file
+    copies in ``asyncio.to_thread``; a revert to direct sync calls would block
+    the DatasetManager event loop for the duration of the copy.
+    """
+
+    @pytest.fixture
+    def to_thread_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> list[Callable[..., Any]]:
+        """Record every callable dispatched through ``asyncio.to_thread``.
+
+        The wrapper delegates to the real implementation, so the offloaded
+        work still executes and behavior can be asserted alongside dispatch.
+        """
+        recorded: list[Callable[..., Any]] = []
+        real_to_thread = asyncio.to_thread
+
+        async def recording_to_thread(
+            func: Callable[..., Any], /, *args: Any, **kwargs: Any
+        ) -> Any:
+            recorded.append(func)
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
+        return recorded
+
+    @pytest.mark.asyncio
+    async def test_configure_dataset_locked_populate_offloaded_to_thread(
+        self,
+        tmp_path: Path,
+        mock_tokenizer,
+        to_thread_calls: list[Callable[..., Any]],
+    ) -> None:
+        trace = _write_trace(tmp_path)
+        run = _make_run(file_path=trace, benchmark_id="offload-populate")
+        key = mmap_cache.compute_cache_key_from_run(run)
+        assert key is not None
+
+        dm = await _run_configure(run)
+        await dm.stop()
+
+        assert any(
+            getattr(func, "__func__", None) is DatasetManager._populate_cache_after_run
+            for func in to_thread_calls
+        ), "_populate_cache_after_run must be dispatched via asyncio.to_thread"
+        # The offloaded populate still ran for real: the entry is in the cache.
+        assert mmap_cache.lookup(key, compressed=False) is not None
+
+    @pytest.mark.asyncio
+    async def test_configure_from_cache_hit_restore_offloaded_to_thread(
+        self,
+        tmp_path: Path,
+        mock_tokenizer,
+        to_thread_calls: list[Callable[..., Any]],
+    ) -> None:
+        trace = _write_trace(tmp_path)
+        run1 = _make_run(file_path=trace, benchmark_id="offload-restore-1")
+        dm1 = await _run_configure(run1)
+        await dm1.stop()
+
+        to_thread_calls.clear()
+        run2 = _make_run(file_path=trace, benchmark_id="offload-restore-2")
+        dm2 = await _run_configure(run2)
+
+        assert any(func is mmap_cache.restore_to_run_dir for func in to_thread_calls), (
+            "restore_to_run_dir must be dispatched via asyncio.to_thread"
+        )
+        # The offloaded restore still ran for real: HIT adopted, files restored.
+        assert dm2._cache_hit_used is True
+        run_data_path, run_index_path = dm2._run_mmap_paths()
+        assert run_data_path.exists()
+        assert run_index_path.exists()
+        await dm2.stop()
