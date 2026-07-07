@@ -610,6 +610,64 @@ class TestBasetenTraceDatasetLoader:
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
 
+    def test_sampling_and_grouping_use_same_session_key(self, tmp_path: Path):
+        # Sampling filters rows by the session key scored on the FULL file;
+        # grouping must reuse that key. Re-scoring the filtered subset can flip
+        # to the other column, shredding the sessions sampling kept whole and
+        # grouping row-sampled null-key rows into multi-turn conversations with
+        # silently dropped middle turns.
+        #
+        # Fixture shape is pinned to the sampling RNG (root seed 42 from the
+        # autouse fixture): 7 poor_man sessions draw the first 7 uniforms (pairB
+        # dropped, pairA kept, singletons eat the rest), then the 3 null-poor_man
+        # "s0" rows draw the next 3 (t0 kept, t1 dropped, t2 kept). Full-file
+        # scores: poor_man (4, 2) > provided (2·"s0"... 3 rows -> (3, 1)), so
+        # sampling keys on poor_man; the filtered subset scores (2, 1) vs (2, 1),
+        # which re-scoring would flip to provided_session_id.
+        def row(ts: int, prompt: str, poor: int | None, provided: str | None = None):
+            return {
+                "timestamp_start_unix_ms": ts,
+                "prompt": prompt,
+                "input_tokens": 5,
+                "output_tokens": 1,
+                "provided_session_id": provided,
+                "poor_man_session_id": poor,
+            }
+
+        rows = [
+            row(0, "pairB-t0", 20),
+            row(10, "pairB-t1", 20),
+            row(100, "pairA-t0", 10),
+            row(110, "pairA-t1", 10),
+            *(
+                row(200 + 100 * i, f"single-{i}", 31 + i)
+                for i in range(5)
+            ),
+            *(row(1_000 + 100 * i, f"s0-t{i}", None, "s0") for i in range(3)),
+        ]
+        path = _write_parquet(tmp_path / "trace.parquet", rows)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.4),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        session_prompts = [
+            [trace.text_input for trace in traces] for traces in dataset.values()
+        ]
+        kept = {prompt for prompts in session_prompts for prompt in prompts}
+        # Guard against fixture/RNG drift: sampling must actually filter.
+        assert "pairB-t0" not in kept and "pairA-t0" in kept and "s0-t0" in kept
+        # The sampled poor_man pair stays whole in ONE session.
+        assert ["pairA-t0", "pairA-t1"] in session_prompts
+        # Row-sampled null-poor_man rows stay synthesized single-turn sessions;
+        # they must never be regrouped into a multi-turn session with holes.
+        for prompts in session_prompts:
+            if any(prompt.startswith("s0-") for prompt in prompts):
+                assert len(prompts) == 1
+
     def test_resolver_session_count_uses_same_key_as_loader(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",

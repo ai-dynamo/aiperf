@@ -39,8 +39,6 @@ __all__ = [
     "count_baseten_parquet_records_and_sessions",
 ]
 
-_SESSION_KEY_PROBE_ROWS = 10_000
-
 
 def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int]:
     """Return row and session counts for a Baseten Parquet trace file."""
@@ -94,6 +92,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._force_min_tokens = getattr(dataset, "force_min_tokens", True)
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
         self._floored_zero_osl = 0
+        # Session key used to filter rows during sampling; grouping must reuse
+        # it because re-scoring the filtered subset can flip to the other
+        # column and silently shred the sessions sampling kept whole.
+        self._sampled_session_key: str | None = None
 
     @classmethod
     def can_load(
@@ -151,7 +153,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if not items:
             return {}
 
-        session_key = self._choose_session_key(items)
+        session_key = self._sampled_session_key or self._choose_session_key(items)
         if session_key is None:
             self.info(
                 "No repeated Baseten trace session key found; generating session IDs."
@@ -219,10 +221,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if metadata_table.num_rows == 0:
             return None, None, None, None
 
-        probe_size = min(_SESSION_KEY_PROBE_ROWS, metadata_table.num_rows)
-        probe_rows = metadata_table.slice(offset=0, length=probe_size).to_pylist()
-        session_key = self._choose_session_key_from_metadata_rows(probe_rows)
         metadata_rows = metadata_table.to_pylist()
+        session_key = self._choose_session_key_from_metadata_rows(metadata_rows)
 
         min_timestamp: int | None = None
         session_first_ts: dict[str | int, int] = {}
@@ -285,6 +285,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             f"using {session_key} with "
             f"trace_session_sample_ratio={self._session_sample_ratio}"
         )
+        self._sampled_session_key = session_key
         return (
             min_timestamp,
             session_key,
