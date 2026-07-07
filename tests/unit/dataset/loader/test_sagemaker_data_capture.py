@@ -812,6 +812,8 @@ class TestParseTraceErrorPaths:
         }
         with pytest.raises(DatasetLoaderError, match="bad-json payload decode failed"):
             loader._parse_trace(record)
+
+    def test_load_dataset_empty_file_returns_empty(self, tmp_path: Path) -> None:
         f = tmp_path / "empty.jsonl"
         f.write_text("")
         loader = self._make_loader(tmp_path)
@@ -836,8 +838,6 @@ class TestMaxOslCapApplied:
     once returned uncapped output lengths)."""
 
     def _loader_for(self, tmp_path: Path, line: str) -> SageMakerDataCaptureLoader:
-        from aiperf.config.flags.cli_config import CLIConfig
-
         path = tmp_path / "capture.jsonl"
         path.write_text(line + "\n")
         return SageMakerDataCaptureLoader(
