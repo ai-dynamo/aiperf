@@ -14,10 +14,6 @@ from aiperf.operator.environment import OperatorEnvironment
 class TestOperatorEnvironmentDefaults:
     """Tests for OperatorEnvironment default values."""
 
-    def test_default_image(self) -> None:
-        """Verify default benchmark image."""
-        assert OperatorEnvironment.DEFAULT_IMAGE == "nvcr.io/nvidia/aiperf:latest"
-
     def test_job_timeout_seconds(self) -> None:
         """Verify default job timeout is 0 (no timeout)."""
         assert OperatorEnvironment.JOB_TIMEOUT_SECONDS == 0
@@ -119,14 +115,6 @@ class TestEnvironmentVariableOverrides:
         monkeypatch.setenv("AIPERF_RESULTS_TTL_DAYS", "90")
         settings = _ResultsSettings()
         assert settings.TTL_DAYS == 90
-
-    def test_root_default_image_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Verify AIPERF_DEFAULT_IMAGE overrides default."""
-        from aiperf.operator.environment import _OperatorEnvironment
-
-        monkeypatch.setenv("AIPERF_DEFAULT_IMAGE", "custom-registry/aiperf:v2")
-        settings = _OperatorEnvironment()
-        assert settings.DEFAULT_IMAGE == "custom-registry/aiperf:v2"
 
     def test_root_job_timeout_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Verify AIPERF_JOB_TIMEOUT_SECONDS overrides default."""
@@ -314,7 +302,6 @@ class TestEveryEnvVarMapsToField:
         ("AIPERF_JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_SECONDS", 0),
         ("AIPERF_POD_RESTART_THRESHOLD", "POD_RESTART_THRESHOLD", 3),
         ("AIPERF_ENDPOINT_CHECK_TIMEOUT", "ENDPOINT_CHECK_TIMEOUT", 10.0),
-        ("AIPERF_DEFAULT_IMAGE", "DEFAULT_IMAGE", "nvcr.io/nvidia/aiperf:latest"),
         ("AIPERF_PREFLIGHT_TIMEOUT", "PREFLIGHT_TIMEOUT", 30.0),
     ]
 
@@ -345,7 +332,6 @@ class TestEveryEnvVarMapsToField:
             param("AIPERF_JOB_TIMEOUT_SECONDS", "JOB_TIMEOUT_SECONDS", "3600", id="AIPERF_JOB_TIMEOUT_SECONDS"),
             param("AIPERF_POD_RESTART_THRESHOLD", "POD_RESTART_THRESHOLD", "10", id="AIPERF_POD_RESTART_THRESHOLD"),
             param("AIPERF_ENDPOINT_CHECK_TIMEOUT", "ENDPOINT_CHECK_TIMEOUT", "30.0", id="AIPERF_ENDPOINT_CHECK_TIMEOUT"),
-            param("AIPERF_DEFAULT_IMAGE", "DEFAULT_IMAGE", "custom:v2", id="AIPERF_DEFAULT_IMAGE"),
             param("AIPERF_PREFLIGHT_TIMEOUT", "PREFLIGHT_TIMEOUT", "60.0", id="AIPERF_PREFLIGHT_TIMEOUT"),
         ],
     )  # fmt: skip
@@ -378,7 +364,7 @@ class TestEveryEnvVarMapsToField:
 
     def test_all_env_vars_covered(self) -> None:
         """Guard: if this list changes, a deploy manifest env var was added or removed."""
-        assert len(self.ENV_VAR_MAP) == 11
+        assert len(self.ENV_VAR_MAP) == 10
 
 
 # =============================================================================

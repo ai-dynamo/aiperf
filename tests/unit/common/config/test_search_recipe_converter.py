@@ -522,7 +522,7 @@ def test_v1_converter_max_concurrency_under_sla_grid_honors_bounds() -> None:
         search_style="grid",
         concurrency_min=4,
         concurrency_max=256,
-        concurrency_steps=8,  # currently unused by this branch but harmless
+        concurrency_steps=8,  # currently unused by the grid code path but harmless
     )
     assert isinstance(config.sweep, GridSweep)
     matched = [k for k in config.sweep.variables if k.endswith(".concurrency")]

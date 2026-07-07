@@ -192,9 +192,9 @@ class TestSingleRunErrorPaths:
 
     @pytest.fixture(autouse=True)
     def _prevent_forkserver(self):
-        """No-op on sweep-orchestrator-port: this branch has no global error
-        queue / forkserver init to neutralize. Retained as a hook in case the
-        kubernetes/error-queue port lands later.
+        """No-op: the current implementation has no global error queue /
+        forkserver init to neutralize. Retained as a hook so it is easy to
+        reintroduce if a global error queue lands later.
         """
 
     @pytest.fixture(autouse=True)

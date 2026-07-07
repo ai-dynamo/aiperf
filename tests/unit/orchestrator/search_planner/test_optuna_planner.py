@@ -502,6 +502,45 @@ def test_signed_violation_handles_unmeasurable():
     assert _signed_violation(250.0, sla) == pytest.approx(50.0)
 
 
+@pytest.mark.parametrize(
+    "op, threshold, value, expected",
+    [
+        param("lt", 200.0, 250.0, 50.0, id="lt-violation-positive"),
+        param("lt", 200.0, 150.0, -50.0, id="lt-slack-negative"),
+        param("lt", 200.0, 200.0, 0.0, id="lt-on-boundary-zero"),
+        param("le", 200.0, 250.0, 50.0, id="le-violation-positive"),
+        param("le", 200.0, 199.0, -1.0, id="le-slack-negative"),
+        param("gt", 100.0, 50.0, 50.0, id="gt-violation-positive"),
+        param("gt", 100.0, 150.0, -50.0, id="gt-slack-negative"),
+        param("gt", 100.0, 100.0, 0.0, id="gt-on-boundary-zero"),
+        param("ge", 100.0, 50.0, 50.0, id="ge-violation-positive"),
+        param("ge", 100.0, 150.0, -50.0, id="ge-slack-negative"),
+    ],
+)  # fmt: skip
+def test_signed_violation_sign_convention(
+    op: str,
+    threshold: float,
+    value: float,
+    expected: float,
+) -> None:
+    """Positive = violation, negative = slack, for all four comparison ops."""
+    sla = SLAFilter(
+        metric_tag="time_to_first_token", stat="p95", op=op, threshold=threshold
+    )
+    assert _signed_violation(value, sla) == pytest.approx(expected)
+
+
+def test_no_data_sentinel_loss_is_finite_and_large():
+    """The no-prior-success sentinel must dominate real losses without
+    poisoning the sampler with inf/NaN."""
+    from aiperf.orchestrator.search_planner.optuna_planner import (
+        NO_DATA_SENTINEL_LOSS,
+    )
+
+    assert NO_DATA_SENTINEL_LOSS == 1.0e6
+    assert NO_DATA_SENTINEL_LOSS > 1e3
+
+
 def test_attr_key_disambiguates_overlapping_filters():
     """Two filters on the same metric_tag with different stat must have distinct keys."""
     a = SLAFilter(metric_tag="ttft", stat="p95", op="lt", threshold=200.0)

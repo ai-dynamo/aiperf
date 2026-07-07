@@ -706,8 +706,6 @@ def epoch_key_from_body(body: dict) -> str:
     """
     metadata = body["metadata"]
     ts = metadata["creationTimestamp"]
-    # ``fromisoformat`` on 3.10 rejects trailing Z; swap for the explicit
-    # UTC offset so the parse works across supported Python versions.
     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     seconds = int(dt.timestamp())
     if dt.microsecond != 0:

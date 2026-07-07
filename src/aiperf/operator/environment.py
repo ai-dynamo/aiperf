@@ -3,12 +3,12 @@
 """Operator environment configuration.
 
 All settings can be configured via environment variables with the AIPERF_OPERATOR_ prefix,
-or AIPERF_ for shared settings (results dir, default image).
+or AIPERF_ for shared settings (results dir, job timeout).
 
 Examples:
     AIPERF_OPERATOR_MONITOR_INTERVAL=10.0
     AIPERF_RESULTS_DIR=/data
-    AIPERF_DEFAULT_IMAGE=nvcr.io/nvidia/aiperf:latest
+    AIPERF_JOB_TIMEOUT_SECONDS=3600
 
 See also: ``aiperf.kubernetes.environment.K8sEnvironment`` (cluster defaults
 baked into pod manifests) and ``aiperf.common.environment.Environment``
@@ -277,10 +277,6 @@ class _OperatorEnvironment(BaseSettings):
         extra="allow",
     )
 
-    DEFAULT_IMAGE: str = Field(
-        default="nvcr.io/nvidia/aiperf:latest",
-        description="Default container image for benchmark jobs",
-    )
     JOB_TIMEOUT_SECONDS: float = Field(
         default=0,
         ge=0,

@@ -114,7 +114,7 @@ def _benchmark_run() -> BenchmarkRun:
         }
     )
     return BenchmarkRun(
-        benchmark_id="ajc-sweep-conc-may18-v03-t7",
+        benchmark_id="sweep-conc-demo-v03-t7",
         cfg=benchmark,
         variation=SweepVariation(
             index=3,
@@ -122,7 +122,7 @@ def _benchmark_run() -> BenchmarkRun:
             values={"phases.profiling.concurrency": 32},
         ),
         trial=7,
-        artifact_dir=Path("/results/aiperf-benchmarks/ajc-sweep-conc-may18-v03-t7"),
+        artifact_dir=Path("/results/aiperf-benchmarks/sweep-conc-demo-v03-t7"),
         label="concurrency_32_trial_7",
         cli_command=None,
     )
@@ -490,7 +490,7 @@ class TestChildMetadataSelectorLabels:
             api=None,
             sweep={
                 "metadata": {
-                    "name": "ajc-sweep-conc-may18",
+                    "name": "sweep-conc-demo",
                     "namespace": "aiperf-benchmarks",
                     "uid": "uid-sweep-7f2a",
                 },
@@ -516,11 +516,11 @@ class TestChildMetadataSelectorLabels:
         )
 
         metadata = executor._build_child_metadata(
-            _benchmark_run(), "ajc-sweep-conc-may18-v03-t7"
+            _benchmark_run(), "sweep-conc-demo-v03-t7"
         )
         labels = metadata["labels"]
 
-        assert labels[SWEEP_LABEL] == "ajc-sweep-conc-may18"
+        assert labels[SWEEP_LABEL] == "sweep-conc-demo"
         assert labels[SWEEP_UID_LABEL] == "uid-sweep-7f2a"
         assert labels[SWEEP_RUN_EPOCH_LABEL] == "1778027130"
         assert labels[VARIATION_INDEX_LABEL] == "03"
@@ -552,7 +552,7 @@ class TestChildNameCardinality:
     ) -> None:
         with pytest.raises(ValueError, match=match):
             build_child_name(
-                sweep_name="ajc-sweep-conc-may18",
+                sweep_name="sweep-conc-demo",
                 variation_index=variation_index,
                 trial_index=trial_index,
             )

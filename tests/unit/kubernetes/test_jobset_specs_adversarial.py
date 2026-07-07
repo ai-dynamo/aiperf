@@ -38,7 +38,7 @@ def _jobset_spec(**overrides: Any) -> AIPerfJobSetSpec:
         "name": "aiperf-bench-7f2a",
         "namespace": "aiperf-benchmarks",
         "job_id": "aiperf-bench-7f2a",
-        "image": "nvcr.io/nvidia/aiperf:branch-ajc-k8s-post-port",
+        "image": "nvcr.io/nvidia/aiperf:custom-test-tag",
         "worker_replicas": 2,
         "workers_per_pod": 2,
         "record_processors_per_pod": 1,
@@ -375,7 +375,7 @@ class TestJobSetSpecPodTemplateMergeAndInvalidShapes:
         with pytest.raises(ValueError, match="resources"):
             AIPerfContainerSpec(
                 name="worker-0",
-                image="nvcr.io/nvidia/aiperf:branch-ajc-k8s-post-port",
+                image="nvcr.io/nvidia/aiperf:custom-test-tag",
                 resources=resources,
             )
 

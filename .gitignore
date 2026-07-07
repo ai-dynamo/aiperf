@@ -55,7 +55,6 @@ src/aiperf/_build_info.py
 !.cursor/rules/
 .worktrees/
 .loop_integration_state/
-.superpowers/
 
 # Chaos/adversarial test run artifacts
 tests/scripts/.chaos_runs/

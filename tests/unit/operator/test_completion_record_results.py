@@ -115,7 +115,7 @@ class TestSummaryFallbackFromFiles:
     """When /api/metrics was empty/unavailable but result files were
     downloaded, summary must still be derived from the parsed JSON export.
 
-    Regression: this branch previously called ``set_results`` only,
+    Regression: an earlier implementation called ``set_results`` only,
     leaving status.summary empty. ``aiperf kube list`` and the operator
     UI then displayed '-' for THROUGHPUT and LATENCY even though the
     numbers were already on disk under status.results.

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for tools/migrate_config_yaml.py — the Plan A migration script."""
+"""Tests for tools/migrate_config_yaml.py — the flat-envelope config migration script."""
 
 from __future__ import annotations
 

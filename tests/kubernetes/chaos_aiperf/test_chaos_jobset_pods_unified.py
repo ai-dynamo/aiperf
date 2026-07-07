@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unified-API port of ``tests/kubernetes/chaos/test_chaos_jobset_pods.py``.
 
-Covers Wave-1 C-series scenarios C6, C7, C8, C9 through the unified
+Covers C-series scenarios C6, C7, C8, C9 through the unified
 :py:class:`InjectorRegistry` interface. Faults that used to call
 :py:meth:`ChaosInjector.kill_container_by_pid` or :py:meth:`ChaosInjector.
 kill_container_in_pod` directly are now routed through

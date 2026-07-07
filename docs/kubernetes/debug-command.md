@@ -183,7 +183,7 @@ In the report:
 - **Problems Found** — an `Unschedulable` entry on a pod, severity `CRITICAL`, with a message like `persistentvolumeclaim "aiperf-results" not found` or `0/4 nodes are available: pod has unbound immediate PersistentVolumeClaims`.
 - **Recent Events** (verbose) — the `FailedScheduling` events from the scheduler, repeated every few seconds.
 
-Fix by ensuring the StorageClass exists and a provisioner is running; see [configuration.md](./configuration.md#results-storage).
+Fix by ensuring the StorageClass exists and a provisioner is running; see [configuration.md](./configuration.md#storage).
 
 ### CrashLoopBackOff in the controller
 

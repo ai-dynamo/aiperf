@@ -349,7 +349,7 @@ def _valid_sweep_doc() -> dict:
 
 
 class TestValidateFileKindDispatch:
-    """Plan-C: validate_file accepts both AIPerfJob and AIPerfSweep."""
+    """validate_file accepts both AIPerfJob and AIPerfSweep."""
 
     def test_validate_file_aiperfjob_with_sweep_block_rejected(
         self, tmp_path: Path

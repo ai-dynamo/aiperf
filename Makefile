@@ -27,7 +27,7 @@
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
-		generate-crd check-crd check-chart-consistency crd-release benchmark-resources \
+		generate-crd check-crd check-chart-consistency crd-release \
 		kube-setup kube-doctor kube-status kube-cleanup kube-teardown kube-reload \
 		kube-build kube-load kube-logs kube-cluster-create kube-cluster-delete \
 		kube-install-jobset kube-install-dynamo \
@@ -314,8 +314,8 @@ integration-tests-slow test-integration-slow: #? run only the slow-marked integr
 	$(activate_venv) && pytest tests/integration/ -m 'integration and slow and not performance and not ffmpeg and not stress' -n auto -v --tb=long --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server slow integration tests passed!$(reset)\n"
 
-kubernetes-tests-ci test-kubernetes-ci: #? run kubernetes tests on Kind for CI (full suite minus gpu/k8s_slow).
-	$(activate_venv) && pytest tests/kubernetes/ --ignore=tests/kubernetes/gpu -m 'k8s and not k8s_slow' -n auto -v --tb=long $(args)
+kubernetes-tests-ci test-kubernetes-ci: #? run kubernetes tests on Kind for CI (full suite minus gpu/k8s_slow/k8s_audit).
+	$(activate_venv) && pytest tests/kubernetes/ --ignore=tests/kubernetes/gpu -m 'k8s and not k8s_slow and not k8s_audit' -n auto -v --tb=long $(args)
 
 component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running Fake Component Integration tests...$(reset)\n"
@@ -380,12 +380,15 @@ check-crd: #? check if CRD YAML is up-to-date.
 check-chart-consistency: #? assert operator code-side defaults match the Helm chart's values.yaml.
 	$(activate_venv) && python tools/check_chart_consistency.py
 
-crd-release: #? render the Helm CRD template to dist/aiperfjob-crd.yaml for release.
+crd-release: #? render the Helm CRD templates to dist/{aiperfjob,aiperfsweep}-crd.yaml for release.
 	$(activate_venv) && mkdir -p dist && \
 		helm template aiperf-operator deploy/helm/aiperf-operator \
 			--show-only templates/crd-aiperfjob.yaml \
-			> dist/aiperfjob-crd.yaml
-	@echo "Wrote dist/aiperfjob-crd.yaml"
+			> dist/aiperfjob-crd.yaml && \
+		helm template aiperf-operator deploy/helm/aiperf-operator \
+			--show-only templates/crd-aiperfsweep.yaml \
+			> dist/aiperfsweep-crd.yaml
+	@echo "Wrote dist/aiperfjob-crd.yaml and dist/aiperfsweep-crd.yaml"
 
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py

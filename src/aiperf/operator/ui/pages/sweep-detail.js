@@ -525,7 +525,7 @@ export function SweepDetail({ namespace, name, epoch }) {
           `;
         })()}
         ${(() => {
-          // Plan-C separated ``cancelled`` from ``failed`` on AIPerfSweep.
+          // ``cancelled`` is a separate terminal bucket from ``failed`` on AIPerfSweep.
           // ``s.cancelled_runs`` arrives via the extended SweepRecord schema;
           // tolerate older API responses where the field is absent.
           const failed = s.failed_runs ?? 0;

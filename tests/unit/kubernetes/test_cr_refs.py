@@ -15,17 +15,19 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pytest import param
 
 from aiperf.kubernetes import cr_refs
 
-_CRD_MANIFEST = (
+_CRD_TEMPLATES_DIR = (
     Path(__file__).resolve().parents[3]
     / "deploy"
     / "helm"
     / "aiperf-operator"
     / "templates"
-    / "crd.yaml"
 )
+_CRD_JOB_MANIFEST = _CRD_TEMPLATES_DIR / "crd-aiperfjob.yaml"
+_CRD_SWEEP_MANIFEST = _CRD_TEMPLATES_DIR / "crd-aiperfsweep.yaml"
 
 
 class TestAIPerfJobRefs:
@@ -107,35 +109,58 @@ class TestFormatInvariants:
         assert plural.endswith("s")
 
 
-@pytest.mark.skipif(
-    not _CRD_MANIFEST.exists(),
-    reason=f"CRD manifest not found at {_CRD_MANIFEST}",
-)
+def _load_crd_manifest(manifest: Path) -> dict:
+    """Parse a Helm-templated CRD manifest into a dict.
+
+    The generated CRDs are plain YAML except for a handful of Helm expressions
+    (chart labels, the templated ``spec.image`` default); replacing every
+    ``{{ ... }}`` with a scalar placeholder yields valid YAML.
+    """
+    assert manifest.exists(), f"CRD manifest not found at {manifest}"
+    cleaned = re.sub(r"{{[^}]*}}", "PLACEHOLDER", manifest.read_text())
+    return yaml.safe_load(cleaned)
+
+
 class TestCRDManifestPinning:
-    """cr_refs must stay in sync with the Helm CRD manifest."""
+    """cr_refs must stay in sync with both generated Helm CRD manifests."""
 
-    def test_aiperf_group_matches_crd_manifest(self) -> None:
-        manifest_text = _CRD_MANIFEST.read_text()
-        # The Helm template wraps with Go template syntax; extract group via regex.
-        match = re.search(r"group:\s*([a-z0-9.\-]+)", manifest_text)
-        assert match, "CRD manifest missing group: field"
-        assert match.group(1) == cr_refs.AIPERF_JOB_GROUP
+    @pytest.mark.parametrize(
+        "manifest, expected_group",
+        [
+            param(_CRD_JOB_MANIFEST, cr_refs.AIPERF_JOB_GROUP, id="aiperfjob"),
+            param(_CRD_SWEEP_MANIFEST, cr_refs.AIPERF_SWEEP_GROUP, id="aiperfsweep"),
+        ],
+    )  # fmt: skip
+    def test_group_matches_crd_manifest(
+        self, manifest: Path, expected_group: str
+    ) -> None:
+        doc = _load_crd_manifest(manifest)
+        assert doc["spec"]["group"] == expected_group
 
-    def test_aiperf_plural_matches_crd_manifest(self) -> None:
-        manifest_text = _CRD_MANIFEST.read_text()
-        match = re.search(r"plural:\s*([a-z0-9\-]+)", manifest_text)
-        assert match, "CRD manifest missing plural: field"
-        assert match.group(1) == cr_refs.AIPERF_JOB_PLURAL
+    @pytest.mark.parametrize(
+        "manifest, expected_plural",
+        [
+            param(_CRD_JOB_MANIFEST, cr_refs.AIPERF_JOB_PLURAL, id="aiperfjob"),
+            param(_CRD_SWEEP_MANIFEST, cr_refs.AIPERF_SWEEP_PLURAL, id="aiperfsweep"),
+        ],
+    )  # fmt: skip
+    def test_plural_matches_crd_manifest(
+        self, manifest: Path, expected_plural: str
+    ) -> None:
+        doc = _load_crd_manifest(manifest)
+        assert doc["spec"]["names"]["plural"] == expected_plural
 
-    def test_aiperf_version_matches_crd_manifest(self) -> None:
+    @pytest.mark.parametrize(
+        "manifest, expected_version",
+        [
+            param(_CRD_JOB_MANIFEST, cr_refs.AIPERF_JOB_VERSION, id="aiperfjob"),
+            param(_CRD_SWEEP_MANIFEST, cr_refs.AIPERF_SWEEP_VERSION, id="aiperfsweep"),
+        ],
+    )  # fmt: skip
+    def test_version_served_by_crd_manifest(
+        self, manifest: Path, expected_version: str
+    ) -> None:
         """The CRD declares its served versions under spec.versions[*].name."""
-        manifest_text = _CRD_MANIFEST.read_text()
-        # Strip Helm template braces so yaml.safe_load can parse.
-        cleaned = re.sub(r"{{[^}]*}}", "PLACEHOLDER", manifest_text)
-        try:
-            doc = yaml.safe_load(cleaned)
-        except yaml.YAMLError:
-            pytest.skip("CRD manifest uses Helm templating that can't be stripped")
-        versions = doc.get("spec", {}).get("versions", [])
-        names = [v.get("name") for v in versions]
-        assert cr_refs.AIPERF_JOB_VERSION in names
+        doc = _load_crd_manifest(manifest)
+        names = [v.get("name") for v in doc["spec"]["versions"]]
+        assert expected_version in names

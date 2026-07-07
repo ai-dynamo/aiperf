@@ -9,7 +9,7 @@ computes actual CPU cores consumed per process and per service type.
 
 Usage:
     # Against a real or mock server:
-    uv run python scripts/measure_cpu_usage.py -- \
+    uv run python tools/measure_cpu_usage.py -- \
         aiperf profile -m Qwen/Qwen3-0.6B --concurrency 50 \
         --url localhost:8765 --benchmark-duration 30 --streaming \
         --osl 128 --isl 512 --workers-max 16 --record-processors 4 \
@@ -17,11 +17,12 @@ Usage:
         --ui simple
 
     # Or with env var to suppress event loop health spam:
-    AIPERF_SERVICE_EVENT_LOOP_HEALTH_ENABLED=false uv run python scripts/measure_cpu_usage.py -- ...
+    AIPERF_SERVICE_EVENT_LOOP_HEALTH_ENABLED=false uv run python tools/measure_cpu_usage.py -- ...
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import subprocess
@@ -311,41 +312,38 @@ def print_cpu_report(procs: list[ProcessInfo]) -> None:
 
 
 def main() -> None:
-    # Split args on "--"
-    if "--" in sys.argv:
-        idx = sys.argv.index("--")
-        aiperf_args = sys.argv[idx + 1 :]
+    # Split argv on the first "--"; everything after it is the aiperf command
+    # to launch, everything before it belongs to this script.
+    argv = sys.argv[1:]
+    if "--" in argv:
+        idx = argv.index("--")
+        own_args, aiperf_args = argv[:idx], argv[idx + 1 :]
     else:
-        # Default demo command
-        aiperf_args = [
-            "aiperf",
-            "profile",
-            "-m",
-            "Qwen/Qwen3-0.6B",
-            "--concurrency",
-            "50",
-            "--url",
-            "localhost:8765",
-            "--benchmark-duration",
-            "30",
-            "--streaming",
-            "--osl",
-            "128",
-            "--isl",
-            "512",
-            "--workers-max",
-            "16",
-            "--record-processors",
-            "4",
-            "--no-gpu-telemetry",
-            "--no-server-metrics",
-            "--num-dataset-entries",
-            "500",
-            "--ui",
-            "simple",
-        ]
+        own_args, aiperf_args = argv, []
 
-    procs = run_and_measure(aiperf_args)
+    parser = argparse.ArgumentParser(
+        prog="tools/measure_cpu_usage.py",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=1.0,
+        help="Seconds between /proc/[pid]/stat samples (default: 1.0).",
+    )
+    args = parser.parse_args(own_args)
+
+    if not aiperf_args:
+        parser.print_help(sys.stderr)
+        print(
+            "\nerror: no benchmark command given; "
+            "pass the aiperf invocation after '--'",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    procs = run_and_measure(aiperf_args, poll_interval=args.poll_interval)
     print_cpu_report(procs)
 
 

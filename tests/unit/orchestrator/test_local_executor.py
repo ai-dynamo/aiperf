@@ -415,7 +415,7 @@ async def test_stale_parent_env_headers_not_forwarded_when_run_has_none(
     """REGRESSION-LOCK: a stale ``AIPERF_INJECTED_HEADERS`` in the parent
     shell must not leak into a child run that has no sensitive headers.
 
-    Reproduced on PR #982 by ajcasagrande: parent env carried
+    Reproduction: parent env carried
     ``AIPERF_INJECTED_HEADERS={"Authorization":"Bearer stale-parent-secret"}``;
     the child run configured only ``X-Trace-Id`` (non-sensitive). Pre-fix
     the subprocess overlay still applied the stale Authorization onto

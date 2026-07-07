@@ -24,7 +24,6 @@ class TestResourceSettingsToK8sResources:
         "setting_attr,cpu,memory",
         [
             param("SYSTEM_CONTROLLER", "75m", "192Mi", id="system_controller"),
-            param("WORKER_MANAGER", "50m", "192Mi", id="worker_manager"),
             param("TIMING_MANAGER", "50m", "192Mi", id="timing_manager"),
             param("DATASET_MANAGER", "50m", "256Mi", id="dataset_manager"),
             param("RECORDS_MANAGER", "75m", "256Mi", id="records_manager"),
@@ -71,7 +70,6 @@ class TestK8sEnvironmentControllerContainers:
         "setting_attr,cpu,memory",
         [
             param("SYSTEM_CONTROLLER", "75m", "192Mi", id="system_controller"),
-            param("WORKER_MANAGER", "50m", "192Mi", id="worker_manager"),
             param("TIMING_MANAGER", "50m", "192Mi", id="timing_manager"),
             param("DATASET_MANAGER", "50m", "256Mi", id="dataset_manager"),
             param("RECORDS_MANAGER", "75m", "256Mi", id="records_manager"),
@@ -171,7 +169,6 @@ class TestPodResourceEnvOverrides:
         """Controller services should expose per-container resource settings."""
         for name in [
             "SYSTEM_CONTROLLER",
-            "WORKER_MANAGER",
             "TIMING_MANAGER",
             "DATASET_MANAGER",
             "RECORDS_MANAGER",
@@ -311,7 +308,6 @@ class TestK8sEnvironmentAllSettings:
         "setting_name",
         [
             param("SYSTEM_CONTROLLER", id="system_controller"),
-            param("WORKER_MANAGER", id="worker_manager"),
             param("TIMING_MANAGER", id="timing_manager"),
             param("DATASET_MANAGER", id="dataset_manager"),
             param("RECORDS_MANAGER", id="records_manager"),
@@ -336,7 +332,6 @@ class TestK8sEnvironmentAllSettings:
         "resource_setting",
         [
             param(K8sEnvironment.SYSTEM_CONTROLLER, id="system_controller"),
-            param(K8sEnvironment.WORKER_MANAGER, id="worker_manager"),
             param(K8sEnvironment.TIMING_MANAGER, id="timing_manager"),
             param(K8sEnvironment.DATASET_MANAGER, id="dataset_manager"),
             param(K8sEnvironment.RECORDS_MANAGER, id="records_manager"),

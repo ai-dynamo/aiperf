@@ -7,7 +7,7 @@ Runs the full ``aggregate_sweep_and_export`` pipeline against synthetic
 ``RunResult``s so the post-process hook is exercised through real plan/config
 plumbing rather than a mocked surface. ``variation_values`` and
 ``swept_param`` use envelope-prefixed paths to mirror what recipes actually
-emit on this branch (``phases.profiling.concurrency``).
+emit (``phases.profiling.concurrency``).
 """
 
 from __future__ import annotations

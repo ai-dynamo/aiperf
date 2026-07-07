@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Migrating K8s Resources from Pre-Plan-C Shapes
+# Migrating K8s Resources to the Unified Spec Shape
 
-After Plan C, AIPerfJob and AIPerfSweep CRDs share a flat envelope spec shape (Plan A) and differ only by the `kind:` line and whether `spec.sweep` is set.
+AIPerfJob and AIPerfSweep CRDs now share a single flat envelope spec shape and differ only by the `kind:` line and whether `spec.sweep` is set. This guide migrates CRs from the legacy shapes — embedded `benchmark.sweep` blocks, `template:`-wrapped AIPerfSweep specs, and `multi_run.adaptive_search` — onto the unified shape.
 
 ## Single benchmark — old vs. new
 
@@ -99,9 +99,9 @@ spec:
 
 `failedRuns` no longer counts cancelled children. If you have automation, dashboards, or watch loops that read `failedRuns` to detect "did anything not succeed," you must update them.
 
-**Before** (pre-Plan-C): `failedRuns` bucketed every non-success terminal child — `Failed`, `PartiallyFailed`, **and** `Cancelled` — into a single count.
+**Before** (legacy): `failedRuns` bucketed every non-success terminal child — `Failed`, `PartiallyFailed`, **and** `Cancelled` — into a single count.
 
-**After** (Plan C): `failedRuns` only counts `Failed` and `PartiallyFailed` children. Cancelled children move to a new `runStates.cancelled` count. The full breakdown is exposed under `status.runStates`:
+**After** (unified): `failedRuns` only counts `Failed` and `PartiallyFailed` children. Cancelled children move to a new `runStates.cancelled` count. The full breakdown is exposed under `status.runStates`:
 
 | `status.runStates` field | Source child phases (case-insensitive) |
 |---|---|

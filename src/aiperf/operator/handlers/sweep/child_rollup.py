@@ -181,8 +181,8 @@ async def on_child_phase_transition(
             # aggregate into runs_index so analytics queries hit the index
             # rather than re-reading aggregate.json on every request.
             # Underscore-internal _index_sweep_from_disk is reused here as
-            # the canonical "ingest one sweep epoch" entry point — see
-            # plan 2026-04-29-fast-job-sweep-index.md Task 8 Step 4.
+            # the canonical "ingest one sweep epoch" entry point rather than
+            # duplicating the aggregate-walk logic.
             await _ingest_sweep_aggregate(namespace, sweep_name)
             return
         max_total_runs = (parent_cr or {}).get("maxTotalRuns")

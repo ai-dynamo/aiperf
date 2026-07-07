@@ -10,7 +10,7 @@ columns scaled by duration — then measures deep memory with pympler and
 compares against the estimator's predictions.
 
 Usage:
-    uv run python -m aiperf.analysis.calibrate_memory_estimates
+    uv run python tools/calibrate_memory_estimates.py
 """
 
 from __future__ import annotations

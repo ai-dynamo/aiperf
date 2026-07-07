@@ -237,8 +237,6 @@ navigation:
     path: kubernetes/adaptive-search.md
   - page: Parameter Sweeps on Kubernetes
     path: kubernetes/sweeps.md
-  - page: AIPerfJob Status Subresource (AIP-0002)
-    path: kubernetes/aip-0002-status.md
   - page: User-Defined Output Files
     path: kubernetes/user-files.md
   - page: AI-Assisted Deployment Guide

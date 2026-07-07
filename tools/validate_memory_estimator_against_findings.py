@@ -23,8 +23,8 @@ estimator's over-prediction at those cells is appropriate. We treat them
 as "expected loose" rather than failures.
 
 Usage:
-    uv run python -m aiperf.analysis.validate_memory_estimator_against_findings
-    uv run python -m aiperf.analysis.validate_memory_estimator_against_findings --max-error-ratio 1.5
+    uv run python tools/validate_memory_estimator_against_findings.py
+    uv run python tools/validate_memory_estimator_against_findings.py --max-error-ratio 1.5
 """
 
 from __future__ import annotations

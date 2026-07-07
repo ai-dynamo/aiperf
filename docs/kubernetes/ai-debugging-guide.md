@@ -67,7 +67,7 @@ phase == "Running" AND health == "failing"
   -> Go to [Crash Loop](#crash-loop).
 
 phase == "Running" AND health == "degraded"
-  -> Go to [OOM Kills](#oom-kills).
+  -> Go to [OOM Kills](#problem-oom-kills).
 
 phase == "Running" AND health == "stalled"
   -> Go to [Stalled Benchmark](#stalled-benchmark).
@@ -258,7 +258,7 @@ for c in pod['status'].get('containerStatuses', []):
 
 | Exit code | Meaning | Fix |
 |---|---|---|
-| 137 | SIGKILL (OOM or external kill) | Increase memory limits. See [OOM Kills](#oom-kills). |
+| 137 | SIGKILL (OOM or external kill) | Increase memory limits. See [OOM Kills](#problem-oom-kills). |
 | 1 | Application error | Read the logs. Common: bad config, missing model, endpoint unreachable. |
 | 2 | Python syntax/import error | Image may be wrong version. Verify `--image`. |
 

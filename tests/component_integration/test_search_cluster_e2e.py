@@ -80,9 +80,9 @@ def _benchmark() -> dict:
 
 
 def _sweep_cr_with_adaptive_search() -> dict:
-    """Schema-2.0 / Plan-C shape: spec.{benchmark, sweep, multi_run, ...}.
+    """Schema-2.0 flat-envelope shape: spec.{benchmark, sweep, multi_run, ...}.
 
-    Pre-Plan-C used `template.spec.benchmark` and `multi_run.adaptive_search`;
+    The legacy shape used `template.spec.benchmark` and `multi_run.adaptive_search`;
     those wrappers are gone. Adaptive search now lives on the envelope `sweep:`
     block as `type: adaptive_search`.
     """

@@ -59,7 +59,7 @@ async def test_fetch_returns_count_when_pointer_write_raises_oserror(
 
     with caplog.at_level("WARNING", logger=mod.logger.name):
         count = await fetch_sweep_aggregate_to_disk(
-            sweep_name="ajc-sweep-conc-may5",
+            sweep_name="sweep-conc-demo",
             namespace="aiperf-benchmarks",
             epoch="1778027124",
             base_dir=tmp_path,
@@ -92,7 +92,7 @@ async def test_fetch_returns_count_on_happy_path(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(mod, "ProgressClient", lambda *a, **kw: fake_progress_client)
 
     count = await fetch_sweep_aggregate_to_disk(
-        sweep_name="ajc-sweep-conc-may5",
+        sweep_name="sweep-conc-demo",
         namespace="aiperf-benchmarks",
         epoch="1778027124",
         base_dir=tmp_path,
@@ -100,7 +100,7 @@ async def test_fetch_returns_count_on_happy_path(tmp_path: Path, monkeypatch) ->
     assert count == 2
 
     pointer = (
-        tmp_path / "aiperf-benchmarks" / "sweeps" / "ajc-sweep-conc-may5" / "latest.txt"
+        tmp_path / "aiperf-benchmarks" / "sweeps" / "sweep-conc-demo" / "latest.txt"
     )
     assert pointer.exists()
     assert pointer.read_text() == "1778027124"
@@ -127,7 +127,7 @@ async def test_fetch_returns_zero_when_sidecar_unreachable(
     monkeypatch.setattr(mod, "ProgressClient", lambda *a, **kw: fake_progress_client)
 
     count = await fetch_sweep_aggregate_to_disk(
-        sweep_name="ajc-sweep-conc-may5",
+        sweep_name="sweep-conc-demo",
         namespace="aiperf-benchmarks",
         epoch="1778027124",
         base_dir=tmp_path,
@@ -159,7 +159,7 @@ async def test_fetch_returns_zero_when_no_files_listed(
     )
 
     count = await fetch_sweep_aggregate_to_disk(
-        sweep_name="ajc-sweep-conc-may5",
+        sweep_name="sweep-conc-demo",
         namespace="aiperf-benchmarks",
         epoch="1778027124",
         base_dir=tmp_path,

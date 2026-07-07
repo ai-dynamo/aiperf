@@ -5,7 +5,7 @@
 
 Closes the canonical-formulation gap to GH issue #883: maximizes goodput
 under simultaneous TTFT + TPOT + E2E per-request SLOs with a configurable
-attainment fraction (default 0.95). Targets the post-merge
+attainment fraction (default 0.95). Targets the
 ``AdaptiveSearchSweep`` shape with nested ``Objective``.
 """
 

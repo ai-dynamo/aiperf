@@ -366,11 +366,11 @@ search_planner:
     One-to-one mapping per benchmark run.
 
 # =============================================================================
-# Accumulator Category (branch-only / not yet wired)
+# Accumulator Category (not yet wired)
 # =============================================================================
-# Accumulators and stream exporters are the records-pipeline rewrite shipped
-# on the ajc/k8s-new branch but not yet wired into the production records
-# path. The categories are registered (empty) so the orphan modules under
+# Accumulators and stream exporters are a records-pipeline rewrite that is
+# not yet wired into the production records path. The categories are
+# registered (empty) so the orphan modules under
 # aiperf.metrics.accumulator* and aiperf.records.records_manager_* can import
 # AccumulatorType / StreamExporterType cleanly.
 

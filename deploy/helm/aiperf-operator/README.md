@@ -19,7 +19,7 @@ All values are documented inline in [`values.yaml`](./values.yaml). Common overr
 
 | Value | Purpose |
 |---|---|
-| `image.repository` / `image.tag` | Operator image (defaults to `nvcr.io/nvidia/aiperf:<appVersion>`). Override `image.tag` for dev builds — it automatically propagates to `AIPERF_DEFAULT_IMAGE` and the CRD schema default. |
+| `image.repository` / `image.tag` | Operator image (defaults to `nvcr.io/nvidia/aiperf:<appVersion>`). Override `image.tag` for dev builds — it automatically propagates to the CRD schema default for `spec.image`. |
 | `defaults.image` | Override the benchmark-pod image independently of the operator image. Leave empty to derive from `image.repository`/`image.tag`. |
 | `operator.watchNamespaces` | Namespaces to watch for `AIPerfJob` CRs. Empty list (default) watches all namespaces. |
 | `benchmarkNamespace.name` / `.create` | Namespace where chart creates `AIPerfJob` RBAC (and optionally the namespace itself). |
@@ -86,5 +86,5 @@ Hook pods have `helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,
 | `helm test` times out / fails on fresh install | `tests.image` not pullable (airgapped / proxied cluster) | Preload with `kind load docker-image alpine/k8s:1.33.11 --name <cluster>` or `docker save` → node import; or override `tests.image` to a reachable image with `kubectl` + `curl`. |
 | `invalid ownership metadata` on reinstall | Previous uninstall kept the CRD/namespace with the old release's metadata | See [Uninstall + reinstall behavior](#uninstall--reinstall-behavior). |
 | Operator pod stuck `ImagePullBackOff` | `image.repository` / `image.tag` not reachable from the cluster | Check `imagePullSecrets`; preload with `kind load docker-image` on kind clusters. |
-| `AIPERF_DEFAULT_IMAGE` and operator image differ | `defaults.image` set explicitly to a different image | Either unset `defaults.image` (empty → computed from `image.*`) or set both to match. |
+| Benchmark-pod image (CRD `spec.image` default) and operator image differ | `defaults.image` set explicitly to a different image | Either unset `defaults.image` (empty → computed from `image.*`) or set both to match. |
 | `helm test --logs` returns `unable to get pod logs` | Previous chart versions annotated test RBAC as `helm.sh/hook: test`, causing Helm to try fetching logs for non-Pod resources | Fixed in current chart — test RBAC is a regular resource. No action on a fresh install. |

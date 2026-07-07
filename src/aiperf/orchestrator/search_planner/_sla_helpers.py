@@ -121,10 +121,10 @@ def _diagnose_unmeasurable(
     Distinguishes the three silent paths that previously all produced
     ``observed: null`` with no log: (a) no successful trials, (b) metric tag
     absent from every run's ``summary_metrics``, (c) metric present but the
-    requested stat field is ``None`` on every run. The third case is the one
-    that bit ``ajc-sweep-conc-may5`` on DGX 2026-05-06 — the planner read
-    ``run.summary_metrics["time_to_first_token"].p95`` and got ``None`` even
-    though the file on disk had a populated ``time_to_first_token`` entry,
+    requested stat field is ``None`` on every run. The third case is the
+    subtlest: the planner reads e.g.
+    ``run.summary_metrics["time_to_first_token"].p95`` and gets ``None`` even
+    though the file on disk has a populated ``time_to_first_token`` entry,
     just without the ``p95`` percentile.
 
     ``all_results`` is the full per-iteration result list (failed + succeeded);

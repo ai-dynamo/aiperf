@@ -3084,7 +3084,7 @@ select, input {
 }
 
 /* ============================================================
- * Wave 2 — job-detail restyle
+ * Job-detail page — KPI rail
  * ============================================================ */
 
 /* Hero (3) + Secondary (4) KPI rail wrap. Hero tiles get the large
@@ -3150,7 +3150,7 @@ select, input {
 .metric-trend--bad  { color: var(--cat-latency); }
 
 /* ============================================================
- * Wave 2 — split-pane layout, identity bar, rail, drawer chrome
+ * Job-detail page — split-pane layout, identity bar, rail, drawer chrome
  * ============================================================ */
 
 .job-detail__body {
@@ -3370,7 +3370,7 @@ select, input {
 }
 
 /* ============================================================
- * Wave 2 — Artifacts card
+ * Job-detail page — Artifacts card
  * ============================================================ */
 
 .artifacts-card {

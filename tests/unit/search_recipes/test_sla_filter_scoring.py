@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for SLA-aware BO scoring in BayesianSearchPlanner.
 
-Phase 2 of the search-recipes feature: SLA filters add a soft penalty to the
-loss told to skopt and flip ``SearchIteration.feasible`` to False when the
+Phase 2 of the search-recipes feature: SLA filters feed the Optuna sampler's
+constraint signal and flip ``SearchIteration.feasible`` to False when the
 iteration's averaged constraint metric violates a filter or is unmeasurable.
 """
 
@@ -13,10 +13,9 @@ from typing import Any
 
 import pytest
 
-# Branch's BayesianSearchPlanner subclasses OptunaSearchPlanner so the
-# ``bo`` extra (skopt) is no longer required; the helper test exists to
-# pin observable behavior (history feasibility + objective values) rather
-# than internal sampler internals.
+# BayesianSearchPlanner subclasses OptunaSearchPlanner; these tests pin
+# observable behavior (history feasibility + objective values) rather
+# than sampler internals.
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import (

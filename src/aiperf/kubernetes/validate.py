@@ -28,7 +28,8 @@ EXPECTED_API_VERSION = AIPERF_API_VERSION
 KIND_AIPERFJOB = "AIPerfJob"
 KIND_AIPERFSWEEP = "AIPerfSweep"
 SUPPORTED_KINDS: frozenset[str] = frozenset({KIND_AIPERFJOB, KIND_AIPERFSWEEP})
-# Back-compat: pre-Plan-C callers expect a single EXPECTED_KIND constant.
+# Back-compat: callers that predate AIPerfSweep support expect a single
+# EXPECTED_KIND constant.
 EXPECTED_KIND = KIND_AIPERFJOB
 K8S_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$")
 K8S_NAME_MAX_LENGTH = 253

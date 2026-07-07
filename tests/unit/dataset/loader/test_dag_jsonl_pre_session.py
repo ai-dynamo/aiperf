@@ -55,7 +55,7 @@ def test_pre_session_spawns_desugars_to_branch_with_dispatch_timing_pre(
     branch = root.branches[0]
     assert branch.branch_id == "root:pre"
     assert branch.mode == ConversationBranchMode.SPAWN
-    # is_background was renamed to dispatch_timing="pre" in cp-main-sync.
+    # is_background was renamed to dispatch_timing="pre".
     assert branch.dispatch_timing == "pre"
     assert branch.child_conversation_ids == ["early_child"]
     # Attached to turn 0's branch_ids.

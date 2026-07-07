@@ -24,6 +24,7 @@ from aiperf.config.sweep import (
     SweepVariation,
 )
 from aiperf.config.sweep.multi_run import ConvergenceConfig, MultiRunConfig
+from aiperf.kubernetes.sweep_models import FailurePolicy
 
 _MINIMAL_CONFIG_KWARGS = {
     "models": ["test-model"],
@@ -497,10 +498,6 @@ class TestBenchmarkPlanSweepAttachments:
 
     def test_construct_with_failure_policy_and_convergence_round_trips(self) -> None:
         """Constructor accepts failure_policy + multi_run.convergence."""
-        FailurePolicy = pytest.importorskip(
-            "aiperf.kubernetes.sweep_models", reason="kubernetes module not ported"
-        ).FailurePolicy
-
         config = _make_benchmark_config()
         fp = FailurePolicy(on_child_failure="abort", max_failures=2)
         mr = MultiRunConfig(
@@ -523,10 +520,6 @@ class TestBenchmarkPlanSweepAttachments:
 
     def test_assigning_failure_policy_after_construction_does_not_raise(self) -> None:
         """Plain assignment must not raise."""
-        FailurePolicy = pytest.importorskip(
-            "aiperf.kubernetes.sweep_models", reason="kubernetes module not ported"
-        ).FailurePolicy
-
         config = _make_benchmark_config()
         plan = BenchmarkPlan(
             configs=[config],

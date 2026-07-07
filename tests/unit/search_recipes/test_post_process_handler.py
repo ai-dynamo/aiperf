@@ -4,7 +4,7 @@
 """Unit tests for built-in post-process handlers.
 
 Tests the handlers' ``process()`` methods directly against synthetic sweep
-aggregates. Recipes on this branch emit envelope-prefixed swept_param keys
+aggregates. Recipes emit envelope-prefixed swept_param keys
 (``phases.profiling.concurrency`` etc.); fixtures here mirror that
 so they reflect what real recipes feed into the hook.
 """

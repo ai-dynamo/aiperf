@@ -886,6 +886,6 @@ aiperf profile --concurrency 10,20,30,40 --num-profile-runs 5 [other options]
 For more details, see:
 - [Sweep Aggregates API Reference](../api/sweep-aggregates.md) - Complete data format documentation
 - [Multi-Run Confidence](./multi-run-confidence.md) - Understanding confidence intervals
-- [Paired ISL/OSL via shorthand `dataset:`](./sweeps.md#paired-islosl-via-shorthand-dataset) - Terse syntax for paired input/output-length scenarios
+- [Paired ISL/OSL via Scenarios](./sweeps.md#paired-islosl-via-scenarios) - Terse syntax for paired input/output-length scenarios
 - [CLI Options](../cli-options.md) - Full parameter reference
 - [Metrics Reference](../metrics-reference.md) - Detailed metric descriptions

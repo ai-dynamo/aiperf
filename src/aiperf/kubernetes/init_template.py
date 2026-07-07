@@ -6,7 +6,7 @@ Wraps any AIPerf benchmark-config YAML body (e.g. one of the bundled templates
 in ``src/aiperf/config/templates/``) in an ``AIPerfJob`` CR shell so users can
 ``kubectl apply`` or feed it to ``aiperf kube profile --config``.
 
-Post-Plan-C: ``AIPerfJobSpec`` extends ``AIPerfWorkloadSpec(AIPerfConfig,
+``AIPerfJobSpec`` extends ``AIPerfWorkloadSpec(AIPerfConfig,
 DeploymentConfig)`` -- so ``spec.*`` IS the AIPerfConfig envelope; the
 ``benchmark`` body lives at ``spec.benchmark``. The wrap is shape-aware:
 
@@ -149,7 +149,7 @@ def _is_envelope_shape(content: str) -> bool:
     Envelope-shape templates put the swept body under ``benchmark:`` and keep
     cross-variation envelope keys (``variables``, ``random_seed``, ``sweep``,
     ``multi_run``) plus shorthand aliases (``model``, ``dataset``) at the top
-    level. Bundled AIPerf templates are all envelope-shape post-Plan-A.
+    level. Bundled AIPerf templates are all envelope-shape.
 
     Returns False on parse failure (treated as flat for wrap purposes; the
     apiserver will reject the resulting CR with a more specific error).

@@ -193,9 +193,8 @@ class K8sChildJobExecutor(RunExecutor):
     def _build_child_spec(self, run: BenchmarkRun) -> dict[str, Any]:
         """Build a child AIPerfJob spec from the parent AIPerfSweep + this run.
 
-        After Plan A + Plan C, the parent AIPerfSweep CR carries the flat
-        envelope shape (no `template` wrapping). The child AIPerfJob spec
-        gets:
+        The parent AIPerfSweep CR carries the flat envelope shape (no
+        `template` wrapping). The child AIPerfJob spec gets:
           - All deployment fields (image, podTemplate, resources, ...) and
             inheritable envelope fields (multi_run, variables, random_seed)
             inherited verbatim from the parent.
@@ -781,19 +780,18 @@ class K8sChildJobExecutor(RunExecutor):
         Why not the child's results-sidecar? The operator deletes the
         child JobSet on success (``_maybe_delete_jobset_after_success``),
         which tears down the controller pod and its sidecar. Any in-flight
-        fallback then hits ``Connect failed`` or ``Name or service not known``,
-        which is exactly the failure mode that broke ``ajc-sweep-conc-may5``
-        on 2026-05-05. The operator's PVC-backed API is the durable
+        fallback then hits ``Connect failed`` or ``Name or service not known``
+        and loses the metrics. The operator's PVC-backed API is the durable
         alternative — same JSON, no race.
 
         Example:
             >>> child = {
             ...     "metadata": {"namespace": "aiperf-benchmarks",
-            ...                  "name": "ajc-sweep-conc-may5-v00-t0"},
+            ...                  "name": "sweep-conc-demo-v00-t0"},
             ...     "status": {"runEpoch": 1778027130},
             ... }
             >>> # builds: http://aiperf-operator.aiperf-system:8081/api/v1/
-            >>> #         results/aiperf-benchmarks/ajc-sweep-conc-may5-v00-t0/
+            >>> #         results/aiperf-benchmarks/sweep-conc-demo-v00-t0/
             >>> #         runs/1778027130/profile_export_aiperf.json
         """
         from aiperf.common.models.export_models import JsonMetricResult

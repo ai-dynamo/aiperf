@@ -3,15 +3,16 @@
 #
 # CRD release workflow.
 #
-# Regenerates the AIPerfJob CRD from the Pydantic config model and publishes
-# a standalone, non-Helm-templated CRD YAML as:
-#   - a workflow artifact (always), and
-#   - a release asset attached to the pushed tag (on `v*.*.*` tag push only).
+# Regenerates the AIPerfJob and AIPerfSweep CRDs from the Pydantic config
+# models and publishes standalone, non-Helm-templated CRD YAMLs as:
+#   - workflow artifacts (always), and
+#   - release assets attached to the pushed tag (on `v*.*.*` tag push only).
 #
-# `tools/generate_crd.py` emits a Helm-templated CRD directly to
-# `deploy/helm/aiperf-operator/templates/crd.yaml`. For release consumption we
-# need a plain K8s manifest with template actions resolved, so we render via
-# `helm template --show-only templates/crd.yaml`.
+# `tools/generate_crd.py` emits Helm-templated CRDs directly to
+# `deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml` and
+# `deploy/helm/aiperf-operator/templates/crd-aiperfsweep.yaml`. For release
+# consumption we need plain K8s manifests with template actions resolved, so
+# we render via `helm template --show-only templates/crd-<kind>.yaml`.
 name: "CRD Release"
 
 on:
@@ -63,50 +64,66 @@ jobs:
       - name: Render standalone CRD YAML
         run: make crd-release
 
-      - name: Stage artifact with tag-suffixed filename
+      - name: Stage artifacts with tag-suffixed filenames
         id: stage
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/release
-          out="dist/release/aiperfjob-crd-${TAG_NAME}.yaml"
-          cp dist/aiperfjob-crd.yaml "${out}"
-          echo "path=${out}" >> "$GITHUB_OUTPUT"
-          echo "name=aiperfjob-crd-${TAG_NAME}.yaml" >> "$GITHUB_OUTPUT"
-          echo "Rendered CRD:"
-          ls -la "${out}"
-          head -5 "${out}"
+          job_out="dist/release/aiperfjob-crd-${TAG_NAME}.yaml"
+          sweep_out="dist/release/aiperfsweep-crd-${TAG_NAME}.yaml"
+          cp dist/aiperfjob-crd.yaml "${job_out}"
+          cp dist/aiperfsweep-crd.yaml "${sweep_out}"
+          echo "job_path=${job_out}" >> "$GITHUB_OUTPUT"
+          echo "sweep_path=${sweep_out}" >> "$GITHUB_OUTPUT"
+          echo "Rendered CRDs:"
+          ls -la "${job_out}" "${sweep_out}"
+          head -5 "${job_out}"
+          head -5 "${sweep_out}"
 
       - name: Validate rendered CRD YAML
         shell: bash
         run: |
-          python - <<'PY'
-          import os, sys, yaml
-          path = os.environ["CRD_PATH"]
-          with open(path) as f:
-              docs = list(yaml.safe_load_all(f))
-          docs = [d for d in docs if d]
-          assert len(docs) == 1, f"expected 1 CRD doc, got {len(docs)}"
-          crd = docs[0]
-          assert crd.get("kind") == "CustomResourceDefinition", crd.get("kind")
-          assert crd["metadata"]["name"] == "aiperfjobs.aiperf.nvidia.com"
-          print("CRD YAML OK:", crd["metadata"]["name"])
+          # Run inside the uv-provisioned project env (created by
+          # `make first-time-setup`) so pyyaml is importable.
+          uv run python - <<'PY'
+          import os
+
+          import yaml
+
+          expected = {
+              os.environ["JOB_CRD_PATH"]: "aiperfjobs.aiperf.nvidia.com",
+              os.environ["SWEEP_CRD_PATH"]: "aiperfsweeps.aiperf.nvidia.com",
+          }
+          for path, expected_name in expected.items():
+              with open(path) as f:
+                  docs = [d for d in yaml.safe_load_all(f) if d]
+              assert len(docs) == 1, f"{path}: expected 1 CRD doc, got {len(docs)}"
+              crd = docs[0]
+              assert crd.get("kind") == "CustomResourceDefinition", (path, crd.get("kind"))
+              assert crd["metadata"]["name"] == expected_name, (path, crd["metadata"]["name"])
+              print("CRD YAML OK:", crd["metadata"]["name"])
           PY
         env:
-          CRD_PATH: ${{ steps.stage.outputs.path }}
+          JOB_CRD_PATH: ${{ steps.stage.outputs.job_path }}
+          SWEEP_CRD_PATH: ${{ steps.stage.outputs.sweep_path }}
 
-      - name: Upload CRD artifact
+      - name: Upload CRD artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.stage.outputs.name }}
-          path: ${{ steps.stage.outputs.path }}
+          name: aiperf-crds-${{ env.TAG_NAME }}
+          path: |
+            ${{ steps.stage.outputs.job_path }}
+            ${{ steps.stage.outputs.sweep_path }}
           retention-days: 90
 
-      - name: Attach CRD to GitHub release
+      - name: Attach CRDs to GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.stage.outputs.path }}
+          files: |
+            ${{ steps.stage.outputs.job_path }}
+            ${{ steps.stage.outputs.sweep_path }}
           fail_on_unmatched_files: true
 
       - name: Write job summary
@@ -117,8 +134,8 @@ jobs:
             echo "## CRD release"
             echo ""
             echo "- Tag label: \`${TAG_NAME}\`"
-            echo "- Source: Helm-rendered (\`helm template --show-only templates/crd.yaml\`)"
-            echo "- Artifact: \`${{ steps.stage.outputs.name }}\` (90 day retention)"
+            echo "- Source: Helm-rendered (\`helm template --show-only templates/crd-aiperfjob.yaml\` + \`templates/crd-aiperfsweep.yaml\`)"
+            echo "- Artifact: \`aiperf-crds-${TAG_NAME}\` (90 day retention)"
             if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
               echo "- Release attachment: enabled (tag push)"
             else

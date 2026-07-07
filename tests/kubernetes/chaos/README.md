@@ -54,7 +54,7 @@ The `ChaosInjector` helper is the single entry point for kubectl-level faults �
 
 ## Shared PID namespace
 
-Wave 0 added an opt-in `podTemplate.shareProcessNamespace` Helm chart value (also exposed via the `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` operator env) that flips `Pod.spec.shareProcessNamespace` to true on JobSet pods. With it on, `kubectl exec <pod> -c <sidecar> -- kill ...` can reach the aiperf controller/worker PID in another container of the same pod; without it, each container has its own PID namespace and `kill` can only see PID 1 (the shim). The chaos suite sets it true for pods it drives via the `operator_ready_shared_pid` fixture; the production default remains false so normal deployments don't accidentally expose cross-container process introspection. The runtime image is distroless-python with only `bash` and a busybox multicall — there's no `pkill` or `pidof`, so `ChaosInjector._kill_process_by_cmdline_fragment` walks `/proc/*/cmdline` by hand to discover the target PID before invoking `kill`.
+An opt-in `podTemplate.shareProcessNamespace` Helm chart value (also exposed via the `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` operator env) flips `Pod.spec.shareProcessNamespace` to true on JobSet pods. With it on, `kubectl exec <pod> -c <sidecar> -- kill ...` can reach the aiperf controller/worker PID in another container of the same pod; without it, each container has its own PID namespace and `kill` can only see PID 1 (the shim). The chaos suite sets it true for pods it drives via the `operator_ready_shared_pid` fixture; the production default remains false so normal deployments don't accidentally expose cross-container process introspection. The runtime image is distroless-python with only `bash` and a busybox multicall — there's no `pkill` or `pidof`, so `ChaosInjector._kill_process_by_cmdline_fragment` walks `/proc/*/cmdline` by hand to discover the target PID before invoking `kill`.
 
 ## Scenarios and how they map to operator code
 
@@ -144,7 +144,7 @@ Use `tests/kubernetes/chaos/test_chaos_api_disruption.py::test_c16_block_operato
 
 ## Bugs this suite has already surfaced
 
-All four bugs below were discovered in the 2026-04-23 v1 session and fixed in this branch:
+All four bugs below were discovered by the v1 chaos suite and have been fixed:
 
 - **Fixed:** stale `get_api` import in `src/aiperf/kubernetes/completion_signal.py` — every benchmark completion's stop hook crashed silently.
 - **Fixed:** operator self-heals an orphaned `completion-claimed` annotation via `_recover_orphaned_completion_claim` (`src/aiperf/operator/handlers/monitor.py`); `test_c5_orphaned_claim_recovers` is no longer xfail.

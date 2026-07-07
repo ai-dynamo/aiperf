@@ -8,8 +8,14 @@ ci:
     - generate-plugin-artifacts
     - generate-config-schema
     - validate-plugin-schemas
+    - validate-template-metadata
+    - validate-config-examples
+    - generate-crd
+    - helm-lint
+    - check-chart-consistency
     - test-imports
     - check-agent-files-sync
+    - check-docs-index
     - check-ergonomics
     - check-ruff-baselined
 repos:
@@ -84,7 +90,7 @@ repos:
         name: validate-template-metadata
         entry: make validate-template-metadata
         language: python
-        files: (^src/aiperf/config/templates/.*\.yaml$|^src/aiperf/config/templates\.py$|^tools/validate_template_metadata\.py$)
+        files: (^src/aiperf/config/templates/.*\.(py|yaml)$|^tools/validate_template_metadata\.py$)
         pass_filenames: false
         args: []
       - id: validate-config-examples
@@ -105,7 +111,7 @@ repos:
         name: generate-crd
         entry: make generate-crd
         language: python
-        files: (^src/aiperf/config/.*\.py$|^src/aiperf/kubernetes/enums\.py$|^tools/generate_crd\.py$|^pyproject\.toml$)
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/operator/models\.py$|^src/aiperf/kubernetes/enums\.py$|^tools/generate_crd\.py$|^pyproject\.toml$)
         pass_filenames: false
         args: []
       - id: helm-lint

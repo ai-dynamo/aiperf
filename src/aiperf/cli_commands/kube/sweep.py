@@ -230,8 +230,8 @@ def _assemble_spec(
 ) -> dict[str, Any]:
     """Assemble the flat AIPerfSweep spec envelope (deployment + benchmark).
 
-    Plan-C: AIPerfWorkloadSpec is a flat envelope (AIPerfConfig +
-    DeploymentConfig). No `template.spec` wrapping anymore.
+    AIPerfWorkloadSpec is a flat envelope (AIPerfConfig +
+    DeploymentConfig); there is no `template.spec` wrapping.
     """
     deployment = kube_options.to_deployment_config()
     deployment_dict = deployment.model_dump(

@@ -179,8 +179,7 @@ def _convert_schema(
             merged["description"] = schema["description"]
         # Preserve sibling x-kubernetes-preserve-unknown-fields markers
         # (Pydantic emits these alongside $ref via json_schema_extra to mark
-        # narrow shorthand-accepting boundaries — see Task 4 of plan
-        # 2026-04-26-aiperfconfig-strict-crd-schema.md).
+        # narrow shorthand-accepting boundaries).
         if schema.get("x-kubernetes-preserve-unknown-fields"):
             merged["x-kubernetes-preserve-unknown-fields"] = True
         return merged
@@ -472,9 +471,9 @@ def _decorate_aiperf_config_node(node: dict[str, Any]) -> None:
 
     The cross-field rules referencing envelope-level fields
     (``parameter_sweep_same_seed`` requires ``random_seed``; dashboard UI
-    incompatible with sweeps) used to live here too, but Plan A flattened
-    the envelope so ``self.sweep`` / ``self.multiRun`` / ``self.randomSeed``
-    are no longer in scope from a ``benchmark`` node — apiserver rejects
+    incompatible with sweeps) used to live here too, but the envelope is
+    flat, so ``self.sweep`` / ``self.multiRun`` / ``self.randomSeed``
+    are not in scope from a ``benchmark`` node — apiserver rejects
     such rules at install time. Both checks remain enforced via Pydantic
     ``@model_validator`` decorators on ``AIPerfConfig`` (see
     ``validate_sweep_no_dashboard_ui`` in ``src/aiperf/config/config.py``).

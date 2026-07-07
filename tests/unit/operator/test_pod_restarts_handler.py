@@ -317,10 +317,9 @@ class TestPodRestartHandlerAdversarial:
         recreated with the SAME name, hitting restartCount=5 again, the
         second occurrence is silently skipped.
 
-        Pinning this to make the limitation visible. Fix would be to scope
-        dedup by Pod UID rather than name, OR to clear the entry when the
-        watch sees the Pod removed. Out of scope for this session — track
-        as a follow-up.
+        Pinning this to make the limitation visible. A fix would scope
+        dedup by Pod UID rather than name, OR clear the entry when the
+        watch sees the Pod removed.
         """
         meta = {
             "name": "p",

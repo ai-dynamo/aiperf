@@ -270,7 +270,7 @@ def test_load_aggregate_for_cr_skips_malformed_pareto_keeps_others(tmp_path: Pat
     all three artifacts.
     """
     base_dir = tmp_path
-    sweep_dir = base_dir / "ns" / "sweeps" / "ajc-sweep-x" / "1778027124"
+    sweep_dir = base_dir / "ns" / "sweeps" / "sweep-x" / "1778027124"
     sweep_dir.mkdir(parents=True)
     aggregate_dir = base_dir / "aggregate"
     aggregate_dir.mkdir(parents=True)
@@ -283,7 +283,7 @@ def test_load_aggregate_for_cr_skips_malformed_pareto_keeps_others(tmp_path: Pat
         {"metadata": {"num_successful_runs": 6}},
     )
 
-    bundle = _load_aggregate_for_cr(base_dir, "ns", "ajc-sweep-x", "1778027124")
+    bundle = _load_aggregate_for_cr(base_dir, "ns", "sweep-x", "1778027124")
 
     assert "parent" in bundle
     assert "confidence" in bundle

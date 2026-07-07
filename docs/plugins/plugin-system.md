@@ -233,7 +233,7 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 | 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` |
 | 2 | `plugins.yaml` | Register with class path, description, and metadata |
 | 3 | `pyproject.toml` | Add entry point: `my-package = "my_package:plugins.yaml"` |
-| 4 | Terminal | `pip install -e . && aiperf plugins endpoint my_custom` |
+| 4 | Terminal | `uv pip install -e . && aiperf plugins endpoint my_custom` |
 
 ### Minimal Endpoint Example
 
@@ -472,7 +472,7 @@ TypeNotFoundError: Type 'my_plugin' not found for category 'endpoint'.
 **Solutions**:
 1. Verify the plugin is registered in `plugins.yaml`
 2. Check the entry point is defined in `pyproject.toml`
-3. Reinstall the package: `pip install -e .`
+3. Reinstall the package in the active environment: `uv pip install -e .`
 4. Run `aiperf plugins --validate` to check for errors
 
 ### Module Import Errors

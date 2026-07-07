@@ -64,8 +64,8 @@ class SweepSummary(BaseModel):
     cancelled_runs: int = Field(
         default=0,
         description=(
-            "Sum of children in terminal ``cancelled`` phase. Plan-C separated "
-            "this from ``failed_runs`` so user-cancelled children are not "
+            "Sum of children in terminal ``cancelled`` phase. Kept separate "
+            "from ``failed_runs`` so user-cancelled children are not "
             "counted as failures. UIs gating on 'any non-success terminal' "
             "should sum ``failed_runs + cancelled_runs``."
         ),

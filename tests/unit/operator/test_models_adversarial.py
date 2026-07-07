@@ -65,7 +65,7 @@ def _benchmark_with(**overrides: object) -> dict[str, object]:
 def _job_spec(**overrides: object) -> dict[str, object]:
     """Build a minimal AIPerfJobSpec dict with optional top-level overrides."""
     baseline: dict[str, object] = {
-        "image": "nvcr.io/nvidia/aiperf:branch-ajc-k8s-post-port",
+        "image": "nvcr.io/nvidia/aiperf:custom-test-tag",
         "benchmark": _benchmark_with(),
     }
     baseline.update(overrides)
@@ -75,7 +75,7 @@ def _job_spec(**overrides: object) -> dict[str, object]:
 def _sweep_spec(**overrides: object) -> dict[str, object]:
     """Build a minimal AIPerfSweepSpec dict with optional top-level overrides."""
     baseline: dict[str, object] = {
-        "image": "nvcr.io/nvidia/aiperf:branch-ajc-k8s-post-port",
+        "image": "nvcr.io/nvidia/aiperf:custom-test-tag",
         "benchmark": _benchmark_with(),
         "sweep": deepcopy(_VALID_SWEEP),
     }

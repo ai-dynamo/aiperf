@@ -11,7 +11,7 @@ Produces:
   4. Multi-panel PNG plot
 
 Usage:
-    python scripts/analyze_profile_export.py <profile_export.jsonl> [--output-dir DIR]
+    uv run python tools/analyze_profile_export.py <profile_export.jsonl> [--output-dir DIR]
 """
 
 from __future__ import annotations

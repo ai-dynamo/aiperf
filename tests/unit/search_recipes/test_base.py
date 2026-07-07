@@ -3,10 +3,10 @@
 
 """Tests for SearchRecipe base types.
 
-Targets the post-merge shape: ``SearchRecipeOutput.adaptive_search`` is
-typed ``AdaptiveSearchSweep | None`` (not ``Any``), and ``SearchRecipeContext``
+``SearchRecipeOutput.adaptive_search`` is typed
+``AdaptiveSearchSweep | None`` (not ``Any``), and ``SearchRecipeContext``
 takes a validated ``BenchmarkConfig`` (not the deleted v1 ``CLIConfig`` or
-the ajc/k8s ``RecipeCLIConfigView`` SimpleNamespace shape).
+a SimpleNamespace config view).
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def test_search_recipe_output_accepts_sweep_parameters_only() -> None:
 def test_search_recipe_output_adaptive_search_field_is_typed_adaptive_search_sweep() -> (
     None
 ):
-    """The post-merge contract: ``adaptive_search`` is no longer ``Any | None``."""
+    """Contract: ``adaptive_search`` is ``AdaptiveSearchSweep | None``, not ``Any | None``."""
     field = SearchRecipeOutput.model_fields["adaptive_search"]
     annotation = field.annotation
     # Pydantic stores as Optional[AdaptiveSearchSweep] -> AdaptiveSearchSweep | None.

@@ -3,9 +3,8 @@
 """Tests for K8sChildJobExecutor's summary-metrics fallback path.
 
 The primary path reads ``AIPerfJob.status.summary``. When that is empty (the
-``CompletedBeforeMonitor`` race, or — as observed on 2026-05-05 with
-``ajc-sweep-conc-may5`` — a completion-handler bug that skips the summary
-write), the executor falls back to fetching ``profile_export_aiperf.json``
+``CompletedBeforeMonitor`` race, or a completion-handler bug that skips the
+summary write), the executor falls back to fetching ``profile_export_aiperf.json``
 from the operator's PVC-backed results API. The previous implementation hit
 the child controller-pod's results-sidecar, which fails after the JobSet is
 torn down.
@@ -26,7 +25,7 @@ from aiperf.sweep_controller.k8s_executor import K8sChildJobExecutor
 def _sweep_cr() -> dict[str, Any]:
     return {
         "metadata": {
-            "name": "ajc-sweep-conc-may5",
+            "name": "sweep-conc-demo",
             "namespace": "aiperf-benchmarks",
             "uid": "49a887c0-ca76-400d-9e94-5a17f26245c5",
         },
@@ -51,7 +50,7 @@ def _child(
     if run_epoch is not None:
         status["runEpoch"] = run_epoch
     return {
-        "metadata": {"name": "ajc-sweep-x-v00-t0", "namespace": "aiperf-benchmarks"},
+        "metadata": {"name": "sweep-x-v00-t0", "namespace": "aiperf-benchmarks"},
         "status": status,
     }
 
@@ -96,7 +95,6 @@ async def test_pull_summary_recovery_log_lists_metric_tags(
     SLA-filter ``observed: null`` collapse, because oncall couldn't tell
     whether the offending tag (e.g. ``time_to_first_token``) was actually
     among the 19. The fix lists tags so a single grep proves the mismatch.
-    Mirrors the DGX 2026-05-06 ``ajc-sweep-conc-may5`` debug session.
     """
     from aiperf.sweep_controller import k8s_executor as mod
 
@@ -332,7 +330,7 @@ async def test_fetch_from_operator_builds_url_with_run_epoch(monkeypatch) -> Non
     result = await _executor()._fetch_summary_from_operator(child)
 
     assert fake_session.last_url == (
-        "https://op.example:9091/api/v1/results/aiperf-benchmarks/ajc-sweep-x-v00-t0"
+        "https://op.example:9091/api/v1/results/aiperf-benchmarks/sweep-x-v00-t0"
         "/runs/1700000000/profile_export_aiperf.json"
     )
     assert "request_throughput" in result
@@ -554,6 +552,6 @@ async def test_fetch_from_operator_strips_trailing_slash_from_base_url(
         f"trailing slash leaked into URL: {fake_session.last_url}"
     )
     assert fake_session.last_url == (
-        "https://op.example:9091/api/v1/results/aiperf-benchmarks/ajc-sweep-x-v00-t0"
+        "https://op.example:9091/api/v1/results/aiperf-benchmarks/sweep-x-v00-t0"
         "/runs/1700000000/profile_export_aiperf.json"
     )

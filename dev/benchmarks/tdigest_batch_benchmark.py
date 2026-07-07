@@ -7,10 +7,10 @@ Question: how much would batching ``inter_chunk_latency`` lists across multiple
 records (instead of one ``td.update(arr)`` call per record) speed up
 ``TDigestListMetricAggregator``?
 
-The 2026-04-30 ``python-tdigest-libs-streaming-percentile`` finding shows raw
-``crick.TDigest.update(arr)`` peaks at ~12 M samples/s. AIPerf's wrapper hits
-~2.2 M samples/s end-to-end. This microbenchmark measures where the gap goes
-by varying the cross-record batch size K:
+Raw ``crick.TDigest.update(arr)`` over large batched ndarrays peaks at
+~12 M samples/s, but AIPerf's wrapper hits only ~2.2 M samples/s end-to-end.
+This microbenchmark measures where the gap goes by varying the cross-record
+batch size K:
 
 - K=1:   current behavior (one td.update + Welford combine per record)
 - K=10, 100, 1000: buffer K records, concat into one array, one td.update +

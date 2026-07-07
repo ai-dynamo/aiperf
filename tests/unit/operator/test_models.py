@@ -549,7 +549,7 @@ class TestAIPerfSweepSpecRequiresSweep:
 
 
 class TestAIPerfSweepSpecChildMetadata:
-    """spec.childMetadata is the post-Plan-C passthrough for child labels/annotations."""
+    """spec.childMetadata is the passthrough for child labels/annotations."""
 
     def _sweep_spec(self) -> dict:
         return {

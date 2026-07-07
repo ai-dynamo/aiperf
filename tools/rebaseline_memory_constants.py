@@ -24,8 +24,8 @@ deduplicated deep-size that under-counts real-world per-chunk RSS by
 ~5%.
 
 Usage:
-    uv run python -m aiperf.analysis.rebaseline_memory_constants
-    uv run python -m aiperf.analysis.rebaseline_memory_constants --tolerance 0.05
+    uv run python tools/rebaseline_memory_constants.py
+    uv run python tools/rebaseline_memory_constants.py --tolerance 0.05
 """
 
 from __future__ import annotations

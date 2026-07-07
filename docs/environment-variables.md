@@ -36,7 +36,6 @@ Root operator environment configuration. Loads from environment variables. Neste
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_DEFAULT_IMAGE` | `'nvcr.io/nvidia/aiperf:latest'` | — | Default container image for benchmark jobs |
 | `AIPERF_JOB_TIMEOUT_SECONDS` | `0` | ≥ 0 | Job timeout in seconds (0 = no timeout) |
 | `AIPERF_POD_RESTART_THRESHOLD` | `3` | ≥ 0, ≤ 100 | Pod restart count before emitting a warning event |
 | `AIPERF_METRICS_PORT` | `9090` | ≥ 0, ≤ 65535 | Port for the Prometheus /metrics endpoint exposed by the kopf operator process. Set to 0 to disable. Scraped by ServiceMonitor. |

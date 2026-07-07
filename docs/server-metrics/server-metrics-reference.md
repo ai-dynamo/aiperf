@@ -175,7 +175,7 @@ Key equivalent metrics across backends:
 
 ### Understanding Percentiles
 
-Histogram percentiles are *estimated* from bucket boundaries, not exact values. Accuracy depends on bucket granularity. See [Histogram Buckets](#histogram-buckets) for bucket definitions.
+Histogram percentiles are *estimated* from bucket boundaries, not exact values. Accuracy depends on bucket granularity. Bucket definitions are listed per metric (the **Histogram buckets:** blocks) under [Detailed Metric Definitions](#detailed-metric-definitions).
 
 ### Multiple Endpoints
 

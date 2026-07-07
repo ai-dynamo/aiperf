@@ -3,9 +3,9 @@
 
 """Shared fixtures + helpers for tests/unit/search_recipes/.
 
-Recipes on this branch consume a validated ``BenchmarkConfig`` via
-``SearchRecipeContext.benchmark_config`` (not a CLI ``CLIConfig`` view —
-that's the ajc/k8s design). The ``ctx_factory`` helper here builds a
+Recipes consume a validated ``BenchmarkConfig`` via
+``SearchRecipeContext.benchmark_config`` (not a CLI ``CLIConfig``
+view). The ``ctx_factory`` helper here builds a
 minimal valid BenchmarkConfig, lets callers toggle ``streaming`` on the
 endpoint, and stuffs ``sla_targets`` / ``sweep_overrides`` per recipe.
 """

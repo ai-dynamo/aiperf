@@ -133,7 +133,7 @@ export const completedJobs = computed(() =>
 );
 
 // Derived: non-success terminal jobs (failed, error, cancelled).
-// Per Plan-C, ``cancelled`` is a separate terminal phase from ``failed``
+// ``cancelled`` is a separate terminal phase from ``failed``
 // — keep both rolled into this signal so dashboard "Failed" tabs still
 // surface user-cancelled runs.
 export const failedJobs = computed(() =>

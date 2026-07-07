@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adversarial spec-validation tests for AIPerfSweep (flat envelope).
 
-Focuses on the strict-schema surface of the flat AIPerfSweepSpec envelope
-introduced by Plan C:
+Focuses on the strict-schema surface of the flat AIPerfSweepSpec envelope:
 
 - Distribution bounds and optional-strict type (in benchmark.datasets)
 - Sweep-axis key smuggling resistance

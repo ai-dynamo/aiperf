@@ -26,9 +26,9 @@ rules. Without Cilium (or Calico, or a real cluster whose CNI honors
 NetworkPolicy), the test cannot actually block the egress it asserts
 against, and any "passing" result would be a false positive.
 
-### The decision (option c, Wave-0)
+### The decision (option c)
 
-For Wave-0, D704 ships with `@cilium_on_kind_required` from
+D704 ships with `@cilium_on_kind_required` from
 `tests/kubernetes/chaos_common/marks.py`. When `KIND_HAS_CILIUM` is unset
 (the default), the mark expands to
 `pytest.mark.xfail(condition=True, strict=True, reason=...)`, which
@@ -102,7 +102,7 @@ time of running if 1.16.4 has aged out; the helm repo URL
 
 If neither A nor B is feasible (e.g. a developer laptop without
 permission to install Cilium and no access to a real cluster), D704
-stays xfail-skipped and the suite's effective Wave-0 coverage is
+stays xfail-skipped and the suite's effective coverage is
 9-of-10. Document this in the run report; do not silently delete the
 test.
 
@@ -190,4 +190,4 @@ uv run pytest tests/kubernetes/chaos/ tests/kubernetes/chaos_dynamo/ \
 ```
 
 See `tests/kubernetes/chaos_common/FEATURES.md` for the per-`fault_id`
-shipped/Wave-1+/deferred matrix.
+shipped/planned/deferred matrix.

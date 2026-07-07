@@ -353,7 +353,7 @@ The full list of `convergence_reason` values is unchanged from single-objective;
 
 ### Output
 
-`search_history.json` carries the same shape as single-objective, with `objective_values` becoming a length-N tuple per iteration and `best_trials` becoming the Pareto front. See [Search History API — Interpreting `best_trials`](../api/search-history.md#interpreting-best_trials) for the full schema.
+`search_history.json` carries the same shape as single-objective, with `objective_values` becoming a length-N tuple per iteration and `best_trials` becoming the Pareto front. See [Search History API — `best_trials` Section](../api/search-history.md#best_trials-section) for the full schema.
 
 ```json
 {

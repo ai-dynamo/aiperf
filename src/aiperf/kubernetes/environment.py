@@ -456,7 +456,6 @@ class _K8sEnvironment(BaseSettings):
     #   concurrency.
     # fmt: off
     SYSTEM_CONTROLLER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SYSTEM_CONTROLLER_", "75m", "192Mi"), description="SystemController container resources")
-    WORKER_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_MANAGER_", "50m", "192Mi"), description="WorkerManager container resources")
     TIMING_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("TIMING_MANAGER_", "50m", "192Mi"), description="TimingManager container resources")
     DATASET_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("DATASET_MANAGER_", "50m", "256Mi"), description="DatasetManager container resources")
     RECORDS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("RECORDS_MANAGER_", "75m", "256Mi"), description="RecordsManager container resources")

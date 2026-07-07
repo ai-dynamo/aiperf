@@ -723,7 +723,7 @@ class TestBootstrapEdgeCases:
         whole sweep ingest and 'sweep summary endpoints return zero rows'
         until the next backfill tick.
         """
-        epoch_dir = tmp_path / "ns" / "sweeps" / "ajc-sweep-x" / "1714069323"
+        epoch_dir = tmp_path / "ns" / "sweeps" / "sweep-x" / "1714069323"
         epoch_dir.mkdir(parents=True)
         agg = {
             "metadata": {"mode": "INDEPENDENT"},
@@ -762,11 +762,11 @@ class TestBootstrapEdgeCases:
         monkeypatch.setattr(runs_index, "upsert_sweep_variation", _failing_upsert)
 
         ok = await runs_index._index_sweep_from_disk(
-            "ns", "ajc-sweep-x", "1714069323", epoch_dir
+            "ns", "sweep-x", "1714069323", epoch_dir
         )
 
         assert ok == 2, "two variations succeeded → indexed"
-        rows = await runs_index.list_sweep_variations("ns", "ajc-sweep-x", "1714069323")
+        rows = await runs_index.list_sweep_variations("ns", "sweep-x", "1714069323")
         indices = sorted(r.variation_idx for r in rows)
         assert indices == [0, 2], (
             f"idx=1 raised → must be skipped; idx=0 and idx=2 must persist. got={indices}"

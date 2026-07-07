@@ -72,8 +72,6 @@ spec:
           value: {{ .Values.operator.env.monitorInitialDelay | quote }}
         - name: AIPERF_RESULTS_DIR
           value: {{ .Values.storage.mountPath | quote }}
-        - name: AIPERF_DEFAULT_IMAGE
-          value: {{ include "aiperf-operator.defaultJobImage" . | quote }}
         - name: AIPERF_JOB_TIMEOUT_SECONDS
           value: {{ .Values.operator.env.jobTimeoutSeconds | quote }}
         - name: AIPERF_POD_RESTART_THRESHOLD

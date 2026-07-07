@@ -3,7 +3,7 @@
 
 """Unit tests for the ItlSurfaceFit post-process handler.
 
-Recipes on this branch emit envelope-prefixed swept_param keys
+Recipes emit envelope-prefixed swept_param keys
 (``phases.profiling.concurrency`` etc.); fixtures here mirror that.
 """
 

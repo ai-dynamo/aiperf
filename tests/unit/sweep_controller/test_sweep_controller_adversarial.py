@@ -78,7 +78,7 @@ def _result(
 def _valid_sweep_cr() -> dict[str, object]:
     return {
         "metadata": {
-            "name": "ajc-sweep-conc-may18",
+            "name": "sweep-conc-demo",
             "namespace": "aiperf-benchmarks",
             "uid": "sweep-uid-7f2a",
         },
@@ -144,7 +144,7 @@ def _install_main_harness(
     import importlib
 
     main_mod = importlib.import_module("aiperf.sweep_controller.main")
-    monkeypatch.setenv("AIPERF_SWEEP_NAME", "ajc-sweep-conc-may18")
+    monkeypatch.setenv("AIPERF_SWEEP_NAME", "sweep-conc-demo")
     monkeypatch.setenv("AIPERF_SWEEP_NAMESPACE", "aiperf-benchmarks")
     monkeypatch.setenv("AIPERF_SWEEP_EPOCH", "1778027124")
     monkeypatch.setenv("HOSTNAME", "sweep-controller-0")
@@ -312,7 +312,7 @@ async def test_main_adaptive_search_planner_passes_planner_and_sidecar_port(
     aggregate_complete = captured["aggregation_complete"]
     assert aggregate_complete["port"] == SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT
     assert aggregate_complete["aggregate_path"] == (
-        "/api/v1/results/aiperf-benchmarks/ajc-sweep-conc-may18/aggregate"
+        "/api/v1/results/aiperf-benchmarks/sweep-conc-demo/aggregate"
     )
     assert aggregate_complete["controller_host"] == "sweep-controller-0"
 
@@ -377,7 +377,7 @@ def test_write_sweep_parent_aggregate_adaptive_results_use_true_variation_index(
 
     _write_sweep_parent_aggregate(
         base_dir=tmp_path,
-        sweep_cr={"metadata": {"namespace": "aiperf-benchmarks", "name": "ajc-bo"}},
+        sweep_cr={"metadata": {"namespace": "aiperf-benchmarks", "name": "demo-bo"}},
         spec=SimpleNamespace(model_dump=lambda mode: {"benchmark": {"models": ["m"]}}),
         results=results,
         plan=SimpleNamespace(configs=[object(), object(), object()]),
@@ -390,16 +390,16 @@ def test_write_sweep_parent_aggregate_adaptive_results_use_true_variation_index(
             tmp_path
             / "aiperf-benchmarks"
             / "sweeps"
-            / "ajc-bo"
+            / "demo-bo"
             / "1778027124"
             / "children.json"
         ).read_bytes()
     )
     children = children_doc["children"]
     assert [child["name"] for child in children] == [
-        "ajc-bo-v00-t0",
-        "ajc-bo-v00-t1",
-        "ajc-bo-v01-t0",
+        "demo-bo-v00-t0",
+        "demo-bo-v00-t1",
+        "demo-bo-v01-t0",
     ]
     assert [child["variation_index"] for child in children] == [0, 0, 1]
     assert [child["trial_index"] for child in children] == [0, 1, 0]
@@ -420,7 +420,7 @@ def test_write_sweep_parent_aggregate_single_trial_omits_trial_suffix_and_field(
 
     _write_sweep_parent_aggregate(
         base_dir=tmp_path,
-        sweep_cr={"metadata": {"namespace": "aiperf-benchmarks", "name": "ajc-grid"}},
+        sweep_cr={"metadata": {"namespace": "aiperf-benchmarks", "name": "demo-grid"}},
         spec=SimpleNamespace(model_dump=lambda mode: {"benchmark": {"models": ["m"]}}),
         results=results,
         plan=SimpleNamespace(configs=[object()]),
@@ -433,13 +433,13 @@ def test_write_sweep_parent_aggregate_single_trial_omits_trial_suffix_and_field(
             tmp_path
             / "aiperf-benchmarks"
             / "sweeps"
-            / "ajc-grid"
+            / "demo-grid"
             / "1778027124"
             / "children.json"
         ).read_bytes()
     )
     child = children_doc["children"][0]
-    assert child["name"] == "ajc-grid-v07"
+    assert child["name"] == "demo-grid-v07"
     assert child["variation_index"] == 7
     assert child["trial_index"] is None
 
@@ -452,14 +452,14 @@ def test_write_sweep_parent_aggregate_single_trial_omits_trial_suffix_and_field(
 def test_load_aggregate_for_cr_malformed_parent_and_confidence_keeps_children(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    sweep_dir = tmp_path / "aiperf-benchmarks" / "sweeps" / "ajc-sweep-x" / "1778027124"
+    sweep_dir = tmp_path / "aiperf-benchmarks" / "sweeps" / "sweep-x" / "1778027124"
     sweep_dir.mkdir(parents=True)
     aggregate_dir = tmp_path / "aggregate"
     aggregate_dir.mkdir()
     (sweep_dir / "aggregate.json").write_bytes(b'{"phase":')
     _write_json(
         sweep_dir / "children.json",
-        {"children": [{"name": "ajc-sweep-x-v00", "status": "Succeeded"}]},
+        {"children": [{"name": "sweep-x-v00", "status": "Succeeded"}]},
     )
     (aggregate_dir / "profile_export_aiperf_aggregate.json").write_bytes(b"not-json")
 
@@ -467,24 +467,22 @@ def test_load_aggregate_for_cr_malformed_parent_and_confidence_keeps_children(
         bundle = _load_aggregate_for_cr(
             tmp_path,
             "aiperf-benchmarks",
-            "ajc-sweep-x",
+            "sweep-x",
             "1778027124",
         )
 
     assert bundle == {
-        "children": {"children": [{"name": "ajc-sweep-x-v00", "status": "Succeeded"}]}
+        "children": {"children": [{"name": "sweep-x-v00", "status": "Succeeded"}]}
     }
     assert "skipping parent" in caplog.text
     assert "skipping confidence" in caplog.text
-    assert "ajc-sweep-x" in caplog.text
+    assert "sweep-x" in caplog.text
 
 
 def test_load_aggregate_for_cr_parent_only_over_budget_uses_truncation_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sweep_dir = (
-        tmp_path / "aiperf-benchmarks" / "sweeps" / "ajc-sweep-huge" / "1778027124"
-    )
+    sweep_dir = tmp_path / "aiperf-benchmarks" / "sweeps" / "sweep-huge" / "1778027124"
     _write_json(sweep_dir / "aggregate.json", {"payload": "x" * 10_000})
     monkeypatch.setattr(
         "aiperf.sweep_controller.main._AGGREGATE_INLINE_MAX_BYTES",
@@ -494,7 +492,7 @@ def test_load_aggregate_for_cr_parent_only_over_budget_uses_truncation_marker(
     bundle = _load_aggregate_for_cr(
         tmp_path,
         "aiperf-benchmarks",
-        "ajc-sweep-huge",
+        "sweep-huge",
         "1778027124",
     )
 

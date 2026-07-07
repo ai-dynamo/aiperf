@@ -1,18 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Unified chaos / fault-injection suite (Wave-5 follow-up).
+# Unified chaos / fault-injection suite.
 #
-# Runs the three chaos directories the unified plan covers:
-#   - tests/kubernetes/chaos_common/  (adapter unit tests, no cluster needed)
+# Runs the three chaos test directories:
+#   - tests/kubernetes/chaos_common/  (adapter tests, hermetic, not k8s_slow)
 #   - tests/kubernetes/chaos/         (23 legacy AIPerf scenarios, k8s_slow)
-#   - tests/kubernetes/chaos_dynamo/  (Wave-0 D-series, k8s_slow)
+#   - tests/kubernetes/chaos_dynamo/  (dynamo D-series scenarios, k8s_slow)
+#
+# The chaos_common/ adapter tests are NOT marked k8s_slow, so they run as a
+# separate pytest invocation without the marker filter; applying `-m k8s_slow`
+# to that directory would silently deselect every test in it.
 #
 # Modeled on run-chaos-tests.yml for cluster bring-up; ships as a separate
 # workflow because the unified suite covers a superset (the dynamo D-series).
-# Wave-5 follow-up to integrate with the existing k8s test matrix: a future
-# pass should reconcile run-chaos-tests.yml and this file into a single
-# matrix invocation, but they ship side-by-side for now so the legacy chaos
+# A future pass may reconcile run-chaos-tests.yml and this file into a single
+# matrix invocation, but they run side-by-side for now so the legacy chaos
 # suite keeps its existing trigger semantics.
 #
 # Triggers:
@@ -43,7 +46,7 @@ on:
   workflow_dispatch:
     inputs:
       pytest_args:
-        description: "Extra pytest args (e.g. `-k test_d101` or `--k8s-reuse-cluster`)"
+        description: "Extra pytest args for the cluster (k8s_slow) invocation (e.g. `-k test_d101` or `--k8s-reuse-cluster`)"
         type: string
         default: ""
 
@@ -57,7 +60,7 @@ permissions:
 jobs:
   chaos-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 210
     env:
       AIPERF_K8S_SHARE_PROCESS_NAMESPACE: "true"
 
@@ -110,15 +113,51 @@ jobs:
         kubectl version --client || true
         helm version || true
 
-    - name: Run unified chaos tests
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build aiperf image (amd64, from build-images GHA cache)
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: Dockerfile
+        target: runtime
+        platforms: linux/amd64
+        load: true
+        tags: aiperf:local
+        cache-from: type=gha,scope=aiperf
+      timeout-minutes: 20
+
+    - name: Build mock server image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: dev/deploy/Dockerfile.mock-server
+        platforms: linux/amd64
+        load: true
+        tags: aiperf-mock-server:latest
+        cache-from: type=gha,scope=aiperf-mock-server
+        cache-to: type=gha,scope=aiperf-mock-server,mode=max
+      timeout-minutes: 10
+
+    - name: Run chaos adapter tests (chaos_common)
+      id: pytest_common
+      shell: bash
+      run: |
+        set -o pipefail
+        # chaos_common/ is hermetic (echo-only fixture) and its tests are not
+        # marked k8s_slow — no -m filter, or everything would be deselected.
+        uv run pytest tests/kubernetes/chaos_common/ \
+          -n auto \
+          -v --tb=long
+      timeout-minutes: 15
+
+    - name: Run cluster chaos tests (chaos, chaos_dynamo)
       id: pytest
       shell: bash
       run: |
         set -o pipefail
-        # chaos_common/ is hermetic (echo-only fixture); no -m filter.
-        # chaos/ + chaos_dynamo/ require -m k8s_slow.
         uv run pytest -m k8s_slow -n auto \
-          tests/kubernetes/chaos_common/ \
           tests/kubernetes/chaos/ \
           tests/kubernetes/chaos_dynamo/ \
           -v --tb=long \
@@ -162,23 +201,18 @@ jobs:
         {
           echo "## Unified chaos tests"
           echo ""
-          if [[ "${{ steps.pytest.outcome }}" == "success" ]]; then
-            echo "Result: **passed**"
-          else
-            echo "Result: **${{ steps.pytest.outcome }}**"
+          echo "- Adapter tests (chaos_common): **${{ steps.pytest_common.outcome }}**"
+          echo "- Cluster chaos tests (chaos, chaos_dynamo): **${{ steps.pytest.outcome }}**"
+          if [[ "${{ steps.pytest_common.outcome }}" != "success" || "${{ steps.pytest.outcome }}" != "success" ]]; then
             echo ""
             echo "Diagnostics artifact: \`k8s-chaos-unified-logs-${{ github.run_id }}\` (7 day retention)"
           fi
           echo ""
           echo "- Runner: \`ubuntu-latest\`"
           echo "- Python: \`3.12\`"
-          echo "- Marker: \`k8s_slow\` (plus the unmarked chaos_common adapter tests)"
+          echo "- Markers: chaos_common unfiltered; chaos/ + chaos_dynamo/ run with \`-m k8s_slow\`"
           echo "- AIPERF_K8S_SHARE_PROCESS_NAMESPACE: \`true\`"
           echo "- KIND_HAS_CILIUM: unset (D704 expected xfail-skipped)"
-          echo ""
-          echo "Wave-5 follow-up: this workflow ships side-by-side with"
-          echo "\`run-chaos-tests.yml\` until the two are reconciled into a"
-          echo "single matrix invocation."
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Teardown Kind cluster

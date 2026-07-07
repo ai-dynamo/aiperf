@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the post-merge ``aiperf kube sweep`` CR-builder helper.
+"""Unit tests for the ``aiperf kube sweep`` CR-builder helper.
 
 Targets ``_build_sweep_cr_dict`` and ``_name_from_config_file`` in
 ``aiperf.cli_commands.kube.sweep``. The cyclopts ``@app.default`` handler
@@ -247,9 +247,9 @@ def test_build_sweep_cr_dict_adaptive_search_round_trips_with_objectives_list(
     'adaptive_search'`` with a multi-entry ``objectives: [Objective, ...]``
     list (length-1 = single-objective BO; length-N = Pareto BO).
 
-    Exercises the post-port schema where the singular ``objective`` +
-    ``algorithm`` fields were replaced by ``objectives`` and ``planner``
-    on ``AdaptiveSearchSweep``.
+    Exercises the current schema, where ``AdaptiveSearchSweep`` carries
+    ``objectives`` and ``planner`` (replacing the legacy singular
+    ``objective`` + ``algorithm`` fields).
     """
     config_file = tmp_path / "adaptive.yaml"
     config_file.write_text(

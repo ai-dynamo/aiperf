@@ -6,7 +6,7 @@ scenarios; 33 of them close real gaps in dynamo's `tests/fault_tolerance/`.
 
 ## Status
 
-Wave-0 — the 10 highest-leverage scenarios — ships here:
+The 10 highest-leverage scenarios ship here:
 D101, D104, D701, D201, D401, D803, D802, D801, D301, D704.
 
 ## Fixture composition
@@ -49,7 +49,7 @@ Two plain `async def` helpers (not fixtures) are exported from the conftest:
 
 ## Running
 
-Full Wave-0 against a kind cluster (Cilium overlay required for D704):
+Full suite against a kind cluster (Cilium overlay required for D704):
 
     uv run pytest tests/kubernetes/chaos_dynamo/ -v -m k8s_slow -n auto
 

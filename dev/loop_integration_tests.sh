@@ -3,10 +3,10 @@
 # Stops on the first failing file so it can be fixed, then rerun to continue.
 #
 # Usage:
-#   scripts/loop_integration_tests.sh                # start fresh run
-#   scripts/loop_integration_tests.sh --resume       # skip files already marked PASS
-#   scripts/loop_integration_tests.sh --from <file>  # start from a specific file
-#   scripts/loop_integration_tests.sh --reset        # clear state and start over
+#   dev/loop_integration_tests.sh                # start fresh run
+#   dev/loop_integration_tests.sh --resume       # skip files already marked PASS
+#   dev/loop_integration_tests.sh --from <file>  # start from a specific file
+#   dev/loop_integration_tests.sh --reset        # clear state and start over
 #
 # State:
 #   .loop_integration_state/passed.txt  - one path per line, files that passed

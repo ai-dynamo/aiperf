@@ -363,7 +363,7 @@ def test_crd_scalar_fields_accept_string_values_like_local_validation():
 
 
 def test_convergence_min_max_runs_bound():
-    """Convergence config moved into multiRun (Plan A); the structural
+    """Convergence config lives in multiRun; the structural
     convergence_metric/threshold fields are now flat on multiRun. The
     legacy ConvergenceConfig with min_runs/max_runs is no longer wired
     into the AIPerfSweepSpec, so the dedicated CEL bound is gone — the
@@ -420,8 +420,8 @@ def test_runtime_workers_min_lte_workers():
 
 
 def test_parameter_sweep_same_seed_no_longer_a_benchmark_scope_cel_rule():
-    # Plan A flattened the envelope: ``self.multiRun`` and ``self.randomSeed``
-    # are no longer in scope from a ``benchmark`` node, so the apiserver
+    # The envelope is flat: ``self.multiRun`` and ``self.randomSeed``
+    # are not in scope from a ``benchmark`` node, so the apiserver
     # rejects ``!has(self.multiRun) || ...`` rules attached there. The
     # ``validate_parameter_sweep_same_seed_requires_random_seed`` Pydantic
     # validator on AIPerfConfig still enforces this at submit time.

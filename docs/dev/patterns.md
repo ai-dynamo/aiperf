@@ -716,7 +716,7 @@ async def run_command(cmd: list[str], *, timeout: float | None = 60.0) -> Comman
         raw_stdout, raw_stderr = await asyncio.wait_for(
             proc.communicate(), timeout=timeout
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await terminate_process(proc)   # graceful then kill
         raise
     return CommandResult(

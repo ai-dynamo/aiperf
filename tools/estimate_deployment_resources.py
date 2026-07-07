@@ -7,8 +7,8 @@ Runs the memory estimator across common deployment scenarios and prints
 a comparison table showing per-pod and cluster-wide resource usage.
 
 Usage:
-    uv run python -m aiperf.analysis.estimate_deployment_resources
-    uv run python -m aiperf.analysis.estimate_deployment_resources --concurrency 100000
+    uv run python tools/estimate_deployment_resources.py
+    uv run python tools/estimate_deployment_resources.py --concurrency 100000
 """
 
 from __future__ import annotations

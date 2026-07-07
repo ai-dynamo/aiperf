@@ -305,7 +305,7 @@ Excerpt of what a converged run produces:
 
 Read this top-down. Three iterations made the front: at concurrency 224 the run had the lowest p99 TTFT (162.7 ms) but the lowest throughput (8910 tok/s); at concurrency 280 the run had the highest throughput on the front (9800 tok/s) at a p99 TTFT of 215.4 ms; concurrency 256 sits between them. Iteration 27's `(9905.4, 248.9)` is **dominated** by no front member on throughput, but its p99 TTFT exceeds the `threshold: 250.0` reference point only by ~1 ms; depending on whether the planner's actual threshold-based dominance check kept it, it may or may not appear on the front in your run. Trials worse than the threshold contribute zero hypervolume but are not removed from the GP.
 
-For the full schema — including how `feasible` interacts with `sla_filters`, what `feasible_count: 0` means, and the multi-objective hypervolume time-series caveats — see [Search History API → Interpreting `best_trials`](../api/search-history.md#interpreting-best_trials).
+For the full schema — including how `feasible` interacts with `sla_filters`, what `feasible_count: 0` means, and the multi-objective hypervolume time-series caveats — see [Search History API → `best_trials` Section](../api/search-history.md#best_trials-section).
 
 ### Picking a deployment point off the frontier
 

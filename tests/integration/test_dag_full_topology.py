@@ -286,8 +286,8 @@ class TestDagFullTopologyEndToEnd:
         # This profile runs with ``--workers-max 1`` so colocation is
         # structural (only one worker exists). That makes the FORK-inheritance
         # payload assertions in section C deterministic: a child can never land
-        # on a second worker and silently skip parent seeding. Sticky routing
-        # is inert on this branch, so we assert what is actually guaranteed —
+        # on a second worker and silently skip parent seeding. Sticky worker
+        # routing is currently inert, so we assert what is actually guaranteed —
         # a single-worker run keeps every DAG request on the same worker.
         worker_ids = {rec.metadata.worker_id for rec in result.raw_records}
         assert len(worker_ids) == 1, (

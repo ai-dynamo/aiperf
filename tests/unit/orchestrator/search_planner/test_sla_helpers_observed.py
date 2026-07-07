@@ -427,3 +427,11 @@ def test_project_summary_dict_to_sla_filter_end_to_end() -> None:
     assert breach is not None
     assert breach["observed"] == 40000.0  # not None
     assert breach["metric_tag"] == "time_to_first_token"
+
+
+def test_plateau_mean_epsilon_is_small_positive() -> None:
+    """The CV plateau guard floor must stay tiny: large enough to catch a
+    collapsed |mean|, small enough never to mask real metric scales."""
+    from aiperf.orchestrator.search_planner._sla_helpers import PLATEAU_MEAN_EPSILON
+
+    assert 0 < PLATEAU_MEAN_EPSILON < 1e-6

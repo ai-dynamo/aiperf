@@ -27,7 +27,7 @@ Status legend:
 - shipped — concrete `FaultInjector` lives in `injectors/`, has unit
   coverage in `chaos_common/test_*_injector.py`, and is registered by the
   `chaos_dynamo` conftest.
-- Wave-1+ — slot reserved in the spec; not implemented in this PR.
+- planned — slot reserved in the spec; not yet implemented.
 - deferred — explicitly out of scope (no current scenario needs it; will
   land when the first consumer arrives).
 
@@ -65,7 +65,7 @@ surface.
 | Capability | Owner | `fault_id` | Status |
 |---|---|---|---|
 | Restart Deployment via `kubectl rollout restart` | A | `workload.restart` | shipped |
-| Trigger rolling upgrade | B | `workload.rolling_upgrade` | Wave-1+ |
+| Trigger rolling upgrade | B | `workload.rolling_upgrade` | planned |
 | Scale Deployment to N replicas | A | `workload.scale` | shipped |
 | Set env var on Deployment | A | `workload.set_env` | shipped |
 
@@ -76,7 +76,7 @@ surface.
 | Delete CR (no wait) | A->generic | `crd.delete` | shipped |
 | Rapid double-delete | A | `crd.delete_twice` | shipped |
 | Apply invalid CR | A | `crd.apply_invalid` | shipped |
-| Patch CRD spec mid-run | C | `crd.patch` | Wave-1+ |
+| Patch CRD spec mid-run | C | `crd.patch` | planned |
 | Stamp operator-internal annotation | A | `crd.annotate` | shipped |
 
 ### 2d. Operator faults (`operator.*`)
@@ -104,10 +104,10 @@ surface.
 |---|---|---|---|
 | etcd pod kill | B+C | `store.etcd.kill` | shipped (D801) |
 | etcd network pause via Toxiproxy | C | `store.etcd.timeout` | shipped (D802) |
-| etcd bandwidth throttle | C | `store.etcd.bandwidth` | Wave-1+ |
+| etcd bandwidth throttle | C | `store.etcd.bandwidth` | planned |
 | NATS pod kill | C | `store.nats.kill` | shipped (D803) |
-| NATS partition | C | `store.nats.partition` | Wave-1+ |
-| NATS slow_close | C | `store.nats.slow_close` | Wave-1+ |
+| NATS partition | C | `store.nats.partition` | planned |
+| NATS slow_close | C | `store.nats.slow_close` | planned |
 
 ### 2g. GPU faults (`gpu.*`)
 
@@ -128,7 +128,7 @@ surface.
 | Capability | Owner | `fault_id` | Status |
 |---|---|---|---|
 | Force-close client TCP socket mid-request | B | `client.cancel_request` | shipped |
-| Token-overflow client-side input | B | `client.overflow_tokens` | Wave-1+ |
+| Token-overflow client-side input | B | `client.overflow_tokens` | planned |
 
 ### 2j. Cluster faults (`cluster.*`)
 
@@ -136,7 +136,7 @@ surface.
 |---|---|---|---|
 | Apply ResourceQuota | A | `cluster.resource_quota` | shipped |
 | NetworkPolicy egress blackhole | C | `cluster.network_policy.deny_egress` | shipped (D704; requires Cilium) |
-| RBAC role patch / revoke | C | `cluster.rbac.revoke` | Wave-1+ |
+| RBAC role patch / revoke | C | `cluster.rbac.revoke` | planned |
 
 ## 3. Fault-domain dispatch
 

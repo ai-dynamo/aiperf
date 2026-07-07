@@ -165,8 +165,8 @@ class TestChatEndpoint:
         for servers that reject a list-of-parts), with no leaked ``name``.
 
         Exercises the live ``format_payload`` -> ``build_messages`` path (the
-        pre-flatten ``_create_messages`` helper this test used to call was dead
-        code removed on this branch)."""
+        ``_create_messages`` helper this test previously called was dead
+        code and has been removed)."""
         endpoint = ChatEndpoint(model_endpoint=_wrap_model_endpoint(model_endpoint))
         turn = sample_conversations["session_1"].turns[0]
         request_info = create_request_info(config=model_endpoint, turns=[turn])

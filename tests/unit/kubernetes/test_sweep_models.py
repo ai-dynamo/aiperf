@@ -154,7 +154,7 @@ def test_aiperfsweep_spec_ttl_bounds(ttl: int, ok: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AIPerfSweepSpec is a flat envelope (Plan C). Invalid benchmarks and
+# AIPerfSweepSpec is a flat envelope. Invalid benchmarks and
 # wrong-typed deployment fields surface at submit time via Pydantic.
 # ---------------------------------------------------------------------------
 

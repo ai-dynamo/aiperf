@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for BayesianSearchPlanner.
 
-Skopt is a soft dep; tests skip when not installed. Local CI must install
-the `bo` extra.
+BayesianSearchPlanner subclasses OptunaSearchPlanner; Optuna is a core
+dependency, so these tests always run. An autouse fixture swaps the heavy
+BoTorch sampler for TPE so planner behavior is exercised without the
+optional torch/botorch stack.
 """
 
 from __future__ import annotations
@@ -12,19 +14,17 @@ from typing import Any
 
 import pytest
 
-# BayesianSearchPlanner now subclasses OptunaSearchPlanner; these tests patch
-# the sampler to TPE so they exercise planner behavior without the heavy BoTorch path.
-from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
-from aiperf.config.config import BenchmarkConfig  # noqa: E402
-from aiperf.config.sweep import (  # noqa: E402
+from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.config.config import BenchmarkConfig
+from aiperf.config.sweep import (
     AdaptiveObjective,
     AdaptiveSearchSweep,
     SweepVariation,
 )
-from aiperf.config.sweep.adaptive import SearchSpaceDimension  # noqa: E402
-from aiperf.orchestrator.aggregation.sweep import OptimizationDirection  # noqa: E402
-from aiperf.orchestrator.models import RunResult  # noqa: E402
-from aiperf.orchestrator.search_planner.bayesian import (  # noqa: E402
+from aiperf.config.sweep.adaptive import SearchSpaceDimension
+from aiperf.orchestrator.aggregation.sweep import OptimizationDirection
+from aiperf.orchestrator.models import RunResult
+from aiperf.orchestrator.search_planner.bayesian import (
     BayesianSearchPlanner,
 )
 
@@ -149,7 +149,7 @@ def test_minimize_direction_signs_correctly():
     _, v1 = planner.ask()
     planner.tell(v1, [_make_result(v1, throughput=10.0)])
     _, v2 = planner.ask()
-    # If skopt sees signed values correctly, asking again does not crash.
+    # If the sampler sees signed values correctly, asking again does not crash.
     assert v2 is not None
 
 
@@ -227,7 +227,7 @@ def test_plateau_refuses_convergence_when_mean_is_zero():
 
 def test_objective_to_loss_sign_consistency_round_trip():
     """A successful tell and a failed-fallback tell must use the same sign
-    convention so skopt's history is internally consistent."""
+    convention so the Optuna study's history is internally consistent."""
     cfg_max = _cfg(
         max_iterations=10,
         n_initial_points=1,
@@ -252,17 +252,17 @@ def test_objective_to_loss_sign_consistency_round_trip():
 
 # ----------------------------------------------------------------------------
 # Literature-driven improvements added after research-paper review.
-# Letham et al. 2017 (arXiv:1706.07094): pass per-trial observations to the GP
-# rather than pre-averaging — lets skopt's GP fit the noise term properly.
-# Hyperopt no_progress_loss / skopt HollowIterationsStopper: improvement-over-
-# best patience as a second termination signal.
+# Letham et al. 2017 (arXiv:1706.07094): pass per-trial observations to the
+# surrogate rather than pre-averaging — lets the GP fit the noise term properly.
+# Hyperopt's no_progress_loss: improvement-over-best patience as a second
+# termination signal.
 # ----------------------------------------------------------------------------
 
 
 def test_improvement_patience_stops_after_no_progress():
     """is_converged() returns True once `improvement_patience` consecutive
-    iterations show no improvement on best-so-far. Mirrors skopt's
-    HollowIterationsStopper / Hyperopt's no_progress_loss."""
+    iterations show no improvement on best-so-far. Mirrors Hyperopt's
+    no_progress_loss early-stopping heuristic."""
     cfg = _cfg(
         max_iterations=20,
         n_initial_points=1,

@@ -45,7 +45,7 @@ class SweepRecord:
     raw_status: dict[str, Any] = field(default_factory=dict)
     raw_spec: dict[str, Any] = field(default_factory=dict)
     aggregate_doc: dict[str, Any] | None = None
-    # Plan-C-era fields. ``cancelled_runs`` is its own bucket, no longer
+    # Extended sweep-status fields. ``cancelled_runs`` is its own bucket, not
     # rolled into ``failed_runs`` — UI surfaces it separately so user-
     # cancelled children don't masquerade as failures.
     cancelled_runs: int = 0
@@ -58,7 +58,7 @@ class SweepRecord:
     api_url: str | None = None
     results_available: bool = False
     # Per-state run counts rolled up from children (``status.runStates``).
-    # Keyed by Plan-C bucket: pending / running / completed / failed / cancelled.
+    # Keyed by run-state bucket: pending / running / completed / failed / cancelled.
     run_states: dict[str, int] = field(default_factory=dict)
 
 

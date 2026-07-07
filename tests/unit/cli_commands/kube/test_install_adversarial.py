@@ -61,7 +61,7 @@ _VALID_BENCHMARK: dict[str, object] = {
 
 
 class TestKubeOperatorLifecycleSurface:
-    """The CLI only exposes commands implemented on this branch."""
+    """The CLI must not register unimplemented lifecycle commands."""
 
     @pytest.mark.parametrize("subcommand", ["install", "upgrade", "uninstall"])
     def test_helm_lifecycle_subcommands_are_not_registered(

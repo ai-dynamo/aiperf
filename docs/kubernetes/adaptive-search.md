@@ -6,7 +6,8 @@
 # Adaptive Search on Kubernetes
 
 Adaptive search lets the cluster choose its own sweep points instead of
-exhausting a grid. The same `BayesianSearchPlanner` (skopt-backed) used
+exhausting a grid. The same `BayesianSearchPlanner` (Optuna-backed, with
+the Gaussian-process path supplied by BoTorch via the `[botorch]` extra) used
 in-process by `aiperf profile --search-*` runs cluster-side when an
 `AIPerfSweep` CR sets `spec.sweep.type: adaptive_search`. The planner
 proposes one variation at a time; the sweep-controller pod creates a child
@@ -143,7 +144,8 @@ spec:
     numRuns: 2
 ```
 
-`kind: int` rounds skopt suggestions to integers; `kind: real` keeps
+`kind: int` declares an integer dimension — Optuna suggests integer
+parameters natively, no rounding step — while `kind: real` keeps
 floats. `nInitialPoints` Sobol-quasirandom draws fit before the GP
 takes over — bump it for higher-dimensional spaces (rule of thumb:
 `>= 2 * len(searchSpace)`).
@@ -180,7 +182,7 @@ objective, the running best, and the convergence reason — lives in
 
 ## Mutual exclusion rules
 
-After the Plan-C envelope restructure, `adaptive_search` is one of the
+In the flat spec envelope, `adaptive_search` is one of the
 `sweep.type` discriminator values (alongside `grid` and `scenarios`), so
 "adaptive plus grid" is not even expressible — the discriminator picks
 one. The remaining gates protect the cardinality contract:

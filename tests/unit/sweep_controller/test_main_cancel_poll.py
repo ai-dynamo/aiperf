@@ -145,7 +145,7 @@ async def test_main_cancels_poll_task_in_finally(monkeypatch, tmp_path):
     # JobSet completes and the parent CR's TTL reaper can fire). Nothing
     # to monkeypatch — the test's "skip the idle" intent is satisfied by
     # the new clean-exit semantics.
-    _ = _no_idle  # retained for clarity that this branch used to need patching
+    _ = _no_idle  # intentionally unused — see the comment above
 
     # Patch the lazy imports inside main(): the function imports them itself
     # via from-imports, so patch the attributes on the source modules.

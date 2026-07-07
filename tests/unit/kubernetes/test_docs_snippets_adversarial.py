@@ -8,7 +8,7 @@ Focuses on:
   manifests;
 - local ``aiperf kube validate`` parity, including current kind dispatch to
   ``AIPerfJobSpec`` versus ``AIPerfSweepSpec``;
-- docs drift where snippets keep stale Plan-C shapes such as
+- docs drift where snippets keep stale field shapes such as
   ``models.items`` or singular adaptive-search ``objective``;
 - examples remaining runnable by declaring at least one dataset and phase.
 
@@ -242,13 +242,11 @@ def test_docs_kubernetes_aiperf_cr_snippet_declares_required_datasets_and_phases
 
 
 # ============================================================================
-# Stale Plan-C field-shape regression locks
+# Stale field-shape regression locks
 # ============================================================================
 
 
-def test_docs_kubernetes_aiperf_benchmark_snippets_use_current_plan_c_field_shapes() -> (
-    None
-):
+def test_docs_kubernetes_aiperf_benchmark_snippets_use_current_field_shapes() -> None:
     failures: list[str] = []
     for snippet in _AIPERF_BENCHMARK_SNIPPETS:
         benchmark = _benchmark_mapping(snippet)

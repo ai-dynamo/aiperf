@@ -36,7 +36,7 @@ Agents working in this repo should read `CLAUDE.md` first — it defines coding 
 - [docs/tutorials/migrating-config.md](docs/tutorials/migrating-config.md): Migrating flat YAML configs onto the envelope shape (`benchmark:` body + top-level `sweep`/`multi_run`/`variables`/`random_seed`); covers the migration script, body vs envelope field lists, Jinja aliasing, and common gotchas.
 - [docs/tutorials/migrating-k8s-resources.md](docs/tutorials/migrating-k8s-resources.md): Migrating AIPerfJob/AIPerfSweep CRs onto the unified spec shape — kind toggles cardinality (no embedded sweep on AIPerfJob, no `template:` wrapping on AIPerfSweep), `multi_run.adaptive_search` moves to `sweep.type: adaptive_search`. Three before/after cases with the regenerate-via-`aiperf kube generate` migration path.
 - [docs/api/search-history.md](docs/api/search-history.md): Schema reference for `search_history.json` (BO trajectory artifact) — top-level keys, per-iteration fields, `convergence_reason` enum, mid-run partial-state semantics, programmatic consumption.
-- [docs/troubleshooting/adaptive-search-errors.md](docs/troubleshooting/adaptive-search-errors.md): Adaptive-search error catalog — missing `[bo]` extra, malformed `--search-space`, mutual-exclusion conflicts, all-trials-failed sentinel, n_initial_points validator.
+- [docs/troubleshooting/adaptive-search-errors.md](docs/troubleshooting/adaptive-search-errors.md): Adaptive-search error catalog — missing `[botorch]` extra, malformed `--search-space`, mutual-exclusion conflicts, all-trials-failed sentinel, n_initial_points validator.
 - [docs/reference/](docs/reference/): Tokenizer and other reference material.
 
 ## Kubernetes

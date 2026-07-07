@@ -7,7 +7,7 @@ C5 / C5b (orphaned ``aiperf.nvidia.com/completion-claimed`` annotation
 present at operator restart; CR converges to Completed via the monitor
 orphan-recovery branch).
 
-Wave-6 port of :py:mod:`tests.kubernetes.chaos.test_chaos_operator_resilience`
+Port of :py:mod:`tests.kubernetes.chaos.test_chaos_operator_resilience`
 onto the unified ``faults`` registry (:py:mod:`tests.kubernetes.chaos_common`).
 Each scenario is the legacy test verbatim with one substitution:
 
@@ -21,8 +21,8 @@ Each scenario is the legacy test verbatim with one substitution:
   ``await wait_for_aiperfjob_phase(kubectl, ...)`` (provided by
   :py:mod:`tests.kubernetes.chaos_aiperf.conftest`).
 * ``chaos_injector.read_claim_annotation(...)`` stays as a direct call on a
-  locally constructed :py:class:`ChaosInjector` -- porting reads is out of
-  scope for Wave-6 and the helper is read-only.
+  locally constructed :py:class:`ChaosInjector` -- reads are not fault
+  injections and the helper is read-only.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ async def _wait_for_operator_ready(
     Replaces ``chaos_injector.wait_for_operator_ready(...)``. Using
     ``kubectl wait`` here avoids pulling in another legacy helper just to
     poll readiness; the unified registry intentionally leaves "wait for
-    pod ready" to the caller because Wave-6 wants tests to be the source
+    pod ready" to the caller so tests stay the source
     of truth for what "recovered" means.
     """
     await kubectl.run(

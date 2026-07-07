@@ -435,7 +435,6 @@ Every control-plane container, the event-bus proxy sidecar, the results sidecar,
 | Variable | Default | Applies to |
 |---|---|---|
 | `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` / `_MEMORY` | `75m` / `192Mi` | SystemController container |
-| `AIPERF_K8S_WORKER_MANAGER_CPU` / `_MEMORY` | `50m` / `192Mi` | WorkerManager container |
 | `AIPERF_K8S_TIMING_MANAGER_CPU` / `_MEMORY` | `50m` / `192Mi` | TimingManager container |
 | `AIPERF_K8S_DATASET_MANAGER_CPU` / `_MEMORY` | `50m` / `256Mi` | DatasetManager container |
 | `AIPERF_K8S_RECORDS_MANAGER_CPU` / `_MEMORY` | `75m` / `256Mi` | RecordsManager container (raise to 4000m+ for >500k concurrency) |

@@ -414,7 +414,7 @@ def test_every_numeric_field_has_bounds() -> None:
             )
     if failures:
         # Soft-skip the test unless the count gets WORSE than the current
-        # baseline -- some legacy fields are out of scope for this branch.
+        # baseline -- legacy fields are grandfathered rather than fixed here.
         # The mechanism remains in place so new violations fire.
         baseline = _load_or_init_numeric_baseline(failures)
         new = sorted(set(failures) - set(baseline))
