@@ -73,6 +73,5 @@ The `completions` endpoint type already targets `/v1/completions`; if your gatew
 
 ## Notes
 
-- This format is Parquet-only.
 - Session stickiness still works because rows are grouped into multi-turn conversations.
 - For completion traces that already contain the fully expanded historical prompt, AIPerf replays that prompt verbatim rather than reconstructing history from prior turns.
