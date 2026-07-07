@@ -242,48 +242,35 @@ def _parse_dataset_filters(values: list[str]) -> dict[str, str]:
     return filters
 
 
+# (cli field, dataset key, forward explicit None). Booleans forward both
+# polarities so an explicit negative flag (e.g. --no-open-loop-replay)
+# overrides the FileDataset default.
+_VERBATIM_DATASET_FIELDS = (
+    ("input_file", "path", True),
+    ("public_dataset", "dataset", True),
+    ("hf_dataset_subset", "hf_subset", False),
+    ("custom_dataset_type", "format", False),
+    ("dataset_sampling_strategy", "sampling", False),
+    ("conversation_num_dataset_entries", "entries", True),
+    ("trace_session_sample_ratio", "trace_session_sample_ratio", False),
+    ("max_idle_gap_cap_seconds", "max_idle_gap_cap_seconds", False),
+    ("replay_speedup", "replay_speedup", False),
+    ("open_loop_replay", "open_loop_replay", True),
+    ("open_loop_strict", "open_loop_strict", True),
+    ("omit_kv_hints", "omit_kv_hints", True),
+    ("force_min_tokens", "force_min_tokens", True),
+)
+
+
 def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
     """Top-level fields that move through verbatim."""
     out: dict[str, Any] = {}
-    if _set(cli, "input_file"):
-        out["path"] = cli.input_file
-    if _set(cli, "public_dataset"):
-        out["dataset"] = cli.public_dataset
-    if _set(cli, "hf_dataset_subset") and cli.hf_dataset_subset is not None:
-        out["hf_subset"] = cli.hf_dataset_subset
+    for field, key, keep_none in _VERBATIM_DATASET_FIELDS:
+        value = getattr(cli, field)
+        if _set(cli, field) and (keep_none or value is not None):
+            out[key] = value
     if _set(cli, "dataset_filters"):
         out["filters"] = _parse_dataset_filters(cli.dataset_filters)
-    if _set(cli, "custom_dataset_type") and cli.custom_dataset_type is not None:
-        out["format"] = cli.custom_dataset_type
-    if (
-        _set(cli, "dataset_sampling_strategy")
-        and cli.dataset_sampling_strategy is not None
-    ):
-        out["sampling"] = cli.dataset_sampling_strategy
-    if "conversation_num_dataset_entries" in cli.model_fields_set:
-        out["entries"] = cli.conversation_num_dataset_entries
-    if (
-        _set(cli, "trace_session_sample_ratio")
-        and cli.trace_session_sample_ratio is not None
-    ):
-        out["trace_session_sample_ratio"] = cli.trace_session_sample_ratio
-    if (
-        _set(cli, "max_idle_gap_cap_seconds")
-        and cli.max_idle_gap_cap_seconds is not None
-    ):
-        out["max_idle_gap_cap_seconds"] = cli.max_idle_gap_cap_seconds
-    if _set(cli, "replay_speedup") and cli.replay_speedup is not None:
-        out["replay_speedup"] = cli.replay_speedup
-    # Both polarities are forwarded so an explicit negative flag (e.g.
-    # --no-open-loop-replay) overrides the FileDataset default.
-    for flag in (
-        "open_loop_replay",
-        "open_loop_strict",
-        "omit_kv_hints",
-        "force_min_tokens",
-    ):
-        if _set(cli, flag):
-            out[flag] = getattr(cli, flag)
     return out
 
 

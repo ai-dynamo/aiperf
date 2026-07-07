@@ -298,47 +298,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._capped_max_osl = 0
         self._floored_zero_osl = 0
 
-        min_timestamp, sampled_session_key, sampled_session_ids, sampled_null_rows = (
-            self._sample_session_ids()
-        )
-        table_kwargs: dict[str, Any] = {}
-        sampling = sampled_session_key is not None and sampled_session_ids is not None
-        if sampling:
-            table_kwargs["filters"] = (
-                pc.field(sampled_session_key).isin(sorted(sampled_session_ids))
-                | pc.field(sampled_session_key).is_null()
-            )
-
-        table = pq.read_table(self.filename, **table_kwargs)
-        items: list[BasetenTrace] = []
-        null_ordinal = 0
-
-        for row in table.to_pylist():
-            if sampling and row.get(sampled_session_key) is None:
-                kept = null_ordinal in sampled_null_rows
-                null_ordinal += 1
-                if not kept:
-                    continue
-
-            if "__version__" in row and "dataset_version" not in row:
-                row["dataset_version"] = row.pop("__version__")
-
-            trace = BasetenTrace.model_validate(row)
-            self._preprocess_trace(trace)
-            if min_timestamp is not None and trace.timestamp is not None:
-                trace.timestamp = int(trace.timestamp) - int(min_timestamp)
-                if self._speedup != 1.0:
-                    # Compress wall-clock once here; gap-cap + back-pressure delays
-                    # downstream inherit the compressed times. Never touches hash_ids.
-                    trace.timestamp = trace.timestamp / self._speedup
-
-            if not self._filter_and_cap_trace(trace):
-                continue
-
-            # Count after filtering so skipped rows do not inflate the summary.
-            if trace.output_tokens == 0:
-                self._floored_zero_osl += 1
-            items.append(trace)
+        items = self._read_traces(*self._sample_session_ids())
 
         if self._max_idle_gap_cap_ms is not None:
             self._apply_idle_gap_cap(items)
@@ -366,6 +326,52 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 f"(e.g. canceled requests) to an output_length of 1"
             )
         return data
+
+    def _read_traces(
+        self,
+        min_timestamp: int | None,
+        session_key: str | None,
+        session_ids: set[str] | None,
+        null_rows: set[int],
+    ) -> list[BasetenTrace]:
+        """Read, sample, normalize, and filter trace rows from the Parquet file."""
+        sampling = session_key is not None and session_ids is not None
+        table_kwargs: dict[str, Any] = {}
+        if sampling:
+            table_kwargs["filters"] = (
+                pc.field(session_key).isin(sorted(session_ids))
+                | pc.field(session_key).is_null()
+            )
+
+        items: list[BasetenTrace] = []
+        null_ordinal = 0
+        for row in pq.read_table(self.filename, **table_kwargs).to_pylist():
+            if sampling and row.get(session_key) is None:
+                kept = null_ordinal in null_rows
+                null_ordinal += 1
+                if not kept:
+                    continue
+
+            if "__version__" in row and "dataset_version" not in row:
+                row["dataset_version"] = row.pop("__version__")
+
+            trace = BasetenTrace.model_validate(row)
+            self._preprocess_trace(trace)
+            if min_timestamp is not None and trace.timestamp is not None:
+                trace.timestamp = int(trace.timestamp) - int(min_timestamp)
+                if self._speedup != 1.0:
+                    # Compress wall-clock once here; gap-cap + back-pressure delays
+                    # downstream inherit the compressed times. Never touches hash_ids.
+                    trace.timestamp = trace.timestamp / self._speedup
+
+            if not self._filter_and_cap_trace(trace):
+                continue
+
+            # Count after filtering so skipped rows do not inflate the summary.
+            if trace.output_tokens == 0:
+                self._floored_zero_osl += 1
+            items.append(trace)
+        return items
 
     def _apply_idle_gap_cap(self, items: list[BasetenTrace]) -> None:
         """Collapse global idle gaps so a sparse (sampled) trace does not idle
