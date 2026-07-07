@@ -58,6 +58,11 @@ class TestBasetenTraceDatasetLoader:
                     "prompt": "hello",
                     "input_tokens": 3,
                     "output_tokens": 4,
+                    "total_hashes": [1, 2],
+                    "provided_session_id": "s",
+                    "poor_man_session_id": 1,
+                    "block_size": 64,
+                    "request_canceled": 0,
                 }
             ],
         )
@@ -65,6 +70,7 @@ class TestBasetenTraceDatasetLoader:
         assert BasetenTraceDatasetLoader.can_load(filename=path) is True
 
     def test_can_load_parquet_schema_without_optional_columns(self, tmp_path: Path):
+        # Only the four REQUIRED_COLUMNS; every optional column is absent.
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [

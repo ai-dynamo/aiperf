@@ -3,8 +3,7 @@
 """Offline replay-correctness suite for the baseten_trace loader.
 
 FAST (no server, no GPU, mock tokenizer), fully in-process. This is the
-standing characterization net that must stay green as the loader is refactored
-(see traffic-replay/plan.md, traffic-replay/MODULES.md).
+standing characterization net that must stay green as the loader is refactored.
 
 Run just this suite:   pytest tests/unit/dataset/loader/test_baseten_offline_suite.py
 
@@ -14,7 +13,7 @@ It exercises the REAL code path at three levels:
   3. CompletionsEndpoint.format_payload(...)         -> the on-the-wire payload
 
 Convention: checks for features that are NOT YET IMPLEMENTED are marked
-`xfail(strict=False)` with a reason naming the plan item. When that work lands
+`xfail(strict=False)` with a reason naming the pending work. When that work lands
 the test xpasses -> drop the xfail and make it strict. Everything else is a hard
 assertion: a failure means a real regression.
 """
@@ -43,7 +42,7 @@ from tests.unit.conftest import make_run_from_cli
 from tests.unit.endpoints.conftest import create_request_info
 
 BLOCK_SIZE = 64
-GAP_CAP_MS = 5_000  # target max idle gap once the P1.2 gap-cap lands
+GAP_CAP_MS = 5_000  # max idle gap used when exercising the gap-cap
 
 
 def _fixture_rows() -> list[dict]:
@@ -246,10 +245,16 @@ class TestRequestBodyContract:
 
 class TestDeterminism:
     def test_session_sampling_is_deterministic(self, fixture_path):
-        _, d1 = _load(fixture_path, trace_session_sample_ratio=0.67, random_seed=123)
-        _, d2 = _load(fixture_path, trace_session_sample_ratio=0.67, random_seed=123)
-        assert set(d1.keys()) == set(d2.keys())
-        assert set(d1.keys()).issubset({"A", "B", "C"})
+        _, d1 = _load(fixture_path, trace_session_sample_ratio=0.4, random_seed=123)
+        _, d2 = _load(fixture_path, trace_session_sample_ratio=0.4, random_seed=123)
+        assert d1.keys() == d2.keys()
+        assert d1, "sampling must keep at least one session"
+        assert set(d1.keys()) < {"A", "B", "C"}, (
+            "0.4 sampling should keep a non-empty strict subset"
+        )
+        assert [[t.prompt for t in traces] for traces in d1.values()] == [
+            [t.prompt for t in traces] for traces in d2.values()
+        ]
 
 
 class TestTimingNoHang:
@@ -298,7 +303,7 @@ class TestTimingNoHang:
                 assert turn.timestamp is None
 
     def test_back_pressure_subtracts_prior_service_time(self, fixture_path):
-        # #4: a continuation turn's delay = recorded start-to-start gap MINUS the
+        # A continuation turn's delay = recorded start-to-start gap MINUS the
         # prior turn's recorded e2e. fixed_schedule applies the delay AFTER the
         # prior turn completes in replay, so using the raw gap would double-count
         # server time (replay inter-arrival = replay_service + recorded_service +
@@ -368,7 +373,7 @@ class TestTimingNoHang:
         assert all(t.delay is not None and t.delay <= 1000 for t in capped)
 
     def test_open_loop_keeps_absolute_timestamps_no_delay(self, fixture_path):
-        # Open-loop ('no-mercy'): back-pressure is skipped, so EVERY turn across
+        # Open-loop: back-pressure is skipped, so EVERY turn across
         # every session keeps its absolute timestamp and no delay is set.
         loader, data = _load(fixture_path, open_loop_replay=True)
         conversations = loader.convert_to_conversations(data)
@@ -424,12 +429,3 @@ class TestHashIntegrity:
         _, data = _load(fixture_path)
         assert data["A"][0].request_body["hash_ids"] == [10, 11]
         assert data["A"][2].request_body["hash_ids"] == [10, 11, 12, 13]
-
-
-class TestRepresentativenessTier2:
-    @pytest.mark.skip(
-        reason="Tier 2: runs against a real dataset slice; not part of the fast suite"
-    )
-    def test_sample_matches_full_distribution(self):
-        """Placeholder: load a real contiguous multi-session slice and assert the
-        sampled ISL/OSL/session distributions + recomputed KV-hit track the full trace."""

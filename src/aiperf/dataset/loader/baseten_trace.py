@@ -391,7 +391,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         an absolute pre-recorded time. This keeps each session's prefix cached in
         order (faithful KV reuse) and is the correct model for this trace (~93%
         multi-turn). Turn 0 keeps its absolute arrival time (session start).
-        Open-loop ('no-mercy') replay skips back-pressure entirely: every turn
+        Open-loop replay skips back-pressure entirely: every turn
         keeps its absolute (speedup-scaled) timestamp and fires on the schedule.
         With ``open_loop_strict`` additionally set, sessions are exploded so
         every trace row becomes its own independent single-turn conversation:
