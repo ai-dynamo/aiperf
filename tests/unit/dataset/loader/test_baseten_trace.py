@@ -446,6 +446,59 @@ class TestBasetenTraceDatasetLoader:
         # Null-session rows become synthesized single-turn sessions.
         assert sorted(len(traces) for traces in dataset.values()) == [1, 1, 2, 2]
 
+    def test_trace_session_sampling_mid_ratio_keeps_exact_null_subset(
+        self, tmp_path: Path
+    ):
+        rows = [
+            {
+                "timestamp_start_unix_ms": 100 + i,
+                "prompt": f"s1-t{i}",
+                "input_tokens": 5,
+                "output_tokens": 1,
+                "poor_man_session_id": 100,
+            }
+            for i in range(2)
+        ] + [
+            {
+                "timestamp_start_unix_ms": 200 + i,
+                "prompt": f"null-{i:02d}",
+                "input_tokens": 5,
+                "output_tokens": 1,
+                "poor_man_session_id": None,
+            }
+            for i in range(20)
+        ]
+        path = _write_parquet(tmp_path / "trace.parquet", rows)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.5, random_seed=7),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        null_prompts = sorted(
+            trace.text_input
+            for traces in dataset.values()
+            for trace in traces
+            if trace.text_input.startswith("null-")
+        )
+        # Pinned for this file+seed: a proper subset of the 20 null rows, so a
+        # regression to keep-all or drop-all null rows fails here.
+        assert null_prompts == [
+            "null-00",
+            "null-01",
+            "null-02",
+            "null-06",
+            "null-08",
+            "null-09",
+            "null-11",
+            "null-13",
+            "null-15",
+            "null-16",
+            "null-18",
+        ]
+
     def test_trace_session_sampling_null_rows_deterministic_across_loads(
         self, tmp_path: Path
     ):
