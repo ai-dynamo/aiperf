@@ -683,7 +683,10 @@ class ServerMetricsExportData(AIPerfBaseModel):
         SerializeAsAny[
             dict[
                 str,
-                GaugeMetricData | CounterMetricData | HistogramMetricData,
+                GaugeMetricData
+                | CounterMetricData
+                | HistogramMetricData
+                | UnknownMetricData,
             ]
         ]
         | None

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
@@ -33,7 +34,7 @@ from aiperf.credit.messages import (
 )
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
-from aiperf.plugin.enums import AccumulatorType, TimingMode
+from aiperf.plugin.enums import AccumulatorType, TimingMode, UIType
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
@@ -1364,3 +1365,87 @@ class TestProcessServerMetricsResults:
         result = await manager._process_server_metrics_results()
 
         assert result.results is None
+
+
+def _create_manager_for_realtime_task(ui: UIType) -> RecordsManager:
+    """Minimal RecordsManager wired for the realtime inference metrics task.
+
+    SimpleNamespace (not MagicMock) for ``run`` so a wrong attribute path
+    raises instead of silently auto-creating.
+    """
+    manager = RecordsManager.__new__(RecordsManager)
+    manager._stop_requested_event = asyncio.Event()
+    manager.run = SimpleNamespace(cfg=SimpleNamespace(ui_type=ui))
+    manager._records_tracker = MagicMock()
+    manager._records_tracker.create_stats_for_phase.return_value = SimpleNamespace(
+        total_records=1, start_ns=None
+    )
+    manager._server_metrics_accumulator = None
+    manager._previous_realtime_records = None
+    manager._previous_realtime_server_snapshot = None
+    manager._report_realtime_metrics = AsyncMock()
+    return manager
+
+
+class TestRecordsManagerRealtimeInferenceMetricsTask:
+    """Interval resolution and zero-interval handling for _report_realtime_inference_metrics_task."""
+
+    @pytest.mark.asyncio
+    async def test_report_realtime_inference_metrics_task_zero_interval_publishes_at_default_cadence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Interval 0 disables only the log block: the loop sleeps on the per-UI
+        default cadence (never sleep(0) spin) and still publishes for dashboards,
+        with emit_log_block=False."""
+        manager = _create_manager_for_realtime_task(UIType.DASHBOARD)
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 0.0)
+
+        sleep_mock = AsyncMock(
+            side_effect=lambda _delay: setattr(manager, "stop_requested", True)
+        )
+        with patch("asyncio.sleep", sleep_mock):
+            await manager._report_realtime_inference_metrics_task()
+
+        sleep_mock.assert_awaited_once_with(5.0)
+        manager._report_realtime_metrics.assert_awaited_once()
+        assert (
+            manager._report_realtime_metrics.await_args.kwargs["emit_log_block"]
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_report_realtime_inference_metrics_task_none_interval_sleeps_on_resolved_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Interval None resolves via realtime_metrics_interval() (5.0 for dashboard), never sleep(None)."""
+        manager = _create_manager_for_realtime_task(UIType.DASHBOARD)
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", None)
+
+        sleep_mock = AsyncMock(
+            side_effect=lambda _delay: setattr(manager, "stop_requested", True)
+        )
+        with patch("asyncio.sleep", sleep_mock):
+            await manager._report_realtime_inference_metrics_task()
+
+        sleep_mock.assert_awaited_once_with(5.0)
+        manager._report_realtime_metrics.assert_awaited_once()
+        assert (
+            manager._report_realtime_metrics.await_args.kwargs["emit_log_block"] is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_report_realtime_inference_metrics_task_nonzero_interval_sleeps_on_interval(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit nonzero interval is what the loop sleeps on each tick."""
+        manager = _create_manager_for_realtime_task(UIType.DASHBOARD)
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 2.5)
+
+        sleep_mock = AsyncMock(
+            side_effect=lambda _delay: setattr(manager, "stop_requested", True)
+        )
+        with patch("asyncio.sleep", sleep_mock):
+            await manager._report_realtime_inference_metrics_task()
+
+        sleep_mock.assert_awaited_once_with(2.5)
+        manager._report_realtime_metrics.assert_awaited_once()
