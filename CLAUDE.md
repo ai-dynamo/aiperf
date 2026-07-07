@@ -213,7 +213,7 @@ make check-ergonomics        # 8 custom AST checks: nesting-depth, keyword-only-
 make check-ruff-baselined    # 6 ruff rules: C901, TID251, S110, S112, ANN201, D103
 ```
 
-Baselines (`tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`) grandfather pre-existing violations. New code must pass clean; do not add entries to the baselines.
+Baselines (`tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`) grandfather pre-existing violations. New code must pass clean; do not add entries to the baselines. Exception: signatures owned by a framework's positional calling convention (kopf handlers, Dash callbacks) stay baselined against `keyword-only-args` — do not convert them.
 
 **Semantic ceiling (reviewed, not mechanically enforced):**
 
