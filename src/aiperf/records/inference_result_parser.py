@@ -3,7 +3,7 @@
 import asyncio
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
@@ -397,7 +397,7 @@ class InferenceResultParser(CommunicationMixin):
     async def _compute_chat_template_token_count(
         self,
         tokenizer: Tokenizer,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
     ) -> int | None:
         """Tokenize ``messages`` through the HF tokenizer's chat template.
 
