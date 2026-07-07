@@ -30,12 +30,12 @@ Common optional columns:
 
 ## Replay Semantics
 
-- Requests are grouped into sessions using `provided_session_id` when it actually forms multi-turn sessions.
-- If `provided_session_id` is effectively unique per row, the loader falls back to `poor_man_session_id`.
+- Requests are grouped into sessions by whichever of `provided_session_id` / `poor_man_session_id` shows the stronger repeated-session signal; ties prefer `provided_session_id`.
+- If neither column repeats (or the chosen column is null for a row), the loader generates a fresh per-row session ID.
 - All timestamps are normalized to `ms since first event in file`.
 - Rows inside each session are sorted by normalized timestamp before replay.
 - `prompt` is replayed as the literal completion prompt.
-- `output_tokens` becomes both `max_tokens` and `min_tokens`. If `max_osl` caps the row, both values use the capped output length.
+- `output_tokens` becomes both `max_tokens` and `min_tokens`. If `max_osl` caps the row, both values use the capped output length. Rows with `output_tokens=0` (e.g. canceled requests) are floored to 1, since `max_tokens` must be at least 1.
 - `total_hashes` is forwarded as per-row request body metadata under `hash_ids`.
 - `block_size` is forwarded per row when present.
 - `request_canceled` is retained in trace metadata but is not filtered out.
@@ -69,18 +69,7 @@ aiperf profile \
   --fixed-schedule
 ```
 
-If your server expects OpenAI-style text completions explicitly:
-
-```bash
-aiperf profile \
-  --model YOUR_MODEL \
-  --url http://localhost:8000 \
-  --endpoint /v1/completions \
-  --endpoint-type completions \
-  --input-file /path/to/trace.parquet \
-  --custom-dataset-type baseten_trace \
-  --fixed-schedule
-```
+The `completions` endpoint type already targets `/v1/completions`; if your gateway serves completions at a non-default path, add `--endpoint <path>`.
 
 ## Notes
 
