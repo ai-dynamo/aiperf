@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import bisect
 import inspect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -10,10 +11,6 @@ from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.models.sequence_distribution import (
-    SequenceLengthDistribution,
-    SequenceLengthPair,
-)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import FileDataset, SyntheticDataset
 from aiperf.dataset.generator.audio import AudioGenerator
@@ -22,6 +19,7 @@ from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.generator.video import VideoGenerator
 
 if TYPE_CHECKING:
+    from aiperf.common.random_generator import RandomGenerator
     from aiperf.config.dataset import VideoConfig
     from aiperf.config.dataset.content import (
         AudioConfig,
@@ -31,6 +29,38 @@ if TYPE_CHECKING:
     )
     from aiperf.config.distributions import SamplingDistribution
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config.types import SequenceDistributionEntry
+
+
+class _TypedSequenceDistribution:
+    """Weighted ISL/OSL buckets whose per-bucket typed distributions sample
+    their full shape (the legacy SequenceLengthDistribution only supported
+    fixed-or-normal buckets).
+
+    Weights are relative; config-level validation already checks they sum
+    to ~100.
+    """
+
+    def __init__(
+        self, entries: list[SequenceDistributionEntry], rng_instance: RandomGenerator
+    ) -> None:
+        self._entries = list(entries)
+        self._rng = rng_instance
+        total = sum(e.probability for e in self._entries)
+        cumulative = 0.0
+        self._cumulative: list[float] = []
+        for entry in self._entries:
+            cumulative += entry.probability / total
+            self._cumulative.append(cumulative)
+
+    def sample(self) -> tuple[int, int]:
+        r = self._rng.random()
+        idx = bisect.bisect_right(self._cumulative, r)
+        entry = self._entries[min(idx, len(self._entries) - 1)]
+        return (
+            entry.isl.sample_int(self._rng),
+            entry.osl.sample_int(self._rng),
+        )
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
@@ -87,11 +117,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         # ``PromptConfig.sequence_distribution`` is a
         # ``list[SequenceDistributionEntry]`` of typed ``SamplingDistribution``
-        # objects. Convert each entry directly to a ``SequenceLengthPair``
-        # (extracting mean + stddev from the underlying distribution) and
-        # build the runtime distribution without re-serializing through
-        # ``DistributionParser.parse``, which only accepts strings.
-        self._seq_distribution = self._build_sequence_distribution()
+        # objects. The runtime sampler draws each bucket's ISL/OSL from their
+        # full distribution shape (lognormal/multimodal/empirical/percentile),
+        # not a flattened mean+stddev.
+        self._seq_distribution: _TypedSequenceDistribution | None = (
+            self._build_sequence_distribution()
+        )
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
@@ -106,33 +137,23 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         ...
 
-    def _build_sequence_distribution(self) -> SequenceLengthDistribution | None:
-        """Build a runtime sequence-length distribution from config entries.
+    def _build_sequence_distribution(self) -> _TypedSequenceDistribution | None:
+        """Build the runtime sequence-length sampler from config entries.
 
         ``PromptConfig.sequence_distribution`` is a list of
         ``SequenceDistributionEntry`` carrying typed ``SamplingDistribution``
-        ISL/OSL fields (Fixed/Normal/LogNormal/...). Pull the mean and the
-        normal-distribution stddev (0 for non-normal types) off each entry to
-        construct ``SequenceLengthPair`` directly. ``DistributionParser.parse``
-        only accepts strings and would reject this list shape.
+        ISL/OSL fields. Each bucket samples its full distribution shape —
+        lognormal/multimodal/empirical/percentile buckets are NOT flattened
+        to mean+stddev.
         """
         if self._synthetic_prompts is None:
             return None
         entries = self._synthetic_prompts.sequence_distribution
         if not entries:
             return None
-
-        pairs = [
-            SequenceLengthPair(
-                input_seq_len=int(entry.isl.expected_value),
-                output_seq_len=int(entry.osl.expected_value),
-                probability=float(entry.probability),
-                input_seq_len_stddev=float(getattr(entry.isl, "stddev", 0.0) or 0.0),
-                output_seq_len_stddev=float(getattr(entry.osl, "stddev", 0.0) or 0.0),
-            )
-            for entry in entries
-        ]
-        return SequenceLengthDistribution(pairs)
+        return _TypedSequenceDistribution(
+            entries, rng.derive("composer.sequence.distribution")
+        )
 
     def _osl_distribution(self) -> SamplingDistribution | None:
         """Resolve the OSL distribution to use as a fallback for max_tokens.

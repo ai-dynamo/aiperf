@@ -68,8 +68,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         )
 
         # Inclusion flags (computed once at init).
-        self._include_prompt = (
-            _expected(dataset.prompts.isl if dataset.prompts is not None else None) > 0
+        # A sequence_distribution drives ISL/OSL directly, so text is included
+        # even when prompts.isl is left unset (the isl field is ignored then).
+        self._include_prompt = dataset.prompts is not None and (
+            _expected(dataset.prompts.isl) > 0
+            or bool(dataset.prompts.sequence_distribution)
         )
         self._include_image = (
             dataset.images is not None

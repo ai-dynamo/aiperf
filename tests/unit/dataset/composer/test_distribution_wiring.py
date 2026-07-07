@@ -21,6 +21,7 @@ def _make_composer(
     isl: Any = None,
     osl: Any = None,
     entries: int = 1000,
+    sequence_distribution: Any = None,
     **dataset_overrides: Any,
 ) -> SyntheticDatasetComposer:
     """Build a SyntheticDatasetComposer whose prompts.isl/osl are the given
@@ -28,8 +29,9 @@ def _make_composer(
 
     Uses the native BenchmarkConfig path (rather than CLIConfig, which is flat
     and cannot express typed distributions): the top-level ``isl``/``osl``
-    shortcuts hoist into ``prompts.{isl,osl}``. A FakeTokenizer keeps prompt
-    generation cheap.
+    shortcuts hoist into ``prompts.{isl,osl}``. A ``sequence_distribution`` list
+    is nested under ``prompts.sequence_distribution`` (it has no top-level
+    shorthand). A FakeTokenizer keeps prompt generation cheap.
 
     The composer clears its per-turn sequence cache inside ``_finalize_turn``
     to free memory; the tests need to observe every per-turn sample, so the
@@ -46,6 +48,10 @@ def _make_composer(
         dataset["isl"] = isl
     if osl is not None:
         dataset["osl"] = osl
+    if sequence_distribution is not None:
+        dataset.setdefault("prompts", {})["sequence_distribution"] = (
+            sequence_distribution
+        )
 
     run = make_benchmark_run(extra={"datasets": [dataset]})
     composer = SyntheticDatasetComposer(run=run, tokenizer=FakeTokenizer())
@@ -141,3 +147,63 @@ class TestMaxTokensPairing:
         composer = _make_composer(isl=512, osl={"mean": 0})
         conversations = composer.create_dataset()
         assert all(t.max_tokens is None for c in conversations for t in c.turns)
+
+
+class TestTypedSequenceDistributionBuckets:
+    def test_lognormal_bucket_actually_skews(self):
+        composer = _make_composer(
+            sequence_distribution=[
+                {"isl": {"mean": 2000, "median": 1000}, "osl": 100, "probability": 100},
+            ]
+        )
+        composer.create_dataset()
+        isls = [p[0] for p in composer._turn_sequence_cache.values()]
+        assert len(set(isls)) > 10  # was: constant 2000 (lognormal flattened)
+        assert statistics.median(isls) < statistics.fmean(isls)
+
+    def test_bucket_pairing_never_crosses(self):
+        composer = _make_composer(
+            sequence_distribution=[
+                {
+                    "isl": {"mean": 100, "stddev": 5},
+                    "osl": {"mean": 10, "stddev": 1},
+                    "probability": 50,
+                },
+                {
+                    "isl": {"mean": 10000, "stddev": 50},
+                    "osl": {"mean": 1000, "stddev": 10},
+                    "probability": 50,
+                },
+            ]
+        )
+        composer.create_dataset()
+        for isl, osl in composer._turn_sequence_cache.values():
+            assert (isl < 1000) == (osl < 100)  # small isl with small osl only
+
+    def test_bucket_weights_respected(self):
+        composer = _make_composer(
+            entries=2000,
+            sequence_distribution=[
+                {"isl": 100, "osl": 10, "probability": 80},
+                {"isl": 10000, "osl": 1000, "probability": 20},
+            ],
+        )
+        composer.create_dataset()
+        isls = [p[0] for p in composer._turn_sequence_cache.values()]
+        small_frac = sum(1 for v in isls if v == 100) / len(isls)
+        assert 0.72 < small_frac < 0.88
+
+    def test_percentile_inside_bucket(self):
+        composer = _make_composer(
+            entries=4000,
+            sequence_distribution=[
+                {
+                    "isl": {"p50": 5000, "p99": 40000, "mean": 6000},
+                    "osl": 100,
+                    "probability": 100,
+                },
+            ],
+        )
+        composer.create_dataset()
+        isls = sorted(p[0] for p in composer._turn_sequence_cache.values())
+        assert isls[len(isls) // 2] == pytest.approx(5000, rel=0.10)

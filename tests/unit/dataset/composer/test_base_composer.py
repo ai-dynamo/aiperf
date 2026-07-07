@@ -71,17 +71,13 @@ class TestBaseDatasetComposer:
             run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
         )
 
-        # Distribution was built directly from the v2 entries (not via
-        # DistributionParser.parse, which only accepts strings).
+        # The runtime sampler is built directly from the typed v2 entries (not
+        # via DistributionParser.parse, which only accepts strings). Each bucket
+        # has stddev 0, so sampling is deterministic per bucket: every draw must
+        # be one of the two configured (isl, osl) pairs and both must appear.
         assert composer._seq_distribution is not None
-        pairs = composer._seq_distribution.pairs
-        assert len(pairs) == 2
-        assert pairs[0].input_seq_len == 100
-        assert pairs[0].output_seq_len == 25
-        assert pairs[0].probability == 50.0
-        assert pairs[1].input_seq_len == 200
-        assert pairs[1].output_seq_len == 50
-        assert pairs[1].probability == 50.0
+        samples = {composer._seq_distribution.sample() for _ in range(100)}
+        assert samples == {(100, 25), (200, 50)}
 
     def test_model_selection_round_robin(self, base_config, mock_tokenizer):
         """Test round robin model selection."""
