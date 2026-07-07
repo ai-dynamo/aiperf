@@ -158,7 +158,9 @@ class InferenceClient(AIPerfLifecycleMixin):
             # never mutates a cached Turn. The verbatim PAYLOAD_BYTES path is
             # excluded by the dataset-load guard, so it is not handled here.
             endpoint = self.model_endpoint.endpoint
-            if endpoint.use_dynamo_conv_aware_routing:
+            if endpoint.use_dynamo_conv_aware_routing and isinstance(
+                formatted_payload, dict
+            ):
                 session_id = request_info.x_correlation_id
                 legacy = endpoint.use_legacy_dynamo_session_control
                 session_control = build_session_control(
