@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 import jinja2
 import orjson
 import yaml
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 from pydantic import Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -33,7 +34,12 @@ _JINJA_MARKERS = ("{{", "{%", "{#")
 # Strict-undefined env duplicated from loader/jinja.py: that one is for load-time
 # config expansion, this one is for run-time user_files materialization. Keep them
 # separate so changes to one don't bleed into the other.
-_USER_FILES_ENV = jinja2.Environment(
+#
+# ImmutableSandboxedEnvironment (not the bare Environment) because user_files content
+# originates from the same attacker-controlled CRD spec; rendering it in a plain Environment
+# is an SSTI -> RCE gadget in the operator pod. The sandbox blocks dunder/attribute-escape
+# access and unsafe callables while preserving normal variable/filter/loop rendering.
+_USER_FILES_ENV = ImmutableSandboxedEnvironment(
     undefined=jinja2.StrictUndefined,
     autoescape=False,
     keep_trailing_newline=True,

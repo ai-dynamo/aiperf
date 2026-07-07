@@ -104,6 +104,11 @@ class SequenceDistributionEntry(BaseConfig):
         if not isinstance(data, dict):
             return data
 
+        # Copy first: as a mode="before" validator this receives the CALLER's
+        # actual dict and the merges below reassign keys; mutating in place
+        # leaks the rewritten isl/osl/stddev back into caller state.
+        data = dict(data)
+
         if "isl_stddev" in data and data["isl_stddev"] is not None:
             isl = data.get("isl")
             if isinstance(isl, (int, float)):

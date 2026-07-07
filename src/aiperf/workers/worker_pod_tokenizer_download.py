@@ -15,7 +15,6 @@ import io
 import logging
 import os
 import shutil
-import sys
 import tarfile
 from pathlib import Path
 from urllib.parse import quote
@@ -175,12 +174,48 @@ def _extract_bundle(compressed: bytes, dest: Path) -> None:
     with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(compressed)) as reader:
         tar_bytes = reader.read()
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tf:
-        # ``filter="data"`` was added in Python 3.12 and becomes mandatory in
-        # 3.14 (PEP 706). Pass it conditionally so we still run on 3.11.
-        if sys.version_info >= (3, 12):
-            tf.extractall(path=dest, filter="data")
-        else:
-            tf.extractall(path=dest)
+        _safe_extractall(tf, dest)
+
+
+def _safe_extractall(tf: tarfile.TarFile, dest: Path) -> None:
+    """Extract every member into ``dest``, rejecting path-traversal escapes.
+
+    A malicious tokenizer bundle could carry a member named ``../evil`` (or an
+    absolute path, or an escaping symlink) to write outside ``dest`` — the
+    classic tar-slip (CWE-22). PEP 706's ``data`` filter blocks all of these;
+    it was backported to 3.11.4+/3.12+ and becomes the default in 3.14, so on
+    every currently-shipped interpreter (requires-python >=3.11) we extract
+    through ``filter="data"``.
+
+    The handful of 3.11.0-3.11.3 patch releases predate the backport
+    (``tarfile.data_filter`` absent). Rather than fall back to an unfiltered
+    ``extractall`` there, validate each member's resolved path stays under
+    ``dest`` first, so no supported interpreter ever runs an unguarded extract.
+    """
+    if hasattr(tarfile, "data_filter"):
+        tf.extractall(path=dest, filter="data")
+        return
+
+    dest_resolved = dest.resolve()
+    for member in tf.getmembers():
+        target = (dest / member.name).resolve()
+        if target != dest_resolved and dest_resolved not in target.parents:
+            raise tarfile.TarError(
+                f"tar member '{member.name}' escapes extraction dir {dest}"
+            )
+        if member.issym() or member.islnk():
+            link_target = (
+                (dest / member.name).parent.joinpath(member.linkname).resolve()
+            )
+            if (
+                link_target != dest_resolved
+                and dest_resolved not in link_target.parents
+            ):
+                raise tarfile.TarError(
+                    f"tar link member '{member.name}' -> '{member.linkname}' "
+                    f"escapes extraction dir {dest}"
+                )
+    tf.extractall(path=dest)
 
 
 class _bundle_lock:

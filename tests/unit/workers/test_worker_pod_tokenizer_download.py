@@ -26,6 +26,7 @@ from aiperf.common.constants import IS_WINDOWS
 from aiperf.workers import worker_pod_tokenizer_download
 from aiperf.workers.worker_pod_tokenizer_download import (
     _bundle_lock,
+    _extract_bundle,
     download_tokenizer,
 )
 
@@ -213,3 +214,62 @@ async def test_bundle_lock_posix_acquires_and_releases(tmp_path: Path) -> None:
         assert lock._fd is not None
         assert lock_path.exists()
     assert lock._fd is None
+
+
+def test_extract_rejects_path_traversal(tmp_path: Path) -> None:
+    """A ``../`` tar member (tar-slip / CWE-22) must not write outside dest.
+
+    Runs through the real ``_extract_bundle`` path (which uses PEP 706's
+    ``filter="data"`` on 3.11.4+/3.12+): extraction must reject the escaping
+    member and leave nothing in the parent of the destination dir.
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    bundle = _make_bundle({"../escaped.txt": b"pwned"})
+
+    with pytest.raises(tarfile.TarError):
+        _extract_bundle(bundle, dest)
+
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_extract_rejects_path_traversal_pre_pep706_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Force the 3.11.0-3.11.3 (pre-PEP-706) branch and assert it still blocks.
+
+    Deleting ``tarfile.data_filter`` makes ``hasattr`` return False, exercising
+    the manual per-member resolved-path validation fallback that guards the
+    handful of patch releases predating the ``data`` filter backport.
+    """
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    bundle = _make_bundle({"../escaped.txt": b"pwned"})
+
+    with pytest.raises(tarfile.TarError, match="escapes extraction dir"):
+        _extract_bundle(bundle, dest)
+
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_extract_fallback_extracts_safe_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The manual fallback must still extract legitimate (non-escaping) files.
+
+    Forcing the pre-PEP-706 branch on a modern interpreter routes through the
+    unfiltered ``extractall`` (guarded by the manual validation above it),
+    which emits the 3.14 filter DeprecationWarning; that warning is irrelevant
+    to real 3.11.0-3.11.3 targets, so it is suppressed here.
+    """
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    bundle = _make_bundle({"tokenizer.json": b'{"v":1}', "nested/vocab.json": b"{}"})
+
+    _extract_bundle(bundle, dest)
+
+    assert (dest / "tokenizer.json").read_bytes() == b'{"v":1}'
+    assert (dest / "nested" / "vocab.json").exists()

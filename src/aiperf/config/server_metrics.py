@@ -188,6 +188,11 @@ class ServerMetricsConfig(BaseConfig):
         if not isinstance(data, dict):
             return data
 
+        # Copy first: as a mode="before" validator this receives the CALLER's
+        # actual dict; the url→urls rename below pops/assigns keys and mutating
+        # in place leaks them back into caller state and breaks re-loads.
+        data = dict(data)
+
         # url → urls (singular to plural)
         if "url" in data and "urls" not in data:
             url = data.pop("url")

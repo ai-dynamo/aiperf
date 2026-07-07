@@ -9,6 +9,7 @@ from typing import Any
 
 import jinja2
 from jinja2 import meta
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from aiperf.config.loader.env_vars import substitute_env_vars
 from aiperf.config.loader.errors import ConfigurationError
@@ -38,7 +39,15 @@ SKIP_TEMPLATE_PATH_PREFIXES = (
 # rather than silently rendering empty strings that downstream parsers must catch.
 # keep_trailing_newline=True preserves terminal '\n' so rendered artifact file contents
 # (artifacts.user_files) survive unchanged instead of jinja's default one-newline strip.
-_JINJA_ENV = jinja2.Environment(
+#
+# ImmutableSandboxedEnvironment (not the bare Environment) because these config strings
+# are attacker-controlled: the k8s operator renders AIPerfJob/AIPerfSweep CRD benchmark-body
+# fields through this env during create, so a plain Environment is a server-side template
+# injection (SSTI) -> RCE gadget. The sandbox blocks dunder/attribute-escape access
+# ({{ x.__class__.__mro__ }}, {{ cycler.__init__.__globals__ }}) and unsafe callables while
+# still allowing arithmetic, filters, {% for %}/{% if %}, and registered globals. Immutable
+# also blocks in-template mutation, which no legitimate config template needs.
+_JINJA_ENV = ImmutableSandboxedEnvironment(
     undefined=jinja2.StrictUndefined,
     autoescape=False,
     keep_trailing_newline=True,

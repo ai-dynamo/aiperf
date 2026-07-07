@@ -17,12 +17,15 @@ from aiperf.gpu_telemetry.constants import DCGM_TO_FIELD_MAPPING
 
 __all__ = ["DCGMTelemetryCollector"]
 
-# Unit conversion scaling factors for DCGM metrics
+# Unit conversion scaling factors for DCGM metrics.
+# power_violation is intentionally absent: DCGM_FI_DEV_POWER_VIOLATION already
+# reports microseconds (the µs display unit), so it passes through unscaled.
+# Do NOT copy the pynvml collector's `power_violation: 1e-3 (ns -> µs)` factor
+# here — NVML's violationTime is nanoseconds, but the DCGM field is not.
 SCALING_FACTORS = {
     "energy_consumption": 1e-9,  # mJ -> MJ
     "gpu_memory_used": 1.048576e-3,  # MiB -> GB
     "sm_utilization": 100,  # ratio (0-1) -> percentage (0-100)
-    "power_violation": 1e-3,  # ns -> µs
 }
 
 

@@ -136,9 +136,18 @@ def _hoist_synthetic_prompt_fields(config: dict[str, Any]) -> None:
     if "isl" not in config and "osl" not in config:
         return
 
-    prompts = config.setdefault("prompts", {})
-    if not isinstance(prompts, dict):
+    prompts = config.get("prompts")
+    if prompts is None:
+        prompts = {}
+    elif not isinstance(prompts, dict):
         return
+    else:
+        # Copy the nested prompts dict before mutating. The call sites only
+        # shallow-copy the top-level config, so this nested dict is still shared
+        # with the caller's input; setdefault below would otherwise leak the
+        # hoisted isl/osl back into caller state (breaking load(d) idempotency).
+        prompts = dict(prompts)
+    config["prompts"] = prompts
     if "isl" in config:
         prompts.setdefault("isl", config.pop("isl"))
     if "osl" in config:

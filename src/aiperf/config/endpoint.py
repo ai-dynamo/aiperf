@@ -369,6 +369,11 @@ class EndpointConfig(BaseConfig):
         if not isinstance(data, dict):
             return data
 
+        # Copy first: as a mode="before" validator this receives the CALLER's
+        # actual dict and the normalizations below pop/assign keys; mutating in
+        # place leaks renamed keys back into caller state and breaks re-loads.
+        data = dict(data)
+
         # url → urls (singular to plural). Both keys can be present after a
         # YAML+CLI deep-merge (resolve_config) where the YAML used the
         # singular shorthand and a CLI flag overlaid the plural form: in that

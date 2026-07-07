@@ -667,3 +667,39 @@ class TestDataProcessingEdgeCases:
         assert scaled["unscaled_metric"] == 999.0
         # Scaled metric should remain unchanged (power has factor 1.0)
         assert scaled["gpu_power_usage"] == 100.0
+
+    def test_power_violation_passes_through_unscaled(self):
+        """DCGM_FI_DEV_POWER_VIOLATION is already µs — must not be rescaled.
+
+        Regression for a 1000x-too-small bug: the DCGM collector copied the
+        pynvml collector's ``power_violation: 1e-3 (ns -> µs)`` factor onto a
+        field that DCGM reports directly in microseconds. The display unit is
+        MICROSECONDS (gpu_telemetry/constants.py), so nothing downstream
+        compensates — the value must pass through ``_apply_scaling_factors``
+        unchanged.
+        """
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
+
+        scaled = collector._apply_scaling_factors({"power_violation": 12345.0})
+
+        assert scaled["power_violation"] == 12345.0
+        assert "power_violation" not in collector._scaling_factors
+
+    def test_power_violation_parse_passthrough_microseconds(self):
+        """End-to-end parse: a known power-violation value survives in µs.
+
+        Parses a DCGM sample carrying DCGM_FI_DEV_POWER_VIOLATION = 12345 µs
+        and asserts the emitted TelemetryRecord reports exactly 12345 (µs), not
+        12.345 (the 1e-3-scaled bug value).
+        """
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
+
+        metrics = (
+            'DCGM_FI_DEV_POWER_VIOLATION{gpu="0",modelName="RTX",UUID="uuid-1"} '
+            "12345.0\n"
+        )
+
+        records = collector._parse_metrics_to_records(metrics)
+
+        assert len(records) == 1
+        assert records[0].telemetry_data.power_violation == 12345.0

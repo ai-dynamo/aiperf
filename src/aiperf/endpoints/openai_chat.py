@@ -213,7 +213,14 @@ class ChatEndpoint(BaseEndpoint):
             if not json_obj:
                 continue
             choices = json_obj.get("choices") or []
-            if not choices:
+            # Same malformed-``choices`` degradation as the parse path: an empty
+            # list, a non-list value, or a first entry that isn't a dict would
+            # crash ``_absorb_chat_choice``'s ``choice.get(...)``. Skip it.
+            if (
+                not isinstance(choices, list)
+                or not choices
+                or not isinstance(choices[0], dict)
+            ):
                 continue
             self._absorb_chat_choice(
                 json_obj.get("object"),
@@ -485,8 +492,21 @@ class ChatEndpoint(BaseEndpoint):
             self.debug(lambda: f"No choices found in response: {json_obj}")
             return None
 
+        # Malformed ``choices`` shapes — a non-list value or a first entry that
+        # isn't a dict (``[None]``, ``['x']``, ``[5]``, ``'oops'``, ``{...}``) —
+        # degrade to None rather than crashing the parser, mirroring the fast
+        # path's ``isinstance(first_choice, dict)`` guard so both paths agree on
+        # every malformed body (see the contract comment above).
+        if not isinstance(choices, list) or not isinstance(choices[0], dict):
+            self.debug(lambda: f"Malformed choices in response: {json_obj}")
+            return None
+
         data = choices[0].get(data_key)
-        if not data:
+        if not isinstance(data, dict):
+            # A truthy non-dict ``delta``/``message`` (e.g. ``message: 'hello'``)
+            # would crash ``data.get(...)`` below; the fast path routes this to
+            # ``_usage_only_response``, so degrade to None here and let
+            # ``parse_response`` surface any usage exactly as the fast path does.
             self.debug(lambda: f"No data found in response: {json_obj}")
             return None
 
