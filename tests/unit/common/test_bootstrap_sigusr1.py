@@ -24,7 +24,9 @@ from aiperf.common import bootstrap
     not hasattr(signal, "SIGUSR1"), reason="SIGUSR1 not available on this platform"
 )
 def test_registers_sigusr1_handler() -> None:
-    with patch("aiperf.common.bootstrap.faulthandler.register") as mock_register:
+    with patch(
+        "aiperf.common.bootstrap.faulthandler.register", create=True
+    ) as mock_register:
         bootstrap.register_sigusr1_faulthandler()
     mock_register.assert_called_once_with(signal.SIGUSR1, all_threads=True, chain=False)
 
@@ -36,7 +38,9 @@ def test_noop_without_sigusr1() -> None:
     )  # no attributes -> hasattr(..., "SIGUSR1") is False
     with (
         patch("aiperf.common.bootstrap.signal", fake_signal),
-        patch("aiperf.common.bootstrap.faulthandler.register") as mock_register,
+        patch(
+            "aiperf.common.bootstrap.faulthandler.register", create=True
+        ) as mock_register,
     ):
         bootstrap.register_sigusr1_faulthandler()
     mock_register.assert_not_called()
@@ -60,6 +64,7 @@ def test_registration_errors_are_suppressed(exc_type: type[Exception]) -> None:
     with patch(
         "aiperf.common.bootstrap.faulthandler.register",
         side_effect=exc_type("sys.stderr has no fileno"),
+        create=True,
     ):
         bootstrap.register_sigusr1_faulthandler()  # must not raise
 
