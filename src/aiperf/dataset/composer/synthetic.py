@@ -185,7 +185,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         # Sample ISL/OSL pair for this request (cached for consistency)
         turn_id = id(turn)
-        isl, _ = self._get_turn_sequence_lengths(turn_id)
+        isl, _ = self._get_turn_sequence_lengths(turn_id, is_first=is_first)
 
         # `isl` was already drawn from the full typed distribution inside
         # `_get_turn_sequence_lengths` via `sample_int(rng)`. Passing a

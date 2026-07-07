@@ -22,6 +22,7 @@ def _make_composer(
     osl: Any = None,
     entries: int = 1000,
     sequence_distribution: Any = None,
+    first_turn_isl: Any = None,
     **dataset_overrides: Any,
 ) -> SyntheticDatasetComposer:
     """Build a SyntheticDatasetComposer whose prompts.isl/osl are the given
@@ -30,7 +31,7 @@ def _make_composer(
     Uses the native BenchmarkConfig path (rather than CLIConfig, which is flat
     and cannot express typed distributions): the top-level ``isl``/``osl``
     shortcuts hoist into ``prompts.{isl,osl}``. A ``sequence_distribution`` list
-    is nested under ``prompts.sequence_distribution`` (it has no top-level
+    and ``first_turn_isl`` are nested under ``prompts`` (they have no top-level
     shorthand). A FakeTokenizer keeps prompt generation cheap.
 
     The composer clears its per-turn sequence cache inside ``_finalize_turn``
@@ -52,6 +53,8 @@ def _make_composer(
         dataset.setdefault("prompts", {})["sequence_distribution"] = (
             sequence_distribution
         )
+    if first_turn_isl is not None:
+        dataset.setdefault("prompts", {})["first_turn_isl"] = first_turn_isl
 
     run = make_benchmark_run(extra={"datasets": [dataset]})
     composer = SyntheticDatasetComposer(run=run, tokenizer=FakeTokenizer())
@@ -232,3 +235,42 @@ class TestTypedSequenceDistributionBuckets:
         composer.create_dataset()
         isls = sorted(p[0] for p in composer._turn_sequence_cache.values())
         assert isls[len(isls) // 2] == pytest.approx(5000, rel=0.10)
+
+
+class TestFirstTurnIsl:
+    def test_first_turn_uses_starting_distribution_subsequent_use_isl(self):
+        composer = _make_composer(
+            isl={"mean": 200, "stddev": 5},
+            first_turn_isl={"mean": 20000, "stddev": 10},
+            turns=4,
+            entries=50,
+        )
+        conversations = composer.create_dataset()
+        cache = composer._turn_sequence_cache
+        for conv in conversations:
+            assert cache[id(conv.turns[0])][0] > 10000  # starting context size
+            for turn in conv.turns[1:]:
+                assert cache[id(turn)][0] < 1000  # per-turn new input
+
+    def test_first_turn_isl_unset_isl_applies_to_all_turns(self):
+        composer = _make_composer(isl={"mean": 200, "stddev": 5}, turns=3, entries=30)
+        conversations = composer.create_dataset()
+        cache = composer._turn_sequence_cache
+        for conv in conversations:
+            for turn in conv.turns:
+                assert cache[id(turn)][0] < 1000
+
+
+class TestRelativeBucketWeights:
+    def test_weights_not_summing_to_100_normalized(self):
+        composer = _make_composer(
+            entries=2000,
+            sequence_distribution=[
+                {"isl": 100, "osl": 10, "probability": 50},
+                {"isl": 10000, "osl": 1000, "probability": 1},
+            ],
+        )
+        composer.create_dataset()
+        isls = [p[0] for p in composer._turn_sequence_cache.values()]
+        small_frac = sum(1 for v in isls if v == 100) / len(isls)
+        assert small_frac > 0.94  # 50:1 ~ 98%

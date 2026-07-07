@@ -37,8 +37,8 @@ class _TypedSequenceDistribution:
     their full shape (the legacy SequenceLengthDistribution only supported
     fixed-or-normal buckets).
 
-    Weights are relative; config-level validation already checks they sum
-    to ~100.
+    Weights are relative and normalized by their total here; config-level
+    validation only guarantees a positive total (so this division is safe).
     """
 
     def __init__(
@@ -191,7 +191,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         else:
             raise ValueError(f"Invalid model selection strategy: {strategy}.")
 
-    def _get_turn_sequence_lengths(self, turn_id: int) -> tuple[int, int]:
+    def _get_turn_sequence_lengths(
+        self, turn_id: int, *, is_first: bool = False
+    ) -> tuple[int, int]:
         """Sample (or return the cached) ISL/OSL pair for a specific turn.
 
         Both lengths are drawn from their full typed distributions
@@ -201,6 +203,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         Args:
             turn_id: Unique identifier for the turn
+            is_first: When True and ``prompts.first_turn_isl`` is set, the ISL is
+                drawn from that starting-context distribution instead of ``isl``.
+                Only affects the plain isl/osl path (sequence_distribution ignores it).
 
         Returns:
             Tuple of (input_seq_len, output_seq_len)
@@ -209,11 +214,17 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             return self._turn_sequence_cache[turn_id]
 
         if self._seq_distribution is None:
+            prompts = self._synthetic_prompts
+            isl_dist = None
+            if prompts is not None:
+                isl_dist = (
+                    prompts.first_turn_isl
+                    if is_first and prompts.first_turn_isl is not None
+                    else prompts.isl
+                )
             isl = (
-                self._synthetic_prompts.isl.sample_int(self._seq_len_rng)
-                if self._synthetic_prompts is not None
-                and self._synthetic_prompts.isl is not None
-                and self._synthetic_prompts.isl.expected_value > 0
+                isl_dist.sample_int(self._seq_len_rng)
+                if isl_dist is not None and isl_dist.expected_value > 0
                 else 0
             )
             osl_dist = self._osl_distribution()

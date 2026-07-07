@@ -77,6 +77,18 @@ class PromptConfig(BaseConfig):
         ),
     ]
 
+    first_turn_isl: Annotated[
+        SamplingDistribution | None,
+        Field(
+            default=None,
+            description="Input sequence length for the FIRST turn of each conversation. "
+            "In multi-turn benchmarks with growing context (e.g. user-centric mode), "
+            "this sets the starting-context size while `isl` controls each subsequent "
+            "turn's new input. When unset, `isl` applies to all turns. "
+            "Requires `isl` to be set. Ignored when sequence_distribution is specified.",
+        ),
+    ]
+
     osl: Annotated[
         SamplingDistribution | None,
         Field(
@@ -120,7 +132,8 @@ class PromptConfig(BaseConfig):
             default=None,
             description="Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. "
             "Each entry specifies {isl, osl, probability}. "
-            "Probabilities are percentages (0-100) and must sum to 100. "
+            "Probabilities are relative weights (normalized across all entries) and do NOT "
+            "need to sum to 100 (e.g. probability=50 alongside probability=1 yields ~98%%/2%%). "
             "When specified, requests are sampled from this distribution instead of using isl/osl fields.",
         ),
     ]
@@ -133,6 +146,15 @@ class PromptConfig(BaseConfig):
         if v is not None:
             validate_probability_distribution(v)
         return v
+
+    @model_validator(mode="after")
+    def validate_first_turn_isl_requires_isl(self) -> PromptConfig:
+        if self.first_turn_isl is not None and self.isl is None:
+            raise ValueError(
+                "first_turn_isl requires isl to be set: first_turn_isl sizes the "
+                "first turn's starting context, isl sizes every subsequent turn."
+            )
+        return self
 
 
 class PrefixPromptConfig(BaseConfig):

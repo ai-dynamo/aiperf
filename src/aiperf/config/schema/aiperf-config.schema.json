@@ -744,6 +744,9 @@
               "$ref": "#/$defs/LogNormalDistribution"
             },
             {
+              "$ref": "#/$defs/PercentileDistribution"
+            },
+            {
               "$ref": "#/$defs/MultimodalDistribution"
             },
             {
@@ -2506,6 +2509,9 @@
                           "$ref": "#/$defs/LogNormalDistribution"
                         },
                         {
+                          "$ref": "#/$defs/PercentileDistribution"
+                        },
+                        {
                           "$ref": "#/$defs/MultimodalDistribution"
                         },
                         {
@@ -2533,6 +2539,9 @@
                         },
                         {
                           "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/PercentileDistribution"
                         },
                         {
                           "$ref": "#/$defs/MultimodalDistribution"
@@ -2619,6 +2628,9 @@
                           "$ref": "#/$defs/LogNormalDistribution"
                         },
                         {
+                          "$ref": "#/$defs/PercentileDistribution"
+                        },
+                        {
                           "$ref": "#/$defs/MultimodalDistribution"
                         },
                         {
@@ -2646,6 +2658,9 @@
                         },
                         {
                           "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/PercentileDistribution"
                         },
                         {
                           "$ref": "#/$defs/MultimodalDistribution"
@@ -2802,6 +2817,9 @@
                         },
                         {
                           "$ref": "#/$defs/LogNormalDistribution"
+                        },
+                        {
+                          "$ref": "#/$defs/PercentileDistribution"
                         },
                         {
                           "$ref": "#/$defs/MultimodalDistribution"
@@ -7504,6 +7522,9 @@
                   "$ref": "#/$defs/LogNormalDistribution"
                 },
                 {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
                   "$ref": "#/$defs/MultimodalDistribution"
                 },
                 {
@@ -8536,6 +8557,9 @@
               "$ref": "#/$defs/LogNormalDistribution"
             },
             {
+              "$ref": "#/$defs/PercentileDistribution"
+            },
+            {
               "$ref": "#/$defs/MultimodalDistribution"
             },
             {
@@ -8566,6 +8590,9 @@
             },
             {
               "$ref": "#/$defs/LogNormalDistribution"
+            },
+            {
+              "$ref": "#/$defs/PercentileDistribution"
             },
             {
               "$ref": "#/$defs/MultimodalDistribution"
@@ -9742,6 +9769,9 @@
                   "$ref": "#/$defs/LogNormalDistribution"
                 },
                 {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
                   "$ref": "#/$defs/MultimodalDistribution"
                 },
                 {
@@ -10058,6 +10088,138 @@
           "x-kubernetes-preserve-unknown-fields": true
         }
       ]
+    },
+    "PercentileDistribution": {
+      "additionalProperties": false,
+      "description": "Right-skewed distribution parameterized directly by percentile targets.\n\nYAML:\n    isl: {p50: 50000, p99: 400000}                 # log-normal, exact p50/p99\n    isl: {p50: 50000, p99: 400000, mean: 60000}    # mixture, also pins the mean\n\nWith only p50 and p99, a log-normal fits both exactly. Adding ``mean``\ncovers shapes no 2-parameter distribution can express (e.g. p50=50k,\np99=400k, mean=60k): a body component carries the median while a small\nheavy tail carries the p99, solved deterministically at config\nvalidation time so infeasible targets fail fast in `aiperf config\nvalidate` rather than mid-benchmark.",
+      "properties": {
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive lower bound; samples below are clamped up. Applies to every distribution type — composes with mean/stddev/median/peaks/points/value.",
+          "title": "Min",
+          "x-jinja2-supported": true
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Inclusive upper bound; samples above are clamped down.",
+          "title": "Max",
+          "x-jinja2-supported": true
+        },
+        "p50": {
+          "description": "Target median (50th percentile) of the samples.",
+          "title": "P50",
+          "oneOf": [
+            {
+              "description": "Target median (50th percentile) of the samples.",
+              "exclusiveMinimum": 0.0,
+              "title": "P50",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "p99": {
+          "description": "Target 99th percentile. Must be greater than p50.",
+          "title": "P99",
+          "oneOf": [
+            {
+              "description": "Target 99th percentile. Must be greater than p50.",
+              "exclusiveMinimum": 0.0,
+              "title": "P99",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Optional target mean. Must be greater than p50. When omitted, the mean implied by the p50/p99 log-normal fit applies.",
+          "title": "Mean",
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "p50",
+        "p99"
+      ],
+      "title": "PercentileDistribution",
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
     },
     "PoissonPhase": {
       "additionalProperties": false,
@@ -10542,6 +10704,9 @@
                   "$ref": "#/$defs/LogNormalDistribution"
                 },
                 {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
                   "$ref": "#/$defs/MultimodalDistribution"
                 },
                 {
@@ -10557,6 +10722,38 @@
           "description": "Input sequence length in tokens. Can be a fixed integer (e.g., 512) or distribution {mean: 512, stddev: 50}. AIPerf generates prompts with lengths following a normal distribution around the mean (±stddev). Ignored when sequence_distribution is specified.",
           "title": "Isl"
         },
+        "firstTurnIsl": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FixedDistribution"
+                },
+                {
+                  "$ref": "#/$defs/NormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
+                  "$ref": "#/$defs/MultimodalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/EmpiricalDistribution"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Input sequence length for the FIRST turn of each conversation. In multi-turn benchmarks with growing context (e.g. user-centric mode), this sets the starting-context size while `isl` controls each subsequent turn's new input. When unset, `isl` applies to all turns. Requires `isl` to be set. Ignored when sequence_distribution is specified.",
+          "title": "Firstturnisl"
+        },
         "osl": {
           "anyOf": [
             {
@@ -10569,6 +10766,9 @@
                 },
                 {
                   "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/PercentileDistribution"
                 },
                 {
                   "$ref": "#/$defs/MultimodalDistribution"
@@ -10649,7 +10849,7 @@
             }
           ],
           "default": null,
-          "description": "Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Each entry specifies {isl, osl, probability}. Probabilities are percentages (0-100) and must sum to 100. When specified, requests are sampled from this distribution instead of using isl/osl fields.",
+          "description": "Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Each entry specifies {isl, osl, probability}. Probabilities are relative weights (normalized across all entries) and do NOT need to sum to 100 (e.g. probability=50 alongside probability=1 yields ~98%%/2%%). When specified, requests are sampled from this distribution instead of using isl/osl fields.",
           "title": "Sequencedistribution"
         }
       },
@@ -10854,6 +11054,9 @@
               "$ref": "#/$defs/LogNormalDistribution"
             },
             {
+              "$ref": "#/$defs/PercentileDistribution"
+            },
+            {
               "$ref": "#/$defs/MultimodalDistribution"
             },
             {
@@ -10886,6 +11089,9 @@
               "$ref": "#/$defs/LogNormalDistribution"
             },
             {
+              "$ref": "#/$defs/PercentileDistribution"
+            },
+            {
               "$ref": "#/$defs/MultimodalDistribution"
             },
             {
@@ -10916,6 +11122,9 @@
             },
             {
               "$ref": "#/$defs/LogNormalDistribution"
+            },
+            {
+              "$ref": "#/$defs/PercentileDistribution"
             },
             {
               "$ref": "#/$defs/MultimodalDistribution"
@@ -11618,6 +11827,9 @@
               "$ref": "#/$defs/LogNormalDistribution"
             },
             {
+              "$ref": "#/$defs/PercentileDistribution"
+            },
+            {
               "$ref": "#/$defs/MultimodalDistribution"
             },
             {
@@ -11675,6 +11887,9 @@
               "$ref": "#/$defs/LogNormalDistribution"
             },
             {
+              "$ref": "#/$defs/PercentileDistribution"
+            },
+            {
               "$ref": "#/$defs/MultimodalDistribution"
             },
             {
@@ -11720,13 +11935,12 @@
           "x-jinja2-supported": true
         },
         "probability": {
-          "description": "Relative probability weight for this distribution bucket (0-100). Weights are normalized across all entries. Example: probability=40 means 40%% of requests use this ISL/OSL.",
+          "description": "Relative probability weight for this distribution bucket. Weights are normalized across all entries and do NOT need to sum to 100 (probability=50 alongside probability=1 yields ~98%%/2%%).",
           "title": "Probability",
           "oneOf": [
             {
-              "description": "Relative probability weight for this distribution bucket (0-100). Weights are normalized across all entries. Example: probability=40 means 40%% of requests use this ISL/OSL.",
-              "maximum": 100.0,
-              "minimum": 0.0,
+              "description": "Relative probability weight for this distribution bucket. Weights are normalized across all entries and do NOT need to sum to 100 (probability=50 alongside probability=1 yields ~98%%/2%%).",
+              "exclusiveMinimum": 0.0,
               "title": "Probability",
               "type": "number"
             },
@@ -12342,6 +12556,9 @@
                   "$ref": "#/$defs/LogNormalDistribution"
                 },
                 {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
                   "$ref": "#/$defs/MultimodalDistribution"
                 },
                 {
@@ -12369,6 +12586,9 @@
                 },
                 {
                   "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/PercentileDistribution"
                 },
                 {
                   "$ref": "#/$defs/MultimodalDistribution"
@@ -12473,6 +12693,9 @@
                   "$ref": "#/$defs/LogNormalDistribution"
                 },
                 {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
                   "$ref": "#/$defs/MultimodalDistribution"
                 },
                 {
@@ -12500,6 +12723,9 @@
                 },
                 {
                   "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/PercentileDistribution"
                 },
                 {
                   "$ref": "#/$defs/MultimodalDistribution"

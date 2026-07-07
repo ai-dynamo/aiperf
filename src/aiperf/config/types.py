@@ -127,11 +127,10 @@ class SequenceDistributionEntry(BaseConfig):
     probability: Annotated[
         float,
         Field(
-            ge=0.0,
-            le=100.0,
-            description="Relative probability weight for this distribution bucket (0-100). "
-            "Weights are normalized across all entries. "
-            "Example: probability=40 means 40%% of requests use this ISL/OSL.",
+            gt=0.0,
+            description="Relative probability weight for this distribution bucket. "
+            "Weights are normalized across all entries and do NOT need to sum to 100 "
+            "(probability=50 alongside probability=1 yields ~98%%/2%%).",
         ),
     ]
 
@@ -155,11 +154,19 @@ class SequenceDistributionEntry(BaseConfig):
 def validate_probability_distribution(
     entries: list[SequenceDistributionEntry],
 ) -> list[SequenceDistributionEntry]:
-    """Validate that a probability distribution sums to approximately 100."""
+    """Validate a relative-weight probability distribution.
+
+    Weights are relative and normalized at sampling time, so they do not need
+    to sum to 100. The only requirement is at least one entry with a positive
+    total weight: the downstream sampler normalizes by that total, so a
+    non-positive total would divide by zero.
+    """
+    if not entries:
+        raise ValueError("Sequence distribution must contain at least one entry.")
     total = sum(entry.probability for entry in entries)
-    if not (99.0 <= total <= 101.0):
+    if total <= 0:
         raise ValueError(
-            f"Sequence distribution probabilities must sum to ~100, got {total}. "
+            f"Sequence distribution weights must have a positive total, got {total}. "
             f"Individual probabilities: {[e.probability for e in entries]}"
         )
     return entries

@@ -61,12 +61,12 @@ class TestSequenceLengthPair:
             SequenceLengthPair(256, -1, 50.0)
 
     def test_invalid_probability(self):
-        """Test validation of probability values."""
-        with pytest.raises(ValueError, match="Probability must be in \\[0,100\\]"):
+        """Test validation of probability values (must be a positive weight)."""
+        with pytest.raises(ValueError, match="Probability weight must be positive"):
             SequenceLengthPair(256, 128, -10.0)
 
-        with pytest.raises(ValueError):
-            SequenceLengthPair(256, 128, 110.0)
+        with pytest.raises(ValueError, match="Probability weight must be positive"):
+            SequenceLengthPair(256, 128, 0.0)
 
     def test_invalid_input_stddev(self):
         """Test validation of negative input sequence length standard deviation."""
@@ -83,10 +83,11 @@ class TestSequenceLengthPair:
             SequenceLengthPair(256, 128, 50.0, output_seq_len_stddev=-2.0)
 
     def test_boundary_probabilities(self):
-        """Test boundary probability values."""
-        # Should work
-        SequenceLengthPair(256, 128, 0.0)
+        """Test boundary probability values (positive relative weights)."""
+        # Weights are relative: small and large positive values are both valid.
+        SequenceLengthPair(256, 128, 0.001)
         SequenceLengthPair(256, 128, 100.0)
+        SequenceLengthPair(256, 128, 250.0)
 
     def test_immutability(self):
         """Test that pairs are immutable."""
@@ -225,16 +226,17 @@ class TestSequenceLengthDistribution:
         with pytest.raises(ValueError, match="at least one sequence length pair"):
             SequenceLengthDistribution([])
 
-    def test_probability_sum_validation(self):
-        """Test validation of probability sum."""
-        # Probabilities don't sum to 100.0
-        invalid_pairs = [
+    def test_relative_weights_do_not_require_sum_100(self):
+        """Probabilities are relative weights; a non-100 sum is accepted."""
+        # Sum = 70.0 -> normalized to 30/70 and 40/70 at sampling time.
+        pairs = [
             SequenceLengthPair(256, 128, 30.0),
-            SequenceLengthPair(512, 256, 40.0),  # Sum = 70.0
+            SequenceLengthPair(512, 256, 40.0),
         ]
 
-        with pytest.raises(ValueError, match="must sum to 100.0"):
-            SequenceLengthDistribution(invalid_pairs)
+        dist = SequenceLengthDistribution(pairs)
+        for isl, osl in dist.sample_batch(100):
+            assert (isl, osl) in [(256, 128), (512, 256)]
 
     def test_probability_sum_tolerance(self):
         """Test that small floating-point errors are tolerated."""
@@ -359,11 +361,15 @@ class TestDistributionParser:
         assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 0.0)
         assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 0.0, 15.0)
 
-    def test_semicolon_format_invalid_fractions(self):
-        """Test that fractions are properly rejected (percentage-only enforcement)."""
+    def test_semicolon_format_relative_weight_fractions(self):
+        """Fractional weights are accepted as relative weights (0.6:0.4 -> 60/40)."""
         dist_str = "256,128:0.6;512,256:0.4"
-        with pytest.raises(ValueError, match="Probabilities must sum to 100.0"):
-            DistributionParser.parse(dist_str)
+        dist = DistributionParser.parse(dist_str)
+
+        assert len(dist.pairs) == 2
+        samples = dist.sample_batch(2000)
+        small_frac = sum(1 for isl, _ in samples if isl == 256) / len(samples)
+        assert 0.5 < small_frac < 0.7
 
     def test_bracket_format_parsing(self):
         """Test parsing bracket format with percentages."""
@@ -424,9 +430,7 @@ class TestDistributionParser:
             "256,128",  # Missing probability
             "256:50",  # Missing OSL
             "invalid",
-            "256,128:110",  # Invalid probability (>100)
-            "256,128:-10",  # Invalid probability (<0)
-            "256,128:0.6",  # Fraction not allowed (percentage-only)
+            "256,128:-10",  # Invalid probability weight (must be positive)
             '{"invalid": "json"}',  # Invalid JSON structure
             "256|,128:100",  # Empty stddev
             "256|-5,128:100",  # Negative stddev

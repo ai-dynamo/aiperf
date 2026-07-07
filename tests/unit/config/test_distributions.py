@@ -19,6 +19,7 @@ from pydantic import TypeAdapter, ValidationError
 from pytest import param
 
 from aiperf.common import random_generator as rng
+from aiperf.config.dataset.content import PromptConfig
 from aiperf.config.distributions import (
     Distribution,
     EmpiricalDistribution,
@@ -538,3 +539,41 @@ class TestSequenceDistributionEntry:
         assert isinstance(entry.osl, NormalDistribution)
         assert entry.osl.mean == 256.0
         assert entry.osl.stddev == 25.0
+
+
+# ============================================================
+# 9. first_turn_isl + relative bucket weights
+# ============================================================
+
+
+def test_first_turn_isl_without_isl_raises():
+    with pytest.raises(ValidationError, match="first_turn_isl"):
+        PromptConfig(first_turn_isl={"mean": 20000, "stddev": 10})
+
+
+def test_sequence_distribution_relative_weights_accepted():
+    cfg = PromptConfig(
+        sequence_distribution=[
+            {"isl": 60000, "osl": 100, "probability": 50},
+            {"isl": 400000, "osl": 10, "probability": 1},
+        ]
+    )
+    assert len(cfg.sequence_distribution) == 2
+
+
+def test_sequence_distribution_zero_total_weight_rejected():
+    with pytest.raises(ValidationError):
+        PromptConfig(
+            sequence_distribution=[
+                {"isl": 100, "osl": 10, "probability": 0},
+            ]
+        )
+
+
+def test_legacy_string_parser_accepts_relative_weights():
+    from aiperf.common.models.sequence_distribution import DistributionParser
+
+    dist = DistributionParser.parse("100,10:50;4000,10:1")
+    samples = [dist.sample() for _ in range(2000)]
+    small = sum(1 for isl, _ in samples if isl == 100) / len(samples)
+    assert small > 0.94
