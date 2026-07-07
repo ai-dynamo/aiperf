@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from aiperf.analysis.sweepline import (
+    SweepLineStats,
     add_step_functions,
     compute_active_weighted_stats,
     compute_time_weighted_stats,
@@ -24,6 +25,7 @@ from aiperf.analysis.sweepline import (
     tokens_in_flight_sweep_line_icl,
     total_throughput_sweep_line,
 )
+from aiperf.analysis.sweepline_stats import metric_result_from_sweep_line_stats
 
 
 class TestConcurrencySweep:
@@ -1568,3 +1570,69 @@ class TestICLSweepReference:
         # permanent negative offset = 2 * (osl-1)/K.
         assert tif[-1] == pytest.approx(0.0, abs=1e-9)
         assert float(np.min(tif)) >= 0.0
+
+
+class TestMetricResultFromSweepLineStats:
+    """MetricResult construction from sweep-line stats scrubs non-finite values.
+
+    MetricResult stat fields are plain ``float | None`` and feed JSON/console
+    exports directly, so NaN/inf must be scrubbed to None at construction.
+    """
+
+    def test_metric_result_from_sweep_line_stats_non_finite_scrubbed_to_none(
+        self,
+    ) -> None:
+        stats = SweepLineStats(
+            avg=float("nan"),
+            min=float("inf"),
+            max=float("-inf"),
+            p50=float("nan"),
+            p90=float("inf"),
+            p95=float("-inf"),
+            p99=float("nan"),
+            std=float("inf"),
+        )
+        result = metric_result_from_sweep_line_stats(
+            "tokens_in_flight", "Tokens In Flight", "tokens", stats
+        )
+        assert result.avg is None
+        assert result.min is None
+        assert result.max is None
+        assert result.p50 is None
+        assert result.p90 is None
+        assert result.p95 is None
+        assert result.p99 is None
+        assert result.std is None
+
+    def test_metric_result_from_sweep_line_stats_scaled_overflow_scrubbed(
+        self,
+    ) -> None:
+        """Finite stats that only overflow AFTER scaling must also be scrubbed."""
+        huge = 1e308
+        stats = SweepLineStats(
+            avg=huge, min=1.0, max=huge, p50=1.0, p90=1.0, p95=1.0, p99=1.0, std=1.0
+        )
+        result = metric_result_from_sweep_line_stats(
+            "tokens_in_flight", "Tokens In Flight", "tokens", stats, scale=10.0
+        )
+        assert result.avg is None
+        assert result.max is None
+        assert result.min == pytest.approx(10.0)
+
+    def test_metric_result_from_sweep_line_stats_finite_values_pass_through(
+        self,
+    ) -> None:
+        stats = SweepLineStats(
+            avg=1.5, min=0.5, max=3.0, p50=1.0, p90=2.0, p95=2.5, p99=2.9, std=0.25
+        )
+        result = metric_result_from_sweep_line_stats(
+            "tokens_in_flight", "Tokens In Flight", "tokens", stats, scale=2.0
+        )
+        assert result.avg == pytest.approx(3.0)
+        assert result.min == pytest.approx(1.0)
+        assert result.max == pytest.approx(6.0)
+        assert result.p50 == pytest.approx(2.0)
+        assert result.p90 == pytest.approx(4.0)
+        assert result.p95 == pytest.approx(5.0)
+        assert result.p99 == pytest.approx(5.8)
+        assert result.std == pytest.approx(0.5)

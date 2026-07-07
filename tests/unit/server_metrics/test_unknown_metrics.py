@@ -274,7 +274,8 @@ class TestUnknownJsonRoundTrip:
         assert entry.model_dump(mode="json")["type"] == "unknown"
 
     def test_export_data_accepts_unknown_in_warmup_metrics(self) -> None:
-        """``warmup_metrics`` must admit ``UnknownMetricData`` like ``metrics`` does."""
+        """``warmup_metrics`` must admit ``UnknownMetricData`` like ``metrics``
+        does — ``_build_hybrid_metrics`` emits it for both phases."""
         umd = UnknownMetricData(description="Statistic IcmpInErrors.")
         export_data = ServerMetricsExportData(
             summary=ServerMetricsSummary(
