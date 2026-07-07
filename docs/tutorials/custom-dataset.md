@@ -19,7 +19,7 @@ AIPerf supports these custom dataset types for benchmarking with your own data:
 | **Random Pool** | Load testing with variety | No | No | Yes |
 | **Mooncake / Bailian / Baseten Trace** | Production trace replay | Yes | Yes | No |
 
-**All three support:**
+**All of these support:**
 - Client-side batching
 - Automatic media handling: local files are converted to base64 format, while remote URLs are sent directly to the API
 

@@ -477,10 +477,25 @@ Collapse global idle gaps in a trace replay schedule to at most this many second
 Wall-clock compression factor for trace replay (e.g. 10 = replay 10x faster than recorded). Divides all normalized timestamps and inter-turn delays so a ~2h trace replays in minutes. ``None`` = real time. Does NOT touch hash_ids (unlike synthesis speedup_ratio). Routes onto the active FileDataset's ``replay_speedup`` at config-resolution time.
 <br/>_Constraints: > 0.0_
 
-#### `--open-loop-replay`
+#### `--open-loop-replay`, `--no-open-loop-replay`
 
-Replay every recorded request at its absolute (speedup-scaled) timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When set, all turns retain their absolute timestamp and fire on the fixed schedule regardless of prior-turn completion, rather than continuation turns replaying closed-loop via inter-turn delays. Use for replaying recordings whose sessions are already-determined event logs. Routes onto the active FileDataset's ``open_loop_replay`` field at config-resolution time.
+Open-loop absolute-timestamp replay (the default): every recorded request fires at its absolute (speedup-scaled) timestamp, bypassing per-turn back-pressure. Pass `--no-open-loop-replay` for closed-loop back-pressure: each continuation turn fires a think-time delay after the prior turn completes (recorded start-to-start gap minus the prior turn's recorded e2e duration). Closed-loop keeps sessions causally ordered when replayed service times differ from recorded ones, e.g. for A/A comparisons. Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``open_loop_replay`` field at config-resolution time.
+<br/>_Default: `True`_
+
+#### `--open-loop-strict`
+
+In open-loop replay, additionally treat every trace row as an independent single-turn session so ALL requests (not just each session's first turn) fire at their absolute recorded timestamps, even if earlier turns of the same recorded session have not completed. Trades away multi-turn session grouping and session metrics. Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``open_loop_strict`` field at config-resolution time.
 <br/>_Flag (no value required)_
+
+#### `--omit-kv-hints`
+
+Stop forwarding recorded KV-cache hints (``hash_ids``, ``block_size``) in replayed request bodies; some strict frontends reject unknown parameters. Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``omit_kv_hints`` field at config-resolution time.
+<br/>_Flag (no value required)_
+
+#### `--force-min-tokens`, `--no-force-min-tokens`
+
+Pin ``min_tokens`` to the recorded output length in replayed request bodies so replayed generations match recorded lengths. Pass `--no-force-min-tokens` to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``force_min_tokens`` field at config-resolution time.
+<br/>_Default: `True`_
 
 ### Prompt
 
@@ -1842,10 +1857,25 @@ Collapse global idle gaps in a trace replay schedule to at most this many second
 Wall-clock compression factor for trace replay (e.g. 10 = replay 10x faster than recorded). Divides all normalized timestamps and inter-turn delays so a ~2h trace replays in minutes. ``None`` = real time. Does NOT touch hash_ids (unlike synthesis speedup_ratio). Routes onto the active FileDataset's ``replay_speedup`` at config-resolution time.
 <br/>_Constraints: > 0.0_
 
-#### `--open-loop-replay`
+#### `--open-loop-replay`, `--no-open-loop-replay`
 
-Replay every recorded request at its absolute (speedup-scaled) timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When set, all turns retain their absolute timestamp and fire on the fixed schedule regardless of prior-turn completion, rather than continuation turns replaying closed-loop via inter-turn delays. Use for replaying recordings whose sessions are already-determined event logs. Routes onto the active FileDataset's ``open_loop_replay`` field at config-resolution time.
+Open-loop absolute-timestamp replay (the default): every recorded request fires at its absolute (speedup-scaled) timestamp, bypassing per-turn back-pressure. Pass `--no-open-loop-replay` for closed-loop back-pressure: each continuation turn fires a think-time delay after the prior turn completes (recorded start-to-start gap minus the prior turn's recorded e2e duration). Closed-loop keeps sessions causally ordered when replayed service times differ from recorded ones, e.g. for A/A comparisons. Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``open_loop_replay`` field at config-resolution time.
+<br/>_Default: `True`_
+
+#### `--open-loop-strict`
+
+In open-loop replay, additionally treat every trace row as an independent single-turn session so ALL requests (not just each session's first turn) fire at their absolute recorded timestamps, even if earlier turns of the same recorded session have not completed. Trades away multi-turn session grouping and session metrics. Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``open_loop_strict`` field at config-resolution time.
 <br/>_Flag (no value required)_
+
+#### `--omit-kv-hints`
+
+Stop forwarding recorded KV-cache hints (``hash_ids``, ``block_size``) in replayed request bodies; some strict frontends reject unknown parameters. Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``omit_kv_hints`` field at config-resolution time.
+<br/>_Flag (no value required)_
+
+#### `--force-min-tokens`, `--no-force-min-tokens`
+
+Pin ``min_tokens`` to the recorded output length in replayed request bodies so replayed generations match recorded lengths. Pass `--no-force-min-tokens` to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader. Routes onto the active FileDataset's ``force_min_tokens`` field at config-resolution time.
+<br/>_Default: `True`_
 
 ### Prompt
 

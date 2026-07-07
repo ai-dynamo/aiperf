@@ -43,6 +43,20 @@ Common optional columns:
 
 `output_text` is preserved in the trace model for debugging and offline validation, but AIPerf still measures a fresh model response during the benchmark.
 
+## Timing model
+
+By default replay is **open-loop**: every request is scheduled at its absolute recorded timestamp, treating the trace as a fixed event log (but see the known limitation below).
+
+- `--no-open-loop-replay` selects **closed-loop back-pressure**: each continuation turn fires a think-time delay after the prior turn completes. Think-time = recorded start-to-start gap minus the prior turn's recorded `duration_e2e_ms`, clamped by `--inter-turn-delay-cap-seconds`. Use closed-loop when replayed service times differ from recorded ones (e.g. A/A comparisons) and sessions must stay causally ordered.
+- `--replay-speedup N` divides all timestamps and inter-turn delays by `N` (e.g. `10` replays a ~2h trace in ~12 minutes) without touching `hash_ids`, so KV-cache fidelity is preserved.
+- `--max-idle-gap-cap-seconds S` collapses any global dead-air gap between consecutive requests (across all sessions) to at most `S` seconds.
+- `--trace-session-sample-ratio R` keeps a fraction `R` of whole sessions, preserving multi-turn integrity. Sampling is only deterministic across runs with a fixed `--random-seed`.
+- `--omit-kv-hints` stops forwarding `hash_ids`/`block_size` KV-cache hints in request bodies (some strict frontends reject unknown parameters).
+- `--force-min-tokens` (default) pins `min_tokens` to the recorded output length so replayed generations match recorded lengths; `--no-force-min-tokens` lets EOS end generations naturally (some servers reject `min_tokens`).
+- `--open-loop-strict` additionally treats every trace row as an independent single-turn session so ALL requests (not just each session's first turn) fire at their absolute recorded timestamps, even if earlier turns of the same recorded session have not completed. This trades away multi-turn session grouping and session metrics.
+
+**Known limitation:** without `--open-loop-strict`, a session's continuation turns fire at max(scheduled time, prior turn completion) — an open-loop timestamp inside a session cannot preempt an in-flight prior turn.
+
 ## Command
 
 ```bash
