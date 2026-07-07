@@ -81,7 +81,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         self.video_generator = VideoGenerator(self._synthetic_video)
 
         self._model_selector_rng = rng.derive("composer.turn.model_selection")
-        self._max_tokens_rng = rng.derive("composer.turn.max_tokens")
+        self._seq_len_rng = rng.derive("composer.turn.sequence_lengths")
 
         self.turn_count = 0
 
@@ -171,10 +171,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             raise ValueError(f"Invalid model selection strategy: {strategy}.")
 
     def _get_turn_sequence_lengths(self, turn_id: int) -> tuple[int, int]:
-        """Get or sample ISL/OSL pair for a specific turn, ensuring consistency.
+        """Sample (or return the cached) ISL/OSL pair for a specific turn.
 
-        This method caches the sequence lengths per turn to ensure that the same
-        ISL/OSL pair is used for both prompt generation and max_tokens setting.
+        Both lengths are drawn from their full typed distributions
+        (Fixed/Normal/LogNormal/Multimodal/Empirical/Percentile) exactly once
+        per turn; the cache guarantees prompt generation and max_tokens see
+        the same pair.
 
         Args:
             turn_id: Unique identifier for the turn
@@ -186,22 +188,20 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             return self._turn_sequence_cache[turn_id]
 
         if self._seq_distribution is None:
-            isl_mean = (
-                int(self._synthetic_prompts.isl.expected_value)
+            isl = (
+                self._synthetic_prompts.isl.sample_int(self._seq_len_rng)
                 if self._synthetic_prompts is not None
                 and self._synthetic_prompts.isl is not None
+                and self._synthetic_prompts.isl.expected_value > 0
                 else 0
             )
-            osl_mean = (
-                int(self._synthetic_prompts.osl.expected_value)
-                if self._synthetic_prompts is not None
-                and self._synthetic_prompts.osl is not None
+            osl_dist = self._osl_distribution()
+            osl = (
+                osl_dist.sample_int(self._seq_len_rng)
+                if osl_dist is not None and osl_dist.expected_value > 0
                 else None
             )
-            seq_lengths = (
-                isl_mean,
-                osl_mean or max(128, isl_mean // 2),
-            )
+            seq_lengths = (isl, osl if osl is not None else max(128, isl // 2))
         else:
             seq_lengths = self._seq_distribution.sample()
 
@@ -237,14 +237,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 turn.max_tokens = osl
         else:
             osl_dist = self._osl_distribution()
-            if osl_dist is not None:
-                osl_mean = int(osl_dist.expected_value)
-                if osl_mean <= 0:
-                    return
-                osl_stddev = int(getattr(osl_dist, "stddev", 0.0) or 0.0)
-                turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
-                    osl_mean, osl_stddev
-                )
+            if osl_dist is not None and osl_dist.expected_value > 0:
+                _, osl = self._get_turn_sequence_lengths(id(turn))
+                turn.max_tokens = osl
 
     def _finalize_turn(self, turn: Turn) -> None:
         """Finalize a turn by populating all required metadata fields.

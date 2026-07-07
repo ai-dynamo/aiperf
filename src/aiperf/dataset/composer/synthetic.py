@@ -66,9 +66,6 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._video_batch_size = (
             dataset.video.batch_size if dataset.video is not None else 1
         )
-        self._isl_stddev = _stddev_int(
-            dataset.prompts.isl if dataset.prompts is not None else None
-        )
 
         # Inclusion flags (computed once at init).
         self._include_prompt = (
@@ -192,12 +189,14 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn_id = id(turn)
         isl, _ = self._get_turn_sequence_lengths(turn_id)
 
-        # Preserve original variance unless sequence distribution is active
-        stddev = 0 if self._seq_distribution is not None else self._isl_stddev
-
+        # `isl` was already drawn from the full typed distribution inside
+        # `_get_turn_sequence_lengths` via `sample_int(rng)`. Passing a
+        # stddev here would apply a SECOND normal sample around that draw,
+        # compounding the variance to stddev*sqrt(2). Per-turn variance
+        # belongs to the distribution; per-prompt generation is
+        # deterministic at the turn's target.
         for _ in range(self._prompt_batch_size):
-            # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
+            content = self.prompt_generator.generate(mean=isl, stddev=0)
 
             # Add prefix prompt if this is the first turn and prefix is enabled
             if is_first and self.prefix_prompt_enabled:
