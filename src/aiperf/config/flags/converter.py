@@ -236,7 +236,7 @@ def _lookup_recipe_class(cli: CLIConfig) -> Any | None:
 
     try:
         return get_class(PluginType.SEARCH_RECIPE, cli.search_recipe)
-    except Exception:  # noqa: BLE001 - missing recipe will surface as a clearer error downstream
+    except Exception:  # missing recipe will surface as a clearer error downstream
         return None
 
 

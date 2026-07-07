@@ -179,7 +179,7 @@ class _TestSafeFdEdgeReader(_RealFdEdgeReader):
         if events is None:
             try:
                 events = self._socket.getsockopt(zmq.EVENTS)
-            except Exception:  # noqa: BLE001 - mock teardown / closed socket
+            except Exception:  # mock teardown / closed socket
                 return
         if not isinstance(events, int):
             return

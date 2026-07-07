@@ -3,10 +3,9 @@
 
 import tempfile
 from pathlib import Path
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, Self
 
 from pydantic import Field, PrivateAttr, model_validator
-from typing_extensions import Self
 
 from aiperf.config.comm.base import BaseZMQCommunicationConfig, BaseZMQProxyConfig
 from aiperf.config.comm.ipc import (

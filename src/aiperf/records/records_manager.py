@@ -461,7 +461,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for results_processor in self._metric_results_processors:
             try:
                 await results_processor.process_result(record_data)
-            except Exception as exc:  # noqa: BLE001 - telemetry processor failure must not crash the run
+            # telemetry processor failure must not crash the run
+            except Exception as exc:
                 self.exception(
                     "Failed to process metric record in "
                     f"{results_processor.__class__.__name__}: {exc!r}"

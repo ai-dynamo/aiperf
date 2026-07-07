@@ -16,9 +16,8 @@ import csv
 import json
 import re
 import sys
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 _HEADER = """\
 <!--

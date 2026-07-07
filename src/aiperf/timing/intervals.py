@@ -9,10 +9,9 @@ Modes for inter-arrival time generation:
 - ConcurrencyBurst: Zero delay, throughput controlled by concurrency semaphore
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Self, runtime_checkable
 
 from pydantic import Field
-from typing_extensions import Self
 
 from aiperf.common import random_generator as rng
 from aiperf.common.models import AIPerfBaseModel
