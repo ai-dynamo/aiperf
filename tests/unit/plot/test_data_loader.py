@@ -1621,3 +1621,32 @@ class TestZstRunLoading:
         run_data = loader.load_run(run_dir, load_per_request_data=False)
         assert run_data.requests is None
         assert "request_throughput" in run_data.aggregated["metrics"]
+
+
+class TestJsonlReaderSkipsSchemaInvalidLines:
+    """A JSONL line that is valid JSON but fails the msgspec schema (older or
+    partially-corrupt exports) must be skipped, not crash the whole load.
+    msgspec.ValidationError does not subclass ValueError, so it would escape a
+    ValueError-only except clause."""
+
+    def test_msgspec_validation_error_line_is_skipped(self, tmp_path: Path) -> None:
+        import msgspec
+
+        class _Row(msgspec.Struct):
+            a: int
+
+        decoder = msgspec.json.Decoder(_Row)
+
+        jsonl = tmp_path / "rows.jsonl"
+        jsonl.write_text(
+            '{"a": 1}\n'  # valid
+            '{"a": "not-an-int"}\n'  # valid JSON, invalid schema -> ValidationError
+            "{ not json\n"  # invalid JSON -> orjson/DecodeError
+            '{"a": 2}\n'  # valid
+        )
+
+        loader = DataLoader()
+        records = loader._read_jsonl_with_error_handling(
+            jsonl, decoder.decode, raise_on_empty=False
+        )
+        assert [r.a for r in records] == [1, 2]

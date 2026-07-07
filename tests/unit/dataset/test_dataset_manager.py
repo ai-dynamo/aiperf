@@ -690,3 +690,42 @@ class TestDatasetManagerTokenizerSkip:
         )
 
         assert dataset_manager.tokenizer is not None
+
+
+class TestAccuracySamplingGuard:
+    """Accuracy mode requires sequential sampling; the guard must read the real
+    dataset attribute (`sampling`), not a nonexistent `sampling_strategy`."""
+
+    def _accuracy_run(self, sampling: str) -> BenchmarkRun:
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE_CONFIG,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 10,
+                        "sampling": sampling,
+                        "prompts": {"isl": 32, "osl": 16},
+                    }
+                ],
+                "accuracy": {"benchmark": "mmlu"},
+            }
+        )
+        return _make_run(config)
+
+    @pytest.mark.asyncio
+    async def test_random_sampling_rejected_in_accuracy_mode(self) -> None:
+        manager = DatasetManager(
+            run=self._accuracy_run("random"), service_id="test_dataset_manager"
+        )
+        with pytest.raises(ServiceError, match="sequential request order"):
+            await manager._load_accuracy_dataset()
+
+    @pytest.mark.asyncio
+    async def test_shuffle_sampling_rejected_in_accuracy_mode(self) -> None:
+        manager = DatasetManager(
+            run=self._accuracy_run("shuffle"), service_id="test_dataset_manager"
+        )
+        with pytest.raises(ServiceError, match="sequential request order"):
+            await manager._load_accuracy_dataset()

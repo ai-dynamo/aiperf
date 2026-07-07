@@ -292,7 +292,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
         dataset_config = self.run.cfg.get_default_dataset()
-        sampling = getattr(dataset_config, "sampling_strategy", None)
+        sampling = getattr(dataset_config, "sampling", None)
         if sampling is not None and sampling != DatasetSamplingStrategy.SEQUENTIAL:
             raise self._service_error(
                 f"Accuracy mode requires sequential request order; "

@@ -376,15 +376,15 @@ def on_pull_message(
     Example:
     ```python
     class MyService(PullClientMixin, BaseComponentService):
-        @on_pull_message(MessageType.CREDIT_DROP)
-        def _on_credit_drop_pull(self, message: CreditDropMessage) -> None:
+        @on_pull_message(MessageType.INFERENCE_RESULTS)
+        def _on_inference_results(self, message: InferenceResultsWireMessage) -> None:
             pass
     ```
 
     The above is the equivalent to setting:
     ```python
-    MyService._on_pull_message.__aiperf_hook_type__ = AIPerfHook.ON_PULL_MESSAGE
-    MyService._on_pull_message.__aiperf_hook_params__ = (MessageType.CREDIT_DROP,)
+    MyService._on_inference_results.__aiperf_hook_type__ = AIPerfHook.ON_PULL_MESSAGE
+    MyService._on_inference_results.__aiperf_hook_params__ = (MessageType.INFERENCE_RESULTS,)
     """
     return _hook_decorator_with_params(AIPerfHook.ON_PULL_MESSAGE, message_types)
 

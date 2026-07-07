@@ -131,6 +131,12 @@ class FileReaderMixin:
                         records.append(record)
                     except (
                         orjson.JSONDecodeError,
+                        # msgspec.ValidationError/DecodeError do NOT subclass
+                        # ValueError, so a JSONL line that is valid JSON but
+                        # fails the msgspec schema (older/mixed-version or
+                        # partially-corrupt exports) would otherwise escape
+                        # and crash the whole plot load instead of skipping.
+                        msgspec.MsgspecError,
                         ValueError,
                         TypeError,
                         KeyError,

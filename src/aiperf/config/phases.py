@@ -24,6 +24,8 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.cancellation import CancellationConfig
 from aiperf.config.loader.duration import (
     DurationSpec,
+    NonNegativeDurationSpec,
+    PositiveDurationSpec,
     _normalize_duration,
     _parse_duration,
 )
@@ -132,9 +134,8 @@ class BasePhaseConfig(BaseConfig):
     ]
 
     duration: Annotated[
-        DurationSpec,
+        PositiveDurationSpec,
         Field(
-            gt=0,
             default=None,
             description="Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.",
         ),
@@ -197,9 +198,8 @@ class BasePhaseConfig(BaseConfig):
     # -------------------------------------------------------------------------
 
     grace_period: Annotated[
-        DurationSpec,
+        NonNegativeDurationSpec,
         Field(
-            ge=0,
             default=None,
             description="Seconds to wait for in-flight requests after duration expires (must be >= 0). "
             "Requires 'duration' to be set. Supports: 30, '30s', '2m'.",

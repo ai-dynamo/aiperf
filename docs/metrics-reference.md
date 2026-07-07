@@ -944,6 +944,184 @@ total_usage_total_tokens = sum(r.usage_total_tokens for r in records if r.valid)
 
 ---
 
+### Total Usage Reasoning Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported reasoning tokens across all requests.
+
+**Formula:**
+```python
+total_usage_reasoning_tokens = sum(r.usage_reasoning_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported reasoning tokens across all requests.
+
+---
+
+### Total Usage Prompt Cache Read Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported prompt cache-read tokens across all requests.
+
+**Formula:**
+```python
+total_usage_prompt_cache_read_tokens = sum(r.usage_prompt_cache_read_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported cache-read prompt tokens across all requests (OpenAI `prompt_tokens_details.cached_tokens` or Anthropic top-level `cache_read_input_tokens`).
+
+---
+
+### Overall Usage Prompt Cache Read %
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Run-aggregate share of input tokens served from prompt cache, weighted by token volume. Computed from the run totals so a request with 10k prompt tokens contributes 100x as much weight as a request with 100 prompt tokens — the resulting number reflects the actual fraction of input tokens the API served from cache across the whole benchmark.
+
+**Formula:**
+```python
+overall_usage_prompt_cache_read_pct = (
+    total_usage_prompt_cache_read_tokens / total_usage_prompt_tokens
+) * 100
+```
+
+**Notes:**
+- No value is produced if `total_usage_prompt_tokens` is zero (e.g. all requests errored before reporting usage).
+
+---
+
+### Total Usage Prompt Cache Write Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported prompt cache-write (cache creation) tokens across all requests. Anthropic-specific.
+
+**Formula:**
+```python
+total_usage_prompt_cache_write_tokens = sum(r.usage_prompt_cache_write_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported cache-write prompt tokens across all requests (Anthropic top-level `cache_creation_input_tokens`). Empty for OpenAI workloads.
+
+---
+
+### Total Usage Prompt Audio Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported prompt audio tokens across all requests.
+
+**Formula:**
+```python
+total_usage_prompt_audio_tokens = sum(r.usage_prompt_audio_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported prompt audio tokens across all requests.
+
+---
+
+### Total Usage Completion Audio Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported completion audio tokens across all requests.
+
+**Formula:**
+```python
+total_usage_completion_audio_tokens = sum(r.usage_completion_audio_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported completion audio tokens across all requests.
+
+---
+
+### Total Usage Accepted Prediction Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported accepted prediction tokens across all requests.
+
+**Formula:**
+```python
+total_usage_accepted_prediction_tokens = sum(r.usage_accepted_prediction_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported accepted prediction tokens across all requests.
+
+---
+
+### Total Usage Rejected Prediction Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported rejected prediction tokens across all requests.
+
+**Formula:**
+```python
+total_usage_rejected_prediction_tokens = sum(r.usage_rejected_prediction_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported rejected prediction tokens across all requests.
+
+---
+
+### Total Usage Prompt Cache Miss Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported prompt cache-miss tokens across all requests. **DeepSeek-specific.**
+
+**Formula:**
+```python
+total_usage_prompt_cache_miss_tokens = sum(r.usage_prompt_cache_miss_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates DeepSeek's top-level `prompt_cache_miss_tokens` across all requests. Empty for vendors that don't surface a separate miss field.
+
+---
+
+### Total Usage Tool Use Prompt Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported tool-use prompt tokens across all requests. **Gemini-specific.**
+
+**Formula:**
+```python
+total_usage_tool_use_prompt_tokens = sum(r.usage_tool_use_prompt_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates Gemini's `toolUsePromptTokenCount` across all requests. Useful for understanding what fraction of total prompt tokens were spent on tool/function declarations in tool-heavy agentic workloads.
+
+---
+
+### Total Usage Prompt Audio Seconds
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported prompt audio durations across all requests, in **seconds (not tokens)**. **Mistral-specific.**
+
+**Formula:**
+```python
+total_usage_prompt_audio_seconds = sum(r.usage_prompt_audio_seconds for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates Mistral's `prompt_audio_seconds`. Unit is seconds; do not confuse with [Total Usage Prompt Audio Tokens](#total-usage-prompt-audio-tokens).
+
+---
+
 ## Usage Discrepancy Metrics
 
 > [!NOTE]
@@ -1097,6 +1275,34 @@ good_request_count = sum(1 for r in records if r.all_slos_met)
 - Requires SLO thresholds to be configured (e.g., `--goodput`).
 - Only counts requests where ALL SLO constraints are satisfied.
 - Used to calculate Goodput metric.
+
+---
+
+### Good Request Fraction
+
+**Type:** [Derived Metric](#derived-metrics)
+
+**Tag:** `good_request_fraction`
+
+The fraction of all attempted requests that satisfied every per-request SLO. Returns a ratio in `[0.0, 1.0]`. Errored requests count toward the denominator so a backend that drops traffic under load cannot look "good" simply because the surviving requests stayed under the latency budget.
+
+**Formula:**
+```python
+attempted = request_count + error_request_count
+good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
+```
+
+**Flags:** `GOODPUT | LARGER_IS_BETTER | NO_CONSOLE`
+
+**Unit:** `RATIO` (0.0–1.0)
+
+**Required upstream metrics:** `good_request_count`, `request_count`. `error_request_count` is included in the denominator when present (it is `ERROR_ONLY` and absent on clean runs).
+
+**Notes:**
+- Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
+- Returns `0.0` when no requests were attempted (`request_count + error_request_count == 0`).
+- Hidden from console output (`NO_CONSOLE`); appears in JSON, CSV, and Parquet exports.
+- Powers the SLA-feasibility gate of the [`max-goodput-under-slo`](sweeping/search-recipes.md) search recipe (`good_request_fraction:avg:ge:<attainment>`); without it, the recipe filter dereferences a missing tag and Bayesian optimization treats every iteration as infeasible.
 
 ---
 

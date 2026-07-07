@@ -119,3 +119,51 @@ def test_phases_rejects_duplicate_names():
 def test_phases_rejects_empty_list():
     with pytest.raises(ValueError, match="at least 1 item"):
         _cfg([])
+
+
+def test_phase_duration_null_is_accepted_not_typeerror():
+    """An explicit null duration must validate cleanly (the numeric bound lives
+    on the float member of the union, so None does not run the gt validator)."""
+    cfg = _cfg(
+        [
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "requests": 5,
+                "concurrency": 1,
+                "duration": None,
+                "gracePeriod": None,
+            }
+        ]
+    )
+    assert cfg.phases[0].duration is None
+    assert cfg.phases[0].grace_period is None
+
+
+def test_phase_duration_non_positive_raises_validation_error():
+    """A zero/negative duration is a clean ValidationError, not a TypeError."""
+    with pytest.raises(ValueError, match="greater_than|greater than"):
+        _cfg(
+            [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "duration": 0,
+                }
+            ]
+        )
+
+
+def test_phase_duration_shorthand_string_still_parses():
+    cfg = _cfg(
+        [
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "concurrency": 1,
+                "duration": "5m",
+            }
+        ]
+    )
+    assert cfg.phases[0].duration == 300.0

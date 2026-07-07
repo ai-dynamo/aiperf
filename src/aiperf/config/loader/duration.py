@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, Field
 
 _DURATION_PATTERN = re.compile(
     r"^(\d+(?:\.\d+)?)\s*(s|sec|m|min|h|hr|hour)?$", re.IGNORECASE
@@ -62,3 +62,17 @@ def _normalize_duration(v: Any) -> Any:
 
 # Type alias for duration that supports shorthand strings
 DurationSpec = Annotated[float | None, BeforeValidator(_normalize_duration)]
+
+# Bounded variants. The numeric constraint is applied to the ``float`` member
+# of the union, NOT the whole ``float | None`` — otherwise an explicit ``None``
+# (e.g. ``duration: null`` in YAML or a CRD spec) runs the gt/ge validator on
+# None and raises a bare ``TypeError`` that escapes callers catching only
+# ``ValueError`` (the operator's ``_validate_spec``). With the constraint on
+# the float branch, ``None`` matches the None branch cleanly and a real value
+# still validates.
+PositiveDurationSpec = Annotated[
+    Annotated[float, Field(gt=0)] | None, BeforeValidator(_normalize_duration)
+]
+NonNegativeDurationSpec = Annotated[
+    Annotated[float, Field(ge=0)] | None, BeforeValidator(_normalize_duration)
+]

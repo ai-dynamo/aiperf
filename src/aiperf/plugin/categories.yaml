@@ -366,13 +366,13 @@ search_planner:
     One-to-one mapping per benchmark run.
 
 # =============================================================================
-# Accumulator Category (not yet wired)
+# Accumulator Category
 # =============================================================================
-# Accumulators and stream exporters are a records-pipeline rewrite that is
-# not yet wired into the production records path. The categories are
-# registered (empty) so the orphan modules under
-# aiperf.metrics.accumulator* and aiperf.records.records_manager_* can import
-# AccumulatorType / StreamExporterType cleanly.
+# Accumulators, stream exporters, and analyzers carry registered plugins
+# (see plugins.yaml) that the records_manager service loads and drives on the
+# hot path: RecordsManager.__init__ calls load_accumulators/load_stream_exporters/
+# load_analyzers, and every non-excluded record is fanned out to the
+# accumulators. Do not treat these categories as empty placeholders.
 
 accumulator:
   protocol: aiperf.common.accumulator_protocols:AccumulatorProtocol
