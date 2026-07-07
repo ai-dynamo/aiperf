@@ -379,7 +379,16 @@ class InferenceResultParser(CommunicationMixin):
                 tokenizer, inputs.messages
             )
             if templated is not None:
-                return templated + pretokenised
+                # Tool text (replayed tool_calls / function_call items and
+                # tools schemas) is absent from the role/content ``messages``
+                # view, so it must be tokenised on top of the templated count.
+                tool_count = (
+                    await self._compute_token_count(
+                        tokenizer, inputs.tool_texts, separator=" "
+                    )
+                    or 0
+                )
+                return templated + tool_count + pretokenised
 
         # Bare-text path: join the extracted texts with a space separator.
         if inputs.texts:

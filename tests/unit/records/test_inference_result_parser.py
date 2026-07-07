@@ -789,6 +789,79 @@ class TestChatTemplateAwareTokenization:
         assert all("role" in m and "content" in m for m in messages_arg)
         assert any(m["role"] == "user" for m in messages_arg)
 
+    async def test_chat_template_counts_tool_text_on_top(
+        self, setup_inference_parser, sample_turn
+    ):
+        """Tool text (replayed tool_calls + tools schemas) is absent from the
+        role/content messages view, so the templated ISL must tokenise it
+        separately and add it on top of the templated count."""
+        tokenizer = MagicMock()
+        tokenizer.encode.side_effect = lambda x: list(range(len(x.split())))
+        tokenizer._tokenizer.apply_chat_template.return_value = list(range(17))
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
+
+        info = create_test_request_info(turns=[sample_turn])
+        payload = orjson.loads(info.payload_bytes)
+        payload["messages"].append(
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Paris"}',
+                        },
+                    }
+                ],
+            }
+        )
+        payload["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "weather lookup",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ]
+        info.payload_bytes = orjson.dumps(payload)
+
+        record = RequestRecord(request_info=info, model_name="test-model")
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        expected_tool_texts = [
+            "get_weather",
+            '{"city": "Paris"}',
+            "get_weather",
+            "weather lookup",
+            '{"type":"object"}',
+        ]
+        expected_tool_tokens = len(" ".join(expected_tool_texts).split())
+        assert result == 17 + expected_tool_tokens
+        tokenizer._tokenizer.apply_chat_template.assert_called_once()
+
+    async def test_chat_template_without_tools_adds_nothing(
+        self, setup_inference_parser, sample_turn
+    ):
+        """No tool text in the payload: the templated count stands alone and
+        the bare encoder is never invoked."""
+        tokenizer = MagicMock()
+        tokenizer.encode.side_effect = lambda x: list(range(len(x.split())))
+        tokenizer._tokenizer.apply_chat_template.return_value = list(range(17))
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
+
+        record = RequestRecord(
+            request_info=create_test_request_info(turns=[sample_turn]),
+            model_name="test-model",
+        )
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        assert result == 17
+        tokenizer.encode.assert_not_called()
+
     async def test_falls_back_when_apply_chat_template_raises(
         self, setup_inference_parser, sample_turn
     ):

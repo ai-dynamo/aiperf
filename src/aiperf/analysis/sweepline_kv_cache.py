@@ -195,7 +195,8 @@ def _icl_chunk_events(
     icl_record_indices: Int32Array,
     icl_offsets: Int64Array,
 ) -> tuple[FloatArray | None, FloatArray, NDArray[np.bool_]]:
-    """Build per-chunk +tokens delta events; also return per-record has_icl mask.
+    """Build per-chunk +tokens delta events; also return a per-record mask of
+    records that emitted at least one valid chunk event.
 
     ICL gives K = icl_count timestamps for K+1 actual chunks (the first chunk
     arrives at gen_start_ns; ICL[k] is the gap between chunk k+1 and k+2).
@@ -235,7 +236,12 @@ def _icl_chunk_events(
         & ~np.isnan(per_req_tokens)
         & (per_req_tokens >= 1)
     )
-    has_icl = icl_counts > 0
+    # has_icl must mirror chunk_valid at record level: a record whose chunks
+    # were ALL filtered out (NaN gen_start, NaN/zero output_tokens) emits no
+    # +chunk/+TTFT additions, so the caller's end-of-request subtraction
+    # branches must not fire for it either — otherwise the cumsum picks up a
+    # permanent negative offset (or NaN, when output_tokens is NaN).
+    has_icl = np.bincount(rec_idx[chunk_valid], minlength=len(output_tokens)) > 0
 
     # Clamp chunk arrival to strictly before the record's end_ns. Recorder
     # jitter (chunks streamed slightly after end_ns is wall-clocked, sum of

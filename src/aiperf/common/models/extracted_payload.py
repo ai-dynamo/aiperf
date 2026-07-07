@@ -22,6 +22,15 @@ class ExtractedPayload(AIPerfBaseModel):
         description="Tokenisable text strings (prompt content, instructions, "
         "tool schemas, replayed assistant tool_calls).",
     )
+    tool_texts: list[str] = Field(
+        default_factory=list,
+        description="Subset of ``texts`` contributed by tool machinery: "
+        "replayed ``tool_calls`` / ``function_call`` items and top-level "
+        "``tools`` schemas. These strings are NOT part of the ``messages`` "
+        "role/content view, so the chat-template ISL path tokenises them "
+        "separately on top of the templated count; the bare-text path "
+        "already covers them via ``texts``.",
+    )
     image_count: int = Field(
         default=0,
         description="Count of image content parts in the payload.",

@@ -13,6 +13,7 @@ from aiperf.analysis.sweepline import (
     _step_lookup,
 )
 from aiperf.common.enums import MetricConsoleGroup
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models import MetricResult
 
 
@@ -196,18 +197,22 @@ def metric_result_from_sweep_line_stats(
     scale: float = 1.0,
     console_group: MetricConsoleGroup = MetricConsoleGroup.EFFECTIVE,
 ) -> MetricResult:
-    """Build a MetricResult from compute_time_weighted_stats output."""
+    """Build a MetricResult from compute_time_weighted_stats output.
+
+    Stats are scrubbed to finite-or-None: MetricResult feeds JSON/console
+    exports, and NaN/inf leaking into them would silently serialize as null.
+    """
     return MetricResult(
         tag=tag,
         header=header,
         unit=unit,
-        avg=stats.avg * scale,
-        min=stats.min * scale,
-        max=stats.max * scale,
-        p50=stats.p50 * scale,
-        p90=stats.p90 * scale,
-        p95=stats.p95 * scale,
-        p99=stats.p99 * scale,
-        std=stats.std * scale,
+        avg=scrub_non_finite(stats.avg * scale),
+        min=scrub_non_finite(stats.min * scale),
+        max=scrub_non_finite(stats.max * scale),
+        p50=scrub_non_finite(stats.p50 * scale),
+        p90=scrub_non_finite(stats.p90 * scale),
+        p95=scrub_non_finite(stats.p95 * scale),
+        p99=scrub_non_finite(stats.p99 * scale),
+        std=scrub_non_finite(stats.std * scale),
         console_group=console_group,
     )

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import PluginDisabled, PostProcessorDisabled
+from aiperf.common.logging import AIPerfLogger
 from aiperf.common.models import (
     ErrorDetails,
     MetricResult,
@@ -40,6 +41,9 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.records.error_tracker import ErrorTracker
     from aiperf.records.records_tracker import RecordsTracker
+
+
+_logger = AIPerfLogger(__name__)
 
 
 class _LoaderHost(Protocol):
@@ -170,8 +174,13 @@ async def generate_realtime_metrics(
         return_exceptions=True,
     )
     flat: list[MetricResult] = []
-    for result in results:
+    for acc, result in zip(accumulators, results, strict=True):
         if isinstance(result, BaseException):
+            # A persistently failing accumulator would otherwise leave the
+            # realtime dashboard/log block silently stale with no trail.
+            _logger.warning(
+                f"Realtime summarize failed for {acc.__class__.__name__}: {result!r}"
+            )
             continue
         # AccumulatorMetricsSummary.results is dict[tag, MetricResult]
         results_attr = getattr(result, "results", None)

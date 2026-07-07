@@ -22,7 +22,7 @@ def _phase_stats(
     completed: int,
     sent: int,
     errors: int = 0,
-    elapsed_s: float = 10.0,  # noqa: ARG001
+    elapsed_s: float = 10.0,
 ) -> PhaseRecordsStats:
     now_ns = time.time_ns()
     return PhaseRecordsStats(

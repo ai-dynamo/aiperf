@@ -91,6 +91,7 @@ from aiperf.plugin.enums import (
     StreamExporterType,
     UIType,
 )
+from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.protocols import (
     IS_BEST_EFFORT_ATTR,
     FlushableResultsProcessorProtocol,
@@ -539,10 +540,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Gate the legacy MetricResultsProcessor off when the accumulator engine
         # is driving the summary, to avoid double-compute / divergent numbers.
         if AccumulatorType.METRIC_RESULTS in self._accumulators:
+            # Exact-type check, deliberately NOT isinstance: subclasses like
+            # TimesliceMetricResultsProcessor (results_processor:timeslice)
+            # produce non-summary outputs and must stay active.
             self._metric_results_processors = [
                 p
                 for p in self._metric_results_processors
-                if p.__class__.__name__ != "MetricResultsProcessor"
+                if type(p) is not MetricResultsProcessor
             ]
             self.debug(
                 "MetricsAccumulator active; legacy MetricResultsProcessor gated off"
@@ -1006,7 +1010,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             for record in telemetry_records:
                 try:
                     await exporter.process_record(record)
-                except BaseException as exc:  # noqa: BLE001
+                except Exception as exc:
                     self.error(
                         f"Stream exporter {exporter.__class__.__name__} failed for "
                         f"gpu_telemetry record: {exc!r}"
@@ -1036,7 +1040,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for exporter in self._server_metrics_stream_exporters:
             try:
                 await exporter.process_record(record)
-            except BaseException as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.error(
                     f"Stream exporter {exporter.__class__.__name__} failed for "
                     f"server_metrics record: {exc!r}"

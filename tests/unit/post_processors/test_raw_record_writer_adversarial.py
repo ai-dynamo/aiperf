@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adversarial coverage for ``RawRecordWriterProcessor`` Fragment splicing.
 
-These tests pin the *current* behaviour of the ``payload_bytes`` fast path
-in ``buffered_write`` — including the known Wave-2 bug where a broad
-``except Exception`` silently drops records that explode during
-serialisation. One ``xfail(strict=True)`` case documents the desired
-post-fix behaviour (propagate or increment a counter).
+These tests pin the behaviour of the ``payload_bytes`` fast path in
+``buffered_write``. Serialisation failures are not silently dropped: the
+Wave-2 fix surfaces them via ``RawRecordWriterProcessor.dropped_record_count``,
+and ``TestWave2FixCounter`` validates that implemented behaviour.
 """
 
 from typing import Any
@@ -474,16 +473,16 @@ class TestAggregatorUnlinkSemantics:
 
 
 class TestWave2FixCounter:
-    """Wave-2 visibility fix for silent drops."""
+    """Wave-2 visibility fix for silent drops (implemented)."""
 
     @pytest.mark.asyncio
-    async def test_buffered_write_invalid_json_payload_bytes_raises_or_increments_counter_post_fix(
+    async def test_buffered_write_invalid_json_payload_bytes_raises_or_increments_counter(
         self,
         run_raw,
     ):
-        """Post-Wave-2: invalid/unserialisable ``payload_bytes`` must either
-        propagate OR increment a dedicated ``dropped_record_count``-style
-        attribute so operators can see drops.
+        """Invalid/unserialisable ``payload_bytes`` must either propagate OR
+        increment a dedicated ``dropped_record_count``-style attribute so
+        operators can see drops.
         """
         # Use the same shape as test_non_json_non_bytes which hits the
         # TypeError path (orjson.Fragment rejects a non-bytes/str int).

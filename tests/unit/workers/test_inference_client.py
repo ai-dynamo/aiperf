@@ -388,6 +388,41 @@ class TestInferenceClient:
 
         assert result.model_name == "standalone-model"
 
+    def test_finalize_request_record_hoists_per_turn_scalars(self, inference_client):
+        """max_tokens / audio_duration_seconds must be hoisted from the turns
+        onto the RecordContext so record metrics (requested_osl,
+        audio_duration) can read them off the record after the downcast.
+        """
+        turn = Turn(
+            texts=[Text(contents=["hoisted turn"])],
+            role="user",
+            max_tokens=128,
+            audio_duration_seconds=12.5,
+        )
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[turn],
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+
+        result = inference_client._finalize_request_record(
+            record=record, request_info=request_info
+        )
+
+        assert result.request_info.max_tokens == 128
+        assert result.request_info.audio_duration_seconds == 12.5
+
     def _make_routing_request_info(
         self,
         inference_client,
