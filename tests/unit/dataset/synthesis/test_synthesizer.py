@@ -429,6 +429,26 @@ class TestSynthesizer:
         assert "input_length" not in synthetic[0]
         assert "input_length" not in synthetic[1]
 
+    def test_payload_trace_not_given_input_length(self) -> None:
+        """Traces with a pre-built payload must not get input_length added.
+
+        MooncakeTrace requires exactly one of input_length / text_input /
+        messages / payload, so injecting input_length into a payload trace
+        makes the synthesized dataset fail validation on reconstruction.
+        """
+        traces = [
+            {"payload": {"prompt": "Hello", "max_tokens": 50}, "output_length": 50},
+            {"payload": {"prompt": "World"}, "output_length": 100, "timestamp": 1000},
+        ]
+        synthesizer = Synthesizer()
+        synthetic = synthesizer.synthesize_traces(traces)
+
+        # payload should be preserved verbatim, input_length should NOT be added
+        assert synthetic[0]["payload"] == {"prompt": "Hello", "max_tokens": 50}
+        assert synthetic[1]["payload"] == {"prompt": "World"}
+        assert "input_length" not in synthetic[0]
+        assert "input_length" not in synthetic[1]
+
     # ============================================================================
     # Input Length Preservation Tests
     # ============================================================================
