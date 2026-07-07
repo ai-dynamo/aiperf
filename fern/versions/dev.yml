@@ -10,6 +10,8 @@ navigation:
         path: ../pages-dev/tutorial.md
       - page: "AIPerf: Comprehensive LLM Benchmarking"
         path: ../pages-dev/comprehensive-llm-benchmarking.md
+      - page: Interactive Chat Sanity Checks
+        path: ../pages-dev/tutorials/interactive-chat.md
       - page: Migrating from GenAI-Perf
         path: ../pages-dev/migrating.md
       - page: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
