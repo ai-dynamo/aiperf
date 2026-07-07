@@ -7,12 +7,17 @@ import hashlib
 import logging
 import random
 import time
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Any
 
 import orjson
-from aiperf_mock_server.config import server_config
+from aiperf_mock_server.config import (
+    MockServerConfig,
+    public_config_dump,
+    server_config,
+)
 from aiperf_mock_server.dcgm_faker import DCGMFaker
 from aiperf_mock_server.metrics import (
     AIPERF_MOCK_REGISTRY,
@@ -100,7 +105,7 @@ async def lifespan(_: FastAPI):
     """Initialize server on startup."""
     global server_start_time
     server_start_time = time.time()
-    logger.info("Server starting: %s", server_config.model_dump())
+    logger.info("Server starting: %s", public_config_dump(server_config))
     if server_config.random_seed is not None:
         random.seed(server_config.random_seed)
 
@@ -196,6 +201,84 @@ class TimingMiddleware:
 _INFERENCE_PATHS: frozenset[str] = frozenset(
     {"/v1/chat/completions", "/v1/completions", "/v1/embeddings"}
 )
+_AUTH_PROTECTED_PATHS: frozenset[str] = frozenset(
+    {
+        "/generate",
+        "/generate_stream",
+        "/rag/api/prompt",
+        "/rerank",
+        "/v1/chat/completions",
+        "/v1/chat/embeddings",
+        "/v1/completions",
+        "/v1/custom-multimodal",
+        "/v1/embeddings",
+        "/v1/image/infer",
+        "/v1/images/edits",
+        "/v1/images/generations",
+        "/v1/infer",
+        "/v1/ranking",
+        "/v1/responses",
+        "/v1/videos",
+        "/v2/rerank",
+    }
+)
+
+
+def _is_auth_protected_path(path: str) -> bool:
+    return path in _AUTH_PROTECTED_PATHS or path.startswith("/v1/videos/")
+
+
+def _asgi_headers(headers: object) -> Mapping[str, str]:
+    if not isinstance(headers, list):
+        return {}
+
+    result: dict[str, str] = {}
+    for item in headers:
+        if not isinstance(item, tuple) or len(item) != 2:
+            continue
+        name, value = item
+        if isinstance(name, bytes) and isinstance(value, bytes):
+            result[name.decode("latin-1").lower()] = value.decode("latin-1")
+    return result
+
+
+class InferenceAuthMiddleware:
+    """Enforces optional API-key auth on inference endpoints."""
+
+    def __init__(self, inner_app: ASGIApp, config: MockServerConfig) -> None:
+        self.app = inner_app
+        self.config = config
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = str(scope.get("path", ""))
+        if (
+            scope["type"] == "http"
+            and self.config.api_key is not None
+            and _is_auth_protected_path(path)
+        ):
+            headers = _asgi_headers(scope.get("headers"))
+            header_name = self.config.auth_header_name.lower()
+            header_value = headers.get(header_name)
+            # aiperf --api-key sends "Authorization: Bearer <api_key>"
+            authorized = header_value == self.config.api_key or (
+                header_name == "authorization"
+                and header_value == f"Bearer {self.config.api_key}"
+            )
+            if not authorized:
+                body = orjson.dumps({"error": "Unauthorized"})
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode()),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
 
 
 class InferenceReadinessMiddleware:
@@ -234,7 +317,9 @@ class InferenceReadinessMiddleware:
 
 
 # Wrap FastAPI with ASGI middleware for earliest possible timing
-asgi_app = InferenceReadinessMiddleware(TimingMiddleware(app))
+asgi_app = InferenceAuthMiddleware(
+    InferenceReadinessMiddleware(TimingMiddleware(app)), server_config
+)
 
 
 # ============================================================================
@@ -1121,7 +1206,7 @@ async def solido_rag(req: SolidoRAGRequest, request: Request) -> ORJSONResponse:
 @app.get("/health")
 async def health():
     """Health check."""
-    return {"status": "healthy", "config": server_config.model_dump()}
+    return {"status": "healthy", "config": public_config_dump(server_config)}
 
 
 @app.get("/v1/models")
@@ -1146,7 +1231,7 @@ async def root():
     return {
         "message": "AIPerf Mock Server",
         "version": "2.0.0",
-        "config": server_config.model_dump(),
+        "config": public_config_dump(server_config),
     }
 
 
