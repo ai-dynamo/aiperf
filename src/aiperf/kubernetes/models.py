@@ -227,6 +227,90 @@ class CRJobStatus(K8sCamelModel):
         return v or "Pending"
 
 
+def _first_model_name(models: str | list | dict[str, Any]) -> str | None:
+    """Extract a display model name from ``spec.benchmark.models``.
+
+    Handles the three YAML shapes: bare string, list of names, and the
+    long-form ``{"items": [{"name": ...}]}`` dict.
+    """
+    if isinstance(models, str):
+        return models
+    if isinstance(models, dict):
+        items = models.get("items", [])
+        return items[0].get("name") if items else None
+    if models:
+        first = models[0]
+        return first if isinstance(first, str) else None
+    return None
+
+
+def _endpoint_url(endpoint: CREndpoint | dict[str, Any]) -> str | None:
+    """Extract a display URL from ``spec.benchmark.endpoint`` (dict or model form)."""
+    if isinstance(endpoint, dict):
+        return endpoint.get("url") or (endpoint.get("urls", [None])[0])
+    return endpoint.url or (endpoint.urls[0] if endpoint.urls else None)
+
+
+def _requests_progress_percent(phases: dict[str, dict[str, Any]]) -> float | None:
+    """Read the latest ``requestsProgressPercent`` written by PhaseProgress."""
+    progress: float | None = None
+    for p in phases.values():
+        pct = p.get("requestsProgressPercent")
+        if pct is not None:
+            progress = float(pct)
+    return progress
+
+
+def _summary_stat(summary: dict[str, Any], tag: str, stat: str) -> float | None:
+    """Read ``summary[tag][stat]`` as float, tolerating missing/malformed entries."""
+    entry = summary.get(tag) if isinstance(summary, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    val = entry.get(stat)
+    return float(val) if isinstance(val, (int, float)) else None
+
+
+def _total_requests(summary: dict[str, Any]) -> int | None:
+    """Total request count from a status summary dict.
+
+    Prefers the derived ``total_requests`` scalar that
+    MetricsSummary.from_metrics writes alongside the per-tag entries; falls
+    back to ``request_count.avg`` for older statuses written before the
+    derived scalar landed.
+    """
+    if isinstance(summary, dict):
+        raw_total = summary.get("total_requests")
+        if isinstance(raw_total, (int, float)):
+            return int(raw_total)
+    rc = _summary_stat(summary, "request_count", "avg")
+    return int(rc) if rc is not None else None
+
+
+def _error_rate(summary: dict[str, Any]) -> float | None:
+    """Read the derived ``error_rate`` scalar from a status summary dict."""
+    if isinstance(summary, dict):
+        raw_err = summary.get("error_rate")
+        if isinstance(raw_err, (int, float)):
+            return float(raw_err)
+    return None
+
+
+def _sweep_linkage(labels: dict[str, str]) -> tuple[str | None, int | None, str | None]:
+    """Read sweep linkage labels as ``(sweep_name, variation_index, variation_label)``.
+
+    The labels are stamped on every AIPerfJob created by the sweep-controller;
+    standalone jobs return ``(None, None, None)``.
+    """
+    sweep_name = labels.get("aiperf.nvidia.com/sweep") or None
+    raw_idx = labels.get("aiperf.nvidia.com/variation-index")
+    try:
+        variation_index = int(raw_idx) if raw_idx is not None else None
+    except ValueError:
+        variation_index = None
+    variation_label = labels.get("aiperf.nvidia.com/variation-label") or None
+    return sweep_name, variation_index, variation_label
+
+
 class AIPerfJobCR(K8sCamelModel):
     """Parsed AIPerfJob custom resource.
 
@@ -244,78 +328,14 @@ class AIPerfJobCR(K8sCamelModel):
 
     def to_info(self) -> AIPerfJobInfo:
         """Convert to flat AIPerfJobInfo for CLI display."""
-        models = self.spec.benchmark.models
-        if isinstance(models, str):
-            model = models
-        elif isinstance(models, dict):
-            items = models.get("items", [])
-            model = items[0].get("name") if items else None
-        elif models:
-            first = models[0]
-            model = first if isinstance(first, str) else None
-        else:
-            model = None
-
-        ep = self.spec.benchmark.endpoint
-        if isinstance(ep, dict):
-            endpoint_url = ep.get("url") or (ep.get("urls", [None])[0])
-        else:
-            endpoint_url = ep.url or (ep.urls[0] if ep.urls else None)
-
-        # Progress: read requestsProgressPercent written by PhaseProgress
-        progress: float | None = None
-        for p in self.status.phases.values():
-            pct = p.get("requestsProgressPercent")
-            if pct is not None:
-                progress = float(pct)
-
         # Summary: operator writes nested metric tags via MetricsSummary.from_metrics(),
         # so request_throughput.avg / request_latency.p99 are the canonical reads.
-        s = self.status.live_summary or self.status.summary or {}
-
-        def _stat(tag: str, stat: str) -> float | None:
-            entry = s.get(tag) if isinstance(s, dict) else None
-            if not isinstance(entry, dict):
-                return None
-            val = entry.get(stat)
-            return float(val) if isinstance(val, (int, float)) else None
-
-        throughput = _stat("request_throughput", "avg")
-        latency = _stat("request_latency", "p99")
-        ttft = _stat("time_to_first_token", "avg")
-        out_tok_tps = _stat("output_token_throughput", "avg")
-        itl = _stat("inter_token_latency", "avg")
-
-        # Total requests: prefer the derived ``total_requests`` scalar that
-        # MetricsSummary.from_metrics writes alongside the per-tag entries;
-        # fall back to request_count.avg for older statuses written before
-        # the derived scalar landed.
-        total_requests: int | None = None
-        if isinstance(s, dict):
-            raw_total = s.get("total_requests")
-            if isinstance(raw_total, (int, float)):
-                total_requests = int(raw_total)
-        if total_requests is None:
-            rc = _stat("request_count", "avg")
-            if rc is not None:
-                total_requests = int(rc)
-
-        error_rate: float | None = None
-        if isinstance(s, dict):
-            raw_err = s.get("error_rate")
-            if isinstance(raw_err, (int, float)):
-                error_rate = float(raw_err)
-
-        # Sweep linkage labels are stamped on every AIPerfJob created by the
-        # sweep-controller; standalone jobs leave all three as None.
-        labels = self.metadata.labels
-        sweep_name = labels.get("aiperf.nvidia.com/sweep") or None
-        raw_idx = labels.get("aiperf.nvidia.com/variation-index")
-        try:
-            variation_index = int(raw_idx) if raw_idx is not None else None
-        except ValueError:
-            variation_index = None
-        variation_label = labels.get("aiperf.nvidia.com/variation-label") or None
+        summary = self.status.live_summary or self.status.summary or {}
+        throughput = _summary_stat(summary, "request_throughput", "avg")
+        latency = _summary_stat(summary, "request_latency", "p99")
+        sweep_name, variation_index, variation_label = _sweep_linkage(
+            self.metadata.labels
+        )
 
         return AIPerfJobInfo(
             name=self.metadata.name,
@@ -330,16 +350,18 @@ class AIPerfJobCR(K8sCamelModel):
             start_time=self.status.start_time,
             completion_time=self.status.completion_time,
             created=self.metadata.creation_timestamp,
-            progress_percent=progress,
+            progress_percent=_requests_progress_percent(self.status.phases),
             throughput_rps=float(throughput) if throughput is not None else None,
             latency_p99_ms=float(latency) if latency is not None else None,
-            ttft_ms=ttft,
-            output_token_throughput_tps=out_tok_tps,
-            inter_token_latency_ms=itl,
-            total_requests=total_requests,
-            error_rate=error_rate,
-            model=model,
-            endpoint=endpoint_url,
+            ttft_ms=_summary_stat(summary, "time_to_first_token", "avg"),
+            output_token_throughput_tps=_summary_stat(
+                summary, "output_token_throughput", "avg"
+            ),
+            inter_token_latency_ms=_summary_stat(summary, "inter_token_latency", "avg"),
+            total_requests=_total_requests(summary),
+            error_rate=_error_rate(summary),
+            model=_first_model_name(self.spec.benchmark.models),
+            endpoint=_endpoint_url(self.spec.benchmark.endpoint),
             sweep_name=sweep_name,
             variation_index=variation_index,
             variation_label=variation_label,

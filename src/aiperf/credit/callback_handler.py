@@ -350,27 +350,40 @@ class CreditCallbackHandler:
         # 6. Cleanup ended sessions or notify strategy for subsequent turns.
         # Skipped when the orchestrator intercepted (it owns the next turn).
         if not intercepted:
-            if disposition.session_ended:
-                handle_session_ended = getattr(
-                    handler.strategy, "handle_session_ended", None
-                )
-                if handle_session_ended is not None:
-                    await handle_session_ended(credit)
-            elif disposition.should_continue:
-                # Child non-final returns ALWAYS notify the strategy so its
-                # ``_issue_child_continuation_or_release`` can fire
-                # ``on_child_stopped`` when the cap blocks dispatch — otherwise
-                # the parent's pending join would never drain. Root credits
-                # stay gated on ``can_send_any_turn``.
-                is_child_non_final = credit.agent_depth > 0 and not credit.is_final_turn
-                if is_child_non_final or handler.stop_checker.can_send_any_turn():
-                    await handler.strategy.handle_credit_return(credit)
+            await self._dispatch_next_turn(credit, disposition, handler)
 
         # 7. Deferred all-credits-returned check. The orchestrator can drain
         # the DAG synchronously inside ``intercept`` (e.g. cap=1: every spawned
         # child refused at the gate). If we skipped this, the event would
         # never fire because no future credit return is coming.
         self._maybe_signal_dag_completion(phase, handler)
+
+    async def _dispatch_next_turn(
+        self,
+        credit: Credit,
+        disposition: ReturnDisposition,
+        handler: PhaseCallbackContext,
+    ) -> None:
+        """Cleanup an ended session or notify the strategy for subsequent turns.
+
+        Called only when the DAG orchestrator did NOT intercept the return
+        (the orchestrator owns the next-turn path when it does).
+        """
+        if disposition.session_ended:
+            handle_session_ended = getattr(
+                handler.strategy, "handle_session_ended", None
+            )
+            if handle_session_ended is not None:
+                await handle_session_ended(credit)
+        elif disposition.should_continue:
+            # Child non-final returns ALWAYS notify the strategy so its
+            # ``_issue_child_continuation_or_release`` can fire
+            # ``on_child_stopped`` when the cap blocks dispatch — otherwise
+            # the parent's pending join would never drain. Root credits
+            # stay gated on ``can_send_any_turn``.
+            is_child_non_final = credit.agent_depth > 0 and not credit.is_final_turn
+            if is_child_non_final or handler.stop_checker.can_send_any_turn():
+                await handler.strategy.handle_credit_return(credit)
 
     def _dag_work_pending(self, credit: Credit) -> bool:
         """True iff the orchestrator has work in flight or will spawn on this

@@ -1516,6 +1516,269 @@ def register_export_png_callback(
         # Sanitize for filesystem
         return filename.replace("-", "_").replace("/", "_").replace(":", "_")
 
+    def _write_plot_to_zip(
+        zip_file: zipfile.ZipFile,
+        fig: go.Figure,
+        safe_filename: str,
+        *,
+        export_format: str,
+        width: int | None,
+        height: int | None,
+        font_scale: float,
+    ) -> bool:
+        """Write one figure into the ZIP as PNG (with HTML fallback) or HTML.
+
+        Returns:
+            True if PNG rendering failed and the figure fell back to HTML.
+        """
+        if export_format != "png":
+            html_str = fig.to_html(include_plotlyjs="cdn", config={"responsive": True})
+            zip_file.writestr(f"{safe_filename}.html", html_str.encode())
+            return False
+
+        try:
+            _scale_figure_fonts(fig, font_scale)
+            img_bytes = fig.to_image(format="png", width=width, height=height)
+            zip_file.writestr(f"{safe_filename}.png", img_bytes)
+            return False
+        except Exception as e:  # noqa: BLE001 - kaleido/Chrome can raise vendor-specific errors on PNG render; fallback to HTML so export still succeeds
+            print(
+                f"⚠️ PNG conversion failed for {safe_filename}, falling back to HTML: {e}"
+            )
+            html_str = fig.to_html(include_plotlyjs="cdn", config={"responsive": True})
+            zip_file.writestr(f"{safe_filename}.html", html_str.encode())
+            return True
+
+    def _export_single_run_plots_to_zip(
+        zip_file: zipfile.ZipFile,
+        *,
+        visible_plots: list[str],
+        plot_configs: dict,
+        plot_gen: PlotGenerator,
+        current_theme: PlotTheme,
+        export_format: str,
+        width: int | None,
+        height: int | None,
+        font_scale: float,
+    ) -> bool:
+        """Export all visible single-run plots into the ZIP.
+
+        Returns:
+            True if any PNG rendering fell back to HTML.
+        """
+        # Use drill-down cache if available
+        run = (
+            _DRILL_DOWN_RUN_CACHE["current"]
+            if "current" in _DRILL_DOWN_RUN_CACHE
+            else runs[0]
+        )
+        html_fallback_used = False
+        for plot_id in visible_plots:
+            config = plot_configs.get(plot_id)
+            if not config:
+                continue
+
+            try:
+                if config.get("is_default", True):
+                    # Export default plot from PlotSpec
+                    fig = _export_single_run_default_plot(
+                        plot_id,
+                        plot_specs=plot_specs,
+                        run=run,
+                        plot_gen=plot_gen,
+                        available_metrics=available_metrics,
+                    )
+                else:
+                    # Export custom plot from config
+                    fig = _generate_custom_single_run_plot(
+                        config, run, plot_gen, current_theme
+                    )
+
+                if not fig:
+                    continue
+
+                safe_filename = generate_export_filename_single_run(plot_id, config)
+                html_fallback_used |= _write_plot_to_zip(
+                    zip_file,
+                    fig,
+                    safe_filename,
+                    export_format=export_format,
+                    width=width,
+                    height=height,
+                    font_scale=font_scale,
+                )
+            except Exception as e:  # noqa: BLE001 - plot-bundle export iterates many heterogeneous plots; skip the failing one so the rest still download
+                _logger.warning(f"Failed to export plot {plot_id}: {e}")
+                continue
+        return html_fallback_used
+
+    def _extract_experiment_types(
+        df: pd.DataFrame, group_by: str | list | None
+    ) -> dict | None:
+        """Extract the group -> experiment_type mapping used for color assignment.
+
+        Returns:
+            The mapping, or None if the DataFrame lacks the columns needed.
+        """
+        if "experiment_type" not in df.columns or not group_by:
+            return None
+        group_col = group_by[0] if isinstance(group_by, list) else group_by
+        if group_col not in df.columns:
+            return None
+        return {
+            g: df[df[group_col] == g]["experiment_type"].iloc[0]
+            for g in df[group_col].unique()
+        }
+
+    def _build_multi_run_figure(
+        config: dict,
+        filtered_runs: list[RunData],
+        plot_gen: PlotGenerator,
+    ) -> go.Figure | None:
+        """Build one multi-run figure from a plot config dict.
+
+        Returns:
+            The figure, or None if the plot cannot be generated (missing
+            metrics, empty data, or unsupported plot type).
+        """
+        x_metric = config.get("x_metric")
+        y_metric = config.get("y_metric")
+        x_stat = config.get("x_stat", "p50")
+        y_stat = config.get("y_stat", "avg")
+        plot_type = config.get("plot_type", "scatter_line")
+        log_scale = config.get("log_scale", "none")
+        title = config.get("title", "")
+        label_by = config.get("label_by", "concurrency")
+        group_by = config.get("group_by", "model")
+
+        if not x_metric or not y_metric:
+            return None
+
+        # Generate DataFrame
+        result = runs_to_dataframe(
+            filtered_runs,
+            x_metric=x_metric,
+            x_stat=x_stat,
+            y_metric=y_metric,
+            y_stat=y_stat,
+        )
+        df = result["df"]
+
+        if df.empty:
+            return None
+
+        # Extract experiment_types mapping for color assignment
+        experiment_types = _extract_experiment_types(df, group_by)
+
+        # Generate figure based on plot_type
+        if plot_type == "pareto":
+            fig = plot_gen.create_pareto_plot(
+                df,
+                x_metric,
+                y_metric,
+                label_by=label_by,
+                group_by=group_by,
+                title=title,
+                experiment_types=experiment_types,
+            )
+        elif plot_type == "scatter_line":
+            fig = plot_gen.create_scatter_line_plot(
+                df,
+                x_metric,
+                y_metric,
+                label_by=label_by,
+                group_by=group_by,
+                title=title,
+                mode="lines+markers",
+                experiment_types=experiment_types,
+            )
+        elif plot_type == "scatter":
+            fig = plot_gen.create_scatter_line_plot(
+                df,
+                x_metric,
+                y_metric,
+                label_by=label_by,
+                group_by=group_by,
+                title=title,
+                mode="markers",
+                experiment_types=experiment_types,
+            )
+        elif plot_type == "bar":
+            fig = plot_gen.create_multi_run_bar_chart(
+                df=df,
+                x_metric=x_metric,
+                y_metric=y_metric,
+                group_by=group_by,
+                title=title,
+            )
+        elif plot_type == "latency_throughput_uncertainty":
+            fig = _build_uncertainty_figure(
+                df,
+                x_metric,
+                y_metric,
+                plot_gen,
+                actual_group_by=group_by,
+                actual_label_by=label_by,
+                plot_config_dict=config,
+                title=title,
+                x_label=config.get("x_label", x_metric),
+                y_label=config.get("y_label", y_metric),
+            )
+        else:
+            # Skip unsupported plot types
+            return None
+
+        # Apply log scale
+        if log_scale in ("x", "both"):
+            fig.update_xaxes(type="log")
+        if log_scale in ("y", "both"):
+            fig.update_yaxes(type="log")
+        return fig
+
+    def _export_multi_run_plots_to_zip(
+        zip_file: zipfile.ZipFile,
+        *,
+        visible_plots: list[str],
+        plot_configs: dict,
+        filtered_runs: list[RunData],
+        plot_gen: PlotGenerator,
+        export_format: str,
+        width: int | None,
+        height: int | None,
+        font_scale: float,
+    ) -> bool:
+        """Export all visible multi-run plots into the ZIP.
+
+        Returns:
+            True if any PNG rendering fell back to HTML.
+        """
+        html_fallback_used = False
+        for plot_id in visible_plots:
+            config = plot_configs.get(plot_id)
+            if not config:
+                continue
+
+            try:
+                fig = _build_multi_run_figure(config, filtered_runs, plot_gen)
+                if fig is None:
+                    continue
+
+                safe_filename = generate_export_filename(plot_id, config)
+                html_fallback_used |= _write_plot_to_zip(
+                    zip_file,
+                    fig,
+                    safe_filename,
+                    export_format=export_format,
+                    width=width,
+                    height=height,
+                    font_scale=font_scale,
+                )
+            except Exception as e:  # noqa: BLE001 - plot-bundle export iterates many heterogeneous plots; skip the failing one so the rest still download
+                # Log error but continue with other plots
+                _logger.warning(f"Failed to export plot {plot_id}: {e}")
+                continue
+        return html_fallback_used
+
     @app.callback(
         Output("download-png-bundle", "data"),
         Input("btn-export-png", "n_clicks"),
@@ -1580,227 +1843,37 @@ def register_export_png_callback(
 
         # Create ZIP in memory
         zip_buffer = io.BytesIO()
-        html_fallback_used = [False]
 
         plot_configs = plot_state.get("plot_configs", {})
 
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             if mode == VisualizationMode.SINGLE_RUN:
-                # Single-run export - use drill-down cache if available
-                if "current" in _DRILL_DOWN_RUN_CACHE:
-                    run = _DRILL_DOWN_RUN_CACHE["current"]
-                else:
-                    run = runs[0]
-
-                for plot_id in visible_plots:
-                    config = plot_configs.get(plot_id)
-                    if not config:
-                        continue
-
-                    try:
-                        is_default = config.get("is_default", True)
-
-                        if is_default:
-                            # Export default plot from PlotSpec
-                            fig = _export_single_run_default_plot(
-                                plot_id,
-                                plot_specs=plot_specs,
-                                run=run,
-                                plot_gen=plot_gen,
-                                available_metrics=available_metrics,
-                            )
-                        else:
-                            # Export custom plot from config
-                            fig = _generate_custom_single_run_plot(
-                                config, run, plot_gen, current_theme
-                            )
-
-                        if not fig:
-                            continue
-
-                        # Generate filename
-                        safe_filename = generate_export_filename_single_run(
-                            plot_id, config
-                        )
-
-                        # Export to ZIP
-                        if export_format == "png":
-                            try:
-                                _scale_figure_fonts(fig, font_scale)
-                                img_bytes = fig.to_image(
-                                    format="png", width=width, height=height
-                                )
-                                zip_file.writestr(f"{safe_filename}.png", img_bytes)
-                            except Exception as e:  # noqa: BLE001 - kaleido/Chrome can raise vendor-specific errors on PNG render; fallback to HTML so export still succeeds
-                                print(
-                                    f"⚠️ PNG conversion failed for {safe_filename}, falling back to HTML: {e}"
-                                )
-                                html_str = fig.to_html(
-                                    include_plotlyjs="cdn", config={"responsive": True}
-                                )
-                                zip_file.writestr(
-                                    f"{safe_filename}.html", html_str.encode()
-                                )
-                                html_fallback_used[0] = True
-                        else:
-                            html_str = fig.to_html(
-                                include_plotlyjs="cdn", config={"responsive": True}
-                            )
-                            zip_file.writestr(
-                                f"{safe_filename}.html", html_str.encode()
-                            )
-
-                    except Exception as e:  # noqa: BLE001 - plot-bundle export iterates many heterogeneous plots; skip the failing one so the rest still download
-                        _logger.warning(f"Failed to export plot {plot_id}: {e}")
-                        continue
-
+                html_fallback_used = _export_single_run_plots_to_zip(
+                    zip_file,
+                    visible_plots=visible_plots,
+                    plot_configs=plot_configs,
+                    plot_gen=plot_gen,
+                    current_theme=current_theme,
+                    export_format=export_format,
+                    width=width,
+                    height=height,
+                    font_scale=font_scale,
+                )
             else:
-                # Multi-run export - Generate and add each visible plot dynamically using plot_configs
-                for plot_id in visible_plots:
-                    config = plot_configs.get(plot_id)
-                    if not config:
-                        continue
-
-                    try:
-                        # Get config values
-                        x_metric = config.get("x_metric")
-                        y_metric = config.get("y_metric")
-                        x_stat = config.get("x_stat", "p50")
-                        y_stat = config.get("y_stat", "avg")
-                        plot_type = config.get("plot_type", "scatter_line")
-                        log_scale = config.get("log_scale", "none")
-                        title = config.get("title", "")
-                        label_by = config.get("label_by", "concurrency")
-                        group_by = config.get("group_by", "model")
-
-                        if not x_metric or not y_metric:
-                            continue
-
-                        # Generate DataFrame
-                        result = runs_to_dataframe(
-                            filtered_runs,
-                            x_metric=x_metric,
-                            x_stat=x_stat,
-                            y_metric=y_metric,
-                            y_stat=y_stat,
-                        )
-                        df = result["df"]
-
-                        if df.empty:
-                            continue
-
-                        # Extract experiment_types mapping for color assignment
-                        experiment_types = None
-                        if "experiment_type" in df.columns and group_by:
-                            group_col = (
-                                group_by[0] if isinstance(group_by, list) else group_by
-                            )
-                            if group_col in df.columns:
-                                experiment_types = {
-                                    g: df[df[group_col] == g]["experiment_type"].iloc[0]
-                                    for g in df[group_col].unique()
-                                }
-
-                        # Generate figure based on plot_type
-                        if plot_type == "pareto":
-                            fig = plot_gen.create_pareto_plot(
-                                df,
-                                x_metric,
-                                y_metric,
-                                label_by=label_by,
-                                group_by=group_by,
-                                title=title,
-                                experiment_types=experiment_types,
-                            )
-                        elif plot_type == "scatter_line":
-                            fig = plot_gen.create_scatter_line_plot(
-                                df,
-                                x_metric,
-                                y_metric,
-                                label_by=label_by,
-                                group_by=group_by,
-                                title=title,
-                                mode="lines+markers",
-                                experiment_types=experiment_types,
-                            )
-                        elif plot_type == "scatter":
-                            fig = plot_gen.create_scatter_line_plot(
-                                df,
-                                x_metric,
-                                y_metric,
-                                label_by=label_by,
-                                group_by=group_by,
-                                title=title,
-                                mode="markers",
-                                experiment_types=experiment_types,
-                            )
-                        elif plot_type == "bar":
-                            fig = plot_gen.create_multi_run_bar_chart(
-                                df=df,
-                                x_metric=x_metric,
-                                y_metric=y_metric,
-                                group_by=group_by,
-                                title=title,
-                            )
-                        elif plot_type == "latency_throughput_uncertainty":
-                            fig = _build_uncertainty_figure(
-                                df,
-                                x_metric,
-                                y_metric,
-                                plot_gen,
-                                actual_group_by=group_by,
-                                actual_label_by=label_by,
-                                plot_config_dict=config,
-                                title=title,
-                                x_label=config.get("x_label", x_metric),
-                                y_label=config.get("y_label", y_metric),
-                            )
-                        else:
-                            # Skip unsupported plot types
-                            continue
-
-                        # Apply log scale
-                        if log_scale in ("x", "both"):
-                            fig.update_xaxes(type="log")
-                        if log_scale in ("y", "both"):
-                            fig.update_yaxes(type="log")
-
-                        # Export to ZIP with descriptive filename
-                        safe_filename = generate_export_filename(plot_id, config)
-                        if export_format == "png":
-                            try:
-                                _scale_figure_fonts(fig, font_scale)
-                                img_bytes = fig.to_image(
-                                    format="png", width=width, height=height
-                                )
-                                zip_file.writestr(f"{safe_filename}.png", img_bytes)
-                            except Exception as e:  # noqa: BLE001 - kaleido/Chrome can raise vendor-specific errors on PNG render; fallback to HTML so export still succeeds
-                                print(
-                                    f"⚠️ PNG conversion failed for {safe_filename}, falling back to HTML: {e}"
-                                )
-                                html_str = fig.to_html(
-                                    include_plotlyjs="cdn", config={"responsive": True}
-                                )
-                                zip_file.writestr(
-                                    f"{safe_filename}.html", html_str.encode()
-                                )
-                                html_fallback_used[0] = True
-                        else:
-                            # HTML export - no try/catch needed, intentional format
-                            html_str = fig.to_html(
-                                include_plotlyjs="cdn", config={"responsive": True}
-                            )
-                            zip_file.writestr(
-                                f"{safe_filename}.html", html_str.encode()
-                            )
-
-                    except Exception as e:  # noqa: BLE001 - plot-bundle export iterates many heterogeneous plots; skip the failing one so the rest still download
-                        # Log error but continue with other plots
-                        _logger.warning(f"Failed to export plot {plot_id}: {e}")
-                        continue
+                html_fallback_used = _export_multi_run_plots_to_zip(
+                    zip_file,
+                    visible_plots=visible_plots,
+                    plot_configs=plot_configs,
+                    filtered_runs=filtered_runs,
+                    plot_gen=plot_gen,
+                    export_format=export_format,
+                    width=width,
+                    height=height,
+                    font_scale=font_scale,
+                )
 
             # Add README only if PNG export failed and fell back to HTML
-            if export_format == "png" and html_fallback_used[0]:
+            if export_format == "png" and html_fallback_used:
                 readme = """AIPerf Dashboard Plots - Exported as HTML
 
 Chrome rendering failed, so PNG export was unavailable.

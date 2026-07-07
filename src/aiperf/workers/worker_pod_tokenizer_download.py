@@ -82,22 +82,19 @@ async def download_tokenizer(
         ) as session:
             for attempt in range(1, max_retries + 1):
                 try:
-                    async with session.get(url) as resp:
-                        if resp.status == 404:
-                            raise RuntimeError(
-                                f"tokenizer '{name}' not registered on operator API "
-                                f"(HTTP 404 from {url})"
-                            )
-                        if resp.status == 503:
-                            logger.info(
-                                f"tokenizer '{name}' not ready (503), "
-                                f"attempt {attempt}/{max_retries}"
-                            )
-                            await asyncio.sleep(min(backoff, _MAX_BACKOFF_S))
-                            backoff *= 2
-                            continue
-                        resp.raise_for_status()
-                        compressed = await resp.read()
+                    compressed = await _fetch_bundle(
+                        session,
+                        url,
+                        name=name,
+                        attempt=attempt,
+                        max_retries=max_retries,
+                        logger=logger,
+                    )
+                    if compressed is None:
+                        # Bundle not ready yet (503) — back off and retry.
+                        await asyncio.sleep(min(backoff, _MAX_BACKOFF_S))
+                        backoff *= 2
+                        continue
                     logger.info(
                         f"download_tokenizer: '{name}' fetched "
                         f"({len(compressed)} bytes), extracting atomically"
@@ -131,6 +128,39 @@ async def download_tokenizer(
         raise RuntimeError(
             f"failed to download tokenizer '{name}' after {max_retries} attempts: {last_exc}"
         )
+
+
+async def _fetch_bundle(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    name: str,
+    attempt: int,
+    max_retries: int,
+    logger: logging.Logger,
+) -> bytes | None:
+    """Fetch the compressed bundle bytes for one attempt.
+
+    Returns None when the server replies 503 (bundle not ready yet) so the
+    caller can back off and retry.
+
+    Raises:
+        RuntimeError: 404 from server (tokenizer not registered).
+        aiohttp.ClientError: Non-OK status or transport failure.
+    """
+    async with session.get(url) as resp:
+        if resp.status == 404:
+            raise RuntimeError(
+                f"tokenizer '{name}' not registered on operator API "
+                f"(HTTP 404 from {url})"
+            )
+        if resp.status == 503:
+            logger.info(
+                f"tokenizer '{name}' not ready (503), attempt {attempt}/{max_retries}"
+            )
+            return None
+        resp.raise_for_status()
+        return await resp.read()
 
 
 def _extract_bundle(compressed: bytes, dest: Path) -> None:

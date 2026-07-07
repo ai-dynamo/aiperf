@@ -10,6 +10,7 @@ the data is reconstructed from the archived ``aggregate.json``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ import orjson
 from fastapi import APIRouter, HTTPException
 from kubernetes_asyncio.client import ApiClient
 
+from aiperf.kubernetes.models import AIPerfJobInfo
 from aiperf.operator.job_union import list_all_jobs
 from aiperf.operator.results_layout import (
     EPOCH_RE,
@@ -174,6 +176,55 @@ def _cells_from_aggregate(doc: dict[str, Any]) -> list[CellEntry]:
     return sorted(out, key=lambda x: x.variation_index)
 
 
+def _fold_child_into_bucket(bucket: dict[str, Any], job: AIPerfJobInfo) -> None:
+    """Fold one child job into its variation bucket (counts, metrics, refs).
+
+    Status mapping: only count terminal children towards aggregates.
+    """
+    phase = (job.phase or "").lower()
+    if phase in {"succeeded", "completed"}:
+        bucket["trials_completed"] += 1
+        if job.throughput_rps is not None:
+            bucket["throughputs"].append(float(job.throughput_rps))
+        if job.latency_p99_ms is not None:
+            bucket["p99_latencies"].append(float(job.latency_p99_ms))
+    elif phase in {"failed", "cancelled", "partiallyfailed"}:
+        bucket["trials_failed"] += 1
+    bucket["children"].append(
+        ChildJobRef(
+            namespace=job.namespace,
+            name=job.name,
+            trial_index=None,
+            phase=job.phase,
+        )
+    )
+
+
+def _avg(xs: list[float]) -> float | None:
+    """Arithmetic mean of ``xs``, or None when the list is empty."""
+    return (sum(xs) / len(xs)) if xs else None
+
+
+def _cell_entry_from_bucket(idx: int, bucket: dict[str, Any]) -> CellEntry:
+    """Materialize the response-facing CellEntry for one variation bucket."""
+    metrics: dict[str, dict[str, float]] = {}
+    thr_avg = _avg(bucket["throughputs"])
+    if thr_avg is not None:
+        metrics["request_throughput"] = {"avg": thr_avg}
+    lat_avg = _avg(bucket["p99_latencies"])
+    if lat_avg is not None:
+        metrics["request_latency_p99"] = {"avg": lat_avg}
+    return CellEntry(
+        variation_index=idx,
+        variation_label=bucket["variation_label"],
+        values={},  # structured values come from spec; live path leaves empty
+        trials_completed=bucket["trials_completed"],
+        trials_failed=bucket["trials_failed"],
+        metrics=metrics,
+        children=bucket["children"],
+    )
+
+
 async def _cells_from_live_children(
     api: ApiClient,
     base_dir: Path,
@@ -210,49 +261,9 @@ async def _cells_from_live_children(
                 "children": [],
             },
         )
-        # Status mapping: only count terminal children towards aggregates.
-        phase = (j.phase or "").lower()
-        if phase in {"succeeded", "completed"}:
-            bucket["trials_completed"] += 1
-            if j.throughput_rps is not None:
-                bucket["throughputs"].append(float(j.throughput_rps))
-            if j.latency_p99_ms is not None:
-                bucket["p99_latencies"].append(float(j.latency_p99_ms))
-        elif phase in {"failed", "cancelled", "partiallyfailed"}:
-            bucket["trials_failed"] += 1
-        bucket["children"].append(
-            ChildJobRef(
-                namespace=j.namespace,
-                name=j.name,
-                trial_index=None,
-                phase=j.phase,
-            )
-        )
+        _fold_child_into_bucket(bucket, j)
 
-    def _avg(xs: list[float]) -> float | None:
-        return (sum(xs) / len(xs)) if xs else None
-
-    out: list[CellEntry] = []
-    for idx, b in sorted(by_cell.items()):
-        metrics: dict[str, dict[str, float]] = {}
-        thr_avg = _avg(b["throughputs"])
-        if thr_avg is not None:
-            metrics["request_throughput"] = {"avg": thr_avg}
-        lat_avg = _avg(b["p99_latencies"])
-        if lat_avg is not None:
-            metrics["request_latency_p99"] = {"avg": lat_avg}
-        out.append(
-            CellEntry(
-                variation_index=idx,
-                variation_label=b["variation_label"],
-                values={},  # structured values come from spec; live path leaves empty
-                trials_completed=b["trials_completed"],
-                trials_failed=b["trials_failed"],
-                metrics=metrics,
-                children=b["children"],
-            )
-        )
-    return out
+    return [_cell_entry_from_bucket(idx, b) for idx, b in sorted(by_cell.items())]
 
 
 async def _get_cells_impl(
@@ -379,6 +390,73 @@ async def _get_children_impl(
     return _children_manifest_from_doc(doc, epoch=epoch)
 
 
+def _register_sweep_read_routes(
+    router: APIRouter,
+    require_api: Callable[[], ApiClient],
+    base_dir: Path,
+) -> None:
+    """Register the sweep list, detail, and epoch-listing endpoints."""
+
+    @router.get("/sweeps", response_model=SweepListResponse)
+    async def list_sweeps() -> SweepListResponse:
+        return await _list_sweeps_impl(require_api(), base_dir)
+
+    @router.get("/sweeps/{namespace}/{name}", response_model=SweepDetailResponse)
+    async def get_sweep(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> SweepDetailResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return await _get_sweep_impl(
+            require_api(), base_dir, namespace, name, epoch=epoch
+        )
+
+    @router.get(
+        "/sweeps/{namespace}/{name}/epochs",
+        response_model=SweepEpochsResponse,
+        response_model_by_alias=True,
+    )
+    async def list_sweep_epochs_endpoint(
+        namespace: str, name: str
+    ) -> SweepEpochsResponse:
+        return await _list_sweep_epochs_impl(base_dir, namespace, name)
+
+
+def _register_sweep_cell_routes(
+    router: APIRouter,
+    require_api: Callable[[], ApiClient],
+    base_dir: Path,
+) -> None:
+    """Register the per-cell aggregate and children-manifest endpoints."""
+
+    @router.get(
+        "/sweeps/{namespace}/{name}/cells",
+        response_model=CellAggregatesResponse,
+    )
+    async def get_sweep_cells(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> CellAggregatesResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return await _get_cells_impl(
+            require_api(), base_dir, namespace, name, epoch=epoch
+        )
+
+    @router.get(
+        "/sweeps/{namespace}/{name}/children",
+        response_model=ChildrenManifestResponse,
+        response_model_by_alias=True,
+    )
+    async def get_sweep_children(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> ChildrenManifestResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return await _get_children_impl(
+            require_api(), base_dir, namespace=namespace, name=name, epoch=epoch
+        )
+
+
 def create_sweeps_router(
     api_holder: list[ApiClient | None] | None = None,
     results_dir: Path | None = None,
@@ -398,59 +476,9 @@ def create_sweeps_router(
             )
         return api
 
-    @router.get("/sweeps", response_model=SweepListResponse)
-    async def list_sweeps() -> SweepListResponse:
-        return await _list_sweeps_impl(_require_api(), _base_dir)
-
-    @router.get("/sweeps/{namespace}/{name}", response_model=SweepDetailResponse)
-    async def get_sweep(
-        namespace: str, name: str, epoch: str | None = None
-    ) -> SweepDetailResponse:
-        if epoch is not None and not EPOCH_RE.match(epoch):
-            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
-        return await _get_sweep_impl(
-            _require_api(), _base_dir, namespace, name, epoch=epoch
-        )
-
-    @router.get(
-        "/sweeps/{namespace}/{name}/epochs",
-        response_model=SweepEpochsResponse,
-        response_model_by_alias=True,
-    )
-    async def list_sweep_epochs_endpoint(
-        namespace: str, name: str
-    ) -> SweepEpochsResponse:
-        return await _list_sweep_epochs_impl(_base_dir, namespace, name)
-
+    _register_sweep_read_routes(router, _require_api, _base_dir)
     register_sweep_artifact_routes(router, _base_dir)
-
-    @router.get(
-        "/sweeps/{namespace}/{name}/cells",
-        response_model=CellAggregatesResponse,
-    )
-    async def get_sweep_cells(
-        namespace: str, name: str, epoch: str | None = None
-    ) -> CellAggregatesResponse:
-        if epoch is not None and not EPOCH_RE.match(epoch):
-            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
-        return await _get_cells_impl(
-            _require_api(), _base_dir, namespace, name, epoch=epoch
-        )
-
-    @router.get(
-        "/sweeps/{namespace}/{name}/children",
-        response_model=ChildrenManifestResponse,
-        response_model_by_alias=True,
-    )
-    async def get_sweep_children(
-        namespace: str, name: str, epoch: str | None = None
-    ) -> ChildrenManifestResponse:
-        if epoch is not None and not EPOCH_RE.match(epoch):
-            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
-        return await _get_children_impl(
-            _require_api(), _base_dir, namespace=namespace, name=name, epoch=epoch
-        )
-
+    _register_sweep_cell_routes(router, _require_api, _base_dir)
     register_diagnostics_routes(router, _require_api)
 
     return router

@@ -216,6 +216,24 @@ def _record_from_archive(
     )
 
 
+def _latest_archived_record(
+    base_dir: Path, ns_name: str, sweep_dir: Path
+) -> SweepRecord | None:
+    """Build the latest-epoch archived record for one sweep dir, if resolvable.
+
+    The list page is latest-only: sweeps without a latest pointer (or whose
+    pointed-at epoch dir is missing) return None and are skipped — cluster
+    operators must run the wipe script first.
+    """
+    latest = resolve_sweep_latest(base_dir, ns_name, sweep_dir.name)
+    if latest is None:
+        return None
+    epoch_dir = sweep_dir / latest
+    if not epoch_dir.is_dir():
+        return None
+    return _record_from_archive(ns_name, sweep_dir.name, epoch_dir)
+
+
 def _scan_archived(base_dir: Path, namespace: str | None = None) -> list[SweepRecord]:
     if not base_dir.exists() or not base_dir.is_dir():
         return []
@@ -231,15 +249,7 @@ def _scan_archived(base_dir: Path, namespace: str | None = None) -> list[SweepRe
         for sweep_dir in sorted(sweeps_root.iterdir()):
             if not sweep_dir.is_dir():
                 continue
-            # List page is latest-only: skip sweeps without a latest pointer
-            # (cluster operators must run the wipe script first).
-            latest = resolve_sweep_latest(base_dir, ns_dir.name, sweep_dir.name)
-            if latest is None:
-                continue
-            epoch_dir = sweep_dir / latest
-            if not epoch_dir.is_dir():
-                continue
-            rec = _record_from_archive(ns_dir.name, sweep_dir.name, epoch_dir)
+            rec = _latest_archived_record(base_dir, ns_dir.name, sweep_dir)
             if rec is not None:
                 out.append(rec)
     return out

@@ -15,26 +15,6 @@
       "SessionIDGenerator.reset"
     ],
     [
-      "ANN201",
-      "src/aiperf/config/loader/helpers.py",
-      "BenchmarkHelpersMixin.output"
-    ],
-    [
-      "ANN201",
-      "src/aiperf/operator/results_db.py",
-      "ResultsDB.compare"
-    ],
-    [
-      "ANN201",
-      "src/aiperf/operator/results_db.py",
-      "ResultsDB.history"
-    ],
-    [
-      "ANN201",
-      "src/aiperf/operator/results_db.py",
-      "ResultsDB.leaderboard"
-    ],
-    [
       "C901",
       "src/aiperf/accuracy/graders/_math_strip.py",
       "strip_string"
@@ -43,11 +23,6 @@
       "C901",
       "src/aiperf/accuracy/graders/math.py",
       "_math_equal"
-    ],
-    [
-      "C901",
-      "src/aiperf/cli_commands/kube/sweep.py",
-      "_build_sweep_cr_dict"
     ],
     [
       "C901",
@@ -71,18 +46,8 @@
     ],
     [
       "C901",
-      "src/aiperf/credit/callback_handler.py",
-      "CreditCallbackHandler.on_credit_return"
-    ],
-    [
-      "C901",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
-    ],
-    [
-      "C901",
-      "src/aiperf/endpoints/openai_chat.py",
-      "ChatEndpoint.format_payload"
     ],
     [
       "C901",
@@ -91,78 +56,8 @@
     ],
     [
       "C901",
-      "src/aiperf/kubernetes/models.py",
-      "AIPerfJobCR.to_info"
-    ],
-    [
-      "C901",
-      "src/aiperf/kubernetes/results_artifacts.py",
-      "_download_artifact"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/handlers/monitor.py",
-      "_maybe_recover_terminated_controller"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/job_union.py",
-      "find_any_job"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/job_union.py",
-      "list_all_jobs"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/routers/jobs.py",
-      "_fetch_cluster_gpu_stats"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/routers/jobs.py",
-      "_fetch_cluster_name"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/routers/jobs.py",
-      "create_jobs_router"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/routers/results_analytics.py",
-      "_register_index_routes"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/routers/sweeps.py",
-      "_cells_from_live_children"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/routers/sweeps.py",
-      "create_sweeps_router"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/runs_index.py",
-      "bootstrap"
-    ],
-    [
-      "C901",
-      "src/aiperf/operator/sweep_union.py",
-      "_scan_archived"
-    ],
-    [
-      "C901",
       "src/aiperf/orchestrator/jsonl_loader.py",
       "iter_profiling_records"
-    ],
-    [
-      "C901",
-      "src/aiperf/plot/core/mode_detector.py",
-      "ModeDetector._find_all_run_directories_recursive"
     ],
     [
       "C901",
@@ -198,11 +93,6 @@
       "C901",
       "src/aiperf/plot/dashboard/callbacks.py",
       "register_export_png_callback"
-    ],
-    [
-      "C901",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "register_export_png_callback.export_plots_bundle"
     ],
     [
       "C901",
@@ -323,51 +213,6 @@
       "D103",
       "src/aiperf/common/tokenizer_display.py",
       "log_tokenizer_validation_results"
-    ],
-    [
-      "D103",
-      "src/aiperf/controller/system_controller.py",
-      "profile_results_have_successes"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "compare"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "get_run"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "get_summary_blob"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "history"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "leaderboard"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "list_runs_for_job"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "list_sweep_epochs_for_sweep"
-    ],
-    [
-      "D103",
-      "src/aiperf/operator/runs_index.py",
-      "list_sweep_variations"
     ],
     [
       "S110",

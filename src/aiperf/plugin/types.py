@@ -16,6 +16,28 @@ MetadataT = TypeVar("MetadataT", bound=BaseModel)
 _logger = AIPerfLogger(__name__)
 
 
+def _class_defined_in_module_ast(tree: ast.Module, class_name: str) -> bool:
+    """Check whether ``class_name`` appears in the module AST without executing code.
+
+    Matches a class definition, a ``from ... import`` (including aliased imports),
+    or a module-level assignment (covers dynamically generated classes).
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return True
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == class_name or alias.asname == class_name
+            for alias in node.names or ()
+        ):
+            return True
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == class_name
+            for target in node.targets
+        ):
+            return True
+    return False
+
+
 # ==============================================================================
 # Package Info
 # ==============================================================================
@@ -209,33 +231,7 @@ class PluginEntry(BaseModel):
                 if source_path.suffix == ".py" and source_path.exists():
                     source = source_path.read_text(encoding="utf-8")
                     tree = ast.parse(source)
-
-                    # Look for class definition, import, or module-level assignment
-                    class_found = False
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.ClassDef) and node.name == class_name:
-                            class_found = True
-                            break
-                        # Check for imports that might bring in the class
-                        if isinstance(node, ast.ImportFrom) and node.names:
-                            for alias in node.names:
-                                if (
-                                    alias.name == class_name
-                                    or alias.asname == class_name
-                                ):
-                                    class_found = True
-                                    break
-                        # Check for module-level assignments (dynamically generated classes)
-                        if isinstance(node, ast.Assign):
-                            for target in node.targets:
-                                if (
-                                    isinstance(target, ast.Name)
-                                    and target.id == class_name
-                                ):
-                                    class_found = True
-                                    break
-
-                    if not class_found:
+                    if not _class_defined_in_module_ast(tree, class_name):
                         return False, f"Class '{class_name}' not found in {module_path}"
             except SyntaxError as e:
                 return False, f"Syntax error in {module_path}: {e}"

@@ -101,6 +101,62 @@ def _incomplete_download_action(
     return "skip"
 
 
+def _sanitized_artifact_relpath(filename: str) -> str | None:
+    """Normalise an artifact filename to a safe relative POSIX path.
+
+    Server-supplied names are untrusted: traversal segments (``.``/``..``),
+    empty names, and hidden basenames are refused (with a warning) by
+    returning ``None``.
+    """
+    parts = [p for p in filename.replace("\\", "/").split("/") if p]
+    if (
+        not parts
+        or any(p in ("", ".", "..") for p in parts)
+        or parts[-1].startswith(".")
+    ):
+        print_warning(f"Refusing unsafe filename: {filename!r}")
+        return None
+    return "/".join(parts)
+
+
+async def _read_artifact_response(
+    resp: aiohttp.ClientResponse,
+    safe_filename: str,
+    *,
+    attempt: int,
+    max_retries: int,
+) -> tuple[str, bytes] | Literal["retry"] | None:
+    """Validate one artifact HTTP response and read its body.
+
+    Returns ``(dest_name, content)`` when the body is complete, ``"retry"``
+    when the body is short but retries remain, and ``None`` when the artifact
+    must be skipped (404, redirect, reserved name, exhausted retries).
+    """
+    if resp.status == 404:
+        return None
+    if resp.status in _REDIRECT_STATUSES:
+        print_warning(f"Refusing redirected download for {safe_filename}")
+        return None
+    resp.raise_for_status()
+
+    dest_name = _response_destination(resp, Path(safe_filename).name)
+    if dest_name is None:
+        return None
+    content = await resp.read()
+    action = _incomplete_download_action(
+        dest_name=dest_name,
+        expected=resp.content_length,
+        actual=len(content),
+        attempt=attempt,
+        max_retries=max_retries,
+    )
+    if action == "retry":
+        return "retry"
+    if action == "skip":
+        return None
+    return (dest_name, content)
+
+
 async def _download_artifact(
     session: aiohttp.ClientSession,
     files_base: str,
@@ -118,43 +174,23 @@ async def _download_artifact(
 
     Returns ``(dest_name, size_bytes)`` on success, ``None`` on skip/error.
     """
-    parts = [p for p in filename.replace("\\", "/").split("/") if p]
-    if (
-        not parts
-        or any(p in ("", ".", "..") for p in parts)
-        or parts[-1].startswith(".")
-    ):
-        print_warning(f"Refusing unsafe filename: {filename!r}")
+    safe_filename = _sanitized_artifact_relpath(filename)
+    if safe_filename is None:
         return None
-    safe_filename = "/".join(parts)
     quoted = quote(safe_filename, safe="/")
     rel_path = Path(safe_filename)
 
     for attempt in range(1 + max_retries):
         try:
             async with _get_no_redirects(session, f"{files_base}/{quoted}") as resp:
-                if resp.status == 404:
-                    return None
-                if resp.status in _REDIRECT_STATUSES:
-                    print_warning(f"Refusing redirected download for {safe_filename}")
-                    return None
-                resp.raise_for_status()
-
-                dest_name = _response_destination(resp, rel_path.name)
-                if dest_name is None:
-                    return None
-                content = await resp.read()
-                action = _incomplete_download_action(
-                    dest_name=dest_name,
-                    expected=resp.content_length,
-                    actual=len(content),
-                    attempt=attempt,
-                    max_retries=max_retries,
+                outcome = await _read_artifact_response(
+                    resp, safe_filename, attempt=attempt, max_retries=max_retries
                 )
-                if action == "retry":
+                if outcome == "retry":
                     continue
-                if action == "skip":
+                if outcome is None:
                     return None
+                dest_name, content = outcome
 
                 dest_rel = (rel_path.parent / dest_name).as_posix()
                 dest_path = output_dir / rel_path.parent / dest_name

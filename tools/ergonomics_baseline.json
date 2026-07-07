@@ -7,36 +7,6 @@
       "from_exception_data:MetricSample"
     ],
     [
-      "isinstance-tuple",
-      "src/aiperf/accuracy/graders/code_execution.py",
-      "isinstance:337"
-    ],
-    [
-      "isinstance-tuple",
-      "src/aiperf/config/sweep/expand.py",
-      "isinstance:150"
-    ],
-    [
-      "isinstance-tuple",
-      "src/aiperf/orchestrator/search_planner/_pooled_percentile.py",
-      "isinstance:78"
-    ],
-    [
-      "isinstance-tuple",
-      "src/aiperf/orchestrator/search_planner/multi_tier_planner.py",
-      "isinstance:595"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/common/models/telemetry_timeseries.py",
-      "to_metric_result_filtered"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/dataset/loader/hf_conversation.py",
-      "__init__"
-    ],
-    [
       "keyword-only-args",
       "src/aiperf/operator/handlers/create.py",
       "on_create"
@@ -88,16 +58,6 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/operator/routers/results_analytics.py",
-      "leaderboard"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/operator/routers/sweeps.py",
-      "_get_children_impl"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/plot/dashboard/callbacks.py",
       "create_custom_plot"
     ],
@@ -138,38 +98,13 @@
     ],
     [
       "nesting-depth",
-      "src/aiperf/dataset/loader/random_pool.py",
-      "_validate_path"
-    ],
-    [
-      "nesting-depth",
       "src/aiperf/plot/dashboard/callbacks.py",
       "_generate_custom_single_run_plot"
     ],
     [
       "nesting-depth",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "export_plots_bundle"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/plot/dashboard/callbacks.py",
-      "register_export_png_callback"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/plugin/types.py",
-      "validate"
-    ],
-    [
-      "nesting-depth",
       "src/aiperf/post_processors/otel_streaming_fanout.py",
       "run_otel_streaming_fanout"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/workers/worker_pod_tokenizer_download.py",
-      "download_tokenizer"
     ],
     [
       "pydantic-fields",

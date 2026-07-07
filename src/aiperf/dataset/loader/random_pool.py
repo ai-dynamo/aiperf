@@ -121,33 +121,32 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Raises:
             ValidationError: If any file contains invalid data.
         """
-        valid_count = 0
-
         if path.is_dir():
             # if path is a directory, recursively call this function for each child
             # if any child fails validation, it will exit early with an exception
-            for file in path.iterdir():
-                valid_count += RandomPoolDatasetLoader._validate_path(file)
+            return sum(
+                RandomPoolDatasetLoader._validate_path(file) for file in path.iterdir()
+            )
 
-        elif path.is_file():
-            # if path is a file, validate the first non-empty line against the RandomPool model
-            # if the line is valid, increment the valid count and break the loop,
-            # otherwise a ValidationError will be raised and the function will exit early.
-            # A stray binary/unreadable file in a directory (image, .parquet, .gz) raises
-            # UnicodeDecodeError/OSError during read; treat it as "not a RandomPool file"
-            # (contributes 0) so structural auto-detection skips it instead of crashing.
-            try:
-                with open(path, encoding="utf-8") as f:
-                    for line in f:
-                        if not (line := line.strip()):
-                            continue
-                        RandomPool.model_validate_json(line)
-                        valid_count += 1
-                        break
-            except (UnicodeDecodeError, OSError):
-                return 0
+        if not path.is_file():
+            return 0
 
-        return valid_count
+        # if path is a file, validate the first non-empty line against the RandomPool
+        # model; if the line is valid, count the file as valid, otherwise a
+        # ValidationError will be raised and the function will exit early.
+        # A stray binary/unreadable file in a directory (image, .parquet, .gz) raises
+        # UnicodeDecodeError/OSError during read; treat it as "not a RandomPool file"
+        # (contributes 0) so structural auto-detection skips it instead of crashing.
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    if not (line := line.strip()):
+                        continue
+                    RandomPool.model_validate_json(line)
+                    return 1
+        except (UnicodeDecodeError, OSError):
+            return 0
+        return 0
 
     @classmethod
     def can_load(

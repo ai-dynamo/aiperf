@@ -60,16 +60,7 @@ class ChatEndpoint(BaseEndpoint):
             "stream": model_endpoint.endpoint.streaming,
         }
 
-        if turns[-1].raw_tools is not None:
-            payload["tools"] = turns[-1].raw_tools
-        else:
-            # Walk back through prior turns so DAG FORK children inherit
-            # ``raw_tools`` from the parent turn that declared them. Stop on
-            # the first non-None value (closest ancestor wins).
-            for prior in reversed(turns[:-1]):
-                if prior.raw_tools is not None:
-                    payload["tools"] = prior.raw_tools
-                    break
+        self._apply_raw_tools(payload, turns)
 
         if turns[-1].max_tokens is not None:
             token_field = (
@@ -98,17 +89,43 @@ class ChatEndpoint(BaseEndpoint):
             model_endpoint.endpoint.streaming
             and model_endpoint.endpoint.use_server_token_count
         ):
-            # Automatically set stream_options to include usage when using server token counts
-            if "stream_options" not in payload:
-                payload["stream_options"] = {"include_usage": True}
-            elif (
-                isinstance(payload["stream_options"], dict)
-                and "include_usage" not in payload["stream_options"]
-            ):
-                payload["stream_options"]["include_usage"] = True
+            self._ensure_stream_usage(payload)
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    @staticmethod
+    def _apply_raw_tools(payload: dict[str, Any], turns: list[Turn]) -> None:
+        """Set ``payload["tools"]`` from the dispatch turn's ``raw_tools``.
+
+        Walks back through prior turns so DAG FORK children inherit
+        ``raw_tools`` from the parent turn that declared them. Stops on the
+        first non-None value (closest ancestor wins). Leaves ``payload``
+        untouched when no turn declares tools.
+        """
+        if turns[-1].raw_tools is not None:
+            payload["tools"] = turns[-1].raw_tools
+            return
+        for prior in reversed(turns[:-1]):
+            if prior.raw_tools is not None:
+                payload["tools"] = prior.raw_tools
+                break
+
+    @staticmethod
+    def _ensure_stream_usage(payload: dict[str, Any]) -> None:
+        """Set ``stream_options.include_usage`` so streamed responses carry usage.
+
+        Server token counts require the final usage-bearing chunk; user-supplied
+        ``stream_options`` (including non-dict shapes from ``extra_body``) are
+        preserved, only a missing ``include_usage`` key is filled in.
+        """
+        if "stream_options" not in payload:
+            payload["stream_options"] = {"include_usage": True}
+        elif (
+            isinstance(payload["stream_options"], dict)
+            and "include_usage" not in payload["stream_options"]
+        ):
+            payload["stream_options"]["include_usage"] = True
 
     @staticmethod
     def _format_messages(

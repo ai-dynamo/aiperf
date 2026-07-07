@@ -271,14 +271,30 @@ class ModeDetector(AIPerfLoggerMixin):
         if self._is_run_directory(path):
             run_dirs.append(path)
 
-        # The per-trial ``profile_runs/`` subtree is redundant ONLY when an
-        # ``aggregate/`` sibling carries the canonical per-cell view (trials>1
-        # REPEATED / INDEPENDENT sweeps). Skipping it there collapses the cells
-        # to one aggregate per variation instead of one entry per trial run.
-        # When there is no aggregate sibling (adaptive BO, recipe convergence
-        # loops, non-sweep multi-trial runs) ``profile_runs/`` is the only place
-        # data lives, so it is still traversed. Passing ``.../profile_runs/``
-        # explicitly as the top-level path opts back into the per-trial view.
+        self._collect_from_subdirectories(path, visited, run_dirs)
+
+        return run_dirs
+
+    def _collect_from_subdirectories(
+        self, path: Path, visited: set[Path], run_dirs: list[Path]
+    ) -> None:
+        """Recurse into subdirectories of ``path``, appending found run dirs.
+
+        The per-trial ``profile_runs/`` subtree is redundant ONLY when an
+        ``aggregate/`` sibling carries the canonical per-cell view (trials>1
+        REPEATED / INDEPENDENT sweeps). Skipping it there collapses the cells
+        to one aggregate per variation instead of one entry per trial run.
+        When there is no aggregate sibling (adaptive BO, recipe convergence
+        loops, non-sweep multi-trial runs) ``profile_runs/`` is the only place
+        data lives, so it is still traversed. Passing ``.../profile_runs/``
+        explicitly as the top-level path opts back into the per-trial view.
+
+        Args:
+            path: Directory whose children should be searched.
+            visited: Set of already visited resolved paths (shared across the
+                whole recursive walk for circular symlink protection).
+            run_dirs: Accumulator list; discovered run directories are appended.
+        """
         try:
             has_aggregate_sibling = self._has_valid_aggregate_marker(path / "aggregate")
             for subdir in path.iterdir():
@@ -297,5 +313,3 @@ class ModeDetector(AIPerfLoggerMixin):
             self.warning(f"Permission denied accessing directory: {path}")
         except OSError as e:
             self.warning(f"Cannot read directory {path}: {e}")
-
-        return run_dirs

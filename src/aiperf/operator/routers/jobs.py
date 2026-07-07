@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -101,62 +101,29 @@ async def _fetch_k8s_version(api: ApiClient) -> str:
     return version_info.get("gitVersion", "unknown")
 
 
-async def _fetch_cluster_name(api: ApiClient) -> str | None:
-    """Auto-detect the cluster name from the apiserver, or None.
+def _parse_kubeadm_cluster_name(cluster_yaml: str) -> str | None:
+    """Extract ``clusterName`` from a kubeadm ``ClusterConfiguration`` doc.
 
-    Kubernetes core has no canonical "cluster name" field, but two
-    well-known sources cover most installs:
-
-    * ``kube-system/kubeadm-config`` ConfigMap — written by kubeadm
-      (and tools that wrap it: kind, kops, kubespray, most on-prem and
-      DGX-style clusters). The ``ClusterConfiguration`` doc embedded in
-      its ``data`` block has a ``clusterName`` field.
-    * ``kube-system/cluster-info`` ConfigMap — public bootstrap info on
-      some installs; the embedded kubeconfig blob's ``clusters[0].name``
-      gives a usable label.
-
-    Best-effort: any RBAC denial / parse failure falls back to ``None``,
-    which lets the UI show the Kubernetes version instead. Operators
-    can override via ``AIPERF_OPERATOR_CLUSTER_NAME`` for clusters that
-    don't expose either of these (managed GKE/EKS, custom installers).
+    Cheap line-scan for `clusterName: <value>` — avoids pulling a
+    YAML dep just for this single field. The kubeadm doc keeps it
+    at top level so a simple prefix match is correct.
     """
-    from kubernetes_asyncio import client as k8s
+    for line in cluster_yaml.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("clusterName:"):
+            name = stripped.split(":", 1)[1].strip().strip("'\"")
+            if name and name not in {"kubernetes", ""}:
+                return name
+    return None
 
-    try:
-        core = k8s.CoreV1Api(api)
-        cm = await core.read_namespaced_config_map(
-            name="kubeadm-config", namespace="kube-system"
-        )
-    except Exception:  # noqa: BLE001 - best-effort; try the next source
-        cm = None
 
-    if cm is not None:
-        data = getattr(cm, "data", None) or {}
-        cluster_yaml = data.get("ClusterConfiguration") or data.get("ClusterStatus")
-        if isinstance(cluster_yaml, str):
-            # Cheap line-scan for `clusterName: <value>` — avoids pulling a
-            # YAML dep just for this single field. The kubeadm doc keeps it
-            # at top level so a simple prefix match is correct.
-            for line in cluster_yaml.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("clusterName:"):
-                    name = stripped.split(":", 1)[1].strip().strip("'\"")
-                    if name and name not in {"kubernetes", ""}:
-                        return name
+def _parse_kubeconfig_cluster_name(kubeconfig_blob: str) -> str | None:
+    """Extract the first cluster ``name:`` from an embedded kubeconfig blob.
 
-    try:
-        core = k8s.CoreV1Api(api)
-        cm = await core.read_namespaced_config_map(
-            name="cluster-info", namespace="kube-system"
-        )
-    except Exception:  # noqa: BLE001 - best-effort
-        return None
-
-    data = getattr(cm, "data", None) or {}
-    kubeconfig_blob = data.get("kubeconfig") or ""
-    # Same strategy as above — line-scan for the first `name:` under
-    # `clusters:`. Good enough for the simple kubeconfig format the
-    # cluster-info CM typically embeds.
+    Same strategy as :func:`_parse_kubeadm_cluster_name` — line-scan for
+    the first `name:` under `clusters:`. Good enough for the simple
+    kubeconfig format the cluster-info CM typically embeds.
+    """
     in_clusters_section = False
     for line in kubeconfig_blob.splitlines():
         stripped = line.strip()
@@ -177,6 +144,60 @@ async def _fetch_cluster_name(api: ApiClient) -> str | None:
         ):
             in_clusters_section = False
     return None
+
+
+async def _cluster_name_from_kubeadm_config(api: ApiClient) -> str | None:
+    """Read ``kube-system/kubeadm-config`` and extract ``clusterName``, or None."""
+    try:
+        core = client.CoreV1Api(api)
+        cm = await core.read_namespaced_config_map(
+            name="kubeadm-config", namespace="kube-system"
+        )
+    except Exception:  # noqa: BLE001 - best-effort; try the next source
+        return None
+    data = getattr(cm, "data", None) or {}
+    cluster_yaml = data.get("ClusterConfiguration") or data.get("ClusterStatus")
+    if isinstance(cluster_yaml, str):
+        return _parse_kubeadm_cluster_name(cluster_yaml)
+    return None
+
+
+async def _cluster_name_from_cluster_info(api: ApiClient) -> str | None:
+    """Read ``kube-system/cluster-info`` and extract a cluster label, or None."""
+    try:
+        core = client.CoreV1Api(api)
+        cm = await core.read_namespaced_config_map(
+            name="cluster-info", namespace="kube-system"
+        )
+    except Exception:  # noqa: BLE001 - best-effort
+        return None
+    data = getattr(cm, "data", None) or {}
+    return _parse_kubeconfig_cluster_name(data.get("kubeconfig") or "")
+
+
+async def _fetch_cluster_name(api: ApiClient) -> str | None:
+    """Auto-detect the cluster name from the apiserver, or None.
+
+    Kubernetes core has no canonical "cluster name" field, but two
+    well-known sources cover most installs:
+
+    * ``kube-system/kubeadm-config`` ConfigMap — written by kubeadm
+      (and tools that wrap it: kind, kops, kubespray, most on-prem and
+      DGX-style clusters). The ``ClusterConfiguration`` doc embedded in
+      its ``data`` block has a ``clusterName`` field.
+    * ``kube-system/cluster-info`` ConfigMap — public bootstrap info on
+      some installs; the embedded kubeconfig blob's ``clusters[0].name``
+      gives a usable label.
+
+    Best-effort: any RBAC denial / parse failure falls back to ``None``,
+    which lets the UI show the Kubernetes version instead. Operators
+    can override via ``AIPERF_OPERATOR_CLUSTER_NAME`` for clusters that
+    don't expose either of these (managed GKE/EKS, custom installers).
+    """
+    name = await _cluster_name_from_kubeadm_config(api)
+    if name is not None:
+        return name
+    return await _cluster_name_from_cluster_info(api)
 
 
 def _pod_gpu_request(pod: V1Pod) -> int:
@@ -200,6 +221,75 @@ def _pod_gpu_request(pod: V1Pod) -> int:
     return total
 
 
+async def _list_nodes_safe(api: ApiClient) -> list[V1Node]:
+    """List cluster nodes, absorbing and logging every Kubernetes error."""
+    try:
+        return await list_nodes(api)
+    except ApiException as e:
+        if (e.status or 0) == 403:
+            logger.error(
+                "Cluster node listing forbidden (403) — check that the "
+                "operator ClusterRole grants `nodes get/list`: %s",
+                e,
+            )
+        else:
+            logger.warning("Failed to query nodes (apiserver %s): %s", e.status, e)
+        return []
+    except Exception as e:  # noqa: BLE001 - UI tolerates missing cluster-wide query
+        logger.warning(f"Failed to query nodes: {e}")
+        return []
+
+
+async def _list_pods_safe(api: ApiClient) -> list[V1Pod]:
+    """List pods in all namespaces, absorbing and logging every Kubernetes error."""
+    try:
+        return await list_pods_all_namespaces(api)
+    except ApiException as e:
+        if (e.status or 0) == 403:
+            logger.error(
+                "Cluster pod listing forbidden (403) — check that the "
+                "operator ClusterRole grants `pods get/list`: %s",
+                e,
+            )
+        else:
+            logger.warning("Failed to query pods (apiserver %s): %s", e.status, e)
+        return []
+    except Exception as e:  # noqa: BLE001 - best-effort
+        logger.warning(f"Failed to query pods cluster-wide: {e}")
+        return []
+
+
+def _gpu_capacity_by_node(nodes: list[V1Node]) -> dict[str, int]:
+    """Map node-name -> allocatable GPUs (only nodes that actually have GPUs)."""
+    node_capacity: dict[str, int] = {}
+    for node in nodes:
+        name = node.metadata.name if node.metadata else None
+        if not name:
+            continue
+        gpus = _node_gpu_count(node)
+        if gpus > 0:
+            node_capacity[name] = gpus
+    return node_capacity
+
+
+def _gpu_usage_by_node(
+    pods: list[V1Pod], node_capacity: dict[str, int]
+) -> dict[str, int]:
+    """Sum GPU requests per GPU node across Running/Pending pods."""
+    used_per_node: dict[str, int] = {}
+    for pod in pods:
+        phase = (pod.status.phase if pod.status else None) or ""
+        if phase not in ("Running", "Pending"):
+            continue
+        node_name = pod.spec.node_name if pod.spec else None
+        if not node_name or node_name not in node_capacity:
+            continue
+        req = _pod_gpu_request(pod)
+        if req > 0:
+            used_per_node[node_name] = used_per_node.get(node_name, 0) + req
+    return used_per_node
+
+
 async def _fetch_cluster_gpu_stats(api: ApiClient) -> dict[str, Any]:
     """Compute cluster-wide GPU capacity, usage, and node-state breakdown.
 
@@ -213,60 +303,13 @@ async def _fetch_cluster_gpu_stats(api: ApiClient) -> dict[str, Any]:
     supplementary UI context, not a critical path. The response always
     has every key present so the JS side can rely on the schema.
     """
-    try:
-        nodes = await list_nodes(api)
-    except ApiException as e:
-        if (e.status or 0) == 403:
-            logger.error(
-                "Cluster node listing forbidden (403) — check that the "
-                "operator ClusterRole grants `nodes get/list`: %s",
-                e,
-            )
-        else:
-            logger.warning("Failed to query nodes (apiserver %s): %s", e.status, e)
-        nodes = []
-    except Exception as e:  # noqa: BLE001 - UI tolerates missing cluster-wide query
-        logger.warning(f"Failed to query nodes: {e}")
-        nodes = []
-
-    # Map node-name -> allocatable GPUs (only nodes that actually have GPUs).
-    node_capacity: dict[str, int] = {}
-    for node in nodes:
-        name = node.metadata.name if node.metadata else None
-        if not name:
-            continue
-        gpus = _node_gpu_count(node)
-        if gpus > 0:
-            node_capacity[name] = gpus
+    nodes = await _list_nodes_safe(api)
+    node_capacity = _gpu_capacity_by_node(nodes)
 
     used_per_node: dict[str, int] = {}
     if node_capacity:
-        try:
-            pods = await list_pods_all_namespaces(api)
-        except ApiException as e:
-            if (e.status or 0) == 403:
-                logger.error(
-                    "Cluster pod listing forbidden (403) — check that the "
-                    "operator ClusterRole grants `pods get/list`: %s",
-                    e,
-                )
-            else:
-                logger.warning("Failed to query pods (apiserver %s): %s", e.status, e)
-            pods = []
-        except Exception as e:  # noqa: BLE001 - best-effort
-            logger.warning(f"Failed to query pods cluster-wide: {e}")
-            pods = []
-
-        for pod in pods:
-            phase = (pod.status.phase if pod.status else None) or ""
-            if phase not in ("Running", "Pending"):
-                continue
-            node_name = pod.spec.node_name if pod.spec else None
-            if not node_name or node_name not in node_capacity:
-                continue
-            req = _pod_gpu_request(pod)
-            if req > 0:
-                used_per_node[node_name] = used_per_node.get(node_name, 0) + req
+        pods = await _list_pods_safe(api)
+        used_per_node = _gpu_usage_by_node(pods, node_capacity)
 
     total_gpus = sum(node_capacity.values())
     total_used = sum(
@@ -809,6 +852,106 @@ async def _cluster_info_impl(api: ApiClient) -> ClusterResponse:
     )
 
 
+def _register_job_collection_routes(
+    router: APIRouter,
+    require_api: Callable[[], ApiClient],
+    results_dir: Path,
+    mutating_dependencies: Sequence[DependsParam],
+) -> None:
+    """Register the ``GET /jobs`` (list) and ``POST /jobs`` (create) endpoints."""
+
+    @router.get("/jobs", response_model=ActiveJobListResponse)
+    async def list_jobs() -> ActiveJobListResponse:
+        return await _list_jobs_impl(require_api(), results_dir)
+
+    @router.post(
+        "/jobs",
+        response_model=CreateJobResponse,
+        status_code=201,
+        dependencies=list(mutating_dependencies),
+    )
+    async def create_job(body: CreateJobRequest) -> CreateJobResponse:
+        return await _create_job_impl(require_api(), body.manifest)
+
+
+def _register_job_detail_routes(
+    router: APIRouter,
+    require_api: Callable[[], ApiClient],
+    optional_api: Callable[[], ApiClient | None],
+    results_dir: Path,
+) -> None:
+    """Register the per-job read endpoints (detail + epoch listing)."""
+
+    @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
+    async def get_job(
+        namespace: str, name: str, epoch: str | None = None
+    ) -> JobDetailResponse:
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
+        return await _get_job_impl(
+            require_api(), results_dir, namespace, name, epoch=epoch
+        )
+
+    @router.get(
+        "/jobs/{namespace}/{name}/epochs",
+        response_model=JobEpochsResponse,
+        response_model_by_alias=True,
+    )
+    async def list_job_epochs(namespace: str, name: str) -> JobEpochsResponse:
+        return await _list_job_epochs_impl(optional_api(), results_dir, namespace, name)
+
+
+def _register_job_action_routes(
+    router: APIRouter,
+    require_api: Callable[[], ApiClient],
+    results_dir: Path,
+    mutating_dependencies: Sequence[DependsParam],
+) -> None:
+    """Register the per-job cancel, events, and pod-log endpoints."""
+
+    @router.post(
+        "/jobs/{namespace}/{name}/cancel",
+        response_model=CancelResponse,
+        dependencies=list(mutating_dependencies),
+    )
+    async def cancel_job(namespace: str, name: str) -> CancelResponse:
+        return await _cancel_job_impl(require_api(), results_dir, namespace, name)
+
+    @router.get("/jobs/{namespace}/{name}/events", response_model=JobEventsResponse)
+    async def list_job_events(namespace: str, name: str) -> JobEventsResponse:
+        return await _list_events_impl(require_api(), namespace, name)
+
+    @router.get("/jobs/{namespace}/{name}/logs")
+    async def get_pod_logs(
+        namespace: str,
+        name: str,
+        *,
+        pod: str,
+        follow: int = 0,
+        tail_lines: int = 200,
+        container: str | None = None,
+    ) -> Response:
+        return await get_pod_logs_impl(
+            require_api(),
+            namespace,
+            name,
+            pod=pod,
+            follow=bool(follow),
+            tail_lines=tail_lines,
+            container=container,
+        )
+
+
+def _register_cluster_routes(
+    router: APIRouter, require_api: Callable[[], ApiClient]
+) -> None:
+    """Register the cluster-wide capacity/version endpoint."""
+
+    @router.get("/cluster", response_model=ClusterResponse)
+    async def cluster_info() -> ClusterResponse:
+        return await _cluster_info_impl(require_api())
+
+
 def create_jobs_router(
     api_holder: list[ApiClient | None] | None = None,
     results_dir: Path | None = None,
@@ -850,73 +993,12 @@ def create_jobs_router(
         """
         return _holder[0] if _holder else None
 
-    @router.get("/jobs", response_model=ActiveJobListResponse)
-    async def list_jobs() -> ActiveJobListResponse:
-        return await _list_jobs_impl(_require_api(), _results_dir)
-
-    @router.post(
-        "/jobs",
-        response_model=CreateJobResponse,
-        status_code=201,
-        dependencies=list(mutating_dependencies),
+    _register_job_collection_routes(
+        router, _require_api, _results_dir, mutating_dependencies
     )
-    async def create_job(body: CreateJobRequest) -> CreateJobResponse:
-        return await _create_job_impl(_require_api(), body.manifest)
-
-    @router.get("/jobs/{namespace}/{name}", response_model=JobDetailResponse)
-    async def get_job(
-        namespace: str, name: str, epoch: str | None = None
-    ) -> JobDetailResponse:
-        if epoch is not None and not EPOCH_RE.match(epoch):
-            raise HTTPException(400, f"Invalid epoch: {epoch!r}")
-        return await _get_job_impl(
-            _require_api(), _results_dir, namespace, name, epoch=epoch
-        )
-
-    @router.get(
-        "/jobs/{namespace}/{name}/epochs",
-        response_model=JobEpochsResponse,
-        response_model_by_alias=True,
+    _register_job_detail_routes(router, _require_api, _optional_api, _results_dir)
+    _register_job_action_routes(
+        router, _require_api, _results_dir, mutating_dependencies
     )
-    async def list_job_epochs(namespace: str, name: str) -> JobEpochsResponse:
-        return await _list_job_epochs_impl(
-            _optional_api(), _results_dir, namespace, name
-        )
-
-    @router.post(
-        "/jobs/{namespace}/{name}/cancel",
-        response_model=CancelResponse,
-        dependencies=list(mutating_dependencies),
-    )
-    async def cancel_job(namespace: str, name: str) -> CancelResponse:
-        return await _cancel_job_impl(_require_api(), _results_dir, namespace, name)
-
-    @router.get("/jobs/{namespace}/{name}/events", response_model=JobEventsResponse)
-    async def list_job_events(namespace: str, name: str) -> JobEventsResponse:
-        return await _list_events_impl(_require_api(), namespace, name)
-
-    @router.get("/jobs/{namespace}/{name}/logs")
-    async def get_pod_logs(
-        namespace: str,
-        name: str,
-        *,
-        pod: str,
-        follow: int = 0,
-        tail_lines: int = 200,
-        container: str | None = None,
-    ) -> Response:
-        return await get_pod_logs_impl(
-            _require_api(),
-            namespace,
-            name,
-            pod=pod,
-            follow=bool(follow),
-            tail_lines=tail_lines,
-            container=container,
-        )
-
-    @router.get("/cluster", response_model=ClusterResponse)
-    async def cluster_info() -> ClusterResponse:
-        return await _cluster_info_impl(_require_api())
-
+    _register_cluster_routes(router, _require_api)
     return router

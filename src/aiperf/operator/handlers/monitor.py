@@ -1574,6 +1574,62 @@ async def _fail_unrecoverable_controller(
     events.failed(body, job_id, error)
 
 
+async def _salvage_terminated_controller_results(
+    api: ApiClient,
+    *,
+    body: dict[str, Any],
+    result: ControllerFetchResult,
+    status: dict[str, Any],
+    namespace: str,
+    jobset_name: str,
+    job_id: str,
+    reason: str,
+    sb: StatusBuilder,
+) -> None:
+    """Dispatch the claimed salvage branches for a terminated controller.
+
+    Tries, in order: partial checkpoint files, live CR status metrics, and
+    finally the unrecoverable-failure path. Exactly one branch runs; every
+    branch stamps a terminal FAILED phase and deletes the JobSet. Callers
+    MUST hold the durable completion claim before invoking.
+    """
+    custom = client.CustomObjectsApi(api)
+    if result.checkpoints:
+        await _recover_from_partial_checkpoints(
+            body=body,
+            result=result,
+            namespace=namespace,
+            jobset_name=jobset_name,
+            job_id=job_id,
+            sb=sb,
+            custom=custom,
+            status=status,
+        )
+        return
+
+    if await _recover_from_live_status(
+        body=body,
+        status=status,
+        namespace=namespace,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        reason=reason,
+        sb=sb,
+        custom=custom,
+    ):
+        return
+
+    await _fail_unrecoverable_controller(
+        body=body,
+        namespace=namespace,
+        jobset_name=jobset_name,
+        job_id=job_id,
+        reason=reason,
+        sb=sb,
+        custom=custom,
+    )
+
+
 async def _maybe_recover_terminated_controller(
     api: ApiClient,
     body: dict[str, Any],
@@ -1661,40 +1717,16 @@ async def _maybe_recover_terminated_controller(
     if not await try_claim_completion(namespace, name, body):
         return False
 
-    custom = client.CustomObjectsApi(api)
-    if result.checkpoints:
-        await _recover_from_partial_checkpoints(
-            body=body,
-            result=result,
-            namespace=namespace,
-            jobset_name=jobset_name,
-            job_id=job_id,
-            sb=sb,
-            custom=custom,
-            status=status,
-        )
-        return True
-
-    if await _recover_from_live_status(
+    await _salvage_terminated_controller_results(
+        api,
         body=body,
+        result=result,
         status=status,
         namespace=namespace,
         jobset_name=jobset_name,
         job_id=job_id,
         reason=reason,
         sb=sb,
-        custom=custom,
-    ):
-        return True
-
-    await _fail_unrecoverable_controller(
-        body=body,
-        namespace=namespace,
-        jobset_name=jobset_name,
-        job_id=job_id,
-        reason=reason,
-        sb=sb,
-        custom=custom,
     )
     return True
 

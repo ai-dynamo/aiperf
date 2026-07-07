@@ -977,53 +977,8 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
     for ns_dir in base.iterdir():
         if not ns_dir.is_dir():
             continue
-
-        # Runs walk: every <ns>/<job>/, EXCLUDING <ns>/sweeps/.
-        for job_dir_path in ns_dir.iterdir():
-            if not job_dir_path.is_dir() or job_dir_path.name == "sweeps":
-                continue
-            ns = ns_dir.name
-            job = job_dir_path.name
-            latest_epoch = resolve_latest(base, ns, job)
-            for epoch in list_run_epochs(base, ns, job):
-                # Per-iteration guard so one corrupt run dir (malformed
-                # input_config, sqlite hiccup, partial filesystem permission
-                # error) cannot abort the WHOLE bootstrap. Same shape as
-                # the per-file try/except in completion._parse_metrics_from_files.
-                try:
-                    indexed = await _index_run_from_disk(
-                        base, ns, job, epoch, is_latest=(epoch == latest_epoch)
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        f"runs index bootstrap: skipping {ns}/{job} epoch={epoch} "
-                        f"({type(exc).__name__}: {exc})"
-                    )
-                    continue
-                if indexed:
-                    runs_count += 1
-
-        # Sweeps walk
-        sweeps_root = ns_dir / "sweeps"
-        if sweeps_root.is_dir():
-            for sweep_dir in sweeps_root.iterdir():
-                if not sweep_dir.is_dir():
-                    continue
-                for epoch_dir in sweep_dir.iterdir():
-                    if not epoch_dir.is_dir() or not EPOCH_RE.match(epoch_dir.name):
-                        continue
-                    try:
-                        indexed = await _index_sweep_from_disk(
-                            ns_dir.name, sweep_dir.name, epoch_dir.name, epoch_dir
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            f"runs index bootstrap: skipping sweep "
-                            f"{ns_dir.name}/{sweep_dir.name} epoch={epoch_dir.name} "
-                            f"({type(exc).__name__}: {exc})"
-                        )
-                        continue
-                    sweep_count += indexed
+        runs_count += await _bootstrap_namespace_runs(base, ns_dir)
+        sweep_count += await _bootstrap_namespace_sweeps(ns_dir)
 
     elapsed = time.monotonic() - started
     await set_meta("last_bootstrap_unix", str(int(time.time())))
@@ -1034,6 +989,70 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
         elapsed,
     )
     return BootstrapStats(runs_count, sweep_count, elapsed)
+
+
+async def _bootstrap_namespace_runs(base: Path, ns_dir: Path) -> int:
+    """Ingest every run epoch under ``<ns>/<job>/``, excluding ``<ns>/sweeps/``.
+
+    Returns the number of runs indexed for this namespace dir.
+    """
+    runs_count = 0
+    for job_dir_path in ns_dir.iterdir():
+        if not job_dir_path.is_dir() or job_dir_path.name == "sweeps":
+            continue
+        ns = ns_dir.name
+        job = job_dir_path.name
+        latest_epoch = resolve_latest(base, ns, job)
+        for epoch in list_run_epochs(base, ns, job):
+            # Per-iteration guard so one corrupt run dir (malformed
+            # input_config, sqlite hiccup, partial filesystem permission
+            # error) cannot abort the WHOLE bootstrap. Same shape as
+            # the per-file try/except in completion._parse_metrics_from_files.
+            try:
+                indexed = await _index_run_from_disk(
+                    base, ns, job, epoch, is_latest=(epoch == latest_epoch)
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"runs index bootstrap: skipping {ns}/{job} epoch={epoch} "
+                    f"({type(exc).__name__}: {exc})"
+                )
+                continue
+            if indexed:
+                runs_count += 1
+    return runs_count
+
+
+async def _bootstrap_namespace_sweeps(ns_dir: Path) -> int:
+    """Ingest every sweep-variation epoch under ``<ns>/sweeps/``.
+
+    Returns the number of sweep variations indexed for this namespace dir;
+    corrupt epoch dirs are logged and skipped (same per-iteration guard as
+    the runs walk) so one bad sweep cannot abort the whole bootstrap.
+    """
+    sweeps_root = ns_dir / "sweeps"
+    if not sweeps_root.is_dir():
+        return 0
+    sweep_count = 0
+    for sweep_dir in sweeps_root.iterdir():
+        if not sweep_dir.is_dir():
+            continue
+        for epoch_dir in sweep_dir.iterdir():
+            if not epoch_dir.is_dir() or not EPOCH_RE.match(epoch_dir.name):
+                continue
+            try:
+                indexed = await _index_sweep_from_disk(
+                    ns_dir.name, sweep_dir.name, epoch_dir.name, epoch_dir
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"runs index bootstrap: skipping sweep "
+                    f"{ns_dir.name}/{sweep_dir.name} epoch={epoch_dir.name} "
+                    f"({type(exc).__name__}: {exc})"
+                )
+                continue
+            sweep_count += indexed
+    return sweep_count
 
 
 async def _index_run_from_disk(

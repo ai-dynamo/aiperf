@@ -16,6 +16,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import orjson
 from fastapi import APIRouter, HTTPException, Query
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -310,13 +311,39 @@ def _register_summary_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
         return result
 
 
-def _register_index_routes(
-    router: APIRouter,
-    get_db: Callable[[], ResultsDB],
-    base_dir: Path,
-    api_holder: list[ApiClient | None],
+async def _config_from_job_spec_file(
+    base_dir: Path, namespace: str, job_id: str, epoch: str | None
+) -> dict[str, Any] | None:
+    """Serve the standalone ``job_spec.json`` fallback as a config response.
+
+    Returns the ``{"source": "file", "spec": ...}`` response body when the
+    run directory holds a parseable ``job_spec.json``; None when the file is
+    missing or corrupt (logged) so the caller can try the next fallback.
+    """
+    run = resolve_run_dir(base_dir, namespace, job_id, epoch)
+    if run is None:
+        return None
+    spec_file = run / "job_spec.json"
+    if not spec_file.exists():
+        return None
+    try:
+        data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
+        return {"source": "file", "spec": _redact_exposed_spec(data)}
+    except (orjson.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "Ignoring corrupt job_spec.json for %s/%s at %s: %s",
+            namespace,
+            job_id,
+            spec_file,
+            exc,
+        )
+        return None
+
+
+def _register_job_index_route(
+    router: APIRouter, get_db: Callable[[], ResultsDB]
 ) -> None:
-    """Register job-index and per-job config-lookup endpoints."""
+    """Register the ``/index`` endpoint."""
 
     @router.get("/index")
     async def get_index() -> dict[str, Any]:
@@ -326,6 +353,15 @@ def _register_index_routes(
         for row in rows:
             out[f"{row['namespace']}/{row['job_id']}"] = row
         return out
+
+
+def _register_job_config_route(
+    router: APIRouter,
+    get_db: Callable[[], ResultsDB],
+    base_dir: Path,
+    api_holder: list[ApiClient | None],
+) -> None:
+    """Register the ``/config/{namespace}/{job_id}`` endpoint."""
 
     @router.get("/config/{namespace}/{job_id}")
     async def get_job_config(
@@ -351,23 +387,11 @@ def _register_index_routes(
         if spec is not None:
             return {"source": "index", "spec": _redact_exposed_spec(spec)}
 
-        run = resolve_run_dir(base_dir, namespace, job_id, epoch)
-        if run is not None:
-            spec_file = run / "job_spec.json"
-            if spec_file.exists():
-                import orjson
-
-                try:
-                    data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
-                    return {"source": "file", "spec": _redact_exposed_spec(data)}
-                except (orjson.JSONDecodeError, OSError) as exc:
-                    logger.warning(
-                        "Ignoring corrupt job_spec.json for %s/%s at %s: %s",
-                        namespace,
-                        job_id,
-                        spec_file,
-                        exc,
-                    )
+        file_response = await _config_from_job_spec_file(
+            base_dir, namespace, job_id, epoch
+        )
+        if file_response is not None:
+            return file_response
 
         result = await get_db().summary(namespace, job_id, epoch=epoch)
         if result and result.get("input_config"):
@@ -383,6 +407,17 @@ def _register_index_routes(
                 return {"source": "cr", "spec": spec}
 
         raise HTTPException(404, f"No config found for {namespace}/{job_id}")
+
+
+def _register_index_routes(
+    router: APIRouter,
+    get_db: Callable[[], ResultsDB],
+    base_dir: Path,
+    api_holder: list[ApiClient | None],
+) -> None:
+    """Register job-index and per-job config-lookup endpoints."""
+    _register_job_index_route(router, get_db)
+    _register_job_config_route(router, get_db, base_dir, api_holder)
 
 
 def create_results_analytics_router(

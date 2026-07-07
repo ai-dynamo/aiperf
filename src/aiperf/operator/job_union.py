@@ -89,6 +89,15 @@ def _summary_path(run: Path) -> Path | None:
     return None
 
 
+def _mtime_iso(path: Path) -> str:
+    """Return the file's mtime as an ISO-8601 UTC timestamp with a Z suffix."""
+    return (
+        datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
 def _kpi_fields_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     """Project the KPI fields the live ``AIPerfJobCR.to_info`` path emits.
 
@@ -212,8 +221,6 @@ def _scan_pvc_jobs(
     Skips namespaces other than ``namespace`` if supplied; skips dirs that
     lack a summary JSON; logs + skips unreadable summaries.
     """
-    import datetime as _dt
-
     if not base_dir.exists() or not base_dir.is_dir():
         return []
 
@@ -235,20 +242,12 @@ def _scan_pvc_jobs(
             summary = _read_summary(summary_path)
             if summary is None:
                 continue
-            mtime_iso = (
-                _dt.datetime.fromtimestamp(
-                    summary_path.stat().st_mtime,
-                    tz=_dt.UTC,
-                )
-                .isoformat()
-                .replace("+00:00", "Z")
-            )
             out.append(
                 _archived_from_summary(
                     ns_dir.name,
                     name_dir.name,
                     summary,
-                    mtime_iso=mtime_iso,
+                    mtime_iso=_mtime_iso(summary_path),
                     name_dir=name_dir,
                 )
             )
@@ -349,6 +348,30 @@ def _parse_sort_ts(ts: str | None) -> float:
         return 0.0
 
 
+def _backfill_cr_from_archived(cr: AIPerfJobInfo, pvc: AIPerfJobInfo) -> None:
+    """Promote a live CR entry to ``source="both"`` and backfill PVC-only fields.
+
+    Mutates ``cr`` in place. The CR wins on every field it already carries
+    (it has live worker/phase data); the archived half only fills the
+    historical fields the CR is silent about.
+    """
+    cr.source = "both"
+    if cr.throughput_rps is None:
+        cr.throughput_rps = pvc.throughput_rps
+    if cr.latency_p99_ms is None:
+        cr.latency_p99_ms = pvc.latency_p99_ms
+    if cr.model is None:
+        cr.model = pvc.model
+    if cr.endpoint is None:
+        cr.endpoint = pvc.endpoint
+    if cr.sweep_name is None:
+        cr.sweep_name = pvc.sweep_name
+    if cr.variation_index is None:
+        cr.variation_index = pvc.variation_index
+    if cr.variation_label is None:
+        cr.variation_label = pvc.variation_label
+
+
 async def list_all_jobs(
     api: ApiClient | None,
     results_dir: Path,
@@ -384,29 +407,60 @@ async def list_all_jobs(
     for pj in pvc_jobs:
         key = (pj.namespace, pj.name)
         if key in cr_keys:
-            # Promote the matching CR entry to source="both" and backfill any
-            # historical-only fields the CR is silent about.
             for cj in out:
                 if (cj.namespace, cj.name) == key:
-                    cj.source = "both"
-                    if cj.throughput_rps is None:
-                        cj.throughput_rps = pj.throughput_rps
-                    if cj.latency_p99_ms is None:
-                        cj.latency_p99_ms = pj.latency_p99_ms
-                    if cj.model is None:
-                        cj.model = pj.model
-                    if cj.endpoint is None:
-                        cj.endpoint = pj.endpoint
-                    if cj.sweep_name is None:
-                        cj.sweep_name = pj.sweep_name
-                    if cj.variation_index is None:
-                        cj.variation_index = pj.variation_index
-                    if cj.variation_label is None:
-                        cj.variation_label = pj.variation_label
+                    _backfill_cr_from_archived(cj, pj)
                     break
         else:
             out.append(pj)
     return sorted(out, key=lambda j: _parse_sort_ts(j.created), reverse=True)
+
+
+async def _find_live_cr(
+    api: ApiClient | None, namespace: str, name: str
+) -> AIPerfJobInfo | None:
+    """Look up the live CR half of a job, returning None on lookup failure."""
+    try:
+        cr = await find_aiperf_job(api, name, namespace)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"find_aiperf_job failed, falling back to PVC: {e}")
+        return None
+    if cr is not None:
+        cr.source = "live"
+    return cr
+
+
+def _find_archived_job(
+    results_dir: Path,
+    namespace: str,
+    name: str,
+    epoch: str | None,
+) -> AIPerfJobInfo | None:
+    """Load the archived (PVC) half of a job, or None when absent/unreadable."""
+    run = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
+    if run is None:
+        return None
+    summary_path = _summary_path(run)
+    if summary_path is None:
+        if epoch is not None and epoch != "latest":
+            # Pinned epoch dir exists on disk but has no profile_export summary;
+            # ``/epochs`` still lists this epoch (see ``_archived_stubs``).
+            return archived_stub(namespace, name, run_dir=run, name_dir=run.parent)
+        return None
+    data = _read_summary(summary_path)
+    if data is None:
+        return None
+    # ``run`` is the epoch-specific dir; the sweep marker lives at the
+    # per-name root one level up since sweep linkage is fixed for a
+    # given child name (not per-epoch). ``run.parent`` resolves to
+    # ``<results_dir>/<ns>/<name>`` for any epoch, latest or pinned.
+    return _archived_from_summary(
+        namespace,
+        name,
+        data,
+        mtime_iso=_mtime_iso(summary_path),
+        name_dir=run.parent,
+    )
 
 
 async def find_any_job(
@@ -428,71 +482,17 @@ async def find_any_job(
     for a historical epoch would conflate epochs. ``epoch`` of ``"latest"``
     or ``None`` falls through to ``latest.txt`` (legacy behavior).
     """
-    cr: AIPerfJobInfo | None = None
-    try:
-        cr = await find_aiperf_job(api, name, namespace)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"find_aiperf_job failed, falling back to PVC: {e}")
-        cr = None
-    if cr is not None:
-        cr.source = "live"
-
-    run = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
-    summary_path = _summary_path(run) if run is not None else None
-    pvc: AIPerfJobInfo | None = None
-    if summary_path is not None:
-        import datetime as _dt
-
-        data = _read_summary(summary_path)
-        if data is not None:
-            mtime_iso = (
-                _dt.datetime.fromtimestamp(
-                    summary_path.stat().st_mtime,
-                    tz=_dt.UTC,
-                )
-                .isoformat()
-                .replace("+00:00", "Z")
-            )
-            # ``run`` is the epoch-specific dir; the sweep marker lives at the
-            # per-name root one level up since sweep linkage is fixed for a
-            # given child name (not per-epoch). ``run.parent`` resolves to
-            # ``<results_dir>/<ns>/<name>`` for any epoch, latest or pinned.
-            pvc = _archived_from_summary(
-                namespace,
-                name,
-                data,
-                mtime_iso=mtime_iso,
-                name_dir=run.parent,
-            )
-    elif run is not None and epoch is not None and epoch != "latest":
-        # Pinned epoch dir exists on disk but has no profile_export summary;
-        # ``/epochs`` still lists this epoch (see ``_archived_stubs``).
-        pvc = archived_stub(namespace, name, run_dir=run, name_dir=run.parent)
+    cr = await _find_live_cr(api, namespace, name)
+    pvc = _find_archived_job(results_dir, namespace, name, epoch)
 
     # Caller asked for a specific historical epoch: never merge the live CR.
     if epoch is not None and epoch != "latest":
         return pvc
 
-    if cr is None and pvc is None:
-        return None
     if cr is None:
         return pvc
     if pvc is None:
         return cr
     # Both present: backfill missing CR fields from PVC.
-    cr.source = "both"
-    if cr.throughput_rps is None:
-        cr.throughput_rps = pvc.throughput_rps
-    if cr.latency_p99_ms is None:
-        cr.latency_p99_ms = pvc.latency_p99_ms
-    if cr.model is None:
-        cr.model = pvc.model
-    if cr.endpoint is None:
-        cr.endpoint = pvc.endpoint
-    if cr.sweep_name is None:
-        cr.sweep_name = pvc.sweep_name
-    if cr.variation_index is None:
-        cr.variation_index = pvc.variation_index
-    if cr.variation_label is None:
-        cr.variation_label = pvc.variation_label
+    _backfill_cr_from_archived(cr, pvc)
     return cr
