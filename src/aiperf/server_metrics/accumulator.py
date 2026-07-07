@@ -209,8 +209,21 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         )
 
         # Export Parquet file directly from accumulator if format is enabled.
-        # Widen the export window to include the final per-endpoint collection,
-        # which may land after end_ns (e.g. a scrape completing post-benchmark).
+        await self._export_parquet_widened(start_ns, end_ns)
+
+        return results
+
+    async def _export_parquet_widened(self, start_ns: int, end_ns: int) -> None:
+        """Export the Parquet artifact over the collection-widened window.
+
+        Widens the window to include the final per-endpoint collection, which
+        may land after end_ns (e.g. a scrape completing post-benchmark). Skips
+        degenerate windows: TimeRangeFilter rejects start >= end, and a raise
+        here propagates out of export_results and is swallowed into a None
+        result (records_manager _publish_server_metrics_results), losing ALL
+        server metrics. Mirrors the guards at the per-endpoint / warmup /
+        json_exporter sites.
+        """
         export_end_ns = max(
             end_ns,
             *(
@@ -218,17 +231,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 for time_series in self._server_metrics_hierarchy.endpoints.values()
             ),
         )
-        # Skip degenerate windows: TimeRangeFilter rejects start >= end, and a
-        # raise here propagates out of export_results and is swallowed into a
-        # None result (records_manager _publish_server_metrics_results), losing
-        # ALL server metrics. Mirrors the guards at the per-endpoint / warmup /
-        # json_exporter sites.
         if start_ns < export_end_ns:
             await self._export_parquet_if_enabled(
                 TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
             )
-
-        return results
 
     def _warmup_summary_end_ns(self, warmup_end_ns: int, start_ns: int) -> int:
         """Resolve the end of the warmup aggregation window.
