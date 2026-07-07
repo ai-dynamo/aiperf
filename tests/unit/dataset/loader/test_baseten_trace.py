@@ -671,6 +671,42 @@ class TestBasetenTraceDatasetLoader:
             3 * one_hour_ms,
         ]
 
+    def test_offset_window_selects_recorded_time_under_replay_speedup(
+        self, tmp_path: Path
+    ):
+        one_minute_ms = 60_000
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 1_000_000 + minute * one_minute_ms,
+                    "prompt": f"minute{minute}",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": minute,
+                }
+                for minute in range(10)
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(
+                path,
+                fixed_schedule=True,
+                fixed_schedule_end_offset=one_minute_ms,
+                replay_speedup=10.0,
+            ),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+        traces = [trace for session in dataset.values() for trace in session]
+
+        # The end offset selects the first RECORDED minute (inclusive bounds);
+        # the kept timestamps are then compressed by replay_speedup.
+        assert sorted(trace.text_input for trace in traces) == ["minute0", "minute1"]
+        assert sorted(trace.timestamp for trace in traces) == [0, 6_000]
+
     def _write_hinted_single_row(self, tmp_path: Path) -> Path:
         return _write_parquet(
             tmp_path / "trace.parquet",
@@ -832,6 +868,38 @@ class TestBasetenTraceDatasetLoader:
 
         assert trace.output_length == 3
         assert trace.request_body == {"min_tokens": 3}
+
+    def test_synthesis_speedup_ratio_rejected(self, tmp_path: Path):
+        path = self._write_hinted_single_row(tmp_path)
+        # No custom_dataset_type: the auto-detected path must be rejected by
+        # the loader itself, not only by explicit CLI-flag validation.
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                input_file=str(path),
+                synthesis_speedup_ratio=10.0,
+            )
+        )
+
+        with pytest.raises(ValueError, match="--replay-speedup"):
+            BasetenTraceDatasetLoader(
+                filename=str(path),
+                run=run,
+                prompt_generator=_mock_prompt_generator(),
+            )
+
+    def test_non_speedup_synthesis_still_loads(self, tmp_path: Path):
+        path = self._write_hinted_single_row(tmp_path)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, synthesis_output_len_multiplier=2.0),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert trace.output_length == 8
 
 
 class TestBasetenTraceModel:

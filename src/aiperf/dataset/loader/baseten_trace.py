@@ -229,6 +229,16 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
+        # Reject synthesis speedup on every config path (YAML, auto-detected
+        # type): it compounds with replay_speedup and bypasses the think-time
+        # subtraction in back-pressure.
+        synthesis_speedup = getattr(self._synthesis, "speedup_ratio", 1.0)
+        if synthesis_speedup != 1.0:
+            raise ValueError(
+                f"synthesis speedup_ratio={synthesis_speedup} is not supported "
+                "by the baseten_trace loader; use --replay-speedup for "
+                "wall-clock compression."
+            )
         self._open_loop = getattr(dataset, "open_loop_replay", True)
         self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
         self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
@@ -500,15 +510,19 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
             trace = BasetenTrace.model_validate(row)
             self._preprocess_trace(trace)
-            if min_timestamp is not None and trace.timestamp is not None:
+            normalized = min_timestamp is not None and trace.timestamp is not None
+            if normalized:
                 trace.timestamp = int(trace.timestamp) - int(min_timestamp)
-                if self._speedup != 1.0:
-                    # Compress wall-clock once here; gap-cap + back-pressure delays
-                    # downstream inherit the compressed times. Never touches hash_ids.
-                    trace.timestamp = trace.timestamp / self._speedup
 
+            # Filter on normalized-but-uncompressed ms so the offset window
+            # selects recorded time regardless of replay_speedup.
             if not self._filter_and_cap_trace(trace):
                 continue
+
+            if normalized and self._speedup != 1.0:
+                # Compress wall-clock once here; gap-cap + back-pressure delays
+                # downstream inherit the compressed times. Never touches hash_ids.
+                trace.timestamp = trace.timestamp / self._speedup
 
             # Count after filtering so skipped rows do not inflate the summary.
             if trace.output_tokens == 0:
