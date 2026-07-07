@@ -5,17 +5,22 @@
 
 Covers the open-loop default flip (``--open-loop-replay`` /
 ``--no-open-loop-replay``), the ``--open-loop-strict`` / ``--omit-kv-hints`` /
-``--force-min-tokens`` boolean flags, and the converter guard rejecting the
-value-typed baseten-only knobs on non-baseten datasets.
+``--force-min-tokens`` boolean flags, the converter guard rejecting the
+baseten-only knobs (value and boolean) on non-baseten datasets, the
+contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection,
+and the resolver warning for baseten-only knobs on auto-detected non-baseten
+datasets.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.flags._converter_dataset import build_dataset
@@ -208,3 +213,221 @@ class TestBasetenOnlyValueFlagGuard:
         assert dataset.trace_session_sample_ratio == 0.5
         assert dataset.replay_speedup == 10.0
         assert dataset.max_idle_gap_cap_seconds == 5.0
+
+
+_BASETEN_ONLY_BOOL_FLAGS = [
+    param("--open-loop-replay", id="open-loop"),
+    param("--no-open-loop-replay", id="no-open-loop"),
+    param("--open-loop-strict", id="strict"),
+    param("--omit-kv-hints", id="omit-kv-hints"),
+    param("--force-min-tokens", id="force-min"),
+    param("--no-force-min-tokens", id="no-force-min"),
+]
+
+
+class TestBasetenOnlyBoolFlagGuard:
+    """Explicitly-set boolean replay knobs get the same guard as value knobs."""
+
+    @pytest.mark.parametrize("flag", _BASETEN_ONLY_BOOL_FLAGS)  # fmt: skip
+    def test_bool_flag_with_non_baseten_type_rejected(
+        self, tmp_path: Path, flag: str
+    ) -> None:
+        mc_jsonl = tmp_path / "mc.jsonl"
+        mc_jsonl.touch()
+        cli = _parse_cli_args(
+            [
+                "--url",
+                "http://localhost:8000/test",
+                "--model",
+                "test-model",
+                "--input-file",
+                str(mc_jsonl),
+                "--custom-dataset-type",
+                "mooncake_trace",
+                flag,
+            ]
+        )
+        with pytest.raises(
+            ValueError,
+            match="is only supported by the baseten_trace "
+            "loader, but --custom-dataset-type is mooncake_trace",
+        ):
+            build_dataset(cli)
+
+    @pytest.mark.parametrize("flag", _BASETEN_ONLY_BOOL_FLAGS)  # fmt: skip
+    def test_bool_flag_without_input_file_clean_error(self, flag: str) -> None:
+        """Synthetic dataset + boolean replay knob: clean guard error, not a raw
+        pydantic ``extra_forbidden`` crash from AIPerfConfig validation."""
+        cli = _parse_cli_args(
+            ["--url", "http://localhost:8000/test", "--model", "test-model", flag]
+        )
+        with pytest.raises(
+            ValueError,
+            match="is only supported by the baseten_trace "
+            "loader; provide --input-file and --custom-dataset-type baseten_trace",
+        ):
+            convert_cli_to_aiperf(cli)
+
+    def test_bool_flag_with_public_dataset_clean_error(self) -> None:
+        cli = _parse_cli_args(
+            [
+                "--url",
+                "http://localhost:8000/test",
+                "--model",
+                "test-model",
+                "--public-dataset",
+                "sharegpt",
+                "--open-loop-strict",
+            ]
+        )
+        with pytest.raises(
+            ValueError,
+            match="--open-loop-strict is only supported by the baseten_trace "
+            "loader; provide --input-file and --custom-dataset-type baseten_trace",
+        ):
+            convert_cli_to_aiperf(cli)
+
+
+class TestOpenLoopContradictionGuard:
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            param(("--no-open-loop-replay", "--open-loop-strict"), id="replay-first"),
+            param(("--open-loop-strict", "--no-open-loop-replay"), id="strict-first"),
+        ],
+    )  # fmt: skip
+    def test_strict_with_closed_loop_rejected(
+        self, trace_parquet: Path, extra: tuple[str, ...]
+    ) -> None:
+        cli = _parse_cli_args(_baseten_argv(trace_parquet, *extra))
+        with pytest.raises(
+            ValueError,
+            match="--open-loop-strict requires open-loop replay; remove "
+            "--no-open-loop-replay",
+        ):
+            build_dataset(cli)
+
+    def test_strict_with_explicit_open_loop_accepted(self, trace_parquet: Path) -> None:
+        dataset = _dataset_from_argv(
+            _baseten_argv(trace_parquet, "--open-loop-replay", "--open-loop-strict")
+        )
+        assert dataset.open_loop_replay is True
+        assert dataset.open_loop_strict is True
+
+
+class TestMaxIdleGapCapMustBePositive:
+    """0 (or negative) silently disabled the reflow; ``gt=0`` rejects it."""
+
+    @pytest.mark.parametrize("bad", ["0", "-1"])  # fmt: skip
+    def test_cli_rejects_non_positive(self, trace_parquet: Path, bad: str) -> None:
+        from cyclopts.exceptions import ValidationError as CycloptsValidationError
+
+        with pytest.raises(
+            CycloptsValidationError, match="Input should be greater than 0"
+        ):
+            _parse_cli_args(
+                _baseten_argv(trace_parquet, "--max-idle-gap-cap-seconds", bad)
+            )
+
+    def test_file_dataset_rejects_zero(self, trace_parquet: Path) -> None:
+        from aiperf.config.dataset import FileDataset
+
+        with pytest.raises(ValidationError, match="greater than 0"):
+            FileDataset(
+                name="d",
+                type="file",
+                path=trace_parquet,
+                max_idle_gap_cap_seconds=0.0,
+            )
+
+    def test_small_positive_cap_accepted(self, trace_parquet: Path) -> None:
+        dataset = _dataset_from_argv(
+            _baseten_argv(trace_parquet, "--max-idle-gap-cap-seconds", "0.5")
+        )
+        assert dataset.max_idle_gap_cap_seconds == 0.5
+
+
+@pytest.fixture
+def mooncake_jsonl(tmp_path: Path) -> Path:
+    """A mooncake-shaped JSONL that auto-detects as mooncake_trace."""
+    path = tmp_path / "mc.jsonl"
+    path.write_text(
+        '{"input_length": 100, "output_length": 50, "hash_ids": [1, 2], "timestamp": 1000}\n'
+        '{"input_length": 200, "output_length": 75, "hash_ids": [3], "timestamp": 2000}\n'
+    )
+    return path
+
+
+def _resolve_file_dataset(tmp_path: Path, path: Path, **fields: object) -> None:
+    from aiperf.config import BenchmarkConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config.resolution.resolvers import DatasetResolver
+
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/completions"]},
+        datasets=[{"name": "main", "type": "file", "path": str(path), **fields}],
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 1,
+                "concurrency": 1,
+            }
+        ],
+    )
+    run = BenchmarkRun(
+        benchmark_id="test-run", cfg=cfg, artifact_dir=tmp_path / "artifacts"
+    )
+    DatasetResolver().resolve(run)
+
+
+class TestAutoDetectedNonBasetenWarning:
+    """Baseten-only knobs on an auto-detected non-baseten dataset pass the
+    convert-time guard (type is unset), so the resolver must warn."""
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            param({"replay_speedup": 10.0}, id="replay-speedup"),
+            param({"trace_session_sample_ratio": 0.5}, id="sample-ratio"),
+            param({"open_loop_replay": False}, id="closed-loop-bool"),
+            param({"omit_kv_hints": True}, id="omit-kv-hints"),
+        ],
+    )  # fmt: skip
+    def test_warns_on_auto_detected_mooncake(
+        self,
+        tmp_path: Path,
+        mooncake_jsonl: Path,
+        fields: dict[str, object],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
+            _resolve_file_dataset(tmp_path, mooncake_jsonl, **fields)
+        (field_name,) = fields
+        assert any(
+            "baseten_trace-only" in r.message
+            and "mooncake_trace" in r.message
+            and field_name in r.message
+            for r in caplog.records
+        )
+
+    def test_no_warning_for_baseten_parquet(
+        self,
+        tmp_path: Path,
+        trace_parquet: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
+            _resolve_file_dataset(tmp_path, trace_parquet, replay_speedup=10.0)
+        assert not any("baseten_trace-only" in r.message for r in caplog.records)
+
+    def test_no_warning_without_baseten_fields(
+        self,
+        tmp_path: Path,
+        mooncake_jsonl: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
+            _resolve_file_dataset(tmp_path, mooncake_jsonl)
+        assert not any("baseten_trace-only" in r.message for r in caplog.records)
