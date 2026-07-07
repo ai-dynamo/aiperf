@@ -586,22 +586,28 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # results_processors that survived the accumulator gate (e.g. otel
         # streaming, which is best-effort and does not touch summary numbers).
         await self._send_record_to_accumulators(record_data)
-        await self._send_results_to_results_processors(record_data)
+        # A non-best-effort results processor that raises must NOT skip the
+        # tracker update + completion-barrier check, or the phase never
+        # converges and the (timeout-less) barrier hangs. Run those in a
+        # finally, then let the original exception re-propagate (already logged
+        # inside _send_results_to_results_processors).
+        try:
+            await self._send_results_to_results_processors(record_data)
+        finally:
+            self._records_tracker.update_from_record_data(record_data)
+            if record_data.error:
+                self._error_tracker.increment_error_count_for_phase(
+                    record_data.metadata.benchmark_phase, record_data.error
+                )
 
-        self._records_tracker.update_from_record_data(record_data)
-        if record_data.error:
-            self._error_tracker.increment_error_count_for_phase(
-                record_data.metadata.benchmark_phase, record_data.error
-            )
-
-        phase = record_data.metadata.benchmark_phase
-        if (
-            phase in self._complete_credit_phases
-            and self._records_tracker.check_and_set_all_records_received_for_phase(
-                phase
-            )
-        ):
-            await self._handle_all_records_received(phase)
+            phase = record_data.metadata.benchmark_phase
+            if (
+                phase in self._complete_credit_phases
+                and self._records_tracker.check_and_set_all_records_received_for_phase(
+                    phase
+                )
+            ):
+                await self._handle_all_records_received(phase)
 
     async def _send_record_to_accumulators(
         self, record_data: MetricRecordsData
