@@ -266,7 +266,12 @@ class GpuTelemetryData(msgspec.Struct, kw_only=True):
         """Get MetricResult for a specific metric with optional time filtering."""
         if time_filter is not None or is_counter:
             return self.time_series.to_metric_result_filtered(
-                metric_name, tag, header, unit, time_filter, is_counter
+                metric_name,
+                tag,
+                header,
+                unit,
+                time_filter=time_filter,
+                is_counter=is_counter,
             )
         return self.time_series.to_metric_result(metric_name, tag, header, unit)
 

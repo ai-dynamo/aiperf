@@ -171,6 +171,7 @@ def _register_leaderboard_route(
 
     @router.get("/analytics/leaderboard", response_model=LeaderboardResponse)
     async def leaderboard(
+        *,
         metric: str = Query(
             default="request_throughput",
             description="Metric to rank by (e.g. request_throughput, request_latency)",

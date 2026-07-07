@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
+from aiperf.common.enums import SSEFieldType
 from tools.rebaseline_memory_constants import (
     _CHARS_PER_TOKEN,
     Calibration,
@@ -30,7 +31,6 @@ from tools.rebaseline_memory_constants import (
     _make_text_response,
     _make_turn,
 )
-from aiperf.common.enums import SSEFieldType
 
 # ============================================================
 # Object factories

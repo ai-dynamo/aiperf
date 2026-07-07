@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
+from aiperf.common.enums import SSEFieldType
 from tools.calibrate_memory_estimates import (
     _CHARS_PER_TOKEN,
     SCENARIOS,
@@ -37,7 +38,6 @@ from tools.calibrate_memory_estimates import (
     _next_pow2,
     measure_records_manager,
 )
-from aiperf.common.enums import SSEFieldType
 
 # ============================================================
 # Numeric helpers

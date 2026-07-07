@@ -23,7 +23,7 @@ import orjson
 import pytest
 from pytest import param
 
-from aiperf.analysis.analyze_profile_export import (
+from tools.analyze_profile_export import (
     EventType,
     ExpectedWindow,
     SweepState,

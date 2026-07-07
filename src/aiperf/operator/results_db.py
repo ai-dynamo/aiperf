@@ -53,7 +53,7 @@ class ResultsDB:
             return False
         return True
 
-    async def leaderboard(self, *args, **kwargs):
+    async def leaderboard(self, *args, **kwargs) -> list[dict[str, Any]]:
         disk_rows = self._leaderboard_from_disk(*args, **kwargs)
         if not await self._ensure_readonly_index():
             return disk_rows
@@ -75,7 +75,7 @@ class ResultsDB:
         rows.sort(key=lambda row: row["value"], reverse=(order.lower() == "desc"))
         return rows[:limit]
 
-    async def history(self, *args, **kwargs):
+    async def history(self, *args, **kwargs) -> list[dict[str, Any]]:
         disk_rows = self._history_from_disk(*args, **kwargs)
         if not await self._ensure_readonly_index():
             return disk_rows
@@ -96,7 +96,7 @@ class ResultsDB:
         rows.sort(key=lambda row: row.get("start_time") or "")
         return rows[:limit]
 
-    async def compare(self, *args, **kwargs):
+    async def compare(self, *args, **kwargs) -> list[dict[str, Any]]:
         disk_rows = self._compare_from_disk(*args, **kwargs)
         if not await self._ensure_readonly_index():
             return disk_rows

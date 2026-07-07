@@ -523,7 +523,7 @@ class TestGpuMetricTimeSeries:
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "power", "tag", "header", "W", time_filter, is_counter=False
+            "power", "tag", "header", "W", time_filter=time_filter, is_counter=False
         )
 
         # Stats should only include values 100, 120, 80 (not 50)
@@ -538,7 +538,7 @@ class TestGpuMetricTimeSeries:
         """Test counter delta computed from baseline before start_ns."""
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = counter_time_series.to_metric_result_filtered(
-            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+            "energy", "tag", "header", "MJ", time_filter=time_filter, is_counter=True
         )
 
         # Delta: final (1800) - baseline (1000) = 800
@@ -558,7 +558,7 @@ class TestGpuMetricTimeSeries:
         # Filter starts before any data
         time_filter = TimeRangeFilter(start_ns=1_000_000_000, end_ns=5_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+            "energy", "tag", "header", "MJ", time_filter=time_filter, is_counter=True
         )
 
         # No baseline: delta = final (1600) - first filtered (1000) = 600
@@ -574,7 +574,7 @@ class TestGpuMetricTimeSeries:
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=5_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "energy", "tag", "header", "MJ", time_filter, is_counter=True
+            "energy", "tag", "header", "MJ", time_filter=time_filter, is_counter=True
         )
 
         # Raw delta: 300 - 5000 = -4700, clamped to 0
@@ -591,7 +591,7 @@ class TestGpuMetricTimeSeries:
 
         with pytest.raises(NoMetricValue) as exc_info:
             time_series.to_metric_result_filtered(
-                "power", "tag", "header", "W", time_filter, is_counter=False
+                "power", "tag", "header", "W", time_filter=time_filter, is_counter=False
             )
         assert "No data in time range" in str(exc_info.value)
 
@@ -679,7 +679,7 @@ class TestGpuMetricTimeSeries:
         time_filter = TimeRangeFilter(start_ns=1_500_000_000, end_ns=3_000_000_000)
         with pytest.raises(NoMetricValue, match="All in-range samples"):
             time_series.to_metric_result_filtered(
-                "b", "t", "h", "u", time_filter, is_counter=False
+                "b", "t", "h", "u", time_filter=time_filter, is_counter=False
             )
 
     def test_to_metric_result_filtered_counter_nan_baseline_clamps_to_zero(self):
@@ -696,7 +696,7 @@ class TestGpuMetricTimeSeries:
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "energy", "t", "h", "MJ", time_filter, is_counter=True
+            "energy", "t", "h", "MJ", time_filter=time_filter, is_counter=True
         )
         # Reference = first valid in-window = 100; last valid in-window = 100.
         assert result.avg == 0.0
@@ -715,7 +715,7 @@ class TestGpuMetricTimeSeries:
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "energy", "t", "h", "MJ", time_filter, is_counter=True
+            "energy", "t", "h", "MJ", time_filter=time_filter, is_counter=True
         )
         # reference_idx = 1 (NaN); walk back to scrape 0 (= 100).
         # filtered_last = 200. delta = 200 - 100 = 100.
@@ -732,7 +732,7 @@ class TestGpuMetricTimeSeries:
 
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
         result = time_series.to_metric_result_filtered(
-            "energy", "t", "h", "MJ", time_filter, is_counter=True
+            "energy", "t", "h", "MJ", time_filter=time_filter, is_counter=True
         )
         # reference = 100, filtered_last = 200 (not NaN). delta = 100.
         assert result.avg == 100.0
@@ -749,7 +749,7 @@ class TestGpuMetricTimeSeries:
         time_filter = TimeRangeFilter(start_ns=2_000_000_000, end_ns=4_000_000_000)
         with pytest.raises(NoMetricValue, match="No valid"):
             time_series.to_metric_result_filtered(
-                "energy", "t", "h", "MJ", time_filter, is_counter=True
+                "energy", "t", "h", "MJ", time_filter=time_filter, is_counter=True
             )
 
     def test_gauge_std_uses_non_nan_count_for_ddof_guard(self):

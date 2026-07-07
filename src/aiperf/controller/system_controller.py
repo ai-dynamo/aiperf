@@ -106,6 +106,7 @@ if TYPE_CHECKING:
 
 
 def profile_results_have_successes(results: ProfileResults | None) -> bool:
+    """Return True iff any record in ``results`` completed successfully."""
     if results is None:
         return False
     return any(record.tag == "request_count" for record in results.records or [])

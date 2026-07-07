@@ -592,7 +592,7 @@ class MultiTierPlanner(SearchPlanner):
             stat_values: dict[str, float] = {}
             for stat in _ALL_STATS:
                 val = getattr(metric, stat, None)
-                if isinstance(val, int | float) and is_finite_value(val):
+                if isinstance(val, (int, float)) and is_finite_value(val):
                     stat_values[stat] = val
             if stat_values:
                 result[tag] = stat_values

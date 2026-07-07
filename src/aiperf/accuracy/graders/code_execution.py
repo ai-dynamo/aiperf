@@ -334,7 +334,7 @@ def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, list):
         return raw
     if (
-        isinstance(raw, str | bytes | bytearray)
+        isinstance(raw, (str, bytes, bytearray))
         and translate_private_test_cases is not None
     ):
         try:

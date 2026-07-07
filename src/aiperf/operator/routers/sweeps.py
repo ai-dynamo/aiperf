@@ -327,6 +327,7 @@ def _children_manifest_from_doc(
 async def _get_children_impl(
     api: ApiClient,
     base_dir: Path,
+    *,
     namespace: str,
     name: str,
     epoch: str | None,
@@ -447,7 +448,7 @@ def create_sweeps_router(
         if epoch is not None and not EPOCH_RE.match(epoch):
             raise HTTPException(400, f"Invalid epoch: {epoch!r}")
         return await _get_children_impl(
-            _require_api(), _base_dir, namespace, name, epoch
+            _require_api(), _base_dir, namespace=namespace, name=name, epoch=epoch
         )
 
     register_diagnostics_routes(router, _require_api)

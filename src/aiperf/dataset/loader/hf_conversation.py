@@ -60,6 +60,7 @@ class HFConversationDatasetLoader(BaseHFDatasetLoader):
     def __init__(
         self,
         run: BenchmarkRun,
+        *,
         conversation_column: str,
         message_content_key: str = "content",
         image_column: str | None = None,

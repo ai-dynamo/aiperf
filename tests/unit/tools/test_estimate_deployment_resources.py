@@ -20,7 +20,8 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.analysis.estimate_deployment_resources import (
+from aiperf.common.environment import Environment
+from tools.estimate_deployment_resources import (
     _DEFAULT_CONNECTIONS_PER_WORKER,
     _STRESS_HISTOGRAM_BUCKETS,
     _STRESS_HISTOGRAM_METRICS,
@@ -28,7 +29,6 @@ from aiperf.analysis.estimate_deployment_resources import (
     _make_params,
     run_comparison_table,
 )
-from aiperf.common.environment import Environment
 
 # ============================================================
 # _make_params

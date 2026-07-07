@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         GPUTelemetryMode,
         ServerMetricsFormat,
     )
+    from aiperf.config.artifacts import ArtifactsConfig
     from aiperf.config.comm import BaseZMQCommunicationConfig
     from aiperf.config.dataset import DatasetConfig
     from aiperf.config.phases import PhaseConfig
@@ -202,7 +203,7 @@ class BenchmarkHelpersMixin:
         return self.server_metrics.formats  # type: ignore[attr-defined]
 
     @property
-    def output(self):  # type: ignore[no-untyped-def]
+    def output(self) -> ArtifactsConfig:
         """Alias for artifacts config (convenience access via config.output.*)."""
         return self.artifacts  # type: ignore[attr-defined]
 

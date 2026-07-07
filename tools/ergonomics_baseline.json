@@ -2,16 +2,6 @@
   "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python -m tools.check_ergonomics --regenerate-baseline. New entries here should be rare and justified; prefer fixing the underlying violation.",
   "violations": [
     [
-      "duplicate-classes",
-      "src/aiperf/analysis/analyze_profile_export.py",
-      "EventType"
-    ],
-    [
-      "duplicate-classes",
-      "src/aiperf/operator/events.py",
-      "EventType"
-    ],
-    [
       "exception-message",
       "src/aiperf/common/models/_server_metrics_records.py",
       "from_exception_data:MetricSample"
@@ -28,11 +18,6 @@
     ],
     [
       "isinstance-tuple",
-      "src/aiperf/config/sweep/sampling.py",
-      "isinstance:105"
-    ],
-    [
-      "isinstance-tuple",
       "src/aiperf/orchestrator/search_planner/_pooled_percentile.py",
       "isinstance:78"
     ],
@@ -40,21 +25,6 @@
       "isinstance-tuple",
       "src/aiperf/orchestrator/search_planner/multi_tier_planner.py",
       "isinstance:595"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/analysis/analyze_profile_export.py",
-      "plot"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/analysis/analyze_profile_export.py",
-      "print_sweep_summary"
-    ],
-    [
-      "keyword-only-args",
-      "src/aiperf/analysis/estimate_deployment_resources.py",
-      "_make_params"
     ],
     [
       "keyword-only-args",
@@ -168,11 +138,6 @@
     ],
     [
       "nesting-depth",
-      "src/aiperf/analysis/analyze_profile_export.py",
-      "sweep"
-    ],
-    [
-      "nesting-depth",
       "src/aiperf/dataset/loader/random_pool.py",
       "_validate_path"
     ],
@@ -205,11 +170,6 @@
       "nesting-depth",
       "src/aiperf/workers/worker_pod_tokenizer_download.py",
       "download_tokenizer"
-    ],
-    [
-      "pydantic-fields",
-      "src/aiperf/common/environment.py",
-      "_ServiceSettings"
     ],
     [
       "pydantic-fields",

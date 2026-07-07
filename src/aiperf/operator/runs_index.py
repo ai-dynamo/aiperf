@@ -684,6 +684,7 @@ def _row_to_run(row: tuple) -> RunIndexRow:
 
 
 async def get_run(namespace: str, job_id: str, epoch: str) -> RunIndexRow | None:
+    """Fetch the indexed row for one ``(namespace, job_id, epoch)`` run, if present."""
     cur = await _conn().execute(
         f"SELECT {_RUN_ROW_COLS} FROM runs WHERE namespace = ? AND job_id = ? AND epoch = ?",
         (namespace, job_id, epoch),
@@ -736,6 +737,7 @@ async def get_run_narrow_metrics(
 
 
 async def list_runs_for_job(namespace: str, job_id: str) -> list[RunIndexRow]:
+    """List indexed runs for a job, newest epoch first."""
     cur = await _conn().execute(
         f"SELECT {_RUN_ROW_COLS} FROM runs WHERE namespace = ? AND job_id = ? "
         "ORDER BY mtime_epoch DESC NULLS LAST, epoch DESC",
@@ -747,6 +749,7 @@ async def list_runs_for_job(namespace: str, job_id: str) -> list[RunIndexRow]:
 
 
 async def get_summary_blob(namespace: str, job_id: str, epoch: str) -> bytes | None:
+    """Return the zstd-compressed ``metrics_json`` blob for a run, if indexed."""
     cur = await _conn().execute(
         "SELECT metrics_json FROM runs WHERE namespace = ? AND job_id = ? AND epoch = ?",
         (namespace, job_id, epoch),
@@ -851,6 +854,7 @@ async def mark_sweep_pareto(
 async def list_sweep_variations(
     namespace: str, sweep_name: str, sweep_epoch: str
 ) -> list[SweepVariationRow]:
+    """List indexed variation rows for one sweep epoch."""
     cur = await _conn().execute(
         "SELECT namespace, sweep_name, sweep_epoch, variation_idx, mode, phase, "
         "       pareto_rank, is_best, child_namespace, child_job_id, child_epoch "
@@ -930,6 +934,7 @@ async def get_run_spec(
 
 
 async def list_sweep_epochs_for_sweep(namespace: str, sweep_name: str) -> list[str]:
+    """List distinct sweep epochs recorded for a sweep, newest first."""
     cur = await _conn().execute(
         "SELECT DISTINCT sweep_epoch FROM sweep_variations "
         "WHERE namespace = ? AND sweep_name = ? ORDER BY sweep_epoch DESC",
@@ -1592,6 +1597,7 @@ async def leaderboard(
     *,
     epoch: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Rank indexed runs by one ``metric``/``stat`` column, best first."""
     _validate_identifier(metric)
     _validate_identifier(stat)
     order_dir = "DESC" if order.lower() == "desc" else "ASC"
@@ -1626,6 +1632,7 @@ async def history(
     limit: int = 100,
     epoch: str | None = None,
 ) -> list[dict[str, Any]]:
+    """List indexed runs over time, optionally filtered by model/endpoint."""
     _validate_identifier(metric)
     _validate_identifier(stat)
     col = f"{metric}_{stat}"
@@ -1691,6 +1698,7 @@ async def compare(
     *,
     epoch: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Fetch the requested metric columns for specific ``job_ids`` side by side."""
     if not job_ids:
         return []
     if metrics is None:
