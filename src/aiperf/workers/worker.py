@@ -1231,6 +1231,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Check for error in conversation response
         if isinstance(conversation_response, ErrorMessage):
             error = conversation_response.error
+            # Count this credit as a dispatched task before completing it as
+            # failed. ``_send_inference_result_message`` -> ``task_finished``
+            # increments ``failed``; without a matching ``total`` bump (as
+            # ``_dispatch_turn`` does) ``in_progress`` (= total - completed -
+            # failed) would go negative and an idle worker would misreport as
+            # HEALTHY.
+            self.task_stats.total += 1
             await self._send_inference_result_message(
                 RequestRecord(
                     request_info=RequestInfo(

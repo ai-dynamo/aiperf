@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import orjson
 
+from aiperf.common.exceptions import DatasetError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.config.defaults import InputTokensDefaults
 from aiperf.dataset.synthesis.models import AnalysisStats, MetricStats
@@ -50,15 +51,46 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
 
         # First pass: collect all data
         with open(trace_file) as f:
-            for line in f:
+            for line_number, line in enumerate(f, start=1):
                 if line.strip():
-                    data = orjson.loads(line)
-                    self._process_trace_first_pass(data)
+                    self._process_trace_first_pass(
+                        self._parse_trace_line(trace_file, line_number, line)
+                    )
 
         # Second pass: compute context lengths
         self._compute_context_lengths()
 
         return self._compute_stats()
+
+    @staticmethod
+    def _parse_trace_line(trace_file: Path, line_number: int, line: str) -> dict:
+        """Parse one JSONL trace line into a dict, or raise a located error.
+
+        Args:
+            trace_file: Path to the trace file (for error context).
+            line_number: 1-based line number within the file (for error context).
+            line: Raw JSONL line text.
+
+        Returns:
+            The parsed trace object.
+
+        Raises:
+            DatasetError: If the line is not valid JSON or is not a JSON object.
+                The message names the file and line number so callers can locate
+                the offending row (e.g. ``traces.jsonl:42: invalid JSON ...``).
+        """
+        try:
+            data = orjson.loads(line)
+        except orjson.JSONDecodeError as e:
+            raise DatasetError(
+                f"{trace_file}:{line_number}: invalid JSON in trace line: {e}"
+            ) from e
+        if not isinstance(data, dict):
+            raise DatasetError(
+                f"{trace_file}:{line_number}: trace line must be a JSON object, "
+                f"got {type(data).__name__}"
+            )
+        return data
 
     def analyze_traces(self, traces: list[dict]) -> AnalysisStats:
         """Analyze a list of trace dictionaries.

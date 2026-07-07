@@ -141,6 +141,34 @@ def test_reader_degrades_gracefully_on_unusable_archives(
     assert summary.convergence is None
 
 
+def test_reader_degrades_on_bare_valueerror_from_model_validate(monkeypatch) -> None:
+    """A BARE ValueError from ``model_validate`` must degrade, not 500 the route.
+
+    ``pydantic.ValidationError`` subclasses ``ValueError``, but a malformed
+    distribution value makes ``AIPerfSweepSpec.model_validate`` raise a plain
+    ``builtins.ValueError`` that is not a ``ValidationError``. The old
+    ``except ValidationError`` missed it and let it escape, 500ing the summary
+    route; the broadened ``except ValueError`` catches it (using ``str(exc)``
+    since a bare ValueError has no structured ``.errors()``) and falls back.
+    """
+
+    class _RaisesBareValueError:
+        @staticmethod
+        def model_validate(_raw):
+            raise ValueError("could not coerce distribution value '512' to a float")
+
+    monkeypatch.setattr(
+        "aiperf.operator.routers._sweeps_spec.AIPerfSweepSpec",
+        _RaisesBareValueError,
+    )
+    rec = _Record(raw_spec=_RAW_SPEC)  # truthy raw_spec, no archived aggregate
+
+    summary = spec_summary_from_record(rec)
+
+    assert summary.sweep_type == "grid"
+    assert summary.dimensions == []
+
+
 def test_reader_live_path_still_wins_over_archive() -> None:
     """A validatable live raw_spec takes precedence over the archived doc."""
     rec = _Record(

@@ -450,11 +450,11 @@ _TAG_MAP = {
 _CANONICAL_TYPES = ("fixed", "normal", "lognormal", "multimodal", "empirical")
 
 
-def _distribution_discriminator(v: Any) -> str:
+def _distribution_discriminator(v: Any) -> str | None:
     """Detect distribution type from `type:` key OR field structure.
 
     Order:
-        scalar              -> "fixed"
+        scalar (non-bool)   -> "fixed"
         explicit "type:"    -> use it (must be one of _CANONICAL_TYPES)
         "peaks" in dict     -> "multimodal"
         "points" in dict    -> "empirical"
@@ -463,20 +463,25 @@ def _distribution_discriminator(v: Any) -> str:
         "value" in dict     -> "fixed"
         "mean" in dict      -> "normal"
         already-built       -> pass through via _TAG_MAP
-        unknown             -> ValueError
+        unknown             -> None
+
+    Returning ``None`` (an unregistered tag) rather than raising lets pydantic
+    surface the union's ``custom_error_message`` as a proper
+    ``pydantic.ValidationError`` carrying the offending field's location. A raw
+    ``ValueError`` from a callable ``Discriminator`` escapes pydantic's wrapping
+    entirely — leaking the wrong exception type and losing the field loc — and
+    also makes ``custom_error_message`` dead code. ``bool`` is excluded from the
+    scalar branch (``bool`` is an ``int`` subclass) so ``isl: true`` is rejected
+    instead of silently coercing to ``FixedDistribution(value=1.0)``.
     """
-    if isinstance(v, (int, float)):
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
         return "fixed"
     if isinstance(v, dict):
         explicit = v.get("type")
         if isinstance(explicit, str):
             if explicit in _CANONICAL_TYPES:
                 return explicit
-            raise ValueError(
-                f"Unknown distribution type {explicit!r}. "
-                f"Expected one of {_CANONICAL_TYPES} or omit `type:` and rely on "
-                f"structural inference (e.g. {{mean: 512, stddev: 100}})."
-            )
+            return None
         if "peaks" in v:
             return "multimodal"
         if "points" in v:
@@ -489,15 +494,8 @@ def _distribution_discriminator(v: Any) -> str:
             return "fixed"
         if "mean" in v:
             return "normal"
-        raise ValueError(
-            "Cannot determine distribution type from keys. "
-            "Expected: scalar, {mean+stddev}, {mean+median}, "
-            "{peaks:[distA, distB]}, or {points:[{value, weight}, ...]}."
-        )
-    tag = _TAG_MAP.get(type(v).__name__)
-    if tag:
-        return tag
-    raise ValueError(f"Cannot parse {type(v).__name__!r} as a distribution.")
+        return None
+    return _TAG_MAP.get(type(v).__name__)
 
 
 SamplingDistribution = Annotated[

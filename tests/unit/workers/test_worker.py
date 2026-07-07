@@ -8,10 +8,11 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import CreditPhase, MessageType, WorkerStartupState
-from aiperf.common.messages import DatasetConfiguredNotification
+from aiperf.common.messages import DatasetConfiguredNotification, ErrorMessage
 from aiperf.common.models import (
     Conversation,
     DatasetMetadata,
+    ErrorDetails,
     MemoryMapClientMetadata,
     ParsedResponse,
     ProcessHealth,
@@ -426,6 +427,51 @@ class TestRetrieveConversation:
 
         assert result == expected_conversation
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
+
+
+@pytest.mark.asyncio
+class TestConversationFetchErrorStats:
+    """Regression: the conversation-fetch error path must keep task stats balanced."""
+
+    async def test_error_response_keeps_in_progress_non_negative(
+        self, monkeypatch, mock_worker, sample_credit_context
+    ):
+        """An ErrorMessage from the dataset manager increments both total and failed.
+
+        The error branch completes the credit as failed via
+        ``_send_inference_result_message`` -> ``task_finished``. Without a
+        matching ``total`` bump (as ``_dispatch_turn`` does), ``in_progress``
+        (= total - completed - failed) would go negative and an idle worker
+        would misreport as HEALTHY.
+        """
+        mock_worker._dataset_client = None
+        error_response = ErrorMessage(
+            error=ErrorDetails(message="conversation not found", code=404),
+        )
+        mock_worker.conversation_request_client = AsyncMock()
+        mock_worker.conversation_request_client.request = AsyncMock(
+            return_value=error_response
+        )
+        # Let the real _send_inference_result_message run (its first line calls
+        # task_finished) but keep serialization and the ZMQ push off the wire.
+        monkeypatch.setattr(
+            mock_worker, "_serialize_inference_wire", Mock(return_value=b"")
+        )
+        mock_worker.inference_results_push_client = Mock()
+        mock_worker.inference_results_push_client.push_raw = Mock(return_value=None)
+        mock_worker.execute_async = Mock()
+
+        assert mock_worker.task_stats.in_progress == 0
+
+        with pytest.raises(ValueError, match="Failed to retrieve conversation"):
+            await mock_worker._request_conversation_from_dataset_manager(
+                "test-conv-123", sample_credit_context
+            )
+
+        assert mock_worker.task_stats.total == 1
+        assert mock_worker.task_stats.failed == 1
+        assert mock_worker.task_stats.completed == 0
+        assert mock_worker.task_stats.in_progress == 0
 
 
 class TestKubernetesMode:

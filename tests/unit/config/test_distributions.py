@@ -14,6 +14,8 @@ Covers:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 from pytest import param
@@ -538,3 +540,149 @@ class TestSequenceDistributionEntry:
         assert isinstance(entry.osl, NormalDistribution)
         assert entry.osl.mean == 256.0
         assert entry.osl.stddev == 25.0
+
+
+# ============================================================
+# 9. Malformed inputs surface as pydantic.ValidationError
+# ============================================================
+#
+# Regression for the sentinel-tag discriminator: `_distribution_discriminator`
+# returns an unregistered tag (None) for unrecognized inputs instead of raising
+# builtins.ValueError. A raw ValueError from a callable Discriminator escapes
+# pydantic's wrapping — leaking the wrong exception type and dropping the field
+# location — and makes the union's `custom_error_message` dead code. Returning
+# None routes to no union member, so pydantic emits `invalid_distribution_type`
+# with the offending field's loc. See distributions.py `_distribution_discriminator`.
+
+
+def _isl_config(isl: Any) -> dict:
+    """Minimal AIPerfConfig payload with the synthetic dataset's `isl` set to `isl`."""
+    return {
+        "benchmark": {
+            "models": ["x"],
+            "endpoint": {"urls": ["http://x/v1"]},
+            "datasets": [
+                {"name": "main", "type": "synthetic", "entries": 10, "isl": isl}
+            ],
+            "phases": [
+                {"name": "p", "type": "concurrency", "duration": 10, "concurrency": 1}
+            ],
+        }
+    }
+
+
+class TestMalformedDistributionRaisesValidationError:
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param("512", id="bare-string"),
+            param([1, 2, 3], id="list"),
+            param({"foo": 1}, id="dict-unknown-keys"),
+            param({"type": "gaussian", "mean": 512}, id="dict-typo-type"),
+            param({"min": 0, "max": 100}, id="bounds-only-no-distribution-key"),
+        ],
+    )  # fmt: skip
+    def test_typeadapter_raises_validationerror_not_value_error(self, bad: Any) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            _TA.validate_python(bad)
+        errors = exc_info.value.errors()
+        assert any(e["type"] == "invalid_distribution_type" for e in errors), errors
+        assert "Invalid distribution" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param("512", id="bare-string"),
+            param([1, 2, 3], id="list"),
+            param({"foo": 1}, id="dict-unknown-keys"),
+            param({"type": "gaussian", "mean": 512}, id="dict-typo-type"),
+        ],
+    )  # fmt: skip
+    def test_public_api_raises_validationerror_naming_field(self, bad: Any) -> None:
+        # Guards the AIPerfConfig.model_validate contract: malformed distributions
+        # must raise pydantic.ValidationError with the field loc, never a bare
+        # builtins.ValueError leaking from the discriminator.
+        from aiperf.config.config import AIPerfConfig
+
+        with pytest.raises(ValidationError) as exc_info:
+            AIPerfConfig.model_validate(_isl_config(bad))
+        assert any(
+            e["type"] == "invalid_distribution_type" and "isl" in e["loc"]
+            for e in exc_info.value.errors()
+        ), exc_info.value.errors()
+
+
+class TestBoolRejectedAsDistribution:
+    """`bool` is an `int` subclass; without the explicit guard `isl: true` would
+    silently coerce to FixedDistribution(value=1.0). It must be rejected."""
+
+    @pytest.mark.parametrize(
+        "value", [param(True, id="true"), param(False, id="false")]
+    )
+    def test_bool_scalar_rejected_by_typeadapter(self, value: bool) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            _TA.validate_python(value)
+        assert any(
+            e["type"] == "invalid_distribution_type" for e in exc_info.value.errors()
+        )
+
+    @pytest.mark.parametrize(
+        "value", [param(True, id="true"), param(False, id="false")]
+    )
+    def test_bool_rejected_via_public_api(self, value: bool) -> None:
+        from aiperf.config.config import AIPerfConfig
+
+        with pytest.raises(ValidationError):
+            AIPerfConfig.model_validate(_isl_config(value))
+
+
+class TestValidDistributionFormsStillParse:
+    """Pin every distribution form the code actually supports so the malformed-input
+    fix cannot regress the happy path. Note: string shorthands and non-finite (`inf`)
+    values are NOT supported forms — the discriminator handles only scalars, dicts,
+    and already-built instances, and finite bounds/values are enforced downstream."""
+
+    @pytest.mark.parametrize(
+        "payload, expected_cls",
+        [
+            param(512, FixedDistribution, id="int-scalar"),
+            param(512.5, FixedDistribution, id="float-scalar"),
+            param(0, FixedDistribution, id="zero-scalar"),
+            param(-10, FixedDistribution, id="negative-scalar"),
+            param({"value": 256}, FixedDistribution, id="value-key"),
+            param({"mean": 512}, NormalDistribution, id="mean-alone-stddev-defaults-0"),
+            param({"mean": 512, "stddev": 50}, NormalDistribution, id="mean-stddev"),
+            param({"mean": 512, "median": 400}, LogNormalDistribution, id="mean-median"),
+            param(
+                {"peaks": [{"mean": 128, "stddev": 20}, {"mean": 2048, "median": 1800}]},
+                MultimodalDistribution,
+                id="peaks",
+            ),
+            param(
+                {"points": [{"value": 128, "weight": 40}, {"value": 512, "weight": 60}]},
+                EmpiricalDistribution,
+                id="points",
+            ),
+            param({"type": "fixed", "value": 256}, FixedDistribution, id="explicit-fixed"),
+            param(
+                {"type": "normal", "mean": 512, "stddev": 50},
+                NormalDistribution,
+                id="explicit-normal",
+            ),
+            param(
+                {"mean": 512, "stddev": 50, "min": 100, "max": 900},
+                NormalDistribution,
+                id="normal-with-bounds",
+            ),
+            param(
+                {"value": 512, "min": 100, "max": 900},
+                FixedDistribution,
+                id="fixed-with-bounds",
+            ),
+        ],
+    )  # fmt: skip
+    def test_valid_form_routes_to_expected_class(
+        self, payload: Any, expected_cls: type
+    ) -> None:
+        result = _TA.validate_python(payload)
+        assert isinstance(result, expected_cls)

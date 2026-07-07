@@ -82,6 +82,8 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
     - [Error Request Count](#error-request-count)
+    - [Completed Request Count](#completed-request-count)
+    - [Request Error Rate](#request-error-rate)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
@@ -1426,7 +1428,41 @@ error_request_count = sum(1 for r in records if not r.valid)
 ```
 
 **Notes:**
-- Error rate can be computed as `error_request_count / (request_count + error_request_count)`.
+- The error rate is available directly as the built-in [Request Error Rate](#request-error-rate) (`request_error_rate`) metric; no manual computation is required.
+
+---
+
+### Completed Request Count
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The total number of requests that finished the benchmark pipeline, counting both successful and error responses. Distinct from [Request Count](#request-count), which counts only successful (valid) responses. Surfaces the total completion volume so consumers can compute error rate without re-summing.
+
+**Formula:**
+```python
+completed_request_count = request_count + error_request_count
+```
+
+**Notes:**
+- Error requests (missing/absent for zero-error workloads) contribute 0, so this equals `request_count` when there are no failures.
+
+---
+
+### Request Error Rate
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The percentage of completed requests that ended in error. Reads [Error Request Count](#error-request-count) and [Request Count](#request-count) so the operational error rate can be read alongside latency percentiles (which are computed on successes only).
+
+**Formula:**
+```python
+request_error_rate = 100.0 * error_request_count / (request_count + error_request_count)
+```
+
+**Notes:**
+- Reported as a percentage (0-100).
+- Not produced when there are no completed requests (both counts zero).
+- Pair with the `adj_*` percentile band on flagged latency metrics for a full picture of failure-contaminated tail behavior.
 
 ---
 

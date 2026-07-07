@@ -229,9 +229,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 await self.cancel()
                 raise e
 
-            # Remove from active runners when fully complete
-            # For seamless phases, this happens after returns complete (background task)
-            if not is_seamless_non_final:
+            # Remove from active runners when fully complete.
+            # For seamless phases, this happens after returns complete (background task).
+            # The membership guard makes the removal safe against a concurrent
+            # cancel(): a SIGINT during the returns/sending-completion window
+            # runs _cancel_active_runners() -> _active_runners.clear() while
+            # this coroutine is suspended inside runner.run(). run() then
+            # returns normally via the cooperative-cancellation path, and an
+            # unconditional remove() would raise ValueError (x not in list),
+            # crashing _execute_phases and losing the aggregated exports. The
+            # runner has already been removed by clear(), so skip.
+            if not is_seamless_non_final and runner in self._active_runners:
                 self._active_runners.remove(runner)
 
     def _phase_runner_cleanup_callback(self, runner: PhaseRunner) -> Callable[[], None]:

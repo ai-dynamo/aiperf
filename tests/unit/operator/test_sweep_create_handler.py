@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import UTC
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import kopf
 import pytest
@@ -155,6 +155,103 @@ async def test_handle_expand_sweep_valueerror_becomes_permanent_error(monkeypatc
         await sweep_create.handle(
             body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
         )
+
+
+@pytest.mark.asyncio
+async def test_handle_bare_valueerror_from_model_validate_becomes_permanent_error(
+    monkeypatch,
+):
+    """A BARE ValueError from spec validation must stop kopf retrying.
+
+    ``pydantic.ValidationError`` subclasses ``ValueError``, but a malformed
+    distribution value makes ``AIPerfSweepSpec.model_validate`` raise a plain
+    ``builtins.ValueError`` that is *not* a ``ValidationError``. The old
+    ``except ValidationError`` missed it, so it escaped as a generic exception
+    and kopf retried a permanently-invalid spec forever. The broadened
+    ``except (ValidationError, ValueError)`` turns it into a PermanentError.
+    """
+    body = _valid_body()
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+
+    class _RaisesBareValueError:
+        @staticmethod
+        def model_validate(_spec):
+            raise ValueError("could not coerce distribution value '512' to a float")
+
+    # `handle` lazily does `from aiperf.operator.models import AIPerfSweepSpec`,
+    # so patch the attribute on that module (resolved at call time).
+    monkeypatch.setattr("aiperf.operator.models.AIPerfSweepSpec", _RaisesBareValueError)
+
+    with pytest.raises(
+        kopf.PermanentError,
+        match=r"AIPerfSweep spec invalid: could not coerce distribution value",
+    ):
+        await sweep_create.handle(
+            body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_rejects_oversized_grid_before_expanding(monkeypatch):
+    """A grid whose cardinality exceeds the variation cap is rejected from its
+    cheap shape BEFORE ``expand_sweep`` materializes the cartesian product.
+
+    At huge cardinality (1M variations) the full expand blocks the kopf event
+    loop ~35s and allocates ~4GB; the liveness probe kills the pod mid-handler
+    and kopf crashloops. The cheap ``math.prod`` pre-check must reject first,
+    so ``expand_sweep`` is never called.
+    """
+    body = _valid_body()
+    body["spec"]["sweep"] = {
+        "type": "grid",
+        # 201 values -> 201 variations, one over the 200 cap.
+        "variables": {"benchmark.phases.profiling.concurrency": list(range(1, 202))},
+    }
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+
+    expand_spy = MagicMock(
+        side_effect=AssertionError("expand_sweep must not run for an over-cap grid")
+    )
+    monkeypatch.setattr(sweep_create, "expand_sweep", expand_spy)
+
+    with pytest.raises(
+        kopf.PermanentError,
+        match=r"expands to 201 variations, exceeding the 200-variation",
+    ):
+        await sweep_create.handle(
+            body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+        )
+    expand_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_under_cap_grid_still_expands(monkeypatch):
+    """An under-cap grid still routes through ``expand_sweep`` for the exact
+    count — the cheap pre-check must not short-circuit valid sweeps."""
+    body = _valid_body()
+    body["spec"]["sweep"] = {
+        "type": "grid",
+        "variables": {"benchmark.phases.profiling.concurrency": [1, 2, 3]},
+    }
+    body["spec"]["multiRun"]["numRuns"] = 1
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+
+    spy = MagicMock(side_effect=sweep_create.expand_sweep)
+    monkeypatch.setattr(sweep_create, "expand_sweep", spy)
+
+    await sweep_create.handle(
+        body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+    )
+
+    spy.assert_called_once()
+    assert patch.status["totalVariations"] == 3
+    assert patch.status["maxTotalRuns"] == 3
 
 
 @pytest.mark.asyncio

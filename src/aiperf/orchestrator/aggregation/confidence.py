@@ -315,16 +315,53 @@ class ConfidenceAggregation(AggregationStrategy):
         # NaN slipping through would otherwise poison every downstream
         # field (CV, SE, CI) and silently round-trip to JSON ``null``.
         mean_opt = nan_safe_mean(values)
+        if mean_opt is None:
+            # Truly no finite data (empty or all-non-finite value list).
+            # Should never happen: ``_aggregate_metrics`` drops empty value
+            # lists and ``_extract_values_for_pair`` filters non-finite
+            # samples. Degrade to NaN sentinels rather than crash. This is
+            # the ONLY case that blanks ``mean`` — a single real observation
+            # (below) keeps its value.
+            nan = float("nan")
+            return ConfidenceMetric(
+                mean=nan,
+                std=nan,
+                min=nan,
+                max=nan,
+                cv=nan,
+                se=nan,
+                ci_low=nan,
+                ci_high=nan,
+                t_critical=nan,
+                unit=unit,
+            )
+
+        mean = float(mean_opt)
         std_opt = nan_safe_std(values, ddof=1)
-        if mean_opt is None or std_opt is None:
-            # Should never happen because the caller drops empty value lists
-            # and the single-run branch handles n=1 separately, but degrade
-            # to NaN sentinels rather than crashing if it does.
-            mean = float("nan")
-            std = float("nan")
-        else:
-            mean = float(mean_opt)
-            std = float(std_opt)
+        if std_opt is None:
+            # Exactly one finite observation across all aggregated runs. A
+            # metric present in only one of N>=2 trials lands here — e.g. an
+            # adjusted-latency ("n"-prefixed) metric that
+            # ``derived_latency`` injects only when that trial had errors.
+            # A sample std / t-based CI needs >= 2 observations, so degrade
+            # to the SAME single-observation shape the single-run branch
+            # emits (see ``_aggregate_metrics_single_run``) instead of
+            # blanking the real value to NaN (which exports as JSON null and
+            # silently drops the observation).
+            return ConfidenceMetric(
+                mean=mean,
+                std=0.0,
+                min=float(min(values)),
+                max=float(max(values)),
+                cv=0.0,
+                se=0.0,
+                ci_low=mean,
+                ci_high=mean,
+                t_critical=float("nan"),
+                unit=unit,
+            )
+
+        std = float(std_opt)
         n = len(values)
 
         # Coefficient of variation (handle division by zero)

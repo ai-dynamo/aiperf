@@ -10,6 +10,7 @@ schedules it.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any
 
@@ -56,7 +57,12 @@ async def handle(
 
     try:
         validated = AIPerfSweepSpec.model_validate(spec)
-    except ValidationError as e:
+    except (ValidationError, ValueError) as e:
+        # pydantic.ValidationError subclasses ValueError, but a malformed
+        # distribution value makes model_validate raise a BARE ValueError that
+        # `except ValidationError` alone misses — it would then escape as a
+        # generic exception and kopf would retry a permanently-invalid spec
+        # forever. Catch both, matching the AIPerfJob handler's `except ValueError`.
         raise kopf.PermanentError(f"AIPerfSweep spec invalid: {e}") from e
 
     # Mirror `sweep_controller.plan_builder.build_plan_from_sweep`:
@@ -160,6 +166,17 @@ def _compute_cardinality(
         )
 
     sweep = validated.sweep
+    # Reject an over-cap sweep from its cheap O(#dimensions) shape BEFORE
+    # expand_sweep materializes the full cartesian product. A grid whose
+    # variables multiply to ~1M variations otherwise blocks the kopf event
+    # loop ~35s and allocates ~4GB before this cap rejects it — long enough
+    # for the liveness probe to kill the pod mid-handler, so kopf re-runs and
+    # crashloops. The cheap count equals the expansion length exactly for
+    # every concrete sweep type (see `_cheap_variation_count`).
+    cheap_count = _cheap_variation_count(sweep)
+    if cheap_count is not None and cheap_count > _MAX_VARIATIONS:
+        raise kopf.PermanentError(_over_cap_message(cheap_count))
+
     if isinstance(sweep, AdaptiveSearchSweep):
         n_variations = sweep.max_iterations
     else:
@@ -174,13 +191,65 @@ def _compute_cardinality(
             ) from e
 
     if n_variations > _MAX_VARIATIONS:
-        raise kopf.PermanentError(
-            f"AIPerfSweep expands to {n_variations} variations, exceeding the "
-            f"{_MAX_VARIATIONS}-variation child-name budget (variation index "
-            f"0..{_MAX_VARIATIONS - 1}); reduce the sweep cardinality."
-        )
+        raise kopf.PermanentError(_over_cap_message(n_variations))
 
     return n_variations, n_variations * max_trials
+
+
+def _over_cap_message(n_variations: int) -> str:
+    """Build the PermanentError message for an over-cap sweep cardinality."""
+    return (
+        f"AIPerfSweep expands to {n_variations} variations, exceeding the "
+        f"{_MAX_VARIATIONS}-variation child-name budget (variation index "
+        f"0..{_MAX_VARIATIONS - 1}); reduce the sweep cardinality."
+    )
+
+
+def _cheap_variation_count(sweep: Any) -> int | None:
+    """Count the variations a sweep expands to WITHOUT materializing them.
+
+    O(#dimensions) shape inspection of the validated sweep model, used to
+    reject an over-cap sweep before ``expand_sweep`` allocates the full
+    cartesian product. Cardinality per sweep type:
+
+    * ``grid``            -> product of every variable list's length
+    * ``zip``             -> the shared list length (validated equal)
+    * ``scenarios``       -> number of hand-picked runs
+    * ``sobol`` / ``latin_hypercube`` -> ``samples``
+    * ``adaptive_search`` -> ``max_iterations`` (upper bound)
+
+    Returns ``None`` when the count can't be derived from the sweep shape
+    alone; the caller then falls back to a full ``expand_sweep``.
+
+    Example:
+        >>> from aiperf.config.sweep import GridSweep
+        >>> _cheap_variation_count(
+        ...     GridSweep(variables={"phases.profiling.concurrency": [1, 2, 4]})
+        ... )
+        3
+    """
+    from aiperf.config.sweep import (
+        AdaptiveSearchSweep,
+        GridSweep,
+        LatinHypercubeSweep,
+        ScenarioSweep,
+        SobolSweep,
+        ZipSweep,
+    )
+
+    if isinstance(sweep, GridSweep):
+        return math.prod(len(values) for values in sweep.variables.values())
+    if isinstance(sweep, ZipSweep):
+        # `_check_equal_lengths` guarantees every list shares one length, so
+        # any single list's length is the lockstep cardinality.
+        return len(next(iter(sweep.variables.values())))
+    if isinstance(sweep, ScenarioSweep):
+        return len(sweep.runs)
+    if isinstance(sweep, (SobolSweep, LatinHypercubeSweep)):
+        return sweep.samples
+    if isinstance(sweep, AdaptiveSearchSweep):
+        return sweep.max_iterations
+    return None
 
 
 def _reject_overlong_child_names(

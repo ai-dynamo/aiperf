@@ -204,12 +204,22 @@ def spec_summary_from_record(rec: Any) -> SpecSummary:
         try:
             spec = AIPerfSweepSpec.model_validate(rec.raw_spec)
             return _summary_from_snapshot(spec_summary_snapshot(spec))
-        except ValidationError as exc:
+        except ValueError as exc:
+            # pydantic.ValidationError subclasses ValueError, but a malformed
+            # distribution value makes model_validate raise a BARE ValueError.
+            # `except ValidationError` alone would miss it and let it 500 the
+            # summary route; catch both and fall back to the archived aggregate.
+            # Only ValidationError carries structured `.errors()`.
+            detail = (
+                exc.errors(include_url=False)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            )
             logger.warning(
                 "AIPerfSweep %s/%s raw_spec rejected; falling back to aggregate. %s",
                 rec.namespace,
                 rec.name,
-                exc.errors(include_url=False),
+                detail,
             )
     if rec.aggregate_doc is not None:
         snap = _summary_snapshot_from_archive(rec, rec.aggregate_doc)

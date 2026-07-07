@@ -2,8 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for PrefixAnalyzer."""
 
+from pathlib import Path
+
 import pytest
 
+from aiperf.common.exceptions import DatasetError
 from aiperf.dataset.synthesis import PrefixAnalyzer
 
 
@@ -279,6 +282,57 @@ class TestPrefixAnalyzer:
         stats = analyzer.analyze_traces(traces)
 
         # Should handle gracefully
+        assert stats.total_requests == 2
+
+    # ============================================================================
+    # Malformed-line Error Boundary
+    # ============================================================================
+
+    def test_analyze_file_malformed_json_line_raises_located_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A non-JSON line raises DatasetError naming the file and line number."""
+        trace_file = tmp_path / "traces.jsonl"
+        trace_file.write_text(
+            '{"input_length": 100, "output_length": 20}\nthis is not json\n'
+        )
+        analyzer = PrefixAnalyzer()
+
+        with pytest.raises(DatasetError) as exc:
+            analyzer.analyze_file(trace_file)
+
+        message = str(exc.value)
+        assert str(trace_file) in message
+        assert ":2:" in message  # the bad line is line 2, not line 1
+        assert "invalid JSON" in message
+
+    def test_analyze_file_non_object_line_raises_located_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A JSON line that is not an object (e.g. an array) raises DatasetError."""
+        trace_file = tmp_path / "traces.jsonl"
+        trace_file.write_text('{"input_length": 100, "output_length": 20}\n[1, 2, 3]\n')
+        analyzer = PrefixAnalyzer()
+
+        with pytest.raises(DatasetError) as exc:
+            analyzer.analyze_file(trace_file)
+
+        message = str(exc.value)
+        assert str(trace_file) in message
+        assert ":2:" in message
+        assert "must be a JSON object" in message
+
+    def test_analyze_file_valid_lines_succeed(self, tmp_path: Path) -> None:
+        """A well-formed JSONL file analyzes without raising."""
+        trace_file = tmp_path / "traces.jsonl"
+        trace_file.write_text(
+            '{"input_length": 100, "output_length": 20, "hash_ids": [1, 2]}\n'
+            '{"input_length": 200, "output_length": 30, "hash_ids": [1, 3]}\n'
+        )
+        analyzer = PrefixAnalyzer()
+
+        stats = analyzer.analyze_file(trace_file)
+
         assert stats.total_requests == 2
 
     def test_multiple_analyses_separate_state(self) -> None:

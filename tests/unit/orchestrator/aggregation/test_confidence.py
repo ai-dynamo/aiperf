@@ -505,6 +505,106 @@ class TestConfidenceAggregation:
         with pytest.raises(ValueError, match="Invalid confidence level"):
             ConfidenceAggregation(confidence_level=1.5)
 
+    def test_metric_present_in_one_of_two_runs_preserves_value(self):
+        """A metric finite in only ONE of >=2 runs keeps its real value.
+
+        Regression for the union-collect / per-run-subset drop: a metric
+        present in exactly one trial (e.g. an adjusted-latency
+        ``n``-prefixed metric that ``derived_latency`` injects only when
+        that trial had errors) produced a single-element value list, which
+        made ``nan_safe_std(..., ddof=1)`` return ``None``. The old code
+        blanked ``mean`` to NaN in that case (exported as JSON ``null``),
+        silently dropping the observed value. It must now degrade to the
+        established single-observation shape and keep the value.
+        """
+        import math
+
+        strategy = ConfidenceAggregation(confidence_level=0.95)
+        results = [
+            RunResult(
+                label="run_0001",
+                success=True,
+                summary_metrics={
+                    "request_latency": JsonMetricResult(unit="ms", avg=100.0),
+                    # Adjusted-latency metric injected only when this trial
+                    # hit transient errors — absent from run_0002.
+                    "n_request_latency": JsonMetricResult(unit="ms", avg=97.0),
+                },
+                artifacts_path=Path("/tmp/run_0001"),
+            ),
+            RunResult(
+                label="run_0002",
+                success=True,
+                summary_metrics={
+                    "request_latency": JsonMetricResult(unit="ms", avg=110.0),
+                },
+                artifacts_path=Path("/tmp/run_0002"),
+            ),
+        ]
+
+        aggregate = strategy.aggregate(results)
+
+        # The one-of-two metric keeps its real value with single-observation
+        # degenerate stats (identical shape to the len==1 single-run path).
+        one_of = aggregate.metrics["n_request_latency_avg"]
+        assert one_of.mean == 97.0
+        assert one_of.min == 97.0
+        assert one_of.max == 97.0
+        assert one_of.std == 0.0
+        assert one_of.cv == 0.0
+        assert one_of.se == 0.0
+        assert one_of.ci_low == 97.0
+        assert one_of.ci_high == 97.0
+        assert math.isnan(one_of.t_critical)
+        assert one_of.unit == "ms"
+
+        # The both-present metric still gets a normal two-observation CI.
+        both = aggregate.metrics["request_latency_avg"]
+        assert both.mean == pytest.approx(105.0)
+        assert both.std == pytest.approx(np.std([100.0, 110.0], ddof=1))
+        assert both.ci_low < both.mean < both.ci_high
+        assert not math.isnan(both.t_critical)
+
+    def test_metric_absent_from_all_runs_not_in_output(self):
+        """A metric absent from every run yields no key (no spurious value)."""
+        strategy = ConfidenceAggregation()
+        results = [
+            RunResult(
+                label="run_0001",
+                success=True,
+                summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=100.0)},
+                artifacts_path=Path("/tmp/run_0001"),
+            ),
+            RunResult(
+                label="run_0002",
+                success=True,
+                summary_metrics={"ttft": JsonMetricResult(unit="ms", avg=110.0)},
+                artifacts_path=Path("/tmp/run_0002"),
+            ),
+        ]
+
+        aggregate = strategy.aggregate(results)
+
+        assert "ttft_avg" in aggregate.metrics
+        assert "n_request_latency_avg" not in aggregate.metrics
+
+    def test_compute_confidence_stats_no_finite_data_returns_nan(self):
+        """The defensive no-finite-data path still blanks to NaN (no value).
+
+        ``mean_opt is None`` only when the value list is empty or entirely
+        non-finite. In that (unreachable-via-``aggregate``) case there is no
+        real observation to preserve, so ``mean`` must remain NaN rather
+        than fabricate a spurious value.
+        """
+        import math
+
+        strategy = ConfidenceAggregation()
+        metric = strategy._compute_confidence_stats([float("nan")], "phantom_avg", "ms")
+        assert math.isnan(metric.mean)
+        assert math.isnan(metric.std)
+        assert math.isnan(metric.ci_low)
+        assert math.isnan(metric.ci_high)
+
 
 class TestConfidenceMetric:
     """Tests for ConfidenceMetric data model."""

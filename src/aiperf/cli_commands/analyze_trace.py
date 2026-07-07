@@ -24,6 +24,13 @@ def analyze_trace(
         block_size: KV cache block size for analysis (default: 512)
         output_file: Optional output path for analysis report (JSON)
     """
+    from aiperf.cli_utils import exit_on_error
+    from aiperf.common.exceptions import DatasetError
     from aiperf.dataset.synthesis.cli import analyze_trace as _analyze_trace
 
-    _analyze_trace(input_file, block_size=block_size, output_file=output_file)
+    with exit_on_error(
+        title="Error Analyzing Trace",
+        show_traceback=False,
+        quiet_for=(DatasetError,),
+    ):
+        _analyze_trace(input_file, block_size=block_size, output_file=output_file)

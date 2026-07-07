@@ -107,10 +107,11 @@ def test_explicit_type_matches_structure(payload, expected_cls):
     ],
 )  # fmt: skip
 def test_explicit_type_mismatch_or_unknown_fails(payload):
-    # Discriminator-level ValueError (e.g. unknown `type:`) propagates raw;
-    # subclass-level errors (e.g. extra_forbidden) wrap as ValidationError.
-    # Existing tests in test_distributions.py follow the same convention.
-    with pytest.raises((ValidationError, ValueError)):
+    # Both discriminator-level rejections (unknown `type:`) and subclass-level
+    # errors (extra_forbidden) surface as pydantic.ValidationError: the callable
+    # Discriminator returns an unregistered sentinel tag rather than raising, so
+    # the union's custom_error_message wraps into a proper ValidationError.
+    with pytest.raises(ValidationError):
         _DIST_ADAPTER.validate_python(payload)
 
 

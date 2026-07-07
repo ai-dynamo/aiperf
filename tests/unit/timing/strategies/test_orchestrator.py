@@ -123,6 +123,99 @@ class TestCancellation:
         assert router.cancel_all_credits.call_count == 2
 
 
+class _CancelDuringRunFakeRunner:
+    """Fake PhaseRunner reproducing the Ctrl-C race in ``_execute_phases``.
+
+    Its ``run()`` invokes the orchestrator's ``cancel()`` (which runs
+    ``_cancel_active_runners`` -> ``_active_runners.clear()``) and THEN
+    returns normally, forcing the exact interleaving of a SIGINT that lands
+    while ``runner.run()`` is suspended in the returns/sending-completion
+    window: the active-runners list is emptied *before* control returns to
+    the unconditional ``remove(runner)`` line. Deterministic — no sleeps.
+    """
+
+    def __init__(self, orch: PhaseOrchestrator, *, phase: str = "profiling") -> None:
+        self._orch = orch
+        self.phase = phase
+        self.cancel_calls = 0
+        self.run_calls = 0
+
+    async def run(self, *, is_final_phase: bool) -> None:
+        self.run_calls += 1
+        # SIGINT arrives here (cooperative-cancellation window): cancel()
+        # clears _active_runners while run() is "in flight", then run()
+        # returns normally.
+        await self._orch.cancel()
+
+    def cancel(self) -> None:
+        self.cancel_calls += 1
+
+
+@pytest.mark.asyncio
+class TestCancelDuringRunRace:
+    """Regression tests for the cancel()-vs-_execute_phases removal race.
+
+    Before the fix, ``_cancel_active_runners`` calling ``list.clear()``
+    concurrently with the unconditional ``_active_runners.remove(runner)``
+    in ``_execute_phases`` raised ``ValueError: list.remove(x): x not in
+    list``, crashing phase execution and losing the aggregated exports.
+    """
+
+    def _make_orch(self) -> tuple[PhaseOrchestrator, MagicMock, MagicMock]:
+        router = make_router()
+        publisher = make_publisher()
+        orch = PhaseOrchestrator(
+            config=make_timing_config(
+                TimingMode.REQUEST_RATE, request_count=5, request_rate=10.0
+            ),
+            phase_publisher=publisher,
+            credit_router=router,
+            dataset_metadata=make_dataset(3, 2),
+        )
+        return orch, router, publisher
+
+    async def test_cancel_mid_run_does_not_raise_and_removes_once(
+        self, monkeypatch
+    ) -> None:
+        """cancel() clearing the list mid-run must not crash the remove line."""
+        orch, router, _ = self._make_orch()
+        await orch.initialize()
+
+        fake = _CancelDuringRunFakeRunner(orch)
+        monkeypatch.setattr(
+            "aiperf.timing.phase_orchestrator.PhaseRunner",
+            lambda **kwargs: fake,
+        )
+
+        # Must NOT raise ValueError: list.remove(x): x not in list.
+        await orch._execute_phases()
+
+        assert fake.run_calls == 1
+        # Removed exactly once (by cancel()'s clear); the guarded remove skips.
+        assert fake.cancel_calls == 1
+        assert orch._active_runners == []
+        router.cancel_all_credits.assert_called_once()
+
+    async def test_cancel_mid_run_still_runs_export_cleanup(self, monkeypatch) -> None:
+        """The start path's finally (exports/cleanup) still runs after the race."""
+        orch, router, publisher = self._make_orch()
+        await orch.initialize()
+
+        fake = _CancelDuringRunFakeRunner(orch)
+        monkeypatch.setattr(
+            "aiperf.timing.phase_orchestrator.PhaseRunner",
+            lambda **kwargs: fake,
+        )
+
+        # Drives _execute_phases inside the try/finally; must complete cleanly
+        # and reach the credits-complete cleanup (analogue of "exports run").
+        await orch._start_orchestrator()
+
+        router.mark_credits_complete.assert_called_once()
+        publisher.publish_credits_complete.assert_awaited_once()
+        assert orch._active_runners == []
+
+
 @pytest.mark.asyncio
 class TestOrchestratorStop:
     """Tests for PhaseOrchestrator @on_stop cleanup.
