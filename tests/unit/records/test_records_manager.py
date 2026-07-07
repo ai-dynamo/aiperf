@@ -691,6 +691,32 @@ class TestRecordsManagerTimingDispatch:
         failing_processor.process_result.assert_awaited_once()
         manager.exception.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_on_metric_records_processor_raises_still_updates_tracker_and_converges_barrier(
+        self,
+    ) -> None:
+        """A non-best-effort results processor that raises must not skip the
+        tracker update or completion-barrier check, or the phase never converges
+        and the timeout-less barrier hangs. The raise re-propagates after the
+        finally runs the barrier logic."""
+        manager = _create_manager_for_timing_dispatch()
+        manager._send_results_to_results_processors = AsyncMock(
+            side_effect=RuntimeError("non-best-effort processor exploded")
+        )
+        manager._complete_credit_phases = {CreditPhase.PROFILING}
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
+
+        with pytest.raises(RuntimeError, match="non-best-effort processor exploded"):
+            await manager._on_metric_records(_metric_records_message())
+
+        manager._records_tracker.update_from_record_data.assert_called_once()
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
 
 class TestRecordsManagerProcessorDispatch:
     @pytest.mark.asyncio
@@ -1267,6 +1293,11 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         mock_self = MagicMock(spec=RecordsManager)
         mock_self._dataset_configured_event = asyncio.Event()
         mock_self.is_trace_enabled = False
+        # The finally block (F4) always runs the tracker/barrier logic even when
+        # the processor raises; supply the instance attributes it touches.
+        mock_self._records_tracker = MagicMock()
+        mock_self._error_tracker = MagicMock()
+        mock_self._complete_credit_phases = set()
         # First downstream step after the barrier; raising proves the barrier was passed.
         mock_self._send_results_to_results_processors = AsyncMock(
             side_effect=RuntimeError("REACHED_PROCESSING")
