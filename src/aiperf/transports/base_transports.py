@@ -1,10 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# TODO(branch-port): re-add main's multi-vendor `session_header` support (was used
-# by `model_endpoint.endpoint.session_header` in HEAD's build_url path). Branch's
-# version dropped this. Cross-reference origin/main:src/aiperf/transports/base_transports.py.
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -132,7 +128,10 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         if request_info.x_request_id:
             headers["X-Request-ID"] = request_info.x_request_id
         if request_info.x_correlation_id:
-            headers["X-Correlation-ID"] = request_info.x_correlation_id
+            correlation_header = (
+                self.model_endpoint.endpoint.session_header or "X-Correlation-ID"
+            )
+            headers[correlation_header] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
         if request_info.turns and request_info.turns[-1].extra_headers:

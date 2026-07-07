@@ -407,3 +407,48 @@ class TestBaseTransportAbstractMethods:
 
         with pytest.raises(TypeError):
             IncompleteTransport()
+
+
+class TestSessionHeader:
+    """Tests for --session-header rename of X-Correlation-ID."""
+
+    def _make_transport(self, session_header: str | None = None) -> FakeTransport:
+        endpoint = {**_MINIMAL_CONFIG_KWARGS["endpoint"]}
+        if session_header is not None:
+            endpoint["session_header"] = session_header
+        run = _make_run(endpoint=endpoint)
+        return FakeTransport(model_endpoint=ModelEndpointInfo.from_run(run))
+
+    def test_default_sends_x_correlation_id(self):
+        """Without --session-header, X-Correlation-ID is used as before."""
+        transport = self._make_transport()
+        request_info = _make_request_info(
+            transport.run.cfg, x_correlation_id="conv-uuid-123"
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Correlation-ID"] == "conv-uuid-123"
+
+    def test_session_header_replaces_x_correlation_id(self):
+        """With --session-header, the configured name is used instead of X-Correlation-ID."""
+        transport = self._make_transport(session_header="X-Session-ID")
+        request_info = _make_request_info(
+            transport.run.cfg, x_correlation_id="conv-uuid-123"
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Session-ID"] == "conv-uuid-123"
+        assert "X-Correlation-ID" not in headers
+
+    def test_session_header_custom_name(self):
+        """Any header name is accepted."""
+        transport = self._make_transport(session_header="My-Pod-Affinity-Key")
+        request_info = _make_request_info(
+            transport.run.cfg, x_correlation_id="conv-uuid-123"
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["My-Pod-Affinity-Key"] == "conv-uuid-123"
