@@ -285,10 +285,10 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         trace.request_body = {}
         if self._force_min_tokens:
             trace.request_body["min_tokens"] = trace.output_length
-        # KV-cache-aware routing hints. Inert at 1P1D (no routing choice); some
-        # strict frontends (Dynamo v1.2) 400 on these unknown params. Opt out via
-        # omit_kv_hints to keep request bodies identical across legs whose
-        # frontends differ in param tolerance.
+        # KV-cache-aware routing hints. Inert when there is no routing choice
+        # (single replica per role); some strict frontends reject unknown body
+        # params with HTTP 400. Opt out via omit_kv_hints for frontends that do
+        # not tolerate extra params.
         if not self._omit_kv_hints:
             if trace.hash_ids:
                 trace.request_body["hash_ids"] = trace.hash_ids
@@ -557,8 +557,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         For multi-turn sessions, continuation turns (index > 0) replay
         closed-loop — turn N+1 fires only after turn N completes — rather than at
         an absolute pre-recorded time. This keeps each session's prefix cached in
-        order (faithful KV reuse) and is the correct model for this trace (~93%
-        multi-turn). Turn 0 keeps its absolute arrival time (session start).
+        order (faithful KV reuse) and is the correct model for heavily
+        multi-turn traces. Turn 0 keeps its absolute arrival time (session start).
         Open-loop replay skips back-pressure entirely: every turn
         keeps its absolute (speedup-scaled) timestamp and fires on the schedule.
         With ``open_loop_strict`` additionally set, sessions are exploded so
