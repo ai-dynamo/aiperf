@@ -173,18 +173,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         )
         warmup_endpoint_summaries = None
         if warmup_start_ns is not None and warmup_end_ns is not None:
-            # Extend the warmup window to include the dedicated end-of-warmup
-            # scrape (WARMUP-tagged, captured after CREDIT_PHASE_COMPLETE so
-            # its timestamp is strictly past warmup_end_ns). Cap at just
-            # before profiling start so profiling samples are never admitted.
-            warmup_summary_end_ns = warmup_end_ns
-            if self._last_warmup_record_ns is not None:
-                warmup_summary_end_ns = max(
-                    warmup_end_ns, min(self._last_warmup_record_ns, start_ns - 1)
-                )
             warmup_endpoint_summaries = self._compute_endpoint_summaries(
                 warmup_start_ns,
-                warmup_summary_end_ns,
+                self._warmup_summary_end_ns(warmup_end_ns, start_ns),
                 self._slice_duration,
                 include_final_collection=False,
             )
@@ -218,6 +209,18 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         )
 
         return results
+
+    def _warmup_summary_end_ns(self, warmup_end_ns: int, start_ns: int) -> int:
+        """Resolve the end of the warmup aggregation window.
+
+        Extends the warmup window to include the dedicated end-of-warmup scrape
+        (WARMUP-tagged, captured after CREDIT_PHASE_COMPLETE so its timestamp is
+        strictly past ``warmup_end_ns``). Capped at just before profiling
+        ``start_ns`` so profiling samples are never admitted.
+        """
+        if self._last_warmup_record_ns is None:
+            return warmup_end_ns
+        return max(warmup_end_ns, min(self._last_warmup_record_ns, start_ns - 1))
 
     def _compute_endpoint_summaries(
         self,
