@@ -242,9 +242,10 @@ def _parse_dataset_filters(values: list[str]) -> dict[str, str]:
     return filters
 
 
-# (cli field, dataset key, forward explicit None). Booleans forward both
-# polarities so an explicit negative flag (e.g. --no-open-loop-replay)
-# overrides the FileDataset default.
+# (cli field, dataset key, forward explicit None). The _set gate alone
+# forwards explicitly-set booleans of both polarities (e.g.
+# --no-open-loop-replay); a bool is never None, so keep_none is
+# irrelevant for the boolean rows.
 _VERBATIM_DATASET_FIELDS = (
     ("input_file", "path", True),
     ("public_dataset", "dataset", True),
@@ -255,10 +256,10 @@ _VERBATIM_DATASET_FIELDS = (
     ("trace_session_sample_ratio", "trace_session_sample_ratio", False),
     ("max_idle_gap_cap_seconds", "max_idle_gap_cap_seconds", False),
     ("replay_speedup", "replay_speedup", False),
-    ("open_loop_replay", "open_loop_replay", True),
-    ("open_loop_strict", "open_loop_strict", True),
-    ("omit_kv_hints", "omit_kv_hints", True),
-    ("force_min_tokens", "force_min_tokens", True),
+    ("open_loop_replay", "open_loop_replay", False),
+    ("open_loop_strict", "open_loop_strict", False),
+    ("omit_kv_hints", "omit_kv_hints", False),
+    ("force_min_tokens", "force_min_tokens", False),
 )
 
 
@@ -558,13 +559,24 @@ _BASETEN_ONLY_TRACE_FLAGS: tuple[tuple[str, str], ...] = (
     ("max_idle_gap_cap_seconds", "--max-idle-gap-cap-seconds"),
 )
 
+# Boolean knobs are never None, so an explicit set of either polarity
+# (membership in model_fields_set) is the guard signal.
+_BASETEN_ONLY_TRACE_BOOL_FLAGS: tuple[tuple[str, str], ...] = (
+    ("open_loop_replay", "--open-loop-replay/--no-open-loop-replay"),
+    ("open_loop_strict", "--open-loop-strict"),
+    ("omit_kv_hints", "--omit-kv-hints"),
+    ("force_min_tokens", "--force-min-tokens/--no-force-min-tokens"),
+)
+
 
 def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
     """Reject baseten_trace-only replay knobs on incompatible datasets.
 
     These knobs are only consumed by the baseten_trace loader; on any other
-    dataset they would silently no-op, hiding user error. Rejected when no
-    --input-file is given, or when --custom-dataset-type is explicitly set
+    dataset they would silently no-op (or crash AIPerfConfig validation with
+    a raw ``extra_forbidden`` on synthetic/public datasets), hiding user
+    error. Rejected when the dataset cannot be file-based (--public-dataset
+    set or no --input-file), or when --custom-dataset-type is explicitly set
     to a different loader.
     """
     from aiperf.plugin.enums import CustomDatasetType
@@ -574,20 +586,39 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
         for attr, flag in _BASETEN_ONLY_TRACE_FLAGS
         if attr in cli.model_fields_set and getattr(cli, attr) is not None
     ]
+    set_flags += [
+        flag
+        for attr, flag in _BASETEN_ONLY_TRACE_BOOL_FLAGS
+        if attr in cli.model_fields_set
+    ]
     if not set_flags:
         return
-    if not cli.input_file:
+    msg = f"{', '.join(set_flags)} is only supported by the baseten_trace loader"
+    if cli.public_dataset or not cli.input_file:
         raise ValueError(
-            f"{', '.join(set_flags)} is only supported by the baseten_trace "
-            "loader; provide --input-file and --custom-dataset-type baseten_trace."
+            f"{msg}; provide --input-file and --custom-dataset-type baseten_trace."
         )
     if (
         cli.custom_dataset_type is not None
         and cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE
     ):
         raise ValueError(
-            f"{', '.join(set_flags)} is only supported by the baseten_trace "
-            f"loader, but --custom-dataset-type is {cli.custom_dataset_type}."
+            f"{msg}, but --custom-dataset-type is {cli.custom_dataset_type}."
+        )
+
+
+def _reject_contradictory_open_loop_flags(cli: CLIConfig) -> None:
+    """Reject --open-loop-strict combined with --no-open-loop-replay.
+
+    ``open_loop_strict`` is an open-loop-only modifier; the loader would
+    silently ignore it in closed-loop replay. Strict defaults False and
+    open-loop defaults True, so strict=True with open-loop=False can only
+    come from explicitly contradictory flags.
+    """
+    if cli.open_loop_strict and not cli.open_loop_replay:
+        raise ValueError(
+            "--open-loop-strict requires open-loop replay; remove "
+            "--no-open-loop-replay (or drop --open-loop-strict)."
         )
 
 
@@ -721,6 +752,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
+    _reject_contradictory_open_loop_flags(cli)
     if cli.dataset_filters and not cli.public_dataset:
         raise ValueError("--dataset-filter requires --public-dataset")
 
