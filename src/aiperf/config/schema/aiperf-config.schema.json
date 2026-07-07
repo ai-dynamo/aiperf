@@ -10762,6 +10762,7 @@
     },
     "PublicDatasetType": {
       "enum": [
+        "exgentic_v2",
         "exgentic",
         "sharegpt",
         "aimo",

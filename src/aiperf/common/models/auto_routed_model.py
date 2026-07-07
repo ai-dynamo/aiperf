@@ -37,11 +37,10 @@ Hierarchical discriminators (same field, multiple levels):
     # Routes directly: Animal.from_json({"type": "poodle"}) -> Poodle instance
 """
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
-from typing_extensions import Self
 
 from aiperf.common.utils import load_json_str
 
