@@ -1280,6 +1280,8 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 
 Every absolutely-scheduled turn carries its intended send time (`Turn.timestamp`, ms relative to the schedule zero), and the worker stamps `RequestRecord.timestamp_ns` (wall clock) when the request is dispatched to the transport. The wall-clock instant of the schedule zero is not recorded, so lag is reported **relative to the least-late request** of the run (`lag = offset - min(offset)`).
 
+The derived family is computed once over the whole run and is **excluded from `--slice-duration` timeslice exports**: re-deriving it per slice would re-anchor each slice at its own least-late request and erase the cumulative schedule drift these metrics exist to expose.
+
 **What this cannot measure:**
 - A constant delay applied uniformly to every request (the least-late request defines zero).
 - Lag of delay-scheduled continuation turns (back-pressure replay fires them relative to the prior turn's completion; they carry no absolute intended time and are excluded).
