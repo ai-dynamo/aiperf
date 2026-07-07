@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -90,6 +89,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
         self._open_loop = getattr(dataset, "open_loop_replay", False)
+        self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
+        self._force_min_tokens = getattr(dataset, "force_min_tokens", True)
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
         self._floored_zero_osl = 0
 
@@ -127,19 +128,14 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     def _set_request_body(self, trace: BasetenTrace) -> None:
         if trace.hash_ids is None:
             trace.hash_ids = list(trace.total_hashes or [])
-        trace.request_body = {"min_tokens": trace.output_length}
-        # Baseten's serverless /v1/completions gateway rejects a list[str] prompt
-        # (it accepts only a string or list[int]), but the shared upstream
-        # completions endpoint always emits a list. Override the prompt to a bare
-        # string here via extra_body so the endpoint stays byte-identical to
-        # upstream (extra_body is merged last at dispatch).
-        if trace.text_input is not None:
-            trace.request_body["prompt"] = trace.text_input
+        trace.request_body = {}
+        if self._force_min_tokens:
+            trace.request_body["min_tokens"] = trace.output_length
         # KV-cache-aware routing hints. Inert at 1P1D (no routing choice); some
-        # strict frontends (Dynamo v1.2) 400 on these unknown params. Opt-out via
-        # AIPERF_BASETEN_OMIT_KV_HINTS=1 to keep request bodies identical across
-        # legs whose frontends differ in param tolerance.
-        if os.environ.get("AIPERF_BASETEN_OMIT_KV_HINTS") != "1":
+        # strict frontends (Dynamo v1.2) 400 on these unknown params. Opt out via
+        # omit_kv_hints to keep request bodies identical across legs whose
+        # frontends differ in param tolerance.
+        if not self._omit_kv_hints:
             if trace.hash_ids:
                 trace.request_body["hash_ids"] = trace.hash_ids
             if trace.block_size is not None:

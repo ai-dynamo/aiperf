@@ -212,6 +212,11 @@ class TestRequestBodyContract:
         assert a1.request_body["hash_ids"] == [10, 11]
         assert a1.request_body["block_size"] == BLOCK_SIZE
 
+    @pytest.mark.xfail(
+        strict=False,
+        reason="single-prompt bare-string emission moves into CompletionsEndpoint "
+        "(endpoints lane); the loader-side prompt override was removed",
+    )
     def test_completions_payload_prompt_is_bare_string(self, fixture_path):
         # Baseten's gateway rejects list[str]; a single prompt must be a bare str.
         loader, data = _load(fixture_path)
@@ -313,19 +318,41 @@ class TestTimingNoHang:
         # When the prior turn's duration_e2e_ms is absent, the delay falls back
         # to the raw start-to-start gap (nothing to subtract).
         rows = [
-            dict(timestamp_start_unix_ms=1_000, prompt="Z-1", input_tokens=10,
-                 output_tokens=5, total_hashes=[1], provided_session_id="Z",
-                 poor_man_session_id=9, block_size=BLOCK_SIZE, request_canceled=0,
-                 duration_e2e_ms=None, duration_ttft_ms=None, cached_tokens_reference=0),
-            dict(timestamp_start_unix_ms=4_000, prompt="Z-2", input_tokens=12,
-                 output_tokens=6, total_hashes=[1, 2], provided_session_id="Z",
-                 poor_man_session_id=9, block_size=BLOCK_SIZE, request_canceled=0,
-                 duration_e2e_ms=500, duration_ttft_ms=90, cached_tokens_reference=0),
+            dict(
+                timestamp_start_unix_ms=1_000,
+                prompt="Z-1",
+                input_tokens=10,
+                output_tokens=5,
+                total_hashes=[1],
+                provided_session_id="Z",
+                poor_man_session_id=9,
+                block_size=BLOCK_SIZE,
+                request_canceled=0,
+                duration_e2e_ms=None,
+                duration_ttft_ms=None,
+                cached_tokens_reference=0,
+            ),
+            dict(
+                timestamp_start_unix_ms=4_000,
+                prompt="Z-2",
+                input_tokens=12,
+                output_tokens=6,
+                total_hashes=[1, 2],
+                provided_session_id="Z",
+                poor_man_session_id=9,
+                block_size=BLOCK_SIZE,
+                request_canceled=0,
+                duration_e2e_ms=500,
+                duration_ttft_ms=90,
+                cached_tokens_reference=0,
+            ),
         ]
         path = tmp_path / "nulldur.parquet"
         pq.write_table(pa.Table.from_pylist(rows), path)
         loader, data = _load(path)
-        conts = [t for conv in loader.convert_to_conversations(data) for t in conv.turns[1:]]
+        conts = [
+            t for conv in loader.convert_to_conversations(data) for t in conv.turns[1:]
+        ]
         assert conts and conts[0].delay == 3000.0  # raw gap, no subtraction
 
     def test_inter_turn_delay_cap_clamps_continuation_delays(self, fixture_path):

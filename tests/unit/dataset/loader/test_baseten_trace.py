@@ -6,6 +6,8 @@ from unittest.mock import Mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.config.flags.cli_config import CLIConfig
@@ -36,6 +38,14 @@ def _make_run(input_file: str | Path | None = None, **kwargs):
         kwargs.setdefault("input_file", str(input_file))
         kwargs.setdefault("custom_dataset_type", CustomDatasetType.BASETEN_TRACE)
     return make_run_from_cli(CLIConfig(model_names=["test-model"], **kwargs))
+
+
+def _set_dataset_attr(run, **attrs) -> None:
+    """Set loader knobs on the dataset config; the CLI fields land in another
+    lane, so bypass pydantic field validation (the loader reads via getattr)."""
+    dataset = run.cfg.get_default_dataset()
+    for key, value in attrs.items():
+        object.__setattr__(dataset, key, value)
 
 
 class TestBasetenTraceDatasetLoader:
@@ -122,9 +132,10 @@ class TestBasetenTraceDatasetLoader:
         assert [trace.timestamp for trace in dataset["42"]] == [0, 150]
         assert dataset["42"][0].text_input == "first prompt"
         assert dataset["42"][0].request_canceled == 1
+        # No "prompt" override: the completions endpoint emits single-prompt
+        # payloads as bare strings itself.
         assert dataset["42"][0].request_body == {
             "min_tokens": 5,
-            "prompt": "first prompt",
             "hash_ids": [1, 2],
             "block_size": 64,
         }
@@ -160,7 +171,6 @@ class TestBasetenTraceDatasetLoader:
         assert turn.max_tokens == 12
         assert turn.extra_body == {
             "min_tokens": 12,
-            "prompt": "literal prompt",
             "hash_ids": [11, 12],
             "block_size": 64,
         }
@@ -560,6 +570,92 @@ class TestBasetenTraceDatasetLoader:
             3 * one_hour_ms,
         ]
 
+    @pytest.mark.parametrize(
+        "omit_kv_hints, expected_body",
+        [
+            param(
+                False,
+                {"min_tokens": 4, "hash_ids": [1, 2], "block_size": 64},
+                id="hints_present",
+            ),
+            param(True, {"min_tokens": 4}, id="hints_omitted"),
+        ],
+    )  # fmt: skip
+    def test_set_request_body_omit_kv_hints_controls_cache_hints(
+        self, tmp_path: Path, omit_kv_hints: bool, expected_body: dict
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "hinted",
+                    "input_tokens": 5,
+                    "output_tokens": 4,
+                    "total_hashes": [1, 2],
+                    "block_size": 64,
+                }
+            ],
+        )
+        run = _make_run()
+        _set_dataset_attr(run, omit_kv_hints=omit_kv_hints)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert trace.request_body == expected_body
+
+    @pytest.mark.parametrize(
+        "force_min_tokens, expected_body",
+        [
+            param(
+                True,
+                {"min_tokens": 4, "hash_ids": [1, 2], "block_size": 64},
+                id="min_tokens_pinned",
+            ),
+            param(
+                False,
+                {"hash_ids": [1, 2], "block_size": 64},
+                id="min_tokens_not_set",
+            ),
+        ],
+    )  # fmt: skip
+    def test_set_request_body_force_min_tokens_controls_min_tokens(
+        self, tmp_path: Path, force_min_tokens: bool, expected_body: dict
+    ):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "pinned",
+                    "input_tokens": 5,
+                    "output_tokens": 4,
+                    "total_hashes": [1, 2],
+                    "block_size": 64,
+                }
+            ],
+        )
+        run = _make_run()
+        _set_dataset_attr(run, force_min_tokens=force_min_tokens)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        turn = conversations[0].turns[0]
+        assert turn.extra_body == expected_body
+        # max_tokens handling is untouched by the min_tokens gate.
+        assert turn.max_tokens == 4
+
     def test_load_dataset_zero_output_tokens_floored_to_one(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",
@@ -619,7 +715,7 @@ class TestBasetenTraceDatasetLoader:
         trace = next(iter(next(iter(dataset.values()))))
 
         assert trace.output_length == 3
-        assert trace.request_body == {"min_tokens": 3, "prompt": "cap me"}
+        assert trace.request_body == {"min_tokens": 3}
 
 
 class TestBasetenTraceModel:
@@ -708,6 +804,35 @@ class TestSynthesisHooks:
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
+
+    def test_reconstruct_traces_omit_kv_hints_true_drops_cache_hints(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        run = _make_run()
+        _set_dataset_attr(run, omit_kv_hints=True)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+        originals = [
+            BasetenTrace(
+                timestamp_start_unix_ms=100,
+                prompt="original",
+                input_tokens=10,
+                output_tokens=20,
+                total_hashes=[1, 2],
+                block_size=64,
+            )
+        ]
+        synth_dicts = [
+            {"timestamp": 5, "input_length": 50, "output_length": 60},
+        ]
+
+        result = loader._reconstruct_traces(originals, synth_dicts)
+
+        assert result[0].request_body == {"min_tokens": 60}
 
     def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
         self, tmp_path: Path
