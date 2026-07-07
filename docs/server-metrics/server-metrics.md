@@ -193,6 +193,40 @@ aiperf profile --model MODEL ... --server-metrics \
     http://node2:8081
 ```
 
+### Kubernetes Auto-Discovery
+
+When AIPerf runs inside a Kubernetes cluster, it queries the Kubernetes API at
+benchmark-configure time and merges discovered inference-server `/metrics`
+endpoints with the endpoint-derived and explicitly configured URLs. A running
+pod is scraped when any one of these holds:
+
+1. It carries the Dynamo opt-in label `nvidia.com/metrics-enabled=true`
+2. It carries the AIPerf opt-in annotation `aiperf.nvidia.com/metrics-paths=<comma-separated paths>`
+3. Any container image matches a known inference-server signature (vLLM, SGLang, Triton Inference Server, TensorRT-LLM, NVIDIA Dynamo)
+4. It matches a user-provided `label_selector`
+
+The broad `prometheus.io/scrape=true` annotation is intentionally **not** a
+trigger (platform components like Loki and kube-state-metrics set it), but
+`prometheus.io/{port,path,scheme}` annotations are honored when constructing
+the scrape URL for an eligible pod.
+
+Configure via the `server_metrics.discovery` block in YAML:
+
+```yaml
+server_metrics:
+  discovery:
+    mode: auto          # auto (default) | kubernetes | disabled
+    namespace: inference  # optional; all namespaces when omitted
+    label_selector: app=vllm  # optional server-side filter
+```
+
+- `auto` (default) — discover only when running in-cluster; no-op locally.
+- `kubernetes` — force K8s API discovery; logs a warning and discovers nothing outside a cluster.
+- `disabled` — use only explicit URLs (`namespace`/`label_selector` are rejected in this mode).
+
+Discovery is best-effort: API errors are logged as warnings and the benchmark
+proceeds with the explicitly configured endpoints.
+
 ### Disabling Server Metrics
 
 ```bash

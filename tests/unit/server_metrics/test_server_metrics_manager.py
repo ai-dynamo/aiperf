@@ -22,7 +22,7 @@ from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.plugin.enums import EndpointType, TimingMode
 from aiperf.server_metrics.manager import ServerMetricsManager
 from aiperf.timing.config import CreditPhaseConfig
-from tests.unit.conftest import make_run_from_cli
+from tests.unit.conftest import make_benchmark_run, make_run_from_cli
 
 
 @pytest.fixture
@@ -1071,4 +1071,184 @@ class TestCallbackEdgeCases:
             reason=None,
             endpoints_configured=[],
             endpoints_reachable=[],
+        )
+
+
+class TestMetricsDiscovery:
+    """Kubernetes endpoint auto-discovery wiring in ServerMetricsManager."""
+
+    @pytest.mark.asyncio
+    async def test_disabled_mode_returns_empty(self):
+        run = make_benchmark_run(
+            extra={"server_metrics": {"discovery": {"mode": "disabled"}}},
+        )
+        manager = ServerMetricsManager(run=run)
+        assert await manager._run_metrics_discovery() == []
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_mode_not_in_cluster(self):
+        run = make_benchmark_run(
+            extra={"server_metrics": {"discovery": {"mode": "kubernetes"}}},
+        )
+        manager = ServerMetricsManager(run=run)
+        with patch(
+            "aiperf.server_metrics.manager.is_running_in_kubernetes",
+            return_value=False,
+        ):
+            assert await manager._run_metrics_discovery() == []
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_mode_in_cluster_passes_selector_and_namespace(self):
+        run = make_benchmark_run(
+            extra={
+                "server_metrics": {
+                    "discovery": {
+                        "mode": "kubernetes",
+                        "namespace": "inference",
+                        "label_selector": "app=vllm",
+                    },
+                },
+            },
+        )
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://pod-1:8080/metrics"],
+            ) as mock_discover,
+        ):
+            result = await manager._run_metrics_discovery()
+
+        assert result == ["http://pod-1:8080/metrics"]
+        mock_discover.assert_called_once_with(
+            namespace="inference",
+            label_selector="app=vllm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_in_cluster(self):
+        run = make_benchmark_run()
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://auto:8080/metrics"],
+            ),
+        ):
+            assert await manager._run_metrics_discovery() == [
+                "http://auto:8080/metrics"
+            ]
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_not_in_cluster(self):
+        run = make_benchmark_run()
+        manager = ServerMetricsManager(run=run)
+        with patch(
+            "aiperf.server_metrics.manager.is_running_in_kubernetes",
+            return_value=False,
+        ):
+            assert await manager._run_metrics_discovery() == []
+
+    @pytest.mark.asyncio
+    async def test_discovery_exception_handled_gracefully(self):
+        run = make_benchmark_run(
+            extra={"server_metrics": {"discovery": {"mode": "kubernetes"}}},
+        )
+        manager = ServerMetricsManager(run=run)
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                side_effect=Exception("K8s API error"),
+            ),
+        ):
+            assert await manager._run_metrics_discovery() == []
+
+    @pytest.mark.asyncio
+    async def test_configure_integrates_discovered_endpoints(self):
+        run = make_benchmark_run(
+            extra={"server_metrics": {"discovery": {"mode": "kubernetes"}}},
+        )
+        manager = ServerMetricsManager(run=run)
+        initial_count = len(manager._server_metrics_endpoints)
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://discovered:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert len(manager._server_metrics_endpoints) == initial_count + 1
+        assert "http://discovered:8080/metrics" in manager._server_metrics_endpoints
+        assert "http://discovered:8080/metrics" in manager._collectors
+
+    @pytest.mark.asyncio
+    async def test_configure_deduplicates_discovered_endpoints(self):
+        run = make_benchmark_run(
+            extra={
+                "server_metrics": {
+                    "urls": ["http://already-there:8080/metrics"],
+                    "discovery": {"mode": "kubernetes"},
+                },
+            },
+        )
+        manager = ServerMetricsManager(run=run)
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=["http://already-there:8080/metrics"],
+            ),
+            patch(
+                "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+            ) as mock_collector_class,
+        ):
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            count_before = len(manager._server_metrics_endpoints)
+            await manager._profile_configure_command(
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+        assert len(manager._server_metrics_endpoints) == count_before
+        assert (
+            manager._server_metrics_endpoints.count("http://already-there:8080/metrics")
+            == 1
         )

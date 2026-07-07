@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType, MessageType
+from aiperf.common.enums import (
+    CommandType,
+    MessageType,
+    ServerMetricsDiscoveryMode,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_message, on_stop
@@ -24,6 +28,10 @@ from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServerMetricsProcessorType
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+from aiperf.server_metrics.discovery.kubernetes import (
+    discover_kubernetes_endpoints,
+    is_running_in_kubernetes,
+)
 from aiperf.server_metrics.protocols import (
     ServerMetricsAccumulatorProtocol,
     ServerMetricsProcessorProtocol,
@@ -150,6 +158,8 @@ class ServerMetricsManager(BaseComponentService):
             )
             return
 
+        await self._merge_discovered_endpoints()
+
         self._collectors.clear()
 
         for endpoint_url in self._server_metrics_endpoints:
@@ -214,6 +224,61 @@ class ServerMetricsManager(BaseComponentService):
             ],
             endpoints_reachable=reachable_endpoints,
         )
+
+    async def _merge_discovered_endpoints(self) -> None:
+        """Merge Kubernetes auto-discovered endpoint URLs into the configured set.
+
+        Deduplicates against statically configured endpoints so a URL present
+        in both sources produces a single collector.
+        """
+        discovered_urls = await self._run_metrics_discovery()
+        added = 0
+        for url in discovered_urls:
+            if url not in self._server_metrics_endpoints:
+                self._server_metrics_endpoints.append(url)
+                added += 1
+        if added > 0:
+            self.info(f"Server Metrics: Auto-discovery added {added} endpoint(s)")
+
+    async def _run_metrics_discovery(self) -> list[str]:
+        """Run Kubernetes metrics-endpoint auto-discovery based on configuration.
+
+        Honors ``server_metrics.discovery.mode``:
+        - ``disabled``: never discover.
+        - ``kubernetes``: force K8s API discovery; warns and returns [] when
+          not running in a cluster.
+        - ``auto`` (default): discover only when running inside Kubernetes.
+
+        Returns:
+            Discovered endpoint URLs (already full scrape URLs, e.g.
+            ``http://10.0.3.7:8081/metrics``); empty list when discovery is
+            skipped or fails. Failures never propagate — discovery is
+            best-effort on top of explicitly configured endpoints.
+        """
+        discovery = self.run.cfg.server_metrics.discovery
+
+        if discovery.mode == ServerMetricsDiscoveryMode.DISABLED:
+            return []
+
+        if discovery.mode == ServerMetricsDiscoveryMode.KUBERNETES:
+            if not is_running_in_kubernetes():
+                self.warning(
+                    "Server Metrics: Kubernetes discovery requested but not running in K8s cluster"
+                )
+                return []
+        elif not is_running_in_kubernetes():
+            # AUTO mode outside a cluster: nothing to discover.
+            return []
+
+        self.info("Server Metrics: Running Kubernetes endpoint discovery...")
+        try:
+            return await discover_kubernetes_endpoints(
+                namespace=discovery.namespace,
+                label_selector=discovery.label_selector,
+            )
+        except Exception as e:  # noqa: BLE001 - discovery is best-effort; never block configure
+            self.warning(f"Server Metrics: Kubernetes discovery failed: {e}")
+            return []
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:

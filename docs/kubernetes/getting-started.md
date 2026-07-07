@@ -505,7 +505,7 @@ aiperf kube results dynamo-benchmark --from-pods
 
 ### Dynamo Server Metrics
 
-When benchmarking Dynamo, AIPerf automatically discovers and collects Prometheus metrics from pods with the `nvidia.com/metrics-enabled=true` label. These include:
+When benchmarking Dynamo, AIPerf automatically discovers and collects Prometheus metrics from pods with the `nvidia.com/metrics-enabled=true` label (or a recognizable inference-server image; see the `server_metrics.discovery` block in the [server-metrics guide](../server-metrics/server-metrics.md#kubernetes-auto-discovery) to tune or disable discovery). These include:
 
 - **Frontend metrics** -- `dynamo_frontend_requests`, `dynamo_frontend_time_to_first_token_seconds`, `dynamo_frontend_inter_token_latency_seconds`, `dynamo_frontend_output_tokens`
 - **Component metrics** -- Per-worker `dynamo_component_requests`, `dynamo_component_kvstats_gpu_cache_usage_percent`, `dynamo_component_kvstats_gpu_prefix_cache_hit_rate`
