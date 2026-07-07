@@ -156,8 +156,9 @@ class TestDynamoSessionControlDetector:
         assert insight is not None
         assert "bind" in insight.title
         assert "session_control" in insight.problem
-        assert any("--use-dynamo-conv-aware-routing" in c for c in insight.causes)
-        assert any("--use-legacy-dynamo-session-control" in f for f in insight.fixes)
+        assert any("--session-routing dynamo_nvext" in c for c in insight.causes)
+        assert any("--session-routing" in f for f in insight.fixes)
+        assert not any("use-legacy" in f for f in insight.fixes)
 
     @pytest.mark.parametrize(
         "message",
@@ -193,6 +194,25 @@ class TestDynamoSessionControlDetector:
 
         assert DynamoSessionControlDetector.detect(summary) is None
 
+    def test_detects_unknown_field_session_control_error(self):
+        """Current Dynamo main (#[serde(deny_unknown_fields)] on NvExt) rejects
+        nvext.session_control as an unknown FIELD; recommend dynamo_headers."""
+        err = MockErrorDetails(
+            message="Failed to deserialize the JSON body: nvext: unknown field `session_control`"
+        )
+        insight = DynamoSessionControlDetector.detect(make_summary(err))
+        assert insight is not None
+        assert any("--session-routing dynamo_headers" in f for f in insight.fixes)
+
+    def test_bind_rejection_fixes_reference_new_flag(self):
+        err = MockErrorDetails(
+            message="unknown variant `bind`, expected `open` or `close`"
+        )
+        insight = DynamoSessionControlDetector.detect(make_summary(err))
+        assert insight is not None
+        assert not any("use-legacy" in f for f in insight.fixes)
+        assert any("--session-routing" in f for f in insight.fixes)
+
     @pytest.mark.asyncio
     async def test_exporter_prints_panel_for_bind_rejection(self):
         """The registered detector should surface a Rich panel via the exporter."""
@@ -215,4 +235,5 @@ class TestDynamoSessionControlDetector:
         panel = args[0]
         assert "Unsupported Dynamo session_control action: bind" in str(panel.title)
         panel_text = str(panel.renderable)
-        assert "--use-legacy-dynamo-session-control" in panel_text
+        assert "--session-routing" in panel_text
+        assert "use-legacy" not in panel_text

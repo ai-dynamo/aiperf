@@ -940,7 +940,7 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, GPUTelemetryProcessorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordProcessorType, ResultsProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServerMetricsProcessorType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, GPUTelemetryProcessorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordProcessorType, ResultsProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServerMetricsProcessorType, ServiceRunType, ServiceType, SessionRoutingType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.search_recipes._base import SearchRecipe
@@ -951,6 +951,7 @@ if TYPE_CHECKING:
     from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
     from aiperf.transports.base_transports import TransportProtocol
     from aiperf.ui.protocols import AIPerfUIProtocol
+    from aiperf.workers.session_routing import SessionRoutingBase
     from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
     from typing import Literal, overload
     # </generated-imports>
@@ -1003,6 +1004,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.TRANSPORT, "transport"], name_or_class_path: TransportType | str) -> type[TransportProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.TRANSPORT, "transport"]) -> Iterator[tuple[PluginEntry, type[TransportProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.SESSION_ROUTING, "session_routing"], name_or_class_path: SessionRoutingType | str) -> type[SessionRoutingBase]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.SESSION_ROUTING, "session_routing"]) -> Iterator[tuple[PluginEntry, type[SessionRoutingBase]]]: ...
     @overload
     def get_class(category: Literal[PluginType.RECORD_PROCESSOR, "record_processor"], name_or_class_path: RecordProcessorType | str) -> type[RecordProcessorProtocol]: ...
     @overload

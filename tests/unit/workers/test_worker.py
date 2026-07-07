@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
@@ -16,7 +17,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.credit.structs import Credit, CreditContext
-from aiperf.workers.worker import Worker
+from aiperf.workers.worker import Worker, _is_terminal_context_overflow
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
@@ -243,6 +244,33 @@ class TestCreateRequestInfo:
         assert request_info.turns[-1].max_tokens == 1
         assert original.max_tokens == 4096
 
+    async def test_create_request_info_plumbs_finality_from_credit(self, mock_worker):
+        # Real Credit struct (not a MagicMock, which would auto-create the
+        # attributes and mask a missed plumb) carrying both finality facts.
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+                is_parent_final=True,
+                is_tree_final=True,
+            ),
+            drop_perf_ns=0,
+        )
+
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            credit_context=credit_context,
+            turns=[Turn()],
+        )
+
+        assert request_info.is_parent_final is True
+        assert request_info.is_tree_final is True
+
 
 # --- Fixture for CreditContext ---
 
@@ -321,27 +349,129 @@ class TestRetrieveConversation:
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
 
 
-# --- Terminal Eviction / Dynamo Session Tracking Tests ---
+# --- Terminal Eviction / Session-Routing Hook Tests ---
 
 
 @pytest.mark.asyncio
 class TestReleaseAndEvictForTerminal:
     """Test suite for Worker's _release_and_evict_for_terminal method."""
 
-    async def test_release_and_evict_for_terminal_cancelled_session_discards_dynamo_open_tracking(
+    async def test_release_and_evict_for_terminal_notifies_session_end(
         self, mock_worker, sample_credit_context
     ):
-        """A session abandoned before its final turn (e.g. cancellation) must be
-        dropped from the legacy Dynamo 'open' tracking set on terminal eviction,
-        since the inline final-turn discard never fires for it."""
+        """A terminal eviction fires the routing plugin's post-session hook
+        (``InferenceClient.notify_session_end``) so stateful plugins release the
+        session even when abandoned before its final turn (e.g. cancellation)."""
         credit = sample_credit_context.credit
-        mock_worker.inference_client._dynamo_opened_sessions.add(
-            credit.x_correlation_id
-        )
+        mock_worker.inference_client.notify_session_end = Mock()
 
         mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
 
-        assert mock_worker.inference_client._dynamo_opened_sessions == set()
+        mock_worker.inference_client.notify_session_end.assert_called_once_with(
+            credit.x_correlation_id
+        )
+
+
+_OVERFLOW_BODY = "This model's maximum context length is 8192 tokens"
+
+
+class TestTerminalContextOverflowClassifier:
+    """``_is_terminal_context_overflow``: a context-overflow error on a
+    non-final, non-cancelled turn is terminal (agentic_replay recycles the lane
+    and sends no final/cancel credit). Final-turn / cancelled returns go through
+    the normal eviction path and must NOT be classified as overflow-terminal."""
+
+    @pytest.mark.parametrize(
+        "is_final, cancelled, error, expected",
+        [
+            param(False, False, _OVERFLOW_BODY, True, id="nonfinal-overflow"),
+            param(False, False, "connection reset by peer", False, id="nonfinal-plain-error"),
+            param(False, False, None, False, id="nonfinal-no-error"),
+            param(True, False, _OVERFLOW_BODY, False, id="final-turn"),
+            param(False, True, _OVERFLOW_BODY, False, id="cancelled"),
+        ],
+    )  # fmt: skip
+    def test_classifier(self, is_final, cancelled, error, expected) -> None:
+        credit = MagicMock(is_final_turn=is_final)
+        ctx = MagicMock(cancelled=cancelled, error=error)
+        assert _is_terminal_context_overflow(credit, ctx) is expected
+
+
+class TestSessionRoutingTerminalHooks:
+    """Every terminal disposition reaches ``InferenceClient.notify_session_end``
+    so routing plugins get their idempotent post-session hook on ALL four
+    terminal paths: final turn, cancellation, terminal context overflow, and the
+    done-callback cancel-before-start branch (which the finally block never sees).
+    """
+
+    def _dispatch_terminal(
+        self, *, is_final: bool, cancelled: bool, error
+    ) -> MagicMock:
+        """Drive the real terminal-disposition gate on a mock worker.
+
+        Both ``_handle_terminal_disposition`` and ``_release_and_evict_for_terminal``
+        are bound as real methods so the final/cancelled path actually reaches
+        ``notify_session_end``; everything else (session_manager) stays mocked.
+        """
+        worker = MagicMock()
+        worker.inference_client = MagicMock()
+        worker._release_and_evict_for_terminal = (
+            Worker._release_and_evict_for_terminal.__get__(worker)
+        )
+        credit = MagicMock(is_final_turn=is_final)
+        ctx = MagicMock(cancelled=cancelled, error=error)
+        Worker._handle_terminal_disposition.__get__(worker)(credit, ctx, "conv-X")
+        return worker
+
+    def test_final_turn_notifies_session_end(self) -> None:
+        worker = self._dispatch_terminal(is_final=True, cancelled=False, error=None)
+        worker.inference_client.notify_session_end.assert_called_once_with("conv-X")
+
+    def test_cancelled_notifies_session_end(self) -> None:
+        worker = self._dispatch_terminal(is_final=False, cancelled=True, error=None)
+        worker.inference_client.notify_session_end.assert_called_once_with("conv-X")
+
+    def test_terminal_context_overflow_notifies_session_end(self) -> None:
+        worker = self._dispatch_terminal(
+            is_final=False, cancelled=False, error=_OVERFLOW_BODY
+        )
+        worker.inference_client.notify_session_end.assert_called_once_with("conv-X")
+
+    def test_nonfinal_plain_error_does_not_notify(self) -> None:
+        worker = self._dispatch_terminal(
+            is_final=False, cancelled=False, error="connection reset by peer"
+        )
+        worker.inference_client.notify_session_end.assert_not_called()
+
+    def _done_callback(self, *, returned: bool) -> MagicMock:
+        """Drive the real done-callback on a mock worker with a not-yet-returned
+        (or already-returned) credit context."""
+        worker = MagicMock()
+        worker.inference_client = MagicMock()
+        worker.service_id = "worker-1"
+        credit = MagicMock()
+        credit.id = 7
+        credit.x_correlation_id = "conv-done"
+        ctx = MagicMock()
+        ctx.returned = returned
+        ctx.credit = credit
+        task = MagicMock()
+        task.cancelled.return_value = True
+        Worker._on_credit_drop_message_task_done.__get__(worker)(task, ctx)
+        return worker
+
+    def test_done_callback_not_returned_branch_notifies_session_end(self) -> None:
+        """The cancel-before-start path (task done, credit never returned) is a
+        terminal disposition the finally block never sees, so the done-callback
+        must fire the hook too."""
+        worker = self._done_callback(returned=False)
+        worker.inference_client.notify_session_end.assert_called_once_with("conv-done")
+
+    def test_done_callback_already_returned_does_not_double_notify(self) -> None:
+        """When the credit already returned, the finally block already notified;
+        the done-callback short-circuits without a second hook call."""
+        worker = self._done_callback(returned=True)
+        worker.inference_client.notify_session_end.assert_not_called()
 
 
 # --- Payload Bytes Fast Path Tests ---

@@ -207,10 +207,10 @@ Make the routing conversation-aware, or cross-replica scatter will destroy
 the prefix-cache reuse this benchmark exists to measure. Server side: SGLang
 Model Gateway `--policy cache_aware` (or `--policy manual`) / Dynamo
 `--router-mode kv`. Client side, AIPerf keeps a stable per-conversation ID
-and can expose it as a routing key:
-`AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=true` (SGLang `manual`),
-`--session-header X-Dynamo-Session-ID` (Dynamo session affinity), or
-`--use-dynamo-conv-aware-routing` (Dynamo builds with
+and exposes it as a routing key via `--session-routing <mode>`:
+`--session-routing smg_routing_key` (SGLang `manual`),
+`--session-routing dynamo_headers` (Dynamo session affinity), or
+`--session-routing dynamo_nvext` (Dynamo builds with
 `nvext.session_control`). Details and full launch commands: the
 [AgentX FAQ §9](../benchmark-modes/semianalysis-agentx-faq.md#9-multi-replica-serving-conversation-aware-routing-sglang-dynamo).
 

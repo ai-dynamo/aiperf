@@ -343,7 +343,6 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                     attributes.get("gen_ai.input.messages")
                 ),
                 raw_tools=_normalize_tools(attributes.get("gen_ai.tool.definitions")),
-                extra_headers={"x-dynamo-session-id": session_id},
             )
         except (KeyError, TypeError, ValueError) as error:
             raise DatasetLoaderError(

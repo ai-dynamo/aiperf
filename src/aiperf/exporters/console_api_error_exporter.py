@@ -112,7 +112,7 @@ class DynamoSessionControlDetector:
                         "v1.3.0-dev / upstream commit d97c889ba)."
                     ),
                     causes=[
-                        "--use-dynamo-conv-aware-routing emits action='bind' on every non-final turn.",
+                        "--session-routing dynamo_nvext emits action='bind' on every non-final turn.",
                         "The target Dynamo server predates the 'bind' action (e.g. v1.2.1).",
                     ],
                     investigation=[
@@ -121,8 +121,32 @@ class DynamoSessionControlDetector:
                     ],
                     fixes=[
                         "Upgrade Dynamo to a build that supports action='bind' (>= v1.3.0-dev, upstream commit d97c889ba).",
-                        "Or run with --use-legacy-dynamo-session-control to emit the v1.2.x-compatible open/close lifecycle (requires the worker to expose a session_control endpoint).",
-                        "Or disable --use-dynamo-conv-aware-routing.",
+                        "Or switch to --session-routing dynamo_headers (header-based affinity; requires --router-session-affinity-ttl-secs on the Dynamo frontend).",
+                    ],
+                )
+
+            # Current upstream Dynamo removed session_control and its NvExt
+            # deserializer denies unknown fields, so the whole field is rejected.
+            if "unknown field" in error_blob and "session_control" in error_blob:
+                return ErrorInsight(
+                    title="Dynamo build does not implement nvext.session_control",
+                    problem=(
+                        "The Dynamo frontend rejected nvext.session_control as an unknown "
+                        "field. Current upstream Dynamo removed session_control; its NvExt "
+                        "deserializer denies unknown fields, so every request fails."
+                    ),
+                    causes=[
+                        "--session-routing dynamo_nvext emits nvext.session_control on every turn.",
+                        "The target Dynamo build has no session_control support (e.g. current main).",
+                    ],
+                    investigation=[
+                        "Check the Dynamo frontend version/build for session_control support.",
+                        "Inspect request payloads in profile_export.jsonl -> nvext.session_control.",
+                    ],
+                    fixes=[
+                        "Switch to --session-routing dynamo_headers and run the Dynamo "
+                        "frontend with --router-session-affinity-ttl-secs.",
+                        "Or drop --session-routing for an untagged baseline.",
                     ],
                 )
 

@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 33 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf supports 36 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
 
 ### Timing Categories
 
@@ -128,6 +128,51 @@ AIPerf supports 33 plugin categories organized by function, including `api_route
 | `api_router` | `APIRouterType` | Lifecycle-managed HTTP/WebSocket routers exposed via `BaseRouter` |
 | `endpoint` | `EndpointType` | API endpoint implementations (chat, completions, embeddings, etc.) |
 | `transport` | `TransportType` | Network transport (HTTP via aiohttp) |
+
+### Session Routing Category
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `session_routing` | `SessionRoutingType` | Stamps per-session identity (headers or body metadata) onto outbound requests so an external router pins every turn of a session to one worker; selected via `--session-routing` |
+
+**Purpose.** A session-routing plugin gives an external router (SGLang Model Gateway, Dynamo, a
+generic session-affinity load balancer) the identity of the session a request belongs to, so all of
+a conversation's turns re-land on the replica holding its KV prefix. Exactly one mode runs per
+invocation; the selected plugin is instantiated once per worker by `InferenceClient` and invoked at
+the request-serialization chokepoint. The base class is `SessionRoutingBase`
+(`src/aiperf/workers/session_routing.py`); passthrough is the default (no headers, body unchanged).
+
+**Built-ins:**
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `dynamo_headers` | `DynamoHeadersRouting` | Dynamo session affinity via `X-Dynamo-Session-ID`, plus `X-Dynamo-Parent-Session-ID` on subagent children. No options. |
+| `dynamo_nvext` | `DynamoNvextRouting` | Dynamo session affinity via `nvext.session_control` request-body metadata (bind on non-final turns, close on the final turn). Only for Dynamo builds that implement `session_control`. Option: `timeout_seconds` (default 300). |
+| `smg_routing_key` | `SmgRoutingKeyRouting` | SGLang Model Gateway `manual`-policy stickiness via `X-SMG-Routing-Key`. No options. |
+| `session_id_header` | `SessionIdHeaderRouting` | Generic additive session-affinity header carrying the session's correlation ID. Option: `header_name` (default `X-Session-ID`). |
+
+**Options (`--session-routing-opt key=value`).** Each plugin exposes an `Options` Pydantic model
+(`extra="forbid"`, so unknown keys are rejected at startup). Repeated `--session-routing-opt`
+pairs populate it; values are coerced to the model's field types and canonicalized at config
+resolution, so downstream code always sees typed values. `--session-routing-opt` without
+`--session-routing` is an error, and parameterless modes (`dynamo_headers`, `smg_routing_key`)
+reject every opt key.
+
+**`mutates_body` and the PAYLOAD_BYTES fast path.** A plugin sets the `mutates_body` class var to
+`True` when `transform_body` changes the payload (only `dynamo_nvext` does). Body-mutating modes are
+incompatible with the verbatim PAYLOAD_BYTES mmap fast path and are gated off it at three points:
+dataset build, cache hit, and runtime. Header-only modes leave the body untouched and keep the fast
+path. `transform_body` must never mutate its input — the structured path shares cached
+`Turn.raw_payload` dicts with the dataset — so it returns a new dict.
+
+**`on_session_end` contract.** Fires strictly after the session's last worker-side activity, on
+every terminal path (final turn, cancellation, terminal context overflow, cancel-before-start). It
+is post-session cleanup only and must be idempotent (default no-op).
+
+**Stateful-plugin rule.** A stateful plugin must key its instance state on `ctx.x_correlation_id`
+only. A session tree deliberately spans workers, so tree-keyed worker state fragments across
+processes. For tree-scoped behavior, use the stateless per-request context facts
+`root_correlation_id` and `is_tree_final` instead of accumulating state.
 
 ### Processing Categories
 

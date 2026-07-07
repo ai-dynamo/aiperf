@@ -159,6 +159,36 @@ class SessionTreeRegistry:
         """True when this registry is tracking ``root_corr`` (engagement gate)."""
         return root_corr in self._trees
 
+    def root_terminal(self, root_correlation_id: str) -> bool | None:
+        """True when the tree's root has returned its terminal turn; None if unknown.
+
+        Queried at credit-issue time while the tree is still live (a descendant
+        being issued keeps it in ``_trees``). A fully drained tree has been
+        popped and reads as unknown/None.
+        """
+        state = self._trees.get(root_correlation_id)
+        if state is None:
+            return None
+        return not state.root_pending
+
+    def is_last_tree_request(
+        self,
+        root_correlation_id: str,
+        *,
+        is_final_turn: bool,
+        is_root_credit: bool,
+        has_forks: bool,
+    ) -> bool:
+        """Conservative: True only when this credit is provably the tree's last request."""
+        if not is_final_turn or has_forks:
+            return False
+        state = self._trees.get(root_correlation_id)
+        if state is None:
+            return False
+        if is_root_credit:
+            return state.outstanding <= 0
+        return (not state.root_pending) and state.outstanding == 1
+
     def register_descendants(self, root_corr: str, n: int = 1) -> None:
         """Add ``n`` descendants (spawned or snapshot-seeded) to a tree.
 

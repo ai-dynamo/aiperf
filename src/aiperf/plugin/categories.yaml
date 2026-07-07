@@ -141,6 +141,22 @@ transport:
     One-to-one mapping based on transport_type configuration.
 
 # =============================================================================
+# Session Routing Category
+# =============================================================================
+
+session_routing:
+  protocol: aiperf.workers.session_routing:SessionRoutingBase
+  enum: SessionRoutingType
+  description: |
+    Session-routing transforms stamp per-session identity onto outbound
+    requests (headers or body metadata) so an external router in front of
+    multiple replicas can pin every turn of a session to one worker.
+    Selected via --session-routing; parameterized via repeatable
+    --session-routing-opt key=value validated against the plugin's
+    Options model. Body-mutating plugins (mutates_body=True) are rejected
+    against the verbatim PAYLOAD_BYTES mmap fast path.
+
+# =============================================================================
 # Processing Categories
 # =============================================================================
 
