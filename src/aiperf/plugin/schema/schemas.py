@@ -571,5 +571,6 @@ from aiperf.plugin.schema._orchestrator_schemas import (  # noqa: E402
 __all__ = [
     "ConvergenceCriterionMetadata",
     "GPUTelemetryCollectorMetadata",
+    "RecordRoutingMetadata",
     "SearchPlannerMetadata",
 ]
