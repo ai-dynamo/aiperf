@@ -122,6 +122,28 @@ class _APIServerSettings(BaseSettings):
     )
 
 
+class _ChatSettings(BaseSettings):
+    """Settings for the interactive ``aiperf chat`` command."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_CHAT_",
+    )
+
+    CONNECT_TIMEOUT: float = Field(
+        gt=0.0,
+        default=10.0,
+        description="Seconds to wait to establish a connection to the endpoint "
+        "before a turn fails. Kept short so an unreachable URL fails fast.",
+    )
+    READ_TIMEOUT: float = Field(
+        gt=0.0,
+        default=300.0,
+        description="Seconds to wait for the next streamed chunk before a turn "
+        "fails. No overall (total) timeout is applied, so long generations are "
+        "never truncated mid-reply; this only fires if the server stalls.",
+    )
+
+
 class _CompressionSettings(BaseSettings):
     """Compression settings for streaming file transfers.
 
@@ -1375,6 +1397,10 @@ class _Environment(BaseSettings):
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
+    )
+    CHAT: _ChatSettings = Field(
+        default_factory=_ChatSettings,
+        description="Interactive `aiperf chat` command settings",
     )
     COMPRESSION: _CompressionSettings = Field(
         default_factory=_CompressionSettings,

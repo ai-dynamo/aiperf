@@ -38,7 +38,16 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.plugins import _PluginRegistry as PluginRegistry
 from tests.harness.fake_tokenizer import FakeTokenizer
+from tests.harness.optional_deps import collect_ignore_for_unavailable_deps
 from tests.harness.time_traveler import TimeTraveler
+
+# Skip (at collection time) any unit-test module whose top-level imports need a
+# native dependency with no Windows-on-ARM build (pyarrow, datasets,
+# soundfile/libsndfile, trustme->cryptography). Without this, collection itself
+# crashes on win-arm before any test runs. The set is discovered by statically
+# scanning each module's top-level imports (see optional_deps.py) -- new tests
+# self-gate with no edits here. Empty on every platform where the deps exist.
+collect_ignore: list[str] = collect_ignore_for_unavailable_deps(Path(__file__).parent)
 
 # Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
