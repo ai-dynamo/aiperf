@@ -282,6 +282,93 @@ class TestBasetenTraceDatasetLoader:
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
 
+    def _write_null_session_mix(self, tmp_path: Path) -> Path:
+        return _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "s1-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "s1-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "s2-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 400,
+                    "prompt": "s2-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 500,
+                    "prompt": "null-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": None,
+                },
+                {
+                    "timestamp_start_unix_ms": 600,
+                    "prompt": "null-2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": None,
+                },
+            ],
+        )
+
+    def test_trace_session_sampling_keeps_null_session_rows(self, tmp_path: Path):
+        path = self._write_null_session_mix(tmp_path)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.9999, random_seed=7),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        prompts = sorted(
+            trace.text_input for traces in dataset.values() for trace in traces
+        )
+        assert prompts == ["null-1", "null-2", "s1-t1", "s1-t2", "s2-t1", "s2-t2"]
+        # Null-session rows become synthesized single-turn sessions.
+        assert sorted(len(traces) for traces in dataset.values()) == [1, 1, 2, 2]
+
+    def test_trace_session_sampling_null_rows_deterministic_across_loads(
+        self, tmp_path: Path
+    ):
+        path = self._write_null_session_mix(tmp_path)
+
+        def load() -> list[list[str]]:
+            loader = BasetenTraceDatasetLoader(
+                filename=str(path),
+                run=_make_run(path, trace_session_sample_ratio=0.5, random_seed=7),
+                prompt_generator=_mock_prompt_generator(),
+            )
+            return [
+                [trace.text_input for trace in traces]
+                for traces in loader.load_dataset().values()
+            ]
+
+        first, second = load(), load()
+
+        assert first == second
+        assert first, "mid-ratio sampling should keep at least one session"
+
     def test_trace_session_sampling_skips_when_no_effective_session_key(
         self, tmp_path: Path
     ):

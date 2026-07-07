@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from aiperf.common import random_generator as rng
@@ -217,11 +218,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
     def _sample_session_ids(
         self,
-    ) -> tuple[int | None, str | None, set[str | int] | None]:
+    ) -> tuple[int | None, str | None, set[str | int] | None, set[int] | None]:
         metadata_table = self._read_metadata_table()
 
         if metadata_table.num_rows == 0:
-            return None, None, None
+            return None, None, None, None
 
         probe_size = min(_SESSION_KEY_PROBE_ROWS, metadata_table.num_rows)
         probe_rows = metadata_table.slice(offset=0, length=probe_size).to_pylist()
@@ -230,6 +231,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         min_timestamp: int | None = None
         session_first_ts: dict[str | int, int] = {}
+        null_row_count = 0
 
         for row in metadata_rows:
             timestamp = int(row[METADATA_COLUMNS_TIME])
@@ -242,6 +244,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
             session_id = row.get(session_key)
             if session_id is None:
+                null_row_count += 1
                 continue
 
             session_first_ts[session_id] = min(
@@ -250,14 +253,14 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             )
 
         if self._session_sample_ratio is None or self._session_sample_ratio >= 1.0:
-            return min_timestamp, session_key, None
+            return min_timestamp, session_key, None, None
 
         if session_key is None:
             self.warning(
                 "trace_session_sample_ratio requested, but neither provided_session_id "
                 "nor poor_man_session_id forms multi-row sessions; skipping sampling."
             )
-            return min_timestamp, None, None
+            return min_timestamp, None, None, None
 
         session_entries = sorted(
             (
@@ -276,15 +279,26 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if not sampled_entries and original_count > 0:
             sampled_entries = [self._rng.choice(session_entries)]
 
+        # Null-session rows become synthesized single-turn sessions downstream,
+        # so sample each (keyed by file row order) at the same ratio instead of
+        # letting the pyarrow "in" filter drop them all.
+        sampled_null_rows = {
+            ordinal
+            for ordinal in range(null_row_count)
+            if self._rng.uniform(0.0, 1.0) < self._session_sample_ratio
+        }
+
         self.info(
-            f"Sampled {len(sampled_entries):,} of {original_count:,} sessions using "
-            f"{session_key} "
+            f"Sampled {len(sampled_entries):,} of {original_count:,} sessions and "
+            f"{len(sampled_null_rows):,} of {null_row_count:,} null-session rows "
+            f"using {session_key} "
             f"with trace_session_sample_ratio={self._session_sample_ratio}"
         )
         return (
             min_timestamp,
             session_key,
             {session_id for _, session_id in sampled_entries},
+            sampled_null_rows,
         )
 
     def load_dataset(self) -> dict[str, list[BasetenTrace]]:
@@ -293,19 +307,28 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._capped_max_osl = 0
         self._floored_zero_osl = 0
 
-        min_timestamp, sampled_session_key, sampled_session_ids = (
+        min_timestamp, sampled_session_key, sampled_session_ids, sampled_null_rows = (
             self._sample_session_ids()
         )
         table_kwargs: dict[str, Any] = {}
-        if sampled_session_key and sampled_session_ids:
-            table_kwargs["filters"] = [
-                (sampled_session_key, "in", sorted(sampled_session_ids))
-            ]
+        sampling = sampled_session_key is not None and sampled_session_ids is not None
+        if sampling:
+            table_kwargs["filters"] = (
+                pc.field(sampled_session_key).isin(sorted(sampled_session_ids))
+                | pc.field(sampled_session_key).is_null()
+            )
 
         table = pq.read_table(self.filename, **table_kwargs)
         items: list[BasetenTrace] = []
+        null_ordinal = 0
 
         for row in table.to_pylist():
+            if sampling and row.get(sampled_session_key) is None:
+                kept = null_ordinal in sampled_null_rows
+                null_ordinal += 1
+                if not kept:
+                    continue
+
             if "__version__" in row and "dataset_version" not in row:
                 row["dataset_version"] = row.pop("__version__")
 
