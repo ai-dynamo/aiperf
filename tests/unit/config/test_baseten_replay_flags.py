@@ -9,7 +9,8 @@ Covers the open-loop default flip (``--open-loop-replay`` /
 baseten-only knobs (value and boolean) on non-baseten datasets, the
 contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection,
 the resolver warning for baseten-only knobs on auto-detected non-baseten
-datasets, and the baseten_trace rejection of ``--synthesis-speedup-ratio``.
+datasets, and the baseten_trace rejections of ``--synthesis-speedup-ratio``
+and loader-colliding ``--extra-inputs`` keys.
 """
 
 from __future__ import annotations
@@ -401,3 +402,59 @@ class TestSynthesisSpeedupBasetenGuard:
             _baseten_argv(trace_parquet, "--synthesis-prompt-len-multiplier", "2.0")
         )
         assert dataset.synthesis.prompt_len_multiplier == 2.0
+
+
+_COLLIDING_EXTRA_INPUTS = [
+    param("min_tokens:5", "--no-force-min-tokens", id="min-tokens"),
+    param("hash_ids:999", "--omit-kv-hints", id="hash-ids"),
+    param("block_size:64", "--omit-kv-hints", id="block-size"),
+]
+
+
+class TestExtraInputsLoaderCollisionGuard:
+    """Keys the baseten_trace loader injects per-turn silently clobber user
+    --extra-inputs values on the wire; rejected unless the matching opt-out
+    flag disables the injection (max_tokens is user-wins, not guarded)."""
+
+    @pytest.mark.parametrize(("extra_input", "optout"), _COLLIDING_EXTRA_INPUTS)  # fmt: skip
+    def test_colliding_key_rejected_with_optout_hint(
+        self, trace_parquet: Path, extra_input: str, optout: str
+    ) -> None:
+        key = extra_input.split(":", 1)[0]
+        cli = _parse_cli_args(
+            _baseten_argv(trace_parquet, "--extra-inputs", extra_input)
+        )
+        with pytest.raises(
+            ValueError,
+            match=f"--extra-inputs {key} is overwritten per-turn by the "
+            f"baseten_trace loader; pass {optout} to send your value",
+        ):
+            build_dataset(cli)
+
+    @pytest.mark.parametrize(("extra_input", "optout"), _COLLIDING_EXTRA_INPUTS)  # fmt: skip
+    def test_accepted_with_optout_flag(
+        self, trace_parquet: Path, extra_input: str, optout: str
+    ) -> None:
+        cfg = convert_cli_to_aiperf(
+            _parse_cli_args(
+                _baseten_argv(trace_parquet, "--extra-inputs", extra_input, optout)
+            )
+        )
+        key, value = extra_input.split(":", 1)
+        assert cfg.benchmark.endpoint.extra[key] == int(value)
+
+    def test_max_tokens_not_rejected(self, trace_parquet: Path) -> None:
+        cfg = convert_cli_to_aiperf(
+            _parse_cli_args(
+                _baseten_argv(trace_parquet, "--extra-inputs", "max_tokens:99")
+            )
+        )
+        assert cfg.benchmark.endpoint.extra["max_tokens"] == 99
+
+    def test_non_baseten_dataset_unaffected(self, mooncake_jsonl: Path) -> None:
+        cfg = convert_cli_to_aiperf(
+            _parse_cli_args(
+                _mooncake_argv(mooncake_jsonl, "--extra-inputs", "min_tokens:5")
+            )
+        )
+        assert cfg.benchmark.endpoint.extra["min_tokens"] == 5

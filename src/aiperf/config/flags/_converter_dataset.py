@@ -630,6 +630,40 @@ def _reject_baseten_trace_synthesis_speedup(cli: CLIConfig) -> None:
         )
 
 
+def _reject_baseten_trace_extra_input_collisions(cli: CLIConfig) -> None:
+    """Reject --extra-inputs keys the baseten_trace loader injects per-turn.
+
+    Loader-injected per-turn values (``min_tokens`` from the recorded output
+    length, ``hash_ids``/``block_size`` KV hints) overwrite endpoint-level
+    extras, so the user's value would be silently clobbered on the wire.
+    Each collision has an opt-out flag that stops the injection so the user
+    value goes through. ``max_tokens`` is not guarded: user extras win over
+    the loader for that key.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+        return
+    extra = dict(cli.extra_inputs or ())
+    collisions: list[tuple[str, str]] = []
+    if cli.force_min_tokens and "min_tokens" in extra:
+        collisions.append(("min_tokens", "--no-force-min-tokens"))
+    if not cli.omit_kv_hints:
+        collisions.extend(
+            (key, "--omit-kv-hints")
+            for key in ("hash_ids", "block_size")
+            if key in extra
+        )
+    if collisions:
+        raise ValueError(
+            "; ".join(
+                f"--extra-inputs {key} is overwritten per-turn by the "
+                f"baseten_trace loader; pass {flag} to send your value instead"
+                for key, flag in collisions
+            )
+        )
+
+
 def _reject_contradictory_open_loop_flags(cli: CLIConfig) -> None:
     """Reject --open-loop-strict combined with --no-open-loop-replay.
 
@@ -776,6 +810,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
     _reject_baseten_trace_synthesis_speedup(cli)
+    _reject_baseten_trace_extra_input_collisions(cli)
     _reject_contradictory_open_loop_flags(cli)
     if cli.dataset_filters and not cli.public_dataset:
         raise ValueError("--dataset-filter requires --public-dataset")
