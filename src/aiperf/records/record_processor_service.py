@@ -5,7 +5,13 @@ import traceback
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    CreditPhase,
+    ExportLevel,
+    MessageType,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_message, on_pull_message
@@ -237,7 +243,17 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             self.exception(
                 f"Failed to process inference record; forwarding as error: {e!r}"
             )
-            await self._forward_failed_record(message, record, last_response_perf_ns, e)
+            # Last-resort guard: a failure inside the error-forward path must not
+            # propagate out of the handler, or the timeout-less completion barrier
+            # hangs the run (see docstring). Log and swallow.
+            try:
+                await self._forward_failed_record(
+                    message, record, last_response_perf_ns, e
+                )
+            except Exception as forward_exc:  # noqa: BLE001
+                self.exception(
+                    f"Failed to forward error record; dropping to avoid escaping handler: {forward_exc!r}"
+                )
 
     async def _process_and_forward_record(
         self,
@@ -289,9 +305,31 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     ) -> None:
         """Forward an error record after a parse/process failure so the
         records-side count stays in lockstep with the already-returned credit."""
-        metadata = self._create_metric_record_metadata(
-            record, message.service_id, last_response_perf_ns
-        )
+        try:
+            metadata = self._create_metric_record_metadata(
+                record, message.service_id, last_response_perf_ns
+            )
+        except Exception as meta_exc:  # noqa: BLE001
+            # Metadata creation itself can fail (e.g. request_info is None, which
+            # was often the original failure cause). Fall back to a minimal record
+            # built only from always-available fields so lockstep is preserved.
+            self.exception(
+                f"Failed to build metric record metadata for error record; using fallback: {meta_exc!r}"
+            )
+            if record.request_info is not None:
+                session_num = record.request_info.credit_num
+                benchmark_phase = record.request_info.credit_phase
+            else:
+                session_num = -1
+                benchmark_phase = CreditPhase.PROFILING
+            metadata = MetricRecordMetadata(
+                session_num=session_num,
+                request_start_ns=record.timestamp_ns,
+                request_end_ns=record.timestamp_ns,
+                worker_id=message.service_id,
+                record_processor_id=self.service_id,
+                benchmark_phase=benchmark_phase,
+            )
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
