@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from aiperf.analysis.sweepline import (
+    ZERO_SWEEP_LINE_STATS,
     SweepLineStats,
     add_step_functions,
     compute_active_weighted_stats,
@@ -119,6 +120,19 @@ class TestThroughputSweep:
         output_tokens = np.array([11.0, np.nan])
         ts, tput = throughput_sweep_line(gen_start, end, output_tokens)
         assert len(ts) == 2  # Only 1 valid request
+
+    def test_throughput_sweep_line_zero_output_tokens_no_negative_rate(self) -> None:
+        """OSL=0 must be dropped (matching the ICL variant), never produce a
+        negative rate segment from the (output_tokens - 1) / gen_dur formula.
+
+        Pre-fix this record yielded curve values [-0.01, 0.0] (min = -0.01).
+        """
+        ts, tput = throughput_sweep_line(
+            np.array([0.0]), np.array([100.0]), np.array([0.0])
+        )
+        assert len(ts) == 0
+        assert len(tput) == 0
+        assert np.all(tput >= 0)
 
 
 class TestPrefillThroughputSweep:
@@ -268,6 +282,33 @@ class TestTotalThroughputSweep:
         )
         assert len(ts) > 0
         assert float(np.max(tput)) == pytest.approx(1.0)  # 100/100
+
+    def test_total_throughput_sweep_line_zero_output_tokens_no_negative_rate(
+        self,
+    ) -> None:
+        """OSL=0 must not inject a negative generation-rate segment; the
+        prefill branch stays untouched.
+
+        Note: the pre-existing test_zero_output_tokens_excluded uses OSL=1
+        (rate 0) and therefore did not cover this OSL=0 sign bug. Pre-fix the
+        generation branch injects a -0.01 segment during [50, 150).
+        """
+        start = np.array([0.0])
+        gen_start = np.array([50.0])
+        end = np.array([150.0])
+        input_tokens = np.array([100.0])
+        output_tokens = np.array([0.0])
+
+        ts, tput = total_throughput_sweep_line(
+            start,
+            gen_start,
+            end,
+            input_tokens,
+            output_tokens=output_tokens,
+        )
+        assert np.all(tput >= 0)
+        # Prefill rate 100/50 unchanged, confirming the prefill branch is untouched.
+        assert float(np.max(tput)) == pytest.approx(2.0)
 
 
 class TestThroughputSweepIcl:
@@ -1197,6 +1238,30 @@ class TestComputeActiveWeightedStats:
             10.0,
         )
         assert stats.avg == 0.0
+
+    def test_compute_active_weighted_stats_empty_mask_nonempty_rate_returns_zero(
+        self,
+    ) -> None:
+        """Empty mask curve with a non-empty rate curve must not IndexError.
+
+        An empty mask step function is 0 everywhere (per _step_lookup's
+        "value is 0 before the first event" contract), so no segment is ever
+        active and the result is ZERO_SWEEP_LINE_STATS. Prior to the guard,
+        _step_lookup eagerly indexed a size-0 array and raised IndexError.
+        """
+        stats = compute_active_weighted_stats(
+            rate_ts=np.array([0.0, 100.0]),
+            rate_vals=np.array([5.0, 0.0]),
+            mask_ts=np.array([], dtype=np.float64),
+            mask_vals=np.array([], dtype=np.float64),
+            window_start=0.0,
+            window_end=100.0,
+        )
+        assert stats == ZERO_SWEEP_LINE_STATS
+        assert stats.avg == 0.0
+        assert stats.min == 0.0
+        assert stats.max == 0.0
+        assert stats.std == 0.0
 
     def test_no_active_segments(self) -> None:
         """Mask is zero throughout — stats should be all zeros."""

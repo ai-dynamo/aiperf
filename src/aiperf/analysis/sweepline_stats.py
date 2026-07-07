@@ -145,7 +145,7 @@ def compute_active_weighted_stats(
         ZERO_SWEEP_LINE_STATS if no active segments overlap the window.
     """
     total_dur = window_end - window_start
-    if total_dur <= 0 or len(rate_ts) == 0:
+    if total_dur <= 0 or len(rate_ts) == 0 or len(mask_ts) == 0:
         return ZERO_SWEEP_LINE_STATS
 
     # Window edges cover exact-boundary events; _step_lookup resolves the value
