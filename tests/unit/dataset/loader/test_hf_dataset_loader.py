@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image as PILImage
 
-from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.common.exceptions import ConfigurationError, DatasetLoaderError
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.public import PublicDatasetComposer
@@ -18,6 +18,7 @@ from aiperf.dataset.loader.hf_instruction_response import (
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+from tests.harness.optional_deps import HAS_DATASETS, HAS_SOUNDFILE
 from tests.unit.conftest import make_run_from_cli
 
 
@@ -78,6 +79,19 @@ class TestBaseHFDatasetLoader:
             result = await loader.load_dataset()
         assert result == {"dataset": fake_dataset}
 
+    async def test_missing_datasets_raises_clear_configuration_error(
+        self, loader, monkeypatch
+    ):
+        """When ``datasets`` can't be imported (e.g. Windows-on-ARM has no wheel),
+        the loader raises an actionable ConfigurationError rather than a generic
+        DatasetLoaderError suggesting a gated-dataset auth issue."""
+        import sys
+
+        monkeypatch.setitem(sys.modules, "datasets", None)
+        with pytest.raises(ConfigurationError, match="datasets"):
+            await loader.load_dataset()
+
+    @pytest.mark.skipif(not HAS_DATASETS, reason="datasets has no Windows-on-ARM wheel")
     async def test_load_hf_dataset_calls_load_dataset_with_correct_args(
         self, cli_config
     ):
@@ -89,9 +103,7 @@ class TestBaseHFDatasetLoader:
             prompt_column="q",
         )
         mock_load_dataset = MagicMock(return_value=[])
-        with patch(
-            "aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", mock_load_dataset
-        ):
+        with patch("datasets.load_dataset", mock_load_dataset):
             loader._load_hf_dataset()
 
         mock_load_dataset.assert_called_once_with(
@@ -111,6 +123,7 @@ class TestBaseHFDatasetLoader:
         )
         assert loader.streaming is False
 
+    @pytest.mark.skipif(not HAS_DATASETS, reason="datasets has no Windows-on-ARM wheel")
     async def test_streaming_true_passed_to_hf_load_dataset(self, cli_config):
         loader = HFInstructionResponseDatasetLoader(
             run=make_run_from_cli(cli_config),
@@ -120,9 +133,7 @@ class TestBaseHFDatasetLoader:
             streaming=True,
         )
         mock_load_dataset = MagicMock(return_value=[])
-        with patch(
-            "aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", mock_load_dataset
-        ):
+        with patch("datasets.load_dataset", mock_load_dataset):
             loader._load_hf_dataset()
 
         mock_load_dataset.assert_called_once_with(
@@ -381,6 +392,10 @@ class TestHFInstructionResponseAudioColumn:
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].audios == []
 
+    @pytest.mark.skipif(
+        not HAS_SOUNDFILE,
+        reason="soundfile/libsndfile unavailable (e.g. Windows-on-ARM)",
+    )
     async def test_audio_column_attaches_audio_to_turn(self, cli_config):
         loader = self._make_loader(cli_config)
         data = {"dataset": [_make_audio_row()]}

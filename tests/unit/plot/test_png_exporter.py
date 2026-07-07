@@ -2653,3 +2653,29 @@ class TestPlotSpecListValidation:
         )
 
         assert spec.label_by is None
+
+
+class TestPngExportWindowsArmGuard:
+    """The kaleido PNG path hard-crashes (access violation) on Windows-on-ARM,
+    so ``_export_figure`` must raise an actionable error there instead."""
+
+    def test_export_figure_raises_configuration_error_on_windows_arm(
+        self, single_run_exporter, tmp_path, monkeypatch
+    ):
+        import plotly.graph_objects as go
+
+        from aiperf.common.exceptions import ConfigurationError
+
+        monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", True)
+        with pytest.raises(ConfigurationError, match="Windows-on-ARM"):
+            single_run_exporter._export_figure(go.Figure(), tmp_path / "x.png")
+
+    def test_export_figure_writes_when_not_windows_arm(
+        self, single_run_exporter, tmp_path, monkeypatch
+    ):
+        import plotly.graph_objects as go
+
+        monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
+        out = tmp_path / "x.png"
+        single_run_exporter._export_figure(go.Figure(), out)
+        assert out.exists()
