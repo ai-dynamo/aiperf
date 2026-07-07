@@ -136,5 +136,5 @@ In the standard end-of-run output, AIPerf renders one table per non-empty `Metri
 
 ## References
 
-- Per-metric definitions and formulas: [`docs/metrics-reference.md`](../metrics-reference.md)
+- Definitions and formulas for the record-level metrics referenced here (TTFT, ITL, request latency, ISL/OSL): [`docs/metrics-reference.md`](../metrics-reference.md). The Effective/Active families themselves are defined only in this brief.
 - Coordinated omission background: Gil Tene, "How NOT to Measure Latency" (Strange Loop 2015)

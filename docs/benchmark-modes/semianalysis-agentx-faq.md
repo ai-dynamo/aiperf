@@ -71,6 +71,15 @@ transparency.
   / `--adaptive-scale`.
 - **Your parameters** (not locked): `--url`, `--model`, `--endpoint-type chat`, `--concurrency`,
   `--use-server-token-count`, `--artifact-dir`.
+- **Sizing to your server** (optional, not scenario-checked): add
+  `--max-context-length <your server's context window>` to drop traces whose peak prompt+output
+  wouldn't fit; a ~256k-window server should instead pick a `_256k` corpus
+  ([§3](#3-how-realistic-are-the-prompts-and-token-counts)).
+
+The [AgentX MVP tutorial](../tutorials/agentx-mvp.md#quick-start)'s Quick Start is the same run,
+written slightly differently: it uses the rolling `semianalysis_cc_traces_weka_with_subagents` alias
+(this page pins the `062126` drop it currently resolves to) and writes out `--max-context-length`, a
+pinned `--random-seed`, and `--ui simple`.
 
 What to expect:
 
@@ -88,9 +97,9 @@ What to expect:
 **If it breaks:**
 
 - Configuration times out before any traffic starts → raise the reconstruction timeouts
-  ([§8](#8-running-the-benchmark-and-why-the-first-run-is-slow)).
+  ([§8 troubleshooting](#q-configuration-times-out-before-any-traffic-starts)).
 - Connection resets (`ECONNRESET`) partway through → lower the client keep-alive
-  ([§8](#8-running-the-benchmark-and-why-the-first-run-is-slow)).
+  ([§8 troubleshooting](#q-my-run-dies-partway-with-connection-resets)).
 - `submission_valid: false` → find which locked rule or health bound tripped
   ([§7](#7-reading-the-results-metrics-validity-and-submission-requirements)).
 
@@ -99,17 +108,80 @@ What to expect:
 ## Table of contents
 
 - [Quickstart](#quickstart)
-
 1. [What is this benchmark and what is it measuring?](#1-what-is-this-benchmark-and-what-is-it-measuring)
+    - [In one sentence, what is SemiAnalysis AgentX?](#q-in-one-sentence-what-is-semianalysis-agentx)
+    - [Where does the traffic come from?](#q-where-does-the-traffic-come-from)
+    - [What is it actually trying to measure that a normal load test can't?](#q-what-is-it-actually-trying-to-measure-that-a-normal-load-test-cant)
 2. [What load does it actually put on my server?](#2-what-load-does-it-actually-put-on-my-server)
+    - [How is the load shaped over time?](#q-how-is-the-load-shaped-over-time)
+    - [What does `--concurrency N` mean for this benchmark?](#q-what-does---concurrency-n-mean-for-this-benchmark)
+    - [Are inter-turn delays honored, or is it as-fast-as-possible?](#q-are-inter-turn-delays-honored-or-is-it-as-fast-as-possible)
+    - [What does a single session look like on the wire?](#q-what-does-a-single-session-look-like-on-the-wire)
 3. [How realistic are the prompts and token counts?](#3-how-realistic-are-the-prompts-and-token-counts)
+    - [Are the prompts real text, or synthesized?](#q-are-the-prompts-real-text-or-synthesized)
+    - [How exact is the input sequence length (ISL)?](#q-how-exact-is-the-input-sequence-length-isl)
+    - [How is the output sequence length (OSL) controlled?](#q-how-is-the-output-sequence-length-osl-controlled)
+    - [How does it reproduce KV-cache prefix sharing specifically?](#q-how-does-it-reproduce-kv-cache-prefix-sharing-specifically)
+    - [What does a recorded trace actually look like?](#q-what-does-a-recorded-trace-actually-look-like)
+    - [Show me how those turns become what's actually sent on the wire.](#q-show-me-how-those-turns-become-whats-actually-sent-on-the-wire)
+    - [The traces were recorded against Claude models — and one trace can mix two of them. I serve one model; what is actually sent?](#q-the-traces-were-recorded-against-claude-models--and-one-trace-can-mix-two-of-them-i-serve-one-model-what-is-actually-sent)
+    - [Is there a way to know the "ideal" cache-hit rate for a run?](#q-is-there-a-way-to-know-the-ideal-cache-hit-rate-for-a-run)
+    - [What about tool calls — do they hit my server as real tool schemas?](#q-what-about-tool-calls--do-they-hit-my-server-as-real-tool-schemas)
+    - [Several corpora have a `_256k` variant — which should I use?](#q-several-corpora-have-a-_256k-variant--which-should-i-use)
+    - [How does `_256k` differ from just passing `--max-context-length`?](#q-how-does-_256k-differ-from-just-passing---max-context-length)
 4. [The KV-cache story: warmup, t\*, and cache-busting](#4-the-kv-cache-story-warmup-t-and-cache-busting)
+    - [Why start each session at a sampled point t\* rather than always from turn 0?](#q-why-start-each-session-at-a-sampled-point-t-rather-than-always-from-turn-0)
+    - [What exactly does the warmup phase send?](#q-what-exactly-does-the-warmup-phase-send)
+    - [What is cache-busting and why would I want it?](#q-what-is-cache-busting-and-why-would-i-want-it)
+    - [How is the marker designed so it doesn't break the warmup-to-profiling cache handoff?](#q-how-is-the-marker-designed-so-it-doesnt-break-the-warmup-to-profiling-cache-handoff)
+    - [Where is the marker placed in the prompt?](#q-where-is-the-marker-placed-in-the-prompt)
+    - [Does cache-busting change my reconstructed dataset / cache key?](#q-does-cache-busting-change-my-reconstructed-dataset--cache-key)
 5. [Subagents, forks, and joins: the agentic shape of the load](#5-subagents-forks-and-joins-the-agentic-shape-of-the-load)
+    - [How are subagents represented in the load?](#q-how-are-subagents-represented-in-the-load)
+    - [Do subagents run in parallel or in sequence?](#q-do-subagents-run-in-parallel-or-in-sequence)
+    - [How is the classification of "real subagent" vs "small helper call" decided?](#q-how-is-the-classification-of-real-subagent-vs-small-helper-call-decided)
+    - [Do subagents consume my `--concurrency` budget?](#q-do-subagents-consume-my---concurrency-budget)
+    - [What if a subagent errors out?](#q-what-if-a-subagent-errors-out)
 6. [Concurrency, lanes, and steady state](#6-concurrency-lanes-and-steady-state)
+    - [How does the benchmark keep N sessions alive throughout the run?](#q-how-does-the-benchmark-keep-n-sessions-alive-throughout-the-run)
+    - [What decides which trace a lane runs next?](#q-what-decides-which-trace-a-lane-runs-next)
+    - [Does the run length depend on the dataset size?](#q-does-the-run-length-depend-on-the-dataset-size)
+    - [How do I scale the offered load up or down?](#q-how-do-i-scale-the-offered-load-up-or-down)
+    - [Can I sweep concurrency (e.g. `--concurrency 64,128,256`) in one invocation?](#q-can-i-sweep-concurrency-eg---concurrency-64128256-in-one-invocation)
 7. [Reading the results: metrics, validity, and submission requirements](#7-reading-the-results-metrics-validity-and-submission-requirements)
+    - [What performance numbers does the benchmark report?](#q-what-performance-numbers-does-the-benchmark-report)
+    - [Are latencies measured per request or per session?](#q-are-latencies-measured-per-request-or-per-session)
+    - [How do I compare two runs (or two servers) fairly?](#q-how-do-i-compare-two-runs-or-two-servers-fairly)
+    - [What is `submission_valid` and where do I see it?](#q-what-is-submission_valid-and-where-do-i-see-it)
+    - [What can make a run invalid?](#q-what-can-make-a-run-invalid)
+    - [What counts as a "context overflow," and why does it gate validity?](#q-what-counts-as-a-context-overflow-and-why-does-it-gate-validity)
+    - [If my server overflows occasionally, does the whole run get thrown out?](#q-if-my-server-overflows-occasionally-does-the-whole-run-get-thrown-out)
+    - [Do generic request errors (HTTP 500s, timeouts) invalidate the run?](#q-do-generic-request-errors-http-500s-timeouts-invalidate-the-run)
+    - [My server has a ~256k context window and the run keeps overflowing — what's the right fix?](#q-my-server-has-a-256k-context-window-and-the-run-keeps-overflowing--whats-the-right-fix)
+    - [How do I visualize what actually happened during the run?](#q-how-do-i-visualize-what-actually-happened-during-the-run)
+    - [How do I inspect the exact prompts/messages a run sent?](#q-how-do-i-inspect-the-exact-promptsmessages-a-run-sent)
 8. [Running the benchmark (and why the first run is slow)](#8-running-the-benchmark-and-why-the-first-run-is-slow)
-9. [Configuration knobs that matter](#9-configuration-knobs-that-matter)
-10. [Practical caveats and things that surprise people](#10-practical-caveats-and-things-that-surprise-people)
+    - [Why does the first run take minutes to "configure" before any traffic?](#q-why-does-the-first-run-take-minutes-to-configure-before-any-traffic)
+    - [Is that cost paid on every run?](#q-is-that-cost-paid-on-every-run)
+    - [What invalidates that cache?](#q-what-invalidates-that-cache)
+    - [How is the prepared dataset shared with the worker processes?](#q-how-is-the-prepared-dataset-shared-with-the-worker-processes)
+    - [How do I know AIPerf itself isn't the bottleneck at high concurrency?](#q-how-do-i-know-aiperf-itself-isnt-the-bottleneck-at-high-concurrency)
+    - [Which endpoint does it hit, and why streaming?](#q-which-endpoint-does-it-hit-and-why-streaming)
+    - [What's the minimal way to run it?](#q-whats-the-minimal-way-to-run-it)
+    - [Can I do a short smoke test before committing to the full 30 minutes?](#q-can-i-do-a-short-smoke-test-before-committing-to-the-full-30-minutes)
+    - [Troubleshooting common failures](#troubleshooting-common-failures)
+        - [Configuration times out before any traffic starts](#q-configuration-times-out-before-any-traffic-starts)
+        - [My run dies partway with connection resets](#q-my-run-dies-partway-with-connection-resets)
+9. [Multi-replica serving: conversation-aware routing (SGLang, Dynamo)](#9-multi-replica-serving-conversation-aware-routing-sglang-dynamo)
+    - [I'm serving multiple replicas behind a router — how do I make routing conversation-aware?](#q-im-serving-multiple-replicas-behind-a-router--how-do-i-make-routing-conversation-aware)
+    - [Client-side routing flags (reference)](#client-side-routing-flags-reference)
+10. [Configuration knobs that matter](#10-configuration-knobs-that-matter)
+    - [Load and duration](#load-and-duration)
+    - [Fidelity / shape](#fidelity--shape)
+    - [Validity thresholds (environment variables)](#validity-thresholds-environment-variables)
+    - [Operational (environment variables)](#operational-environment-variables)
+    - [Subagent-classification tuning (advanced)](#subagent-classification-tuning-advanced)
+11. [Practical caveats and things that surprise people](#11-practical-caveats-and-things-that-surprise-people)
 
 ---
 
@@ -162,14 +234,19 @@ Three things a uniform-random-prompt benchmark cannot reproduce:
 ## 2. What load does it actually put on my server?
 
 ### Q: How is the load shaped over time?
-Each trace is replayed starting from a random wall-clock instant **t\*** sampled uniformly across the
-**full** recorded run (0%–100%) under the AgentX scenario (the generic agentic-replay default outside
-the scenario is 25%–75%). For each session mid-flight at t\*, the **single turn immediately before
-t\*** is sent during a **warmup** phase — that request carries the accumulated prefix, priming your
-server's cache to the session's state at t\*; everything *at or after* t\* is sent during the
-**profiling** phase that produces the reported metrics. Because t\* can land anywhere, the measured
-window is a realistic mix of session depths — from near-cold early sessions through nearly-complete
-late ones — rather than exclusively mid-run warm-cache traffic.
+Each lane's **initial** session is replayed starting from a random wall-clock instant **t\*** sampled
+uniformly across the **full** recorded run (0%–100%) under the AgentX scenario (the generic
+agentic-replay default outside the scenario is 25%–75%). For each session mid-flight at t\*, the
+**single turn immediately before t\*** is sent during a **warmup** phase — that request carries the
+accumulated prefix, priming your server's cache to the session's state at t\*; everything *at or
+after* t\* is sent during the **profiling** phase that produces the reported metrics. Because t\* can
+land anywhere, the measured window is a realistic mix of session depths — from near-cold early
+sessions through nearly-complete late ones — rather than exclusively mid-run warm-cache traffic.
+
+The t\* mechanism covers the startup population only. When a lane finishes its session and recycles,
+the next session replays its trace **in full from turn 0** — so over a long run the measured traffic
+is a mix of t\*-anchored partial replays and full-depth recycled replays
+([§6](#6-concurrency-lanes-and-steady-state)).
 
 ```mermaid
 flowchart TD
@@ -192,9 +269,14 @@ that results is whatever those N sessions naturally produce given the recorded i
 
 ### Q: Are inter-turn delays honored, or is it as-fast-as-possible?
 Recorded timing is honored by default (the scenario forbids `--ignore-trace-delays`). Between turns,
-the benchmark waits the recorded "think time"/gap before sending the next turn. Long idle gaps are
-capped (the AgentX scenario caps the idle gap at 10 seconds) so a session that sat idle for an hour in
-the original capture doesn't stall a lane for an hour here.
+the benchmark waits the recorded "think time"/gap before sending the next turn. The gap is measured
+**end-to-start** — from the previous turn's *completion* to the next turn's dispatch, not
+request-start to request-start (this is the scenario-locked `--use-end-to-start-delays` flag from the
+[Quickstart](#quickstart) legend). Replay dispatches each turn only after the previous one completes,
+so start-to-start deltas would double-count the server's own response time and make every session
+drift later turn by turn. Long idle gaps are capped (the AgentX scenario caps the idle gap at 10
+seconds) so a session that sat idle for an hour in the original capture doesn't stall a lane for an
+hour here.
 
 ### Q: What does a single session look like on the wire?
 A sequence of chat-completions requests that grow turn over turn (the prompt prefix accumulates),
@@ -232,9 +314,10 @@ different model's tokenizer than your server uses.
 ### Q: How is the output sequence length (OSL) controlled?
 Each turn sets `max_tokens` to the recorded output length, so decode load matches the original. Parent
 turns honor an optional `--synthesis-max-osl` cap; **subagent turns are intentionally uncapped**, so
-subagent decode behavior stays faithful even when you cap top-level outputs. (Flat-chain sidecars —
-top-level fan-outs that AIPerf reclassifies internally — still honor the cap, like the top-level
-requests they originally were.) The scenario also injects `ignore_eos=true` into the request's extra
+subagent decode behavior stays faithful even when you cap top-level outputs. (One exception: some
+requests recorded as top-level turns are reconstructed by AIPerf as auxiliary child conversations —
+the "sidecars" of [§5](#5-subagents-forks-and-joins-the-agentic-shape-of-the-load). These still honor
+the cap, like the top-level requests they originally were.) The scenario also injects `ignore_eos=true` into the request's extra
 inputs (and rejects an explicit `ignore_eos=false` as a config conflict), so a compliant server
 produces the full recorded output length rather than stopping early.
 
@@ -378,9 +461,11 @@ Two things are deliberately *not* affected by the rewrite:
 ### Q: Is there a way to know the "ideal" cache-hit rate for a run?
 Yes. The benchmark computes a **theoretical prefix-cache hit/total** per turn — the hit rate a perfect
 prefix cache would achieve given the trace's block structure (accounting for blocks shared across a
-trace's own subagents, since they live in one cache namespace per trace). Comparing your server's
-observed cache behavior against this theoretical ceiling tells you how much prefix-reuse you're leaving
-on the table.
+trace's own subagents, since they live in one cache namespace per trace). It is reported as the
+**Theoretical Prefix Cache Hit** metric in the results;
+[§7](#7-reading-the-results-metrics-validity-and-submission-requirements) explains how to compare it
+against the server-reported `Usage Prompt Cache *` metrics to see how much prefix-reuse you're
+leaving on the table.
 
 ### Q: What about tool calls — do they hit my server as real tool schemas?
 By default, tool-result turns are sent as plain user messages (the captures don't include real tool
@@ -394,10 +479,11 @@ off by default.
 Pick the corpus to match your server's context window:
 
 - **Full-context corpora** (e.g. `semianalysis_cc_traces_weka_062126`) keep every recorded request.
-  Per-request input is capped only at ~990k tokens, just enough to strip cache-overcount artifacts —
+  Per-request input is capped only at ~990k tokens — a few recorded input counts exceed ~1M because
+  the capture's KV-cache accounting overcounted them, and the cap trims only those inflated records —
   so these are effectively the full agentic context. Use them when your server's `max_model_len` is
-  large (approaching 1M) and you want the heaviest, most faithful prefill load, including the rare
-  giant turns.
+  large (approaching 1M) and you want the heaviest, most faithful prefill load, including the
+  deepest-context turns.
 - **256k-capped corpora** (the `_256k` suffix, e.g. `semianalysis_cc_traces_weka_062126_256k`) are
   derived from the same parent corpus by **dropping any individual request whose input + output
   exceeds 256,000 tokens**, done once at the dataset source. Use them when your server is configured
@@ -415,10 +501,12 @@ granularities, and the difference matters for fidelity:
 - **`_256k` dataset filtering** is pre-baked at the source and removes only the *individual over-limit
   requests* from within a trace; surviving requests keep their relative timestamps (the origin is
   shifted only if the very first request was dropped), so think-time pacing and subagent overlap are
-  preserved. The trace stays multi-turn; only the handful of giant turns are surgically removed.
-  Dropping those turns is not negligible — for the 062126 corpus, total requests fall from ~99k to ~68k
-  and top-level turns from ~57k to ~28k, which tells you how much of the raw token volume lives in
-  a small number of very large turns.
+  preserved. The cut is deep, though: because agentic context accumulates turn over turn, once a
+  session's input + output crosses 256k its remaining turns are typically all over the limit too, so
+  the whole deep-context tail of a long session drops out. For the 062126 corpus that removes about
+  half the top-level turns (total requests fall from ~99k to ~68k, top-level turns from ~57k to
+  ~28k). The trace stays multi-turn; what survives is the portion of each session a 256k window can
+  actually serve.
 - **`--max-context-length`** is a load-time filter that drops *whole traces* whose peak prompt+output
   exceeds the limit. A trace with even one over-limit turn is removed entirely (and if it would drop
   every trace, the run errors rather than running empty).
@@ -445,15 +533,18 @@ immediately before t\*** (which carries the whole accumulated prefix), so when p
 in-flight session's prefix is already cached on your server.
 
 ### Q: What exactly does the warmup phase send?
-For each in-flight session, it sends the single turn immediately before t\* — enough to bring your
-server's cache to the state it would be in at t\*. In the default (spread) mode, warmup dispatches are
-timed so that **every session's t\* lands at the same instant**, i.e. the warmup-to-profiling boundary,
-so profiling begins with a coherently warmed pool. This warm-pool guarantee covers only the sessions in
-flight at that boundary; lanes that recycle later in the run replay their next trace from turn 0 and
-warm their own caches as they go (see [§6](#6-concurrency-lanes-and-steady-state)). If a **root
-(depth-0) session** fails warmup (a terminal error or cancellation on its warmup turn), the run aborts
-before profiling rather than reporting steady-state numbers against a degraded cache; a subagent
-stream's warmup failure does **not** trigger the abort.
+For each in-flight session, the **single turn immediately before t\*** — enough to bring your
+server's cache to the state it would be in at t\*. Three details worth knowing:
+
+- **Boundary timing.** In the default (spread) mode, warmup dispatches are timed so that **every
+  session's t\* lands at the same instant** — the warmup-to-profiling boundary — so profiling begins
+  with a coherently warmed pool.
+- **Recycled lanes.** The warm-pool guarantee covers only the sessions in flight at that boundary;
+  lanes that recycle later in the run replay their next trace from turn 0 and warm their own caches
+  as they go (see [§6](#6-concurrency-lanes-and-steady-state)).
+- **Warmup failures.** If a **root (depth-0) session** fails warmup (a terminal error or cancellation
+  on its warmup turn), the run aborts before profiling rather than reporting steady-state numbers
+  against a degraded cache; a subagent stream's warmup failure does **not** trigger the abort.
 
 ### Q: What is cache-busting and why would I want it?
 When you run with more concurrency than there are unique traces, the same trace lands on multiple lanes
@@ -533,7 +624,7 @@ is grouped and labeled. It is tunable via the `AIPERF_DATASET_WEKA_AUX_*` knobs 
 `AIPERF_DATASET_WEKA_AUX_REDUCTION_OSL_MAX` / `AIPERF_DATASET_WEKA_AUX_REDUCTION_RATIO`), the
 parallel-fan-out grouping threshold `AIPERF_DATASET_WEKA_WORKER_GROUP_MIN`, and an off-switch for
 detection as a whole, `AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false` (see also
-[§9](#9-configuration-knobs-that-matter)). But for most serving-optimization work you can leave it at
+[§10](#10-configuration-knobs-that-matter)). But for most serving-optimization work you can leave it at
 defaults: it affects the *shape* of the reconstructed tree, not whether subagent load is sent.
 
 ### Q: Do subagents consume my `--concurrency` budget?
@@ -573,7 +664,8 @@ The dataset sampler, honoring whatever sampling strategy is configured (sequenti
 or random-with-replacement). When concurrency exceeds the number of unique traces, traces naturally
 repeat across lanes (each replay being a distinct session). At startup each lane's trajectory gets an
 independent t\*, so concurrent copies of the same trace don't move in lockstep; a **recycled** session
-(what a lane runs next) replays its trace in full from turn 0 (no new t\*).
+(what a lane runs next) replays its trace in full from turn 0 — no t\* is applied, and the whole
+trace is sent during profiling.
 
 ### Q: Does the run length depend on the dataset size?
 The run is bounded by `--benchmark-duration` (the scenario requires at least 900 seconds and defaults
@@ -621,6 +713,11 @@ from every reported number). Full definitions live in
   ceiling against your server's **actual** cache behavior (the `Usage Prompt Cache *` token metrics,
   populated from the server's `usage` field when it reports cache hits) to see how much reuse you're
   actually capturing.
+- **Effective and Active metrics** — the time-weighted EFFECTIVE and ACTIVE tables that render
+  *above* the default metrics table in the console output: full-window vs phase-restricted
+  prefill/decode throughput and concurrency, plus the coordinated-omission-aware
+  `effective_latency`. These are not in the metrics reference; their definitions live in
+  [Effective vs Active Metrics](../reference/effective-vs-active-metrics.md).
 
 ### Q: Are latencies measured per request or per session?
 **Per request** — every turn (parent or subagent) is its own record, so TTFT, ITL, and request latency
@@ -854,11 +951,78 @@ conflict (a violation) — because streaming is what makes **TTFT** and **ITL** 
 core metrics here. (The endpoint type itself is not locked, but a non-chat endpoint won't accept the
 multi-turn message arrays this benchmark sends.) `--model` must name the model your server serves (it
 also selects the tokenizer unless you override with `--tokenizer`). `--use-server-token-count` makes
-the token-based metrics use the server's reported counts rather than local re-tokenization — useful
-when your tokenizer differs from the one that captured the traces; it does not change how prompts are
-built.
+the token-based metrics use the server's reported `usage` counts rather than local re-tokenization —
+useful when local re-tokenization can't match your server's real counts (a different tokenizer
+revision, or chat-template overhead the client can't see); it does not change how prompts are built.
 
-### Q: I'm serving multiple replicas behind a router — how do I make routing conversation-aware (SGLang, Dynamo)?
+### Q: What's the minimal way to run it?
+Six flags. The scenario auto-fills every locked and default setting, so the genuinely minimal command
+is just your server, your model, the corpus, and a load level (replace `YOUR_MODEL` with the model
+your server serves):
+
+```bash
+aiperf profile \
+  --scenario inferencex-agentx-mvp \
+  --url http://localhost:8000 \
+  --model YOUR_MODEL \
+  --endpoint-type chat \
+  --public-dataset semianalysis_cc_traces_weka_062126 \
+  --concurrency 256
+```
+
+AIPerf fills in the rest — including a fresh `--random-seed`, which it logs — and writes artifacts
+under `./artifacts/`. For the fully explicit form, with every scenario-locked and scenario-default
+flag written out and a legend of which is which, use the [Quickstart](#quickstart) command instead.
+For a cold run, also apply the timeout and keep-alive environment-variable workarounds from this
+section — a raised `AIPERF_DATASET_CONFIGURATION_TIMEOUT` / `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT`
+and a lowered `AIPERF_HTTP_KEEPALIVE_TIMEOUT` (see the troubleshooting questions below).
+
+### Q: Can I do a short smoke test before committing to the full 30 minutes?
+Not as a *valid* run: any `--benchmark-duration` below 900s refuses to start (the scenario requires
+≥900s to reach steady state), and running it anyway with `--unsafe-override` stamps
+`submission_valid: false`. What the shrink levers actually do:
+
+- **`--num-dataset-entries N`** loads only the first N traces and is not scenario-locked — the run
+  stays valid and the reconstruction cost shrinks roughly proportionally. Caveat: it keys a
+  *different* dataset-cache entry, so a shrunk smoke run does not warm the cache for the
+  full-corpus run.
+- **Lowering `--concurrency`** lightens the load but shortens nothing — the 900s floor is
+  wall-clock. A small concurrency at 900s is the cheapest *valid* run.
+- **A true minutes-long shakeout** (connectivity, endpoint, artifacts) is `--unsafe-override` plus a
+  short duration: it exercises the full pipeline and is marked invalid, which is fine for plumbing
+  verification.
+
+The useful trick: reconstruction cost depends on corpus size, not duration or concurrency — so run
+your shakeout on the **full corpus** with a pinned `--random-seed` and a short overridden duration,
+then run the real benchmark with the *same seed*. The smoke run pays the one-time reconstruction and
+the real run restores it from cache in seconds (see "Is that cost paid on every run?" above).
+
+### Troubleshooting common failures
+
+Two failures come up often — one at configuration time, one mid-run:
+
+#### Q: Configuration times out before any traffic starts
+That is the cold-run reconstruction exceeding the default 300-second configuration timeout on the larger
+corpora. Raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` and `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT`
+(which must be ≥ it) to ~1800 seconds for a cold run — the same workaround the first question of this
+section describes.
+
+#### Q: My run dies partway with connection resets
+A common cause is keep-alive mismatch: if the client's connection keep-alive outlives your server's
+(for example uvicorn's default 5-second server keep-alive), idle pooled connections get reused after the
+server already closed them, yielding a stream of `ECONNRESET`. Work around it by lowering the client
+keep-alive below the server's — e.g. `AIPERF_HTTP_KEEPALIVE_TIMEOUT=4` — so connections are evicted
+before the server drops them. Warmup is immune because its connections never go idle long enough; the
+problem shows up during profiling-phase pacing.
+
+---
+
+## 9. Multi-replica serving: conversation-aware routing (SGLang, Dynamo)
+
+Only relevant when benchmarking through a router in front of several replicas — single-replica
+setups can skip this section.
+
+### Q: I'm serving multiple replicas behind a router — how do I make routing conversation-aware?
 It matters more here than in most benchmarks: every turn re-sends a session's huge shared prefix, so
 a router that scatters turns across replicas destroys prefix-cache reuse and your measured cache hits
 will sit far below the theoretical ceiling
@@ -927,92 +1091,19 @@ None of these knobs are scenario-locked — they change where requests land, not
 whichever matches your deployment, and A/B against `--router-mode round-robin` (Dynamo) or
 `--policy round_robin` (SGLang) to quantify what conversation-aware routing buys you.
 
-### Q: What's the minimal way to run it?
-This is the [Quickstart](#quickstart) command, with every scenario-locked and scenario-default flag
-written out so the run is fully explicit (replace `YOUR_MODEL` with the model your server serves):
+### Client-side routing flags (reference)
 
-```bash
-aiperf profile \
-  --scenario inferencex-agentx-mvp \
-  --url http://localhost:8000 \
-  --model YOUR_MODEL \
-  --endpoint-type chat \
-  --public-dataset semianalysis_cc_traces_weka_062126 \
-  --concurrency 256 \
-  --benchmark-duration 1800 \
-  --streaming \
-  --use-end-to-start-delays \
-  --trace-idle-gap-cap-seconds 10.0 \
-  --trajectory-start-min-ratio 0.0 \
-  --trajectory-start-max-ratio 1.0 \
-  --cache-bust first_turn_prefix \
-  --use-server-token-count \
-  --artifact-dir ./artifacts/my-run/
-```
-
-**Flag legend:**
-
-- **Scenario-locked** (a conflicting value is rejected): `--streaming`, `--use-end-to-start-delays`,
-  `--trace-idle-gap-cap-seconds 10.0`, `--cache-bust first_turn_prefix`, and a pinned `--public-dataset`
-  (`--streaming` and `--use-end-to-start-delays` auto-enable if omitted).
-- **Scenario defaults** (auto-filled if omitted; overridable): `--benchmark-duration 1800` (floor 900s),
-  `--trajectory-start-min-ratio 0.0` / `--trajectory-start-max-ratio 1.0` (sample t\* across the full run).
-- **Auto-injected, no flag:** `ignore_eos=true` (added to `--extra-inputs`; `ignore_eos=false` rejected)
-  and a fresh `--random-seed` (pin one for reproducible A/Bs —
-  [§7](#7-reading-the-results-metrics-validity-and-submission-requirements)); timing mode is locked to
-  agentic-replay.
-- **Forbidden — do not pass:** `--ignore-trace-delays`, `--synthesis-max-isl`, and the rate/schedule
-  flags (`--request-rate` / `--arrival-pattern` / `--user-centric-rate` / `--fixed-schedule` /
-  `--adaptive-scale`).
-- **Your parameters** (not locked): `--url`, `--model`, `--endpoint-type chat`, `--concurrency`,
-  `--use-server-token-count`, `--artifact-dir`.
-
-`--use-server-token-count` is explained above (it only affects metrics, never prompt construction). For
-a cold run, also apply the timeout and keep-alive environment-variable workarounds from this section —
-a raised `AIPERF_DATASET_CONFIGURATION_TIMEOUT` / `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` and a
-lowered `AIPERF_HTTP_KEEPALIVE_TIMEOUT` (see Troubleshooting below).
-
-### Q: Can I do a short smoke test before committing to the full 30 minutes?
-Not as a *valid* run: any `--benchmark-duration` below 900s refuses to start (the scenario requires
-≥900s to reach steady state), and running it anyway with `--unsafe-override` stamps
-`submission_valid: false`. What the shrink levers actually do:
-
-- **`--num-dataset-entries N`** loads only the first N traces and is not scenario-locked — the run
-  stays valid and the reconstruction cost shrinks roughly proportionally. Caveat: it keys a
-  *different* dataset-cache entry, so a shrunk smoke run does not warm the cache for the
-  full-corpus run.
-- **Lowering `--concurrency`** lightens the load but shortens nothing — the 900s floor is
-  wall-clock. A small concurrency at 900s is the cheapest *valid* run.
-- **A true minutes-long shakeout** (connectivity, endpoint, artifacts) is `--unsafe-override` plus a
-  short duration: it exercises the full pipeline and is marked invalid, which is fine for plumbing
-  verification.
-
-The useful trick: reconstruction cost depends on corpus size, not duration or concurrency — so run
-your shakeout on the **full corpus** with a pinned `--random-seed` and a short overridden duration,
-then run the real benchmark with the *same seed*. The smoke run pays the one-time reconstruction and
-the real run restores it from cache in seconds (see "Is that cost paid on every run?" above).
-
-### Troubleshooting common failures
-
-Two failures come up often — one at configuration time, one mid-run:
-
-### Q: Configuration times out before any traffic starts — what do I raise?
-That is the cold-run reconstruction exceeding the default 300-second configuration timeout on the larger
-corpora. Raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` and `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT`
-(which must be ≥ it) to ~1800 seconds for a cold run — the same workaround the first question of this
-section describes.
-
-### Q: My run dies partway with connection resets — what's going on?
-A common cause is keep-alive mismatch: if the client's connection keep-alive outlives your server's
-(for example uvicorn's default 5-second server keep-alive), idle pooled connections get reused after the
-server already closed them, yielding a stream of `ECONNRESET`. Work around it by lowering the client
-keep-alive below the server's — e.g. `AIPERF_HTTP_KEEPALIVE_TIMEOUT=4` — so connections are evicted
-before the server drops them. Warmup is immune because its connections never go idle long enough; the
-problem shows up during profiling-phase pacing.
+| Setting | What it does |
+|---|---|
+| `--session-header NAME` | Renames the per-conversation affinity header (default `X-Correlation-ID`), e.g. `X-Dynamo-Session-ID` for Dynamo session affinity. |
+| `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID` | Additionally send `X-SMG-Routing-Key` for the SGLang Model Gateway `manual` routing policy. |
+| `AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID` | Additionally send `X-Session-ID` for routers that expect that header. |
+| `--use-dynamo-conv-aware-routing` | Emit Dynamo `nvext.session_control` (bind/close) in request bodies; only for Dynamo frontends that implement it (`--use-legacy-dynamo-session-control` for v1.2.x). |
+| `--connection-reuse-strategy sticky-user-sessions` | One TCP connection per conversation (closed on final turn) for connection-hashing load balancers. |
 
 ---
 
-## 9. Configuration knobs that matter
+## 10. Configuration knobs that matter
 
 You rarely need to touch the reconstruction knobs — defaults reproduce the captured workload faithfully.
 The ones a serving engineer is most likely to use:
@@ -1030,9 +1121,9 @@ The ones a serving engineer is most likely to use:
 | corpus choice (`_256k` vs full) | Match the dataset to your server's context window. `_256k` corpora pre-drop individual >256k-token requests (for ~256k servers); full corpora keep effectively-full context (for large windows). Preferred over `--max-context-length` for a 256k server. See §3. |
 | `--synthesis-max-osl` | Caps top-level output length (subagent outputs stay uncapped). |
 | `--max-context-length` | Drops whole traces whose peak prompt+output exceeds your server's window, so you don't get guaranteed mid-run overflows. Blunter than a `_256k` corpus (removes entire traces, not just over-limit turns). If it would drop everything, the run errors instead of silently emptying the dataset. |
-| `trajectory start ratios` | The window within each session where t\* is sampled — i.e. how deep into sessions the measured traffic sits. Defaults to the **full session (0%–100%)** under the `inferencex-agentx-mvp` scenario; 25%–75% is the generic CLI default when not scenario-locked. |
-| `trace idle gap cap` | Caps long idle gaps between turns (scenario default 10s) so dead time doesn't stall lanes. |
-| cache-bust target | Where the per-session uniqueness marker goes; scenario locks first-turn-prefix. |
+| `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` | The window within each session where t\* is sampled — i.e. how deep into sessions the measured traffic sits. Defaults to the **full session (0.0–1.0)** under the `inferencex-agentx-mvp` scenario; 0.25–0.75 is the generic CLI default when not scenario-locked. |
+| `--trace-idle-gap-cap-seconds` | Caps long idle gaps between turns (scenario default 10s) so dead time doesn't stall lanes. |
+| `--cache-bust` | Where the per-session uniqueness marker goes; the scenario locks `first_turn_prefix`. |
 
 ### Validity thresholds (environment variables)
 | Variable | Default | What it does |
@@ -1050,33 +1141,27 @@ The ones a serving engineer is most likely to use:
 | `AIPERF_DATASET_MMAP_CACHE_DIR` | unset (resolves to `~/.cache/aiperf/dataset_mmap`) | Where prepared datasets are cached. |
 | `AIPERF_DAG_FAIL_FAST` | `false` | Abort the parent, its sibling subagents, and the entire run/phase on the first subagent error instead of absorbing it. |
 
-### Multi-replica routing (client side)
-Only relevant when benchmarking through a router in front of several replicas — see
-[§8](#8-running-the-benchmark-and-why-the-first-run-is-slow) for the matching router-side config.
-
-| Setting | What it does |
-|---|---|
-| `--session-header NAME` | Renames the per-conversation affinity header (default `X-Correlation-ID`), e.g. `X-Dynamo-Session-ID` for Dynamo session affinity. |
-| `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID` | Additionally send `X-SMG-Routing-Key` for the SGLang Model Gateway `manual` routing policy. |
-| `AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID` | Additionally send `X-Session-ID` for routers that expect that header. |
-| `--use-dynamo-conv-aware-routing` | Emit Dynamo `nvext.session_control` (bind/close) in request bodies; only for Dynamo frontends that implement it (`--use-legacy-dynamo-session-control` for v1.2.x). |
-| `--connection-reuse-strategy sticky-user-sessions` | One TCP connection per conversation (closed on final turn) for connection-hashing load balancers. |
-
 ### Subagent-classification tuning (advanced)
 These reshape how side-chains are split into subagents vs auxiliary helpers vs parallel-worker groups.
 Leave them alone unless you're specifically studying how the tree shape affects your server. Their
-environment-variable prefix is `AIPERF_DATASET_WEKA_*` (named after the trace format the captures use),
-and they include the aux-vs-subagent thresholds (`..._WEKA_AUX_MAX_REQUESTS`, `..._WEKA_AUX_ISL_RATIO`,
-`..._WEKA_AUX_ISL_FLOOR`, `..._WEKA_AUX_CROSS_MODEL`, `..._WEKA_AUX_REDUCTION_OSL_MAX`,
-`..._WEKA_AUX_REDUCTION_RATIO`), the parallel-fan-out grouping threshold (`..._WEKA_WORKER_GROUP_MIN`),
-the chain-continuation seam guards (`..._WEKA_SEAM_MAX_GAP_SECONDS`, `..._WEKA_SEAM_MIN_OVERLAP_RATIO`),
-the tool-shaping toggle (`..._WEKA_TOOL_SHAPED_MESSAGES`), and the reconstruction parallelism (`..._WEKA_PARALLEL_WORKERS`,
-`..._WEKA_PARALLEL_THRESHOLD`). Changing any of the content-affecting ones triggers a fresh dataset
-reconstruction (and cache entry).
+environment-variable prefix is `AIPERF_DATASET_WEKA_*` (named after the trace format the captures
+use); full defaults and semantics are in the
+[environment-variable reference](../environment-variables.md). Changing any of the content-affecting
+ones triggers a fresh dataset reconstruction (and cache entry).
+
+| Variable (`AIPERF_DATASET_WEKA_` prefix) | What it does |
+|---|---|
+| `..._AUX_MAX_REQUESTS`, `..._AUX_ISL_RATIO`, `..._AUX_ISL_FLOOR`, `..._AUX_CROSS_MODEL` | Aux-vs-subagent thresholds: how short/small/cross-model a side-chain must be to classify as an auxiliary sidecar rather than a genuine subagent ([§5](#5-subagents-forks-and-joins-the-agentic-shape-of-the-load)). |
+| `..._AUX_REDUCTION_OSL_MAX`, `..._AUX_REDUCTION_RATIO` | The reduction arm: recognizes large-input/short-output one-shots (summaries, compactions) as sidecar calls. |
+| `..._WORKER_GROUP_MIN` | Minimum concurrent members for a fan-out to group as a parallel worker group. |
+| `..._SEAM_MAX_GAP_SECONDS`, `..._SEAM_MIN_OVERLAP_RATIO` | Chain-continuation seam guards: whether a far-future continuation is stitched onto its chain or spawned as a new conversation. |
+| `..._TOOL_SHAPED_MESSAGES` | Emit synthetic OpenAI tool-call/tool-result pairs instead of plain user messages ([§3](#3-how-realistic-are-the-prompts-and-token-counts)). |
+| `..._SPLIT_FLATTENED_AGENTS` | Master off-switch for nested chain detection; `false` serializes each subagent into a single child conversation. |
+| `..._PARALLEL_WORKERS`, `..._PARALLEL_THRESHOLD` | Reconstruction parallelism (worker-process count and the corpus size that triggers it) — performance only, no effect on content ([§8](#8-running-the-benchmark-and-why-the-first-run-is-slow)). |
 
 ---
 
-## 10. Practical caveats and things that surprise people
+## 11. Practical caveats and things that surprise people
 
 - **There is no request-rate or QPS setting in this mode.** Load is governed entirely by concurrency
   (number of live sessions) and the recorded inter-turn timing. If you're used to rate-based benchmarks,
@@ -1100,13 +1185,11 @@ reconstruction (and cache entry).
 - **The first run is slow on purpose, and only the first run.** Budget time (and the raised timeouts) for
   cold-cache reconstruction; subsequent runs reuse the prepared dataset.
 
-- **A too-small context window quietly invalidates the run.** If your server can't hold the agentic
-  prompts, you'll cross the context-overflow rate limit and get `submission_valid: false`. Size the
-  window appropriately, or match the corpus to it.
-
-- **Match the corpus to your context window.** Use a `_256k` corpus for ~256k-class servers and a full
-  corpus for large-window servers — see [§3](#3-how-realistic-are-the-prompts-and-token-counts) for why
-  `_256k` is a first-class choice (not a downgrade) and a cleaner fix than `--max-context-length`.
+- **A too-small context window quietly invalidates the run — match the corpus to it.** If your
+  server can't hold the agentic prompts, you'll cross the context-overflow rate limit and get
+  `submission_valid: false`. Use a `_256k` corpus for ~256k-class servers and a full corpus for
+  large-window servers — see [§3](#3-how-realistic-are-the-prompts-and-token-counts) for why `_256k`
+  is a first-class choice (not a downgrade) and a cleaner fix than `--max-context-length`.
 
 - **Cache-busting is on (first-turn-prefix) for a reason.** It prevents falsely inflated cross-session
   cache hits when concurrency exceeds the trace pool, while preserving within-session sharing.
@@ -1115,5 +1198,5 @@ reconstruction (and cache entry).
 - **Warmup failures abort before profiling.** A terminal error or cancellation on any *root* session's
   warmup turn stops the run rather than letting it report steady-state numbers against a cold/degraded
   pool — so a clean profiling run means every root trajectory really was warm. (Subagent-stream warmup
-  failures do not trigger the abort; only depth-0 root warmup credits gate it.)
+  failures do not trigger the abort; only failures on root (depth-0) sessions' warmup requests do.)
 

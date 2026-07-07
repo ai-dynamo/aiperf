@@ -10,8 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 > and the output fields described here may change as the spec stabilizes.
 
 This page walks you through running the **AgentX MVP** benchmark in AIPerf. It's
-aimed at someone who hasn't worked with the scenario before — you'll get a
-copy-pasteable command first, then explanations of what it actually does and why.
+aimed at someone who hasn't worked with the scenario before — after a short
+orientation, you'll get a copy-pasteable command, then explanations of what it
+does and why.
 
 > **Want the under-the-hood mechanics instead of a how-to?** See
 > [SemiAnalysis AgentX: How the Benchmark Works (FAQ)](../benchmark-modes/semianalysis-agentx-faq.md)
@@ -36,7 +37,7 @@ mapping.
 
 AgentX MVP is essentially a *recipe* on top of those traces: a fixed set of
 replay rules so two different teams running on two different servers produce
-results you can actually compare. Things like "long request-start idle gaps are
+results you can compare. Things like "long request-start idle gaps are
 compressed to 10 seconds", "the server must be allowed to generate full
 responses (no early stop)", "warm up the cache before measuring", and so on.
 
@@ -57,16 +58,29 @@ You'll need:
   scheme-prefixed URL; the endpoint path (e.g. `/v1/chat/completions`) is
   appended automatically based on `--endpoint-type`. If the server requires
   authentication, add `--api-key <key>` (sent as a `Bearer` token).
-- AIPerf installed: `uv pip install aiperf` (or run it ad hoc with
+- AIPerf installed: `pip install aiperf` (or run it ad hoc with
   `uvx aiperf`).
+- The model's **HuggingFace tokenizer** resolvable from `--model`: the Weka
+  loaders rebuild every prompt through it. For a gated repo, export
+  `HF_TOKEN`; if `--model` isn't a resolvable HF repo name (a local server
+  alias, a private build), pass `--tokenizer <hf-repo-or-local-path>`
+  explicitly. See
+  [Tokenizer Auto-Detection](../reference/tokenizer-auto-detection.md).
 
 The trace corpus is fetched automatically from HuggingFace
 (`semianalysisai/cc-traces-weka-062126`, public, no auth) — no
 manual clone required; HF caches it locally.
 The `semianalysis_cc_traces_weka_with_subagents` value in the command below
-is a *rolling* alias tracking the current with-subagents corpus; the
-date-pinned `semianalysis_cc_traces_weka_062126` locks the corpus for
-reproducibility.
+is a *rolling* alias tracking the current with-subagents corpus (presently
+the `062126` drop); the date-pinned `semianalysis_cc_traces_weka_062126`
+locks the corpus for reproducibility. Prefer the date-pinned alias for any
+run you intend to compare or submit — the rolling alias advances when a new
+corpus drops, and two runs on different drops are not comparable. Each corpus
+also has a `_256k` variant (e.g.
+`semianalysis_cc_traces_weka_with_subagents_256k`) that pre-drops individual
+requests whose input + output exceeds 256k tokens — pick it when your
+server's context window is ~256k (see the
+[AgentX FAQ §3](../benchmark-modes/semianalysis-agentx-faq.md#3-how-realistic-are-the-prompts-and-token-counts)).
 
 Then:
 
@@ -92,81 +106,139 @@ aiperf profile \
     --ui simple
 ```
 
-Everything from `--streaming` through `--benchmark-duration` spells out the
-values the scenario locks or defaults. You can omit all of them — AIPerf
-fills in exactly these values under `--scenario` — but writing them out makes
-the command document what actually runs. `--random-seed` is the one
-exception: omitted, AIPerf picks a fresh random seed and logs it; passing
-your own (any integer) makes the run reproducible up front.
+The command mixes three kinds of flags — knowing which is which tells you
+what you must set, what you may tune, and what you shouldn't touch:
 
-A few notes on the flags you do choose:
+**Flags you choose** — your server, model, and load:
 
 - **`--scenario inferencex-agentx-mvp`** is the only flag that's specific to
   this benchmark. Everything else is normal AIPerf.
-- `--model` is whatever you're actually serving — you don't have to match
+- `--model` is whatever you're serving — you don't have to match
   the model names baked into the trace corpus; AIPerf rewrites every trace
   request's `model` field. See
   [Per-Trace Model Rewriting](weka-trace.md#per-trace-model-rewriting) in the
   Weka tutorial for how multiple `--model` values map.
-- **`--max-context-length 128000`** drops traces whose peak input length
-  exceeds 128k tokens before replay. Set it to the maximum context your
-  server actually accepts — i.e. the model's native maximum, since AgentX MVP
-  expects the server to run at its default max length. Because it mirrors the
-  server's real capacity, the run replays only traces the server can serve —
-  which is why the scenario allows it while rejecting the arbitrary
-  client-side cap `--synthesis-max-isl`.
-- **`--benchmark-duration 1800`** (30 minutes) is the scenario default;
-  900 seconds (15 minutes) is the minimum, and AIPerf rejects anything
-  shorter.
+- **`--max-context-length 128000`** drops traces whose peak **input + output**
+  — the prompt plus that turn's requested `max_tokens` — exceeds 128k tokens
+  before replay. Set it to the maximum context your server accepts — i.e. the
+  model's native maximum, since AgentX MVP expects the server to run at its
+  default max length. Because it mirrors the server's real capacity, the run
+  replays only traces the server can serve — which is why the scenario allows
+  it while rejecting the arbitrary client-side cap `--synthesis-max-isl`.
+  The flag is optional and the scenario doesn't check it: omit it and no
+  client-side filtering happens, so over-length traces fail at the server
+  and count toward the 1% context-overflow threshold instead.
 - **`--concurrency`** sets how many session trees stay live throughout the
   run, i.e. the sustained load. It must be a single integer under
   `--scenario`; comma-list sweeps are rejected.
-- **`--streaming`** is locked on by the scenario — auto-enabled if you omit
-  it; an explicit `--no-streaming` is rejected.
+- `--url`, `--endpoint-type chat`, `--use-server-token-count`, and `--ui`
+  round out the group ([`--use-server-token-count`](#tokenization-options---apply-chat-template-and---use-server-token-count)
+  is explained below).
+
+**Flags the scenario hard-locks** — `--streaming`,
+`--extra-inputs ignore_eos:true`, `--use-end-to-start-delays`,
+`--cache-bust first_turn_prefix`, and `--trace-idle-gap-cap-seconds 10`. You
+can omit all of them (AIPerf fills in exactly these values under
+`--scenario`), but writing them out makes the command document what runs. If
+you pass one of them with a *conflicting* value, AIPerf errors up front
+rather than silently producing an invalid result.
+
+**Flags the scenario only defaults** — auto-filled when omitted, but an
+explicit value is honored *silently*, with no error and no change to the
+`submission_valid` stamp:
+
+- **`--trajectory-start-min-ratio 0.0` / `--trajectory-start-max-ratio 1.0`**
+  set the window where each lane's starting instant `t*` is sampled. The
+  scenario never validates these — override them and the run still stamps
+  `submission_valid: true` while replaying a materially different workload.
+  Leave them at `0.0`/`1.0` for any run you intend to compare.
+- **`--benchmark-duration 1800`** (30 minutes) is the scenario default;
+  900 seconds (15 minutes) is the enforced minimum, and AIPerf rejects
+  anything shorter. Longer values are accepted without complaint.
+- **`--random-seed`**: omitted, AIPerf picks a fresh random seed and logs it;
+  passing your own (any integer) makes the run reproducible up front.
+  Pinning a seed also keys the reconstructed-dataset disk cache: unseeded
+  scenario runs draw a fresh seed each time and repay the full multi-minute
+  corpus reconstruction on every run (see the
+  [AgentX FAQ §8](../benchmark-modes/semianalysis-agentx-faq.md#8-running-the-benchmark-and-why-the-first-run-is-slow)).
+
+**Optional extras** (not in the command above):
+
 - **`--num-profile-runs N`** repeats the benchmark N times and adds an
   aggregate file with confidence intervals across the runs. See
   [Reading the Result](#reading-the-result-submission_valid) below for where
   the `submission_valid` stamp lands.
 - The full corpus (393 traces) loads by default; `--num-dataset-entries N`
-  caps loading to the first N traces.
+  caps loading to the first N traces. Reducing the corpus changes the
+  replayed workload and is *not* caught by the scenario locks — the run
+  still stamps `submission_valid: true` — so use it only for smoke tests,
+  never for runs you intend to compare against other AgentX MVP results.
 
 You don't need to touch the scheduling or warmup knobs: the scenario picks
 the agentic-replay scheduler and auto-fills the values shown above. Don't
 pass `--fixed-schedule`, `--request-rate`, or `--ignore-trace-delays` — they
-conflict with the locked scheduling mode and the run will error. If you pass
-a locked option with the wrong value, AIPerf tells you up front rather than
-silently producing an invalid result.
+conflict with the locked scheduling mode and the run will error.
 
-> **Optional: `--apply-chat-template`.** With the flag off (the default),
-> the reported ISL is the bare-text encode of the wire payload. With it on,
-> the record processor re-tokenizes each request's wire payload through the
-> tokenizer's own `apply_chat_template`, so the reported ISL counts the full
-> wire-token total — chat-template wrapping plus the cache-bust marker — and
-> is directly comparable to a server's `usage.prompt_tokens`. See
-> [Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md)
-> for the full picture.
+### Tokenization options: `--apply-chat-template` and `--use-server-token-count`
 
-> **`--use-server-token-count` (included in the Quick Start command; fixes
-> OSL mismatch).** Without it, AIPerf computes output sequence length (OSL)
-> by re-tokenizing the server's response with the model's local tokenizer.
-> If that tokenizer disagrees with the server's own — a different revision,
-> different BPE merges, a different chat template — the reported OSL drifts
-> from the server's actual emitted token count, and the per-run console
-> shows an "Output Sequence Length Mismatch Warning" panel even though
-> `ignore_eos=true` is locked and the server really did emit `max_tokens`.
-> With the flag, AIPerf trusts the server's `usage.completion_tokens` (and
-> `usage.prompt_tokens`) and the mismatch goes away.
+**Optional: `--apply-chat-template`.** With the flag off (the default),
+the reported ISL is the bare-text encode of the wire payload. With it on,
+the record processor re-tokenizes each request's wire payload through the
+tokenizer's own `apply_chat_template`, so the reported ISL counts the full
+wire-token total — chat-template wrapping plus the cache-bust marker — and
+is directly comparable to a server's `usage.prompt_tokens`. See
+[Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md)
+for the full picture.
 
-> **Benchmarking through a router (multiple replicas)?** Make the routing
-> conversation-aware, or cross-replica scatter will destroy the prefix-cache
-> reuse this benchmark exists to measure. Server side: SGLang Model Gateway
-> `--policy cache_aware` (or `--policy manual`) / Dynamo `--router-mode kv`.
-> Client side, AIPerf keeps a stable per-conversation ID and can expose it
-> as a routing key: `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=true`
-> (SGLang `manual`), `--session-header X-Dynamo-Session-ID` (Dynamo session
-> affinity), or `--use-dynamo-conv-aware-routing` (Dynamo builds with
-> `nvext.session_control`). Details and full launch commands: the
-> [AgentX FAQ §8](../benchmark-modes/semianalysis-agentx-faq.md#8-running-the-benchmark-and-why-the-first-run-is-slow).
+**`--use-server-token-count` (included in the Quick Start command; fixes
+OSL mismatch).** Without it, AIPerf computes output sequence length (OSL)
+by re-tokenizing the server's response with the model's local tokenizer.
+If that tokenizer disagrees with the server's own — a different revision,
+different BPE merges, a different chat template — the reported OSL drifts
+from the server's actual emitted token count, and the per-run console
+shows an "Output Sequence Length Mismatch Warning" panel even though
+`ignore_eos=true` is locked and the server really did emit `max_tokens`.
+With the flag, AIPerf trusts the server's `usage.completion_tokens` (and
+`usage.prompt_tokens`) and the mismatch goes away.
+
+### Benchmarking through a router (multiple replicas)
+
+Make the routing conversation-aware, or cross-replica scatter will destroy
+the prefix-cache reuse this benchmark exists to measure. Server side: SGLang
+Model Gateway `--policy cache_aware` (or `--policy manual`) / Dynamo
+`--router-mode kv`. Client side, AIPerf keeps a stable per-conversation ID
+and can expose it as a routing key:
+`AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=true` (SGLang `manual`),
+`--session-header X-Dynamo-Session-ID` (Dynamo session affinity), or
+`--use-dynamo-conv-aware-routing` (Dynamo builds with
+`nvext.session_control`). Details and full launch commands: the
+[AgentX FAQ §9](../benchmark-modes/semianalysis-agentx-faq.md#9-multi-replica-serving-conversation-aware-routing-sglang-dynamo).
+
+### What you should see
+
+A run moves through four externally visible stages; knowing them keeps you
+from killing a healthy run (a Ctrl+C stamps it `run_cancelled` / invalid):
+
+1. **Dataset configuration.** On the first run this includes the corpus
+   download from HuggingFace plus a CPU-heavy reconstruction of every trace
+   into a tokenized, cache-structured dataset — expect several minutes of
+   apparent silence, and see
+   [Troubleshooting](#troubleshooting) if it exceeds the default
+   configuration timeout. Later runs with the same corpus, settings, and a
+   pinned `--random-seed` restore it from the on-disk cache in seconds.
+2. **Warmup.** Each lane replays one deep-prefix turn to prime the server's
+   KV cache. With deep histories in real coding traces this is a meaningful
+   chunk of wall time on its own.
+3. **Profiling** for `--benchmark-duration` (1800 s by default) — with
+   `--ui simple`, per-phase progress and request counts tick along as
+   traffic flows.
+4. **Drain and export.** In-flight requests finish during a grace-period
+   drain, then the console prints the metrics tables and the exact artifact
+   paths (under `./artifacts/` unless you set `--artifact-dir`).
+
+End to end, a cold first run therefore takes noticeably longer than the 30
+minutes the duration flag suggests — reconstruction, warmup, and drain all
+sit on top of it.
 
 ---
 
@@ -179,14 +251,14 @@ flag.
 
 | Locked setting | What it means | Why it matters |
 |---|---|---|
-| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state, sampler-driven trace recycle, per-session-tree concurrency, trace idle-gap compression). |
+| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state — the [profiling phase](#profiling-phase-replay-recycle-idle-gap-compression) — with sampler-driven trace recycle, per-session-tree concurrency, and trace idle-gap compression). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
 | `--streaming` is on | Responses stream token-by-token (auto-enabled when unset; explicit `--no-streaming` errors) | The per-token latency metrics (TTFT, ITL) are core to this benchmark and need streaming responses. |
-| `--use-end-to-start-delays` is on | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta (auto-enabled when unset; explicitly disabling it errors) | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, drift every session later turn-by-turn, and fabricate cross-session concurrency. |
+| `--use-end-to-start-delays` is on | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta (auto-enabled when unset; explicitly disabling it errors) | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved, with long idle gaps capped by the trace idle-gap rule below | The whole point of replay is to preserve the agent's pacing without letting coffee-break gaps dominate steady-state. |
 | `--trace-idle-gap-cap-seconds = 10` | Gaps between recorded request starts over 10s are compressed to 10s per trace | Real coding sessions have long idle gaps; capping request-start gaps preserves relative subagent overlap better than clamping each parent turn delay independently. |
 | `--cache-bust first_turn_prefix` | A unique per-conversation marker is injected at the start of the first user turn for every play (each dispatch of a trace, initial or recycled) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
-| Loader is a Weka with-subagents corpus loader | The dataset must be the public SemiAnalysis Weka corpus, reachable three ways: a with-subagents `--public-dataset` alias (the rolling `semianalysis_cc_traces_weka_with_subagents[_256k]` family or a date-pinned alias like `semianalysis_cc_traces_weka_062126`; the legacy no-subagents aliases are rejected), a local Weka-format directory via the `weka_trace` loader (`--input-file <dir>`, auto-detected), or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`, constrained to that repo). All three produce byte-identical conversations from the same source rows — see [the Weka tutorial](weka-trace.md#file-based-vs-huggingface-which-to-use) and the Troubleshooting entry below for exact commands. | The benchmark is defined against exact, hash-verifiable corpora so submissions are reproducible. |
+| Loader is a Weka with-subagents corpus loader | The dataset must be the public SemiAnalysis Weka with-subagents corpus, reachable via a with-subagents `--public-dataset` alias, a local Weka-format directory (`weka_trace`), or `--hf-weka-dataset` (`weka_hf`) — all three produce byte-identical conversations. The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | The benchmark is defined against exact, hash-verifiable corpora so submissions are reproducible. |
 | `--benchmark-duration >= 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; if omitted, it runs for 30 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` — the file-based synthesis ISL filter — is rejected because it drops traces whose input length exceeds the cap (the `--public-dataset` corpus has no synthesis filter, so there the flag has no effect either way) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
@@ -198,6 +270,13 @@ injects the locked value and tells you at INFO log level. The same goes for
 when you don't set them explicitly. If you pass one of these explicitly with
 a value that conflicts with the scenario, AIPerf errors with all the
 violations listed at once — you don't have to fix them one at a time.
+
+The trajectory-start ratios (`--trajectory-start-min-ratio` /
+`--trajectory-start-max-ratio`) are the soft exception: the scenario
+auto-fills `0.0`/`1.0` but never validates them, so an explicit different
+value is honored silently — no error, no change to `submission_valid` — even
+though it materially changes the workload. Treat them as fixed for any run
+you intend to compare (see the flag groups in [Quick Start](#quick-start)).
 
 ---
 
@@ -267,7 +346,7 @@ evolving (see the status note at the top).
 
 ---
 
-## How It Actually Runs
+## How a Run Executes
 
 ### Warmup Phase: Trajectories and `k_i`
 
@@ -300,14 +379,17 @@ seed = same trajectories + same start points + same recycle order, on any
 machine. That's why the scenario insists on a seed.
 
 AIPerf aborts the run as soon as any **root-conversation** warmup request
-fails terminally (after exhausting its retries) — it does not wait for the
-rest of the warmup to drain. A single terminal failure means profiling would
-start on a degraded trajectory pool, so AIPerf cancels in-flight warmup
-immediately, logs the failing trace at `WARNING` ("aborting run early"), and
-shuts down as a cancelled run stamped `submission_valid: false` (reason
-`run_cancelled`). Slow-but-healthy warmups are *not* aborted: the warmup
-grace period has no limit by default, so a warmup that is merely slow runs
-to completion.
+fails terminally — each warmup request gets exactly one attempt; there is no
+retry — and it does not wait for the rest of the warmup to drain. A single
+terminal failure means profiling would start on a degraded trajectory pool,
+so AIPerf cancels in-flight warmup immediately, logs the failing trace at
+`WARNING` ("aborting run early"), and shuts down as a cancelled run stamped
+`submission_valid: false` (reason `run_cancelled`). A *subagent* stream's
+warmup failure does not trigger the abort — only root (depth-0)
+conversations gate it. Slow-but-healthy warmups are also *not* aborted: the
+warmup grace period (`--warmup-grace-period`, see the
+[Warmup Phase tutorial](warmup.md)) has no limit by default, so a warmup
+that is merely slow runs to completion.
 
 #### Optional cache-pressure warmup
 
@@ -326,11 +408,13 @@ request metrics.
 
 After warmup, the profiling phase opens. Now you're measuring. Each trajectory
 keeps replaying its conversation from turn `k_i + 1` onward, honoring the
-trace's recorded request-start schedule after applying the 10-second idle-gap
-compression rule. When a recorded gap between consecutive request starts in
-the same trace exceeds 10 seconds, the later request and everything after it
-are shifted earlier so the gap becomes exactly 10 seconds, preserving local
-subagent overlap.
+recorded inter-turn idle gaps: the 10-second compression rule is applied to
+the recorded request-start timeline, then each gap is replayed as an
+end-to-start delay counted from the moment the previous turn completes (the
+locked `--use-end-to-start-delays` rule from the table above). When a
+recorded gap between consecutive request starts in the same trace exceeds 10
+seconds, the later request and everything after it are shifted earlier so
+the gap becomes exactly 10 seconds, preserving local subagent overlap.
 
 Concurrency here is **per session tree**: each lane holds one slot for a
 whole tree — the root conversation plus every subagent worker stream it
@@ -358,14 +442,14 @@ A few wrinkles worth knowing:
   to keep injecting mid-conversation jumps forever.
 - **Each play of a trace gets a fresh cache-bust marker.** When a trace is
   first dispatched (or recycled), AIPerf prepends a unique short tag like
-  `[rid:8a3f2c1b9e7d]\n\n` to the first user turn — one injection per play,
-  shared across all turns of that play. Each play keeps its marker for the
-  trace's whole lifetime and gets a fresh one each time the trace recycles —
-  that's what keeps the server's prefix cache from warming progressively on
-  identical content as the run goes on. Across runs the markers differ too,
-  since each run's auto-generated benchmark ID feeds the marker digest. See
-  the [AgentX FAQ](../benchmark-modes/semianalysis-agentx-faq.md) for the
-  digest construction.
+  `[rid:8a3f2c1b9e7d]\n\n` to the first user turn. The marker is generated
+  once per play, reused on every turn of that play, and replaced when the
+  trace recycles into a new play — that's what keeps the server's prefix
+  cache from warming progressively on identical content as the run goes on.
+  Markers also differ across runs, since each run's auto-generated benchmark
+  ID feeds the marker digest. See
+  [AgentX FAQ §4](../benchmark-modes/semianalysis-agentx-faq.md#4-the-kv-cache-story-warmup-t-and-cache-busting)
+  for marker placement and the warmup-to-profiling handoff.
 - **Warmup and profiling share the marker for a given play.** A trajectory's
   warmup turn `k_i` and its first profiling turn `k_i+1` carry the *same*
   `[rid:…]` — that's how the KV-cache prefix work done during warmup
@@ -398,17 +482,15 @@ branches, background subagents with no following anchor do not block the
 parent, and adjacent subagents sharing the same anchors collapse into one
 multi-child branch.
 
-Within each subagent entry, AIPerf detects nested context chains (by
-longest-common-prefix over the recorded hash ids) and splits the inner
-requests into per-chain children under the subagent's thread id
-`::sa:<agent_id>`: `:aux:NNN` sidecars for one-shot disjoint calls,
-`:wg:GGG_MMM` forks for parallel worker groups, and `:fa:NNN` streams for
-solo/flattened worker threads. Each chain child dispatches at its **recorded
-offset** from the spawn rather than bursting when the parent turn completes,
-so the in-subagent request schedule replays on the recorded timeline. The
-parent's SPAWN_JOIN waits on all of a subagent's chain children. For the
-format details, detection rules, and SPAWN/JOIN mechanics, see the
-[Weka Traces tutorial](weka-trace.md).
+Within each subagent entry, AIPerf additionally detects nested context
+chains, so one recorded subagent may replay as several parallel child
+streams (helper sidecars, worker groups, solo workers). Two behaviors
+matter for the load: each child stream dispatches at its **recorded offset**
+from the spawn rather than bursting when the parent turn completes, so the
+in-subagent request schedule replays on the recorded timeline; and the
+parent's SPAWN_JOIN waits on *all* of a subagent's child streams. For the
+detection rules and the `::sa:`/`::aux:`/`::wg:`/`::fa:` stream-naming
+scheme, see the [Weka Traces tutorial](weka-trace.md).
 
 ---
 
@@ -451,7 +533,7 @@ want to compare against other AgentX MVP runs.
 **`UnknownScenarioError: Unknown scenario 'inferencex-agentx-mvp'. Valid scenarios: …`**
 The AIPerf you're running predates this scenario — scenarios ship with the
 package and are registered in code, not in a data file you can regenerate.
-Upgrade AIPerf (`uv pip install -U aiperf`) and re-run.
+Upgrade AIPerf (`pip install -U aiperf`) and re-run.
 
 **`EmptyTracePoolError: Loader produced 0 traces; trajectories cannot be built.`**
 The HF dataset download or row validation produced no usable traces. Check
@@ -461,13 +543,25 @@ your network connectivity to `huggingface.co` and confirm the
 `semianalysis_cc_traces_weka_062126`), or `weka_hf` with
 `--hf-weka-dataset semianalysisai/cc-traces-weka-062126`. On an offline
 machine, replay a local Weka-format trace directory via
-`--custom-dataset-type weka_trace --input-file <dir>`.
+`--custom-dataset-type weka_trace --input-file <dir>` — see the
+[Weka Traces tutorial](weka-trace.md) for how to obtain or capture one, and
+note the model tokenizer must also be available offline (pre-populate the HF
+cache and set `HF_HUB_OFFLINE=1`, or point `--tokenizer` at a local path).
+
+**The tokenizer can't be resolved or downloaded**
+The Weka loaders rebuild every prompt through a HuggingFace tokenizer
+derived from `--model`, so the dataset build fails if that repo can't be
+reached. If the model repo is gated, export `HF_TOKEN`; if `--model` isn't a
+resolvable HF repo name (a local server alias, a private build), pass
+`--tokenizer <hf-repo-or-local-path>` explicitly. See
+[Tokenizer Auto-Detection](../reference/tokenizer-auto-detection.md).
 
 **Run aborts early: `aborting run early (broadcasting ProfileCancelCommand)` / warmup failure**
-Your inference server rejected a warmup request after exhausting AIPerf's
-normal retry budget. AgentX MVP aborts on the **first** terminal warmup
-failure rather than producing a partial result: the run cancels immediately
-and the failing trace is named in the `WARNING` log. Check the AIPerf and
+Your inference server rejected a warmup request. Each warmup request gets
+exactly one attempt — there is no retry — and AgentX MVP aborts on the
+**first** terminal root-conversation warmup failure rather than producing a
+partial result: the run cancels immediately and the failing trace is named
+in the `WARNING` log. Check the AIPerf and
 server logs — the underlying cause is usually a connection error
 (`Connection refused`: wrong `--url` or the server isn't running), an auth
 failure (`401`/`403`: pass `--api-key`), a model-name mismatch
@@ -479,10 +573,16 @@ requested context.
 Your server is rejecting prompts as too long for more than 1% of requests.
 The most common cause is starting the server with a reduced `--max-model-len`
 (or equivalent flag) — AgentX MVP requires the model's default. Restart the
-server without overriding the max length and try again. The exact overflow
-count appears as the `context_overflow_count` metric (its value is the raw
-request count), top-level in `profile_export_aiperf.json` and under `metrics`
-in the aggregate file — so you can see how close you were to the threshold.
+server without overriding the max length and try again. If the model's
+*native* window is itself around 256k (MiniMax-class models), the fix is a
+matching `_256k` corpus instead — e.g.
+`--public-dataset semianalysis_cc_traces_weka_with_subagents_256k`; see the
+[AgentX FAQ §3](../benchmark-modes/semianalysis-agentx-faq.md#3-how-realistic-are-the-prompts-and-token-counts)
+for why that beats capping client-side. The number of requests that
+overflowed appears as the `context_overflow_count` metric (a raw count, not
+a rate), top-level in `profile_export_aiperf.json` and under `metrics` in
+the aggregate file — divide it by the run's total request count to see how
+close you were to the 1% threshold.
 
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …"**
 The AgentX MVP scenario is defined against the public SemiAnalysis Weka
@@ -534,14 +634,28 @@ the per-run `profile_export_aiperf.json` (under `metadata`). If you passed
 `aggregate/profile_export_aiperf_aggregate.json` under the artifact directory
 too.
 
+**Configuration times out before any traffic starts**
+The first run on a machine reconstructs the whole corpus into a tokenized,
+cache-structured dataset before sending anything, and for the with-subagents
+corpora that reconstruction can exceed the default 300-second configuration
+timeout. Raise `AIPERF_DATASET_CONFIGURATION_TIMEOUT` and
+`AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` (which must be at least as large)
+to ~1800 seconds for a cold run. The cost is one-time: the reconstructed
+dataset lands in an on-disk cache (default `~/.cache/aiperf/dataset_mmap`)
+whose key includes the random seed, so pin `--random-seed` and later runs
+restore it in seconds. See
+[AgentX FAQ §8](../benchmark-modes/semianalysis-agentx-faq.md#8-running-the-benchmark-and-why-the-first-run-is-slow).
+
 **Run is slower than I expected**
-The warmup phase replays a full conversation prefix for every trajectory
-stream before profiling starts; with deep histories in real coding traces,
-that's a meaningful chunk of wall time on its own. Subagent fan-out can also
-create additional in-flight requests beyond the active parent trajectory
-count. If your server is concurrency-limited and you raised `--concurrency`
-above its limit, you'll also see queueing. Drop `--concurrency` or raise the
-server's limit.
+On a cold first run, the corpus reconstruction described in the previous
+entry happens before any traffic — budget several extra minutes for it.
+After that, the warmup phase replays a full conversation prefix for every
+trajectory stream before profiling starts; with deep histories in real
+coding traces, that's a meaningful chunk of wall time on its own. Subagent
+fan-out can also create additional in-flight requests beyond the active
+parent trajectory count. If your server is concurrency-limited and you
+raised `--concurrency` above its limit, you'll also see queueing. Drop
+`--concurrency` or raise the server's limit.
 
 **Results vary run-to-run on the same server**
 Two runs with different `--random-seed` values will land on different
@@ -559,6 +673,9 @@ the percentiles more data to stabilize on.
   and SPAWN/JOIN subagent mechanics.
 - [Metrics Reference](../metrics-reference.md) — definitions and formulas for
   TTFT, ITL, throughput, and every other reported metric.
+- [Effective vs Active Metrics](../reference/effective-vs-active-metrics.md) —
+  the time-weighted EFFECTIVE and ACTIVE console tables printed at the end of
+  a run.
 - [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) —
   where `agentic_replay` fits among the other AIPerf timing modes.
 - [Warmup Phase tutorial](warmup.md) — the generic AIPerf warmup mechanism
