@@ -36,18 +36,17 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         from aiperf.plugin.enums import PhaseType
 
         endpoint_metadata = plugins.get_endpoint_metadata(self.run.cfg.endpoint.type)
-        if not endpoint_metadata.produces_tokens:
-            disallowed_flags |= MetricFlags.PRODUCES_TOKENS_ONLY
-        if not endpoint_metadata.tokenizes_input:
-            disallowed_flags |= MetricFlags.TOKENIZES_INPUT_ONLY
-        if not endpoint_metadata.supports_audio:
-            disallowed_flags |= MetricFlags.SUPPORTS_AUDIO_ONLY
-        if not endpoint_metadata.supports_images:
-            disallowed_flags |= MetricFlags.SUPPORTS_IMAGE_ONLY
-        if not endpoint_metadata.supports_videos:
-            disallowed_flags |= MetricFlags.SUPPORTS_VIDEO_ONLY
-        if not endpoint_metadata.produces_videos:
-            disallowed_flags |= MetricFlags.PRODUCES_VIDEO_ONLY
+        capability_flags = (
+            ("produces_tokens", MetricFlags.PRODUCES_TOKENS_ONLY),
+            ("tokenizes_input", MetricFlags.TOKENIZES_INPUT_ONLY),
+            ("supports_audio", MetricFlags.SUPPORTS_AUDIO_ONLY),
+            ("supports_images", MetricFlags.SUPPORTS_IMAGE_ONLY),
+            ("supports_videos", MetricFlags.SUPPORTS_VIDEO_ONLY),
+            ("produces_videos", MetricFlags.PRODUCES_VIDEO_ONLY),
+        )
+        for capability, flag in capability_flags:
+            if not getattr(endpoint_metadata, capability):
+                disallowed_flags |= flag
         if not self.run.cfg.endpoint.streaming:
             disallowed_flags |= MetricFlags.STREAMING_ONLY
         if self.run.cfg.endpoint.use_server_token_count:
