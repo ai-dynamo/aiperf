@@ -1,15 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
+from aiperf.dataset.loader.baseten_trace_models import BasetenTrace
 from aiperf.plugin.enums import CustomDatasetType
-
-if TYPE_CHECKING:
-    from aiperf.dataset.loader.baseten_trace import BasetenTrace
 
 
 def validate_chat_messages(messages: list[dict[str, Any]]) -> None:
@@ -466,21 +464,18 @@ class SageMakerDataCaptureTrace(AIPerfBaseModel):
     )
 
 
-if TYPE_CHECKING:
-    _CustomDatasetBound = (
-        SingleTurn
-        | MultiTurn
-        | RandomPool
-        | MooncakeTrace
-        | BailianTrace
-        | BasetenTrace
-        | BurstGPTTrace
-        | RawPayload
-        | InputsJsonSession
-        | SageMakerDataCaptureTrace
-    )
-else:
-    _CustomDatasetBound = AIPerfBaseModel
+_CustomDatasetBound = (
+    SingleTurn
+    | MultiTurn
+    | RandomPool
+    | MooncakeTrace
+    | BailianTrace
+    | BasetenTrace
+    | BurstGPTTrace
+    | RawPayload
+    | InputsJsonSession
+    | SageMakerDataCaptureTrace
+)
 
 CustomDatasetT = TypeVar("CustomDatasetT", bound=_CustomDatasetBound)
 """A union type of all custom data types."""
