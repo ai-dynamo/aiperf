@@ -84,6 +84,9 @@ class EmbeddingsEndpoint(BaseEndpoint):
         if config.endpoint.extra:
             payload.update(config.endpoint.extra)
 
+        if turn.extra_body:
+            payload.update(turn.extra_body)
+
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 

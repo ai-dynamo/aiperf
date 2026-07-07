@@ -177,8 +177,13 @@ def show(
     the fully-resolved YAML (or JSON) representation.
     """
     from aiperf.cli_utils import exit_on_error
+    from aiperf.config.loader.errors import ConfigurationError
 
-    with exit_on_error(title="Error Loading Configuration"):
+    with exit_on_error(
+        title="Error Loading Configuration",
+        show_traceback=False,
+        quiet_for=(ConfigurationError,),
+    ):
         import orjson
 
         from aiperf.config.loader import dump_config, load_config
@@ -212,7 +217,7 @@ def schema(
     """
     from aiperf.cli_utils import exit_on_error
 
-    with exit_on_error(title="Error Generating Schema"):
+    with exit_on_error(title="Error Generating Schema", show_traceback=False):
         import orjson
 
         from aiperf.config.config import AIPerfConfig
@@ -239,8 +244,13 @@ def diff(
 ) -> None:
     """Compare two configs after default-expansion and print the differences."""
     from aiperf.cli_utils import exit_on_error
+    from aiperf.config.loader.errors import ConfigurationError
 
-    with exit_on_error(title="Error Comparing Configurations"):
+    with exit_on_error(
+        title="Error Comparing Configurations",
+        show_traceback=False,
+        quiet_for=(ConfigurationError,),
+    ):
         import orjson
 
         from aiperf.config.loader import load_config
@@ -288,8 +298,13 @@ def generate(
     YAML. Useful for migrating from CLI-driven invocations to YAML configs.
     """
     from aiperf.cli_utils import exit_on_error
+    from aiperf.config.loader.errors import ConfigurationError
 
-    with exit_on_error(title="Error Generating Configuration"):
+    with exit_on_error(
+        title="Error Generating Configuration",
+        show_traceback=False,
+        quiet_for=(ConfigurationError,),
+    ):
         import orjson
 
         from aiperf.config.flags.converter import convert_cli_to_aiperf

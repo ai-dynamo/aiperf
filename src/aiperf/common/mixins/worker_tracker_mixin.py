@@ -101,6 +101,7 @@ class WorkerGroupTracker:
         group.workers = children
         group.task_stats = WorkerTaskStats(
             total=sum(c.task_stats.total for c in children.values()),
+            completed=sum(c.task_stats.completed for c in children.values()),
             failed=sum(c.task_stats.failed for c in children.values()),
         )
         if children:

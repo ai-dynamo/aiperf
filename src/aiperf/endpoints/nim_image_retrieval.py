@@ -51,6 +51,9 @@ class ImageRetrievalEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
+        if turn.extra_body:
+            payload.update(turn.extra_body)
+
         self.trace(lambda: f"Formatted Image Retrieval payload: {payload}")
         return payload
 

@@ -131,6 +131,9 @@ class TemplateEndpoint(BaseEndpoint):
         if self._extra_fields:
             payload.update(self._extra_fields)
 
+        if turn.extra_body:
+            payload.update(turn.extra_body)
+
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 

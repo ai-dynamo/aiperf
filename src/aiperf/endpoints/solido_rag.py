@@ -57,6 +57,9 @@ class SolidoEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
+        if turn.extra_body:
+            payload.update(turn.extra_body)
+
         self.trace(lambda: f"Formatted SOLIDO payload: {payload}")
         return payload
 
