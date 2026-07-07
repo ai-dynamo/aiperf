@@ -64,8 +64,12 @@ def collect_response_items(
     event_type = json_obj.get("type")
 
     if event_type == "response.completed":
-        resp = json_obj.get("response") or {}
-        merge_output_list(items_by_key, resp.get("output"))
+        # A truthy non-dict ``response`` (``{"response": "oops"}``) would crash
+        # ``resp.get(...)``; degrade to no items instead. ``merge_output_list``
+        # already tolerates a non-list ``output``.
+        resp = json_obj.get("response")
+        if isinstance(resp, dict):
+            merge_output_list(items_by_key, resp.get("output"))
         return
 
     if event_type == "response.output_item.done":

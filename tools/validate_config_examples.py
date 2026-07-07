@@ -143,6 +143,7 @@ def validate_examples(
     # Import here to catch import errors gracefully
     try:
         from aiperf.config import load_config
+        from aiperf.config.loader.plan import build_benchmark_plan
     except ImportError as e:
         raise ConfigValidationError(
             "Failed to import config",
@@ -185,9 +186,19 @@ def validate_examples(
                 schema_warnings = validate_against_schema(yaml_path, schema)
 
             # Step 2: Load with Pydantic (authoritative semantic validation)
+            # Step 3: For sweep configs, also expand the benchmark plan.
+            # load_config alone never runs the per-variation BenchmarkConfig
+            # validation that `aiperf profile` / `aiperf config expand` do, so
+            # a broken sweep (e.g. singular `dataset:` combined with a
+            # `datasets.*` sweep path) would pass load_config yet crash on use.
             try:
-                load_config(yaml_path)
+                config = load_config(yaml_path)
                 config_count = 1
+
+                if config.sweep is not None:
+                    plan = build_benchmark_plan(config)
+                    config_count = len(plan.configs)
+
                 total_configs += config_count
 
             except Exception as e:

@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 from pytest import approx
 
-from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
@@ -52,6 +50,15 @@ class TestGoodRequestFractionMetric:
         results[ErrorRequestCountMetric.tag] = 10
         assert metric.derive_value(results) == approx(0.0)
 
+    def test_100pct_fail_only_error_count_present_returns_zero_not_omitted(self):
+        # On a fully-failed run every record is an error, so the valid-only
+        # counters (good_request_count, request_count) never emit -- only
+        # error_request_count is present. The gate must report 0.0, not vanish.
+        metric = GoodRequestFractionMetric()
+        results = MetricResultsDict()
+        results[ErrorRequestCountMetric.tag] = 42
+        assert metric.derive_value(results) == approx(0.0)
+
     def test_zero_total_returns_zero(self):
         metric = GoodRequestFractionMetric()
         results = MetricResultsDict()
@@ -59,12 +66,13 @@ class TestGoodRequestFractionMetric:
         results[RequestCountMetric.tag] = 0
         assert metric.derive_value(results) == 0.0
 
-    def test_missing_good_count_raises(self):
+    def test_missing_good_count_defaults_to_zero(self):
+        # A missing good_request_count means zero good requests, not an
+        # uncomputable metric: 0 good / 20 attempted == 0.0 (never omitted).
         metric = GoodRequestFractionMetric()
         results = MetricResultsDict()
         results[RequestCountMetric.tag] = 20
-        with pytest.raises(NoMetricValue):
-            metric.derive_value(results)
+        assert metric.derive_value(results) == approx(0.0)
 
     def test_registered_in_metric_registry(self):
         from aiperf.metrics.metric_registry import MetricRegistry
@@ -72,8 +80,7 @@ class TestGoodRequestFractionMetric:
         cls = MetricRegistry.get_class("good_request_fraction")
         assert cls is GoodRequestFractionMetric
 
-    def test_required_metrics_declared(self):
-        assert GoodRequestFractionMetric.required_metrics == {
-            GoodRequestCountMetric.tag,
-            RequestCountMetric.tag,
-        }
+    def test_no_required_metrics_so_gate_never_vanishes(self):
+        # Deliberately None: every counter can be legitimately absent (100%-fail
+        # or clean run), so _check_metrics must not gate this metric out.
+        assert GoodRequestFractionMetric.required_metrics is None

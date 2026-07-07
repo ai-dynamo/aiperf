@@ -64,10 +64,18 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
-        if isinstance(json_obj, list) and json_obj:
-            text = json_obj[0].get("generated_text")
-        else:
+        # TGI returns either ``{"generated_text": ...}`` or ``[{"generated_text":
+        # ...}]``. A malformed first list element (``[None]``, ``['x']``, ``[5]``)
+        # or a non-dict top-level body would crash ``.get(...)`` on the worker's
+        # unconditional post-response parse; degrade to None instead (the
+        # streaming path already has a try/except; this one did not).
+        if isinstance(json_obj, list):
+            first = json_obj[0] if json_obj else None
+            text = first.get("generated_text") if isinstance(first, dict) else None
+        elif isinstance(json_obj, dict):
             text = json_obj.get("generated_text")
+        else:
+            text = None
 
         if not text:
             self.debug(lambda: f"No generated_text in response: {json_obj}")

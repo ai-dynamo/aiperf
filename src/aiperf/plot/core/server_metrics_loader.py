@@ -44,7 +44,12 @@ class ServerMetricsLoaderMixin:
         """
         try:
             data = orjson.loads(self._read_bytes(json_path))
-            export_data = ServerMetricsExportData.model_validate(data)
+            # Project away unknown additive keys a newer AIPerf may have written
+            # into nested objects; without this the nested extra="forbid"
+            # dataclasses reject the whole file and the section is dropped.
+            export_data = ServerMetricsExportData.model_validate(
+                ServerMetricsExportData.project_export_dict(data)
+            )
 
             aggregated, rows = self._collect_server_metrics_json(export_data)
             df = pd.DataFrame(rows) if rows else None

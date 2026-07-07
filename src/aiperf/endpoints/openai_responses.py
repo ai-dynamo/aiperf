@@ -346,8 +346,11 @@ class ResponsesEndpoint(BaseEndpoint):
             return ParsedResponse(perf_ns=perf_ns, data=data)
 
         if event_type == "response.completed":
-            resp = json_obj.get("response") or {}
-            usage = resp.get("usage") or None
+            # A truthy non-dict ``response`` (``{"response": "oops"}``) would
+            # crash ``resp.get(...)`` on the worker's unconditional post-response
+            # parse; degrade to None instead.
+            resp = json_obj.get("response")
+            usage = resp.get("usage") or None if isinstance(resp, dict) else None
             if usage:
                 return ParsedResponse(perf_ns=perf_ns, data=None, usage=usage)
             return None

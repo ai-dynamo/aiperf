@@ -62,14 +62,16 @@ def is_finite_value(x: Any) -> bool:
     ``int64``, ...) because ``float(np.float64(...))`` round-trips.
 
     Strings, bytes, lists, dicts and other non-numeric types return False
-    (the ``float()`` coercion either raises ``ValueError`` or
-    ``TypeError``, both of which are caught).
+    (the ``float()`` coercion raises ``ValueError``/``TypeError``). A Python
+    ``int`` larger than the float64 range (e.g. ``10**400``) raises
+    ``OverflowError`` on coercion -- it is not a finite float, so it too
+    returns False. All three are caught to keep this a total function.
     """
     if x is None or isinstance(x, bool):
         return False
     try:
         return math.isfinite(float(x))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
@@ -138,7 +140,7 @@ def scrub_non_finite(obj: Any) -> Any:
     if hasattr(obj, "__float__") and not isinstance(obj, int):
         try:
             f = float(obj)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return obj
         return f if math.isfinite(f) else None
     return obj

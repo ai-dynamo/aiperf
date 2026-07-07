@@ -112,6 +112,12 @@ class ImageGenerationEndpoint(BaseEndpoint):
         elif "data" in json_obj:
             # Non-streaming responses contain data array with image items
             for item in json_obj.get("data", []):
+                # Skip non-dict ``data`` items (``[None]``, ``['x']``, ``[5]``)
+                # so a malformed 200 body degrades rather than crashing
+                # ``item.get(...)`` on the worker's unconditional post-response
+                # parse.
+                if not isinstance(item, dict):
+                    continue
                 images.append(
                     ImageDataItem(
                         url=item.get("url"),

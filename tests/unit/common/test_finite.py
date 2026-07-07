@@ -44,11 +44,37 @@ from aiperf.common.finite import (
         param(np.float64(1.5), True, id="numpy_float64_finite"),
         param(np.int64(0), True, id="numpy_int64_zero"),
         param(np.int64(-100), True, id="numpy_int64_negative"),
+        # A Python int beyond float64 range raises OverflowError on float()
+        # coercion. It is not a finite float, so is_finite_value must catch
+        # the OverflowError and return False (total-function contract).
+        param(10**400, False, id="int_overflowing_float64"),
+        param(-(10**400), False, id="negative_int_overflowing_float64"),
     ],
 )
 def test_is_finite_value(value: object, expected: bool) -> None:
     """is_finite_value must recognize finite Python and numpy scalars."""
     assert is_finite_value(value) is expected
+
+
+def test_is_finite_value_overflowing_int_does_not_raise() -> None:
+    """is_finite_value stays total on ints larger than float64 range."""
+    assert is_finite_value(10**400) is False
+    assert is_finite_value(-(10**400)) is False
+
+
+def test_nan_safe_mean_scrubs_overflowing_int() -> None:
+    """An int beyond float64 range is filtered out, not raised on."""
+    assert nan_safe_mean([10**400, 1.0]) == pytest.approx(1.0)
+
+
+def test_nan_safe_mean_all_overflowing_returns_none() -> None:
+    """When every value overflows float64, no finite values remain -> None."""
+    assert nan_safe_mean([10**400, -(10**400)]) is None
+
+
+def test_nan_safe_std_scrubs_overflowing_int() -> None:
+    """nan_safe_std filters overflowing ints instead of raising OverflowError."""
+    assert nan_safe_std([10**400, 1.0, 3.0]) == pytest.approx(math.sqrt(2.0))
 
 
 class _M(BaseModel):

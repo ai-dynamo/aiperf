@@ -344,3 +344,85 @@ def test_no_sweep_block_yields_single_base_variation() -> None:
     assert variations[0].values == {}
     assert configs[0].phases[0].concurrency == 1
     _assert_each_round_trips(configs)
+
+
+# ---------------------------------------------------------------------------
+# Singular `dataset:` shorthand vs. plural `datasets.<name>` sweep path
+# ---------------------------------------------------------------------------
+
+# Body using the singular `dataset:` shorthand (auto-named `default`).
+_SINGULAR_DATASET_BODY = """\
+benchmark:
+  models: [llama]
+  endpoint:
+    type: chat
+    urls: ["http://x:8000/v1/chat/completions"]
+  dataset:
+    type: synthetic
+    prompts:
+      isl: 512
+      osl: 64
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: 10
+      concurrency: 1
+"""
+
+# Body using the plural `datasets:` list form with an explicit name.
+_PLURAL_DATASET_BODY = """\
+benchmark:
+  models: [llama]
+  endpoint:
+    type: chat
+    urls: ["http://x:8000/v1/chat/completions"]
+  datasets:
+    - name: default
+      type: synthetic
+      prompts:
+        isl: 512
+        osl: 64
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: 10
+      concurrency: 1
+"""
+
+_DATASET_SWEEP = (
+    "sweep:\n"
+    "  type: grid\n"
+    "  variables:\n"
+    "    datasets.default.prompts.isl: [128, 512, 2048]\n"
+)
+
+
+class TestSingularDatasetWithDatasetsSweepPath:
+    """Regression: the singular `dataset:` shorthand cannot be combined with a
+    `datasets.*` grid-sweep path.
+
+    The grid writes the swept value at ``datasets.default.prompts.isl`` (plural),
+    but the raw envelope still carries the singular ``dataset`` key, so the
+    per-variation ``BenchmarkConfig`` validation rejects the ``dataset`` +
+    ``datasets`` mix. The shipped ``sweep_distributions.yaml`` template hit
+    exactly this and leaked a raw ``ValidationError`` from ``aiperf config
+    expand`` / ``aiperf profile``.
+    """
+
+    def test_singular_dataset_shorthand_with_datasets_sweep_path_raises(self) -> None:
+        yaml_str = _DATASET_SWEEP + _SINGULAR_DATASET_BODY
+        with pytest.raises(Exception, match="cannot be used with"):
+            _expand(yaml_str)
+
+    def test_plural_datasets_form_expands_and_materializes_isl(self) -> None:
+        yaml_str = _DATASET_SWEEP + _PLURAL_DATASET_BODY
+        _, variations, configs = _expand(yaml_str)
+
+        assert len(configs) == 3
+        assert [c.datasets[0].prompts.isl.mean for c in configs] == [128, 512, 2048]
+        assert [v.values["datasets.default.prompts.isl"] for v in variations] == [
+            128,
+            512,
+            2048,
+        ]
+        _assert_each_round_trips(configs)

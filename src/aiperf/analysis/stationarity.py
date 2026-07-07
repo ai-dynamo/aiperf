@@ -24,17 +24,24 @@ def spearman_rank_correlation(
 
     Returns:
         (rho, p_value). rho in [-1, 1], p_value in [0, 1].
-        Returns (0.0, 1.0) for arrays shorter than 3 elements.
+        Returns (0.0, 1.0) for arrays shorter than 3 elements, or when either
+        input has zero variance (all-constant) — rho is undefined (0/0) there,
+        so we report the documented "no trend" result rather than a spurious 1.0.
     """
     n = len(x)
     if n < 3:
         return 0.0, 1.0
 
-    # Ranks via double argsort
-    rank_x = np.empty(n, dtype=np.float64)
-    rank_y = np.empty(n, dtype=np.float64)
-    rank_x[np.argsort(x)] = np.arange(1, n + 1, dtype=np.float64)
-    rank_y[np.argsort(y)] = np.arange(1, n + 1, dtype=np.float64)
+    # A constant series has no rank ordering: correlation is undefined (0/0).
+    # Report "no trend" so a flat/stationary window is never flagged as trending.
+    if np.std(x) == 0.0 or np.std(y) == 0.0:
+        return 0.0, 1.0
+
+    # Average-rank tie handling (scipy.stats.rankdata "average" convention):
+    # equal values share the mean of the ranks they would otherwise occupy.
+    # Positional ranks would give a constant/tied series a spurious rho of ~1.
+    rank_x = _average_ranks(x)
+    rank_y = _average_ranks(y)
 
     # Pearson correlation of ranks
     corr_matrix = np.corrcoef(rank_x, rank_y)
@@ -53,6 +60,31 @@ def spearman_rank_correlation(
     # using the regularized incomplete beta function
     p_value = _t_distribution_two_sided_p(t_stat, n - 2)
     return rho, p_value
+
+
+def _average_ranks(values: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Rank values 1..n, assigning tied values the average of their ranks.
+
+    Matches ``scipy.stats.rankdata(values, method="average")`` without the
+    scipy dependency. A run of equal values receives the mean of the positional
+    ranks it spans, so a constant series ranks all-equal (mean rank) rather than
+    monotonically — the correction that keeps a flat window from reading as a trend.
+    """
+    n = len(values)
+    order = np.argsort(values, kind="mergesort")
+    positional = np.empty(n, dtype=np.float64)
+    positional[order] = np.arange(1, n + 1, dtype=np.float64)
+
+    sorted_values = values[order]
+    average = positional.copy()
+    start = 0
+    for i in range(1, n + 1):
+        if i == n or sorted_values[i] != sorted_values[start]:
+            if i - start > 1:
+                mean_rank = (start + 1 + i) / 2.0
+                average[order[start:i]] = mean_rank
+            start = i
+    return average
 
 
 def _t_distribution_two_sided_p(t: float, df: int) -> float:

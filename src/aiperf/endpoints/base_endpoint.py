@@ -479,7 +479,15 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             and isinstance(data[0], dict)
             and data[0].get("object") == "embedding"
         ):
-            embeddings = [item["embedding"] for item in data if "embedding" in item]
+            # A later non-dict item (``[{...}, None]``) would crash the
+            # ``"embedding" in item`` membership test; skip non-dicts so a
+            # partially-malformed body degrades rather than raising on the
+            # worker's unconditional post-response parse.
+            embeddings = [
+                item["embedding"]
+                for item in data
+                if isinstance(item, dict) and "embedding" in item
+            ]
             if embeddings:
                 return EmbeddingResponseData(embeddings=embeddings)
 
@@ -539,17 +547,21 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
                 return self.make_text_response_data("".join(value))
 
         choices = json_obj.get("choices")
-        if isinstance(choices, list) and choices:
+        # A malformed first choice (``[None]``, ``['x']``, ``[5]``) or a truthy
+        # non-dict ``message``/``delta`` (``{"message": "hi"}``) would crash the
+        # ``.get(...)`` calls below on the worker's unconditional post-response
+        # parse. Degrade to None instead, mirroring ChatEndpoint (openai_chat.py).
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
             choice = choices[0]
             if text := choice.get("text"):
                 return self.make_text_response_data(text)
             # Non-streaming chat format
             message = choice.get("message")
-            if message and (content := message.get("content")):
+            if isinstance(message, dict) and (content := message.get("content")):
                 return self.make_text_response_data(content)
             # Streaming chat format (delta)
             delta = choice.get("delta")
-            if delta and (content := delta.get("content")):
+            if isinstance(delta, dict) and (content := delta.get("content")):
                 return self.make_text_response_data(content)
 
         return None

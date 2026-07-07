@@ -23,8 +23,14 @@ class CohereRankingsEndpoint(BaseRankingsEndpoint):
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract ranking results from Cohere Rankings API response."""
         results = json_obj.get("results", [])
-        rankings = [
+        if not isinstance(results, list):
+            return []
+        # Skip non-dict result items (``[None]``, ``['x']``, ``[5]``) so a
+        # malformed 200 body degrades to an empty ranking list rather than
+        # crashing ``r.get(...)`` on the worker's unconditional post-response
+        # parse.
+        return [
             {"index": r.get("index"), "score": r.get("relevance_score")}
             for r in results
+            if isinstance(r, dict)
         ]
-        return rankings

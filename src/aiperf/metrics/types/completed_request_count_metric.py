@@ -25,19 +25,15 @@ class CompletedRequestCountMetric(BaseDerivedMetric[int]):
     unit = GenericMetricUnit.REQUESTS
     display_order = 1075
     flags = MetricFlags.NO_INDIVIDUAL_RECORDS
-    # Both dependencies are declared so MetricRegistry's dependency-order
-    # validator (``create_dependency_order_for``) ensures they are computed
-    # before this metric runs. ``ErrorRequestCountMetric`` may legitimately
-    # be absent (zero-error workloads); the derive falls back to 0 in that
-    # case via ``.get(..., 0)``.
-    required_metrics = frozenset(
-        {
-            RequestCountMetric.tag,
-            ErrorRequestCountMetric.tag,
-        }
-    )
+    # Neither counter is declared required. request_count (successes) is absent
+    # on a 100%-fail run and error_request_count (ERROR_ONLY) is absent on a
+    # clean zero-error run. Both are computed in the separate aggregate phase
+    # (not via derived dependency ordering), so requiring them here would only
+    # make _check_metrics drop the completion total via NoMetricValue exactly
+    # when a caller needs it. Both counters are read with a 0 default.
+    required_metrics = None
 
     def _derive_value(self, metric_results: MetricResultsDict) -> int:
-        successes = int(metric_results.get_or_raise(RequestCountMetric))
+        successes = int(metric_results.get(RequestCountMetric.tag, 0) or 0)
         errors = int(metric_results.get(ErrorRequestCountMetric.tag, 0) or 0)
         return successes + errors

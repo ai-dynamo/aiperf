@@ -119,6 +119,14 @@ class CompletionsEndpoint(BaseEndpoint):
                 if not choices:
                     self.debug(lambda: f"No choices found in response: {json_obj}")
                     return None
+                # Malformed ``choices`` shapes — a non-list value or a first
+                # entry that isn't a dict (``[None]``, ``['x']``, ``[5]``,
+                # ``'oops'``) — degrade to None rather than crashing
+                # ``choices[0].get(...)`` on the worker's unconditional
+                # post-response parse, mirroring ChatEndpoint (openai_chat.py).
+                if not isinstance(choices, list) or not isinstance(choices[0], dict):
+                    self.debug(lambda: f"Malformed choices in response: {json_obj}")
+                    return None
                 return self.make_text_response_data(choices[0].get("text"))
             case _:
                 # Unrecognized object: the server can return arbitrary bodies

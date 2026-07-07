@@ -28,15 +28,17 @@ class RequestErrorRateMetric(BaseDerivedMetric[float]):
     unit = GenericMetricUnit.PERCENT
     display_order = 1080
     flags = MetricFlags.NO_INDIVIDUAL_RECORDS
-    required_metrics = frozenset(
-        {
-            RequestCountMetric.tag,
-            ErrorRequestCountMetric.tag,
-        }
-    )
+    # Neither counter is declared required. request_count (successes) is absent
+    # when 100% of requests fail, and error_request_count (ERROR_ONLY) is absent
+    # on a clean zero-error run. Declaring either in required_metrics would make
+    # _check_metrics raise NoMetricValue and silently drop this metric from the
+    # export exactly when it matters most -- a fully-down server should report a
+    # 100% error rate, not omit it. Both counters are read with a 0 default; the
+    # total <= 0 guard below still covers a truly-empty run.
+    required_metrics = None
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
-        successes = int(metric_results.get_or_raise(RequestCountMetric))
+        successes = int(metric_results.get(RequestCountMetric.tag, 0) or 0)
         errors = int(metric_results.get(ErrorRequestCountMetric.tag, 0) or 0)
         total = successes + errors
         if total <= 0:

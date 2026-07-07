@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import ConfigDict, Field
 
@@ -311,6 +311,57 @@ def HistogramMetricData(
     )
 
 
+def _project_known_fields(raw: dict[str, Any], cls: type) -> dict[str, Any]:
+    """Keep only keys that are declared dataclass fields of ``cls``.
+
+    Drops unknown additive keys a newer writer may have added, so this reader's
+    ``extra="forbid"`` nested dataclasses do not reject the whole payload.
+    """
+    known = cls.__dataclass_fields__
+    return {key: value for key, value in raw.items() if key in known}
+
+
+def _project_series_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project one ``ServerSeries`` dict plus its nested stats / timeslices."""
+    projected = _project_known_fields(raw, ServerSeries)
+    stats = projected.get("stats")
+    if isinstance(stats, dict):
+        projected["stats"] = _project_known_fields(stats, ServerSeriesStats)
+    timeslices = projected.get("timeslices")
+    if isinstance(timeslices, list):
+        projected["timeslices"] = [
+            _project_known_fields(ts, ServerTimeslice) if isinstance(ts, dict) else ts
+            for ts in timeslices
+        ]
+    return projected
+
+
+def _project_metric_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project one ``ServerMetricData`` dict plus its nested series."""
+    projected = _project_known_fields(raw, ServerMetricData)
+    series = projected.get("series")
+    if isinstance(series, list):
+        projected["series"] = [
+            _project_series_dict(item) if isinstance(item, dict) else item
+            for item in series
+        ]
+    return projected
+
+
+def _project_summary_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project the ``ServerMetricsSummary`` dict plus its endpoint_info map."""
+    projected = _project_known_fields(raw, ServerMetricsSummary)
+    endpoint_info = projected.get("endpoint_info")
+    if isinstance(endpoint_info, dict):
+        projected["endpoint_info"] = {
+            url: _project_known_fields(info, ServerMetricsEndpointInfo)
+            if isinstance(info, dict)
+            else info
+            for url, info in endpoint_info.items()
+        }
+    return projected
+
+
 class ServerMetricsExportData(AIPerfBaseModel):
     """Server metrics in hybrid format: keyed metrics with flat stats.
 
@@ -320,6 +371,51 @@ class ServerMetricsExportData(AIPerfBaseModel):
     Example access:
         data["metrics"]["vllm:kv_cache_usage_perc"]["series"][0]["stats"]["p99"]
     """
+
+    @classmethod
+    def project_export_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """Drop unknown additive keys from nested export objects before validation.
+
+        A newer AIPerf may add additive fields to ``server_metrics_export.json``.
+        The nested export dataclasses (``ServerMetricsSummary``, ``ServerMetricData``,
+        ``ServerSeries``, ``ServerSeriesStats``, ``ServerTimeslice``) use
+        ``extra="forbid"``, so without this projection ``model_validate`` would
+        reject the whole file and the plot loader's ``_load_server_metrics`` would
+        swallow the resulting ``DataLoadError`` — silently dropping the ENTIRE
+        server-metrics section from the plot. Projecting each nested object to its
+        known fields keeps additive schema evolution backward-compatible, mirroring
+        ``JsonMetricResult.project_summary_dict``.
+
+        The top-level model itself uses ``extra="allow"`` (via ``AIPerfBaseModel``),
+        so top-level additions already pass through; only the nested ``forbid``
+        dataclasses need projecting. Non-dict input is returned untouched so
+        ``model_validate`` still raises its normal validation error on garbage.
+
+        Example:
+            >>> raw = {
+            ...     "summary": {"endpoints_configured": [], "endpoints_successful": [],
+            ...         "start_time": "2026-01-01T00:00:00", "end_time": "2026-01-01T00:01:00"},
+            ...     "metrics": {"vllm:kv_cache_usage_perc": {"type": "gauge",
+            ...         "description": "d", "series": [{"stats": {"avg": 1.0,
+            ...         "future_field": 9}}]}},
+            ... }
+            >>> projected = ServerMetricsExportData.project_export_dict(raw)
+            >>> "future_field" in projected["metrics"]["vllm:kv_cache_usage_perc"]["series"][0]["stats"]
+            False
+        """
+        if not isinstance(data, dict):
+            return data
+        projected = dict(data)
+        summary = projected.get("summary")
+        if isinstance(summary, dict):
+            projected["summary"] = _project_summary_dict(summary)
+        metrics = projected.get("metrics")
+        if isinstance(metrics, dict):
+            projected["metrics"] = {
+                name: _project_metric_dict(item) if isinstance(item, dict) else item
+                for name, item in metrics.items()
+            }
+        return projected
 
     # Increment on breaking changes to the export structure
     SCHEMA_VERSION: ClassVar[str] = "1.0"

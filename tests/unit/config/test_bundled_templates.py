@@ -14,8 +14,10 @@ import os
 import pathlib
 
 import pytest
+import yaml
 
 from aiperf.config.loader.core import load_config
+from aiperf.config.loader.plan import build_benchmark_plan
 
 TEMPLATES_DIR = (
     pathlib.Path(__file__).resolve().parents[3]
@@ -75,3 +77,42 @@ def test_bundled_templates_directory_is_non_empty() -> None:
         f"No bundled templates found under {TEMPLATES_DIR}; the parametrized "
         "validation test would have silently passed with zero cases."
     )
+
+
+def _has_sweep_block(template_path: pathlib.Path) -> bool:
+    """True when the template declares a top-level `sweep:` block."""
+    data = yaml.safe_load(template_path.read_text())
+    return isinstance(data, dict) and data.get("sweep") is not None
+
+
+_SWEEP_TEMPLATES = sorted(
+    p for p in TEMPLATES_DIR.glob("*.yaml") if _has_sweep_block(p)
+)
+
+
+@pytest.mark.parametrize(
+    "template_path",
+    _SWEEP_TEMPLATES,
+    ids=lambda p: p.name,
+)
+def test_bundled_sweep_template_expands_via_build_benchmark_plan(
+    template_path: pathlib.Path,
+) -> None:
+    """Every bundled sweep template must expand, not just load.
+
+    ``load_config`` alone never runs the per-variation ``BenchmarkConfig``
+    validation that ``aiperf profile`` / ``aiperf config expand`` do. A broken
+    sweep (e.g. singular ``dataset:`` combined with a ``datasets.*`` sweep path,
+    as ``sweep_distributions.yaml`` once shipped) passes ``load_config`` yet
+    crashes on use. Expanding the plan here catches that class of regression.
+    """
+    config = load_config(template_path)
+    plan = build_benchmark_plan(config)
+    assert len(plan.configs) >= 1
+
+
+def test_sweep_distributions_expands_to_full_grid() -> None:
+    """`sweep_distributions.yaml` is a 3 ISL x 3 rate grid == 9 variations."""
+    config = load_config(TEMPLATES_DIR / "sweep_distributions.yaml")
+    plan = build_benchmark_plan(config)
+    assert len(plan.configs) == 9

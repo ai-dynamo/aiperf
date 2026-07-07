@@ -41,9 +41,11 @@ sweep:
     # named ``profiling``. The 12 most-swept phase fields also have
     # bare-name sugar — `rate` below is the alias for `phases.profiling.rate`
     # (see docs/tutorials/sweeps.md "Bare-Name Aliases" for the full list).
-    # For ``datasets:`` use the dataset's ``name`` — the singular ``dataset:``
-    # shorthand auto-names the sole dataset ``default``, so
-    # ``datasets.default.prompts.isl`` is the right path.
+    # Sweep paths address datasets through the plural ``datasets.<name>``
+    # form, so the dataset must be declared under ``datasets:`` with an
+    # explicit ``name`` (see the ``datasets:`` block below) — NOT the singular
+    # ``dataset:`` shorthand, which cannot be combined with a ``datasets.*``
+    # sweep path. See docs/tutorials/yaml-config.md "Sweeps in YAML".
     datasets.default.prompts.isl: [128, 512, 2048]
     rate: [10.0, 30.0, 50.0]
 
@@ -56,12 +58,13 @@ benchmark:
     streaming: true
     timeout: ${TIMEOUT:600.0}
 
-  dataset:
-    type: synthetic
-    entries: 500
-    prompts:
-      isl: 512 # Overridden by sweep
-      osl: {mean: 128, stddev: 25}
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 500
+      prompts:
+        isl: 512 # Overridden by sweep
+        osl: {mean: 128, stddev: 25}
 
   phases:
     - name: warmup
