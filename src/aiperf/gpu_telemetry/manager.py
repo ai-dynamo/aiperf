@@ -256,7 +256,7 @@ class GPUTelemetryManager(BaseComponentService):
             except RuntimeError as e:
                 failure_reason = str(e)
                 self.error(f"GPU Telemetry: {e}")
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            except Exception as e:  # fault-tolerant telemetry
                 failure_reason = f"{collector_name} configuration failed: {e}"
                 self.error(
                     f"GPU Telemetry: Failed to configure {collector_name} collector: {e}"
@@ -272,7 +272,7 @@ class GPUTelemetryManager(BaseComponentService):
         self.info(f"GPU Telemetry: Capturing baseline metrics from {source_identifier}")
         try:
             await collector.initialize()
-        except (Exception, asyncio.CancelledError) as e:  # noqa: BLE001
+        except (Exception, asyncio.CancelledError) as e:
             self.warning(
                 f"GPU Telemetry: Failed to initialize {source_identifier} during "
                 f"baseline capture, disabling collector: {e!r}"
@@ -284,7 +284,7 @@ class GPUTelemetryManager(BaseComponentService):
         try:
             await collector.collect_and_process_metrics()
             self.debug(f"GPU Telemetry: Captured baseline from {source_identifier}")
-        except Exception as e:  # noqa: BLE001 - baseline scrape best-effort
+        except Exception as e:  # baseline scrape best-effort
             self.warning(
                 f"GPU Telemetry: Failed to capture baseline from {source_identifier} "
                 f"(collector remains enabled): {e}"
@@ -350,7 +350,7 @@ class GPUTelemetryManager(BaseComponentService):
             try:
                 await collector.start()
                 started_count += 1
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            except Exception as e:  # fault-tolerant telemetry
                 self.error(f"Failed to start collector for {source_url}: {e}")
 
         if started_count == 0:
@@ -444,7 +444,7 @@ class GPUTelemetryManager(BaseComponentService):
         for source_url, collector in self._collectors.items():
             try:
                 await collector.stop()
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            except Exception as e:  # fault-tolerant telemetry
                 self.error(f"Failed to stop collector for {source_url}: {e}")
 
     async def _on_telemetry_records(

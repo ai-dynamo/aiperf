@@ -12,7 +12,7 @@ used as building blocks inside dataset variants. Video configs live in
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Self
 
 from pydantic import (
     BeforeValidator,
@@ -21,7 +21,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from typing_extensions import Self
 
 from aiperf.common.enums import (
     AudioFormat,

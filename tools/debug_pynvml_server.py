@@ -135,7 +135,7 @@ class NativePynvmlSampler:
                 self._last_sample = self._snapshot_from_samples(samples)
                 self._log_snapshot(self._last_sample, "start")
                 return self.status()
-            except Exception as exc:  # noqa: BLE001 - report NVML startup failures over HTTP
+            except Exception as exc:  # report NVML startup failures over HTTP
                 await asyncio.to_thread(self._shutdown_nvml_sync)
                 self._started_ns = None
                 self._baseline_energy_j = {}
@@ -206,7 +206,7 @@ class NativePynvmlSampler:
                 ]
                 if not self._gpu_handles:
                     raise RuntimeError("NVML initialized but no GPUs were available")
-            except Exception:  # noqa: BLE001 - clean up partially initialized NVML state
+            except Exception:  # clean up partially initialized NVML state
                 self._shutdown_nvml_unlocked()
                 raise
 

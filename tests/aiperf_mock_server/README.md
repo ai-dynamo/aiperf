@@ -116,6 +116,8 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 | `--models-ready-delay-seconds` | | `0.0` | Delay before `/v1/models` reports loaded models |
 | `--disable-models-endpoint` | | `false` | Return 404 from `/v1/models` to exercise fallback readiness probes |
 | `--inference-ready-delay-seconds` | | `0.0` | Delay before inference endpoints stop returning HTTP 503 |
+| `--api-key` | | `None` | API key required for inference endpoints; auth is disabled when unset |
+| `--auth-header-name` | | `Authorization` | Header name checked when `--api-key` is set |
 
 ### Latency Options
 
@@ -208,6 +210,19 @@ export MOCK_SERVER_PORT=8080
 export MOCK_SERVER_FAST=true
 aiperf-mock-server
 ```
+
+### Optional Inference Authentication
+
+```bash
+MOCK_SERVER_API_KEY=<your-mock-api-key> aiperf-mock-server
+
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer <your-mock-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mock-model","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+Use `--auth-header-name X-API-Key` or `MOCK_SERVER_AUTH_HEADER_NAME=X-API-Key` to check a custom header instead of `Authorization`.
 
 ## API Endpoints
 

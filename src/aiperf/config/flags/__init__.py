@@ -10,8 +10,8 @@ AfterValidator), but NO domain validators - AIPerfConfig is the single
 validation gate.
 
 Hard rules (enforced by code review + ``tools/check_ergonomics.py``
-``pydantic-fields`` check, with ``INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS`` /
-``INTENTIONAL_FILE_SIZE_EXEMPTIONS`` whitelisting ``CLIConfig`` itself):
+``pydantic-fields`` check, with ``INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS``
+whitelisting ``CLIConfig`` itself):
 
 1. New CLI flags add as a top-level field on CLIConfig itself. NEVER add
    new nested classes. CLIConfig is fully flat - all modality fields are

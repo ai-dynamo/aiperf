@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [linux, macos, windows, windows-arm]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
         include:
           - os: linux
             runner: prod-aiperf-builder-amd-v1
@@ -31,10 +31,6 @@ jobs:
             runner: windows-latest
           - os: windows-arm
             runner: windows-11-arm
-        exclude:
-          # CPython has no official win-arm64 build for 3.10; 3.11+ only.
-          - os: windows-arm
-            python-version: "3.10"
 
     steps:
     - uses: actions/checkout@v6

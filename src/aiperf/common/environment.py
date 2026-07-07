@@ -40,11 +40,10 @@ Examples:
 """
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
@@ -120,6 +119,28 @@ class _APIServerSettings(BaseSettings):
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
         "Set to 0 to skip the grace window and shut down immediately.",
+    )
+
+
+class _ChatSettings(BaseSettings):
+    """Settings for the interactive ``aiperf chat`` command."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_CHAT_",
+    )
+
+    CONNECT_TIMEOUT: float = Field(
+        gt=0.0,
+        default=10.0,
+        description="Seconds to wait to establish a connection to the endpoint "
+        "before a turn fails. Kept short so an unreachable URL fails fast.",
+    )
+    READ_TIMEOUT: float = Field(
+        gt=0.0,
+        default=300.0,
+        description="Seconds to wait for the next streamed chunk before a turn "
+        "fails. No overall (total) timeout is applied, so long generations are "
+        "never truncated mid-reply; this only fires if the server stalls.",
     )
 
 
@@ -1376,6 +1397,10 @@ class _Environment(BaseSettings):
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
+    )
+    CHAT: _ChatSettings = Field(
+        default_factory=_ChatSettings,
+        description="Interactive `aiperf chat` command settings",
     )
     COMPRESSION: _CompressionSettings = Field(
         default_factory=_CompressionSettings,

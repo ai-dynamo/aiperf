@@ -8,7 +8,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,7 @@ SCHEMA_VERSION = 1
 
 def _iso_utc_from_ns(timestamp_ns: int) -> str:
     """Return an ISO-8601 UTC timestamp with nanosecond input precision."""
-    dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=timezone.utc)
+    dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=UTC)
     return dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 

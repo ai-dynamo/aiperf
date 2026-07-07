@@ -360,11 +360,11 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
             records = await asyncio.to_thread(self._collect_gpu_metrics)
             if records and self._record_callback:
                 await self._record_callback(records, self.id)
-        except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+        except Exception as e:  # fault-tolerant telemetry
             if self._error_callback:
                 try:
                     await self._error_callback(ErrorDetails.from_exception(e), self.id)
-                except Exception as callback_error:  # noqa: BLE001 - fault-tolerant telemetry
+                except Exception as callback_error:  # fault-tolerant telemetry
                     self.error(f"Failed to send error via callback: {callback_error}")
             else:
                 self.error(f"Metrics collection error: {e}")
