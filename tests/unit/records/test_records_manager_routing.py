@@ -34,10 +34,12 @@ from aiperf.common.accumulator_protocols import (
     StreamExporterProtocol,
     SummaryContext,
 )
+from aiperf.common.exceptions import PluginDisabled
 from aiperf.plugin.enums import AccumulatorType, StreamExporterType
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_manager_processing import (
     accumulators_for_record_type,
+    load_accumulators,
     stream_exporters_for_record_type,
 )
 
@@ -453,3 +455,96 @@ def test_routing_table_attribute_exists() -> None:
     precomputed flat lists per record type (just metric_records today). See
     TestAccumulatorsForRecordType / TestStreamExportersForRecordType above
     for the ported behavior."""
+
+
+# ---------------------------------------------------------------------------
+# Tests: load_accumulators construction-failure policy
+# ---------------------------------------------------------------------------
+
+
+def _make_loader_host() -> MagicMock:
+    """Minimal ``_LoaderHost``-shaped MagicMock for load_accumulators."""
+    host = MagicMock()
+    host.service_id = "records-manager"
+    host.run = MagicMock()
+    host.pub_client = MagicMock()
+    host.attach_child_lifecycle = MagicMock()
+    host.debug = MagicMock()
+    host.error = MagicMock()
+    return host
+
+
+class _RaisingAccumulator:
+    """Accumulator whose construction always fails with a generic error."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        raise RuntimeError("accumulator __init__ exploded")
+
+
+class _DisabledAccumulator:
+    """Accumulator whose construction opts out via PluginDisabled."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        raise PluginDisabled("metric_results disabled")
+
+
+class TestLoadAccumulatorsConstructionFailure:
+    """The load-bearing metric_results accumulator must fail fast on a
+    construction error (no fallback summary producer), while optional
+    accumulators degrade gracefully and the explicit disable opt-out stays
+    a silent skip."""
+
+    def test_load_accumulators_metric_results_construction_failure_reraises(
+        self, monkeypatch
+    ) -> None:
+        entries = [_make_entry("metric_results", ["metric_records"])]
+        monkeypatch.setattr(
+            "aiperf.records.records_manager_processing.plugins.iter_entries",
+            lambda _plugin_type: entries,
+        )
+        monkeypatch.setattr(
+            "aiperf.records.records_manager_processing.plugins.get_class",
+            lambda _plugin_type, _name: _RaisingAccumulator,
+        )
+        host = _make_loader_host()
+
+        with pytest.raises(RuntimeError, match="accumulator __init__ exploded"):
+            load_accumulators(host)
+
+    def test_load_accumulators_optional_accumulator_failure_swallowed(
+        self, monkeypatch
+    ) -> None:
+        entries = [_make_entry("gpu_telemetry", ["telemetry_records"])]
+        monkeypatch.setattr(
+            "aiperf.records.records_manager_processing.plugins.iter_entries",
+            lambda _plugin_type: entries,
+        )
+        monkeypatch.setattr(
+            "aiperf.records.records_manager_processing.plugins.get_class",
+            lambda _plugin_type, _name: _RaisingAccumulator,
+        )
+        host = _make_loader_host()
+
+        accumulators = load_accumulators(host)
+
+        assert AccumulatorType.GPU_TELEMETRY not in accumulators
+        host.error.assert_called_once()
+
+    def test_load_accumulators_metric_results_disabled_is_silent_skip(
+        self, monkeypatch
+    ) -> None:
+        entries = [_make_entry("metric_results", ["metric_records"])]
+        monkeypatch.setattr(
+            "aiperf.records.records_manager_processing.plugins.iter_entries",
+            lambda _plugin_type: entries,
+        )
+        monkeypatch.setattr(
+            "aiperf.records.records_manager_processing.plugins.get_class",
+            lambda _plugin_type, _name: _DisabledAccumulator,
+        )
+        host = _make_loader_host()
+
+        accumulators = load_accumulators(host)
+
+        assert AccumulatorType.METRIC_RESULTS not in accumulators
+        host.error.assert_not_called()
