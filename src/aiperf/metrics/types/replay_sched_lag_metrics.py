@@ -24,6 +24,11 @@ What this cannot measure:
 - Lag of delay-scheduled continuation turns: under back-pressure replay they
   fire relative to the prior turn's completion, carry no absolute intended
   time (``Turn.timestamp is None``), and are excluded.
+- Pure scheduler infidelity for continuation turns in non-strict open-loop
+  mode: they keep absolute intended times, but fixed_schedule only dispatches
+  them after the prior turn's credit returns, so their lag also includes
+  prior-turn service time. The values are still honest send lateness against
+  the recorded schedule.
 - True wire time: ``timestamp_ns`` is stamped worker-side at transport
   dispatch, before the TCP write.
 """
@@ -44,11 +49,7 @@ from aiperf.common.logging import AIPerfLogger
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
-from aiperf.metrics.metric_dicts import (
-    MetricArray,
-    MetricRecordDict,
-    MetricResultsDict,
-)
+from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 
 _logger = AIPerfLogger(__name__)
 
@@ -109,18 +110,11 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
 def _anchored_lag_ms(metric_results: MetricResultsDict) -> np.ndarray:
     """Return per-request send lag in ms, anchored at the least-late request.
 
-    Accepts the production ``MetricArray`` aggregation or a plain value list
-    (as produced by simple test pipelines).
-
     Raises:
         NoMetricValue: If no absolutely-scheduled request produced an offset.
     """
     values = metric_results.get_or_raise(ReplaySendScheduleOffsetMetric)
-    data = (
-        values.data
-        if isinstance(values, MetricArray)
-        else np.asarray(values, dtype=np.float64)
-    )
+    data = np.asarray(getattr(values, "data", values), dtype=np.float64)
     if len(data) == 0:
         raise NoMetricValue("No absolutely-scheduled requests were recorded.")
     return (data - data.min()) / NANOS_PER_MILLIS

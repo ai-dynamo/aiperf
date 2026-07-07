@@ -10,6 +10,7 @@ Synthetic records carry an intended schedule timestamp on the dispatched turn
 import pytest
 from pytest import param
 
+from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord, Turn
 from aiperf.metrics.metric_dicts import MetricResultsDict
@@ -20,9 +21,11 @@ from aiperf.metrics.types.replay_sched_lag_metrics import (
     ReplaySchedLagP99Metric,
     ReplaySendScheduleOffsetMetric,
 )
-from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
-
-NANOS_PER_MS = 1_000_000
+from tests.unit.metrics.conftest import (
+    create_metric_array,
+    create_record,
+    run_simple_metrics_pipeline,
+)
 
 
 def _scheduled_record(
@@ -30,7 +33,7 @@ def _scheduled_record(
 ) -> ParsedResponseRecord:
     """Record whose turn was scheduled at ``intended_ms`` (schedule-relative)
     and actually sent at ``actual_send_ms`` (wall clock, same test clock)."""
-    record = create_record(start_ns=int(actual_send_ms * NANOS_PER_MS))
+    record = create_record(start_ns=int(actual_send_ms * NANOS_PER_MILLIS))
     record.request.request_info.turns = [Turn(timestamp=intended_ms)]
     return record
 
@@ -43,7 +46,7 @@ class TestReplaySendScheduleOffsetMetric:
             records, ReplaySendScheduleOffsetMetric.tag
         )
 
-        assert results[ReplaySendScheduleOffsetMetric.tag] == [3 * NANOS_PER_MS]
+        assert results[ReplaySendScheduleOffsetMetric.tag] == [3 * NANOS_PER_MILLIS]
 
     def test_parse_record_no_turn_timestamp_yields_no_value(self):
         records = [_scheduled_record(intended_ms=None, actual_send_ms=5)]
@@ -95,12 +98,25 @@ class TestReplaySchedLagPercentiles:
         with pytest.raises(NoMetricValue):
             ReplaySchedLagP99Metric().derive_value(MetricResultsDict())
 
+    def test_derive_value_metric_array_results_returns_exact_percentile(self):
+        # Production stores scalar record metrics as MetricArray, not the
+        # plain list run_simple_metrics_pipeline uses (see
+        # post_processors/metric_results_processor.py first-touch storage).
+        results = MetricResultsDict()
+        results[ReplaySendScheduleOffsetMetric.tag] = create_metric_array(
+            [5 * NANOS_PER_MILLIS, 15 * NANOS_PER_MILLIS, 105 * NANOS_PER_MILLIS]
+        )
+
+        # Anchored lag [0, 10, 100] ms -> p99 = 10 + 0.98 * 90 = 98.2.
+        assert ReplaySchedLagP99Metric().derive_value(results) == pytest.approx(98.2)
+
 
 class TestReplaySchedDegradedMetric:
     @pytest.mark.parametrize(
         "tail_lag_ms, expected",
         [
             param(400, 0, id="below_threshold"),
+            param(500, 0, id="at_threshold_not_degraded"),
             param(600, 1, id="above_threshold"),
         ],
     )  # fmt: skip
