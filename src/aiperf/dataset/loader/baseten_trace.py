@@ -89,6 +89,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
         self._open_loop = getattr(dataset, "open_loop_replay", False)
+        self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
         self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
         self._force_min_tokens = getattr(dataset, "force_min_tokens", True)
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
@@ -396,8 +397,18 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         multi-turn). Turn 0 keeps its absolute arrival time (session start).
         Open-loop ('no-mercy') replay skips back-pressure entirely: every turn
         keeps its absolute (speedup-scaled) timestamp and fires on the schedule.
+        With ``open_loop_strict`` additionally set, sessions are exploded so
+        every trace row becomes its own independent single-turn conversation:
+        no session grouping, no multi-turn context mode, every request fires at
+        its absolute recorded time.
         """
-        if not self._open_loop:
+        if self._open_loop and self._open_loop_strict:
+            data = {
+                f"{session_id}#{index}": [trace]
+                for session_id, traces in data.items()
+                for index, trace in enumerate(traces)
+            }
+        elif not self._open_loop:
             self._apply_back_pressure(data)
         conversations = super().convert_to_conversations(data)
         self._delay_cap.log_summary(logger_name=__name__)

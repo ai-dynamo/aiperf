@@ -213,6 +213,88 @@ class TestBasetenTraceDatasetLoader:
         )
         assert len(conversations[0].turns) == 2
 
+    def _write_multi_turn(self, tmp_path: Path) -> Path:
+        return _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 1_000,
+                    "prompt": "A-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "A",
+                },
+                {
+                    "timestamp_start_unix_ms": 3_000,
+                    "prompt": "A-2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "A",
+                },
+                {
+                    "timestamp_start_unix_ms": 2_000,
+                    "prompt": "B-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "B",
+                },
+            ],
+        )
+
+    def test_convert_to_conversations_open_loop_strict_explodes_rows(
+        self, tmp_path: Path
+    ):
+        path = self._write_multi_turn(tmp_path)
+        run = _make_run(path, open_loop_replay=True)
+        _set_dataset_attr(run, open_loop_strict=True)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        assert [len(conv.turns) for conv in conversations] == [1, 1, 1]
+        assert all(conv.context_mode is None for conv in conversations)
+        by_prompt = {
+            conv.turns[0].texts[0].contents[0]: conv.turns[0] for conv in conversations
+        }
+        # Absolute (normalized) recorded timestamps are kept; no delays.
+        assert {p: t.timestamp for p, t in by_prompt.items()} == {
+            "A-1": 0,
+            "B-1": 1_000,
+            "A-2": 2_000,
+        }
+        assert all(turn.delay is None for turn in by_prompt.values())
+
+    @pytest.mark.parametrize(
+        "open_loop_replay, open_loop_strict",
+        [
+            param(True, False, id="strict_off"),
+            param(False, True, id="strict_requires_open_loop"),
+        ],
+    )  # fmt: skip
+    def test_convert_to_conversations_open_loop_strict_gate_keeps_grouping(
+        self, tmp_path: Path, open_loop_replay: bool, open_loop_strict: bool
+    ):
+        path = self._write_multi_turn(tmp_path)
+        run = _make_run(path, open_loop_replay=open_loop_replay)
+        _set_dataset_attr(run, open_loop_strict=open_loop_strict)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        assert [len(conv.turns) for conv in conversations] == [2, 1]
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+
     def test_sessions_are_ordered_by_first_timestamp_not_session_id(
         self, tmp_path: Path
     ):
