@@ -52,7 +52,7 @@ class TestRegisterSigusr1Faulthandler:
         stack) without chaining to a prior handler."""
         monkeypatch.setattr(signal, "SIGUSR1", 10, raising=False)
         mock_register = MagicMock()
-        monkeypatch.setattr(faulthandler, "register", mock_register)
+        monkeypatch.setattr(faulthandler, "register", mock_register, raising=False)
 
         register_sigusr1_faulthandler()
 
@@ -65,7 +65,7 @@ class TestRegisterSigusr1Faulthandler:
         before touching faulthandler."""
         monkeypatch.delattr(signal, "SIGUSR1", raising=False)
         mock_register = MagicMock()
-        monkeypatch.setattr(faulthandler, "register", mock_register)
+        monkeypatch.setattr(faulthandler, "register", mock_register, raising=False)
 
         register_sigusr1_faulthandler()
 
@@ -87,7 +87,7 @@ class TestRegisterSigusr1Faulthandler:
         propagate into service bootstrap."""
         monkeypatch.setattr(signal, "SIGUSR1", 10, raising=False)
         mock_register = MagicMock(side_effect=exc_type("boom"))
-        monkeypatch.setattr(faulthandler, "register", mock_register)
+        monkeypatch.setattr(faulthandler, "register", mock_register, raising=False)
 
         register_sigusr1_faulthandler()  # must not raise
 
