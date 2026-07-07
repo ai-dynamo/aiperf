@@ -655,6 +655,20 @@ class _RecordSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for processing record results",
     )
+    STRIP_PAYLOAD_BYTES: bool | None = Field(
+        default=None,
+        description="Tri-state control for omitting canonical request payload "
+        "bytes from RecordContext after a request is sent, which substantially "
+        "reduces record-pipeline memory for very large prompts. None (default) "
+        "auto-detects: bytes are stripped only when no downstream record consumer "
+        "needs them (client-side input tokenization disabled, no synthetic image/"
+        "audio/video inputs, and raw payload export off). True forces stripping "
+        "even when a consumer wants the bytes, disabling client-side input "
+        "tokenization, media counting from request bodies, and raw request "
+        "payload export. False always retains them. Auto-detection does not see "
+        "media embedded in custom dataset payloads under server-token-count mode; "
+        "set False explicitly for that case.",
+    )
 
 
 class _SearchPlannerSettings(BaseSettings):

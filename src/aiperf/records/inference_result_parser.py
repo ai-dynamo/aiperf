@@ -53,9 +53,10 @@ class InferenceResultParser(CommunicationMixin):
         )
         self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
         endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
-        # Derived from the shared resolve_disable_tokenization helper so the
-        # parser's ISL path has a single source of truth for whether
-        # client-side tokenization runs.
+        # Single source of truth shared with the worker's payload-strip
+        # auto-detector (resolve_strip_record_payload_bytes -> this helper), so
+        # the parser's ISL path and the worker's payload retention can never
+        # disagree about whether client-side tokenization runs.
         self.disable_tokenization: bool = resolve_disable_tokenization(
             run.cfg, endpoint_meta
         )
