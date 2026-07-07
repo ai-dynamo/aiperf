@@ -128,7 +128,7 @@ async def _run_chat_over_stdin(
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             process.communicate(input=stdin_text.encode()), timeout=timeout
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         raise
     assert process.returncode == 0, stderr_bytes.decode("utf-8", "replace")

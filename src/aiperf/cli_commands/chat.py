@@ -299,7 +299,7 @@ async def _chat_loop(
                     ),
                     encode=encode,
                 )
-            except (aiohttp.ClientError, asyncio.TimeoutError, SSEResponseError) as e:
+            except (TimeoutError, aiohttp.ClientError, SSEResponseError) as e:
                 # Keep the REPL alive on a transient failure (HTTP error, dropped
                 # connection, stall, or a mid-stream SSE error) -- report it and
                 # let the user retry instead of tearing down the whole session.
