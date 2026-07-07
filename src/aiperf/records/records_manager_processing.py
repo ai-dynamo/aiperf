@@ -15,6 +15,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
+from aiperf.common.accumulator_protocols import SummaryContext
 from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import PluginDisabled, PostProcessorDisabled
 from aiperf.common.logging import AIPerfLogger
@@ -160,6 +161,7 @@ def stream_exporters_for_record_type(
 async def generate_realtime_metrics(
     accumulators: list[AccumulatorProtocol],
     timeout: float = 30.0,
+    phase: CreditPhase = CreditPhase.PROFILING,
 ) -> list[MetricResult]:
     """Generate the real-time metrics for the profile run.
 
@@ -168,9 +170,17 @@ async def generate_realtime_metrics(
     accumulators that return either ``AccumulatorMetricsSummary`` (with a
     ``.results`` dict-of-MetricResult) or a plain ``list[MetricResult]`` —
     GPU telemetry / server metrics accumulators return list shape.
+
+    The realtime view is scoped to ``phase`` (PROFILING by default) so warmup
+    records never dilute the live counts/throughput; the final export path
+    applies the same phase mask.
     """
+    ctx = SummaryContext(phase=phase)
     results = await asyncio.gather(
-        *[asyncio.wait_for(acc.summarize(), timeout=timeout) for acc in accumulators],
+        *[
+            asyncio.wait_for(acc.summarize(ctx), timeout=timeout)
+            for acc in accumulators
+        ],
         return_exceptions=True,
     )
     flat: list[MetricResult] = []

@@ -423,10 +423,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
         plus a per-``turn_index`` TTFT trend that surfaces KV-cache effectiveness.
         """
         export_ctx: ExportContext | None = None
-        if ctx is not None and (ctx.start_ns or ctx.end_ns):
+        if ctx is not None and (ctx.start_ns or ctx.end_ns or ctx.phase is not None):
             export_ctx = ExportContext(
                 start_ns=ctx.start_ns or None,
                 end_ns=ctx.end_ns or None,
+                phase=ctx.phase,
             )
         return self._summarize_for_export_context(export_ctx)
 

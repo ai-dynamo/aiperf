@@ -101,6 +101,9 @@ class SummaryContext:
     end_ns: int = 0
     """Exclusive end of the summarization window (ns since epoch); 0 means full range."""
 
+    phase: CreditPhase | None = None
+    """Credit phase to scope this summary to (e.g. PROFILING for realtime metrics), or None for phase-agnostic full-range summarization."""
+
     cancelled: bool = False
     """True when the profile run was cancelled — analyzers may short-circuit."""
 
