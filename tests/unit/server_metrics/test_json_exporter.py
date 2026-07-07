@@ -396,6 +396,67 @@ class TestServerMetricsJsonExporterGenerateContent:
         assert "summary" in data
         assert "metrics" in data
 
+    def test_generate_content_degenerate_profiling_window_no_raise(
+        self,
+        mock_cfg,
+        mock_profile_results,
+    ):
+        """A degenerate profiling window (start_ns == end_ns) must not raise.
+
+        Building a TimeRangeFilter with start >= end raises ValueError, which
+        previously bubbled out of _generate_content and dropped all server
+        metrics. The profiling phase range must be omitted while metrics still
+        export (regression for F13).
+        """
+        degenerate_ns = 1_000_000_000_000
+        endpoint_summary = ServerMetricsEndpointSummary(
+            endpoint_url="http://localhost:8081/metrics",
+            info=ServerMetricsEndpointInfo(
+                total_fetches=2,
+                first_fetch_ns=degenerate_ns,
+                last_fetch_ns=degenerate_ns,
+                avg_fetch_latency_ms=10.0,
+                unique_updates=1,
+                first_update_ns=degenerate_ns,
+                last_update_ns=degenerate_ns,
+                duration_seconds=0.0,
+                avg_update_interval_ms=0.0,
+            ),
+            metrics={
+                "vllm:kv_cache_usage_perc": GaugeMetricData(
+                    description="KV cache usage percentage",
+                    series=[
+                        GaugeSeries(
+                            labels=None,
+                            stats=GaugeStats(min=0.4, avg=0.5, max=0.6),
+                        ),
+                    ],
+                ),
+            },
+        )
+        results = ServerMetricsResults(
+            benchmark_id="test-benchmark-id",
+            endpoint_summaries={"localhost:8081": endpoint_summary},
+            start_ns=degenerate_ns,
+            end_ns=degenerate_ns,  # degenerate: start == end
+            endpoints_configured=["http://localhost:8081/metrics"],
+            endpoints_successful=["http://localhost:8081/metrics"],
+            error_summary=[],
+        )
+        config = create_exporter_config(
+            profile_results=mock_profile_results,
+            cli_config=mock_cfg,
+            server_metrics_results=results,
+        )
+        exporter = ServerMetricsJsonExporter(config)
+
+        content = exporter._generate_content()  # must not raise
+
+        data = orjson.loads(content)
+        assert "metrics" in data
+        assert len(data["metrics"]) > 0
+        assert "profiling" not in data["summary"].get("phase_time_ranges", {})
+
     def test_generate_content_has_phase_scoped_metrics(
         self,
         mock_cfg,
