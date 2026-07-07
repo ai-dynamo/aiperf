@@ -639,6 +639,47 @@ class TestInferenceClient:
         assert inference_client._dynamo_opened_sessions == set()
 
     @pytest.mark.parametrize(
+        "strip,expected_payload_bytes",
+        [
+            param(True, None, id="strip_enabled_drops_payload_bytes"),
+            param(False, b'{"model": "test-model"}', id="strip_disabled_retains_payload_bytes"),
+        ],
+    )  # fmt: skip
+    def test_finalize_request_record_payload_bytes_retention(
+        self, inference_client, strip, expected_payload_bytes
+    ):
+        """With strip_record_payload_bytes enabled the canonical payload bytes
+        are dropped from the RecordContext after dispatch (memory optimization
+        resolved by the worker's payload-retention auto-detection); disabled
+        leaves them intact for downstream consumers.
+        """
+        assert inference_client.strip_record_payload_bytes is False
+        inference_client.strip_record_payload_bytes = strip
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[Turn(texts=[Text(contents=["payload turn"])], role="user")],
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+            payload_bytes=b'{"model": "test-model"}',
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+
+        result = inference_client._finalize_request_record(
+            record=record, request_info=request_info
+        )
+
+        assert result.request_info.payload_bytes == expected_payload_bytes
+
+    @pytest.mark.parametrize(
         "base_url",
         [
             param("http://127.0.0.1:8000", id="explicit-http"),
