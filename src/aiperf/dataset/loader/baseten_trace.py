@@ -86,7 +86,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
-        self._open_loop = getattr(dataset, "open_loop_replay", False)
+        self._open_loop = getattr(dataset, "open_loop_replay", True)
         self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
         self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
         self._force_min_tokens = getattr(dataset, "force_min_tokens", True)
