@@ -205,7 +205,7 @@ These are documented here so future maintainers don't try to "fix" them without 
 
 ### Multi-turn assistant response overhead
 
-In `deltas_with_responses` mode, request K of a K-turn conversation contains the full prior assistant response history. Each prior assistant message contributes `per_msg_wrap + assistant_response_tokens` to wire ISL. **Why we don't compensate**: assistant response tokens are not under AIPerf's control — they're the actual model output at runtime. Compensating per-assistant-turn would require either predicting response length (impossible) or accumulating measured response tokens into subsequent user turn budgets (would make synthetic prompt size depend on prior runtime behavior, breaking reproducibility). Current behavior: wire ISL of request K ≈ K × `--isl` + Σ(actual assistant responses) + small slack.
+In `deltas_without_responses` mode, request K of a K-turn conversation contains the full prior assistant response history. Each prior assistant message contributes `per_msg_wrap + assistant_response_tokens` to wire ISL. **Why we don't compensate**: assistant response tokens are not under AIPerf's control — they're the actual model output at runtime. Compensating per-assistant-turn would require either predicting response length (impossible) or accumulating measured response tokens into subsequent user turn budgets (would make synthetic prompt size depend on prior runtime behavior, breaking reproducibility). Current behavior: wire ISL of request K ≈ K × `--isl` + Σ(actual assistant responses) + small slack.
 
 ### Tools and function-call schemas
 

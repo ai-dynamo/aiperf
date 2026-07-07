@@ -1154,8 +1154,8 @@ Controls which output files are generated. `summary`: Only aggregate metrics fil
 
 | | | |
 |-------|:-------:|-------------|
-| `summary` |  | Export only aggregated/summarized metrics (default, most compact) |
-| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
+| `summary` |  | Export only aggregated/summarized metrics (most compact) |
+| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion (CLI default) |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
 #### `--slice-duration` `<float>`
@@ -2668,8 +2668,8 @@ Controls which output files are generated. `summary`: Only aggregate metrics fil
 
 | | | |
 |-------|:-------:|-------------|
-| `summary` |  | Export only aggregated/summarized metrics (default, most compact) |
-| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
+| `summary` |  | Export only aggregated/summarized metrics (most compact) |
+| `records` | _default_ | Export per-record metrics after aggregation with display unit conversion (CLI default) |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
 #### `--slice-duration` `<float>`
