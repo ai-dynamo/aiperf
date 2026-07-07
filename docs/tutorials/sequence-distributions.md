@@ -39,6 +39,8 @@ This creates:
 
 Values are automatically clamped to be at least 1.
 
+The `:PROB` weights are **relative** — they are normalized at sampling time and do **not** need to sum to 100. The `70;20;10` above happens to total 100, but `7;2;1` produces the identical split, and `50;1` yields ~98%/2%. Each weight must be positive.
+
 ## Supported Formats
 
 ### 1. Semicolon Format (Recommended)
@@ -79,6 +81,25 @@ Values are automatically clamped to be at least 1.
   {"isl": 512, "isl_stddev": 20, "osl": 256, "osl_stddev": 15, "prob": 40}
 ]}
 ```
+
+## YAML config: typed `sequence_distribution` buckets
+
+The string/CLI formats above only support fixed or `mean|stddev` (normal) ISL/OSL per bucket. In a YAML config, the `prompts.sequence_distribution:` field takes a list of buckets whose `isl` and `osl` accept **any** sampling distribution shape — fixed scalar, `{mean, stddev}` normal, `{mean, median}` log-normal, `{p50, p99[, mean]}` percentile, `{peaks: [...]}` multimodal, or `{points: [...]}` empirical. See [Sampling Distributions in YAML Configs](yaml-distributions.md) for the full set of shapes and the auto-detection rules.
+
+```yaml
+prompts:
+  sequence_distribution:
+    # tied buckets: long-ISL requests get short OSL (inverse correlation)
+    - {isl: {p50: 5000, p99: 40000, mean: 6000}, osl: {mean: 256, stddev: 64}, probability: 50}
+    - {isl: {mean: 400000, stddev: 20000}, osl: 64, probability: 1}
+```
+
+Key behaviors:
+
+- **ISL and OSL are tied per bucket.** Each request first draws *one* bucket (weighted by `probability`), then draws *both* its ISL and its OSL from that bucket's distributions. This is how you model correlations like "longer input → shorter output" — pair a large-ISL bucket with a small-OSL one, as above.
+- **Each bucket samples its full shape.** A `{p50, p99, mean}` percentile or `{mean, median}` log-normal bucket is sampled from that distribution on every draw — nothing is flattened to a single mean.
+- **`probability` weights are relative.** They are normalized across all buckets at sampling time and do **not** need to sum to 100 (each must be positive). Above, `50` alongside `1` yields ~98%/2%.
+- When `sequence_distribution` is set, it drives ISL/OSL for every turn — the plain `isl`/`osl` and `first_turn_isl` fields are ignored.
 
 ## Examples
 
