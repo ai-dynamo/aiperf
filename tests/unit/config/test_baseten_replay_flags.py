@@ -7,11 +7,14 @@ Covers the open-loop default flip (``--open-loop-replay`` /
 ``--no-open-loop-replay``), the ``--open-loop-strict`` / ``--omit-kv-hints`` /
 ``--force-min-tokens`` boolean flags, the converter guard rejecting the
 baseten-only knobs (value and boolean) on non-baseten datasets, the
-contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection.
+contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection,
+and the resolver warning for baseten-only knobs on auto-detected non-baseten
+datasets.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pyarrow as pa
@@ -309,3 +312,89 @@ class TestOpenLoopContradictionGuard:
         )
         assert dataset.open_loop_replay is True
         assert dataset.open_loop_strict is True
+
+
+@pytest.fixture
+def mooncake_jsonl(tmp_path: Path) -> Path:
+    """A mooncake-shaped JSONL that auto-detects as mooncake_trace."""
+    path = tmp_path / "mc.jsonl"
+    path.write_text(
+        '{"input_length": 100, "output_length": 50, "hash_ids": [1, 2], "timestamp": 1000}\n'
+        '{"input_length": 200, "output_length": 75, "hash_ids": [3], "timestamp": 2000}\n'
+    )
+    return path
+
+
+def _resolve_file_dataset(tmp_path: Path, path: Path, **fields: object) -> None:
+    from aiperf.config import BenchmarkConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config.resolution.resolvers import DatasetResolver
+
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/completions"]},
+        datasets=[{"name": "main", "type": "file", "path": str(path), **fields}],
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 1,
+                "concurrency": 1,
+            }
+        ],
+    )
+    run = BenchmarkRun(
+        benchmark_id="test-run", cfg=cfg, artifact_dir=tmp_path / "artifacts"
+    )
+    DatasetResolver().resolve(run)
+
+
+class TestAutoDetectedNonBasetenWarning:
+    """Baseten-only knobs on an auto-detected non-baseten dataset pass the
+    convert-time guard (type is unset), so the resolver must warn."""
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            param({"replay_speedup": 10.0}, id="replay-speedup"),
+            param({"trace_session_sample_ratio": 0.5}, id="sample-ratio"),
+            param({"open_loop_replay": False}, id="closed-loop-bool"),
+            param({"omit_kv_hints": True}, id="omit-kv-hints"),
+        ],
+    )  # fmt: skip
+    def test_warns_on_auto_detected_mooncake(
+        self,
+        tmp_path: Path,
+        mooncake_jsonl: Path,
+        fields: dict[str, object],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
+            _resolve_file_dataset(tmp_path, mooncake_jsonl, **fields)
+        (field_name,) = fields
+        assert any(
+            "baseten_trace-only" in r.message
+            and "mooncake_trace" in r.message
+            and field_name in r.message
+            for r in caplog.records
+        )
+
+    def test_no_warning_for_baseten_parquet(
+        self,
+        tmp_path: Path,
+        trace_parquet: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
+            _resolve_file_dataset(tmp_path, trace_parquet, replay_speedup=10.0)
+        assert not any("baseten_trace-only" in r.message for r in caplog.records)
+
+    def test_no_warning_without_baseten_fields(
+        self,
+        tmp_path: Path,
+        mooncake_jsonl: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
+            _resolve_file_dataset(tmp_path, mooncake_jsonl)
+        assert not any("baseten_trace-only" in r.message for r in caplog.records)
