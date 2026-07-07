@@ -711,6 +711,21 @@ class TestBasetenTraceDatasetLoader:
             3 * one_hour_ms,
         ]
 
+    def _write_hinted_single_row(self, tmp_path: Path) -> Path:
+        return _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "hinted",
+                    "input_tokens": 5,
+                    "output_tokens": 4,
+                    "total_hashes": [1, 2],
+                    "block_size": 64,
+                }
+            ],
+        )
+
     @pytest.mark.parametrize(
         "omit_kv_hints, expected_body",
         [
@@ -725,19 +740,7 @@ class TestBasetenTraceDatasetLoader:
     def test_set_request_body_omit_kv_hints_controls_cache_hints(
         self, tmp_path: Path, omit_kv_hints: bool, expected_body: dict
     ):
-        path = _write_parquet(
-            tmp_path / "trace.parquet",
-            [
-                {
-                    "timestamp_start_unix_ms": 100,
-                    "prompt": "hinted",
-                    "input_tokens": 5,
-                    "output_tokens": 4,
-                    "total_hashes": [1, 2],
-                    "block_size": 64,
-                }
-            ],
-        )
+        path = self._write_hinted_single_row(tmp_path)
         run = _make_run()
         _set_dataset_attr(run, omit_kv_hints=omit_kv_hints)
         loader = BasetenTraceDatasetLoader(
@@ -769,19 +772,7 @@ class TestBasetenTraceDatasetLoader:
     def test_set_request_body_force_min_tokens_controls_min_tokens(
         self, tmp_path: Path, force_min_tokens: bool, expected_body: dict
     ):
-        path = _write_parquet(
-            tmp_path / "trace.parquet",
-            [
-                {
-                    "timestamp_start_unix_ms": 100,
-                    "prompt": "pinned",
-                    "input_tokens": 5,
-                    "output_tokens": 4,
-                    "total_hashes": [1, 2],
-                    "block_size": 64,
-                }
-            ],
-        )
+        path = self._write_hinted_single_row(tmp_path)
         run = _make_run()
         _set_dataset_attr(run, force_min_tokens=force_min_tokens)
         loader = BasetenTraceDatasetLoader(
