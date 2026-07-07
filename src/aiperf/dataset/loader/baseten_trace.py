@@ -121,8 +121,6 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         # Real traces contain canceled requests with output_tokens=0, but
         # Turn.max_tokens requires >= 1.
         trace.output_length = max(1, int(trace.output_tokens))
-        if trace.output_tokens == 0:
-            self._floored_zero_osl += 1
         trace.text_input = trace.prompt
         trace.hash_ids = list(trace.total_hashes or [])
 
@@ -337,6 +335,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             if not self._filter_and_cap_trace(trace):
                 continue
 
+            # Count after filtering so skipped rows do not inflate the summary.
+            if trace.output_tokens == 0:
+                self._floored_zero_osl += 1
             items.append(trace)
 
         if self._max_idle_gap_cap_ms is not None:

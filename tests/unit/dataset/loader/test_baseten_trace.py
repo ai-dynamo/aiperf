@@ -833,6 +833,37 @@ class TestBasetenTraceDatasetLoader:
         assert turns["canceled row"].max_tokens == 1
         assert turns["normal row"].max_tokens == 7
 
+    def test_load_dataset_floored_count_excludes_filtered_rows(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "kept zero-osl",
+                    "input_tokens": 5,
+                    "output_tokens": 0,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "skipped zero-osl",
+                    "input_tokens": 50,
+                    "output_tokens": 0,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, synthesis_max_isl=10),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        prompts = [t.text_input for traces in dataset.values() for t in traces]
+        assert prompts == ["kept zero-osl"]
+        # The "Floored N traces" summary counts only rows that survive filtering.
+        assert loader._floored_zero_osl == 1
+
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",
