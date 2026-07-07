@@ -11,6 +11,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.constants import NANOS_PER_MILLIS
+from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord, Turn
 from aiperf.metrics.metric_dicts import MetricResultsDict
@@ -36,6 +37,21 @@ def _scheduled_record(
     record = create_record(start_ns=int(actual_send_ms * NANOS_PER_MILLIS))
     record.request.request_info.turns = [Turn(timestamp=intended_ms)]
     return record
+
+
+def test_family_is_fixed_schedule_only():
+    # Turn timestamps reach records in every timing mode, so applicability
+    # must be gated on the run's timing mode, not on timestamp presence.
+    for metric_cls in (
+        ReplaySendScheduleOffsetMetric,
+        ReplaySchedLagP50Metric,
+        ReplaySchedLagP90Metric,
+        ReplaySchedLagP99Metric,
+        ReplaySchedDegradedMetric,
+    ):
+        assert metric_cls.has_flags(MetricFlags.FIXED_SCHEDULE_ONLY), (
+            f"{metric_cls.__name__} must be FIXED_SCHEDULE_ONLY"
+        )
 
 
 class TestReplaySendScheduleOffsetMetric:

@@ -78,7 +78,7 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
     header = "Replay Send Schedule Offset"
     short_header = "Sched Offset"
     unit = MetricTimeUnit.NANOSECONDS
-    flags = MetricFlags.INTERNAL
+    flags = MetricFlags.INTERNAL | MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
     required_metrics = None
 
@@ -127,6 +127,7 @@ class _ReplaySchedLagPercentileBase(BaseDerivedMetric[float]):
     percentile: float
 
     unit = MetricTimeUnit.MILLISECONDS
+    flags = MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {ReplaySendScheduleOffsetMetric.tag}
 
@@ -193,6 +194,7 @@ class ReplaySchedDegradedMetric(BaseDerivedMetric[int]):
     header = "Replay Schedule Degraded"
     short_header = "Sched Degraded"
     unit = GenericMetricUnit.COUNT
+    flags = MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {ReplaySendScheduleOffsetMetric.tag}
 

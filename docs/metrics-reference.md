@@ -1276,7 +1276,7 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 ## Replay Schedule Lag Metrics
 
 > [!NOTE]
-> These metrics report how faithfully a fixed-schedule trace replay delivered its offered (recorded) request schedule. They are **not displayed in console output** but are available in exports; a warning is logged when the run is flagged degraded.
+> These metrics report how faithfully a fixed-schedule trace replay delivered its offered (recorded) request schedule. The whole family is `FIXED_SCHEDULE_ONLY`: it is computed only when the profiling phase type is `fixed_schedule`, and stays inactive under any other timing mode even when the dataset carries turn timestamps (e.g. a timestamped trace swept with `--no-fixed-schedule`). The metrics are **not displayed in console output** but are available in exports; a warning is logged when the run is flagged degraded.
 
 Every absolutely-scheduled turn carries its intended send time (`Turn.timestamp`, ms relative to the schedule zero), and the worker stamps `RequestRecord.timestamp_ns` (wall clock) when the request is dispatched to the transport. The wall-clock instant of the schedule zero is not recorded, so lag is reported **relative to the least-late request** of the run (`lag = offset - min(offset)`).
 
