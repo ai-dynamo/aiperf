@@ -161,6 +161,9 @@ class TestChatEndpoint:
 
     def test_format_payload_forwards_extra_body(self, endpoint, model_endpoint):
         """Test per-turn extra_body fields are forwarded into chat payload."""
+        # Loader-shaped extra_body: trace request_body keys with prompt/messages
+        # already stripped. The merge is the only path a completions-style
+        # `prompt` key could reach a chat payload, so pin its absence here.
         turn = Turn(
             texts=[Text(contents=["Generate text"])],
             model="test-model",
@@ -172,6 +175,7 @@ class TestChatEndpoint:
 
         assert payload["hash_ids"] == [1, 2]
         assert payload["block_size"] == 64
+        assert "prompt" not in payload
 
     def test_format_payload_extra_body_overrides_endpoint_extra(
         self, endpoint, model_endpoint
@@ -189,18 +193,6 @@ class TestChatEndpoint:
 
         assert payload["block_size"] == 64
         assert payload["temperature"] == 0.7
-
-    def test_format_payload_without_extra_body_prompt_omits_prompt_key(
-        self, endpoint, model_endpoint
-    ):
-        """Chat payloads carry messages only; no completions-style prompt key."""
-        turn = Turn(texts=[Text(contents=["Generate text"])], model="test-model")
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(request_info)
-
-        assert "prompt" not in payload
-        assert payload["messages"][0]["content"] == "Generate text"
 
     def test_format_payload_legacy_max_tokens(self):
         """Test legacy max_tokens field is used when flag is enabled."""
