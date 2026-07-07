@@ -211,11 +211,6 @@ class TestRequestBodyContract:
         assert a1.request_body["hash_ids"] == [10, 11]
         assert a1.request_body["block_size"] == BLOCK_SIZE
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason="single-prompt bare-string emission moves into CompletionsEndpoint "
-        "(endpoints lane); the loader-side prompt override was removed",
-    )
     def test_completions_payload_prompt_is_bare_string(self, fixture_path):
         # Baseten's gateway rejects list[str]; a single prompt must be a bare str.
         loader, data = _load(fixture_path)
