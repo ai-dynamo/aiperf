@@ -671,6 +671,42 @@ class TestBasetenTraceDatasetLoader:
             3 * one_hour_ms,
         ]
 
+    def test_offset_window_selects_recorded_time_under_replay_speedup(
+        self, tmp_path: Path
+    ):
+        one_minute_ms = 60_000
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 1_000_000 + minute * one_minute_ms,
+                    "prompt": f"minute{minute}",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": minute,
+                }
+                for minute in range(10)
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(
+                path,
+                fixed_schedule=True,
+                fixed_schedule_end_offset=one_minute_ms,
+                replay_speedup=10.0,
+            ),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+        traces = [trace for session in dataset.values() for trace in session]
+
+        # The end offset selects the first RECORDED minute (inclusive bounds);
+        # the kept timestamps are then compressed by replay_speedup.
+        assert sorted(trace.text_input for trace in traces) == ["minute0", "minute1"]
+        assert sorted(trace.timestamp for trace in traces) == [0, 6_000]
+
     def _write_hinted_single_row(self, tmp_path: Path) -> Path:
         return _write_parquet(
             tmp_path / "trace.parquet",

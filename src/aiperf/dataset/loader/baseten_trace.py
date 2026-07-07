@@ -510,15 +510,19 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
             trace = BasetenTrace.model_validate(row)
             self._preprocess_trace(trace)
-            if min_timestamp is not None and trace.timestamp is not None:
+            normalized = min_timestamp is not None and trace.timestamp is not None
+            if normalized:
                 trace.timestamp = int(trace.timestamp) - int(min_timestamp)
-                if self._speedup != 1.0:
-                    # Compress wall-clock once here; gap-cap + back-pressure delays
-                    # downstream inherit the compressed times. Never touches hash_ids.
-                    trace.timestamp = trace.timestamp / self._speedup
 
+            # Filter on normalized-but-uncompressed ms so the offset window
+            # selects recorded time regardless of replay_speedup.
             if not self._filter_and_cap_trace(trace):
                 continue
+
+            if normalized and self._speedup != 1.0:
+                # Compress wall-clock once here; gap-cap + back-pressure delays
+                # downstream inherit the compressed times. Never touches hash_ids.
+                trace.timestamp = trace.timestamp / self._speedup
 
             # Count after filtering so skipped rows do not inflate the summary.
             if trace.output_tokens == 0:
