@@ -2,8 +2,6 @@
 
 **Status**: Research
 
-**Authors**: Anthony Casagrande
-
 **Category**: Research — Correlation Analysis
 
 ---

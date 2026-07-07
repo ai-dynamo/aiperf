@@ -7,8 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 
 **Status**: Research
 
-**Authors**: Anthony Casagrande
-
 **Category**: Research — Correlation Analysis
 
 ---
