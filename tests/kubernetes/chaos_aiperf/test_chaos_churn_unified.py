@@ -442,7 +442,8 @@ async def test_c12_invalid_spec_surfaces_conditions_unified(
             assert surfaced, (
                 f"C12: operator did not surface a failure condition or "
                 f"phase=Failed within 60 s (observed phase={observed_phase!r}). "
-                "See findings for a likely silent-swallow bug."
+                "A handler that logs-and-drops the error without patching "
+                "status would produce exactly this symptom."
             )
     finally:
         await _force_delete(kubectl, operator_job_namespace, name)

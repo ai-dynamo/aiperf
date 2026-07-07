@@ -141,12 +141,9 @@ The full scenario table lives in [`README.md`](README.md). The *taxonomy* — us
 - **Workload runtime** — upstream 5xx burst, upstream Deployment restart, latency injection.
 - **Infrastructure** — image-pull failures, DNS failures, namespace quota exhaustion.
 
-## 8. Findings (run logs)
+## 8. Bug shapes chaos runs have surfaced
 
-- [`findings-2026-04-23.md`](findings-2026-04-23.md) — v1 chaos session run log.
-- [`findings-2026-04-23-v2.md`](findings-2026-04-23-v2.md) — v2 expansion session log.
-
-Both log bugs found, fixes applied, and bug *shapes* (stale imports on rarely-exercised recovery paths, undersized memory limits that work in steady state but OOM during cleanup, RBAC gaps that 403 silently on cross-namespace recovery, durable mid-state markers that leak when the marker-holder dies). Useful as pattern recognition for "what kinds of bugs k8s chaos surfaces."
+Past chaos sessions found (and led to fixes for) recurring bug *shapes*: stale imports on rarely-exercised recovery paths, undersized memory limits that work in steady state but OOM during cleanup, RBAC gaps that 403 silently on cross-namespace recovery, and durable mid-state markers that leak when the marker-holder dies. Useful as pattern recognition for "what kinds of bugs k8s chaos surfaces."
 
 ## 9. Known gaps
 

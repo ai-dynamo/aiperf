@@ -43,8 +43,6 @@ tests/kubernetes/chaos/
   test_chaos_api_disruption.py      # C15, C16
   test_chaos_benchmark.py           # B1, B2, B3
   test_chaos_infra.py               # K1, K2, K3
-  findings-2026-04-23.md            # v1 run log
-  findings-2026-04-23-v2.md         # v2 run log (populated during chaos session)
   README.md                         # this file
 ```
 
@@ -153,8 +151,6 @@ All four bugs below were discovered in the 2026-04-23 v1 session and fixed in th
 - **Fixed:** `tests/kubernetes/helpers/operator.py` now sets `AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=256Mi` (was 128Mi, OOMed and blocked `SystemController`).
 - **Fixed:** `server_metrics_manager` auto-discovery uses the pod's own namespace (via `AIPERF_NAMESPACE` env / downward-API file) instead of endpoint-derived namespace — no more cross-namespace 403 spam.
 
-V2 findings (populated during the next manual chaos run) live in `findings-2026-04-23-v2.md`.
-
 ## Adding a new scenario
 
 1. Add a method to `ChaosInjector` (or `ToxiproxyInjector` / `MockServerInjector`) that expresses the fault at intent level — not raw kubectl args or REST calls.
@@ -163,4 +159,4 @@ V2 findings (populated during the next manual chaos run) live in `findings-2026-
 4. If the scenario needs cross-container `kill`, depend on `operator_ready_shared_pid` (not `operator_ready`). If it needs toxiproxy, depend on `toxiproxy_injector`. If it needs mock-server disruption, depend on `mock_server_injector`.
 5. Always wrap the injection + assertions in `try / finally` with a force-delete (and `toxiproxy_injector.reset()` / `mock_server_injector.restore()` as applicable) in `finally`. Chaos tests leak resources by definition; belt-and-suspenders cleanup keeps the cluster usable for the next test.
 6. If the scenario depends on infra not yet in place, ship it as `@pytest.mark.xfail(strict=False, reason=...)` with a concrete flip-to-pass condition in the reason string. Do NOT use `strict=True` — chaos scenarios are allowed to be exploratory.
-7. Document the new scenario in `findings-2026-04-23-v2.md` (or the next session log) and in this README's scenario table.
+7. Document the new scenario in this README's scenario table.
