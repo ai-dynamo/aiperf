@@ -473,6 +473,42 @@ class TestBasetenTraceDatasetLoader:
             3 * one_hour_ms,
         ]
 
+    def test_load_dataset_zero_output_tokens_floored_to_one(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "canceled row",
+                    "input_tokens": 5,
+                    "output_tokens": 0,
+                    "request_canceled": 1,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "normal row",
+                    "input_tokens": 5,
+                    "output_tokens": 7,
+                    "request_canceled": 0,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        turns = {
+            turn.texts[0].contents[0]: turn
+            for conv in conversations
+            for turn in conv.turns
+        }
+        assert turns["canceled row"].max_tokens == 1
+        assert turns["normal row"].max_tokens == 7
+
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",

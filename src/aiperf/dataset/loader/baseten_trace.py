@@ -90,6 +90,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
         self._open_loop = getattr(dataset, "open_loop_replay", False)
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
+        self._floored_zero_osl = 0
 
     @classmethod
     def can_load(
@@ -114,7 +115,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     def _preprocess_trace(self, trace: BasetenTrace) -> None:
         trace.timestamp = int(trace.timestamp_start_unix_ms)
         trace.input_length = int(trace.input_tokens)
-        trace.output_length = int(trace.output_tokens)
+        # Real traces contain canceled requests with output_tokens=0, but
+        # Turn.max_tokens requires >= 1.
+        trace.output_length = max(1, int(trace.output_tokens))
+        if trace.output_tokens == 0:
+            self._floored_zero_osl += 1
         trace.text_input = trace.prompt
         trace.hash_ids = list(trace.total_hashes or [])
 
@@ -286,6 +291,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        self._floored_zero_osl = 0
 
         min_timestamp, sampled_session_key, sampled_session_ids = (
             self._sample_session_ids()
@@ -337,6 +343,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 self._set_request_body(trace)
 
         self._log_filtering_summary()
+        if self._floored_zero_osl > 0:
+            self.info(
+                f"Floored {self._floored_zero_osl:,} traces with output_tokens=0 "
+                f"(e.g. canceled requests) to an output_length of 1"
+            )
         return data
 
     def _apply_idle_gap_cap(self, items: list[BasetenTrace]) -> None:
