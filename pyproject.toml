@@ -26,7 +26,11 @@ dependencies = [
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
-  "datasets>=3.0",
+  # datasets pulls pyarrow (its Arrow core), which has no Windows-on-ARM wheel
+  # (apache/arrow#47195). Excluded on win_arm64 so the base install works there;
+  # HF-backed --public-dataset is gated on that platform, but synthetic /
+  # --input-file datasets (incl. SPEED-Bench) don't need it.
+  "datasets>=3.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
   "huggingface-hub>=0.34.0,<2.0",
   "jinja2~=3.1.5", # NOTE: Versions prior to 3.1.5 have vuln exploits
   "jmespath~=1.0.1",
@@ -45,7 +49,10 @@ dependencies = [
   "prometheus_client~=0.23.1",
   "protobuf>=4", # Loose on purpose: required by some HF tokenizers (e.g. T5/LLaMA SentencePiece converters); let it co-resolve with transformers/grpc/etc.
   "psutil~=7.0.0",
-  "pyarrow>=18.0.0",
+  # pyarrow ships no Windows-on-ARM wheel (apache/arrow#47195) and source-builds
+  # fail there, so it's excluded on win_arm64; the parquet exporter self-disables
+  # when it's absent. Required on every platform that has wheels.
+  "pyarrow>=18.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
   "pydantic>=2.10.0,<3.0.0",
   "pydantic-settings>=2.10.0,<3.0.0",
   "pyzmq~=26.4.0",
@@ -88,7 +95,11 @@ otel = [
 ]
 test = [
   "httpx>=0.27.0",
-  "hypothesis>=6.0.0",
+  # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
+  # build and no sdist, so it can't install on Windows-on-ARM. Cap it there to
+  # the last pure-Python release (6.155.x); leave it unconstrained elsewhere.
+  "hypothesis>=6.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
+  "hypothesis>=6.0.0,<6.156; platform_system == 'Windows' and platform_machine == 'ARM64'",
   "jsonschema>=4.0.0",
   "looptime>=0.5",
   "pytest>=7.0.0",
@@ -96,7 +107,10 @@ test = [
   "pytest-cov",
   "pytest-rerunfailures>=15.0",
   "pytest-xdist>=3.8.0",
-  "trustme>=1.0.0",
+  # trustme pulls cryptography, which has no Windows-on-ARM wheel and
+  # source-builds against openssl-sys (fails on win-arm). Only the TLS
+  # transport tests use it; they are collect-ignored there.
+  "trustme>=1.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
 ]
 dev = [
   "aiperf[mlflow,otel,test,wandb]",
