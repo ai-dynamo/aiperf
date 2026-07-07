@@ -514,18 +514,30 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     def _apply_back_pressure(self, data: dict[str, list[BasetenTrace]]) -> None:
         """Convert continuation turns from absolute timestamps to inter-turn
         delays (clamped by ``inter_turn_delay_cap_seconds``). Clearing the
-        absolute timestamp makes the timing strategy take its delay branch."""
+        absolute timestamp makes the timing strategy take its delay branch.
+
+        The recorded start-to-start gap already includes the prior turn's
+        service time, and fixed_schedule applies ``delay`` AFTER the prior turn
+        completes in replay — so subtract the prior turn's recorded end-to-end
+        duration to avoid double-counting server time (replay inter-arrival
+        would otherwise be replay_service + recorded_service + think). Fall back
+        to the raw gap when duration_e2e_ms is absent. duration_e2e_ms is not
+        speedup-scaled, so divide it to match the already-scaled timestamps."""
         for traces in data.values():
             ordered = sorted(traces, key=lambda t: int(t.timestamp or 0))
             prev_ts: int | None = None
+            prev_e2e_ms: float = 0.0
             for i, trace in enumerate(ordered):
                 ts = int(trace.timestamp or 0)
                 if i == 0:
                     prev_ts = ts
+                    prev_e2e_ms = float(trace.duration_e2e_ms or 0) / self._speedup
                     continue
-                trace.delay = self._delay_cap.clamp(float(max(0, ts - prev_ts)))
+                gap = float(max(0, ts - prev_ts))
+                trace.delay = self._delay_cap.clamp(max(0.0, gap - prev_e2e_ms))
                 trace.timestamp = None
                 prev_ts = ts
+                prev_e2e_ms = float(trace.duration_e2e_ms or 0) / self._speedup
 
     def _choose_session_key(self, items: list[BasetenTrace]) -> str | None:
         return choose_baseten_session_key(

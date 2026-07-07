@@ -292,6 +292,42 @@ class TestTimingNoHang:
                 assert turn.delay is not None
                 assert turn.timestamp is None
 
+    def test_back_pressure_subtracts_prior_service_time(self, fixture_path):
+        # #4: a continuation turn's delay = recorded start-to-start gap MINUS the
+        # prior turn's recorded e2e. fixed_schedule applies the delay AFTER the
+        # prior turn completes in replay, so using the raw gap would double-count
+        # server time (replay inter-arrival = replay_service + recorded_service +
+        # think). Fixture (zero-origin): A gaps 2000,3000 w/ prev e2e 800,700 ->
+        # 1200,2300; B gap 7500 w/ prev e2e 600 -> 6900.
+        loader, data = _load(fixture_path)  # no delay/gap cap, speedup 1
+        delays = sorted(
+            turn.delay
+            for conv in loader.convert_to_conversations(data)
+            for turn in conv.turns[1:]
+        )
+        assert delays == [1200.0, 2300.0, 6900.0]
+        # regression guard: must NOT be the raw gaps (which double-count service)
+        assert not ({2000.0, 3000.0, 7500.0} & set(delays))
+
+    def test_back_pressure_falls_back_to_raw_gap_without_duration(self, tmp_path):
+        # When the prior turn's duration_e2e_ms is absent, the delay falls back
+        # to the raw start-to-start gap (nothing to subtract).
+        rows = [
+            dict(timestamp_start_unix_ms=1_000, prompt="Z-1", input_tokens=10,
+                 output_tokens=5, total_hashes=[1], provided_session_id="Z",
+                 poor_man_session_id=9, block_size=BLOCK_SIZE, request_canceled=0,
+                 duration_e2e_ms=None, duration_ttft_ms=None, cached_tokens_reference=0),
+            dict(timestamp_start_unix_ms=4_000, prompt="Z-2", input_tokens=12,
+                 output_tokens=6, total_hashes=[1, 2], provided_session_id="Z",
+                 poor_man_session_id=9, block_size=BLOCK_SIZE, request_canceled=0,
+                 duration_e2e_ms=500, duration_ttft_ms=90, cached_tokens_reference=0),
+        ]
+        path = tmp_path / "nulldur.parquet"
+        pq.write_table(pa.Table.from_pylist(rows), path)
+        loader, data = _load(path)
+        conts = [t for conv in loader.convert_to_conversations(data) for t in conv.turns[1:]]
+        assert conts and conts[0].delay == 3000.0  # raw gap, no subtraction
+
     def test_inter_turn_delay_cap_clamps_continuation_delays(self, fixture_path):
         # The existing inter_turn_delay_cap_seconds knob clamps think-time so a
         # session with long gaps stays runnable.
