@@ -411,47 +411,6 @@ class TestHTTPEndpoints:
         assert data["phases"]["warmup"]["total_expected_requests"] == 100
         assert data["phases"]["warmup"]["requests_completed"] == 50
 
-    @pytest.mark.skip(
-        reason="/api/server-metrics not yet migrated to router-based architecture"
-    )
-    def test_server_metrics_empty(
-        self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test server metrics endpoint with no data returns empty response."""
-        mock_fastapi_service._server_metrics = None
-        response = api_test_client.get("/api/server-metrics")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["endpoint_summaries"] == {}
-        assert "message" in data
-
-    @pytest.mark.skip(
-        reason="/api/server-metrics not yet migrated to router-based architecture"
-    )
-    def test_server_metrics_with_data(
-        self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test server metrics endpoint returns cached data."""
-        mock_fastapi_service._server_metrics = {
-            "endpoint_summaries": {
-                "http://server:8000/metrics": {
-                    "queue_depth": {"avg": 5.0, "max": 10.0},
-                    "cache_hit_rate": {"avg": 0.85},
-                }
-            },
-            "message_type": "realtime_server_metrics",
-        }
-        response = api_test_client.get("/api/server-metrics")
-        assert response.status_code == 200
-        data = response.json()
-        assert "http://server:8000/metrics" in data["endpoint_summaries"]
-        assert (
-            data["endpoint_summaries"]["http://server:8000/metrics"]["queue_depth"][
-                "avg"
-            ]
-            == 5.0
-        )
-
 
 class TestResultsEndpoint:
     """Test the /api/results endpoint for benchmark results retrieval."""
@@ -684,80 +643,6 @@ class TestWebSocketEndpoint:
             assert response["type"] == "error"
 
 
-@pytest.mark.skip(
-    reason="ZMQ subscription cleanup not yet migrated to router-based architecture"
-)
-class TestOrphanedSubscriptionCleanup:
-    """Test orphaned ZMQ subscription cleanup."""
-
-    def test_cleanup_removes_orphaned_subscriptions(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that subscriptions are removed when no client uses them."""
-        mock_fastapi_service.debug = MagicMock()
-
-        # Setup: client2 uses topic_b, zmq has both topics
-        ws = MagicMock()
-        mock_fastapi_service.ws_manager.add("client2", ws)
-        mock_fastapi_service.ws_manager.subscribe("client2", ["topic_b"])
-        mock_fastapi_service._zmq_subscriptions = {"topic_a", "topic_b"}
-
-        # Client 1 disconnects with topic_a (orphaned) and topic_b (still used)
-        mock_fastapi_service._cleanup_zmq_subscriptions({"topic_a", "topic_b"})
-
-        assert "topic_a" not in mock_fastapi_service._zmq_subscriptions
-        assert "topic_b" in mock_fastapi_service._zmq_subscriptions
-
-    def test_cleanup_keeps_subscriptions_used_by_other_clients(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that subscriptions still used by other clients are kept."""
-        mock_fastapi_service.debug = MagicMock()
-
-        # Setup: multiple clients with overlapping subscriptions
-        ws2, ws3 = MagicMock(), MagicMock()
-        mock_fastapi_service.ws_manager.add("client2", ws2)
-        mock_fastapi_service.ws_manager.add("client3", ws3)
-        mock_fastapi_service.ws_manager.subscribe("client2", ["topic_a", "topic_c"])
-        mock_fastapi_service.ws_manager.subscribe("client3", ["topic_b"])
-        mock_fastapi_service._zmq_subscriptions = {"topic_a", "topic_b", "topic_c"}
-
-        # Client 1 disconnects with all topics, but they're all still used
-        mock_fastapi_service._cleanup_zmq_subscriptions(
-            {"topic_a", "topic_b", "topic_c"}
-        )
-
-        assert mock_fastapi_service._zmq_subscriptions == {
-            "topic_a",
-            "topic_b",
-            "topic_c",
-        }
-
-    def test_cleanup_handles_empty_removed_subs(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test cleanup with empty removed subscriptions."""
-        mock_fastapi_service.debug = MagicMock()
-        mock_fastapi_service._zmq_subscriptions = {"topic_a"}
-
-        mock_fastapi_service._cleanup_zmq_subscriptions(set())
-
-        # Nothing should change
-        assert mock_fastapi_service._zmq_subscriptions == {"topic_a"}
-
-    def test_cleanup_handles_non_zmq_subscriptions(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test cleanup doesn't affect subscriptions not in zmq_subscriptions."""
-        mock_fastapi_service.debug = MagicMock()
-        mock_fastapi_service._zmq_subscriptions = {"topic_a"}
-
-        # topic_b was never in zmq_subscriptions
-        mock_fastapi_service._cleanup_zmq_subscriptions({"topic_b"})
-
-        assert mock_fastapi_service._zmq_subscriptions == {"topic_a"}
-
-
 class TestCreateTestApp:
     """Test the create_test_app factory and dependency injection patterns."""
 
@@ -790,78 +675,6 @@ class TestCreateTestApp:
 
         response = client.get("/healthz")
         assert response.status_code == 500
-
-
-@pytest.mark.skip(
-    reason="ZMQ subscription management not yet migrated to router-based architecture"
-)
-class TestZmqSubscriptionManagement:
-    """Test ZMQ subscription management in FastAPIService."""
-
-    @pytest.mark.asyncio
-    async def test_ensure_zmq_subscriptions_skips_handled_types(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that handled message types are not dynamically subscribed."""
-        mock_fastapi_service.subscribe = AsyncMock()
-
-        # REALTIME_METRICS is in _handled_types, so it should be skipped
-        await mock_fastapi_service._ensure_zmq_subscriptions(["realtime_metrics"])
-
-        mock_fastapi_service.subscribe.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_ensure_zmq_subscriptions_skips_wildcard(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that wildcard subscription is skipped."""
-        mock_fastapi_service.subscribe = AsyncMock()
-
-        await mock_fastapi_service._ensure_zmq_subscriptions(["*"])
-
-        mock_fastapi_service.subscribe.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_ensure_zmq_subscriptions_skips_already_subscribed(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that already subscribed types are not re-subscribed."""
-        mock_fastapi_service.subscribe = AsyncMock()
-        mock_fastapi_service._zmq_subscriptions = {"custom_type"}
-
-        await mock_fastapi_service._ensure_zmq_subscriptions(["custom_type"])
-
-        mock_fastapi_service.subscribe.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_ensure_zmq_subscriptions_adds_new_subscription(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that new message types are subscribed."""
-        from aiperf.common.enums import MessageType
-
-        mock_fastapi_service.subscribe = AsyncMock()
-
-        # Use a valid MessageType that's not in _handled_types
-        await mock_fastapi_service._ensure_zmq_subscriptions(
-            [str(MessageType.HEARTBEAT)]
-        )
-
-        mock_fastapi_service.subscribe.assert_called_once()
-        assert str(MessageType.HEARTBEAT) in mock_fastapi_service._zmq_subscriptions
-
-    @pytest.mark.asyncio
-    async def test_ensure_zmq_subscriptions_handles_invalid_type(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that invalid message types are handled gracefully."""
-        mock_fastapi_service.subscribe = AsyncMock()
-
-        await mock_fastapi_service._ensure_zmq_subscriptions(["invalid_type_xyz"])
-
-        # Should not raise, should log warning
-        mock_fastapi_service.warning.assert_called()
-        mock_fastapi_service.subscribe.assert_not_called()
 
 
 class TestResultsRouterFinalResults:
