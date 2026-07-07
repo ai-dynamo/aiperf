@@ -31,6 +31,11 @@ What this cannot measure:
   the recorded schedule.
 - True wire time: ``timestamp_ns`` is stamped worker-side at transport
   dispatch, before the TCP write.
+
+The derived family is run-scoped (``timeslice_derivable = False``): with
+``--slice-duration``, it is excluded from per-slice timeslice derivation,
+because re-anchoring each slice at its own least-late request would erase the
+cumulative schedule drift these metrics exist to expose.
 """
 
 from typing import ClassVar
@@ -129,6 +134,7 @@ class _ReplaySchedLagPercentileBase(BaseDerivedMetric[float]):
     unit = MetricTimeUnit.MILLISECONDS
     flags = MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
+    timeslice_derivable = False
     required_metrics: ClassVar[set[str]] = {ReplaySendScheduleOffsetMetric.tag}
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
@@ -197,6 +203,7 @@ class ReplaySchedDegradedMetric(BaseDerivedMetric[int]):
     unit = GenericMetricUnit.COUNT
     flags = MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
+    timeslice_derivable = False
     required_metrics: ClassVar[set[str]] = {
         ReplaySchedLagP50Metric.tag,
         ReplaySchedLagP90Metric.tag,
