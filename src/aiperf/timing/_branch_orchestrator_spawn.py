@@ -42,8 +42,20 @@ class BranchOrchestratorSpawnMixin:
     which spawns worker subprocesses.
     """
 
-    async def _fire_pre_session_children(self, branch: ConversationBranchInfo) -> None:
-        """Issue turn-0 for every child of a pre-session SPAWN branch."""
+    async def _fire_pre_session_children(
+        self, branch: ConversationBranchInfo, parent_conversation_id: str
+    ) -> None:
+        """Issue turn-0 for every child of a pre-session SPAWN branch.
+
+        Each issued child is tracked as a LIVE pre-session descendant of
+        ``parent_conversation_id``. No root session exists yet (pre-dispatch
+        runs before sampling mints any root correlation id), so the children
+        cannot be registered with the session-tree registry here; the
+        orchestrator folds the still-live set into the first root instance's
+        tree at that root's turn-0 return
+        (``_fold_pre_session_descendants``), keeping the root's final-turn
+        ``is_tree_final`` stamp conservative while these children run.
+        """
         for child_cid in branch.child_conversation_ids:
             try:
                 child_session = self._cs.start_pre_session_child(child_cid)
@@ -54,6 +66,11 @@ class BranchOrchestratorSpawnMixin:
             issued = await self._issuer.dispatch_first_turn(child_session)
             if issued:
                 self.stats.children_spawned += 1
+                child_corr = child_session.x_correlation_id
+                self._pre_child_conv[child_corr] = parent_conversation_id
+                self._pre_live_by_conv.setdefault(parent_conversation_id, set()).add(
+                    child_corr
+                )
             else:
                 # ``dispatch_first_turn`` only returns False under
                 # stop-condition refusal (cap reached). Tally as truncated.
@@ -84,6 +101,14 @@ class BranchOrchestratorSpawnMixin:
         if all_children:
             self._descendant_counts.setdefault(parent_corr, 0)
             self._descendant_counts[parent_corr] += len(all_children)
+            # Per-tree finality ledger keys on the ROOT (not the parent), so a
+            # depth>1 spawn still folds into the depth-0 root's tree. Registered
+            # BEFORE the dispatch gather; a child whose dispatch does not land is
+            # decremented again in _rollback_failed_child.
+            if self._session_tree_registry is not None:
+                self._session_tree_registry.register_descendants(
+                    credit.effective_root_correlation_id, len(all_children)
+                )
 
         # If any expected gate had zero children actually register, still
         # create a future-join entry so the drain logic sees it and fires.
@@ -180,6 +205,7 @@ class BranchOrchestratorSpawnMixin:
                 parent_correlation_id=parent_corr,
                 child_conversation_id=child_conv_id,
                 agent_depth=parent_depth + 1,
+                root_correlation_id=credit.effective_root_correlation_id,
                 branch_mode=branch.mode,
             )
         except Exception:
@@ -187,6 +213,9 @@ class BranchOrchestratorSpawnMixin:
             self.stats.children_errored += 1
             return None
         child_corr = child.x_correlation_id
+        # Capture the child's tree root so descendant-done can key the registry
+        # by root even for depth>1 descendants.
+        self._child_root[child_corr] = credit.effective_root_correlation_id
         self._child_modes[child_corr] = branch.mode
         # FORK-mode children sticky-route to the parent's worker; SPAWN-mode
         # children do not register a refcount.
@@ -237,6 +266,10 @@ class BranchOrchestratorSpawnMixin:
         child_corr = child.x_correlation_id
         child_mode = per_child_branch_mode.get(child_corr)
         self._child_modes.pop(child_corr, None)
+        # Undo the register_descendants that ran for this child at spawn time.
+        rolled_root = self._child_root.pop(child_corr, None)
+        if self._session_tree_registry is not None and rolled_root is not None:
+            self._session_tree_registry.on_descendant_done(rolled_root)
         entries = self._child_to_join.pop(child_corr, [])
         for entry in entries:
             if entry.prereq_key is None:
@@ -257,10 +290,17 @@ class BranchOrchestratorSpawnMixin:
             self._sticky_router.release_child_routing(parent_corr)
         if parent_corr in self._descendant_counts:
             self._descendant_counts[parent_corr] -= 1
-        # Three-way classification of non-True gather results:
-        #   * BaseException -> genuine error.
-        #   * False -> stop-condition refusal; tally as truncated.
-        #   * None -> issuer suppressed silently; observable no-op.
+        self._tally_failed_child_result(result, child_corr)
+        self.stats.children_spawned -= 1
+
+    def _tally_failed_child_result(self, result: object, child_corr: str) -> None:
+        """Fold a non-True ``dispatch_first_turn`` gather result into stats.
+
+        Three-way classification of non-True gather results:
+          * BaseException -> genuine error.
+          * False -> stop-condition refusal; tally as truncated.
+          * None -> issuer suppressed silently; observable no-op.
+        """
         if isinstance(result, BaseException):
             logger.error(
                 "dispatch_first_turn failed for child %s",
@@ -279,7 +319,6 @@ class BranchOrchestratorSpawnMixin:
                 child_corr,
             )
             self.stats.children_errored += 1
-        self.stats.children_spawned -= 1
 
     async def _drain_vestigial_gates(self, parent_corr: str) -> None:
         """Drain any zero-outstanding gates created in this spawn cycle.

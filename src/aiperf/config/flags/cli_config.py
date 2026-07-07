@@ -81,6 +81,7 @@ from aiperf.plugin.enums import (
     GPUTelemetryCollectorType,
     PublicDatasetType,
     SearchPlannerType,
+    SessionRoutingType,
     TransportType,
     UIType,
     URLSelectionStrategy,
@@ -388,6 +389,42 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = None
+
+    session_routing: Annotated[
+        SessionRoutingType | None,
+        Field(
+            description=(
+                "Session-aware routing mode: stamps per-session identity on "
+                "every request for router affinity. Built-ins: dynamo_headers "
+                "(X-Dynamo-Session-ID + parent header), dynamo_nvext "
+                "(nvext.session_control bind/close request-body metadata), "
+                "smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway "
+                "manual policy), session_id_header (custom additive header). "
+                "Parameterize with --session-routing-opt."
+            ),
+        ),
+        CLIParameter(
+            name=("--session-routing",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    session_routing_opt: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description=(
+                "Repeatable key=value option for the selected --session-routing "
+                "mode (e.g. --session-routing-opt timeout_seconds=600), "
+                "validated against the plugin's Options model."
+            ),
+        ),
+        CLIParameter(
+            name=("--session-routing-opt",),
+            consume_multiple=True,
+            group=Groups.ENDPOINT,
+        ),
+    ]
 
     @property
     def url(self) -> str:

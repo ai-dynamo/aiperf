@@ -379,6 +379,15 @@ Content type for request body serialization. By default, requests are sent as 'a
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
 
+#### `--session-routing` `<str>`
+
+Session-aware routing mode: stamps per-session identity on every request for router affinity. Built-ins: dynamo_headers (X-Dynamo-Session-ID + parent header), dynamo_nvext (nvext.session_control bind/close request-body metadata), smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway manual policy), session_id_header (custom additive header). Parameterize with --session-routing-opt.
+<br/>_Choices: [`dynamo_headers`, `dynamo_nvext`, `smg_routing_key`, `session_id_header`]_
+
+#### `--session-routing-opt` `<list>`
+
+Repeatable key=value option for the selected --session-routing mode (e.g. --session-routing-opt timeout_seconds=600), validated against the plugin's Options model.
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -1614,7 +1623,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `session_routing`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1775,6 +1784,15 @@ Content type for request body serialization. By default, requests are sent as 'a
 #### `--session-header` `<str>`
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
+
+#### `--session-routing` `<str>`
+
+Session-aware routing mode: stamps per-session identity on every request for router affinity. Built-ins: dynamo_headers (X-Dynamo-Session-ID + parent header), dynamo_nvext (nvext.session_control bind/close request-body metadata), smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway manual policy), session_id_header (custom additive header). Parameterize with --session-routing-opt.
+<br/>_Choices: [`dynamo_headers`, `dynamo_nvext`, `smg_routing_key`, `session_id_header`]_
+
+#### `--session-routing-opt` `<list>`
+
+Repeatable key=value option for the selected --session-routing mode (e.g. --session-routing-opt timeout_seconds=600), validated against the plugin's Options model.
 
 ### Tokenizer
 

@@ -20,6 +20,19 @@ from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
+from aiperf.workers.session_routing import (
+    DynamoHeadersRouting,
+    DynamoNvextRouting,
+    SessionIdHeaderRouting,
+    SmgRoutingKeyRouting,
+)
+
+_ROUTING_CLASSES = {
+    "dynamo_headers": DynamoHeadersRouting,
+    "dynamo_nvext": DynamoNvextRouting,
+    "smg_routing_key": SmgRoutingKeyRouting,
+    "session_id_header": SessionIdHeaderRouting,
+}
 
 
 @pytest.fixture
@@ -435,3 +448,238 @@ class TestInferenceClient:
         assert not pydantic_warnings, (
             f"Unexpected Pydantic serialization warnings for {base_url!r}: {pydantic_warnings}"
         )
+
+
+class TestSessionRouting:
+    """Session-routing plugins wired through the InferenceClient chokepoint.
+
+    The endpoint/transport plugins are mocked as before; the session_routing
+    protocol resolves to the real routing classes so the chokepoint exercises
+    genuine header/body transforms and the notify_session_end pass-through.
+    """
+
+    def _build_client(
+        self,
+        mock_http_transport_entry,
+        *,
+        session_routing: str | None,
+        session_routing_opts: dict | None = None,
+    ) -> InferenceClient:
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+                session_routing=session_routing,
+                session_routing_opts=session_routing_opts or {},
+            ),
+        )
+        mock_transport = MagicMock()
+        mock_endpoint = MagicMock()
+        mock_endpoint.get_endpoint_headers.return_value = {}
+        mock_endpoint.get_endpoint_params.return_value = {}
+        mock_endpoint.format_payload.return_value = {
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        def mock_get_class(protocol, name):
+            if protocol == "endpoint":
+                return lambda **kwargs: mock_endpoint
+            if protocol == "transport":
+                return lambda **kwargs: mock_transport
+            if protocol == "session_routing":
+                return _ROUTING_CLASSES[name]
+            raise ValueError(f"Unknown protocol: {protocol}")
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_http_transport_entry],
+            ),
+        ):
+            client = InferenceClient(
+                model_endpoint=model_endpoint, service_id="test-service-id"
+            )
+        client.transport.send_request = AsyncMock(return_value=RequestRecord())
+        return client
+
+    def _request_info(
+        self,
+        client: InferenceClient,
+        *,
+        x_correlation_id: str = "corr-1",
+        parent_correlation_id: str | None = None,
+        is_final_turn: bool = False,
+        raw_payload: dict | None = None,
+    ) -> RequestInfo:
+        turn = (
+            Turn(role="user", raw_payload=raw_payload)
+            if raw_payload is not None
+            else Turn(role="user", texts=[Text(contents=["hello"])])
+        )
+        return RequestInfo(
+            model_endpoint=client.model_endpoint,
+            turns=[turn],
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="req-1",
+            x_correlation_id=x_correlation_id,
+            parent_correlation_id=parent_correlation_id,
+            conversation_id="conv-template",
+            is_final_turn=is_final_turn,
+        )
+
+    def _sent_payload(self, client: InferenceClient) -> dict:
+        return client.transport.send_request.call_args.kwargs["payload"]
+
+    @pytest.mark.asyncio
+    async def test_dynamo_headers_mode_emits_headers_and_leaves_body(
+        self, mock_http_transport_entry
+    ):
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="dynamo_headers"
+        )
+        request_info = self._request_info(
+            client, parent_correlation_id="parent-corr", is_final_turn=False
+        )
+
+        await client._send_request_to_transport(request_info)
+
+        assert request_info.endpoint_headers["X-Dynamo-Session-ID"] == "corr-1"
+        assert (
+            request_info.endpoint_headers["X-Dynamo-Parent-Session-ID"] == "parent-corr"
+        )
+        assert "nvext" not in self._sent_payload(client)
+
+    @pytest.mark.asyncio
+    async def test_dynamo_headers_root_omits_parent_header(
+        self, mock_http_transport_entry
+    ):
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="dynamo_headers"
+        )
+        request_info = self._request_info(client, parent_correlation_id=None)
+
+        await client._send_request_to_transport(request_info)
+
+        assert request_info.endpoint_headers["X-Dynamo-Session-ID"] == "corr-1"
+        assert "X-Dynamo-Parent-Session-ID" not in request_info.endpoint_headers
+
+    @pytest.mark.asyncio
+    async def test_dynamo_nvext_mode_binds_then_closes(self, mock_http_transport_entry):
+        client = self._build_client(
+            mock_http_transport_entry,
+            session_routing="dynamo_nvext",
+            session_routing_opts={"timeout_seconds": "123"},
+        )
+
+        non_final = self._request_info(client, is_final_turn=False)
+        await client._send_request_to_transport(non_final)
+        assert self._sent_payload(client)["nvext"]["session_control"] == {
+            "session_id": "corr-1",
+            "action": "bind",
+            "timeout": 123,
+        }
+
+        final = self._request_info(client, is_final_turn=True)
+        await client._send_request_to_transport(final)
+        assert self._sent_payload(client)["nvext"]["session_control"] == {
+            "session_id": "corr-1",
+            "action": "close",
+        }
+
+    @pytest.mark.asyncio
+    async def test_dynamo_nvext_on_raw_payload_turn_does_not_mutate_cache(
+        self, mock_http_transport_entry
+    ):
+        """The nvext transform runs on a cached raw_payload dict; the copy-on-write
+        contract must leave the shared Turn.raw_payload untouched."""
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="dynamo_nvext"
+        )
+        raw_payload = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+        request_info = self._request_info(client, raw_payload=raw_payload)
+
+        await client._send_request_to_transport(request_info)
+
+        # The wire payload carries the injected session_control ...
+        assert (
+            self._sent_payload(client)["nvext"]["session_control"]["action"] == "bind"
+        )
+        # ... but the cached raw_payload dict is unchanged (no nvext leaked in).
+        assert "nvext" not in raw_payload
+        assert request_info.turns[0].raw_payload == {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+
+    @pytest.mark.asyncio
+    async def test_smg_routing_key_mode_emits_header(self, mock_http_transport_entry):
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="smg_routing_key"
+        )
+        request_info = self._request_info(client)
+
+        await client._send_request_to_transport(request_info)
+
+        assert request_info.endpoint_headers["X-SMG-Routing-Key"] == "corr-1"
+        assert "nvext" not in self._sent_payload(client)
+
+    @pytest.mark.asyncio
+    async def test_session_id_header_custom_name(self, mock_http_transport_entry):
+        client = self._build_client(
+            mock_http_transport_entry,
+            session_routing="session_id_header",
+            session_routing_opts={"header_name": "X-Affinity"},
+        )
+        request_info = self._request_info(client)
+
+        await client._send_request_to_transport(request_info)
+
+        assert request_info.endpoint_headers["X-Affinity"] == "corr-1"
+        assert "nvext" not in self._sent_payload(client)
+
+    @pytest.mark.asyncio
+    async def test_routing_unset_no_headers_no_body_change(
+        self, mock_http_transport_entry
+    ):
+        client = self._build_client(mock_http_transport_entry, session_routing=None)
+        assert client._routing is None
+        request_info = self._request_info(client, parent_correlation_id="parent-corr")
+
+        await client._send_request_to_transport(request_info)
+
+        payload = self._sent_payload(client)
+        assert "nvext" not in payload
+        assert "X-Dynamo-Session-ID" not in request_info.endpoint_headers
+        assert "X-Dynamo-Parent-Session-ID" not in request_info.endpoint_headers
+
+    @pytest.mark.asyncio
+    async def test_notify_session_end_reaches_plugin(self, mock_http_transport_entry):
+        client = self._build_client(
+            mock_http_transport_entry, session_routing="dynamo_headers"
+        )
+        client._routing.on_session_end = MagicMock()
+
+        # Pass-through must not dedupe: idempotency is the plugin's job.
+        client.notify_session_end("corr-1")
+        client.notify_session_end("corr-1")
+
+        assert client._routing.on_session_end.call_count == 2
+        client._routing.on_session_end.assert_called_with("corr-1")
+
+    def test_notify_session_end_noop_when_routing_unset(
+        self, mock_http_transport_entry
+    ):
+        client = self._build_client(mock_http_transport_entry, session_routing=None)
+        # No routing plugin: the hook is a safe no-op (never raises).
+        client.notify_session_end("corr-1")

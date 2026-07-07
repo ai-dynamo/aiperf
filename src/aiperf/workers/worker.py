@@ -368,6 +368,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.execute_async(self.credit_return_push_client.send(credit_return))
         credit_context.returned = True
 
+        # Post-session hook for routing plugins: this cancel-before-start path is a
+        # terminal disposition the finally block never sees (the credit task was
+        # cancelled before it started), so notify here too. Idempotent by contract.
+        if credit_context.credit is not None:
+            self.inference_client.notify_session_end(
+                credit_context.credit.x_correlation_id
+            )
+
         # Explicitly clear references to help refcounting (GC is disabled on workers)
         credit_context.credit = None
         credit_context.error = None
@@ -604,6 +612,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         Non-FORK and non-parent sessions evict immediately.
         """
+        # Fire the routing plugin's post-session hook on ANY terminal outcome
+        # (final turn or cancel), not just a successful final turn, so stateful
+        # plugins release sessions abandoned mid-conversation. Idempotent by
+        # contract; no-op when session routing is unset.
+        self.inference_client.notify_session_end(x_correlation_id)
         if (
             credit.parent_correlation_id is not None
             and credit.branch_mode == ConversationBranchMode.FORK
@@ -662,6 +675,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             is_final_turn=credit.is_final_turn,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
+            root_correlation_id=credit.effective_root_correlation_id,
+            is_parent_final=credit.is_parent_final,
+            is_tree_final=credit.is_tree_final,
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )

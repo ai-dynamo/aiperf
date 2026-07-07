@@ -653,6 +653,25 @@ class RequestInfo(RecordContext):
         description="Whether this is the final turn in the conversation. "
         "Used by per-conversation connection strategy to release the connection lease.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this request's session TREE. "
+        "Stable across the whole tree (root + every descendant subagent at any depth); equals "
+        "x_correlation_id for a root session. Sourced from the originating Credit. Per-request "
+        "transport context read by the session-routing transform to stamp tree-scoped identity "
+        "on the outbound request; it stays worker-side and is not carried onto the exported record.",
+    )
+    is_parent_final: bool | None = Field(
+        default=None,
+        description="Parent conversation had already returned its final turn at "
+        "credit-issue time; None for roots or when not determinable. Sourced from "
+        "the originating Credit.",
+    )
+    is_tree_final: bool = Field(
+        default=False,
+        description="Provably the last request this session tree will send "
+        "(conservative False when indeterminate). Sourced from the originating Credit.",
+    )
     url_index: int | None = Field(
         default=None,
         ge=0,

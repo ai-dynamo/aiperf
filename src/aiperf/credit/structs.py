@@ -63,7 +63,23 @@ class Credit(
     url_index: int | None = None
     agent_depth: int = 0
     parent_correlation_id: str | None = None
+    root_correlation_id: str | None = None
+    """x_correlation_id of the depth-0 root of this credit's session TREE.
+
+    Stable across the whole tree: the root carries its own x_correlation_id
+    (left None on the wire when it equals x_correlation_id to keep the struct
+    small), and every descendant (child, subchild) inherits the root's id.
+    This is the key used for per-tree finality accounting
+    (``SessionTreeRegistry``) and is persisted in the export so analysis groups
+    a tree under one lane. Effective value is
+    ``root_correlation_id or x_correlation_id``."""
     has_forks: bool = False
+    is_parent_final: bool | None = None
+    """Parent conversation had already returned its final turn at issue time.
+    None for roots / when not determinable. Issue-time stamp, never copied."""
+    is_tree_final: bool = False
+    """Provably the last request the whole session tree will send (conservative
+    False when indeterminate). Issue-time stamp from SessionTreeRegistry."""
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     """DAG branch mode for this credit. Ignored when parent_correlation_id is None
     (i.e. for root sessions). FORK = inherit parent turn_list; SPAWN =
@@ -72,6 +88,11 @@ class Credit(
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
+
+    @property
+    def effective_root_correlation_id(self) -> str:
+        """Tree root id, defaulting to this credit's own ``x_correlation_id``."""
+        return self.root_correlation_id or self.x_correlation_id
 
 
 class CreditContext(
@@ -126,12 +147,32 @@ class TurnToSend(Struct, frozen=True):
     num_turns: int
     agent_depth: int = 0
     parent_correlation_id: str | None = None
+    root_correlation_id: str | None = None
+    """x_correlation_id of the depth-0 root of this turn's session TREE.
+
+    None for a root turn (the root IS its own tree root); set on every
+    descendant to the root's id. Propagated onto the issued ``Credit`` and used
+    for per-tree finality accounting. Effective value is
+    ``root_correlation_id or x_correlation_id``."""
     has_forks: bool = False
+    has_branches: bool = False
+    """True iff the originating turn declares ANY branch (FORK or SPAWN) in its
+    metadata ``branch_ids``. Superset of ``has_forks``, which is FORK-only and
+    owned by the sticky router's deferred-eviction logic — do not conflate the
+    two. Consumed by finality stamping: a turn that will spawn descendants on
+    its return can never be the tree's provably-last request, even when the
+    registry shows nothing outstanding yet (SPAWN children register only at
+    return-intercept, AFTER issue-time stamping)."""
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
+
+    @property
+    def effective_root_correlation_id(self) -> str:
+        """Tree root id, defaulting to this turn's own ``x_correlation_id``."""
+        return self.root_correlation_id or self.x_correlation_id
 
     @classmethod
     def from_previous_credit(
@@ -143,7 +184,10 @@ class TurnToSend(Struct, frozen=True):
             credit: The previous turn's credit.
             next_meta: Metadata for the NEW turn being built. When provided, the
                 ``has_forks`` flag is derived from it so the sticky
-                router can defer parent-entry eviction until DAG children drain.
+                router can defer parent-entry eviction until DAG children drain,
+                and ``has_branches`` (any-mode) is derived from its
+                ``branch_ids`` so finality stamping stays conservative on
+                spawning turns.
         """
         return cls(
             conversation_id=credit.conversation_id,
@@ -152,6 +196,8 @@ class TurnToSend(Struct, frozen=True):
             num_turns=credit.num_turns,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
+            root_correlation_id=credit.root_correlation_id,
             has_forks=next_meta.has_forks if next_meta is not None else False,
+            has_branches=bool(next_meta.branch_ids) if next_meta is not None else False,
             branch_mode=credit.branch_mode,
         )

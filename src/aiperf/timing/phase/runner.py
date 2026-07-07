@@ -24,6 +24,7 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import Ramper, RamperConfig, RampType
+from aiperf.timing.session_tree import SessionTreeRegistry
 from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
@@ -132,6 +133,14 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             counter=self._progress.counter,
         )
+        # Per-tree finality ledger, shared by the issuer (opens trees + stamps
+        # finality) and the branch orchestrator (registers descendants + drives
+        # terminal transitions). Only built for DAG-shaped datasets; None
+        # elsewhere so finality stays conservative. Must precede the issuer so
+        # it can be injected at construction.
+        self._session_tree_registry = self._build_session_tree_registry(
+            conversation_source
+        )
         self._credit_issuer = self._build_credit_issuer(url_selection_strategy)
         self._maybe_construct_branch_orchestrator(conversation_source)
 
@@ -140,6 +149,19 @@ class PhaseRunner(TaskManagerMixin):
         self._return_wait_task: asyncio.Task | None = None
         self._was_cancelled = False
         self._rampers: list[Ramper] = []
+
+    def _build_session_tree_registry(
+        self, conversation_source: ConversationSource
+    ) -> SessionTreeRegistry | None:
+        """Build the per-tree finality ledger for DAG-shaped datasets only.
+
+        Mirrors the ``_maybe_construct_branch_orchestrator`` gate: a registry is
+        pointless without DAG fan-out (no descendants to track), and leaving it
+        None on non-DAG runs keeps ``_finality_for_issue`` conservative.
+        """
+        if not self._is_dag_dataset(conversation_source.dataset_metadata):
+            return None
+        return SessionTreeRegistry()
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -156,6 +178,7 @@ class PhaseRunner(TaskManagerMixin):
             cancellation_policy=self._cancellation_policy,
             lifecycle=self._lifecycle,
             url_selection_strategy=url_selection_strategy,
+            session_tree_registry=self._session_tree_registry,
         )
 
     def _maybe_construct_branch_orchestrator(
@@ -177,6 +200,7 @@ class PhaseRunner(TaskManagerMixin):
             conversation_source=conversation_source,
             credit_issuer=self._credit_issuer,
             sticky_router=sticky_router,
+            session_tree_registry=self._session_tree_registry,
         )
 
     @property
