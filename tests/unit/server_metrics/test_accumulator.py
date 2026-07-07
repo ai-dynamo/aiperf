@@ -252,6 +252,49 @@ class TestServerMetricsResultsProcessor:
         )
         assert profiling_total == pytest.approx(100.0)
 
+    async def test_export_results_degenerate_warmup_window_preserves_profiling(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """A degenerate warmup window (start == end) must not lose profiling results.
+
+        The degenerate window previously raised ValueError inside TimeRangeFilter,
+        which records_manager swallowed into a None result (total server-metrics
+        loss). Profiling summaries must survive; warmup summaries drop to None
+        (regression for F13).
+        """
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, value in (
+            (1_000_000_000, 0.1),
+            (1_500_000_000, 0.2),
+            (2_500_000_000, 0.8),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"cache_usage": gauge},
+            )
+            await processor.process_server_metrics_record(record)
+
+        result = await processor.export_results(
+            start_ns=2_000_000_000,
+            end_ns=3_000_000_000,
+            warmup_start_ns=1_000_000_000,
+            warmup_end_ns=1_000_000_000,  # degenerate: start == end
+        )
+
+        assert result is not None
+        assert isinstance(result, ServerMetricsResults)
+        assert result.endpoint_summaries
+        assert result.warmup_endpoint_summaries is None
+
     async def test_export_results_with_error_summary(
         self,
         mock_cfg: BenchmarkRun,

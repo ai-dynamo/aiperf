@@ -172,7 +172,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             include_final_collection=True,
         )
         warmup_endpoint_summaries = None
-        if warmup_start_ns is not None and warmup_end_ns is not None:
+        if (
+            warmup_start_ns is not None
+            and warmup_end_ns is not None
+            and warmup_start_ns < warmup_end_ns
+        ):
             warmup_endpoint_summaries = self._compute_endpoint_summaries(
                 warmup_start_ns,
                 self._warmup_summary_end_ns(warmup_end_ns, start_ns),
@@ -271,6 +275,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 if include_final_collection
                 else profiling_end_ns
             )
+            # Skip degenerate windows: TimeRangeFilter rejects start >= end.
+            if endpoint_start_ns >= endpoint_end_ns:
+                continue
             time_filter = TimeRangeFilter(
                 start_ns=endpoint_start_ns,
                 end_ns=endpoint_end_ns,
