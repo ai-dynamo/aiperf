@@ -1322,7 +1322,7 @@ replay_sched_lag_p99 = percentile(lag_ms, 99)
 
 **Type:** [Derived Metric](#derived-metrics)
 
-Boolean (0/1) signal that the replay could not keep up with the offered schedule: anchored send-lag p99 exceeded 500 ms. When degraded, a warning with the lag percentiles is logged at results time.
+Boolean (0/1) signal that the replay could not keep up with the offered schedule: anchored send-lag p99 exceeded 500 ms. When degraded, a warning with the lag percentiles is logged at most once per run (the first time the run is flagged); the metric value itself is re-derived on every summarize tick.
 
 **Formula:**
 ```python
