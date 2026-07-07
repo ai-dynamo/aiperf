@@ -120,13 +120,6 @@ class TestResponsesFormatPayloadHostile:
 
         assert payload["tools"] == eb_tools
 
-    @pytest.mark.skip(
-        reason="Turn is now a msgspec.Struct (perf restoration). msgspec does "
-        "not validate dict key types at construct or encode time. Invariant removed."
-    )
-    def test_extra_body_int_key_rejected_by_turn_model(self, endpoint):
-        pass
-
     def test_extra_body_circular_no_crash(self, endpoint):
         a: dict = {}
         b: dict = {"a": a}
@@ -137,18 +130,6 @@ class TestResponsesFormatPayloadHostile:
         payload = endpoint.format_payload(req)
 
         assert payload["b"] is b
-
-    @pytest.mark.skip(
-        reason="v2 Turn.max_tokens enforces ge=1; see test_openai_chat_attack "
-        "for the equivalent skipped sibling. Port pending."
-    )
-    def test_max_tokens_negative_one_serialised(self, endpoint):
-        turn = Turn(texts=[Text(contents=["x"])], max_tokens=-1)
-        req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(req)
-
-        assert payload["max_output_tokens"] == -1
 
     def test_empty_model_falls_back_to_primary(self, endpoint):
         turn = Turn(texts=[Text(contents=["x"])], model="")

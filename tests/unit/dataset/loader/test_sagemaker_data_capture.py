@@ -769,23 +769,3 @@ class TestParseTraceErrorPaths:
         loader.filename = f
         data = loader.load_dataset()
         assert len(data) == 0
-
-
-@pytest.mark.skip(
-    reason="UserConfig._count_dataset_entries() has no AIPerfConfig equivalent on this branch; "
-    "requires a separate dataset-entry-counting helper that doesn't exist post-merge."
-)
-class TestCountDatasetEntriesDirectory:
-    """Test that _count_dataset_entries handles directories for SageMaker captures.
-
-    The pre-merge `UserConfig._count_dataset_entries()` method does not exist on
-    `AIPerfConfig`. Migrating these tests requires either (a) the equivalent
-    helper to be added to AIPerfConfig, or (b) the underlying counting logic to
-    be exposed elsewhere — both are production-side changes and out of scope.
-    """
-
-    def test_count_entries_in_directory(self, tmp_path: Path) -> None:
-        pass
-
-    def test_count_entries_single_file(self, tmp_path: Path) -> None:
-        pass

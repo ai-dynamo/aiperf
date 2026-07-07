@@ -437,24 +437,3 @@ class TestFinalizeStreamExporters:
 # ---------------------------------------------------------------------------
 # Source-branch _dispatch_record / _routing_table — intentionally absent
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.skip(
-    reason="k8s uses static accumulators_for_record_type, not _dispatch_record"
-)
-def test_dispatch_record_method_exists() -> None:
-    """Source branch had RecordsManager._dispatch_record. K8s replaced it
-    with _send_record_to_accumulators driven by precomputed lists set in
-    __init__ via accumulators_for_record_type / stream_exporters_for_record_type.
-    See TestSendRecordToAccumulators above for the ported behavior."""
-
-
-@pytest.mark.skip(
-    reason="k8s uses static accumulators_for_record_type, not _routing_table"
-)
-def test_routing_table_attribute_exists() -> None:
-    """Source branch built RecordsManager._routing_table at init time as
-    dict[str, list[handler]] keyed by record_type. K8s replaces it with two
-    precomputed flat lists per record type (just metric_records today). See
-    TestAccumulatorsForRecordType / TestStreamExportersForRecordType above
-    for the ported behavior."""

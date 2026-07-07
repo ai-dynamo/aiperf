@@ -284,11 +284,6 @@ class TestDatasetManagerInputsJsonGeneration:
         assert any("Generating inputs.json file" in msg for msg in log_messages)
         assert any("inputs.json file generated" in msg for msg in log_messages)
 
-    @pytest.mark.skip(
-        reason="Failing post-merge: fixture/integration of generated "
-        "inputs.json replay needs verification against v2 dataset pipeline. "
-        "Port pending."
-    )
     @pytest.mark.asyncio
     async def test_inputs_json_replay_sends_generated_payload_without_reformatting(
         self,

@@ -730,11 +730,6 @@ benchmark:
 class TestTemplateFilesLoad:
     """Verify all shipped config templates (now camelCase) load correctly."""
 
-    pytestmark = pytest.mark.skip(
-        reason="Wave 2: shipped templates still use phases-as-dict; will be migrated "
-        "in Task 7 of 2026-04-26-phases-list-with-name.md."
-    )
-
     @staticmethod
     def _template_files() -> list[Path]:
         templates_dir = (
@@ -748,10 +743,15 @@ class TestTemplateFilesLoad:
         ids=lambda p: p.stem,
     )  # fmt: skip
     def test_template_loads(self, template_file: Path) -> None:
-        """Each template should parse without error (env var templates skip)."""
+        """Each template should parse without error (env var templates skip).
+
+        substitute_env=True so ``${VAR:default}`` placeholders resolve to
+        their defaults; templates requiring env vars without defaults skip
+        via the handler below.
+        """
         content = template_file.read_text()
         try:
-            config = load_config_from_string(content, substitute_env=False)
+            config = load_config_from_string(content, substitute_env=True)
             assert isinstance(config, AIPerfConfig)
         except Exception as e:
             if "environment variable" in str(e).lower() or "not set" in str(e).lower():

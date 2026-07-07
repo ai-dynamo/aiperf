@@ -823,13 +823,6 @@ class TestRandomPoolBatchSize:
             assert turn.images == []
             assert len(turn.texts[0].contents) == 2
 
-    @pytest.mark.skip(
-        reason="New AIPerfConfig enforces batch_size >= 1 for text prompts"
-    )
-    def test_batch_size_text_zero_disables_texts(self, default_user_run):
-        """batch_size_text=0 should suppress text output even when texts are in the pool."""
-        pass
-
     def test_image_zero_text_one_disables_images_via_legacy_path(
         self, default_user_run
     ):
@@ -852,13 +845,6 @@ class TestRandomPoolBatchSize:
                 "images should be suppressed when batch_size_image=0"
             )
             assert len(turn.texts) == 1
-
-    @pytest.mark.skip(
-        reason="New AIPerfConfig enforces batch_size >= 1 for text prompts"
-    )
-    def test_image_one_text_zero_disables_texts_via_legacy_path(self, default_user_run):
-        """batch_size_image=1/text=0 must not emit texts even via the legacy sampler path."""
-        pass
 
     def test_num_conversations_none_defaults_to_100(self, default_user_run):
         """When num_conversations=None is passed, the loader should default to 100."""

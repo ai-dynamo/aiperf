@@ -7,10 +7,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import orjson
-import pytest
 
-from aiperf.common.enums import CreditPhase
-from aiperf.common.models import CreditPhaseStats
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.record_models import (
     MetricRecordMetadata,
@@ -18,9 +15,7 @@ from aiperf.common.models.record_models import (
     RequestInfo,
     RequestRecord,
 )
-from aiperf.credit.messages import CreditPhaseCompleteMessage
 from aiperf.records.record_processor_service import RecordProcessor
-from aiperf.records.records_manager import RecordsManager
 
 
 class TestMetricRecordMetadataDagFields:
@@ -185,106 +180,3 @@ class TestBranchStatsExport:
         # None-by-default survives a JSON roundtrip.
         restored = ProfileResults.model_validate_json(results.model_dump_json())
         assert restored.branch_stats is None
-
-
-class TestRecordsManagerSnapshotBranchStats:
-    """RecordsManager._snapshot_branch_stats returns stats stored per phase.
-
-    Skipped under branch's RecordsManager which doesn't track per-phase
-    branch stats — DAG branch stats are wired through a different path.
-    """
-
-    pytestmark = pytest.mark.skip(
-        reason="branch's RecordsManager dropped _snapshot_branch_stats"
-    )
-
-    def test_snapshot_returns_none_when_phase_not_recorded(self):
-        mgr = MagicMock(spec=RecordsManager)
-        mgr._phase_branch_stats = {}
-        assert RecordsManager._snapshot_branch_stats(mgr, CreditPhase.PROFILING) is None
-
-    def test_snapshot_returns_stats_for_phase(self):
-        stats = BranchStats(children_spawned=7, parents_resumed=2)
-        mgr = MagicMock(spec=RecordsManager)
-        mgr._phase_branch_stats = {CreditPhase.PROFILING: stats}
-
-        snapshot = RecordsManager._snapshot_branch_stats(mgr, CreditPhase.PROFILING)
-        assert snapshot is stats
-
-    def test_snapshot_isolates_phases(self):
-        warmup = BranchStats(children_spawned=1)
-        profiling = BranchStats(children_spawned=5)
-        mgr = MagicMock(spec=RecordsManager)
-        mgr._phase_branch_stats = {
-            CreditPhase.WARMUP: warmup,
-            CreditPhase.PROFILING: profiling,
-        }
-        assert (
-            RecordsManager._snapshot_branch_stats(mgr, CreditPhase.PROFILING)
-            is profiling
-        )
-        assert RecordsManager._snapshot_branch_stats(mgr, CreditPhase.WARMUP) is warmup
-
-
-class TestRecordsManagerOnCreditPhaseComplete:
-    """RecordsManager._on_credit_phase_complete stores branch stats.
-
-    Skipped under branch's RecordsManager which uses a different
-    branch-stats wire path.
-    """
-
-    pytestmark = pytest.mark.skip(
-        reason="branch's RecordsManager dropped _phase_branch_stats dict"
-    )
-    """Handler stores sub-agent stats from CreditPhaseCompleteMessage per phase."""
-
-    @staticmethod
-    def _make_phase_stats(
-        phase: CreditPhase = CreditPhase.PROFILING,
-    ) -> CreditPhaseStats:
-        return CreditPhaseStats(
-            phase=phase,
-            requests_sent=10,
-            requests_completed=10,
-            final_requests_sent=10,
-            start_ns=1_000_000,
-        )
-
-    @pytest.mark.asyncio
-    async def test_stores_branch_stats_when_present(self):
-        mgr = MagicMock(spec=RecordsManager)
-        mgr._phase_branch_stats = {}
-        mgr._complete_credit_phases = set()
-        mgr._records_tracker = MagicMock()
-        mgr._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
-
-        # Use WARMUP to skip the PROFILING-only logging branch that relies on
-        # real phase_stats fields.
-        phase_stats = self._make_phase_stats(CreditPhase.WARMUP)
-        stats = BranchStats(children_spawned=4, parents_resumed=1)
-        message = CreditPhaseCompleteMessage(
-            service_id="tm-1",
-            stats=phase_stats,
-            branch_stats=stats,
-        )
-
-        await RecordsManager._on_credit_phase_complete(mgr, message)
-
-        assert mgr._phase_branch_stats[phase_stats.phase] == stats
-
-    @pytest.mark.asyncio
-    async def test_no_op_when_branch_stats_absent(self):
-        mgr = MagicMock(spec=RecordsManager)
-        mgr._phase_branch_stats = {}
-        mgr._complete_credit_phases = set()
-        mgr._records_tracker = MagicMock()
-        mgr._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
-
-        message = CreditPhaseCompleteMessage(
-            service_id="tm-1",
-            stats=self._make_phase_stats(CreditPhase.WARMUP),
-        )
-
-        await RecordsManager._on_credit_phase_complete(mgr, message)
-
-        assert mgr._phase_branch_stats == {}

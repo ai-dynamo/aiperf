@@ -1,7 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import pytest
-from pydantic import ValidationError
 
 from aiperf.common.models.worker_models import WorkerTaskStats
 
@@ -22,22 +20,6 @@ class TestWorkerTaskStatsInitialization:
         assert stats.total == 10
         assert stats.failed == 2
         assert stats.completed == 7
-
-    @pytest.mark.skip(
-        reason="WorkerTaskStats converted to slotted dataclass for perf; "
-        "Pydantic's runtime int-coercion validation is no longer in scope. "
-        "Construction-time validation now lives at msgspec/protocol boundaries."
-    )
-    def test_validation_requires_int(self):
-        """Test that fields require integer values."""
-        with pytest.raises(ValidationError):
-            WorkerTaskStats(total="not an int")
-
-        with pytest.raises(ValidationError):
-            WorkerTaskStats(failed=3.5)
-
-        with pytest.raises(ValidationError):
-            WorkerTaskStats(completed=None)
 
 
 class TestWorkerTaskStatsTaskFinished:

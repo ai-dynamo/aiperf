@@ -8,7 +8,6 @@ the `bo` extra.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import pytest
@@ -226,78 +225,6 @@ def test_plateau_refuses_convergence_when_mean_is_zero():
     assert not planner.is_converged()
 
 
-@pytest.mark.skip(
-    reason="Probes BayesianSearchPlanner private attrs (_opt, "
-    "_failed_iteration_loss) from the skopt-direct implementation. "
-    "HEAD's planner subclasses OptunaSearchPlanner — coverage lives "
-    "in test_optuna_helpers.py / test_optuna_planner.py."
-)
-def test_failed_iteration_loss_uses_finite_sentinel_with_no_history():
-    """No prior successful runs → sentinel loss; never inf/nan; same magnitude
-    regardless of direction (so the GP kernel matrix stays well-posed)."""
-    from aiperf.orchestrator.search_planner._bayesian_helpers import (
-        NO_DATA_SENTINEL_LOSS,
-    )
-
-    for direction in (OptimizationDirection.MAXIMIZE, OptimizationDirection.MINIMIZE):
-        cfg = _cfg(max_iterations=5, n_initial_points=1, objective_direction=direction)
-        planner = BayesianSearchPlanner(_base_config(), cfg)
-        loss = planner._failed_iteration_loss()
-        assert math.isfinite(loss)
-        assert loss == pytest.approx(NO_DATA_SENTINEL_LOSS)
-
-
-@pytest.mark.skip(
-    reason="Probes BayesianSearchPlanner private attrs (_opt, "
-    "_failed_iteration_loss) from the skopt-direct implementation. "
-    "HEAD's planner subclasses OptunaSearchPlanner — coverage lives "
-    "in test_optuna_helpers.py / test_optuna_planner.py."
-)
-def test_failed_iteration_loss_is_worse_than_worst_real_loss_maximize():
-    """With prior MAXIMIZE successes, fallback loss must exceed worst real loss
-    (skopt minimizes, so 'worse' = larger loss)."""
-    cfg = _cfg(
-        max_iterations=10,
-        n_initial_points=1,
-        objective_direction=OptimizationDirection.MAXIMIZE,
-    )
-    planner = BayesianSearchPlanner(_base_config(), cfg)
-    # Tell two successful iterations; objectives 100.0 and 50.0.
-    # In skopt's loss space (MAXIMIZE → negate): -100.0 and -50.0.
-    # Worst loss = max(-100, -50) = -50.0.
-    for value in (100.0, 50.0):
-        _, v = planner.ask()
-        planner.tell(v, [_make_result(v, throughput=value)])
-    fallback = planner._failed_iteration_loss()
-    # Fallback must be strictly worse than -50 (i.e., greater than -50).
-    assert fallback > -50.0
-    # And finite, not inf or nan.
-    assert math.isfinite(fallback)
-
-
-@pytest.mark.skip(
-    reason="Probes BayesianSearchPlanner private attrs (_opt, "
-    "_failed_iteration_loss) from the skopt-direct implementation. "
-    "HEAD's planner subclasses OptunaSearchPlanner — coverage lives "
-    "in test_optuna_helpers.py / test_optuna_planner.py."
-)
-def test_failed_iteration_loss_is_worse_than_worst_real_loss_minimize():
-    """With prior MINIMIZE successes (loss = objective passthrough), fallback
-    loss must exceed the largest seen objective."""
-    cfg = _cfg(
-        max_iterations=10,
-        n_initial_points=1,
-        objective_direction=OptimizationDirection.MINIMIZE,
-    )
-    planner = BayesianSearchPlanner(_base_config(), cfg)
-    for value in (10.0, 25.0):
-        _, v = planner.ask()
-        planner.tell(v, [_make_result(v, throughput=value)])
-    fallback = planner._failed_iteration_loss()
-    assert fallback > 25.0
-    assert math.isfinite(fallback)
-
-
 def test_objective_to_loss_sign_consistency_round_trip():
     """A successful tell and a failed-fallback tell must use the same sign
     convention so skopt's history is internally consistent."""
@@ -330,86 +257,6 @@ def test_objective_to_loss_sign_consistency_round_trip():
 # Hyperopt no_progress_loss / skopt HollowIterationsStopper: improvement-over-
 # best patience as a second termination signal.
 # ----------------------------------------------------------------------------
-
-
-@pytest.mark.skip(
-    reason="Probes BayesianSearchPlanner private attrs (_opt, "
-    "_failed_iteration_loss) from the skopt-direct implementation. "
-    "HEAD's planner subclasses OptunaSearchPlanner — coverage lives "
-    "in test_optuna_helpers.py / test_optuna_planner.py."
-)
-def test_per_trial_observations_passed_to_skopt(monkeypatch):
-    """tell() with N>=2 trials must pass N (x, y) pairs to skopt.Optimizer.tell.
-
-    Pre-fix, the planner pre-averaged trials and called `opt.tell(x, mean_y)`.
-    Post-fix it calls `opt.tell([x]*N, [y1, y2, ...])` so the GP sees the
-    within-point variance — matches Letham et al. 2017 (arXiv:1706.07094).
-    """
-    planner = BayesianSearchPlanner(_base_config(), _cfg(max_iterations=5))
-
-    captured: dict = {"calls": []}
-    real_tell = planner._opt.tell
-
-    def spy_tell(x, y, *args, **kwargs):
-        captured["calls"].append((x, y))
-        return real_tell(x, y, *args, **kwargs)
-
-    monkeypatch.setattr(planner._opt, "tell", spy_tell)
-
-    _, variation = planner.ask()
-    # Three trials at the same point with distinct objectives.
-    trial_results = [
-        _make_result(variation, throughput=10.0),
-        _make_result(variation, throughput=12.0),
-        _make_result(variation, throughput=11.0),
-    ]
-    planner.tell(variation, trial_results)
-
-    assert len(captured["calls"]) == 1
-    x_passed, y_passed = captured["calls"][0]
-    # Should be a list of x's (one per trial) and a list of y's.
-    assert isinstance(x_passed, list)
-    assert len(x_passed) == 3
-    assert isinstance(y_passed, list)
-    assert len(y_passed) == 3
-    # All x's identical.
-    assert all(xi == x_passed[0] for xi in x_passed)
-    # Per-trial losses for MAXIMIZE = -throughput. Order may vary; check sets.
-    assert sorted(y_passed) == sorted([-10.0, -12.0, -11.0])
-    # History stores the mean for plateau detection.
-    assert planner.history()[0].objective_value == pytest.approx(11.0)
-
-
-@pytest.mark.skip(
-    reason="Probes BayesianSearchPlanner private attrs (_opt, "
-    "_failed_iteration_loss) from the skopt-direct implementation. "
-    "HEAD's planner subclasses OptunaSearchPlanner — coverage lives "
-    "in test_optuna_helpers.py / test_optuna_planner.py."
-)
-def test_single_trial_path_uses_scalar_tell(monkeypatch):
-    """When only one trial succeeds, tell() should pass scalar x, y.
-
-    Calling `opt.tell([x], [y])` on skopt 0.10 works but is needlessly
-    awkward; the scalar form is what every prior test exercised and what
-    the rest of the test suite relies on.
-    """
-    planner = BayesianSearchPlanner(_base_config(), _cfg(max_iterations=5))
-
-    captured: dict = {"calls": []}
-    real_tell = planner._opt.tell
-
-    def spy_tell(x, y, *args, **kwargs):
-        captured["calls"].append((x, y))
-        return real_tell(x, y, *args, **kwargs)
-
-    monkeypatch.setattr(planner._opt, "tell", spy_tell)
-
-    _, variation = planner.ask()
-    planner.tell(variation, [_make_result(variation, throughput=42.0)])
-
-    x_passed, y_passed = captured["calls"][0]
-    assert isinstance(y_passed, float)
-    assert y_passed == pytest.approx(-42.0)
 
 
 def test_improvement_patience_stops_after_no_progress():

@@ -9,8 +9,6 @@ tests/unit/orchestrator/test_local_executor.py with the Task 7/8 split
 
 from pathlib import Path
 
-import pytest
-
 from aiperf.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.strategies import FixedTrialsStrategy
@@ -52,33 +50,6 @@ def _make_config(**overrides: object) -> BenchmarkConfig:
 
 class TestFixedTrialsStrategyEdgeCases:
     """Verify seed handling, warmup removal, config isolation."""
-
-    @pytest.mark.skip(
-        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
-    )
-    def test_seed_set_when_none_and_auto_true(self) -> None:
-        config = _make_config(random_seed=None)
-        strategy = FixedTrialsStrategy(num_trials=2)
-        result = strategy.get_next_config(config, [])
-        assert result.random_seed == 42
-
-    @pytest.mark.skip(
-        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
-    )
-    def test_seed_preserved_when_already_set(self) -> None:
-        config = _make_config(random_seed=123)
-        strategy = FixedTrialsStrategy(num_trials=2)
-        result = strategy.get_next_config(config, [])
-        assert result.random_seed == 123
-
-    @pytest.mark.skip(
-        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
-    )
-    def test_seed_not_set_when_auto_false(self) -> None:
-        config = _make_config(random_seed=None)
-        strategy = FixedTrialsStrategy(num_trials=2)
-        result = strategy.get_next_config(config, [])
-        assert result.random_seed is None
 
     def test_warmup_removed_on_subsequent_runs(self) -> None:
         config = _make_config()
@@ -124,17 +95,6 @@ class TestFixedTrialsStrategyEdgeCases:
         run = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
         assert not any(p.name == "warmup" for p in run.phases)
         assert any(p.name == "profiling" for p in run.phases)
-
-    @pytest.mark.skip(
-        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
-    )
-    def test_config_deep_copy_when_seed_set(self) -> None:
-        """Mutating returned config must not affect the original."""
-        config = _make_config(random_seed=None)
-        strategy = FixedTrialsStrategy(num_trials=2)
-        result = strategy.get_next_config(config, [])
-        result.random_seed = 999
-        assert config.random_seed is None
 
     def test_config_deep_copy_when_warmup_disabled(self) -> None:
         """Warmup removal must not affect the original config."""

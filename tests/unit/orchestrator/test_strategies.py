@@ -491,31 +491,6 @@ class TestAdaptiveStrategy:
         assert _has_warmup_phase(second)
         assert any(p.name == "warmup" for p in second.phases)
 
-    @pytest.mark.skip(
-        reason="random_seed moved to AIPerfConfig envelope (Task 8); test obsolete"
-    )
-    def test_config_parity_seed_and_warmup_with_fixed_trials(self):
-        """Full config transformation parity between Adaptive and Fixed strategies."""
-        criterion = self._make_mock_criterion()
-        adaptive = AdaptiveStrategy(
-            criterion=criterion,
-            disable_warmup_after_first=True,
-        )
-        fixed = FixedTrialsStrategy(
-            num_trials=10,
-            disable_warmup_after_first=True,
-        )
-
-        config = _make_config(random_seed=None)
-
-        results = self._make_results(1)
-
-        adaptive_cfg = adaptive.get_next_config(config, results)
-        fixed_cfg = fixed.get_next_config(config, results)
-
-        assert adaptive_cfg.random_seed == fixed_cfg.random_seed
-        assert _has_warmup_phase(adaptive_cfg) == _has_warmup_phase(fixed_cfg)
-
     # -- Cooldown --
 
     def test_cooldown_seconds_configured(self):

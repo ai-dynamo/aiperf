@@ -458,50 +458,6 @@ def test_spawn_on_non_terminal_turn_with_gated_consumer_marks_non_background(
 # --- 14 ----------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="cp-main-sync loader does not auto-promote terminal SPAWN to "
-    "dispatch_timing='pre'; inferencex's is_background=True semantics are "
-    "not the same as cp-main-sync's pre/post timing model."
-)
-def test_terminal_spawn_with_no_following_turn_marks_background_no_prereq(
-    tmp_path: Path,
-):
-    """Terminal spawn (last turn of the session): no prereq is emitted
-    anywhere — fire-and-forget in v1. The loader marks the branch as
-    ``is_background=True`` so downstream consumers can distinguish the
-    fire-and-forget semantic from a gated branch."""
-    path = _write(
-        tmp_path,
-        [
-            {
-                "session_id": "root",
-                "turns": [
-                    {
-                        "messages": [{"role": "user", "content": "u"}],
-                        "spawns": ["child"],
-                    }
-                ],
-            },
-            {
-                "session_id": "child",
-                "turns": [{"messages": [{"role": "user", "content": "u"}]}],
-            },
-        ],
-    )
-    loader = DagJsonlLoader(filename=str(path), cfg=_uc())
-    convs = loader.convert_to_conversations(loader.load_dataset())
-    root = next(c for c in convs if c.session_id == "root")
-    assert len(root.branches) == 1
-    assert root.branches[0].dispatch_timing == "pre"
-    # No prereq anywhere in the root session.
-    for t in root.turns:
-        assert not t.prerequisites
-    # Nor in the child.
-    child = next(c for c in convs if c.session_id == "child")
-    for t in child.turns:
-        assert not t.prerequisites
-
-
 def test_non_terminal_spawn_marks_branch_not_background(tmp_path: Path):
     """Non-terminal spawn has a next-turn prereq wired; the branch must NOT
     be flagged is_background — the orchestrator treats background branches

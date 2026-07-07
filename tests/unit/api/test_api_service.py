@@ -1057,36 +1057,6 @@ class TestSelectEncoding:
             assert result == expected_encoding
 
 
-@pytest.mark.skip(
-    reason="_get_content_type moved to inline dict lookup in results router"
-)
-class TestGetContentType:
-    """Test the _get_content_type helper function."""
-
-    @pytest.mark.parametrize(
-        "suffix,expected",
-        [
-            param(".json", "application/json", id="json"),
-            param(".jsonl", "application/x-ndjson", id="jsonl"),
-            param(".csv", "text/csv", id="csv"),
-            param(".parquet", "application/vnd.apache.parquet", id="parquet"),
-            param(".txt", "application/octet-stream", id="txt-fallback"),
-            param(".dat", "application/octet-stream", id="dat-fallback"),
-            param("", "application/octet-stream", id="no-extension"),
-        ],
-    )  # fmt: skip
-    def test_get_content_type_returns_correct_type(
-        self, suffix: str, expected: str
-    ) -> None:
-        """Test that _get_content_type returns correct content type for various extensions."""
-        import pathlib
-
-        from aiperf.api.api_service import _get_content_type
-
-        file_path = pathlib.Path(f"/results/test{suffix}")
-        assert _get_content_type(file_path) == expected
-
-
 class TestResultsListEndpoint:
     """Test the /api/results/list endpoint."""
 

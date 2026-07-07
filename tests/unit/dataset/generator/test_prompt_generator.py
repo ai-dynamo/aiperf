@@ -493,13 +493,6 @@ class TestPromptGeneratorComprehensive:
         with pytest.raises(NotInitializedError):
             generator._create_prefix_prompt_pool()
 
-    @pytest.mark.skip(
-        reason="New AIPerfConfig validates prefix_prompts.length >= 1, zero-length is invalid state"
-    )
-    def test_create_prefix_prompt_pool_zero_length(self, prefix_config):
-        """Test _create_prefix_prompt_pool with zero length prompts."""
-        pass
-
     # ============================================================================
     # Shared System Prompt Tests
     # ============================================================================

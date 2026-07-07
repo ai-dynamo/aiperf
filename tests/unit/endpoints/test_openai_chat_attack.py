@@ -133,20 +133,6 @@ class TestChatFormatPayloadHostile:
 
         assert payload["tools"] == eb_tools
 
-    @pytest.mark.skip(
-        reason="Turn is now a msgspec.Struct (perf restoration). msgspec does "
-        "not validate dict key types at construct or encode time — encoder "
-        "coerces int keys to strings. Invariant removed."
-    )
-    def test_extra_body_non_string_int_key_rejected_by_turn_model(self, endpoint):
-        pass
-
-    @pytest.mark.skip(
-        reason="Turn is now a msgspec.Struct; None keys are coerced or accepted."
-    )
-    def test_extra_body_none_key_rejected_by_turn_model(self, endpoint):
-        pass
-
     def test_extra_body_circular_reference_does_not_crash_format(self, endpoint):
         """A self-referential extra_body must not blow up format_payload itself
         (orjson serialisation would, but that's downstream)."""
@@ -161,35 +147,6 @@ class TestChatFormatPayloadHostile:
         # The cycle is faithfully reflected — payload["b"] is b, payload["b"]["a"] is a.
         assert payload["b"] is b
         assert payload["b"]["a"] is a
-
-    @pytest.mark.skip(
-        reason="v2 Turn.max_tokens enforces ge=1, so negative/zero values "
-        "are rejected at construction time. Test verified pass-through "
-        "behavior on v1 (where Turn was unconstrained); v2 hardened the "
-        "constraint at the dataset layer. Port pending: either relax Turn "
-        "or move the verbatim-emit assertion to a higher layer."
-    )
-    def test_max_tokens_negative_one_serialised_verbatim(self, endpoint):
-        turn = Turn(texts=[Text(contents=["x"])], max_tokens=-1)
-        req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(req)
-
-        assert payload["max_completion_tokens"] == -1
-
-    @pytest.mark.skip(
-        reason="v2 Turn.max_tokens enforces ge=1; see "
-        "test_max_tokens_negative_one_serialised_verbatim."
-    )
-    def test_max_tokens_zero_emits_key(self, endpoint):
-        """max_tokens=0 is falsy but not None — must still be emitted (truthy check
-        would silently drop it; current code uses `is not None`)."""
-        turn = Turn(texts=[Text(contents=["x"])], max_tokens=0)
-        req = create_request_info(model_endpoint=endpoint.model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(req)
-
-        assert payload["max_completion_tokens"] == 0
 
     def test_max_tokens_max_int(self, endpoint):
         turn = Turn(texts=[Text(contents=["x"])], max_tokens=sys.maxsize)

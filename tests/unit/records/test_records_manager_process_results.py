@@ -491,57 +491,6 @@ class TestRunAnalyzers:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="k8s _process_results does not call accumulator.export_results. "
-    "The accumulator path runs per-record via _send_record_to_accumulators; "
-    "summarization happens inside analyzers via SummaryContext.accumulators."
-)
-def test_calls_export_results_on_all_accumulators_source_only() -> None:
-    """Source branch built per-accumulator ``ExportContext`` and called
-    ``acc.export_results(ctx)`` in ``_process_results``. K8s does not — see
-    ``TestProcessResultsAnalyzers`` for the SummaryContext-based equivalent."""
-
-
-@pytest.mark.skip(
-    reason="k8s does not construct ExporterManager inside _process_results. "
-    "ProcessAllResultsMessage carries no exported_artifacts populated from "
-    "this path; that's owned by the SystemController / ExporterManager flow."
-)
-def test_message_contains_exported_artifacts_source_only() -> None:
-    """Source branch's ``ExporterManager.exported_file_infos`` was attached to
-    ``ProcessAllResultsMessage.exported_artifacts``. K8s leaves that field at
-    its default empty dict — exporter integration lives elsewhere."""
-
-
-@pytest.mark.skip(
-    reason="k8s ProcessAllResultsMessage carries telemetry_results / "
-    "server_metrics_results as default None; they are populated by other "
-    "side-channel pipelines (GPU telemetry accumulator/stream-exporter plugins "
-    "and the server_metrics_processor category), not by "
-    "RecordsManager._process_results."
-)
-def test_message_contains_typed_results_source_only() -> None:
-    """Source branch extracted ``TelemetryExportData`` / ``ServerMetricsResults``
-    from accumulator outputs and attached them to ``ProcessAllResultsMessage``.
-    K8s routes GPU telemetry through the ``gpu_telemetry`` accumulator +
-    ``gpu_telemetry_jsonl_writer`` stream-exporter plugins and server metrics
-    through the ``server_metrics_processor`` category — bypassing
-    ``RecordsManager._process_results`` entirely."""
-
-
-@pytest.mark.skip(
-    reason="k8s _process_results has no phase=... kwarg; the phase window "
-    "is built internally from records_tracker.get_results_phases() / "
-    "get_results_time_window(). See test_analyzer_summary_context_has_time_window."
-)
-def test_per_accumulator_export_context_source_only() -> None:
-    """Source branch built per-accumulator ``ExportContext`` with different
-    time windows and error sources (GPU_TELEMETRY: no end_ns; SERVER_METRICS:
-    fallback timestamps; others: phase window). K8s does not — analyzer
-    contexts share one ``SummaryContext`` whose time window comes from the
-    records-tracker."""
-
-
 # ---------------------------------------------------------------------------
 # Tests: no double-emit when both legacy processor and accumulator summarize
 # ---------------------------------------------------------------------------
