@@ -226,3 +226,59 @@ class TestRecordProcessorDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         mock_self.inference_result_parser.parse_request_record.assert_not_called()
+
+
+class TestRecordProcessorLockstepGuard:
+    """The lockstep contract requires that every received inference result
+    forwards exactly one MetricRecordsMessage. The error-forward path itself
+    must therefore never drop the record, even when metadata creation fails or
+    the forward call raises -- otherwise the timeout-less RecordsManager
+    completion barrier hangs the run at end-of-phase.
+    """
+
+    @pytest.mark.asyncio
+    async def test_forward_failed_record_metadata_creation_raises_still_pushes_error(
+        self, sample_request_record
+    ):
+        """If _create_metric_record_metadata raises (e.g. request_info None
+        triggering the original failure), _forward_failed_record must fall back
+        to minimal metadata and still push exactly one error record."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self.service_id = "rp"
+        mock_self.records_push_client = AsyncMock()
+        mock_self._create_metric_record_metadata = MagicMock(
+            side_effect=AttributeError("request_info None")
+        )
+
+        await RecordProcessor._forward_failed_record(
+            mock_self,
+            MagicMock(service_id="w1"),
+            sample_request_record,
+            None,
+            RuntimeError("boom"),
+        )
+
+        mock_self.records_push_client.push.assert_awaited_once()
+        pushed = mock_self.records_push_client.push.await_args.args[0]
+        assert pushed.results == []
+        assert pushed.error is not None
+
+    @pytest.mark.asyncio
+    async def test_on_inference_results_forward_failed_record_raises_does_not_escape(
+        self,
+    ):
+        """A failure inside the error-forward path must be swallowed by the
+        handler's last-resort guard so it cannot escape _on_inference_results."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self._dataset_configured_event = asyncio.Event()
+        mock_self._dataset_configured_event.set()
+        mock_self._process_and_forward_record = AsyncMock(
+            side_effect=RuntimeError("process boom")
+        )
+        mock_self._forward_failed_record = AsyncMock(
+            side_effect=RuntimeError("forward boom")
+        )
+
+        await RecordProcessor._on_inference_results(mock_self, MagicMock())
+
+        mock_self._forward_failed_record.assert_awaited_once()
