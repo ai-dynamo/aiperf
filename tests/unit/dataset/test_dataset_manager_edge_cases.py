@@ -361,7 +361,7 @@ class TestWaitForDatasetConfigurationTimeout:
 
         monkeypatch.setattr(Environment.DATASET, "CONFIGURATION_TIMEOUT", 0.01)
 
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(TimeoutError):
             await manager._wait_for_dataset_configuration()
 
 

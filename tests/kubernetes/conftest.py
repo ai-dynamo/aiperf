@@ -1444,7 +1444,7 @@ async def helm_deployed(
     if not k8s_settings.skip_cleanup:
         try:
             await asyncio.wait_for(helm_deployer.cleanup_all(), timeout=120)
-        except (asyncio.TimeoutError, Exception) as e:
+        except (TimeoutError, Exception) as e:
             logger.warning(f"Job cleanup timed out: {e}")
 
 

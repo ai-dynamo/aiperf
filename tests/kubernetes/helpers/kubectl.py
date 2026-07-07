@@ -229,7 +229,7 @@ class KubectlClient:
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             logger.warning(f"kubectl timed out after {timeout}s: {' '.join(cmd)}")

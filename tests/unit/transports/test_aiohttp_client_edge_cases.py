@@ -7,7 +7,7 @@ handling, and the FirstToken callback. This file exercises the remaining
 error / cancellation surface:
 
 - Connection refused / DNS failures.
-- Read timeouts (``asyncio.TimeoutError`` propagated by aiohttp).
+- Read timeouts (``TimeoutError`` propagated by aiohttp).
 - TLS / certificate errors propagated through ``aiohttp.ClientConnectorError``.
 - Streaming truncation mid-response (``ClientPayloadError``).
 - Binary content-type dispatch (image / video / octet-stream).
@@ -76,7 +76,7 @@ class TestAioHttpClientNetworkFailures:
                 id="payload-truncated",
             ),
             param(
-                lambda: asyncio.TimeoutError(),
+                lambda: TimeoutError(),
                 "TimeoutError",
                 id="read-timeout",
             ),

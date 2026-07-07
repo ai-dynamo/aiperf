@@ -438,7 +438,7 @@ class TestFinalizeAndProcessResults:
     @pytest.mark.asyncio
     async def test_relay_timeout_does_not_abort_processing(self) -> None:
         mgr = _make_manager(bind_methods=["_finalize_and_process_results"])
-        mgr.control_client.request.side_effect = asyncio.TimeoutError()
+        mgr.control_client.request.side_effect = TimeoutError()
         mgr._process_results = AsyncMock()
         mgr._records_tracker.create_stats_for_phase.return_value = MagicMock(
             spec=PhaseRecordsStats

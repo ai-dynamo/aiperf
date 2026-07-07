@@ -206,7 +206,7 @@ def _is_transient_error(exc: BaseException) -> bool:
     Transient errors degrade a check to WARN (the operator will retry on the
     next reconcile). Everything else is a permanent FAIL.
     """
-    if isinstance(exc, asyncio.TimeoutError):
+    if isinstance(exc, TimeoutError):
         return True
     # aiohttp connector errors (ClientConnectorError, ServerConnectionError, etc.)
     if isinstance(exc, aiohttp.ClientConnectionError):

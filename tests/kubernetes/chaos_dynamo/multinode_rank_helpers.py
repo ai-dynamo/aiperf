@@ -152,7 +152,7 @@ async def wait_until_chat_serves(
         try:
             await send_chat_completion(endpoint_url, case_id=case_id)
             return
-        except (aiohttp.ClientError, AssertionError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, aiohttp.ClientError, AssertionError) as exc:
             last_error = repr(exc)
         if asyncio.get_running_loop().time() >= deadline:
             pytest.fail(

@@ -7,7 +7,7 @@ Complements ``tests.unit.kubernetes.test_port_forward`` (which re-exports
 contract of ``progress_stream`` directly:
 
 - Subscription handshake happens before ``on_message`` is invoked.
-- ``asyncio.TimeoutError`` is treated like ``aiohttp.ClientError`` for retry.
+- ``TimeoutError`` is treated like ``aiohttp.ClientError`` for retry.
 - ``ConnectionError`` after ``max_retries`` preserves the original exception
   as ``__cause__``.
 - Exceptions raised inside ``on_message`` propagate after the session /
@@ -15,7 +15,6 @@ contract of ``progress_stream`` directly:
 - Backoff is clamped to ``_WS_MAX_BACKOFF`` during long retry chains.
 """
 
-import asyncio
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, NonCallableMock, patch
 
@@ -199,7 +198,7 @@ class TestTransportErrorRetry:
         "exc",
         [
             pytest.param(aiohttp.ClientError("refused"), id="aiohttp-client-error"),
-            pytest.param(asyncio.TimeoutError(), id="asyncio-timeout-error"),
+            pytest.param(TimeoutError(), id="asyncio-timeout-error"),
             pytest.param(
                 aiohttp.ClientConnectorError(
                     MagicMock(ssl=None), OSError("conn refused")
@@ -258,8 +257,8 @@ class TestTransportErrorRetry:
         assert "Failed to connect to API after 2 attempts" in str(excinfo.value)
 
     async def test_timeout_error_preserved_as_cause(self) -> None:
-        """asyncio.TimeoutError is also preserved as __cause__."""
-        original = asyncio.TimeoutError()
+        """TimeoutError is also preserved as __cause__."""
+        original = TimeoutError()
         session = _make_mock_session(original)
 
         with (

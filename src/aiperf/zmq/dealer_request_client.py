@@ -185,7 +185,7 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
 
         Raises:
             CommunicationError: if the request fails, or
-            asyncio.TimeoutError: if the response is not received in time.
+            TimeoutError: if the response is not received in time.
         """
         future = asyncio.Future[Message]()
 

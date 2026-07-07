@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for aiperf.kubernetes.cli_helpers."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -87,7 +87,7 @@ class TestFormatAge:
 
     def test_format_age_seconds(self) -> None:
         """Test formatting age in seconds."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = (now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
         result = format_age(timestamp)
         # Allow some tolerance for test execution time
@@ -96,14 +96,14 @@ class TestFormatAge:
 
     def test_format_age_minutes(self) -> None:
         """Test formatting age in minutes."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = (now - timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
         result = format_age(timestamp)
         assert result == "15m"
 
     def test_format_age_hours(self) -> None:
         """Test formatting age in hours."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = (now - timedelta(hours=3)).isoformat().replace("+00:00", "Z")
         result = format_age(timestamp)
         assert result == "3h"
@@ -114,14 +114,14 @@ class TestFormatAge:
 
     def test_format_age_boundary_59_seconds(self) -> None:
         """Test boundary at 59 seconds."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = (now - timedelta(seconds=59)).isoformat().replace("+00:00", "Z")
         result = format_age(timestamp)
         assert result.endswith("s")
 
     def test_format_age_boundary_60_seconds(self) -> None:
         """Test boundary at exactly 60 seconds becomes 1m."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timestamp = (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
         result = format_age(timestamp)
         assert result == "1m"

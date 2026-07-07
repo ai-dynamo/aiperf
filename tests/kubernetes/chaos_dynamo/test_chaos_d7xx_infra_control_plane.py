@@ -2750,7 +2750,7 @@ async def _kubectl_stdin(
             proc.communicate(input=stdin.encode()),
             timeout=timeout_s,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         return SimpleNamespace(

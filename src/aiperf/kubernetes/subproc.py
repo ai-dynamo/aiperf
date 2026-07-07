@@ -49,7 +49,7 @@ async def run_command(
         CommandResult with returncode, stdout, and stderr.
 
     Raises:
-        asyncio.TimeoutError: If the command does not exit within ``timeout``.
+        TimeoutError: If the command does not exit within ``timeout``.
     """
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -130,5 +130,5 @@ async def terminate_process(
         await asyncio.wait_for(proc.wait(), timeout=timeout)
     except TimeoutError:
         proc.kill()
-        with contextlib.suppress(asyncio.TimeoutError):
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(proc.wait(), timeout=1.0)

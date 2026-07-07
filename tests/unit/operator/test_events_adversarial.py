@@ -16,7 +16,7 @@ Out of scope: Pod restart threshold and dedup state machines; see sibling
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -181,7 +181,7 @@ class TestEventEntryConversionAdversarial:
     def test_event_to_entry_new_api_event_time_preserves_involved_object_and_count(
         self,
     ) -> None:
-        event_time = datetime(2026, 5, 18, 12, 30, 15, tzinfo=timezone.utc)
+        event_time = datetime(2026, 5, 18, 12, 30, 15, tzinfo=UTC)
         raw = _raw_event(
             reason="BackOff",
             message="Back-off restarting failed container controller",
@@ -369,7 +369,7 @@ class TestEventDiagnosticsNoiseAndFailuresAdversarial:
         repeated = _raw_event(
             reason="BackOff",
             message="Back-off restarting failed container controller",
-            last_timestamp=datetime(2026, 5, 18, 12, 31, tzinfo=timezone.utc),
+            last_timestamp=datetime(2026, 5, 18, 12, 31, tzinfo=UTC),
             count=23,
         )
         monkeypatch.setattr(
@@ -403,7 +403,7 @@ class TestEventDiagnosticsNoiseAndFailuresAdversarial:
                     if name == "llama3-8b-throughput"
                     else "Pod",
                     involved_name=name,
-                    last_timestamp=datetime(2026, 5, 18, 12, 31, tzinfo=timezone.utc),
+                    last_timestamp=datetime(2026, 5, 18, 12, 31, tzinfo=UTC),
                 )
             ]
 

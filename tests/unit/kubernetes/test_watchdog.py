@@ -13,7 +13,7 @@ Focuses on:
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -470,7 +470,7 @@ class TestK8sWatchdogSourceGetPods:
             name="aiperf-worker-abc",
             namespace="test-ns",
             phase="Running",
-            creation_timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=timezone.utc),
+            creation_timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
             container_statuses=[
                 _container_status(
                     name="main", ready=True, restart_count=0, running=True
@@ -572,14 +572,14 @@ class TestK8sWatchdogSourceGetEvents:
             reason="FailedScheduling",
             message="no nodes available",
             involved_name="pod-1",
-            last_timestamp=datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc),
+            last_timestamp=datetime(2026, 1, 15, 10, 0, tzinfo=UTC),
         )
         newer = _event_obj(
             type_="Normal",
             reason="Scheduled",
             message="assigned to node",
             involved_name="pod-1",
-            last_timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=timezone.utc),
+            last_timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
         )
         mock_core = MagicMock()
         mock_core.list_namespaced_event = AsyncMock(

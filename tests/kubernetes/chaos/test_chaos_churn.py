@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC
 
 import pytest
 
@@ -121,12 +122,12 @@ async def test_c10_rapid_create_delete_recreate_same_name(
         )
         # Annotation format: RFC3339-ish with microseconds + Z suffix.
         # Parse by swapping Z -> +00:00 so datetime can consume it.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         claim_dt = datetime.strptime(
             claim.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S.%f%z"
         )
-        delete_dt = datetime.fromtimestamp(delete_wall_time, tz=timezone.utc)
+        delete_dt = datetime.fromtimestamp(delete_wall_time, tz=UTC)
         assert claim_dt > delete_dt, (
             f"C10 cycle 2 claim timestamp {claim_dt.isoformat()} is not "
             f"after cycle 1 delete {delete_dt.isoformat()} — the operator "

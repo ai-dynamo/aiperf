@@ -630,7 +630,7 @@ class TestShutdownMessageErrorSuppression:
         "exc",
         [
             param(zmq.ZMQError("disconnected"), id="zmq-error"),
-            param(asyncio.TimeoutError(), id="timeout"),
+            param(TimeoutError(), id="timeout"),
             param(ConnectionError("refused"), id="connection-error"),
         ],
     )  # fmt: skip
@@ -681,7 +681,7 @@ class TestQueryPodDatasetState:
 
     async def test_returns_none_on_timeout(self, k8s_worker: Worker) -> None:
         k8s_worker.pod_lifecycle_dealer_client.request = AsyncMock(
-            side_effect=asyncio.TimeoutError
+            side_effect=TimeoutError
         )
         assert await k8s_worker._query_pod_dataset_state() is None
 

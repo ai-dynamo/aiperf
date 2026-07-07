@@ -1003,7 +1003,7 @@ class SystemController(
                         CommandType.REPORT_WORKER_STATUS_SUMMARY,
                         timeout=min(remaining, 5.0),
                     )
-            with contextlib.suppress(asyncio.TimeoutError):
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     self._all_workers_ready_event.wait(),
                     timeout=min(remaining, 5.0),
@@ -1602,9 +1602,9 @@ class SystemController(
         # cleanup with a hard timeout: multiprocessing.Queue.join_thread can
         # block indefinitely when the feeder thread cannot flush pending
         # items (e.g. pipe buffer contention under heavy xdist load).
-        with contextlib.suppress(asyncio.TimeoutError, Exception):
+        with contextlib.suppress(TimeoutError, Exception):
             await asyncio.wait_for(cleanup_global_log_queue(), timeout=2.0)
-        with contextlib.suppress(asyncio.TimeoutError, Exception):
+        with contextlib.suppress(TimeoutError, Exception):
             await asyncio.wait_for(cleanup_global_error_queue(), timeout=2.0)
 
         await self._exit_after_optional_api_wait(is_k8s_mode, has_results)

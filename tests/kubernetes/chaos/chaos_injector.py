@@ -139,7 +139,7 @@ class ChaosInjector:
         new-process monitor ticks must take when the claim annotation
         is already present.
         """
-        ts = timestamp_iso or datetime.datetime.now(datetime.timezone.utc).strftime(
+        ts = timestamp_iso or datetime.datetime.now(datetime.UTC).strftime(
             "%Y-%m-%dT%H:%M:%S.000000Z"
         )
         await self.kubectl.run(

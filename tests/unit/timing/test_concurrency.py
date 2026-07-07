@@ -57,7 +57,7 @@ class TestDynamicConcurrencyLimit:
     @pytest.mark.asyncio
     @pytest.mark.looptime
     async def test_acquire_blocks_without_permits(self) -> None:
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(TimeoutError):
             await asyncio.wait_for(DynamicConcurrencyLimit(0).acquire(), timeout=1)
 
     @pytest.mark.asyncio

@@ -132,7 +132,7 @@ async def _force_cleanup_release(
     except Exception:  # noqa: BLE001,S110  (cleanup must never raise)
         pass
 
-    with contextlib.suppress(asyncio.TimeoutError, Exception):
+    with contextlib.suppress(TimeoutError, Exception):
         await asyncio.wait_for(deployer.uninstall_chart(wait=False), timeout=60)
 
     # Drop the operator namespace entirely so re-install is clean.

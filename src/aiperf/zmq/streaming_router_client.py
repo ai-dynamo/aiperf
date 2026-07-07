@@ -227,7 +227,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             The decoded response struct.
 
         Raises:
-            asyncio.TimeoutError: If no response within timeout.
+            TimeoutError: If no response within timeout.
         """
         cid = getattr(struct, "cid", None)
         if cid is None:

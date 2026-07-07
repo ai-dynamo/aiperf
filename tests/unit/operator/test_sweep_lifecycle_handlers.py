@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import UTC
 from unittest.mock import AsyncMock
 
 import kopf
@@ -475,9 +476,9 @@ async def test_on_delete_swallows_apiexception_during_list(monkeypatch):
 @pytest.mark.asyncio
 async def test_maybe_reap_finished_terminal_age_exceeds_ttl_deletes(monkeypatch):
     """Succeeded sweep, completionTime 1h ago, ttl=1800: delete is invoked."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+    one_hour_ago = (datetime.now(tz=UTC) - timedelta(hours=1)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
@@ -499,9 +500,9 @@ async def test_maybe_reap_finished_terminal_age_exceeds_ttl_deletes(monkeypatch)
 @pytest.mark.asyncio
 async def test_maybe_reap_finished_terminal_age_below_ttl_does_not_delete(monkeypatch):
     """Succeeded sweep, completionTime 1h ago, ttl=7200: NOT yet eligible."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+    one_hour_ago = (datetime.now(tz=UTC) - timedelta(hours=1)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
@@ -526,9 +527,9 @@ async def test_maybe_reap_finished_handles_subsecond_completion_time(monkeypatch
     bodies and JSON-patches may carry sub-second precision) would never
     reap.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    one_hour_ago_subsec = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+    one_hour_ago_subsec = (datetime.now(tz=UTC) - timedelta(hours=1)).strftime(
         "%Y-%m-%dT%H:%M:%S.123456Z"
     )
     _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
@@ -587,12 +588,12 @@ async def test_maybe_reap_finished_reads_completion_time_not_completed_at(monkey
     were still looking at `status.completedAt`, the field would be missing,
     fall back to creationTimestamp=now, and never reap.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+    one_hour_ago = (datetime.now(tz=UTC) - timedelta(hours=1)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
-    now_iso = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)
     body = {
         "metadata": {
@@ -617,9 +618,9 @@ async def test_maybe_reap_finished_reads_completion_time_not_completed_at(monkey
 @pytest.mark.asyncio
 async def test_maybe_reap_finished_falls_back_to_creation_timestamp(monkeypatch):
     """No completionTime present: fall back to metadata.creationTimestamp."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    one_hour_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=1)).strftime(
+    one_hour_ago = (datetime.now(tz=UTC) - timedelta(hours=1)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     _list, _patch, delete_mock = _install_fake_k8s_for_lifecycle(monkeypatch)

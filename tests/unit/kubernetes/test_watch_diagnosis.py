@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the watch diagnosis engine."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,7 +18,7 @@ from aiperf.kubernetes.watch_models import (
 
 def _snap(**kwargs: object) -> WatchSnapshot:
     defaults: dict[str, object] = {
-        "timestamp": datetime.now(timezone.utc),
+        "timestamp": datetime.now(UTC),
         "job_id": "test",
         "namespace": "ns",
         "phase": "Running",

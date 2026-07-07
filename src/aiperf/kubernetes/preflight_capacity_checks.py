@@ -9,7 +9,6 @@ take an ``ApiClient`` plus any config they need and return a ``CheckResult``.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -49,7 +48,7 @@ _PUBLIC_REGISTRIES: frozenset[str] = frozenset(
 _CLUSTER_API_ERRORS: tuple[type[BaseException], ...] = (
     ApiException,
     aiohttp.ClientError,
-    asyncio.TimeoutError,
+    TimeoutError,
     OSError,
     RuntimeError,
 )

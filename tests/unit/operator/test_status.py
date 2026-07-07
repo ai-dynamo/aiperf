@@ -3,7 +3,7 @@
 """Unit tests for aiperf.operator.status module."""
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -64,12 +64,12 @@ class TestParseTimestamp:
         assert result.year == expected_year
         assert result.month == expected_month
         assert result.day == expected_day
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_parse_timestamp_with_z_suffix_returns_utc(self) -> None:
         """Test that Z suffix timestamps are parsed as UTC."""
         result = parse_timestamp("2026-01-15T10:30:00Z")
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
         assert result.hour == 10
         assert result.minute == 30
         assert result.second == 0
@@ -77,7 +77,7 @@ class TestParseTimestamp:
     def test_parse_timestamp_with_plus_offset_returns_utc(self) -> None:
         """Test that +00:00 timestamps are parsed as UTC."""
         result = parse_timestamp("2026-01-15T10:30:00+00:00")
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_parse_timestamp_with_microseconds(self) -> None:
         """Test parsing timestamp with microseconds."""
@@ -89,7 +89,7 @@ class TestParseTimestamp:
         original = format_timestamp()
         parsed = parse_timestamp(original)
         assert isinstance(parsed, datetime)
-        assert parsed.tzinfo == timezone.utc
+        assert parsed.tzinfo == UTC
 
 
 class TestPhase:

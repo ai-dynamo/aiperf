@@ -16,7 +16,6 @@ Out of scope: full kube deployment, pod log streaming, and result downloads; see
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -400,9 +399,7 @@ class TestPreflightErrorClassification:
     ) -> None:
         api = MagicMock(spec=ApiClient)
         version_api = MagicMock()
-        version_api.get_code = AsyncMock(
-            side_effect=asyncio.TimeoutError("slow apiserver")
-        )
+        version_api.get_code = AsyncMock(side_effect=TimeoutError("slow apiserver"))
 
         with patch(
             "aiperf.kubernetes.preflight_checks.client.VersionApi",

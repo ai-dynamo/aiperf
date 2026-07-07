@@ -155,7 +155,7 @@ class TestRetryWithBackoff:
         ],
     )  # fmt: skip
     async def test_retries_transport_errors(self, exc_factory) -> None:
-        """ApiException / aiohttp.ClientError / asyncio.TimeoutError /
+        """ApiException / aiohttp.ClientError / TimeoutError /
         ConnectionError / OSError are retried.
         """
         attempts = 0

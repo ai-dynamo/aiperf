@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -2434,7 +2434,7 @@ class TestCleanupOldResultsTimer:
 
         results_dir = temp_results_dir / "job-123"
         results_dir.mkdir()
-        old_time = datetime.now(timezone.utc).timestamp() - (40 * 86400)
+        old_time = datetime.now(UTC).timestamp() - (40 * 86400)
         os.utime(results_dir, (old_time, old_time))
 
         with (
@@ -2485,7 +2485,7 @@ class TestCleanupOldResultsTimer:
 
         results_dir = temp_results_dir / "job-123"
         results_dir.mkdir()
-        old_time = datetime.now(timezone.utc).timestamp() - (40 * 86400)
+        old_time = datetime.now(UTC).timestamp() - (40 * 86400)
         os.utime(results_dir, (old_time, old_time))
 
         with (

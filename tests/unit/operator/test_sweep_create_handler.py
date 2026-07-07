@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import UTC
 from unittest.mock import AsyncMock
 
 import kopf
@@ -102,9 +103,9 @@ async def test_handle_rejects_invalid_spec(monkeypatch):
 @pytest.mark.asyncio
 async def test_epoch_from_creation_timestamp():
     """`metadata.creationTimestamp` parses to a decimal epoch in status.runEpoch."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    expected = int(datetime(2024, 4, 25, 18, 22, 3, tzinfo=timezone.utc).timestamp())
+    expected = int(datetime(2024, 4, 25, 18, 22, 3, tzinfo=UTC).timestamp())
     assert sweep_create._epoch_from_creation_ts("2024-04-25T18:22:03Z") == str(expected)
 
 
@@ -119,10 +120,10 @@ async def test_epoch_from_creation_timestamp_subsecond_precision():
     through to ``"0"`` — collapsing every child name onto epoch 0 across
     reruns.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     # Whole-second baseline.
-    whole = int(datetime(2024, 4, 25, 18, 22, 3, tzinfo=timezone.utc).timestamp())
+    whole = int(datetime(2024, 4, 25, 18, 22, 3, tzinfo=UTC).timestamp())
     # Sub-second precision must still parse to the same whole-second epoch.
     assert sweep_create._epoch_from_creation_ts("2024-04-25T18:22:03.123456Z") == str(
         whole

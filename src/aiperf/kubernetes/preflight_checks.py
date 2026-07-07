@@ -12,7 +12,6 @@ Capacity-focused checks (quotas, nodes, secrets, image) live in
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -59,7 +58,7 @@ REQUIRED_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
 _CLUSTER_API_ERRORS: tuple[type[BaseException], ...] = (
     ApiException,
     aiohttp.ClientError,
-    asyncio.TimeoutError,
+    TimeoutError,
     OSError,
     RuntimeError,
 )

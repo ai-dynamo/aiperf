@@ -464,7 +464,7 @@ class TestStartPortForward:
         )
 
         async def api_timeout(*args, **kwargs):
-            raise asyncio.TimeoutError()
+            raise TimeoutError()
 
         with (
             patch(
@@ -577,7 +577,7 @@ class TestStreamProgressFromApi:
 
     @pytest.mark.asyncio
     async def test_timeout_error_triggers_retry(self, capsys) -> None:
-        """Test asyncio.TimeoutError triggers retry logic."""
+        """Test TimeoutError triggers retry logic."""
         from aiperf.kubernetes.port_forward import stream_progress_from_api
 
         async def on_message(data: dict) -> bool:
@@ -585,7 +585,7 @@ class TestStreamProgressFromApi:
 
         # Create a mock context manager that raises TimeoutError on entry
         mock_ws_cm = MagicMock()
-        mock_ws_cm.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_ws_cm.__aenter__ = AsyncMock(side_effect=TimeoutError())
         mock_ws_cm.__aexit__ = AsyncMock(return_value=False)
 
         mock_session = MagicMock()

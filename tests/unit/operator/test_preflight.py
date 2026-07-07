@@ -1108,7 +1108,7 @@ class TestRunCheckExceptionHandling:
     """Cover the operator-side _run_check fail-closed + transient-classification.
 
     Bug 1: ``_run_check`` previously caught only a narrow tuple
-    (``ApiException`` + ``aiohttp.ClientError`` + ``asyncio.TimeoutError`` +
+    (``ApiException`` + ``aiohttp.ClientError`` + ``TimeoutError`` +
     ``OSError``). A ``RuntimeError`` from a misbehaving check propagated and
     aborted the tier 3+ ``asyncio.gather``, swallowing every other check's
     result.
@@ -1148,13 +1148,12 @@ class TestRunCheckExceptionHandling:
 
     @pytest.mark.asyncio
     async def test_asyncio_timeout_classified_as_transient_warn(self) -> None:
-        """asyncio.TimeoutError -> WARN (transient)."""
-        import asyncio
+        """TimeoutError -> WARN (transient)."""
 
         checker = _make_checker()
 
         async def _timed_out():
-            raise asyncio.TimeoutError("api timed out")
+            raise TimeoutError("api timed out")
 
         result = await checker._run_check(_timed_out)
         assert result.status == CheckStatus.WARN

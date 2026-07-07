@@ -150,7 +150,7 @@ async def _stream_one(
         return {"idx": idx, "kind": "server_disconnect", "error": repr(exc)}
     except aiohttp.ClientConnectionError as exc:
         return {"idx": idx, "kind": "conn_error", "error": repr(exc)}
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         return {"idx": idx, "kind": "timeout", "error": repr(exc)}
     except aiohttp.ClientError as exc:
         return {"idx": idx, "kind": "client_error", "error": repr(exc)}
@@ -552,7 +552,7 @@ async def _post_chat_completion(
         ) as response:
             await response.read()
             return str(response.status)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "timeout"
     except aiohttp.ClientError as exc:
         return type(exc).__name__
@@ -989,7 +989,7 @@ async def test_d203_backend_stream_inactivity_timeout(
                     _stream_with_latency_fault(dynamo_endpoint_url, client_budget),
                     timeout=client_budget + 5.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pytest.fail(
                     f"D203: client did not observe a terminal stream event within "
                     f"{client_budget + 5.0}s after injecting {latency_ms}ms backend "
@@ -1100,11 +1100,7 @@ async def _read_sse_frames(
             if buffered_text.strip():
                 frames.append(f"<TRAILING_BYTES: {buffered_text.strip()}>")
             return status, None
-    except (
-        aiohttp.ClientError,
-        aiohttp.ServerDisconnectedError,
-        asyncio.TimeoutError,
-    ) as exc:
+    except (TimeoutError, aiohttp.ClientError, aiohttp.ServerDisconnectedError) as exc:
         return None, repr(exc)
 
 
@@ -1206,7 +1202,7 @@ async def test_d207_streaming_error_frame_after_decode_kill(
                 first_frame_seen.wait(),
                 timeout=_STREAM_START_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             stream_task.cancel()
             pytest.fail(
                 "D207: no SSE data frame received within "
@@ -1234,7 +1230,7 @@ async def test_d207_streaming_error_frame_after_decode_kill(
                     stream_task,
                     timeout=_CLIENT_ERROR_BUDGET_S + 5.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 stream_task.cancel()
                 pytest.fail(
                     "D207: stream did not terminate with error JSON then [DONE] "
@@ -2455,7 +2451,7 @@ async def _post_chat(
                 "body": body,
                 "elapsed": time.monotonic() - started,
             }
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         return {
             "kind": "timeout",
             "error": repr(exc),
@@ -2504,7 +2500,7 @@ async def _read_stream(
                 "chunks": chunks,
                 "elapsed": time.monotonic() - started,
             }
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         return {
             "kind": "timeout",
             "error": repr(exc),

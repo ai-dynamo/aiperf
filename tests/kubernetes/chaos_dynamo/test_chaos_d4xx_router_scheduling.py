@@ -113,10 +113,10 @@ async def test_d401_kill_decode_mid_request(
                 error_time = time.monotonic()
                 saw_terminal_error = True
         except (
+            TimeoutError,
             aiohttp.ServerDisconnectedError,
             aiohttp.ClientPayloadError,
             aiohttp.ClientConnectionError,
-            asyncio.TimeoutError,
         ) as exc:
             error_time = time.monotonic()
             saw_terminal_error = True
@@ -129,7 +129,7 @@ async def test_d401_kill_decode_mid_request(
     # don't kill an idle worker and call it a pass.
     try:
         await asyncio.wait_for(first_chunk_seen.wait(), timeout=10.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         stream_task.cancel()
         pytest.fail(
             "d401: no streaming chunk received within 10s; cannot prove "
@@ -170,7 +170,7 @@ async def test_d401_kill_decode_mid_request(
         # TimeoutError below rather than waiting on the outer test timeout.
         try:
             await asyncio.wait_for(stream_task, timeout=_CLIENT_ERROR_BUDGET_S + 5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             stream_task.cancel()
             pytest.fail(
                 f"d401: client did not see terminal event within "
@@ -310,7 +310,7 @@ async def _wait_until_frontend_serves(endpoint_url: str, timeout: float) -> None
         try:
             await _send_chat_completion(endpoint_url, prompt="D402 post-churn request")
             return
-        except (aiohttp.ClientError, asyncio.TimeoutError, AssertionError) as exc:
+        except (TimeoutError, aiohttp.ClientError, AssertionError) as exc:
             last_error = repr(exc)
         if asyncio.get_running_loop().time() >= deadline:
             pytest.fail(
@@ -753,7 +753,7 @@ async def test_d406_pinned_worker_head_of_line_observation(
                 for idx in range(_UNPINNED_PROBES)
             )
         )
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         pytest.fail(
             f"D406: pinned stream or unpinned probe exceeded "
             f"{_REQUEST_TIMEOUT_S}s budget while observing "
@@ -1616,7 +1616,7 @@ async def _expect_bounded_completion_or_error(
             content=content,
             max_tokens=8,
         )
-    except (aiohttp.ClientError, TimeoutError, asyncio.TimeoutError) as exc:
+    except (aiohttp.ClientError, TimeoutError) as exc:
         logger.info(
             lambda exc=exc: f"{case}: bounded client error while tier is zero: {exc!r}"
         )

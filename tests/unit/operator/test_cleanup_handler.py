@@ -10,7 +10,7 @@ and the default-TTL fallback.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch as mock_patch
 
@@ -37,7 +37,7 @@ class TestCleanupPathTraversalGuard:
         victim.write_text("do not delete me")
 
         # Age it past TTL so only the guard can save it.
-        old_ts = datetime.now(timezone.utc).timestamp() - (99 * 86400)
+        old_ts = datetime.now(UTC).timestamp() - (99 * 86400)
         os.utime(outside, (old_ts, old_ts))
 
         with mock_patch.object(OperatorEnvironment.RESULTS, "DIR", results_root):
@@ -61,7 +61,7 @@ class TestCleanupPathTraversalGuard:
         results_dir = tmp_path / "job-failed"
         results_dir.mkdir()
 
-        old_ts = datetime.now(timezone.utc).timestamp() - (40 * 86400)
+        old_ts = datetime.now(UTC).timestamp() - (40 * 86400)
         os.utime(results_dir, (old_ts, old_ts))
 
         with (
@@ -90,7 +90,7 @@ class TestCleanupPathTraversalGuard:
         # Age it just past the env default.
         default_ttl = OperatorEnvironment.RESULTS.TTL_DAYS
         age_days = default_ttl + 1
-        old_ts = datetime.now(timezone.utc).timestamp() - (age_days * 86400)
+        old_ts = datetime.now(UTC).timestamp() - (age_days * 86400)
         os.utime(results_dir, (old_ts, old_ts))
 
         with (

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -237,7 +237,7 @@ def _body_with_claim(claim_age_seconds: float) -> dict:
     The claim timestamp value follows ``status.format_timestamp`` (ISO 8601
     with Z suffix) so ``_claim_age_seconds`` round-trips it correctly.
     """
-    claimed_at = datetime.now(timezone.utc) - timedelta(seconds=claim_age_seconds)
+    claimed_at = datetime.now(UTC) - timedelta(seconds=claim_age_seconds)
     ts = claimed_at.isoformat().replace("+00:00", "Z")
     return {
         "metadata": {
@@ -397,7 +397,7 @@ async def test_handle_completion_transient_fetch_recovers_from_on_disk_key_expor
     epoch = str(
         int(
             datetime.strptime(_FIXTURE_CREATION_TS, "%Y-%m-%dT%H:%M:%SZ")
-            .replace(tzinfo=timezone.utc)
+            .replace(tzinfo=UTC)
             .timestamp()
         )
     )

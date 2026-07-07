@@ -102,7 +102,7 @@ async def stream_progress_from_api(
 
     Raises:
         ConnectionError: Transport failed after ``max_retries`` attempts.
-            The original ``aiohttp.ClientError`` / ``asyncio.TimeoutError``
+            The original ``aiohttp.ClientError`` / ``TimeoutError``
             is preserved as ``__cause__``.
     """
     retry_count = 0

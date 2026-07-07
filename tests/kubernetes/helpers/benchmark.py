@@ -1124,7 +1124,7 @@ class BenchmarkDeployer:
                     asyncio.gather(*[_safe_cleanup(r) for r in unique]),
                     timeout=timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"Cleanup timed out after {timeout}s, continuing")
 
         self._deployments.clear()

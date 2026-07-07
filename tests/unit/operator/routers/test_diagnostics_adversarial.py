@@ -16,7 +16,7 @@ Out of scope: browser rendering of diagnostics tabs, covered by
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -36,7 +36,7 @@ from aiperf.operator.routers.jobs import create_jobs_router
 # ============================================================
 
 
-_EVENT_BASE_TS = datetime(2026, 5, 18, 12, 0, 0, tzinfo=timezone.utc)
+_EVENT_BASE_TS = datetime(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
 
 
 def _app(api: object | None, results_dir: Path) -> FastAPI:
@@ -379,7 +379,7 @@ class TestDiagnosticsEventsResponseShape:
     ) -> None:
         from aiperf.operator.routers import jobs as jobs_module
 
-        event_time = datetime(2026, 5, 18, 12, 7, 30, tzinfo=timezone.utc)
+        event_time = datetime(2026, 5, 18, 12, 7, 30, tzinfo=UTC)
         monkeypatch.setattr(
             jobs_module,
             "get_raw_aiperfjob",

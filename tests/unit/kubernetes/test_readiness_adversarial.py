@@ -15,7 +15,6 @@ Out of scope: generic AioHttpClient transport behavior, covered by
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -488,7 +487,7 @@ class TestEndpointUrlValidation:
         "exc",
         [
             param(ApiException(status=403), id="permission-denied"),
-            param(asyncio.TimeoutError(), id="apiserver-timeout"),
+            param(TimeoutError(), id="apiserver-timeout"),
             param(OSError("network unreachable"), id="network-unreachable"),
         ],
     )  # fmt: skip

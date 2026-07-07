@@ -269,7 +269,7 @@ class TestTerminateProcess:
         with patch(
             "asyncio.wait_for",
             new_callable=AsyncMock,
-            side_effect=asyncio.TimeoutError,
+            side_effect=TimeoutError,
         ):
             await terminate_process(proc, timeout=2.0)
 
@@ -285,7 +285,7 @@ class TestTerminateProcess:
         with patch(
             "asyncio.wait_for",
             new_callable=AsyncMock,
-            side_effect=asyncio.TimeoutError,
+            side_effect=TimeoutError,
         ):
             await terminate_process(proc, timeout=0.5)
 

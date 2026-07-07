@@ -170,7 +170,7 @@ class TestZMQDealerRequestClientRequest:
     ):
         """Test that request times out if no response is received."""
         async with dealer_test_helper.create_client(auto_start=True) as client:
-            with pytest.raises(asyncio.TimeoutError):
+            with pytest.raises(TimeoutError):
                 await client.request(sample_message, timeout=1)
 
 

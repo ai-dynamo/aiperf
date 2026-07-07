@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for watch snapshot data models."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import orjson
 
@@ -19,7 +19,7 @@ from aiperf.kubernetes.watch_models import (
 class TestWatchSnapshot:
     def test_create_minimal_snapshot(self) -> None:
         snap = WatchSnapshot(
-            timestamp=datetime(2026, 3, 18, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 3, 18, tzinfo=UTC),
             job_id="test-job",
             namespace="aiperf-benchmarks",
             phase="Pending",
@@ -30,7 +30,7 @@ class TestWatchSnapshot:
 
     def test_to_dict_serializable(self) -> None:
         snap = WatchSnapshot(
-            timestamp=datetime(2026, 3, 18, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 3, 18, tzinfo=UTC),
             job_id="test-job",
             namespace="aiperf-benchmarks",
             phase="Running",
@@ -45,7 +45,7 @@ class TestWatchSnapshot:
 
     def test_diagnosis_included_in_dict(self) -> None:
         snap = WatchSnapshot(
-            timestamp=datetime(2026, 3, 18, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 3, 18, tzinfo=UTC),
             job_id="test-job",
             namespace="aiperf-benchmarks",
             phase="Running",

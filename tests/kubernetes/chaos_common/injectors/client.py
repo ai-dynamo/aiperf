@@ -156,7 +156,7 @@ class ClientInjector(FaultInjector):
             drain_task = asyncio.create_task(_drain())
             try:
                 await asyncio.wait_for(drain_task, timeout=float(cancel_after))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Expected path: deadline hit before server finished streaming.
                 # Cancel the read task; we will close the session below to drop
                 # the TCP socket, which is the actual fault under test.

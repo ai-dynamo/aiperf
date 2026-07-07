@@ -429,7 +429,7 @@ async def _probe_traffic(dynamo_endpoint_url: str) -> tuple[bool, str]:
                 return True, "status=200"
             text = (await resp.read()).decode(errors="replace")[:256]
             return False, f"status={resp.status} body={text!r}"
-    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, aiohttp.ClientError) as exc:
         return False, f"client error {exc!r}"
 
 

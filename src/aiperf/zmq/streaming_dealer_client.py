@@ -208,7 +208,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             The decoded response struct.
 
         Raises:
-            asyncio.TimeoutError: If no response is received within ``timeout``.
+            TimeoutError: If no response is received within ``timeout``.
         """
         key = getattr(struct, "rid", None) or getattr(struct, "cid", None)
         if key is None:

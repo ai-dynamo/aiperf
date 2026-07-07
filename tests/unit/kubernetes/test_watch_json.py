@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import orjson
 
@@ -24,7 +24,7 @@ from aiperf.kubernetes.watch_render_json import JsonRenderer
 
 def _snap(**kwargs) -> WatchSnapshot:
     defaults = dict(
-        timestamp=datetime(2026, 3, 18, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 3, 18, 12, 0, 0, tzinfo=UTC),
         job_id="test-job",
         namespace="aiperf-benchmarks",
         phase="Running",

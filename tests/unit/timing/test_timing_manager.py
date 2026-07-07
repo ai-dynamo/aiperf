@@ -145,7 +145,7 @@ class TestTimingManagerDatasetConfiguration:
         mgr = create_manager(cfg)
         with (
             patch.object(Environment.DATASET, "CONFIGURATION_TIMEOUT", 1),
-            pytest.raises(asyncio.TimeoutError),
+            pytest.raises(TimeoutError),
         ):
             await mgr._profile_configure_command(
                 Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)

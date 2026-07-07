@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -444,9 +445,9 @@ def _v1_event(
     involved_name: str = "test-bench-controller-0",
 ) -> MagicMock:
     """Build a V1Event-shaped mock with the attributes _event_to_entry reads."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    ts = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2026, 4, 30, 12, 0, 0, tzinfo=UTC)
     ev = MagicMock()
     ev.type = type_
     ev.reason = reason

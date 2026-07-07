@@ -186,9 +186,7 @@ async def test_c5_orphaned_claim_recovers_unified(
 
         # Match the legacy helper's timestamp format so any operator-side
         # parsing keeps working byte-for-byte.
-        ts = datetime.datetime.now(datetime.timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%S.000000Z"
-        )
+        ts = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
         async with faults.inject(
             "crd.annotate",
             target={"ns": operator_job_namespace, "name": name},

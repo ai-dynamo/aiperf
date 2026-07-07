@@ -36,7 +36,7 @@ Mocking strategy:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
@@ -301,7 +301,7 @@ class TestJobTimeoutEscalation:
         custom.delete_namespaced_custom_object = AsyncMock()
 
         # startTime ~ now (use a recent timestamp; auto-reset RNG isn't relevant)
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         result = await _check_job_timeout(
             custom,

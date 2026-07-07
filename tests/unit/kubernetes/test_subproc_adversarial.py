@@ -122,7 +122,7 @@ class TestRunCommandAdversarialControlFlow:
     async def test_run_command_timeout_terminates_child_and_raises_timeout(
         self,
     ) -> None:
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(TimeoutError):
             await run_command(
                 _python_cmd("import time; time.sleep(30)"),
                 timeout=0.01,

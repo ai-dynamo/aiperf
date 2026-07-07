@@ -80,7 +80,7 @@ async def test_c15_pause_apiserver_30s_recovers(
 
     Exercises kopf's built-in retry behavior when ``list_cluster_custom_object``
     and ``patch_namespaced_custom_object`` raise ``aiohttp.ClientError`` /
-    ``asyncio.TimeoutError``. With a 30 s toxiproxy ``timeout`` toxic on
+    ``TimeoutError``. With a 30 s toxiproxy ``timeout`` toxic on
     the apiserver-facing proxy, every reconcile call in that window must
     be retried once the toxic is removed, and the monitor timer must
     resume without dropping the in-flight CR.

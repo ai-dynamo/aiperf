@@ -3,7 +3,6 @@
 
 """Tests for early tokenizer validation and preloading."""
 
-import asyncio
 import concurrent.futures
 import logging
 import os
@@ -358,7 +357,7 @@ class TestPreloadTokenizers:
             patch.object(Tokenizer, "from_pretrained"),
             patch(
                 "aiperf.common.tokenizer_validator.asyncio.wait_for",
-                side_effect=asyncio.TimeoutError,
+                side_effect=TimeoutError,
             ),
         ):
             await preload_tokenizers(

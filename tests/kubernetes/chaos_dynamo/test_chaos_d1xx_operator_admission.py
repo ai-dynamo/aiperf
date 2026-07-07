@@ -10,8 +10,8 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import (
+    UTC,
     datetime,
-    timezone,
 )
 from typing import (
     Any,
@@ -4537,7 +4537,7 @@ def _stale_conditions(
 def _future_transition_conditions(
     conditions: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     future: list[dict[str, Any]] = []
     for condition in conditions:
         timestamp = condition.get("lastTransitionTime")

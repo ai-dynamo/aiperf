@@ -281,7 +281,7 @@ class TestSendControlCommandToAll:
     ) -> None:
         async def _send(sid: str, *_a: Any, **_kw: Any) -> Any:
             if sid == "slow":
-                raise asyncio.TimeoutError
+                raise TimeoutError
             return CommandAck(cid="1", sid=sid)
 
         system_controller._send_control_command = AsyncMock(side_effect=_send)  # type: ignore[method-assign]
@@ -382,7 +382,7 @@ class TestSendControlCommandToAllFailFast:
         self, system_controller: SystemController
     ) -> None:
         async def _send(*_a: Any, **_kw: Any) -> Any:
-            raise asyncio.TimeoutError
+            raise TimeoutError
 
         system_controller._send_control_command = AsyncMock(side_effect=_send)  # type: ignore[method-assign]
 

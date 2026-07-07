@@ -286,7 +286,7 @@ class TestOnBenchmarkComplete:
         self,
     ) -> None:
         """The shutdown except clause caught everything; narrow it to
-        (aiohttp.ClientError, asyncio.TimeoutError, OSError) so programmer
+        (aiohttp.ClientError, TimeoutError, OSError) so programmer
         errors (TypeError/AttributeError/etc.) propagate instead of being
         silenced as ShutdownSignalFailed.
         """
@@ -339,7 +339,7 @@ class TestOnBenchmarkComplete:
     async def test_shutdown_failure_narrow_exception_caught_for_transport(
         self, exc_factory
     ) -> None:
-        """asyncio.TimeoutError and OSError must still be caught and emit a
+        """TimeoutError and OSError must still be caught and emit a
         ShutdownSignalFailed event (the narrowed handler covers transport).
         """
         from aiperf.operator.handlers.lifecycle import on_benchmark_complete

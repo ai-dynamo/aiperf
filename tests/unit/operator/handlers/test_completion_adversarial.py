@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -462,11 +463,9 @@ class TestCompletionResultsAvailableGating:
                 "aiperf.operator.handlers._completion_retry.datetime"
             ) as datetime_mock,
         ):
-            from datetime import datetime, timezone
+            from datetime import datetime
 
-            datetime_mock.now.return_value = datetime(
-                2024, 4, 25, 17, 2, 5, tzinfo=timezone.utc
-            )
+            datetime_mock.now.return_value = datetime(2024, 4, 25, 17, 2, 5, tzinfo=UTC)
             datetime_mock.side_effect = lambda *args, **kwargs: datetime(
                 *args, **kwargs
             )

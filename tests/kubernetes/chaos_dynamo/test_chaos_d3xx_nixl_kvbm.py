@@ -517,7 +517,7 @@ async def _stream_chat_once(
                 "elapsed": time.monotonic() - started,
                 "frames": frames,
             }
-    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, aiohttp.ClientError) as exc:
         return {
             "kind": "client_error",
             "elapsed": time.monotonic() - started,

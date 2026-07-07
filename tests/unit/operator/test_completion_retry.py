@@ -19,7 +19,7 @@ exercise:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +36,7 @@ from aiperf.operator.models import ControllerFetchResult
 
 def _now_iso(offset_seconds: float = 0.0) -> str:
     """ISO timestamp; offset_seconds<0 → in the past (older claim)."""
-    return (datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)).isoformat()
+    return (datetime.now(UTC) + timedelta(seconds=offset_seconds)).isoformat()
 
 
 def _body(claim_ts: str | None) -> dict[str, Any]:

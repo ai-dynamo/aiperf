@@ -761,7 +761,7 @@ class OperatorDeployer:
         logger.info("Uninstalling operator")
         try:
             await asyncio.wait_for(self._do_uninstall(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Operator uninstall timed out after {timeout}s")
 
     async def _do_uninstall(self) -> None:
