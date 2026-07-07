@@ -789,7 +789,7 @@ def test_validator_accepts_one_gated_plus_one_background_branch_on_same_turn():
                         branch_id="r:0:bg",
                         child_conversation_ids=["c_bg"],
                         mode=ConversationBranchMode.SPAWN,
-                        is_background=True,
+                        background=True,
                     ),
                 ],
             ),

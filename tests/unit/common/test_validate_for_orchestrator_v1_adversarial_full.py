@@ -114,7 +114,7 @@ def test_pre_dispatch_with_blocking_spawn_rejected():
         branch_id="r:pre",
         child_conversation_ids=["c"],
         mode=ConversationBranchMode.SPAWN,
-        is_background=False,  # blocking
+        background=False,  # blocking
         dispatch_timing="pre",
     )
     md = _md([branch], [TurnMetadata(branch_ids=["r:pre"]), TurnMetadata()])
@@ -129,7 +129,7 @@ def test_pre_dispatch_background_spawn_on_non_root_rejected():
         branch_id="r:pre",
         child_conversation_ids=["c"],
         mode=ConversationBranchMode.SPAWN,
-        is_background=True,
+        background=True,
         dispatch_timing="pre",
     )
     md = _md(
@@ -146,7 +146,7 @@ def test_pre_dispatch_background_spawn_on_non_turn_0_rejected():
         branch_id="r:pre",
         child_conversation_ids=["c"],
         mode=ConversationBranchMode.SPAWN,
-        is_background=True,
+        background=True,
         dispatch_timing="pre",
     )
     # Branch declared on turn 1, not turn 0 — rejected.
@@ -167,7 +167,7 @@ def test_pre_dispatch_background_spawn_valid_shape_accepted():
         branch_id="r:pre",
         child_conversation_ids=["c"],
         mode=ConversationBranchMode.SPAWN,
-        is_background=True,
+        background=True,
         dispatch_timing="pre",
     )
     md = _md([branch], [TurnMetadata(branch_ids=["r:pre"]), TurnMetadata()])
@@ -531,7 +531,7 @@ def test_background_branch_referenced_by_spawn_join_rejected():
         branch_id="r:pre",
         child_conversation_ids=["c"],
         mode=ConversationBranchMode.SPAWN,
-        is_background=True,
+        background=True,
         dispatch_timing="pre",
     )
     p = TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, branch_id="r:pre")
