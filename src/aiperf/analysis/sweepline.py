@@ -448,7 +448,12 @@ def throughput_sweep_line(
         Tuple of (sorted_timestamps, throughput_values) in tokens/ns.
     """
     gen_dur = end_ns - generation_start_ns
-    valid = ~np.isnan(generation_start_ns) & ~np.isnan(output_tokens) & (gen_dur > 0)
+    valid = (
+        ~np.isnan(generation_start_ns)
+        & ~np.isnan(output_tokens)
+        & (gen_dur > 0)
+        & (output_tokens >= 1)
+    )
     k = int(valid.sum())
     if k == 0:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
@@ -537,7 +542,12 @@ def total_throughput_sweep_line(
 
     # Generation: (output_tokens - 1) / gen_duration during [gen_start, end)
     gen_dur = end_ns - generation_start_ns
-    gn_valid = ~np.isnan(generation_start_ns) & ~np.isnan(output_tokens) & (gen_dur > 0)
+    gn_valid = (
+        ~np.isnan(generation_start_ns)
+        & ~np.isnan(output_tokens)
+        & (gen_dur > 0)
+        & (output_tokens >= 1)
+    )
     gn_k = int(gn_valid.sum())
 
     if pf_k == 0 and gn_k == 0:
