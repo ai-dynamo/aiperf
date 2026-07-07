@@ -146,7 +146,7 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
                         f"({elapsed_time:.1f}s)"
                     )
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 elapsed_time = attempt_count * probe_interval
 
                 if elapsed_time >= next_warning_time:

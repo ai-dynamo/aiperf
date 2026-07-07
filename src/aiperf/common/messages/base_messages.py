@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 import msgspec
 import orjson
-from typing_extensions import Self
 
 from aiperf.common.enums import MessageType
 from aiperf.common.models.base_models import _msgspec_dec_hook, _msgspec_enc_hook

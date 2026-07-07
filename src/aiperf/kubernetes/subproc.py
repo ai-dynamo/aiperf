@@ -60,7 +60,7 @@ async def run_command(
         raw_stdout, raw_stderr = await asyncio.wait_for(
             proc.communicate(), timeout=timeout
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await terminate_process(proc)
         raise
     if proc.returncode is None:
@@ -86,7 +86,7 @@ async def check_command(cmd: list[str], *, timeout: float | None = 60.0) -> bool
     """
     try:
         result = await run_command(cmd, timeout=timeout)
-    except (asyncio.TimeoutError, FileNotFoundError):
+    except (TimeoutError, FileNotFoundError):
         return False
     return result.ok
 
@@ -128,7 +128,7 @@ async def terminate_process(
     proc.terminate()
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(proc.wait(), timeout=1.0)

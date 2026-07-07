@@ -130,7 +130,7 @@ async def stream_progress_from_api(
             )
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, _WS_MAX_BACKOFF)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, aiohttp.ClientError) as exc:
             retry_count += 1
             if retry_count >= max_retries:
                 msg = (

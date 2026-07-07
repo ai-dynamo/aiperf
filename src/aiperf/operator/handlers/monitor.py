@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -98,7 +98,7 @@ def _get_elapsed_seconds(status: dict[str, Any]) -> float | None:
         return None
     try:
         start_dt = parse_timestamp(start_time)
-        return (datetime.now(timezone.utc) - start_dt).total_seconds()
+        return (datetime.now(UTC) - start_dt).total_seconds()
     except (ValueError, TypeError):
         return None
 
@@ -348,13 +348,7 @@ async def _fail_on_fatal_pod_waiting_reason(
             namespace=namespace,
             label_selector=f"{JobSetLabels.JOBSET_NAME}={jobset_name}",
         )
-    except (
-        ApiException,
-        aiohttp.ClientError,
-        asyncio.TimeoutError,
-        OSError,
-        TypeError,
-    ) as e:
+    except (TimeoutError, ApiException, aiohttp.ClientError, OSError, TypeError) as e:
         logger.warning(
             "Failed to inspect pods for fatal startup states on %s/%s: %s",
             namespace,
@@ -619,7 +613,7 @@ async def _maybe_recover_exported_results_from_sidecar(
     try:
         async with ProgressClient(port=K8sEnvironment.PORTS.RESULTS_SIDECAR) as sidecar:
             downloaded = await sidecar.download_all_results(host, dest_dir)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.debug(
             "sidecar export recovery for %s/%s unavailable: %s", namespace, name, e
         )
@@ -732,7 +726,7 @@ async def _poll_controller_progress(
     # terminal status patch would be discarded for this tick.
     try:
         await progress_client.send_shutdown(host)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.debug(
             "send_shutdown after completion for %s/%s failed "
             "(expected if controller pod already gone): %s",
@@ -1001,7 +995,7 @@ async def _benchmark_appears_complete(
         progress = await progress_client.get_progress(host)
         if not progress.connection_error and progress.is_complete:
             return True
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.debug(
             "progress probe for %s during orphan-claim gate failed: %s",
             jobset_name,
@@ -1089,7 +1083,7 @@ async def _recover_orphaned_completion_claim(
         progress_client = await get_or_create_progress_client(key)
         try:
             await progress_client.send_shutdown(host)
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (TimeoutError, aiohttp.ClientError, OSError) as e:
             logger.debug(
                 "send_shutdown during orphaned-claim recovery for %s/%s failed "
                 "(expected if controller pod already gone): %s",
@@ -1361,13 +1355,7 @@ async def monitor_progress(
             generation = body.get("metadata", {}).get("generation")
             if generation is not None:
                 sb.set_observed_generation(int(generation))
-    except (
-        ApiException,
-        aiohttp.ClientError,
-        ConnectionError,
-        TimeoutError,
-        asyncio.TimeoutError,
-    ) as e:
+    except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient error monitoring {namespace}/{name}: {e}")
         sb.finalize()
     except Exception:
@@ -1397,7 +1385,7 @@ async def _get_controller_pod(
             ),
         )
         pods = pod_list.items
-    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
         logger.warning(f"Failed to inspect controller pod for salvage: {e}")
         return None
     except Exception as e:  # noqa: BLE001 - salvage path must not raise; skipping recovery is preferred over aborting the monitor tick
@@ -1720,7 +1708,7 @@ async def _fetch_live_metrics(
     """Fetch live metrics from controller and stamp them onto the CR patch."""
     try:
         metrics = await progress_client.get_metrics(host)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.warning(f"Live metrics fetch failed for {jobset_name}: {e}")
         return
     except Exception as e:  # noqa: BLE001 - live metrics are optional; any parse/transport failure downgrades to 'no live metrics this tick'
@@ -1749,7 +1737,7 @@ async def _fetch_server_metrics(
     """Fetch server metrics from controller and stamp them onto the CR patch."""
     try:
         server_metrics = await progress_client.get_server_metrics(host)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.debug(
             f"Server metrics unavailable for {jobset_name} "
             f"(endpoint may not be ready yet): {e}"
@@ -1821,12 +1809,7 @@ async def _fetch_progress(
                 return False
             return True
 
-    except (
-        ApiException,
-        aiohttp.ClientError,
-        asyncio.TimeoutError,
-        OSError,
-    ) as e:
+    except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
         logger.warning(f"Failed to fetch progress for {jobset_name}: {e}")
     except Exception as e:  # noqa: BLE001 - best-effort progress polling; no error here must abort the monitor tick
         logger.warning(f"Failed to fetch progress for {jobset_name}: {e}")

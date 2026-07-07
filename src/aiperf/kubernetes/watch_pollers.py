@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -129,9 +128,7 @@ class CRPoller:
             return
         try:
             self.start_time = parse_timestamp(start_str)
-            self.elapsed_seconds = (
-                datetime.now(timezone.utc) - self.start_time
-            ).total_seconds()
+            self.elapsed_seconds = (datetime.now(UTC) - self.start_time).total_seconds()
         except (ValueError, TypeError):
             pass
 
@@ -284,7 +281,7 @@ class CRPoller:
             if e.status != 404:
                 logger.debug(f"Failed to fetch CR {self._job_id}: {e}")
             return None
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, aiohttp.ClientError, OSError):
             logger.debug(f"Failed to fetch CR {self._job_id}", exc_info=True)
             return None
 
@@ -378,7 +375,7 @@ class SweepCRPoller(CRPoller):
             if e.status != 404:
                 logger.debug(f"Failed to fetch sweep CR {self._job_id}: {e}")
             return None
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, aiohttp.ClientError, OSError):
             logger.debug(f"Failed to fetch sweep CR {self._job_id}", exc_info=True)
             return None
 

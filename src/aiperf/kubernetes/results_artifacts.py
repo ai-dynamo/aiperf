@@ -278,6 +278,6 @@ async def retrieve_all_artifacts(
     except aiohttp.ClientConnectionError:
         print_error("Could not connect to API. Is the pod running?")
         return False
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         print_error(f"Error downloading artifacts: {e!r}")
         return False

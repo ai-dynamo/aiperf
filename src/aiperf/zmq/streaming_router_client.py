@@ -239,7 +239,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         try:
             await self.send_to(identity, struct)
             return await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         finally:
             self._pending_requests.pop(cid, None)
@@ -300,7 +300,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             await self._recreate_socket()
         except asyncio.CancelledError:
             raise
-        except (zmq.ZMQError, asyncio.TimeoutError) as recreate_error:
+        except (TimeoutError, zmq.ZMQError) as recreate_error:
             if not self.stop_requested:
                 self.exception(
                     "Failed to recreate streaming ROUTER socket after send "

@@ -409,7 +409,7 @@ async def _submit_claim_patch(
             e,
         )
         return None
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.warning(
             "Unexpected error claiming completion for %s/%s: %s (not claiming)",
             namespace,
@@ -447,7 +447,7 @@ async def _read_live_completion_claimed(namespace: str, name: str) -> bool | Non
             e,
         )
         return None
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.warning(
             "Unexpected error re-reading completion claim for %s/%s after conflict: %s",
             namespace,

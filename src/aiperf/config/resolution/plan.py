@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import (
     GPUTelemetryMode,

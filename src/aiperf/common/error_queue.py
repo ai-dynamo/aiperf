@@ -64,7 +64,7 @@ async def cleanup_global_error_queue() -> None:
                     asyncio.to_thread(_global_error_queue.join_thread), timeout=1.0
                 )
                 _logger.debug("Cleaned up global error queue")
-            except (OSError, asyncio.TimeoutError, ValueError) as e:
+            except (TimeoutError, OSError, ValueError) as e:
                 # OSError from close()/join_thread on dead handles; ValueError from closed queue.
                 _logger.debug(f"Error cleaning up error queue: {e}")
             finally:

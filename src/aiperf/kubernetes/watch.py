@@ -150,12 +150,7 @@ async def _poll_until_terminal(
             )
             if terminal is not None:
                 return terminal
-        except (
-            ApiException,
-            aiohttp.ClientError,
-            asyncio.TimeoutError,
-            OSError,
-        ) as e:
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             last_poll_error = e
             cli_logger.warning(f"[{elapsed:.0f}s] CR poll error: {e}")
 

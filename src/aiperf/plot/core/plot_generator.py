@@ -1674,11 +1674,11 @@ class PlotGenerator:
     def _add_timeslice_std_legend_proxy(
         self, fig: go.Figure, primary_color: str
     ) -> None:
-        """Off-canvas legend-only trace representing ±1 timeslice std error bars."""
+        """Legend-only trace representing ±1 timeslice std error bars."""
         fig.add_trace(
             go.Scatter(
-                x=[-999999, -999999],
-                y=[0, 1],
+                x=[None],
+                y=[None],
                 mode="lines",
                 line=dict(color=primary_color, width=3),
                 name="±1 Timeslice Std",

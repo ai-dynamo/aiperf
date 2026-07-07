@@ -305,7 +305,7 @@ async def retrieve_sweep_aggregate_artifacts_from_operator(
                 return True
             print_warning("No sweep aggregate files downloaded")
             return False
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         print_error(
             f"Error connecting to operator for sweep aggregate artifacts: {e!r}"
         )

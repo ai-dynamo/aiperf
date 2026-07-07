@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import aiohttp
 from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -91,7 +89,7 @@ class _ResourceChecksMixin:
         try:
             node_list = await _pf.client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(
                 name="Node Resources",
                 status=CheckStatus.WARN,
@@ -179,7 +177,7 @@ class _ResourceChecksMixin:
         try:
             node_list = await _pf.client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(
                 name="Node Selector Match",
                 status=CheckStatus.WARN,
@@ -221,7 +219,7 @@ class _ResourceChecksMixin:
         try:
             node_list = await _pf.client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(
                 name="Per-Node Schedulability",
                 status=CheckStatus.WARN,
@@ -386,7 +384,7 @@ class _ResourceChecksMixin:
         try:
             node_list = await _pf.client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(
                 name="Tolerations",
                 status=CheckStatus.WARN,

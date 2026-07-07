@@ -95,7 +95,7 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
                     "Dealer request client receiver task stopped (ZMQ context terminated)"
                 )
                 break
-            except (zmq.ZMQError, asyncio.TimeoutError) as e:
+            except (TimeoutError, zmq.ZMQError) as e:
                 self.exception(
                     f"Exception receiving responses for client {self.client_id}: {e!r}"
                 )

@@ -406,7 +406,7 @@ class AioHttpClient(AIPerfLoggerMixin):
 
         try:
             return await asyncio.wait_for(request_task, timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return await self._cancel_after_timeout(
                 request_task, start_perf_ns, timeout_s, trace_data
             )
@@ -425,7 +425,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         try:
             await asyncio.wait_for(request_sent.wait(), timeout=send_timeout)
             return None
-        except asyncio.TimeoutError:
+        except TimeoutError:
             request_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await request_task

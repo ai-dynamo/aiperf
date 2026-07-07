@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import aiohttp
 import orjson
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -192,7 +190,7 @@ class _WorkloadChecksMixin:
                     f"Fix: check OPA/Gatekeeper policies or admission webhooks."
                 ),
             )
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (TimeoutError, aiohttp.ClientError, OSError) as e:
             return CheckResult(
                 name="Dry Run",
                 status=CheckStatus.WARN,

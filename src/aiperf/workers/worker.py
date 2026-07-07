@@ -486,7 +486,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 ),
                 timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         if not isinstance(response, GroupDatasetStateSnapshot):
             return None
@@ -640,7 +640,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         except asyncio.CancelledError:
             raise
-        except (zmq.ZMQError, asyncio.TimeoutError, ConnectionError) as e:
+        except (TimeoutError, zmq.ZMQError, ConnectionError) as e:
             self.warning(
                 f"Failed to send shutdown message (already disconnected?): {e!r}"
             )

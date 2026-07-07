@@ -4,9 +4,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -101,7 +100,7 @@ class K8sWatchdogSource:
                 )
             )
         result.sort(
-            key=lambda e: e.last_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda e: e.last_timestamp or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         return result[:limit]
@@ -160,7 +159,7 @@ class K8sWatchdogSource:
                 namespace=namespace,
                 tail_lines=tail,
             )
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
             # Best-effort log fetch: the pod may have been deleted mid-read, or
             # the API server may be unreachable; return empty rather than fail.
             return ""
@@ -185,9 +184,9 @@ class K8sWatchdogSource:
                 _metrics_item_to_pod_metrics(item) for item in data.get("items", [])
             ]
         except (
+            TimeoutError,
             ApiException,
             aiohttp.ClientError,
-            asyncio.TimeoutError,
             KeyError,
             TypeError,
             ValueError,

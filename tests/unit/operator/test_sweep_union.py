@@ -147,7 +147,7 @@ async def test_list_all_sweeps_archived_records_use_epoch_dir_when_timestamps_mi
             sweep_union,
             "_now_utc",
             return_value=sweep_union.datetime.fromtimestamp(
-                1714069300, tz=sweep_union.timezone.utc
+                1714069300, tz=sweep_union.UTC
             ),
         ),
     ):

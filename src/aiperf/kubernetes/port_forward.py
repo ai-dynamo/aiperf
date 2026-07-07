@@ -86,7 +86,7 @@ async def _monitor_pod_liveness(
                     )
                     proc.terminate()
                     return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Probe timed out (run_command already terminated the kubectl
                 # subprocess); skip this tick and try again next interval.
                 continue
@@ -209,13 +209,13 @@ async def _start_port_forward_process(
             raise RuntimeError(
                 f"Port-forward exited unexpectedly: {stderr.strip() or 'no error output'}"
             )
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         stderr = ""
         if proc.stderr:
             try:
                 raw = await asyncio.wait_for(proc.stderr.read(), timeout=2.0)
                 stderr = raw.decode().strip()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         from aiperf.kubernetes.subproc import terminate_process
 
@@ -263,7 +263,7 @@ async def _verify_api_with_retries(
                 timeout=remaining_timeout,
             )
             return proc, actual_port
-        except (RuntimeError, asyncio.TimeoutError) as err:
+        except (TimeoutError, RuntimeError) as err:
             await cleanup_port_forward(proc)
             if attempt >= _API_MAX_RETRIES:
                 raise RuntimeError(

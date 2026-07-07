@@ -22,10 +22,9 @@ license-files = ["LICENSE", "ATTRIBUTIONS.md"]
 authors = [
     { name = "NVIDIA Inc.", email = "sw-dl-dynamo@nvidia.com" },
 ]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "aiofiles~=24.1.0",
-  "async-timeout>=4.0.0; python_version < '3.11'",
   "aiohttp~=3.13.3",
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
@@ -254,6 +253,7 @@ markers = [
     "no_memory_limit: disable the per-test virtual address space cap entirely",
     "network: marks tests that require network access",
     "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
+    "looptime: marks tests that use virtual event-loop time",
 ]
 # Better console output
 console_output_style = "progress"

@@ -165,7 +165,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
             await self.socket.send_multipart([*routing_envelope, error.to_json_bytes()])
         except asyncio.CancelledError:
             raise
-        except (zmq.ZMQError, asyncio.TimeoutError) as e:
+        except (TimeoutError, zmq.ZMQError) as e:
             self.exception(f"Failed to send duplicate-request error: {e}")
 
     async def _wait_for_response(
@@ -198,7 +198,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
             )
         except asyncio.CancelledError:
             raise
-        except (zmq.ZMQError, asyncio.TimeoutError, KeyError) as e:
+        except (TimeoutError, zmq.ZMQError, KeyError) as e:
             self.exception(
                 f"Exception waiting for response for request {request_id}: {e}"
             )
@@ -274,6 +274,6 @@ class ZMQRouterReplyClient(BaseZMQClient):
                     "Router reply client receiver task stopped (ZMQ context terminated)"
                 )
                 break
-            except (zmq.ZMQError, asyncio.TimeoutError) as e:
+            except (TimeoutError, zmq.ZMQError) as e:
                 self.exception(f"Exception receiving request: {e}")
                 await yield_to_event_loop()

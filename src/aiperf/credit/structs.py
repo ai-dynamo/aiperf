@@ -6,10 +6,9 @@ All over-the-wire structs use tag_field="t" for efficient polymorphic decoding v
 Tag values are short strings for minimal wire overhead.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from msgspec import Struct
-from typing_extensions import Self
 
 from aiperf.common.enums import ConversationBranchMode, CreditPhase
 

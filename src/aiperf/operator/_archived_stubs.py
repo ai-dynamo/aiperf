@@ -40,7 +40,7 @@ def archived_stub(
     from aiperf.operator.job_union import _sweep_linkage_from_marker
 
     mtime_iso = (
-        _dt.datetime.fromtimestamp(run_dir.stat().st_mtime, tz=_dt.timezone.utc)
+        _dt.datetime.fromtimestamp(run_dir.stat().st_mtime, tz=_dt.UTC)
         .isoformat()
         .replace("+00:00", "Z")
     )

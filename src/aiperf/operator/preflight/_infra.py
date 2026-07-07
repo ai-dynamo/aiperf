@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import aiohttp
 from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -292,7 +290,7 @@ class _InfraChecksMixin:
                 limit=1,
             )
             return True
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
             return False
 
     async def _namespace_has_default_queue(self) -> bool:
@@ -303,7 +301,7 @@ class _InfraChecksMixin:
             )
             annotations = (ns.metadata.annotations or {}) if ns.metadata else {}
             return bool(annotations.get("kueue.x-k8s.io/default-queue-name"))
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
             return False
 
     async def _check_pod_security_admission(self) -> CheckResult:
@@ -369,7 +367,7 @@ class _InfraChecksMixin:
                 status=CheckStatus.WARN,
                 message=f"Could not check PSA: {e}",
             )
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (TimeoutError, aiohttp.ClientError, OSError) as e:
             return CheckResult(
                 name="Pod Security Admission",
                 status=CheckStatus.WARN,

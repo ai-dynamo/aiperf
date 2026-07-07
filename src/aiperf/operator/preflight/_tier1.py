@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 
 import aiohttp
@@ -97,12 +96,7 @@ class _Tier1ChecksMixin:
                 )
                 if not allowed:
                     missing.append(f"{verb} {display}")
-            except (
-                ApiException,
-                aiohttp.ClientError,
-                asyncio.TimeoutError,
-                OSError,
-            ) as e:
+            except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
                 transient.append(f"{verb} {display} (check failed: {e})")
             except Exception as e:  # noqa: BLE001 - defensive: any per-permission probe error degrades to WARN rather than FAIL
                 transient.append(f"{verb} {display} (check failed: {e})")

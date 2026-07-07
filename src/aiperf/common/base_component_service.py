@@ -215,7 +215,7 @@ class BaseComponentService(BaseService):
                             f"({elapsed_time:.1f}s)"
                         )
                     return
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     elapsed_time += send_interval
 
                     if elapsed_time >= next_warning_time:

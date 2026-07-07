@@ -147,7 +147,7 @@ async def _proxy_to_controller(websocket: WebSocket, ws_url: str, log_tag: str) 
         try:
             upstream_cm = session.ws_connect(ws_url, heartbeat=_WS_HEARTBEAT_SEC)
             upstream = await upstream_cm.__aenter__()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (TimeoutError, aiohttp.ClientError) as e:
             logger.info(f"Upstream WS connect failed for {log_tag}: {e}")
             if websocket.application_state != WebSocketState.DISCONNECTED:
                 await websocket.close(

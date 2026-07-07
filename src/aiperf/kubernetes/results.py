@@ -165,7 +165,7 @@ async def _download_api_file(
                 continue
             print_warning(f"Could not connect to API service for file {filename}")
             return False
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+        except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
             if attempt < max_retries:
                 continue
             print_warning(f"Error downloading {filename}: {e}")
@@ -226,7 +226,7 @@ async def retrieve_results_from_api(
 
             return downloaded_any
 
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         print_warning(f"Error connecting to API: {e}")
         return False
 
@@ -324,7 +324,7 @@ async def kubectl_copy_results(
             ],
             timeout=1800.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print_error(
             f"Timed out copying results from {pod_name}:/results after 1800s. "
             "The artifact tree may be very large; retry with the API path "
@@ -458,7 +458,7 @@ async def shutdown_api_service(
                     f"Unexpected response from shutdown endpoint: {response.status}"
                 )
                 return False
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         print_warning(f"Could not send shutdown signal: {e}")
         return False
 
@@ -578,7 +578,7 @@ async def _fetch_children_manifest(
                     return None
                 resp.raise_for_status()
                 return orjson.loads(await resp.read())
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         print_error(f"Error fetching children manifest: {e!r}")
         return None
 

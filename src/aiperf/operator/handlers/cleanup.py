@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +65,7 @@ async def cleanup_old_results(
     # Check if results are older than TTL
     try:
         mtime = results_dir.stat().st_mtime
-        age_days = (datetime.now(timezone.utc).timestamp() - mtime) / 86400
+        age_days = (datetime.now(UTC).timestamp() - mtime) / 86400
 
         if age_days > ttl_days:
             await asyncio.to_thread(shutil.rmtree, results_dir)

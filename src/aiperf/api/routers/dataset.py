@@ -158,7 +158,7 @@ async def _wait_for_dataset_metadata(component: DatasetRouter) -> None:
                 component.dataset_configured.wait(),
                 timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise HTTPException(
                 status_code=503,
                 detail="Dataset not yet configured. DatasetManager has not sent configuration.",

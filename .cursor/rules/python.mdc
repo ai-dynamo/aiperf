@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 -->
 # AIPerf
 
-Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 12 services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
+Python 3.11+ async AI benchmarking tool for measuring LLM inference server performance. 12 services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
 
 **Reference documentation:**
 - [`llms.txt`](llms.txt) - Agent session-bootstrap index: single-page topology of every doc in the repo with a one-line purpose for each. Start here when unsure which doc to read.

@@ -1646,13 +1646,13 @@ class SystemController(
             await asyncio.wait_for(self.ui.stop(), timeout=5.0)
         except asyncio.CancelledError:
             raise
-        except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001 - UI stop must not block controller teardown
+        except (TimeoutError, Exception) as e:  # noqa: BLE001 - UI stop must not block controller teardown
             self.warning(f"UI stop did not complete cleanly: {e!r}")
         try:
             await asyncio.wait_for(self.ui.wait_for_tasks(), timeout=5.0)
         except asyncio.CancelledError:
             raise
-        except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001 - UI wait must not block controller teardown
+        except (TimeoutError, Exception) as e:  # noqa: BLE001 - UI wait must not block controller teardown
             self.warning(f"UI task drain did not complete cleanly: {e!r}")
 
     async def _emit_post_benchmark_report_or_errors(self) -> None:

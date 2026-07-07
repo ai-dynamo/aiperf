@@ -7,7 +7,7 @@ from __future__ import annotations
 import io
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -421,7 +421,7 @@ def _compute_duration_seconds(status: dict[str, Any]) -> float | None:
         return None
     try:
         start_dt = parse_timestamp(start_time)
-        return (datetime.now(timezone.utc) - start_dt).total_seconds()
+        return (datetime.now(UTC) - start_dt).total_seconds()
     except (ValueError, TypeError):
         return None
 

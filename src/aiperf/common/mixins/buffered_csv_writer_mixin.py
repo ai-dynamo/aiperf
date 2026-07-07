@@ -159,7 +159,7 @@ class BufferedCSVWriterMixin(AIPerfLifecycleMixin):
                         self.wait_for_tasks(),
                         timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self.warning(
                         f"Timeout waiting for {len(self.tasks)} pending CSV flush tasks during shutdown. "
                         "Cancelling tasks and proceeding with cleanup."

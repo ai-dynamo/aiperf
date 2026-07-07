@@ -365,6 +365,6 @@ async def retrieve_results_from_operator(
             print_error("No files downloaded")
             return False
 
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         print_error(f"Error connecting to operator: {e!r}")
         return False

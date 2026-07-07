@@ -157,7 +157,7 @@ class SubprocessManager:
         start_task = asyncio.ensure_future(asyncio.to_thread(process.start))
         try:
             await asyncio.wait_for(asyncio.shield(start_task), timeout=_SPAWN_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._reap_timed_out_spawn(process, service_type, service_id, start_task)
             raise RuntimeError(
                 f"Timed out spawning {service_type} subprocess "

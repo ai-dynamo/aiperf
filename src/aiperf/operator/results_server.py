@@ -31,7 +31,6 @@ Run: python -m aiperf.operator.results_server
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import sqlite3
@@ -102,9 +101,9 @@ def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
             api_holder[0] = ApiClient()
             logger.info("kubernetes_asyncio client initialized for UI endpoints")
         except (
+            TimeoutError,
             config.ConfigException,
             aiohttp.ClientError,
-            asyncio.TimeoutError,
             OSError,
         ) as e:
             logger.warning(
@@ -122,7 +121,7 @@ def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
         if api is not None:
             try:
                 await api.close()
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            except (TimeoutError, aiohttp.ClientError, OSError) as e:
                 logger.warning(f"Error closing kubernetes_asyncio client: {e}")
             api_holder[0] = None
 

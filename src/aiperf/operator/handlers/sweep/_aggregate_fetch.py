@@ -22,7 +22,6 @@ the only state-changing piece).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -101,13 +100,7 @@ async def fetch_sweep_aggregate_to_disk(
     try:
         async with ProgressClient(port=sidecar_port) as sidecar:
             downloaded = await sidecar.download_all_results(host, base_dir)
-    except (
-        aiohttp.ClientError,
-        ConnectionError,
-        TimeoutError,
-        asyncio.TimeoutError,
-        OSError,
-    ) as e:
+    except (aiohttp.ClientError, ConnectionError, TimeoutError, OSError) as e:
         logger.warning(
             f"sweep-aggregate fetch failed for {namespace}/{sweep_name} "
             f"@ {host}:{sidecar_port}: {e}"

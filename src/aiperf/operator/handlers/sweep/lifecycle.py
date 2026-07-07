@@ -10,7 +10,7 @@ for kubectl observability and to handle parent-CR deletion / TTL.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import kopf
@@ -46,7 +46,7 @@ async def cancel(
     existing = status_block.get("conditions") or []
     new_conditions = [c for c in existing if c.get("type") != "Cancelling"]
     if cancelling:
-        now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         new_conditions.append(
             {
                 "type": "Cancelling",
@@ -179,7 +179,7 @@ async def maybe_reap_finished(
         finished = datetime.fromisoformat(completed_at.rstrip("Z") + "+00:00")
     except ValueError:
         return
-    age_seconds = (datetime.now(tz=timezone.utc) - finished).total_seconds()
+    age_seconds = (datetime.now(tz=UTC) - finished).total_seconds()
     if age_seconds < ttl:
         return
 

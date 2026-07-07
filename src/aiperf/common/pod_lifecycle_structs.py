@@ -309,7 +309,7 @@ async def _send_group_peer_hello_with_retry(
         )
         try:
             ack = await dealer_client.request(hello, timeout=attempt_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if asyncio.get_running_loop().time() >= deadline:
                 raise TimeoutError(
                     f"GroupPeerHello for {service_id} never acked after "

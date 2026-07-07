@@ -109,7 +109,7 @@ async def _try_fetch_once(
         return await fetch_once(), None
     except _IncompleteResultsError as e:
         return None, e
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ApiException) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, ApiException) as e:
         # Transient errors (network, IO) count as no-progress attempts
         # too; if they persist past stagnation_limit we bubble them up.
         logger.debug(
@@ -324,7 +324,7 @@ async def _run_fetch_loop_safely(
         )
     except _IncompleteResultsError as e:
         return e.to_fetch_result(job_id)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ApiException) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError, ApiException) as e:
         logger.warning(f"Results fetch failed for {job_id}: {e}")
         return ControllerFetchResult(
             metrics=state["metrics"],

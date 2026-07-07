@@ -59,7 +59,7 @@ async def wait_for_event_with_timeout(
         debug(lambda: f"Event '{name}' set before timeout of {timeout}s")
         return False
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return _on_timeout()
 
     except Exception as e:

@@ -8,7 +8,7 @@ phase transitions, conditions, and progress tracking.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
@@ -23,7 +23,7 @@ def format_timestamp() -> str:
     Returns:
         ISO 8601 timestamp string with Z suffix.
     """
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def parse_timestamp(ts: str) -> datetime:

@@ -484,12 +484,7 @@ async def _check_cluster_service_endpoint(
             message=f"Cluster service '{svc_name}' found in namespace '{svc_ns}'",
             details=details,
         )
-    except (
-        ApiException,
-        aiohttp.ClientError,
-        asyncio.TimeoutError,
-        OSError,
-    ):
+    except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
         return CheckResult(
             name="Endpoint Connectivity",
             status=CheckStatus.FAIL,

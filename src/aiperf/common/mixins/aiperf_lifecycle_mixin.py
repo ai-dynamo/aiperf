@@ -329,7 +329,7 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             timeout = Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
             try:
                 await asyncio.wait_for(self.stop(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.error(
                     f"Shutdown after failure did not complete in {timeout}s; "
                     f"force-exiting"

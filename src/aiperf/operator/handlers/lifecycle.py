@@ -8,7 +8,6 @@ Decorators live in ``aiperf.operator.main``.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -203,7 +202,7 @@ async def on_benchmark_complete(
     try:
         progress_client = await get_or_create_progress_client(key)
         await progress_client.send_shutdown(host)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.exception(f"Failed to send shutdown to {host}")
         kopf.event(
             body,

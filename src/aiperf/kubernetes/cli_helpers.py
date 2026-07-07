@@ -12,7 +12,7 @@ kubernetes_asyncio-backed operations live as free functions in
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from aiperf.kubernetes.console import (
@@ -41,7 +41,7 @@ def format_age(created: str) -> str:
     if not created:
         return "Unknown"
     created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-    age_seconds = max((datetime.now(timezone.utc) - created_dt).total_seconds(), 0)
+    age_seconds = max((datetime.now(UTC) - created_dt).total_seconds(), 0)
     if age_seconds < 60:
         return f"{int(age_seconds)}s"
     if age_seconds < 3600:

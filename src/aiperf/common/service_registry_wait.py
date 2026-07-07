@@ -82,7 +82,7 @@ class _ServiceRegistryWaitMixin(AIPerfLoggerMixin):
         )
         try:
             await asyncio.wait_for(event.wait(), timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._raise_timeout(
                 f"Timed out waiting for {service_type.title()} services to register"
             )
@@ -110,7 +110,7 @@ class _ServiceRegistryWaitMixin(AIPerfLoggerMixin):
         self.info(f"Waiting for {len(service_ids)} services to be registered...")
         try:
             await asyncio.wait_for(event.wait(), timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             missing_ids = [sid for sid in service_ids if not self.is_registered(sid)]
             self._raise_timeout(
                 f"Timed out waiting for service IDs to register: {missing_ids}"
@@ -143,7 +143,7 @@ class _ServiceRegistryWaitMixin(AIPerfLoggerMixin):
             try:
                 await asyncio.wait_for(event.wait(), wait_time)
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 elapsed += wait_time
                 self._raise_on_failure()
                 if timeout is not None and elapsed >= timeout:

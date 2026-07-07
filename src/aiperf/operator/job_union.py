@@ -15,7 +15,7 @@ This module joins the two by `(namespace, name)` and stamps each entry with a
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -238,7 +238,7 @@ def _scan_pvc_jobs(
             mtime_iso = (
                 _dt.datetime.fromtimestamp(
                     summary_path.stat().st_mtime,
-                    tz=_dt.timezone.utc,
+                    tz=_dt.UTC,
                 )
                 .isoformat()
                 .replace("+00:00", "Z")
@@ -344,7 +344,7 @@ def _parse_sort_ts(ts: str | None) -> float:
         return 0.0
     candidate = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
     try:
-        return datetime.fromisoformat(candidate).astimezone(timezone.utc).timestamp()
+        return datetime.fromisoformat(candidate).astimezone(UTC).timestamp()
     except ValueError:
         return 0.0
 
@@ -448,7 +448,7 @@ async def find_any_job(
             mtime_iso = (
                 _dt.datetime.fromtimestamp(
                     summary_path.stat().st_mtime,
-                    tz=_dt.timezone.utc,
+                    tz=_dt.UTC,
                 )
                 .isoformat()
                 .replace("+00:00", "Z")

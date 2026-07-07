@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -63,7 +63,7 @@ class SweepRecord:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _parse_creation_ts(ts: str | None) -> datetime | None:
@@ -74,7 +74,7 @@ def _parse_creation_ts(ts: str | None) -> datetime | None:
     # the strict "%S" parser rejects them, leaving every archived sweep at age=0.
     candidate = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
     try:
-        return datetime.fromisoformat(candidate).astimezone(timezone.utc)
+        return datetime.fromisoformat(candidate).astimezone(UTC)
     except ValueError:
         return None
 
@@ -175,7 +175,7 @@ def _record_from_archive(
     if doc is None:
         # Surface as Unknown so corrupt sweeps still appear and operators see them.
         try:
-            mtime = datetime.fromtimestamp(agg_path.stat().st_mtime, tz=timezone.utc)
+            mtime = datetime.fromtimestamp(agg_path.stat().st_mtime, tz=UTC)
         except OSError:
             mtime = None
         return SweepRecord(
@@ -193,7 +193,7 @@ def _record_from_archive(
         )
     completed_at = _parse_creation_ts(doc.get("completedAt"))
     started_at = _parse_creation_ts(doc.get("startedAt"))
-    epoch_at = datetime.fromtimestamp(int(sweep_dir.name), tz=timezone.utc)
+    epoch_at = datetime.fromtimestamp(int(sweep_dir.name), tz=UTC)
     age_anchor = completed_at or started_at or epoch_at
     run_states = sanitize_run_states(doc.get("runStates"))
     return SweepRecord(

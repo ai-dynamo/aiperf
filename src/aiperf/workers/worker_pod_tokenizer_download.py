@@ -119,7 +119,7 @@ async def download_tokenizer(
                     os.replace(tmp_dest, dest)
                     logger.info(f"download_tokenizer: '{name}' ready at {dest}")
                     return dest
-                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                except (TimeoutError, aiohttp.ClientError) as exc:
                     last_exc = exc
                     logger.warning(
                         f"transient error downloading tokenizer '{name}' "

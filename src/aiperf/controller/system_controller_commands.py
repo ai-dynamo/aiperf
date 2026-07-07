@@ -112,7 +112,7 @@ class SystemControllerCommandMixin:
         for sid, task in tasks.items():
             try:
                 results.append(await task)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 results.append(
                     ErrorDetails(
                         type="TimeoutError",
@@ -151,7 +151,7 @@ class SystemControllerCommandMixin:
                             f"remaining {len(service_ids) - len(results)} service(s)"
                         )
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     results.append(
                         ErrorDetails(
                             type="TimeoutError", message=f"Command {cmd} timed out"

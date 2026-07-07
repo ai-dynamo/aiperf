@@ -573,7 +573,7 @@ class WorkerGroupManagerBase(BaseComponentService):
                 self._dataset_download_event.wait(),
                 timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
             )
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise RuntimeError(
                 f"Dataset download did not complete within "
                 f"{Environment.DATASET.CONFIGURATION_TIMEOUT}s; aborting "

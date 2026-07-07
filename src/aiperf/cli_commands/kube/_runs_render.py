@@ -13,6 +13,8 @@ ceiling. The two helpers here are the read-side of ``list-runs``:
 
 from __future__ import annotations
 
+from datetime import UTC
+
 
 def annotate_preview(payload: dict, retention: dict) -> None:
     """Stamp each run with ``would_delete`` replicating ``enforce_retention`` dry-run.
@@ -54,7 +56,7 @@ def print_runs_table(payload: dict, *, preview: bool = False) -> None:
     per-run ``would_delete`` flag populated by :func:`annotate_preview`, plus a
     footer line summarizing the active retention policy.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from rich.table import Table
 
@@ -79,9 +81,9 @@ def print_runs_table(payload: dict, *, preview: bool = False) -> None:
         table.add_column("WOULD DELETE", justify="center")
 
     for run in runs:
-        ts = datetime.fromtimestamp(
-            run.get("mtime_epoch", 0), tz=timezone.utc
-        ).strftime("%Y-%m-%d %H:%M:%S UTC")
+        ts = datetime.fromtimestamp(run.get("mtime_epoch", 0), tz=UTC).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
         latest = "[green]✓[/green]" if run.get("is_latest") else ""
         row = [
             str(run.get("epoch", "")),

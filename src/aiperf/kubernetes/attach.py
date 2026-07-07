@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,7 +80,7 @@ async def _fetch_and_print_pod_logs(
             logger.info(f"[dim]Last {tail} lines from controller pod {pod_name}:[/dim]")
             for line in log_text.strip().splitlines():
                 logger.info(f"[dim]  {line}[/dim]")
-    except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+    except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
         # Best-effort diagnostic: never fail the caller because logs are
         # unavailable (pod deleted mid-read, API unreachable, etc.).
         return

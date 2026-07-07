@@ -505,7 +505,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 ),
                 timeout=Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.warning(
                 "Server metrics final scrape timed out after "
                 f"{Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT}s; "

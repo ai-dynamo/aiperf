@@ -44,7 +44,7 @@ async def await_dataset_configured(
             event.wait(), timeout=Environment.DATASET.CONFIGURATION_TIMEOUT
         )
         return True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         message = (
             "Dataset configuration not received after "
             f"{Environment.DATASET.CONFIGURATION_TIMEOUT}s; aborting run."

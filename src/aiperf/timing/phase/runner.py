@@ -539,7 +539,7 @@ class PhaseRunner(TaskManagerMixin):
                     self.info(
                         f"All cancelled credits returned for phase {self._config.phase}"
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self.error(
                         f"Timeout waiting {drain_timeout}s for cancelled credits to return. "
                         f"Some credits may be stuck. Forcing phase completion."

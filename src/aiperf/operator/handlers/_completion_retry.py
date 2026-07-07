@@ -24,7 +24,7 @@ to ``Phase.FAILED``.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import kopf
@@ -57,7 +57,7 @@ def _claim_age_seconds(body: dict[str, Any]) -> float | None:
         claimed_at = parse_timestamp(claim_ts)
     except (ValueError, TypeError):
         return None
-    return (datetime.now(timezone.utc) - claimed_at).total_seconds()
+    return (datetime.now(UTC) - claimed_at).total_seconds()
 
 
 def _coerce_settings_float(value: Any, *, default: float = 0.0) -> float:

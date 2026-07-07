@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime
@@ -51,7 +50,7 @@ class PodPoller:
                 self._namespace,
                 label_selector=self._current_label_selector(),
             )
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
             logger.debug(f"Failed to list pods for {self._job_id}", exc_info=True)
             return
         self.pods = [PodSnapshot.from_raw(_pod_to_raw(p)) for p in pod_list.items]
@@ -83,7 +82,7 @@ class EventPoller:
         core = client.CoreV1Api(self._api)
         try:
             ev_list = await core.list_namespaced_event(self._namespace)
-        except (ApiException, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
             logger.debug(f"Failed to list events for {self._job_id}", exc_info=True)
             return
 

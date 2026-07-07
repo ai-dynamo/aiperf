@@ -252,7 +252,7 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
             return
         try:
             await asyncio.wait_for(self._worker_available_event.wait(), timeout)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise RuntimeError(
                 f"No workers registered with the credit router within {timeout}s "
                 "(tunable via AIPERF_SERVICE_START_TIMEOUT); cannot start credit issuance"

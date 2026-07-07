@@ -146,5 +146,5 @@ async def _upload_file(
                 )
     except asyncio.CancelledError:
         raise
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.warning(f"Error uploading {file_path.name}: {e!r}")

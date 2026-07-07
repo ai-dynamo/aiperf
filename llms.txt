@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-> Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. Services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
+> Python 3.11+ async AI benchmarking tool for measuring LLM inference server performance. Services communicate via ZMQ message bus; optionally deployable on Kubernetes via a kopf-based operator.
 
 AIPerf drives synthetic load against LLM-serving endpoints (OpenAI-compatible chat/completions, embeddings, rankings, image/audio, etc.), collects per-request telemetry, and emits latency / throughput / token-rate / goodput metrics. It runs as a local multi-process pipeline or as a Kubernetes Custom Resource (`AIPerfJob`) managed by a kopf-based operator. Inter-service communication uses a ZMQ message bus with Pydantic-modeled messages for control traffic and tagged `msgspec.Struct` payloads for hot-path wire formats.
 

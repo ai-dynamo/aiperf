@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from aiperf.common.constants import IS_WINDOWS
@@ -253,7 +253,7 @@ class WatchOrchestrator:
         event_poller: object,
     ) -> WatchSnapshot:
         return WatchSnapshot(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             job_id=job_id,
             namespace=ns,
             phase=cr_poller.phase,

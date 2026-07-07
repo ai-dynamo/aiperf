@@ -51,9 +51,9 @@ async def retry_with_backoff(
         try:
             return await coro_factory()
         except (
+            TimeoutError,
             ApiException,
             aiohttp.ClientError,
-            asyncio.TimeoutError,
             ConnectionError,
             OSError,
         ):

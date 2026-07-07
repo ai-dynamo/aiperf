@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import socket
 
 import aiohttp
@@ -51,7 +50,7 @@ async def check_endpoint_health(
                 continue
             except aiohttp.ClientError:
                 continue
-            except (asyncio.TimeoutError, OSError) as e:
+            except (TimeoutError, OSError) as e:
                 return EndpointHealthResult(
                     reachable=False, error=f"Unexpected error: {e}"
                 )
