@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Annotated, Any
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from aiperf.common.models import AIPerfBaseModel
 
@@ -36,6 +36,10 @@ RequestCanceledInt = Annotated[int, Field(ge=0, le=1)]
 
 class BasetenTrace(AIPerfBaseModel):
     """Schema for Baseten completion traces exported as Parquet."""
+
+    # populate_by_name lets the model_dump()/model_validate round-trip used by
+    # synthesis reconstruction repopulate aliased fields (dataset_version).
+    model_config = ConfigDict(populate_by_name=True)
 
     timestamp_start_unix_ms: NonNegativeInt = Field(
         description="Recorded request start timestamp in Unix milliseconds."

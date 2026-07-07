@@ -355,9 +355,6 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 if not kept:
                     continue
 
-            if "__version__" in row and "dataset_version" not in row:
-                row["dataset_version"] = row.pop("__version__")
-
             trace = BasetenTrace.model_validate(row)
             self._preprocess_trace(trace)
             if min_timestamp is not None and trace.timestamp is not None:

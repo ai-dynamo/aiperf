@@ -913,6 +913,34 @@ class TestBasetenTraceDatasetLoader:
         # The "Floored N traces" summary counts only rows that survive filtering.
         assert loader._floored_zero_osl == 1
 
+    def test_load_dataset_populates_dataset_version_from_version_column(
+        self, tmp_path: Path
+    ):
+        # The parquet column is named __version__; the pydantic alias must
+        # populate dataset_version instead of stranding it in model_extra.
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "versioned",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "__version__": "0.0.11",
+                }
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert trace.dataset_version == "0.0.11"
+
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",
@@ -1005,6 +1033,7 @@ class TestSynthesisHooks:
                 poor_man_session_id=7,
                 total_hashes=[1, 2],
                 block_size=64,
+                __version__="0.0.11",
             )
         ]
         synth_dicts = [
@@ -1025,6 +1054,9 @@ class TestSynthesisHooks:
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
+        # The model_dump()/model_validate round-trip must not strand aliased
+        # fields in model_extra.
+        assert result[0].dataset_version == "0.0.11"
 
     def test_reconstruct_traces_omit_kv_hints_true_drops_cache_hints(
         self, tmp_path: Path
