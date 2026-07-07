@@ -63,7 +63,6 @@ class TestBasetenTraceReplay:
                 --concurrency 1 \
                 --workers-max {defaults.workers_max} \
                 --export-level raw \
-                --extra-inputs '{{"min_tokens": 1, "block_size": 16}}' \
                 --ui {defaults.ui}
             """,
             timeout=60.0,
