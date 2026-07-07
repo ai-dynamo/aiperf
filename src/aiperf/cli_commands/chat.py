@@ -40,6 +40,7 @@ from aiperf.cli_commands._chat_stats import (
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models.record_models import ParsedResponse
+from aiperf.config.loader.parsing import normalize_http_url
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 app = App(name="chat")
@@ -58,12 +59,13 @@ def _chat_completions_url(url: str) -> str:
     """Resolve a user-supplied base URL to a chat-completions endpoint.
 
     Accepts a bare host (``http://host:8000``), a ``/v1`` base, or a full
-    ``/chat/completions`` path. Appending ``/v1/chat/completions`` to a bare
-    base matches how ``aiperf profile`` joins the endpoint's metadata path, so
-    a server mounted under a sub-path (e.g. ``/openai``) resolves the same way
-    in both commands.
+    ``/chat/completions`` path. A scheme-less URL (``localhost:8000``) gets
+    ``http://`` prepended, matching how ``aiperf profile`` normalizes ``--url``;
+    and appending ``/v1/chat/completions`` to a bare base matches how ``profile``
+    joins the endpoint's metadata path, so a server mounted under a sub-path
+    (e.g. ``/openai``) resolves the same way in both commands.
     """
-    base = url.rstrip("/")
+    base = normalize_http_url(url).rstrip("/")
     if base.endswith("/chat/completions"):
         return base
     if base.endswith("/v1"):
@@ -147,7 +149,17 @@ async def _run_turn(
     body = orjson.dumps(payload)
     post_headers = {**headers, "Content-Type": "application/json"}
     async with session.post(url, data=body, headers=post_headers) as resp:
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except aiohttp.ClientResponseError as e:
+            # OpenAI-compatible servers put the real diagnostic (unknown model,
+            # context-length exceeded, ...) in the response body, which
+            # raise_for_status() discards. Surface a bounded prefix of it -- for
+            # a sanity-check tool that error message is the whole point.
+            detail = (await resp.text())[:500].strip()
+            if detail:
+                e.message = f"{e.message}: {detail}"
+            raise
         responses, output_parts, reasoning_parts, last_usage = await _consume_stream(
             resp
         )
@@ -175,9 +187,11 @@ async def _run_turn(
         reasoning_tokens=reasoning_tokens,
     )
     print(format_stats(compute_record_metrics(record), reasoning_tokens))
-    # Fall back to the reasoning text when the reply had no visible content, so a
-    # reasoning-only turn isn't recorded as an empty assistant message in history
-    # (mirrors profile's build_assistant_turn reasoning-only fallback).
+    # Fall back to the reasoning text only when the reply had no visible content,
+    # so a reasoning-only turn isn't recorded as an empty assistant message.
+    # Intentionally content-only when content exists: unlike profile's per-chunk
+    # build_assistant_turn (which concatenates reasoning + content), we don't
+    # resend reasoning, matching how chat APIs replay assistant turns.
     return "".join(output_parts) or "".join(reasoning_parts)
 
 
@@ -377,7 +391,8 @@ def chat(
     tokenizer: Annotated[
         str | None,
         Parameter(
-            help="Tokenizer for client-side token counts. Defaults to the model name."
+            help="Tokenizer for client-side token counts. Defaults to the model "
+            "name. Pass `builtin` for a zero-network tokenizer."
         ),
     ] = None,
 ) -> None:

@@ -148,7 +148,7 @@ API key sent as a Bearer token. Defaults to the OPENAI_API_KEY environment varia
 
 #### `--tokenizer` `<str>`
 
-Tokenizer for client-side token counts. Defaults to the model name.
+Tokenizer for client-side token counts. Defaults to the model name. Pass `builtin` for a zero-network tokenizer.
 
 <hr/>
 

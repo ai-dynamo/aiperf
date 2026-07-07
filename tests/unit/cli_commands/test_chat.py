@@ -8,7 +8,9 @@ integration tests; the stats/metric logic lives in ``test_chat_stats``.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
+import aiohttp
 import orjson
 import pytest
 from pytest import param
@@ -44,6 +46,11 @@ from aiperf.common.exceptions import SSEResponseError
             "http://h:8000/openai",
             "http://h:8000/openai/v1/chat/completions",
             id="sub_path_base",
+        ),
+        param(
+            "localhost:8000",
+            "http://localhost:8000/v1/chat/completions",
+            id="schemeless",
         ),
     ],
 )  # fmt: skip
@@ -117,11 +124,32 @@ async def test_consume_stream_surfaces_mid_stream_sse_error() -> None:
 class _FakeStreamResponse:
     """Async-context-manager stand-in for the aiohttp response in `_run_turn`."""
 
-    def __init__(self, chunks: list[bytes]) -> None:
+    def __init__(
+        self,
+        chunks: list[bytes],
+        *,
+        url: str = "http://h/v1/chat/completions",
+        status: int = 200,
+        reason: str = "OK",
+        body: bytes = b"",
+    ) -> None:
         self.content = _FakeContent(chunks)
+        self._url = url
+        self.status = status
+        self.reason = reason
+        self._body = body
 
     def raise_for_status(self) -> None:
-        pass
+        if self.status >= 400:
+            raise aiohttp.ClientResponseError(
+                SimpleNamespace(real_url=self._url),
+                (),
+                status=self.status,
+                message=self.reason,
+            )
+
+    async def text(self) -> str:
+        return self._body.decode()
 
     async def __aenter__(self) -> _FakeStreamResponse:
         return self
@@ -133,13 +161,29 @@ class _FakeStreamResponse:
 class _FakeSession:
     """Minimal aiohttp.ClientSession stand-in returning canned SSE chunks."""
 
-    def __init__(self, chunks: list[bytes]) -> None:
+    def __init__(
+        self,
+        chunks: list[bytes],
+        *,
+        status: int = 200,
+        reason: str = "OK",
+        body: bytes = b"",
+    ) -> None:
         self._chunks = chunks
+        self._status = status
+        self._reason = reason
+        self._body = body
         self.posted: list[dict] = []
 
     def post(self, url: str, *, data: bytes, headers: dict) -> _FakeStreamResponse:
         self.posted.append({"url": url, "data": data, "headers": headers})
-        return _FakeStreamResponse(self._chunks)
+        return _FakeStreamResponse(
+            self._chunks,
+            url=url,
+            status=self._status,
+            reason=self._reason,
+            body=self._body,
+        )
 
 
 _CHAT_CHUNKS = [
@@ -190,6 +234,25 @@ async def test_run_turn_reasoning_only_reply_returns_reasoning_for_history() -> 
         encode=lambda s: list(s),
     )
     assert text == "thinking hard"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_surfaces_http_error_body() -> None:
+    # Servers put the real diagnostic in the response body; it must reach the
+    # user, not be discarded by raise_for_status().
+    session = _FakeSession(
+        [], status=404, reason="Not Found", body=b'{"detail":"model x does not exist"}'
+    )
+    with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+        await _run_turn(
+            session,  # type: ignore[arg-type]
+            url="http://h/v1/chat/completions",
+            headers={},
+            model="m",
+            conversation=[{"role": "user", "content": "hi"}],
+            encode=lambda s: list(s),
+        )
+    assert "model x does not exist" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
