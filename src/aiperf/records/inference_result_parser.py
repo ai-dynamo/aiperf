@@ -379,14 +379,8 @@ class InferenceResultParser(CommunicationMixin):
                 tokenizer, inputs.messages
             )
             if templated is not None:
-                # Tool text (replayed tool_calls / function_call items and
-                # tools schemas) is absent from the role/content ``messages``
-                # view, so it must be tokenised on top of the templated count.
-                tool_count = (
-                    await self._compute_token_count(
-                        tokenizer, inputs.tool_texts, separator=" "
-                    )
-                    or 0
+                tool_count = await self._compute_tool_texts_token_count(
+                    tokenizer, inputs
                 )
                 return templated + tool_count + pretokenised
 
@@ -402,6 +396,21 @@ class InferenceResultParser(CommunicationMixin):
 
         # Pure pre-tokenised input (e.g. token-id embeddings) carries no text.
         return pretokenised if pretokenised > 0 else None
+
+    async def _compute_tool_texts_token_count(
+        self, tokenizer: Tokenizer, inputs: ExtractedPayload
+    ) -> int:
+        """Count tool-derived text on top of the chat-template count.
+
+        Tool text (replayed ``tool_calls`` / ``function_call`` items and
+        ``tools`` schemas) is absent from the role/content ``messages`` view,
+        so the chat-template path must tokenise it separately; the bare-text
+        path already covers it via ``texts``.
+        """
+        return (
+            await self._compute_token_count(tokenizer, inputs.tool_texts, separator=" ")
+            or 0
+        )
 
     async def _compute_chat_template_token_count(
         self,

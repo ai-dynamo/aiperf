@@ -1010,7 +1010,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             for record in telemetry_records:
                 try:
                     await exporter.process_record(record)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - best-effort fan-out; CancelledError must propagate
                     self.error(
                         f"Stream exporter {exporter.__class__.__name__} failed for "
                         f"gpu_telemetry record: {exc!r}"
@@ -1040,7 +1040,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for exporter in self._server_metrics_stream_exporters:
             try:
                 await exporter.process_record(record)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - best-effort fan-out; CancelledError must propagate
                 self.error(
                     f"Stream exporter {exporter.__class__.__name__} failed for "
                     f"server_metrics record: {exc!r}"
