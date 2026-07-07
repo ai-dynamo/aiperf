@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from aiperf.common import random_generator as rng
@@ -89,7 +89,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
         self._open_loop = getattr(dataset, "open_loop_replay", False)
+        self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
+        self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
+        self._force_min_tokens = getattr(dataset, "force_min_tokens", True)
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
+        self._floored_zero_osl = 0
 
     @classmethod
     def can_load(
@@ -114,26 +118,23 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     def _preprocess_trace(self, trace: BasetenTrace) -> None:
         trace.timestamp = int(trace.timestamp_start_unix_ms)
         trace.input_length = int(trace.input_tokens)
-        trace.output_length = int(trace.output_tokens)
+        # Real traces contain canceled requests with output_tokens=0, but
+        # Turn.max_tokens requires >= 1.
+        trace.output_length = max(1, int(trace.output_tokens))
         trace.text_input = trace.prompt
         trace.hash_ids = list(trace.total_hashes or [])
 
     def _set_request_body(self, trace: BasetenTrace) -> None:
         if trace.hash_ids is None:
             trace.hash_ids = list(trace.total_hashes or [])
-        trace.request_body = {"min_tokens": trace.output_length}
-        # Baseten's serverless /v1/completions gateway rejects a list[str] prompt
-        # (it accepts only a string or list[int]), but the shared upstream
-        # completions endpoint always emits a list. Override the prompt to a bare
-        # string here via extra_body so the endpoint stays byte-identical to
-        # upstream (extra_body is merged last at dispatch).
-        if trace.text_input is not None:
-            trace.request_body["prompt"] = trace.text_input
+        trace.request_body = {}
+        if self._force_min_tokens:
+            trace.request_body["min_tokens"] = trace.output_length
         # KV-cache-aware routing hints. Inert at 1P1D (no routing choice); some
-        # strict frontends (Dynamo v1.2) 400 on these unknown params. Opt-out via
-        # AIPERF_BASETEN_OMIT_KV_HINTS=1 to keep request bodies identical across
-        # legs whose frontends differ in param tolerance.
-        if os.environ.get("AIPERF_BASETEN_OMIT_KV_HINTS") != "1":
+        # strict frontends (Dynamo v1.2) 400 on these unknown params. Opt out via
+        # omit_kv_hints to keep request bodies identical across legs whose
+        # frontends differ in param tolerance.
+        if not self._omit_kv_hints:
             if trace.hash_ids:
                 trace.request_body["hash_ids"] = trace.hash_ids
             if trace.block_size is not None:
@@ -212,11 +213,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
     def _sample_session_ids(
         self,
-    ) -> tuple[int | None, str | None, set[str | int] | None]:
+    ) -> tuple[int | None, str | None, set[str | int] | None, set[int] | None]:
         metadata_table = self._read_metadata_table()
 
         if metadata_table.num_rows == 0:
-            return None, None, None
+            return None, None, None, None
 
         probe_size = min(_SESSION_KEY_PROBE_ROWS, metadata_table.num_rows)
         probe_rows = metadata_table.slice(offset=0, length=probe_size).to_pylist()
@@ -225,6 +226,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         min_timestamp: int | None = None
         session_first_ts: dict[str | int, int] = {}
+        null_row_count = 0
 
         for row in metadata_rows:
             timestamp = int(row[METADATA_COLUMNS_TIME])
@@ -237,28 +239,25 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
             session_id = row.get(session_key)
             if session_id is None:
+                null_row_count += 1
                 continue
 
             session_first_ts[session_id] = min(
-                timestamp,
-                session_first_ts.get(session_id, timestamp),
+                timestamp, session_first_ts.get(session_id, timestamp)
             )
 
         if self._session_sample_ratio is None or self._session_sample_ratio >= 1.0:
-            return min_timestamp, session_key, None
+            return min_timestamp, session_key, None, None
 
         if session_key is None:
             self.warning(
                 "trace_session_sample_ratio requested, but neither provided_session_id "
                 "nor poor_man_session_id forms multi-row sessions; skipping sampling."
             )
-            return min_timestamp, None, None
+            return min_timestamp, None, None, None
 
         session_entries = sorted(
-            (
-                (first_ts, session_id)
-                for session_id, first_ts in session_first_ts.items()
-            ),
+            ((ts, sid) for sid, ts in session_first_ts.items()),
             key=lambda item: (item[0], str(item[1])),
         )
         original_count = len(session_entries)
@@ -271,35 +270,56 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if not sampled_entries and original_count > 0:
             sampled_entries = [self._rng.choice(session_entries)]
 
+        # Null-session rows become synthesized single-turn sessions downstream, so
+        # sample each (keyed by stable file row order) at the same ratio instead
+        # of letting the pyarrow "in" filter drop them all.
+        sampled_null_rows = {
+            ordinal
+            for ordinal in range(null_row_count)
+            if self._rng.uniform(0.0, 1.0) < self._session_sample_ratio
+        }
+
         self.info(
-            f"Sampled {len(sampled_entries):,} of {original_count:,} sessions using "
-            f"{session_key} "
-            f"with trace_session_sample_ratio={self._session_sample_ratio}"
+            f"Sampled {len(sampled_entries):,} of {original_count:,} sessions and "
+            f"{len(sampled_null_rows):,} of {null_row_count:,} null-session rows "
+            f"using {session_key} with "
+            f"trace_session_sample_ratio={self._session_sample_ratio}"
         )
         return (
             min_timestamp,
             session_key,
             {session_id for _, session_id in sampled_entries},
+            sampled_null_rows,
         )
 
     def load_dataset(self) -> dict[str, list[BasetenTrace]]:
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        self._floored_zero_osl = 0
 
-        min_timestamp, sampled_session_key, sampled_session_ids = (
+        min_timestamp, sampled_session_key, sampled_session_ids, sampled_null_rows = (
             self._sample_session_ids()
         )
         table_kwargs: dict[str, Any] = {}
-        if sampled_session_key and sampled_session_ids:
-            table_kwargs["filters"] = [
-                (sampled_session_key, "in", sorted(sampled_session_ids))
-            ]
+        sampling = sampled_session_key is not None and sampled_session_ids is not None
+        if sampling:
+            table_kwargs["filters"] = (
+                pc.field(sampled_session_key).isin(sorted(sampled_session_ids))
+                | pc.field(sampled_session_key).is_null()
+            )
 
         table = pq.read_table(self.filename, **table_kwargs)
         items: list[BasetenTrace] = []
+        null_ordinal = 0
 
         for row in table.to_pylist():
+            if sampling and row.get(sampled_session_key) is None:
+                kept = null_ordinal in sampled_null_rows
+                null_ordinal += 1
+                if not kept:
+                    continue
+
             if "__version__" in row and "dataset_version" not in row:
                 row["dataset_version"] = row.pop("__version__")
 
@@ -315,6 +335,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             if not self._filter_and_cap_trace(trace):
                 continue
 
+            # Count after filtering so skipped rows do not inflate the summary.
+            if trace.output_tokens == 0:
+                self._floored_zero_osl += 1
             items.append(trace)
 
         if self._max_idle_gap_cap_ms is not None:
@@ -337,6 +360,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 self._set_request_body(trace)
 
         self._log_filtering_summary()
+        if self._floored_zero_osl > 0:
+            self.info(
+                f"Floored {self._floored_zero_osl:,} traces with output_tokens=0 "
+                f"(e.g. canceled requests) to an output_length of 1"
+            )
         return data
 
     def _apply_idle_gap_cap(self, items: list[BasetenTrace]) -> None:
@@ -364,10 +392,20 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         an absolute pre-recorded time. This keeps each session's prefix cached in
         order (faithful KV reuse) and is the correct model for this trace (~93%
         multi-turn). Turn 0 keeps its absolute arrival time (session start).
-        Open-loop ('no-mercy') replay skips back-pressure entirely: every turn
+        Open-loop replay skips back-pressure entirely: every turn
         keeps its absolute (speedup-scaled) timestamp and fires on the schedule.
+        With ``open_loop_strict`` additionally set, sessions are exploded so
+        every trace row becomes its own independent single-turn conversation:
+        no session grouping, no multi-turn context mode, every request fires at
+        its absolute recorded time.
         """
-        if not self._open_loop:
+        if self._open_loop and self._open_loop_strict:
+            data = {
+                f"{session_id}#{index}": [trace]
+                for session_id, traces in data.items()
+                for index, trace in enumerate(traces)
+            }
+        elif not self._open_loop:
             self._apply_back_pressure(data)
         conversations = super().convert_to_conversations(data)
         self._delay_cap.log_summary(logger_name=__name__)

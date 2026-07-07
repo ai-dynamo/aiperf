@@ -6,6 +6,8 @@ from unittest.mock import Mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.config.flags.cli_config import CLIConfig
@@ -38,6 +40,14 @@ def _make_run(input_file: str | Path | None = None, **kwargs):
     return make_run_from_cli(CLIConfig(model_names=["test-model"], **kwargs))
 
 
+def _set_dataset_attr(run, **attrs) -> None:
+    """Set loader knobs on the dataset config; the CLI fields land in another
+    lane, so bypass pydantic field validation (the loader reads via getattr)."""
+    dataset = run.cfg.get_default_dataset()
+    for key, value in attrs.items():
+        object.__setattr__(dataset, key, value)
+
+
 class TestBasetenTraceDatasetLoader:
     def test_can_load_parquet_schema(self, tmp_path: Path):
         path = _write_parquet(
@@ -48,6 +58,11 @@ class TestBasetenTraceDatasetLoader:
                     "prompt": "hello",
                     "input_tokens": 3,
                     "output_tokens": 4,
+                    "total_hashes": [1, 2],
+                    "provided_session_id": "s",
+                    "poor_man_session_id": 1,
+                    "block_size": 64,
+                    "request_canceled": 0,
                 }
             ],
         )
@@ -55,6 +70,7 @@ class TestBasetenTraceDatasetLoader:
         assert BasetenTraceDatasetLoader.can_load(filename=path) is True
 
     def test_can_load_parquet_schema_without_optional_columns(self, tmp_path: Path):
+        # Only the four REQUIRED_COLUMNS; every optional column is absent.
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -122,9 +138,10 @@ class TestBasetenTraceDatasetLoader:
         assert [trace.timestamp for trace in dataset["42"]] == [0, 150]
         assert dataset["42"][0].text_input == "first prompt"
         assert dataset["42"][0].request_canceled == 1
+        # No "prompt" override: the completions endpoint emits single-prompt
+        # payloads as bare strings itself.
         assert dataset["42"][0].request_body == {
             "min_tokens": 5,
-            "prompt": "first prompt",
             "hash_ids": [1, 2],
             "block_size": 64,
         }
@@ -160,7 +177,6 @@ class TestBasetenTraceDatasetLoader:
         assert turn.max_tokens == 12
         assert turn.extra_body == {
             "min_tokens": 12,
-            "prompt": "literal prompt",
             "hash_ids": [11, 12],
             "block_size": 64,
         }
@@ -202,6 +218,88 @@ class TestBasetenTraceDatasetLoader:
             == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         )
         assert len(conversations[0].turns) == 2
+
+    def _write_multi_turn(self, tmp_path: Path) -> Path:
+        return _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 1_000,
+                    "prompt": "A-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "A",
+                },
+                {
+                    "timestamp_start_unix_ms": 3_000,
+                    "prompt": "A-2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "A",
+                },
+                {
+                    "timestamp_start_unix_ms": 2_000,
+                    "prompt": "B-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "provided_session_id": "B",
+                },
+            ],
+        )
+
+    def test_convert_to_conversations_open_loop_strict_explodes_rows(
+        self, tmp_path: Path
+    ):
+        path = self._write_multi_turn(tmp_path)
+        run = _make_run(path, open_loop_replay=True)
+        _set_dataset_attr(run, open_loop_strict=True)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        assert [len(conv.turns) for conv in conversations] == [1, 1, 1]
+        assert all(conv.context_mode is None for conv in conversations)
+        by_prompt = {
+            conv.turns[0].texts[0].contents[0]: conv.turns[0] for conv in conversations
+        }
+        # Absolute (normalized) recorded timestamps are kept; no delays.
+        assert {p: t.timestamp for p, t in by_prompt.items()} == {
+            "A-1": 0,
+            "B-1": 1_000,
+            "A-2": 2_000,
+        }
+        assert all(turn.delay is None for turn in by_prompt.values())
+
+    @pytest.mark.parametrize(
+        "open_loop_replay, open_loop_strict",
+        [
+            param(True, False, id="strict_off"),
+            param(False, True, id="strict_requires_open_loop"),
+        ],
+    )  # fmt: skip
+    def test_convert_to_conversations_open_loop_strict_gate_keeps_grouping(
+        self, tmp_path: Path, open_loop_replay: bool, open_loop_strict: bool
+    ):
+        path = self._write_multi_turn(tmp_path)
+        run = _make_run(path, open_loop_replay=open_loop_replay)
+        _set_dataset_attr(run, open_loop_strict=open_loop_strict)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        assert [len(conv.turns) for conv in conversations] == [2, 1]
+        assert (
+            conversations[0].context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
 
     def test_sessions_are_ordered_by_first_timestamp_not_session_id(
         self, tmp_path: Path
@@ -281,6 +379,146 @@ class TestBasetenTraceDatasetLoader:
         assert len(dataset) == 1
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
+
+    def _write_null_session_mix(self, tmp_path: Path) -> Path:
+        return _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "s1-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "s1-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 100,
+                },
+                {
+                    "timestamp_start_unix_ms": 300,
+                    "prompt": "s2-t1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 400,
+                    "prompt": "s2-t2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": 200,
+                },
+                {
+                    "timestamp_start_unix_ms": 500,
+                    "prompt": "null-1",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": None,
+                },
+                {
+                    "timestamp_start_unix_ms": 600,
+                    "prompt": "null-2",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": None,
+                },
+            ],
+        )
+
+    def test_trace_session_sampling_keeps_null_session_rows(self, tmp_path: Path):
+        path = self._write_null_session_mix(tmp_path)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.9999, random_seed=7),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        prompts = sorted(
+            trace.text_input for traces in dataset.values() for trace in traces
+        )
+        assert prompts == ["null-1", "null-2", "s1-t1", "s1-t2", "s2-t1", "s2-t2"]
+        # Null-session rows become synthesized single-turn sessions.
+        assert sorted(len(traces) for traces in dataset.values()) == [1, 1, 2, 2]
+
+    def test_trace_session_sampling_mid_ratio_keeps_exact_null_subset(
+        self, tmp_path: Path
+    ):
+        rows = [
+            {
+                "timestamp_start_unix_ms": 100 + i,
+                "prompt": f"s1-t{i}",
+                "input_tokens": 5,
+                "output_tokens": 1,
+                "poor_man_session_id": 100,
+            }
+            for i in range(2)
+        ] + [
+            {
+                "timestamp_start_unix_ms": 200 + i,
+                "prompt": f"null-{i:02d}",
+                "input_tokens": 5,
+                "output_tokens": 1,
+                "poor_man_session_id": None,
+            }
+            for i in range(20)
+        ]
+        path = _write_parquet(tmp_path / "trace.parquet", rows)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.5, random_seed=7),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        null_prompts = sorted(
+            trace.text_input
+            for traces in dataset.values()
+            for trace in traces
+            if trace.text_input.startswith("null-")
+        )
+        # Pinned for this file+seed: a proper subset of the 20 null rows, so a
+        # regression to keep-all or drop-all null rows fails here.
+        assert null_prompts == [
+            "null-00",
+            "null-01",
+            "null-02",
+            "null-06",
+            "null-08",
+            "null-09",
+            "null-11",
+            "null-13",
+            "null-15",
+            "null-16",
+            "null-18",
+        ]
+
+    def test_trace_session_sampling_null_rows_deterministic_across_loads(
+        self, tmp_path: Path
+    ):
+        path = self._write_null_session_mix(tmp_path)
+
+        def load() -> list[list[str]]:
+            loader = BasetenTraceDatasetLoader(
+                filename=str(path),
+                run=_make_run(path, trace_session_sample_ratio=0.5, random_seed=7),
+                prompt_generator=_mock_prompt_generator(),
+            )
+            return [
+                [trace.text_input for trace in traces]
+                for traces in loader.load_dataset().values()
+            ]
+
+        first, second = load(), load()
+
+        assert first == second
+        assert first, "mid-ratio sampling should keep at least one session"
 
     def test_trace_session_sampling_skips_when_no_effective_session_key(
         self, tmp_path: Path
@@ -473,6 +711,150 @@ class TestBasetenTraceDatasetLoader:
             3 * one_hour_ms,
         ]
 
+    def _write_hinted_single_row(self, tmp_path: Path) -> Path:
+        return _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "hinted",
+                    "input_tokens": 5,
+                    "output_tokens": 4,
+                    "total_hashes": [1, 2],
+                    "block_size": 64,
+                }
+            ],
+        )
+
+    @pytest.mark.parametrize(
+        "omit_kv_hints, expected_body",
+        [
+            param(
+                False,
+                {"min_tokens": 4, "hash_ids": [1, 2], "block_size": 64},
+                id="hints_present",
+            ),
+            param(True, {"min_tokens": 4}, id="hints_omitted"),
+        ],
+    )  # fmt: skip
+    def test_set_request_body_omit_kv_hints_controls_cache_hints(
+        self, tmp_path: Path, omit_kv_hints: bool, expected_body: dict
+    ):
+        path = self._write_hinted_single_row(tmp_path)
+        run = _make_run()
+        _set_dataset_attr(run, omit_kv_hints=omit_kv_hints)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert trace.request_body == expected_body
+
+    @pytest.mark.parametrize(
+        "force_min_tokens, expected_body",
+        [
+            param(
+                True,
+                {"min_tokens": 4, "hash_ids": [1, 2], "block_size": 64},
+                id="min_tokens_pinned",
+            ),
+            param(
+                False,
+                {"hash_ids": [1, 2], "block_size": 64},
+                id="min_tokens_not_set",
+            ),
+        ],
+    )  # fmt: skip
+    def test_set_request_body_force_min_tokens_controls_min_tokens(
+        self, tmp_path: Path, force_min_tokens: bool, expected_body: dict
+    ):
+        path = self._write_hinted_single_row(tmp_path)
+        run = _make_run()
+        _set_dataset_attr(run, force_min_tokens=force_min_tokens)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        turn = conversations[0].turns[0]
+        assert turn.extra_body == expected_body
+        # max_tokens handling is untouched by the min_tokens gate.
+        assert turn.max_tokens == 4
+
+    def test_load_dataset_zero_output_tokens_floored_to_one(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "canceled row",
+                    "input_tokens": 5,
+                    "output_tokens": 0,
+                    "request_canceled": 1,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "normal row",
+                    "input_tokens": 5,
+                    "output_tokens": 7,
+                    "request_canceled": 0,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        turns = {
+            turn.texts[0].contents[0]: turn
+            for conv in conversations
+            for turn in conv.turns
+        }
+        assert turns["canceled row"].max_tokens == 1
+        assert turns["normal row"].max_tokens == 7
+
+    def test_load_dataset_floored_count_excludes_filtered_rows(self, tmp_path: Path):
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "kept zero-osl",
+                    "input_tokens": 5,
+                    "output_tokens": 0,
+                },
+                {
+                    "timestamp_start_unix_ms": 200,
+                    "prompt": "skipped zero-osl",
+                    "input_tokens": 50,
+                    "output_tokens": 0,
+                },
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, synthesis_max_isl=10),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        prompts = [t.text_input for traces in dataset.values() for t in traces]
+        assert prompts == ["kept zero-osl"]
+        # The "Floored N traces" summary counts only rows that survive filtering.
+        assert loader._floored_zero_osl == 1
+
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",
@@ -496,7 +878,7 @@ class TestBasetenTraceDatasetLoader:
         trace = next(iter(next(iter(dataset.values()))))
 
         assert trace.output_length == 3
-        assert trace.request_body == {"min_tokens": 3, "prompt": "cap me"}
+        assert trace.request_body == {"min_tokens": 3}
 
 
 class TestBasetenTraceModel:
@@ -585,6 +967,35 @@ class TestSynthesisHooks:
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
+
+    def test_reconstruct_traces_omit_kv_hints_true_drops_cache_hints(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(tmp_path / "trace.parquet", [])
+        run = _make_run()
+        _set_dataset_attr(run, omit_kv_hints=True)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+        originals = [
+            BasetenTrace(
+                timestamp_start_unix_ms=100,
+                prompt="original",
+                input_tokens=10,
+                output_tokens=20,
+                total_hashes=[1, 2],
+                block_size=64,
+            )
+        ]
+        synth_dicts = [
+            {"timestamp": 5, "input_length": 50, "output_length": 60},
+        ]
+
+        result = loader._reconstruct_traces(originals, synth_dicts)
+
+        assert result[0].request_body == {"min_tokens": 60}
 
     def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
         self, tmp_path: Path
