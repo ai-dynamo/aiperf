@@ -210,17 +210,13 @@ def _check_prereqs(
             )
 
 
-def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
-    """Reject any cycle in the spawn graph.
+def _collect_turn_declared_spawn_edges(
+    metadata: DatasetMetadata,
+) -> dict[str, set[str]]:
+    """Collect spawn-graph edges restricted to turn-declared branches.
 
-    A turn-declared branch's ``child_conversation_ids`` are directed edges
-    (the declaring conversation -> each child conversation). The v1
-    orchestrator spawns children recursively at ``agent_depth + 1`` with no
-    cycle guard, so a self-spawn (``r -> r``) or any spawn cycle
-    (``r -> c -> r``) would recurse without bound at replay time. Detected
-    here at load time via an iterative DFS so a deep acyclic chain cannot
-    overflow the stack.
-
+    Maps each conversation_id to the set of child conversation_ids reachable
+    through branches whose ``branch_id`` at least one turn declares.
     Descriptors whose ``branch_id`` no turn declares are excluded: both
     orchestrator dispatch paths (``get_branch_ids`` and pre-session dispatch)
     gate on ``turn.branch_ids`` membership, so an undeclared descriptor never
@@ -235,6 +231,23 @@ def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
             spawn_edges.setdefault(conv.conversation_id, set()).update(
                 branch.child_conversation_ids
             )
+    return spawn_edges
+
+
+def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
+    """Reject any cycle in the spawn graph.
+
+    A turn-declared branch's ``child_conversation_ids`` are directed edges
+    (the declaring conversation -> each child conversation). The v1
+    orchestrator spawns children recursively at ``agent_depth + 1`` with no
+    cycle guard, so a self-spawn (``r -> r``) or any spawn cycle
+    (``r -> c -> r``) would recurse without bound at replay time. Detected
+    here at load time via an iterative DFS so a deep acyclic chain cannot
+    overflow the stack. Edges come from
+    ``_collect_turn_declared_spawn_edges``, which excludes descriptors no
+    turn declares.
+    """
+    spawn_edges = _collect_turn_declared_spawn_edges(metadata)
 
     # color: absent=unvisited, 1=on current DFS path, 2=fully explored.
     color: dict[str, int] = {}
