@@ -208,9 +208,15 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 for time_series in self._server_metrics_hierarchy.endpoints.values()
             ),
         )
-        await self._export_parquet_if_enabled(
-            TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
-        )
+        # Skip degenerate windows: TimeRangeFilter rejects start >= end, and a
+        # raise here propagates out of export_results and is swallowed into a
+        # None result (records_manager _publish_server_metrics_results), losing
+        # ALL server metrics. Mirrors the guards at the per-endpoint / warmup /
+        # json_exporter sites.
+        if start_ns < export_end_ns:
+            await self._export_parquet_if_enabled(
+                TimeRangeFilter(start_ns=start_ns, end_ns=export_end_ns)
+            )
 
         return results
 
