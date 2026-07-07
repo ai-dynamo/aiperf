@@ -12,10 +12,7 @@ It exercises the REAL code path at three levels:
   2. loader.convert_to_conversations(data)          -> Conversation/Turn objects
   3. CompletionsEndpoint.format_payload(...)         -> the on-the-wire payload
 
-Convention: checks for features that are NOT YET IMPLEMENTED are marked
-`xfail(strict=False)` with a reason naming the pending work. When that work lands
-the test xpasses -> drop the xfail and make it strict. Everything else is a hard
-assertion: a failure means a real regression.
+Every check is a hard assertion: a failure means a real regression.
 """
 
 from __future__ import annotations
@@ -185,9 +182,6 @@ def fixture_path(tmp_path: Path) -> Path:
 
 
 class TestSchemaAndLoad:
-    def test_can_load(self, fixture_path):
-        assert BasetenTraceDatasetLoader.can_load(filename=fixture_path) is True
-
     def test_groups_three_sessions_by_provided_id(self, fixture_path):
         _, data = _load(fixture_path)
         assert set(data.keys()) == {"A", "B", "C"}
@@ -253,12 +247,6 @@ class TestDeterminism:
 
 
 class TestTimingNoHang:
-    def test_first_turn_has_timestamp(self, fixture_path):
-        # fixed_schedule raises on a None first-turn timestamp.
-        loader, data = _load(fixture_path)
-        for conv in loader.convert_to_conversations(data):
-            assert conv.turns[0].timestamp is not None
-
     def test_global_idle_gap_capped(self, fixture_path):
         # With the cap, no gap between consecutive requests (across all sessions)
         # exceeds the cap, so fixed-schedule replay never idles longer than that.
@@ -287,6 +275,8 @@ class TestTimingNoHang:
     def test_back_pressure_turn0_absolute_continuation_delay(self, fixture_path):
         # Closed-loop multi-turn replay: turn 0 keeps an absolute timestamp
         # (session start); continuation turns fire on completion via a delay.
+        # Companion to test_open_loop_default_keeps_absolute_timestamps_no_delay:
+        # together they prove open_loop_replay is what flips the behavior.
         loader, data = _load(fixture_path, open_loop_replay=False)
         multi = [c for c in loader.convert_to_conversations(data) if len(c.turns) > 1]
         assert multi, "fixture should have a multi-turn session"
@@ -355,6 +345,74 @@ class TestTimingNoHang:
         ]
         assert conts and conts[0].delay == 3000.0  # raw gap, no subtraction
 
+    def test_closed_loop_gap_cap_preserves_recorded_think_time(self, tmp_path):
+        # Closed-loop think time derives from the RECORDED start-to-start gap,
+        # not the gap-cap-reflowed one. Fixture: 150s recorded gap with a 120s
+        # prior e2e -> 30s think time, exactly at a 30s gap cap. Reflowing
+        # first would compress the gap to 30s and zero the delay
+        # (max(0, 30_000 - 120_000)); think-time bounding belongs to
+        # inter_turn_delay_cap_seconds alone.
+        rows = [
+            dict(
+                timestamp_start_unix_ms=1_000,
+                prompt="G-1",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="G",
+                duration_e2e_ms=120_000,
+            ),
+            dict(
+                timestamp_start_unix_ms=151_000,
+                prompt="G-2",
+                input_tokens=12,
+                output_tokens=6,
+                provided_session_id="G",
+                duration_e2e_ms=500,
+            ),
+        ]
+        path = tmp_path / "gapcap.parquet"
+        pq.write_table(pa.Table.from_pylist(rows), path)
+        loader, data = _load(
+            path, open_loop_replay=False, max_idle_gap_cap_seconds=30.0
+        )
+        conts = [
+            t for conv in loader.convert_to_conversations(data) for t in conv.turns[1:]
+        ]
+        assert conts and conts[0].delay == 30_000.0
+
+    def test_closed_loop_gap_cap_still_collapses_dead_air_between_sessions(
+        self, tmp_path
+    ):
+        # In closed-loop mode the gap cap still applies to the absolute
+        # session-start timestamps (the only ones left on the schedule).
+        rows = [
+            dict(
+                timestamp_start_unix_ms=1_000,
+                prompt="S1",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="S1",
+                duration_e2e_ms=500,
+            ),
+            dict(
+                timestamp_start_unix_ms=201_000,
+                prompt="S2",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="S2",
+                duration_e2e_ms=500,
+            ),
+        ]
+        path = tmp_path / "deadair.parquet"
+        pq.write_table(pa.Table.from_pylist(rows), path)
+        loader, data = _load(
+            path, open_loop_replay=False, max_idle_gap_cap_seconds=30.0
+        )
+        starts = sorted(
+            conv.turns[0].timestamp for conv in loader.convert_to_conversations(data)
+        )
+        assert starts == [0, 30_000]
+
     def test_inter_turn_delay_cap_clamps_continuation_delays(self, fixture_path):
         # The existing inter_turn_delay_cap_seconds knob clamps think-time so a
         # session with long gaps stays runnable.
@@ -382,18 +440,6 @@ class TestTimingNoHang:
         for turn in all_turns:
             assert turn.timestamp is not None
             assert turn.delay is None
-
-    def test_closed_loop_flag_continuation_turns_get_delay(self, fixture_path):
-        # Companion: with open_loop_replay=False continuation turns DO get a
-        # delay and drop their absolute timestamp -- proving the flag is what
-        # flips the behavior.
-        loader, data = _load(fixture_path, open_loop_replay=False)
-        multi = [c for c in loader.convert_to_conversations(data) if len(c.turns) > 1]
-        assert multi, "fixture should have a multi-turn session"
-        for conv in multi:
-            for turn in conv.turns[1:]:
-                assert turn.delay is not None
-                assert turn.timestamp is None
 
 
 class TestFidelityCarryThrough:

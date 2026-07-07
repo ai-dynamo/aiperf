@@ -11,6 +11,7 @@ rewrites ``hash_ids``.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 __all__ = ["reflow_idle_gaps"]
@@ -29,16 +30,20 @@ def reflow_idle_gaps(timestamps_ms: Sequence[float], cap_ms: float | None) -> li
     The earliest event keeps its original value: trimming the *leading* offset
     is the origin policy's concern, not this function's.
 
-    ``cap_ms`` of ``None`` or ``<= 0`` is an identity transform. Ties (equal
-    timestamps) are preserved as zero-length gaps and keep their original
-    relative order (stable sort).
+    ``cap_ms`` of ``None`` disables the reflow (identity transform); a
+    non-positive cap raises ``ValueError`` (the CLI enforces ``> 0``), and a
+    sub-millisecond cap rounds up to 1 ms since timestamps are integer ms.
+    Ties (equal timestamps) are preserved as zero-length gaps and keep their
+    original relative order (stable sort).
     """
+    if cap_ms is not None and cap_ms <= 0:
+        raise ValueError(f"cap_ms must be positive or None, got {cap_ms}")
     values = [int(t) for t in timestamps_ms]
     n = len(values)
-    if cap_ms is None or cap_ms <= 0 or n <= 1:
+    if cap_ms is None or n <= 1:
         return values
 
-    cap = int(cap_ms)
+    cap = math.ceil(cap_ms)
     # Stable order by (timestamp, original index) so ties keep input order.
     order = sorted(range(n), key=lambda i: (values[i], i))
     out = [0] * n

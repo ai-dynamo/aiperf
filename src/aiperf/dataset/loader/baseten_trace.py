@@ -39,8 +39,6 @@ __all__ = [
     "count_baseten_parquet_records_and_sessions",
 ]
 
-_SESSION_KEY_PROBE_ROWS = 10_000
-
 
 def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int]:
     """Return row and session counts for a Baseten Parquet trace file."""
@@ -81,19 +79,23 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             dataset, "trace_session_sample_ratio", None
         )
         gap_cap_s = getattr(dataset, "max_idle_gap_cap_seconds", None)
-        self._max_idle_gap_cap_ms = (
-            int(gap_cap_s * 1000) if gap_cap_s is not None else None
-        )
+        # Keep the cap as float ms; int-truncation would turn a sub-ms cap
+        # into 0 and reflow_idle_gaps rejects non-positive caps.
+        self._max_idle_gap_cap_ms = gap_cap_s * 1000 if gap_cap_s is not None else None
         self._delay_cap = DelayCapTracker(
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
-        self._open_loop = getattr(dataset, "open_loop_replay", False)
+        self._open_loop = getattr(dataset, "open_loop_replay", True)
         self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
         self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
         self._force_min_tokens = getattr(dataset, "force_min_tokens", True)
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
         self._floored_zero_osl = 0
+        # Session key used to filter rows during sampling; grouping must reuse
+        # it because re-scoring the filtered subset can flip to the other
+        # column and silently shred the sessions sampling kept whole.
+        self._sampled_session_key: str | None = None
 
     @classmethod
     def can_load(
@@ -151,7 +153,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if not items:
             return {}
 
-        session_key = self._choose_session_key(items)
+        session_key = self._sampled_session_key or self._choose_session_key(items)
         if session_key is None:
             self.info(
                 "No repeated Baseten trace session key found; generating session IDs."
@@ -219,10 +221,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if metadata_table.num_rows == 0:
             return None, None, None, None
 
-        probe_size = min(_SESSION_KEY_PROBE_ROWS, metadata_table.num_rows)
-        probe_rows = metadata_table.slice(offset=0, length=probe_size).to_pylist()
-        session_key = self._choose_session_key_from_metadata_rows(probe_rows)
         metadata_rows = metadata_table.to_pylist()
+        session_key = self._choose_session_key_from_metadata_rows(metadata_rows)
 
         min_timestamp: int | None = None
         session_first_ts: dict[str | int, int] = {}
@@ -285,6 +285,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             f"using {session_key} with "
             f"trace_session_sample_ratio={self._session_sample_ratio}"
         )
+        self._sampled_session_key = session_key
         return (
             min_timestamp,
             session_key,
@@ -300,7 +301,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         items = self._read_traces(*self._sample_session_ids())
 
-        if self._max_idle_gap_cap_ms is not None:
+        # Closed-loop replay defers the gap cap to convert_to_conversations so
+        # think-time delays derive from the recorded timestamps, not reflowed ones.
+        if self._open_loop and self._max_idle_gap_cap_ms is not None:
             self._apply_idle_gap_cap(items)
 
         data = self._group_traces(items)
@@ -331,8 +334,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self,
         min_timestamp: int | None,
         session_key: str | None,
-        session_ids: set[str] | None,
-        null_rows: set[int],
+        session_ids: set[str | int] | None,
+        null_rows: set[int] | None,
     ) -> list[BasetenTrace]:
         """Read, sample, normalize, and filter trace rows from the Parquet file."""
         sampling = session_key is not None and session_ids is not None
@@ -351,9 +354,6 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 null_ordinal += 1
                 if not kept:
                     continue
-
-            if "__version__" in row and "dataset_version" not in row:
-                row["dataset_version"] = row.pop("__version__")
 
             trace = BasetenTrace.model_validate(row)
             self._preprocess_trace(trace)
@@ -377,15 +377,19 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         """Collapse global idle gaps so a sparse (sampled) trace does not idle
         through long dead-air stretches under fixed-schedule replay.
 
-        Operates on the normalized per-row timestamps across ALL sessions, before
-        grouping, so the global schedule stays monotonic. Pure timing rewrite —
-        does not touch hash_ids/prompt, so KV-cache fidelity is preserved.
+        Operates on the normalized timestamps of every trace that still carries
+        one: all rows in open-loop replay (before grouping), only session-start
+        turns in closed-loop replay (after back-pressure clears continuation
+        timestamps). Pure timing rewrite — does not touch hash_ids/prompt, so
+        KV-cache fidelity is preserved.
         """
-        if not items:
+        timed = [trace for trace in items if trace.timestamp is not None]
+        if not timed:
             return
-        original = [int(trace.timestamp or 0) for trace in items]
-        reflowed = reflow_idle_gaps(original, self._max_idle_gap_cap_ms)
-        for trace, new_ts in zip(items, reflowed, strict=True):
+        reflowed = reflow_idle_gaps(
+            [trace.timestamp for trace in timed], self._max_idle_gap_cap_ms
+        )
+        for trace, new_ts in zip(timed, reflowed, strict=True):
             trace.timestamp = new_ts
 
     def convert_to_conversations(
@@ -412,7 +416,14 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 for index, trace in enumerate(traces)
             }
         elif not self._open_loop:
+            # Back-pressure first so think-time delays derive from the RECORDED
+            # start-to-start gaps; the idle-gap cap then reflows only the
+            # remaining absolute session-start timestamps.
             self._apply_back_pressure(data)
+            if self._max_idle_gap_cap_ms is not None:
+                self._apply_idle_gap_cap(
+                    [trace for traces in data.values() for trace in traces]
+                )
         conversations = super().convert_to_conversations(data)
         self._delay_cap.log_summary(logger_name=__name__)
         return conversations
@@ -483,7 +494,5 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             original = originals[i] if i < len(originals) else originals[-1]
             merged = original.model_dump()
             merged.update(synth_dict)
-            trace = BasetenTrace.model_validate(merged)
-            self._set_request_body(trace)
-            result.append(trace)
+            result.append(BasetenTrace.model_validate(merged))
         return result

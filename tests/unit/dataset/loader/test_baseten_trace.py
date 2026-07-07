@@ -40,14 +40,6 @@ def _make_run(input_file: str | Path | None = None, **kwargs):
     return make_run_from_cli(CLIConfig(model_names=["test-model"], **kwargs))
 
 
-def _set_dataset_attr(run, **attrs) -> None:
-    """Set loader knobs on the dataset config; the CLI fields land in another
-    lane, so bypass pydantic field validation (the loader reads via getattr)."""
-    dataset = run.cfg.get_default_dataset()
-    for key, value in attrs.items():
-        object.__setattr__(dataset, key, value)
-
-
 class TestBasetenTraceDatasetLoader:
     def test_can_load_parquet_schema(self, tmp_path: Path):
         path = _write_parquet(
@@ -251,11 +243,9 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path
     ):
         path = self._write_multi_turn(tmp_path)
-        run = _make_run(path, open_loop_replay=True)
-        _set_dataset_attr(run, open_loop_strict=True)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(path, open_loop_replay=True, open_loop_strict=True),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -285,11 +275,13 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path, open_loop_replay: bool, open_loop_strict: bool
     ):
         path = self._write_multi_turn(tmp_path)
-        run = _make_run(path, open_loop_replay=open_loop_replay)
-        _set_dataset_attr(run, open_loop_strict=open_loop_strict)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(
+                path,
+                open_loop_replay=open_loop_replay,
+                open_loop_strict=open_loop_strict,
+            ),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -610,6 +602,61 @@ class TestBasetenTraceDatasetLoader:
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
 
+    def test_sampling_and_grouping_use_same_session_key(self, tmp_path: Path):
+        # Sampling filters rows by the session key scored on the FULL file;
+        # grouping must reuse that key. Re-scoring the filtered subset can flip
+        # to the other column, shredding the sessions sampling kept whole and
+        # grouping row-sampled null-key rows into multi-turn conversations with
+        # silently dropped middle turns.
+        #
+        # Fixture shape is pinned to the sampling RNG (root seed 42 from the
+        # autouse fixture): 7 poor_man sessions draw the first 7 uniforms (pairB
+        # dropped, pairA kept, singletons eat the rest), then the 3 null-poor_man
+        # "s0" rows draw the next 3 (t0 kept, t1 dropped, t2 kept). Full-file
+        # scores: poor_man (4, 2) > provided (2·"s0"... 3 rows -> (3, 1)), so
+        # sampling keys on poor_man; the filtered subset scores (2, 1) vs (2, 1),
+        # which re-scoring would flip to provided_session_id.
+        def row(ts: int, prompt: str, poor: int | None, provided: str | None = None):
+            return {
+                "timestamp_start_unix_ms": ts,
+                "prompt": prompt,
+                "input_tokens": 5,
+                "output_tokens": 1,
+                "provided_session_id": provided,
+                "poor_man_session_id": poor,
+            }
+
+        rows = [
+            row(0, "pairB-t0", 20),
+            row(10, "pairB-t1", 20),
+            row(100, "pairA-t0", 10),
+            row(110, "pairA-t1", 10),
+            *(row(200 + 100 * i, f"single-{i}", 31 + i) for i in range(5)),
+            *(row(1_000 + 100 * i, f"s0-t{i}", None, "s0") for i in range(3)),
+        ]
+        path = _write_parquet(tmp_path / "trace.parquet", rows)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, trace_session_sample_ratio=0.4),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        session_prompts = [
+            [trace.text_input for trace in traces] for traces in dataset.values()
+        ]
+        kept = {prompt for prompts in session_prompts for prompt in prompts}
+        # Guard against fixture/RNG drift: sampling must actually filter.
+        assert "pairB-t0" not in kept and "pairA-t0" in kept and "s0-t0" in kept
+        # The sampled poor_man pair stays whole in ONE session.
+        assert ["pairA-t0", "pairA-t1"] in session_prompts
+        # Row-sampled null-poor_man rows stay synthesized single-turn sessions;
+        # they must never be regrouped into a multi-turn session with holes.
+        for prompts in session_prompts:
+            if any(prompt.startswith("s0-") for prompt in prompts):
+                assert len(prompts) == 1
+
     def test_resolver_session_count_uses_same_key_as_loader(self, tmp_path: Path):
         path = _write_parquet(
             tmp_path / "trace.parquet",
@@ -741,11 +788,9 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path, omit_kv_hints: bool, expected_body: dict
     ):
         path = self._write_hinted_single_row(tmp_path)
-        run = _make_run()
-        _set_dataset_attr(run, omit_kv_hints=omit_kv_hints)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(path, omit_kv_hints=omit_kv_hints),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -773,11 +818,9 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path, force_min_tokens: bool, expected_body: dict
     ):
         path = self._write_hinted_single_row(tmp_path)
-        run = _make_run()
-        _set_dataset_attr(run, force_min_tokens=force_min_tokens)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(path, force_min_tokens=force_min_tokens),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -854,6 +897,34 @@ class TestBasetenTraceDatasetLoader:
         assert prompts == ["kept zero-osl"]
         # The "Floored N traces" summary counts only rows that survive filtering.
         assert loader._floored_zero_osl == 1
+
+    def test_load_dataset_populates_dataset_version_from_version_column(
+        self, tmp_path: Path
+    ):
+        # The parquet column is named __version__; the pydantic alias must
+        # populate dataset_version instead of stranding it in model_extra.
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "versioned",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "__version__": "0.0.11",
+                }
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert trace.dataset_version == "0.0.11"
 
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
@@ -947,6 +1018,7 @@ class TestSynthesisHooks:
                 poor_man_session_id=7,
                 total_hashes=[1, 2],
                 block_size=64,
+                __version__="0.0.11",
             )
         ]
         synth_dicts = [
@@ -959,43 +1031,14 @@ class TestSynthesisHooks:
         assert result[0].timestamp == 5
         assert result[0].input_length == 50
         assert result[0].output_length == 60
-        assert result[0].request_body == {
-            "min_tokens": 60,
-            "hash_ids": [1, 2],
-            "block_size": 64,
-        }
+        # Request bodies are built once in load_dataset, after the max-OSL cap.
+        assert result[0].request_body is None
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
-
-    def test_reconstruct_traces_omit_kv_hints_true_drops_cache_hints(
-        self, tmp_path: Path
-    ) -> None:
-        path = _write_parquet(tmp_path / "trace.parquet", [])
-        run = _make_run()
-        _set_dataset_attr(run, omit_kv_hints=True)
-        loader = BasetenTraceDatasetLoader(
-            filename=str(path),
-            run=run,
-            prompt_generator=_mock_prompt_generator(),
-        )
-        originals = [
-            BasetenTrace(
-                timestamp_start_unix_ms=100,
-                prompt="original",
-                input_tokens=10,
-                output_tokens=20,
-                total_hashes=[1, 2],
-                block_size=64,
-            )
-        ]
-        synth_dicts = [
-            {"timestamp": 5, "input_length": 50, "output_length": 60},
-        ]
-
-        result = loader._reconstruct_traces(originals, synth_dicts)
-
-        assert result[0].request_body == {"min_tokens": 60}
+        # The model_dump()/model_validate round-trip must not strand aliased
+        # fields in model_extra.
+        assert result[0].dataset_version == "0.0.11"
 
     def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
         self, tmp_path: Path
