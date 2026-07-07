@@ -82,7 +82,11 @@ def _delta_ms(
     """
     delta_ns = end - begin
     valid = delta_ns[~np.isnan(delta_ns)]
-    return valid / _NS_PER_MS
+    # Latencies are physically non-negative. float64 epoch-ns quantization
+    # (~256 ns ULP at ~1.75e18) plus cross-process wall-clock skew can push
+    # a near-zero delta slightly negative; clamp to 0 before ms conversion.
+    # np.maximum preserves the already-filtered array (no NaN reintroduced).
+    return np.maximum(valid, 0.0) / _NS_PER_MS
 
 
 def compute_credit_to_start_latency(
