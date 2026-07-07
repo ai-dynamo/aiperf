@@ -190,9 +190,13 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             metric_class = MetricRegistry.get_class(record.tag)
         except MetricTypeError:
             # Unregistered tag (analyzer-injected or external plugin metric):
-            # honor the inline `record.console_group` override against the
-            # group filter; pass the flag filter since there's no metric class
-            # to query for flags.
+            # an unregistered tag has no metric class and therefore no flags, so
+            # it can never satisfy a `require_flags` requirement. Reject it for
+            # require_flags-gated exporters (internal/experimental/HTTP-trace).
+            if self.require_flags != MetricFlags.NONE:
+                return False
+            # Otherwise honor the inline `record.console_group` override against
+            # the group filter.
             if self.console_groups is not None:
                 inline_group = record.console_group or MetricConsoleGroup.DEFAULT
                 if inline_group not in self.console_groups:

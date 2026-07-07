@@ -2,12 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 from rich.console import Console
 
 from aiperf.common.constants import NANOS_PER_MILLIS
+from aiperf.common.enums import MetricConsoleGroup
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
+from aiperf.exporters.experimental_metrics_console_exporter import (
+    ConsoleExperimentalMetricsExporter,
+)
+from aiperf.exporters.http_trace_console_exporter import HttpTraceConsoleExporter
+from aiperf.exporters.internal_metrics_console_exporter import (
+    ConsoleInternalMetricsExporter,
+)
 from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
@@ -249,3 +258,52 @@ class TestConsoleExporter:
     def test_get_title_returns_expected_string(self, mock_exporter_config):
         exporter = ConsoleMetricsExporter(mock_exporter_config)
         assert exporter._get_title() == "NVIDIA AIPerf | LLM Metrics"
+
+    @pytest.mark.parametrize(
+        "exporter_class",
+        [
+            param(ConsoleInternalMetricsExporter, id="internal"),
+            param(ConsoleExperimentalMetricsExporter, id="experimental"),
+            param(HttpTraceConsoleExporter, id="http_trace"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "console_group",
+        [
+            param(None, id="no_inline_group"),
+            param(MetricConsoleGroup.DEFAULT, id="inline_default_group"),
+        ],
+    )  # fmt: skip
+    def test_should_show_unregistered_tag_hidden_by_require_flags_gated_exporter(
+        self, exporter_class, console_group
+    ):
+        """A require_flags-gated exporter must reject an unregistered
+        (analyzer-injected) tag: it has no metric class and therefore no flags,
+        so it can never satisfy the require_flags requirement. The inline
+        console_group override must not rescue it."""
+        # exporter_config=None skips the dev-mode / show_trace_timing gate.
+        exporter = exporter_class(exporter_config=None)
+        record = MetricResult(
+            tag="analyzer_injected_sweep_metric",
+            header="h",
+            unit="tokens/sec",
+            avg=1.0,
+            console_group=console_group,
+        )
+        assert exporter._should_show(record) is False
+
+    def test_should_show_unregistered_tag_shown_by_default_exporter_with_matching_group(
+        self, mock_exporter_config
+    ):
+        """The default (non-flag-gated) exporter still shows an unregistered
+        analyzer-injected tag when its inline console_group matches
+        console_groups — the PR's intended new behavior."""
+        exporter = ConsoleMetricsExporter(mock_exporter_config)
+        record = MetricResult(
+            tag="analyzer_injected_sweep_metric",
+            header="h",
+            unit="tokens/sec",
+            avg=1.0,
+            console_group=MetricConsoleGroup.EFFECTIVE,
+        )
+        assert exporter._should_show(record) is True
