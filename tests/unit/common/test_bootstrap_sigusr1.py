@@ -15,6 +15,7 @@ import signal
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common import bootstrap
 
@@ -44,12 +45,21 @@ def test_noop_without_sigusr1() -> None:
 @pytest.mark.skipif(
     not hasattr(signal, "SIGUSR1"), reason="SIGUSR1 not available on this platform"
 )
-def test_registration_errors_are_suppressed() -> None:
+@pytest.mark.parametrize(
+    "exc_type",
+    [
+        param(ValueError, id="valueerror_stderr_without_fileno"),
+        param(RuntimeError, id="runtimeerror"),
+        param(AttributeError, id="attributeerror"),
+    ],
+)  # fmt: skip
+def test_registration_errors_are_suppressed(exc_type: type[Exception]) -> None:
     """A stderr without fileno() (test harnesses) raises on register; the
-    best-effort helper must swallow it rather than crash startup."""
+    best-effort helper must swallow it (ValueError, RuntimeError, or
+    AttributeError) rather than crash startup."""
     with patch(
         "aiperf.common.bootstrap.faulthandler.register",
-        side_effect=RuntimeError("sys.stderr has no fileno"),
+        side_effect=exc_type("sys.stderr has no fileno"),
     ):
         bootstrap.register_sigusr1_faulthandler()  # must not raise
 

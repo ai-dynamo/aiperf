@@ -20,6 +20,7 @@ import time
 from unittest import mock
 
 import pytest
+from pytest import param
 
 from aiperf.common.bootstrap import _install_parent_death_signal
 
@@ -101,6 +102,47 @@ def test_install_parent_death_signal_falls_back_to_getppid_snapshot():
         mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
     ):
         _install_parent_death_signal()
+
+    exit_mock.assert_not_called()
+
+
+def test_install_parent_death_signal_prctl_failure_returns_early():
+    """A nonzero prctl return means the guard never armed: fall back to
+    daemon=True behavior WITHOUT running the reparent check (an unarmed
+    guard must never exit the process)."""
+    fake_libc = mock.Mock()
+    fake_libc.prctl.return_value = -1
+    with (
+        mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
+        mock.patch("ctypes.CDLL", return_value=fake_libc),
+        # A mismatched ppid would trigger the race path if it were reached.
+        mock.patch.object(os, "getppid", return_value=999),
+        mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
+    ):
+        _install_parent_death_signal(controller_pid=1234)
+
+    exit_mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "exc_type",
+    [
+        param(OSError, id="cdll_load_failure"),
+        param(AttributeError, id="prctl_symbol_missing"),
+    ],
+)  # fmt: skip
+def test_install_parent_death_signal_libc_failure_returns_early(
+    exc_type: type[Exception],
+):
+    """libc load / prctl symbol failures are non-fatal best-effort: no
+    crash, no exit, plain fallback to daemon=True behavior."""
+    with (
+        mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
+        mock.patch("ctypes.CDLL", side_effect=exc_type("boom")),
+        mock.patch.object(os, "getppid", return_value=999),
+        mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
+    ):
+        _install_parent_death_signal(controller_pid=1234)  # must not raise
 
     exit_mock.assert_not_called()
 
