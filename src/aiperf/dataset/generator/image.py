@@ -107,12 +107,8 @@ class ImageGenerator(BaseGenerator):
 
         width_dist = self.config.width
         height_dist = self.config.height
-        width = self._dimensions_rng.sample_positive_normal_integer(
-            int(width_dist.expected_value), int(getattr(width_dist, "stddev", 0) or 0)
-        )
-        height = self._dimensions_rng.sample_positive_normal_integer(
-            int(height_dist.expected_value), int(getattr(height_dist, "stddev", 0) or 0)
-        )
+        width = width_dist.sample_int(self._dimensions_rng)
+        height = height_dist.sample_int(self._dimensions_rng)
 
         image = self._create_source_image(width, height)
         self.debug(

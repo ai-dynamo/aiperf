@@ -3,17 +3,20 @@
 
 import base64
 import io
+import statistics
 import sys
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 import soundfile as sf
 
+import aiperf.dataset.generator.audio as audio_module
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import AudioFormat
 from aiperf.common.exceptions import ConfigurationError
 from aiperf.config.dataset.content import AudioConfig
-from aiperf.config.distributions import NormalDistribution
+from aiperf.config.distributions import LogNormalDistribution, NormalDistribution
 from aiperf.dataset.generator import (
     AudioGenerator,
 )
@@ -197,6 +200,35 @@ def test_audio_below_min_length_raises():
     audio_generator = AudioGenerator(config)
     with pytest.raises(ConfigurationError, match="must be greater than 0.01 seconds"):
         audio_generator.generate()
+
+
+def test_lognormal_audio_length_varies():
+    """Audio length samples its full lognormal shape, not the flattened mean.
+
+    A lognormal has no ``stddev`` attribute, so the old code collapsed it to a
+    constant at the mean; num_samples (length * fixed 8kHz rate) is captured to
+    observe the drawn length without decoding.
+    """
+    config = AudioConfig(
+        length=LogNormalDistribution(mean=3.0, median=2.0),
+        sample_rates=[8.0],
+        depths=[16],
+        format=AudioFormat.WAV,
+        channels=1,
+    )
+    generator = AudioGenerator(config)
+
+    with patch.object(
+        audio_module,
+        "generate_noise_signal",
+        wraps=audio_module.generate_noise_signal,
+    ) as spy:
+        for _ in range(100):
+            generator.generate()
+
+    num_samples = [call.args[1] for call in spy.call_args_list]
+    assert len(set(num_samples)) > 3  # was: constant (lognormal flattened to mean)
+    assert statistics.median(num_samples) < statistics.fmean(num_samples)  # right skew
 
 
 class TestAudioBitDepth:

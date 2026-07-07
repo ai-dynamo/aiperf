@@ -135,15 +135,11 @@ class AudioGenerator(BaseGenerator):
                 - bit depth is not supported (must be 8, 16, 24, or 32)
         """
         length_dist = self.config.length
-        length_mean = float(length_dist.expected_value)
-        length_stddev = float(getattr(length_dist, "stddev", 0) or 0)
-        if length_mean < 0.01:
+        if float(length_dist.expected_value) < 0.01:
             raise ConfigurationError("Audio length must be greater than 0.01 seconds")
 
-        # Sample audio length (in seconds) using rejection sampling
-        audio_length = self._duration_rng.sample_normal(
-            length_mean, length_stddev, lower=0.01
-        )
+        # Sample audio length (in seconds) from the full typed distribution
+        audio_length = max(0.01, length_dist.sample(self._duration_rng))
 
         # Randomly select sampling rate and bit depth
         sampling_rate_hz = int(

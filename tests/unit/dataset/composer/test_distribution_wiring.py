@@ -149,6 +149,31 @@ class TestMaxTokensPairing:
         assert all(t.max_tokens is None for c in conversations for t in c.turns)
 
 
+class TestTurnsAndDelayWiring:
+    def test_lognormal_turns_varies(self):
+        composer = _make_composer(isl=128, turns={"mean": 6, "median": 4}, entries=300)
+        conversations = composer.create_dataset()
+        counts = [len(c.turns) for c in conversations]
+        assert len(set(counts)) > 3  # was: constant 6
+        assert statistics.median(counts) <= statistics.fmean(counts)  # right skew
+
+    def test_empirical_turn_delay_only_configured_values(self):
+        composer = _make_composer(
+            isl=128,
+            turns=3,
+            turn_delay={
+                "points": [{"value": 100, "weight": 50}, {"value": 5000, "weight": 50}]
+            },
+            entries=100,
+        )
+        conversations = composer.create_dataset()
+        delays = {
+            t.delay for c in conversations for t in c.turns if t.delay is not None
+        }
+        assert delays <= {100, 5000, 100.0, 5000.0}
+        assert len(delays) == 2  # was: constant 2550 (empirical mean)
+
+
 class TestTypedSequenceDistributionBuckets:
     def test_lognormal_bucket_actually_skews(self):
         composer = _make_composer(
