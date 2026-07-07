@@ -2557,9 +2557,27 @@
                   "title": "Replayspeedup"
                 },
                 "openLoopReplay": {
-                  "default": false,
-                  "description": "Replay every recorded request at its absolute (speedup-scaled) timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When ``False`` (default) continuation turns replay closed-loop via inter-turn delays; when ``True`` all turns retain their absolute timestamp and fire on the fixed schedule regardless of prior-turn completion. Use for replaying recordings whose sessions are already-determined event logs. Used by the Baseten trace loader.",
+                  "default": true,
+                  "description": "Open-loop absolute-timestamp replay (the default): every recorded request fires at its absolute (speedup-scaled) timestamp, bypassing per-turn back-pressure. Set ``False`` for closed-loop back-pressure: each continuation turn fires a think-time delay after the prior turn completes (recorded start-to-start gap minus the prior turn's recorded e2e duration). Closed-loop keeps sessions causally ordered when replayed service times differ from recorded ones, e.g. for A/A comparisons. Only honored by the baseten_trace loader.",
                   "title": "Openloopreplay",
+                  "type": "boolean"
+                },
+                "openLoopStrict": {
+                  "default": false,
+                  "description": "In open-loop replay, additionally treat every trace row as an independent single-turn session so ALL requests (not just each session's first turn) fire at their absolute recorded timestamps, even if earlier turns of the same recorded session have not completed. Trades away multi-turn session grouping and session metrics. Only honored by the baseten_trace loader.",
+                  "title": "Openloopstrict",
+                  "type": "boolean"
+                },
+                "omitKvHints": {
+                  "default": false,
+                  "description": "Stop forwarding recorded KV-cache hints (``hash_ids``, ``block_size``) in replayed request bodies; some strict frontends reject unknown parameters. Only honored by the baseten_trace loader.",
+                  "title": "Omitkvhints",
+                  "type": "boolean"
+                },
+                "forceMinTokens": {
+                  "default": true,
+                  "description": "Pin ``min_tokens`` to the recorded output length in replayed request bodies so replayed generations match recorded lengths. Disable to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader.",
+                  "title": "Forcemintokens",
                   "type": "boolean"
                 },
                 "osl": {
@@ -6521,9 +6539,27 @@
           "x-jinja2-supported": true
         },
         "openLoopReplay": {
-          "default": false,
-          "description": "Replay every recorded request at its absolute (speedup-scaled) timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When ``False`` (default) continuation turns replay closed-loop via inter-turn delays; when ``True`` all turns retain their absolute timestamp and fire on the fixed schedule regardless of prior-turn completion. Use for replaying recordings whose sessions are already-determined event logs. Used by the Baseten trace loader.",
+          "default": true,
+          "description": "Open-loop absolute-timestamp replay (the default): every recorded request fires at its absolute (speedup-scaled) timestamp, bypassing per-turn back-pressure. Set ``False`` for closed-loop back-pressure: each continuation turn fires a think-time delay after the prior turn completes (recorded start-to-start gap minus the prior turn's recorded e2e duration). Closed-loop keeps sessions causally ordered when replayed service times differ from recorded ones, e.g. for A/A comparisons. Only honored by the baseten_trace loader.",
           "title": "Openloopreplay",
+          "type": "boolean"
+        },
+        "openLoopStrict": {
+          "default": false,
+          "description": "In open-loop replay, additionally treat every trace row as an independent single-turn session so ALL requests (not just each session's first turn) fire at their absolute recorded timestamps, even if earlier turns of the same recorded session have not completed. Trades away multi-turn session grouping and session metrics. Only honored by the baseten_trace loader.",
+          "title": "Openloopstrict",
+          "type": "boolean"
+        },
+        "omitKvHints": {
+          "default": false,
+          "description": "Stop forwarding recorded KV-cache hints (``hash_ids``, ``block_size``) in replayed request bodies; some strict frontends reject unknown parameters. Only honored by the baseten_trace loader.",
+          "title": "Omitkvhints",
+          "type": "boolean"
+        },
+        "forceMinTokens": {
+          "default": true,
+          "description": "Pin ``min_tokens`` to the recorded output length in replayed request bodies so replayed generations match recorded lengths. Disable to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader.",
+          "title": "Forcemintokens",
           "type": "boolean"
         },
         "osl": {

@@ -254,8 +254,16 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         out["max_idle_gap_cap_seconds"] = cli.max_idle_gap_cap_seconds
     if _set(cli, "replay_speedup") and cli.replay_speedup is not None:
         out["replay_speedup"] = cli.replay_speedup
-    if _set(cli, "open_loop_replay") and cli.open_loop_replay:
-        out["open_loop_replay"] = cli.open_loop_replay
+    # Both polarities are forwarded so an explicit negative flag (e.g.
+    # --no-open-loop-replay) overrides the FileDataset default.
+    for flag in (
+        "open_loop_replay",
+        "open_loop_strict",
+        "omit_kv_hints",
+        "force_min_tokens",
+    ):
+        if _set(cli, flag):
+            out[flag] = getattr(cli, flag)
     return out
 
 
@@ -535,15 +543,42 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
         )
 
 
-def _reject_trace_session_sampling_without_file(cli: CLIConfig) -> None:
+_BASETEN_ONLY_TRACE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("trace_session_sample_ratio", "--trace-session-sample-ratio"),
+    ("replay_speedup", "--replay-speedup"),
+    ("max_idle_gap_cap_seconds", "--max-idle-gap-cap-seconds"),
+)
+
+
+def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
+    """Reject baseten_trace-only replay knobs on incompatible datasets.
+
+    These knobs are only consumed by the baseten_trace loader; on any other
+    dataset they would silently no-op, hiding user error. Rejected when no
+    --input-file is given, or when --custom-dataset-type is explicitly set
+    to a different loader.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    set_flags = [
+        flag
+        for attr, flag in _BASETEN_ONLY_TRACE_FLAGS
+        if attr in cli.model_fields_set and getattr(cli, attr) is not None
+    ]
+    if not set_flags:
+        return
+    if not cli.input_file:
+        raise ValueError(
+            f"{', '.join(set_flags)} is only supported by the baseten_trace "
+            "loader; provide --input-file and --custom-dataset-type baseten_trace."
+        )
     if (
-        "trace_session_sample_ratio" in cli.model_fields_set
-        and cli.trace_session_sample_ratio is not None
-        and not cli.input_file
+        cli.custom_dataset_type is not None
+        and cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE
     ):
         raise ValueError(
-            "--trace-session-sample-ratio is only supported with trace file datasets; "
-            "provide --input-file and a trace --custom-dataset-type."
+            f"{', '.join(set_flags)} is only supported by the baseten_trace "
+            f"loader, but --custom-dataset-type is {cli.custom_dataset_type}."
         )
 
 
@@ -676,7 +711,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     """
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
-    _reject_trace_session_sampling_without_file(cli)
+    _reject_baseten_only_trace_flags(cli)
 
     d = _flat_dataset_fields(cli)
     _attach_subtables(d, cli)

@@ -280,9 +280,9 @@ class TestTimingNoHang:
         assert cap_ts[:5] == unc_ts[:5]
 
     def test_back_pressure_turn0_absolute_continuation_delay(self, fixture_path):
-        # Multi-turn replay is closed-loop: turn 0 keeps an absolute timestamp
+        # Closed-loop multi-turn replay: turn 0 keeps an absolute timestamp
         # (session start); continuation turns fire on completion via a delay.
-        loader, data = _load(fixture_path)
+        loader, data = _load(fixture_path, open_loop_replay=False)
         multi = [c for c in loader.convert_to_conversations(data) if len(c.turns) > 1]
         assert multi, "fixture should have a multi-turn session"
         for conv in multi:
@@ -299,7 +299,7 @@ class TestTimingNoHang:
         # server time (replay inter-arrival = replay_service + recorded_service +
         # think). Fixture (zero-origin): A gaps 2000,3000 w/ prev e2e 800,700 ->
         # 1200,2300; B gap 7500 w/ prev e2e 600 -> 6900.
-        loader, data = _load(fixture_path)  # no delay/gap cap, speedup 1
+        loader, data = _load(fixture_path, open_loop_replay=False)
         delays = sorted(
             turn.delay
             for conv in loader.convert_to_conversations(data)
@@ -324,14 +324,16 @@ class TestTimingNoHang:
         ]
         path = tmp_path / "nulldur.parquet"
         pq.write_table(pa.Table.from_pylist(rows), path)
-        loader, data = _load(path)
+        loader, data = _load(path, open_loop_replay=False)
         conts = [t for conv in loader.convert_to_conversations(data) for t in conv.turns[1:]]
         assert conts and conts[0].delay == 3000.0  # raw gap, no subtraction
 
     def test_inter_turn_delay_cap_clamps_continuation_delays(self, fixture_path):
         # The existing inter_turn_delay_cap_seconds knob clamps think-time so a
         # session with long gaps stays runnable.
-        loader, data = _load(fixture_path, inter_turn_delay_cap_seconds=1.0)
+        loader, data = _load(
+            fixture_path, inter_turn_delay_cap_seconds=1.0, open_loop_replay=False
+        )
         capped = [
             turn
             for conv in loader.convert_to_conversations(data)
@@ -340,10 +342,10 @@ class TestTimingNoHang:
         assert capped, "fixture should have continuation turns"
         assert all(t.delay is not None and t.delay <= 1000 for t in capped)
 
-    def test_open_loop_keeps_absolute_timestamps_no_delay(self, fixture_path):
-        # Open-loop ('no-mercy'): back-pressure is skipped, so EVERY turn across
-        # every session keeps its absolute timestamp and no delay is set.
-        loader, data = _load(fixture_path, open_loop_replay=True)
+    def test_open_loop_default_keeps_absolute_timestamps_no_delay(self, fixture_path):
+        # Open-loop replay (the default): back-pressure is skipped, so EVERY turn
+        # across every session keeps its absolute timestamp and no delay is set.
+        loader, data = _load(fixture_path)
         conversations = loader.convert_to_conversations(data)
         assert conversations, "fixture should produce conversations"
         all_turns = [turn for conv in conversations for turn in conv.turns]
@@ -354,11 +356,11 @@ class TestTimingNoHang:
             assert turn.timestamp is not None
             assert turn.delay is None
 
-    def test_open_loop_default_off_continuation_turns_get_delay(self, fixture_path):
-        # Companion: with the default (open_loop_replay=False) continuation turns
-        # DO get a delay and drop their absolute timestamp -- proving the flag is
-        # what flips the behavior.
-        loader, data = _load(fixture_path)
+    def test_closed_loop_flag_continuation_turns_get_delay(self, fixture_path):
+        # Companion: with open_loop_replay=False continuation turns DO get a
+        # delay and drop their absolute timestamp -- proving the flag is what
+        # flips the behavior.
+        loader, data = _load(fixture_path, open_loop_replay=False)
         multi = [c for c in loader.convert_to_conversations(data) if len(c.turns) > 1]
         assert multi, "fixture should have a multi-turn session"
         for conv in multi:

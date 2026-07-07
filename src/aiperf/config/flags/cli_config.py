@@ -883,20 +883,76 @@ class CLIConfig(BaseConfig):
     open_loop_replay: Annotated[
         bool,
         Field(
-            default=False,
-            description="Replay every recorded request at its absolute (speedup-scaled) "
-            "timestamp (open-loop / 'no-mercy'), bypassing per-turn back-pressure. When "
-            "set, all turns retain their absolute timestamp and fire on the fixed "
-            "schedule regardless of prior-turn completion, rather than continuation turns "
-            "replaying closed-loop via inter-turn delays. Use for replaying recordings "
-            "whose sessions are already-determined event logs. Routes onto the active "
-            "FileDataset's ``open_loop_replay`` field at config-resolution time.",
+            default=True,
+            description="Open-loop absolute-timestamp replay (the default): every "
+            "recorded request fires at its absolute (speedup-scaled) timestamp, "
+            "bypassing per-turn back-pressure. Pass `--no-open-loop-replay` for "
+            "closed-loop back-pressure: each continuation turn fires a think-time "
+            "delay after the prior turn completes (recorded start-to-start gap minus "
+            "the prior turn's recorded e2e duration). Closed-loop keeps sessions "
+            "causally ordered when replayed service times differ from recorded ones, "
+            "e.g. for A/A comparisons. Only honored by the baseten_trace loader. "
+            "Routes onto the active FileDataset's ``open_loop_replay`` field at "
+            "config-resolution time.",
         ),
         CLIParameter(
             name=("--open-loop-replay",),
+            negative="--no-open-loop-replay",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = True
+
+    open_loop_strict: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="In open-loop replay, additionally treat every trace row as "
+            "an independent single-turn session so ALL requests (not just each "
+            "session's first turn) fire at their absolute recorded timestamps, even "
+            "if earlier turns of the same recorded session have not completed. "
+            "Trades away multi-turn session grouping and session metrics. Only "
+            "honored by the baseten_trace loader. Routes onto the active "
+            "FileDataset's ``open_loop_strict`` field at config-resolution time.",
+        ),
+        CLIParameter(
+            name=("--open-loop-strict",),
             group=Groups.CONVERSATION_INPUT,
         ),
     ] = False
+
+    omit_kv_hints: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Stop forwarding recorded KV-cache hints (``hash_ids``, "
+            "``block_size``) in replayed request bodies; some strict frontends "
+            "reject unknown parameters. Only honored by the baseten_trace loader. "
+            "Routes onto the active FileDataset's ``omit_kv_hints`` field at "
+            "config-resolution time.",
+        ),
+        CLIParameter(
+            name=("--omit-kv-hints",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = False
+
+    force_min_tokens: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Pin ``min_tokens`` to the recorded output length in "
+            "replayed request bodies so replayed generations match recorded "
+            "lengths. Pass `--no-force-min-tokens` to let EOS end generations "
+            "naturally (some servers reject ``min_tokens``). Only honored by the "
+            "baseten_trace loader. Routes onto the active FileDataset's "
+            "``force_min_tokens`` field at config-resolution time.",
+        ),
+        CLIParameter(
+            name=("--force-min-tokens",),
+            negative="--no-force-min-tokens",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = True
 
     ##############################################################################
     # Prompt
