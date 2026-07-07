@@ -375,6 +375,7 @@ class TestSynthesisSpeedupBasetenGuard:
         "extra",
         [
             param(("--synthesis-speedup-ratio", "10"), id="synthesis-alone"),
+            param(("--synthesis-speedup-ratio", "0.5"), id="slowdown-ratio"),
             param(("--replay-speedup", "10", "--synthesis-speedup-ratio", "10"), id="compounds-with-replay-speedup"),
         ],
     )  # fmt: skip
