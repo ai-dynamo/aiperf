@@ -9,6 +9,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
     ParsedResponse,
+    RequestRecord,
     SSEMessage,
     TextResponseData,
 )
@@ -143,6 +144,44 @@ class TestWorkerFirstTokenCallback:
         results = [await callback(msg.perf_ns, msg) for msg in messages]
 
         assert results == [False, False, True]
+
+
+@pytest.mark.asyncio
+class TestWorkerRequestLatency:
+    async def test_request_latency_uses_last_parsed_content_response(
+        self, monkeypatch, mock_worker
+    ):
+        parse_returns = [
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
+            ParsedResponse(perf_ns=200, data=None),
+            ParsedResponse(perf_ns=250, data=TextResponseData(text="last")),
+        ]
+        setup_mock_endpoint(mock_worker, monkeypatch, parse_returns)
+        record = RequestRecord(
+            start_perf_ns=100,
+            responses=[
+                SSEMessage(perf_ns=150),
+                SSEMessage(perf_ns=200),
+                SSEMessage(perf_ns=250),
+            ],
+        )
+
+        assert mock_worker._request_latency_ns_for_record(record) == 150
+
+    async def test_request_latency_is_none_without_content_response(
+        self, monkeypatch, mock_worker
+    ):
+        setup_mock_endpoint(
+            mock_worker,
+            monkeypatch,
+            ParsedResponse(perf_ns=200, data=None),
+        )
+        record = RequestRecord(
+            start_perf_ns=100,
+            responses=[SSEMessage(perf_ns=200)],
+        )
+
+        assert mock_worker._request_latency_ns_for_record(record) is None
 
 
 class TestWarmupSystemMessage:

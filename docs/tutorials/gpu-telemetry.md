@@ -120,7 +120,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 source $HOME/.local/bin/env
 
-uv venv --python 3.10
+uv venv --python 3.11
 
 source .venv/bin/activate
 
@@ -307,7 +307,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 source $HOME/.local/bin/env
 
-uv venv --python 3.10
+uv venv --python 3.11
 
 source .venv/bin/activate
 

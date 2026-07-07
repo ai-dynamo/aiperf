@@ -315,6 +315,111 @@ benchmark:
 
 Each phase is a complete arrival pattern in its own right, with its own concurrency, duration, and arrival shape (`concurrency`, `constant`, `poisson`, `gamma`, `fixed_schedule`, `user_centric`, ...).
 
+## Adaptive scale in YAML
+
+Adaptive scale is for single-run boundary discovery. Instead of launching a sweep or separate search trials, AIPerf runs one profiling phase, starts at a low control value, evaluates SLA windows, ramps up while the SLA passes, and then sustains near the discovered boundary.
+
+In v1 the control variable is session/request concurrency, so adaptive scale is configured on a `concurrency` phase. The CLI exposes only the basic path: `--adaptive-scale`, `--adaptive-sustain-duration`, `--adaptive-assessment-period`, plus the existing `--concurrency` and `--benchmark-duration` flags and the adaptive-specific `--adaptive-scale-sla` flag. Advanced controller tuning lives in YAML so it stays reviewable and version-controlled.
+
+Do not combine `adaptive_scale` with `concurrency_ramp`: adaptive scale already adjusts concurrency during the phase to discover an SLA boundary. Use `concurrency_ramp` only when you know the target concurrency and want to ease into it over a fixed duration.
+
+When you combine `--config` with adaptive CLI flags, those CLI flags overlay only the basic fields on the profiling phase. If the YAML contains an advanced `adaptive_scale:` block, AIPerf preserves its strategy and tuning fields while applying the explicit CLI overrides for enablement, sustain duration, assessment period, concurrency, duration, and adaptive scale SLA.
+
+```yaml
+schemaVersion: "2.0"
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts: {isl: 512, osl: 128}
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 200          # max control value
+      duration: 3600
+      adaptive_scale:
+        enabled: true
+        control_variable: concurrency
+        min_concurrency: 1
+        assessment_period: 60
+        min_completed_requests: 20
+        sustain_duration: 1800
+        strategy:
+          type: ramp_until_fail
+          step_policy: sla_margin
+          base_step: 10
+          max_step_multiplier: 4
+      sla:
+        request_latency:
+          p95:
+            le: 30000
+```
+
+That example uses the default v1 strategy, `ramp_until_fail`, with `sla_margin` step sizing. On each assessment window, AIPerf computes the configured SLA metric and chooses a larger step when the observed value is far from the boundary, then falls back to the minimum step as it approaches the boundary.
+
+For lower-is-better SLA filters such as latency or error rate, use `lt` or `le`:
+
+```yaml
+sla:
+  request_latency:
+    p95:
+      le: 30000
+```
+
+For higher-is-better SLA filters such as throughput or adaptive-window goodput ratio, use `gt` or `ge`:
+
+```yaml
+sla:
+  request_throughput:
+    avg:
+      ge: 80
+  goodput_ratio:
+    avg:
+      ge: 0.95
+```
+
+Adaptive scale evaluates SLA filters from controller assessment windows. The `request_latency` filter uses the same per-request latency sample as the records-pipeline `request_latency` metric: the interval from request start to the last parsed response with actual content. `request_throughput` is completed successful requests per assessment-window second, and `goodput_ratio` is successful returned requests divided by all returned requests in the assessment window. Errors, cancellations, and requests without a valid latency sample count against the denominator. This is intentionally simpler than the post-processed `goodput` metric, which is SLO-qualified and computed later from full request records.
+
+Adaptive scale uses the shared SLA filter grammar. `request_latency` supports `avg`, `min`, `max`, and percentile stats `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, and `p99`; `request_throughput` and `goodput_ratio` support `avg`, `min`, and `max`.
+
+The same `sla_margin` policy works for both directions. With multiple SLA filters, adaptive scale uses the most constrained margin so the closest boundary controls the next step.
+
+### Future control variables
+
+This release intentionally supports only `control_variable: concurrency`. The controller directly adjusts the profiling phase's session-concurrency limit, which is safe to raise or lower while requests are in flight.
+
+Other control variables should be added through a small adaptive control backend when they are implemented end to end. For example, a future `users` backend would not just set an integer: it would need to resize or rebalance the user-centric schedule, including virtual-history users, spawn cadence, turn gaps, and in-flight sessions. A future `request_rate` backend would need different rate-generator semantics. Until one of those paths exists, rejecting non-`concurrency` values keeps the YAML honest and avoids implying that all load controls are interchangeable.
+
+A likely future shape is:
+
+```python
+class AdaptiveControlBackend(Protocol):
+    name: str
+    current: int
+    maximum: int
+
+    def set(self, value: int) -> None: ...
+```
+
+The adaptive controller would continue to own SLA-window evaluation and step selection, while each backend owns the mechanics of changing its specific control variable.
+
+Adaptive scale writes two timing-owned artifacts into the run directory:
+
+```text
+adaptive_scale_events.jsonl
+adaptive_scale_summary.json
+```
+
+Use these to inspect controller decisions (`adaptive_window`, `adaptive_decision`, `boundary_discovered`, `sustain_started`, terminal events), the current control value, SLA value, step size, and final boundary summary.
+
+Use adaptive scale when you want continuous pressure inside one benchmark invocation. Use `sweep` or `adaptive_search` when you want offline multi-run exploration across many independent trials.
+
 ## Sweeps in YAML
 
 Sweeps are the killer feature of YAML configs. The CLI only ever supported list-style flags like `--concurrency 8,16,32`. YAML lets you sweep any field, combine multiple parameters, or pull from a quasi-random distribution.

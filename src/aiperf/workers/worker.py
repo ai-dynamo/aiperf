@@ -362,6 +362,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
+            request_latency_ns=credit_context.request_latency_ns,
             worker_id=self.service_id,
         )
         self.execute_async(self.credit_return_push_client.send(credit_return))
@@ -418,6 +419,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
+                request_latency_ns=credit_context.request_latency_ns,
                 worker_id=self.service_id,
             )
             await self.credit_return_push_client.send(credit_return)
@@ -507,6 +509,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
             )
+            credit_context.request_latency_ns = self._request_latency_ns_for_record(
+                record
+            )
             await self._send_inference_result_message(record)
 
             # Copy request-level errors to credit context for CreditReturn tracking
@@ -529,6 +534,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self._release_and_evict_for_terminal(credit, x_correlation_id)
+
+    def _request_latency_ns_for_record(self, record: RequestRecord) -> int | None:
+        """Return the same latency sample used by RequestLatencyMetric."""
+        final_response_perf_ns = None
+        for response in record.responses:
+            parsed = self.inference_client.endpoint.parse_response(response)
+            if parsed is not None and parsed.data:
+                final_response_perf_ns = parsed.perf_ns
+        if final_response_perf_ns is None:
+            return None
+        if final_response_perf_ns < record.start_perf_ns:
+            return None
+        return final_response_perf_ns - record.start_perf_ns
 
     def _pin_parent_if_fork_child(self, credit: Credit, x_correlation_id: str) -> None:
         """FORK child seed: pin the parent so its session stays resident in

@@ -62,6 +62,7 @@ class OutputDefaults:
     SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
     SERVER_METRICS_EXPORT_CSV_FILE = Path("server_metrics_export.csv")
     SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
+    NETWORK_LATENCY_EXPORT_JSONL_FILE = Path("profile_export_network_latency.jsonl")
     EXPORT_LEVEL = ExportLevel.RECORDS
     EXPORT_HTTP_TRACE = False
     SHOW_TRACE_TIMING = False
@@ -234,6 +235,7 @@ class ArtifactsConfig(BaseConfig):
         "_server_metrics.jsonl",
         "_server_metrics.json",
         "_server_metrics.csv",
+        "_network_latency.jsonl",
         "_gpu_telemetry.jsonl",
         "_timeslices.csv",
         "_timeslices.json",
@@ -324,6 +326,17 @@ class ArtifactsConfig(BaseConfig):
         """Path for the server metrics JSONL export file."""
         base = self._base()
         name = f"{base}_server_metrics.jsonl" if base else "server_metrics_export.jsonl"
+        return self.dir / name
+
+    @property
+    def network_latency_export_jsonl_file(self) -> Path:
+        """Path for the per-sample network latency RTT probe JSONL export file."""
+        base = self._base()
+        name = (
+            f"{base}_network_latency.jsonl"
+            if base
+            else "profile_export_network_latency.jsonl"
+        )
         return self.dir / name
 
     @property

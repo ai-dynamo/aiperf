@@ -210,6 +210,10 @@ class Turn(AIPerfBaseModel):
         "dispatch time, after endpoint-level extra values, matching the "
         "OpenAI SDK's extra_body convention.",
     )
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        description="Per-turn HTTP headers merged into the request at dispatch time.",
+    )
     prerequisites: list[TurnPrerequisite] = Field(
         default_factory=list,
         description="Conditions gating dispatch of this turn (DAG authoring). "
