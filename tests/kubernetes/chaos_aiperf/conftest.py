@@ -249,9 +249,9 @@ async def scrape_aiperf_metrics(
     to the bare metric name; the last observed value wins). Suitable for
     presence and monotonic-increase assertions.
 
-    TODO(chaos_aiperf): the AIPerf operator's Prometheus surface is owned by
+    Extension note: the AIPerf operator's Prometheus surface is owned by
     :py:mod:`aiperf.operator.metrics` and exposes kopf reconcile counters.
-    As ported scenarios start asserting on benchmark-runtime metrics
+    For scenarios asserting on benchmark-runtime metrics
     (records-manager, workers, the controller HTTP API surface), extend
     this helper to accept an alternate pod selector and preserve label
     information instead of collapsing to bare names.

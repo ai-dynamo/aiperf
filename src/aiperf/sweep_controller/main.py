@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from aiperf.kubernetes.environment import K8sEnvironment
+
 if TYPE_CHECKING:
     from aiperf.config.sweep import AdaptiveSearchSweep
 
@@ -54,14 +56,10 @@ def _is_cancelled_result(result: Any) -> bool:
     return not result.success and error.endswith(_CANCELLED_CHILD_ERROR_SUFFIX)
 
 
-# K8s rejects CR patches > ~1 MiB with HTTP 413. Bound the in-CR aggregate
-# mirror so big sweeps (many cells x metrics x percentiles) don't strand the
-# parent at `Aggregating`. The disk-backed results sidecar still serves the
-# full document via `status.aggregateRef.apiPath`. 600 KiB leaves headroom
-# for status fields and apiserver framing under the 1 MiB ceiling.
-# TODO(slice-3-followup): migrate to `_JobSetSettings` once the working-tree
-# environment.py changes are committed (avoids cross-slice diff bleed here).
-_AGGREGATE_INLINE_MAX_BYTES = 600_000
+# K8s rejects CR patches > ~1 MiB with HTTP 413; the inline aggregate budget
+# lives on K8sEnvironment.JOBSET.SWEEP_AGGREGATE_INLINE_MAX_BYTES. Bound once
+# at module scope so every fit decision in a run uses the same cap.
+_AGGREGATE_INLINE_MAX_BYTES = K8sEnvironment.JOBSET.SWEEP_AGGREGATE_INLINE_MAX_BYTES
 
 
 def aggregate_marker_exists(base_dir: Path) -> bool:
@@ -428,7 +426,8 @@ def _load_aggregate_for_cr(
     ``confidence`` payload grows linearly and the patch can exceed the
     apiserver's 1 MB CR size cap, returning 413 and stranding the parent
     at ``Aggregating``. We bound the inlined size: if the encoded bundle
-    exceeds ``_AGGREGATE_INLINE_MAX_BYTES`` we drop ``confidence`` first,
+    exceeds ``AIPERF_K8S_JOBSET_SWEEP_AGGREGATE_INLINE_MAX_BYTES`` we drop
+    ``confidence`` first,
     then omit ``children`` and add a compact ``childrenTruncated`` marker
     if the post-drop payload still exceeds the budget. The disk-backed
     path served by the results sidecar still has the full document, so

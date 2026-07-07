@@ -143,6 +143,6 @@ def expected_lora_model_name(config: LoraConfig) -> str:
     ``modelName`` (same string passed as ``--name`` to ``deploy-lora``), so
     benchmarks should hit the adapter name, not the base model.
     """
-    # TODO: adjust for LoRA specifics -- if Dynamo ends up exposing adapters
-    # under ``{base_model}+{adapter_name}`` or similar, update this helper.
+    # If Dynamo ends up exposing adapters under ``{base_model}+{adapter_name}``
+    # or similar, update this helper to match.
     return config.adapter_name

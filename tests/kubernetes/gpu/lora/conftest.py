@@ -82,8 +82,7 @@ def lora_image(
         return env
     if gpu_settings.dynamo_image:
         return gpu_settings.dynamo_image
-    # TODO: adjust for LoRA specifics -- replace once there is a canonical
-    # LoRA-capable base image published for CI.
+    # Fallback until a canonical LoRA-capable base image is published for CI.
     return "nvcr.io/nvidia/dynamo/vllm-runtime:latest"
 
 
@@ -136,8 +135,8 @@ def lora_benchmark_config(
 ) -> BenchmarkConfig:
     """Small LoRA benchmark config used by scaffolded tests."""
     s = gpu_settings
-    # TODO: adjust for LoRA specifics -- endpoint_url should point at the
-    # Dynamo frontend service once a real base-model fixture is wired in.
+    # Conventional Dynamo frontend service URL; swap in the base-model
+    # fixture's real URL once one is wired in.
     endpoint_url = (
         f"http://dynamo-frontend.{lora_config.namespace}.svc.cluster.local:8000/v1"
     )
