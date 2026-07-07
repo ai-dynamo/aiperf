@@ -301,7 +301,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
 
         items = self._read_traces(*self._sample_session_ids())
 
-        if self._max_idle_gap_cap_ms is not None:
+        # Closed-loop replay defers the gap cap to convert_to_conversations so
+        # think-time delays derive from the recorded timestamps, not reflowed ones.
+        if self._open_loop and self._max_idle_gap_cap_ms is not None:
             self._apply_idle_gap_cap(items)
 
         data = self._group_traces(items)
@@ -378,15 +380,19 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         """Collapse global idle gaps so a sparse (sampled) trace does not idle
         through long dead-air stretches under fixed-schedule replay.
 
-        Operates on the normalized per-row timestamps across ALL sessions, before
-        grouping, so the global schedule stays monotonic. Pure timing rewrite —
-        does not touch hash_ids/prompt, so KV-cache fidelity is preserved.
+        Operates on the normalized timestamps of every trace that still carries
+        one: all rows in open-loop replay (before grouping), only session-start
+        turns in closed-loop replay (after back-pressure clears continuation
+        timestamps). Pure timing rewrite — does not touch hash_ids/prompt, so
+        KV-cache fidelity is preserved.
         """
-        if not items:
+        timed = [trace for trace in items if trace.timestamp is not None]
+        if not timed:
             return
-        original = [int(trace.timestamp or 0) for trace in items]
-        reflowed = reflow_idle_gaps(original, self._max_idle_gap_cap_ms)
-        for trace, new_ts in zip(items, reflowed, strict=True):
+        reflowed = reflow_idle_gaps(
+            [trace.timestamp for trace in timed], self._max_idle_gap_cap_ms
+        )
+        for trace, new_ts in zip(timed, reflowed, strict=True):
             trace.timestamp = new_ts
 
     def convert_to_conversations(
@@ -413,7 +419,14 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 for index, trace in enumerate(traces)
             }
         elif not self._open_loop:
+            # Back-pressure first so think-time delays derive from the RECORDED
+            # start-to-start gaps; the idle-gap cap then reflows only the
+            # remaining absolute session-start timestamps.
             self._apply_back_pressure(data)
+            if self._max_idle_gap_cap_ms is not None:
+                self._apply_idle_gap_cap(
+                    [trace for traces in data.values() for trace in traces]
+                )
         conversations = super().convert_to_conversations(data)
         self._delay_cap.log_summary(logger_name=__name__)
         return conversations

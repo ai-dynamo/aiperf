@@ -355,6 +355,74 @@ class TestTimingNoHang:
         ]
         assert conts and conts[0].delay == 3000.0  # raw gap, no subtraction
 
+    def test_closed_loop_gap_cap_preserves_recorded_think_time(self, tmp_path):
+        # Closed-loop think time derives from the RECORDED start-to-start gap,
+        # not the gap-cap-reflowed one. Fixture: 150s recorded gap with a 120s
+        # prior e2e -> 30s think time, exactly at a 30s gap cap. Reflowing
+        # first would compress the gap to 30s and zero the delay
+        # (max(0, 30_000 - 120_000)); think-time bounding belongs to
+        # inter_turn_delay_cap_seconds alone.
+        rows = [
+            dict(
+                timestamp_start_unix_ms=1_000,
+                prompt="G-1",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="G",
+                duration_e2e_ms=120_000,
+            ),
+            dict(
+                timestamp_start_unix_ms=151_000,
+                prompt="G-2",
+                input_tokens=12,
+                output_tokens=6,
+                provided_session_id="G",
+                duration_e2e_ms=500,
+            ),
+        ]
+        path = tmp_path / "gapcap.parquet"
+        pq.write_table(pa.Table.from_pylist(rows), path)
+        loader, data = _load(
+            path, open_loop_replay=False, max_idle_gap_cap_seconds=30.0
+        )
+        conts = [
+            t for conv in loader.convert_to_conversations(data) for t in conv.turns[1:]
+        ]
+        assert conts and conts[0].delay == 30_000.0
+
+    def test_closed_loop_gap_cap_still_collapses_dead_air_between_sessions(
+        self, tmp_path
+    ):
+        # In closed-loop mode the gap cap still applies to the absolute
+        # session-start timestamps (the only ones left on the schedule).
+        rows = [
+            dict(
+                timestamp_start_unix_ms=1_000,
+                prompt="S1",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="S1",
+                duration_e2e_ms=500,
+            ),
+            dict(
+                timestamp_start_unix_ms=201_000,
+                prompt="S2",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="S2",
+                duration_e2e_ms=500,
+            ),
+        ]
+        path = tmp_path / "deadair.parquet"
+        pq.write_table(pa.Table.from_pylist(rows), path)
+        loader, data = _load(
+            path, open_loop_replay=False, max_idle_gap_cap_seconds=30.0
+        )
+        starts = sorted(
+            conv.turns[0].timestamp for conv in loader.convert_to_conversations(data)
+        )
+        assert starts == [0, 30_000]
+
     def test_inter_turn_delay_cap_clamps_continuation_delays(self, fixture_path):
         # The existing inter_turn_delay_cap_seconds knob clamps think-time so a
         # session with long gaps stays runnable.
