@@ -23,6 +23,7 @@ the only state-changing piece).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import aiohttp
@@ -31,9 +32,32 @@ from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.operator.progress_client import ProgressClient
 
-__all__ = ["fetch_sweep_aggregate_to_disk"]
+__all__ = ["SweepAggregateFetchResult", "fetch_sweep_aggregate_to_disk"]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True, frozen=True)
+class SweepAggregateFetchResult:
+    """Outcome of one sidecar harvest attempt.
+
+    ``downloaded < listed`` means the harvest is PARTIAL: the sidecar
+    advertised files that never landed on the PVC (sidecar dying mid-stream,
+    PVC write failure). Callers must NOT delete the sweep JobSet on a partial
+    harvest — the controller pod's emptyDir holds the only other copy of the
+    missing files.
+    """
+
+    downloaded: int
+    """Count of files successfully written to the operator's PVC."""
+
+    listed: int
+    """Count of files the sidecar advertised via ``/api/results/list``."""
+
+    @property
+    def is_partial(self) -> bool:
+        """True when at least one advertised file failed to download."""
+        return self.downloaded < self.listed
 
 
 def _ensure_sweep_root(base_dir: Path, namespace: str, sweep_name: str) -> Path:
@@ -64,7 +88,7 @@ async def fetch_sweep_aggregate_to_disk(
     namespace: str,
     epoch: str,
     base_dir: Path,
-) -> int:
+) -> SweepAggregateFetchResult:
     """Download every artifact from the sweep-controller sidecar to the PVC.
 
     Args:
@@ -77,12 +101,16 @@ async def fetch_sweep_aggregate_to_disk(
             typically ``/data``).
 
     Returns:
-        Count of files successfully downloaded. ``0`` indicates the sidecar
-        was unreachable, the marker wasn't ready, or no files were listed.
+        :class:`SweepAggregateFetchResult` with the downloaded and listed
+        file counts. ``downloaded == 0`` indicates the sidecar was
+        unreachable, the marker wasn't ready, or no files were listed;
+        ``downloaded < listed`` indicates a partial harvest (some advertised
+        files failed to land on disk).
 
     The handler does not raise on transient sidecar failures (the
     sweep-controller pod may be mid-shutdown); callers re-trigger on the
-    next ``status.aggregation.phase`` reconcile if the count is zero.
+    next ``status.aggregation.phase`` reconcile if the count is zero or
+    the harvest is partial.
 
     The sweep-controller writes its parent aggregate at
     ``/results/<ns>/sweeps/<sweep>/<epoch>/aggregate.json`` (and
@@ -99,21 +127,34 @@ async def fetch_sweep_aggregate_to_disk(
 
     try:
         async with ProgressClient(port=sidecar_port) as sidecar:
-            downloaded = await sidecar.download_all_results(host, base_dir)
+            # List first so callers can compare downloaded vs advertised.
+            # download_all_results re-lists internally; the file set is
+            # frozen once the controller writes the ready marker, so the
+            # second list sees the same files (or fewer on sidecar death,
+            # which the downloaded < listed comparison catches).
+            listed_files = await sidecar.get_results_list(host)
+            if not listed_files:
+                logger.info(
+                    f"sweep-aggregate fetch found no files for {namespace}/{sweep_name} "
+                    f"(sidecar may be pre-marker)"
+                )
+                return SweepAggregateFetchResult(downloaded=0, listed=0)
+            downloaded_files = await sidecar.download_all_results(host, base_dir)
     except (aiohttp.ClientError, ConnectionError, TimeoutError, OSError) as e:
         logger.warning(
             f"sweep-aggregate fetch failed for {namespace}/{sweep_name} "
             f"@ {host}:{sidecar_port}: {e}"
         )
-        return 0
+        return SweepAggregateFetchResult(downloaded=0, listed=0)
 
-    count = len(downloaded or [])
+    listed = len(listed_files)
+    count = len(downloaded_files or [])
     if count == 0:
         logger.info(
             f"sweep-aggregate fetch returned no files for {namespace}/{sweep_name} "
             f"(sidecar may be pre-marker)"
         )
-        return 0
+        return SweepAggregateFetchResult(downloaded=0, listed=listed)
 
     try:
         _write_sweep_latest_pointer(base_dir, namespace, sweep_name, epoch)
@@ -128,6 +169,6 @@ async def fetch_sweep_aggregate_to_disk(
         )
     logger.info(
         f"sweep-aggregate fetch ok: {namespace}/{sweep_name} epoch={epoch} "
-        f"files={count} -> {base_dir}"
+        f"files={count}/{listed} -> {base_dir}"
     )
-    return count
+    return SweepAggregateFetchResult(downloaded=count, listed=listed)

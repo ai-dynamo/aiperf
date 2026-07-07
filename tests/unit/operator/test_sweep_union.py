@@ -86,7 +86,7 @@ async def test_list_all_sweeps_archived_only(tmp_path: Path) -> None:
             "completedRuns": 4,
             "failedRuns": 0,
             "completedAt": "2026-04-25T01:00:00Z",
-            "spec_snapshot": {
+            "specSummary": {
                 "sweep_type": "grid",
                 "dimensions": [{"name": "concurrency", "values": [1, 2, 4, 8]}],
             },
@@ -174,7 +174,7 @@ async def test_list_all_sweeps_both(tmp_path: Path) -> None:
             "completedRuns": 4,
             "failedRuns": 0,
             "completedAt": "2026-04-25T01:00:00Z",
-            "spec_snapshot": {
+            "specSummary": {
                 "sweep_type": "grid",
                 "dimensions": [{"name": "concurrency", "values": [1, 2, 4, 8]}],
             },

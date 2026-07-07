@@ -134,7 +134,7 @@ def _aggregate_doc(**overrides: object) -> dict[str, object]:
         "startedAt": "2026-05-18T12:00:00Z",
         "completedAt": "2026-05-18T12:05:00Z",
         "runStates": {"completed": 2, "failed": 0, "cancelled": 0},
-        "spec_snapshot": {
+        "specSummary": {
             "sweep_type": "grid",
             "dimensions": [
                 {"name": "concurrency", "values": [32, 64]},

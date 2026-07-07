@@ -147,13 +147,17 @@ def _benchmark_run_for_child() -> BenchmarkRun:
 
 
 def _fake_progress_client(downloaded: list[str] | BaseException) -> MagicMock:
-    """Create an async ProgressClient double with sidecar download behavior."""
+    """Create an async ProgressClient double with sidecar list+download behavior."""
     fake = MagicMock()
     fake.__aenter__ = AsyncMock(return_value=fake)
     fake.__aexit__ = AsyncMock(return_value=None)
     if isinstance(downloaded, BaseException):
+        fake.get_results_list = AsyncMock(side_effect=downloaded)
         fake.download_all_results = AsyncMock(side_effect=downloaded)
     else:
+        fake.get_results_list = AsyncMock(
+            return_value=[{"name": name, "size": 64} for name in downloaded]
+        )
         fake.download_all_results = AsyncMock(return_value=downloaded)
     return fake
 
@@ -521,14 +525,15 @@ class TestSweepAggregateFetchNoPvc:
             aggregate_fetch, "ProgressClient", lambda *args, **kwargs: fake_client
         )
 
-        count = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
+        result = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
             sweep_name="latency-sweep",
             namespace="aiperf-benchmarks",
             epoch="1778027124",
             base_dir=tmp_path,
         )
 
-        assert count == 2
+        assert result.downloaded == 2
+        assert result.listed == 2
         fake_client.download_all_results.assert_awaited_once()
         host_arg, dest_arg = fake_client.download_all_results.await_args.args
         assert (
@@ -555,12 +560,12 @@ class TestSweepAggregateFetchNoPvc:
             lambda *args: pointer_writes.append(args),
         )
 
-        count = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
+        result = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
             sweep_name="latency-sweep",
             namespace="aiperf-benchmarks",
             epoch="1778027124",
             base_dir=tmp_path,
         )
 
-        assert count == 0
+        assert result.downloaded == 0
         assert pointer_writes == []

@@ -87,6 +87,9 @@ class MockCreditRouter:
     async def cancel_all_credits(self) -> None:
         pass
 
+    def begin_phase(self) -> None:
+        pass
+
     def mark_credits_complete(self) -> None:
         pass
 

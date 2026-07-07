@@ -83,16 +83,57 @@ def metric_result_from_array(
 class MetricAggregator(Protocol):
     """Run-level aggregator that produces a :class:`MetricResult`.
 
-    Implemented by :class:`MetricArray` (exact, ``np.ndarray``-backed) and
+    Implemented by :class:`MetricArray` (exact, ``np.ndarray``-backed),
     :class:`aiperf.metrics.list_metric_aggregation.TDigestListMetricAggregator`
-    (bounded-memory t-digest sketch). Both maintain an exact running ``sum``
-    so derived-sum metrics work uniformly across them.
+    (bounded-memory t-digest sketch), and :class:`ScalarSumAggregator`
+    (precomputed sum/count over columnar storage). All maintain an exact
+    running ``sum`` so derived-sum metrics work uniformly across them.
     """
 
     @property
     def sum(self) -> int | float: ...
 
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult: ...
+
+
+class ScalarSumAggregator:
+    """:class:`MetricAggregator` over a precomputed sum and count.
+
+    Used by :class:`aiperf.metrics.accumulator.MetricsAccumulator`, where the
+    per-record values already live in columnar storage: derived-sum metrics
+    (e.g. ``total_osl`` feeding ``output_token_throughput``) only need the
+    exact ``sum``, so copying the column into a :class:`MetricArray` would
+    allocate for nothing. Created once per tag per results pass, never per
+    record.
+
+    Example:
+        >>> agg = ScalarSumAggregator(total=4096.0, count=8)
+        >>> agg.sum
+        4096.0
+    """
+
+    __slots__ = ("_sum", "_count")
+
+    def __init__(self, total: int | float, count: int) -> None:
+        self._sum = total
+        self._count = count
+
+    @property
+    def sum(self) -> int | float:
+        """Exact sum of the per-record values this aggregator stands in for."""
+        return self._sum
+
+    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
+        """Build a sum/avg/count-only result (distribution stats live in the
+        columnar path — see ``metric_result_from_array``)."""
+        return MetricResult(
+            tag=tag,
+            header=header,
+            unit=unit,
+            sum=self._sum,
+            avg=self._sum / self._count if self._count else None,
+            count=self._count,
+        )
 
 
 MetricDictValueTypeVarT = TypeVar(

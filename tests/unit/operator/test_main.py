@@ -59,14 +59,18 @@ _FIXTURE_BODY: dict[str, Any] = {
 
 @pytest.mark.asyncio
 async def test_sweep_aggregation_complete_zero_fetch_raises_temporary_error(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The field handler retries when the sidecar returns no aggregate files."""
     from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
     from aiperf.operator.main import on_aiperfsweep_aggregation_complete
 
-    fetch = AsyncMock(return_value=0)
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=0, listed=0))
     monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
 
     with pytest.raises(kopf.TemporaryError):
         await on_aiperfsweep_aggregation_complete(
@@ -80,7 +84,7 @@ async def test_sweep_aggregation_complete_zero_fetch_raises_temporary_error(
 
 
 @pytest.mark.asyncio
-async def test_sweep_aggregation_complete_partial_fetch_keeps_jobset(
+async def test_sweep_aggregation_complete_missing_aggregate_keeps_jobset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A fetch that reports files but never landed aggregate.json must NOT
@@ -90,8 +94,12 @@ async def test_sweep_aggregation_complete_partial_fetch_keeps_jobset(
     """
     from aiperf.operator import main as operator_main
     from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
 
-    fetch = AsyncMock(return_value=3)  # files fetched, but no aggregate.json
+    # files fetched, but no aggregate.json on disk
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=3, listed=3))
     monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
     delete = AsyncMock()
     monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
@@ -110,18 +118,58 @@ async def test_sweep_aggregation_complete_partial_fetch_keeps_jobset(
 
 
 @pytest.mark.asyncio
+async def test_sweep_aggregation_complete_partial_download_keeps_jobset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """downloaded < listed keeps the JobSet even when aggregate.json landed.
+
+    The missing sibling artifacts (children.json, per-cell exports) exist
+    only on the controller pod's emptyDir; deleting the JobSet on a partial
+    harvest destroys them permanently.
+    """
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b"{}")
+
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=2, listed=3))
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    with pytest.raises(kopf.TemporaryError, match=r"harvest partial \(2/3"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+
+    delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_sweep_aggregation_complete_full_fetch_deletes_jobset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When aggregate.json actually landed on the PVC, the JobSet is reaped."""
     from aiperf.operator import main as operator_main
     from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
     (epoch_dir / "aggregate.json").write_bytes(b"{}")
 
-    fetch = AsyncMock(return_value=3)
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=3, listed=3))
     monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
     delete = AsyncMock()
     monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
@@ -135,6 +183,106 @@ async def test_sweep_aggregation_complete_full_fetch_deletes_jobset(
     )
 
     delete.assert_awaited_once_with("benchmarks", "aiperf-latency-sweep")
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_complete_truncated_aggregate_keeps_jobset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A crash-truncated aggregate.json must NOT pass the on-disk gate.
+
+    exists() alone would accept the truncated file and delete the JobSet,
+    permanently losing the only intact copy on the controller pod's emptyDir.
+    """
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succee')  # truncated
+
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=3, listed=3))
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    with pytest.raises(kopf.TemporaryError, match=r"aggregate harvest incomplete"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+
+    delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_complete_zero_fetch_with_valid_aggregate_treats_done(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A re-fire against a dead sidecar with a parseable aggregate on disk
+    is treated as an already-finished harvest, not an endless retry loop."""
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succeeded"}')
+
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=0, listed=0))
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    await operator_main.on_aiperfsweep_aggregation_complete(
+        body={},
+        status={"runEpoch": "1714064523"},
+        name="latency-sweep",
+        namespace="benchmarks",
+    )
+
+    delete.assert_awaited_once_with("benchmarks", "aiperf-latency-sweep")
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_complete_zero_fetch_truncated_aggregate_retries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Zero-fetch + truncated on-disk aggregate stays on the re-fetch path."""
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succee')  # truncated
+
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=0, listed=0))
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    with pytest.raises(kopf.TemporaryError, match=r"sidecar returned no files"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+
+    delete.assert_not_awaited()
 
 
 # =============================================================================

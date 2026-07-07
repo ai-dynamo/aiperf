@@ -1829,3 +1829,284 @@ class TestErrorAdjustedPercentiles:
         assert rl.p95 == pytest.approx(100.0)
         # No adj_* MetricResult emitted when there are no errors to inflate.
         assert "adj_request_latency" not in results
+
+
+def _token_record(
+    session_num: int,
+    osl: int,
+    isl: int,
+    start_ns: int,
+    end_ns: int,
+    phase: str = "profiling",
+):
+    """One request's worth of record + aggregate metrics, as a record processor emits."""
+    return create_metric_records_message(
+        session_num=session_num,
+        benchmark_phase=phase,
+        request_start_ns=start_ns,
+        request_end_ns=end_ns,
+        results=[
+            {
+                "output_sequence_length": osl,
+                "input_sequence_length": isl,
+                "request_count": 1,
+                "min_request_timestamp": start_ns,
+                "max_response_timestamp": end_ns,
+            }
+        ],
+    )
+
+
+class TestDerivedSumMetrics:
+    """DerivedSumMetric tags (total_osl, total_isl, ...) must survive the
+    accumulator path: _collect_scalars_and_arrays stores a MetricAggregator
+    for RECORD tags, not a bare float, so DerivedSumMetric._derive_value can
+    read ``.sum`` instead of raising and having the tag silently dropped.
+
+    Uses the real MetricRegistry (no mock fixture) so the actual derive
+    functions and dependency ordering run.
+    """
+
+    @pytest.fixture
+    def four_token_records(self) -> list:
+        """osl 10/20/30/40 (sum 100), isl x10 (sum 1000), spanning 1s..5s."""
+        return [
+            _token_record(
+                0, 10, 100, 1 * NANOS_PER_SECOND, int(1.5 * NANOS_PER_SECOND)
+            ),
+            _token_record(
+                1, 20, 200, 2 * NANOS_PER_SECOND, int(2.5 * NANOS_PER_SECOND)
+            ),
+            _token_record(
+                2, 30, 300, 3 * NANOS_PER_SECOND, int(3.5 * NANOS_PER_SECOND)
+            ),
+            _token_record(
+                3, 40, 400, 4 * NANOS_PER_SECOND, int(4.5 * NANOS_PER_SECOND)
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_compute_results_includes_derived_sums_exact(
+        self, mock_user_config: UserConfig, four_token_records: list
+    ) -> None:
+        """Full-dataset results carry total_osl/total_isl with exact sums."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in four_token_records:
+            await processor.process_record(record)
+
+        results = processor._compute_results()
+
+        assert "total_osl" in results, "total_osl dropped from accumulator results"
+        assert results["total_osl"].avg == 100
+        assert "total_isl" in results, "total_isl dropped from accumulator results"
+        assert results["total_isl"].avg == 1000
+
+    @pytest.mark.asyncio
+    async def test_output_token_throughput_dependency_chain(
+        self, mock_user_config: UserConfig, four_token_records: list
+    ) -> None:
+        """output_token_throughput requires total_osl; the chain must resolve."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in four_token_records:
+            await processor.process_record(record)
+
+        results = processor._compute_results()
+
+        # duration = max_response(4.5s) - min_request(1s) = 3.5s
+        assert "output_token_throughput" in results
+        assert results["output_token_throughput"].avg == pytest.approx(100 / 3.5)
+        assert "total_token_throughput" in results
+        assert results["total_token_throughput"].avg == pytest.approx(1100 / 3.5)
+
+    @pytest.mark.asyncio
+    async def test_steady_state_mask_includes_derived_sums(
+        self, mock_user_config: UserConfig, four_token_records: list
+    ) -> None:
+        """compute_results_for_mask (the steady-state path) carries derived sums
+        computed over the masked subset only."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in four_token_records:
+            await processor.process_record(record)
+
+        mask = np.array([True, True, False, False])
+        results = processor.compute_results_for_mask(
+            mask,
+            window_start_ns=1 * NANOS_PER_SECOND,
+            window_end_ns=3 * NANOS_PER_SECOND,
+        )
+
+        assert "total_osl" in results
+        assert results["total_osl"].avg == 30
+        assert "total_isl" in results
+        assert results["total_isl"].avg == 300
+        # duration within mask = max_response(2.5s) - min_request(1s) = 1.5s
+        assert "output_token_throughput" in results
+        assert results["output_token_throughput"].avg == pytest.approx(30 / 1.5)
+
+    @pytest.mark.asyncio
+    async def test_timeslices_include_derived_sums(
+        self, mock_user_config: UserConfig, four_token_records: list
+    ) -> None:
+        """Each timeslice carries per-window derived sums and throughputs."""
+        mock_user_config.benchmark.artifacts.slice_duration = 2.0
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in four_token_records:
+            await processor.process_record(record)
+
+        summary = await processor.summarize()
+
+        assert summary.timeslices is not None
+        assert len(summary.timeslices) == 2
+        first, second = summary.timeslices
+        # Slice 1 = [1s, 3s): records with osl 10, 20.
+        assert first["total_osl"].avg == 30
+        # window duration = max_response(2.5s) - min_request(1s) = 1.5s
+        assert first["output_token_throughput"].avg == pytest.approx(30 / 1.5)
+        # Slice 2 = [3s, 4.5s]: records with osl 30, 40.
+        assert second["total_osl"].avg == 70
+        assert second["output_token_throughput"].avg == pytest.approx(70 / 1.5)
+        # Overall results carry the full-run sums.
+        assert summary.results["total_osl"].avg == 100
+
+    @pytest.mark.asyncio
+    async def test_scalar_dict_exposes_metric_aggregator_for_record_tags(
+        self, mock_user_config: UserConfig, four_token_records: list
+    ) -> None:
+        """The derive-time dict satisfies the MetricAggregator protocol for
+        RECORD tags — the contract DerivedSumMetric._derive_value enforces."""
+        from aiperf.metrics.metric_dicts import MetricAggregator
+
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in four_token_records:
+            await processor.process_record(record)
+
+        captured: list = []
+
+        def spy_derive(results_dict) -> float:
+            captured.append(results_dict["output_sequence_length"])
+            return 0.0
+
+        processor._derive_funcs = {"_spy": spy_derive}
+        processor._compute_results()
+
+        assert len(captured) == 1
+        assert isinstance(captured[0], MetricAggregator)
+        assert captured[0].sum == 100
+
+
+class TestMultiPhaseRowAssignment:
+    """Multi-phase runs restart session_num at 0 per phase; the accumulator
+    must map (benchmark_phase, session_num) to unique rows so later phases
+    do not overwrite earlier phases' rows while running sums double-count."""
+
+    @pytest.fixture
+    def two_phase_records(self) -> list:
+        """Phases p1/p2, both with session_nums 0 and 1 (overlapping)."""
+        return [
+            _token_record(
+                0, 10, 100, 1 * NANOS_PER_SECOND, 2 * NANOS_PER_SECOND, phase="p1"
+            ),
+            _token_record(
+                1, 20, 200, 2 * NANOS_PER_SECOND, 3 * NANOS_PER_SECOND, phase="p1"
+            ),
+            _token_record(
+                0, 100, 1000, 10 * NANOS_PER_SECOND, 11 * NANOS_PER_SECOND, phase="p2"
+            ),
+            _token_record(
+                1, 200, 2000, 11 * NANOS_PER_SECOND, 12 * NANOS_PER_SECOND, phase="p2"
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_overlapping_session_nums_get_independent_rows(
+        self, mock_user_config: UserConfig, two_phase_records: list
+    ) -> None:
+        """No overwrite: all four records occupy distinct rows."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in two_phase_records:
+            await processor.process_record(record)
+
+        store = processor.column_store
+        assert store.count == 4
+        assert processor.record_count == 4
+        osl = store.numeric("output_sequence_length")
+        assert osl.tolist() == [10.0, 20.0, 100.0, 200.0]
+
+    @pytest.mark.asyncio
+    async def test_multi_phase_sums_equal_true_totals(
+        self, mock_user_config: UserConfig, two_phase_records: list
+    ) -> None:
+        """Distribution stats and derived sums reflect all phases' records."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in two_phase_records:
+            await processor.process_record(record)
+
+        results = processor._compute_results()
+
+        osl = results["output_sequence_length"]
+        assert osl.count == 4
+        assert osl.sum == 330
+        assert osl.avg == 82.5
+        assert osl.min == 10
+        assert osl.max == 200
+        assert results["total_osl"].avg == 330
+        assert results["total_isl"].avg == 3300
+        # One request_count per record: 2 per phase.
+        assert results["request_count"].avg == 4
+
+    @pytest.mark.asyncio
+    async def test_per_phase_filtering_still_works(
+        self, mock_user_config: UserConfig, two_phase_records: list
+    ) -> None:
+        """The benchmark_phase categorical mask isolates each phase's rows."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for record in two_phase_records:
+            await processor.process_record(record)
+
+        store = processor.column_store
+        for phase, expected_osl, expected_total in (
+            ("p1", [10.0, 20.0], 30),
+            ("p2", [100.0, 200.0], 300),
+        ):
+            mask = store.mask_for_categorical("benchmark_phase", phase)
+            assert mask.sum() == 2
+            osl_col = store.numeric("output_sequence_length")
+            assert sorted(osl_col[mask].tolist()) == expected_osl
+            results = processor.compute_results_for_mask(mask)
+            assert results["output_sequence_length"].count == 2
+            assert results["total_osl"].avg == expected_total
+
+    @pytest.mark.asyncio
+    async def test_single_phase_rows_unchanged(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        """Single-phase in-order ingest keeps row index == session_num."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for session_num, osl in enumerate([10, 20, 30]):
+            await processor.process_record(
+                _token_record(
+                    session_num,
+                    osl,
+                    osl * 10,
+                    (1 + session_num) * NANOS_PER_SECOND,
+                    (2 + session_num) * NANOS_PER_SECOND,
+                )
+            )
+
+        store = processor.column_store
+        assert store.count == 3
+        assert store.numeric("output_sequence_length").tolist() == [10.0, 20.0, 30.0]
+
+    @pytest.mark.asyncio
+    async def test_redelivered_record_reuses_row(
+        self, mock_user_config: UserConfig
+    ) -> None:
+        """A re-delivered (phase, session_num) pair lands on its original row
+        instead of appending a duplicate."""
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        record = _token_record(0, 10, 100, 1 * NANOS_PER_SECOND, 2 * NANOS_PER_SECOND)
+        await processor.process_record(record)
+        await processor.process_record(record)
+
+        assert processor.column_store.count == 1
+        assert processor.record_count == 1

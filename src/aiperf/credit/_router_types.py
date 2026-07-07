@@ -115,6 +115,15 @@ class CreditRouterProtocol(Protocol):
         """
         ...
 
+    def begin_phase(self) -> None:
+        """Reset per-episode cancellation state before a phase issues credits.
+
+        Called once per phase by the phase runner so a grace-timeout
+        cancellation in an earlier phase does not leave reconciliation and
+        orphan recovery disabled for later phases.
+        """
+        ...
+
     def mark_credits_complete(self) -> None:
         """Mark that all credits have been issued and returned.
 

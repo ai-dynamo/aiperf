@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import logging
 import socket
+import sys
 import tarfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -21,7 +22,12 @@ import pytest
 import zstandard
 from aiohttp import web
 
-from aiperf.workers.worker_pod_tokenizer_download import download_tokenizer
+from aiperf.common.constants import IS_WINDOWS
+from aiperf.workers import worker_pod_tokenizer_download
+from aiperf.workers.worker_pod_tokenizer_download import (
+    _bundle_lock,
+    download_tokenizer,
+)
 
 
 def _make_bundle(payload_files: dict[str, bytes]) -> bytes:
@@ -180,3 +186,30 @@ async def test_extract_crash_then_retry_succeeds(tmp_path: Path, monkeypatch) ->
     assert (out / "tokenizer.json").read_bytes() == b'{"v":1}'
     assert (out / "vocab.json").exists()
     assert (out / ".ready").exists()
+
+
+@pytest.mark.asyncio
+async def test_bundle_lock_windows_is_noop_without_fcntl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows the lock degrades to a no-op and must never import fcntl."""
+    monkeypatch.setattr(worker_pod_tokenizer_download, "IS_WINDOWS", True)
+    # Simulate a platform without the module: any ``import fcntl`` raises.
+    monkeypatch.setitem(sys.modules, "fcntl", None)
+
+    lock_path = tmp_path / "gpt2.lock"
+    lock = _bundle_lock(lock_path)
+    async with lock:
+        assert lock._fd is None
+    assert not lock_path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(IS_WINDOWS, reason="fcntl.flock only exists on POSIX")
+async def test_bundle_lock_posix_acquires_and_releases(tmp_path: Path) -> None:
+    lock_path = tmp_path / "gpt2.lock"
+    lock = _bundle_lock(lock_path)
+    async with lock:
+        assert lock._fd is not None
+        assert lock_path.exists()
+    assert lock._fd is None

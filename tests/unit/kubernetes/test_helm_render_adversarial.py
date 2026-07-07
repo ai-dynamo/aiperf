@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,7 @@ def _helm_template(
         text=True,
         check=False,
         env=os.environ.copy(),
+        timeout=120,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -86,6 +88,7 @@ def _helm_template_failure(*extra: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
         env=os.environ.copy(),
+        timeout=120,
     )
 
 
@@ -375,12 +378,15 @@ class TestGeneratedCrdConsistency:
     """Generated CRD templates stay in sync with the Python generator."""
 
     def test_crd_templates_match_generator_check(self) -> None:
+        # sys.executable (the pytest venv python) already has the project
+        # installed; shelling through ``uv run`` risks a cold lock/sync.
         result = subprocess.run(
-            ["uv", "run", "--active", "python", "tools/generate_crd.py", "--check"],
+            [sys.executable, "tools/generate_crd.py", "--check"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
             check=False,
             env=os.environ.copy(),
+            timeout=120,
         )
         assert result.returncode == 0, result.stdout + result.stderr

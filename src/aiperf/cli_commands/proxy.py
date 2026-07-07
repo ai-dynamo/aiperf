@@ -7,6 +7,7 @@ proxy from the SystemController container, so that large fan-ins of record
 processors and workers don't starve the control plane at startup.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Annotated
 
@@ -23,10 +24,37 @@ _KIND_TO_FLAGS: dict[str, dict[str, bool]] = {
 }
 
 
-async def _run_proxy(run: object, flags: dict[str, bool]) -> None:
-    import asyncio
+def _install_stop_signal_handlers(
+    loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event
+) -> None:
+    """Arrange for SIGTERM/SIGINT (SIGBREAK on Windows) to set ``stop_event``.
+
+    Windows ProactorEventLoop does not implement ``add_signal_handler`` and
+    raises NotImplementedError, which would abort ``aiperf proxy`` before the
+    proxy serves anything. Fall back to ``signal.signal()`` there, mirroring
+    ``aiperf.kubernetes.watch_orchestrator.WatchOrchestrator._install_signal_handlers``.
+    """
     import signal
 
+    from aiperf.common.constants import IS_WINDOWS
+
+    if IS_WINDOWS:
+
+        def windows_signal_handler(_sig: int, _frame: object) -> None:
+            # signal.signal handlers run outside the event loop thread's
+            # normal callback path; marshal onto the loop.
+            loop.call_soon_threadsafe(stop_event.set)
+
+        signal.signal(signal.SIGINT, windows_signal_handler)
+        sigbreak = getattr(signal, "SIGBREAK", None)
+        if sigbreak is not None:
+            signal.signal(sigbreak, windows_signal_handler)
+    else:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop_event.set)
+
+
+async def _run_proxy(run: object, flags: dict[str, bool]) -> None:
     from aiperf.common.environment import Environment
     from aiperf.common.health_server import HealthServer
     from aiperf.controller.proxy_manager import ProxyManager
@@ -41,8 +69,7 @@ async def _run_proxy(run: object, flags: dict[str, bool]) -> None:
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop_event.set)
+    _install_stop_signal_handlers(loop, stop_event)
 
     try:
         await stop_event.wait()
@@ -91,8 +118,6 @@ def proxy(
     from aiperf.cli_utils import exit_on_error
 
     with exit_on_error(title=f"Error Running AIPerf Proxy ({kind})"):
-        import asyncio
-
         import orjson
 
         from aiperf.common.environment import Environment

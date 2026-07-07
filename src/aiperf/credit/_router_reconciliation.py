@@ -58,13 +58,14 @@ class _ReconciliationMixin:
         """Send InFlightReconciliation to each worker with in-flight credits."""
         if self._credits_complete or self._cancellation_pending:
             await self._reclaim_expired_detached_workers()
-            # The timing manager's phase / cancellation barrier has already
-            # drained outstanding returns by the time credits are complete or
-            # cancellation is pending, so the late-return dedup guard
-            # (``_reclaimed_credit_ids``) has served its purpose. Clearing it
-            # here bounds the set per phase / benchmark instead of letting
-            # reclaimed terminal credit ids accumulate for the router lifetime.
-            self._reclaimed_credit_ids.clear()
+            # Cancellation-pending marks the START of the drain window, not its
+            # end: workers are still returning cancelled credits, and detached
+            # workers reclaimed above just added dedup keys. A bulk clear here
+            # would wipe those keys between ticks and let late returns of
+            # already-reclaimed credits double-deliver mid-drain. Prune (same as
+            # the normal path below) to bound the set without breaking dedup
+            # for phases that still have credits in flight.
+            self._prune_drained_reclaimed_credit_ids()
             return
 
         sent_count = 0

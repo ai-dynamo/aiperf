@@ -147,7 +147,18 @@ class TestVideoGenerator:
         generator = VideoGenerator(_make_run(base_config))
 
         with ExitStack() as stack:
-            stack.enter_context(patch("platform.system", return_value=platform_name))
+            # ffmpeg_support branches on the import-time IS_LINUX/IS_MACOS/
+            # IS_WINDOWS constants, so patch those at the module's import
+            # site rather than platform.system.
+            ffmpeg_support = "aiperf.dataset.generator.ffmpeg_support"
+            for const, os_name in (
+                ("IS_LINUX", "Linux"),
+                ("IS_MACOS", "Darwin"),
+                ("IS_WINDOWS", "Windows"),
+            ):
+                stack.enter_context(
+                    patch(f"{ffmpeg_support}.{const}", platform_name == os_name)
+                )
 
             if "open_return" in patches_dict:
                 stack.enter_context(

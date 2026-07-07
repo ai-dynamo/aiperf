@@ -146,7 +146,26 @@
             "required": ["name"]
         },
         "benchmarkRbacNamespaces": {"type": "array", "items": {"type": "string"}},
-        "serverMetricsDiscoveryNamespaces": {"type": "array", "items": {"type": "string"}},
+        "serverMetricsDiscoveryNamespaces": {
+            "type": "array",
+            "items": {
+                "oneOf": [
+                    {"type": "string", "minLength": 1},
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "namespace": {"type": "string", "minLength": 1},
+                            "serviceAccounts": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1}
+                            }
+                        },
+                        "required": ["namespace"]
+                    }
+                ]
+            }
+        },
         "kueue": {
             "type": "object",
             "additionalProperties": false,

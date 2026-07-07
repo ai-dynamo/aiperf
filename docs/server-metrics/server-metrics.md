@@ -243,7 +243,7 @@ ServiceAccount, so it needs `pods: get/list` where it searches:
 | `discovery.namespace` | Searches | RBAC required |
 |---|---|---|
 | omitted (default) | The benchmark pod's own namespace | None — works out of the box: the aiperf-operator chart's benchmark Role already grants `pods: get/list/watch` in every benchmark namespace |
-| `<other-namespace>` (e.g. Dynamo in `dynamo-server`) | That namespace | Add the inference namespace to the chart's `serverMetricsDiscoveryNamespaces` value — it provisions a read-only pods Role there, bound to the benchmark namespaces' `default` ServiceAccount. (Or create an equivalent Role/RoleBinding manually.) |
+| `<other-namespace>` (e.g. Dynamo in `dynamo-server`) | That namespace | Add the inference namespace to the chart's `serverMetricsDiscoveryNamespaces` value — it provisions a read-only pods Role there. A plain string entry binds the benchmark namespaces' `default` ServiceAccount; if benchmark pods run under a custom `podTemplate.serviceAccountName`, use the object form `{namespace: <ns>, serviceAccounts: [<sa>, ...]}` instead. (Or create an equivalent Role/RoleBinding manually.) |
 | `"*"` | All namespaces | A cluster-scoped grant: ClusterRole with `pods: list` bound to the benchmark ServiceAccount. The chart does not provision this. |
 
 ```bash

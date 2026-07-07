@@ -33,7 +33,11 @@ from aiperf.metrics.derived_latency import (
     inject_derived_latency_metrics,
 )
 from aiperf.metrics.display_units import to_display_unit
-from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
+from aiperf.metrics.metric_dicts import (
+    MetricResultsDict,
+    ScalarSumAggregator,
+    metric_result_from_array,
+)
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -54,7 +58,7 @@ _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
 
 
 class MetricsAccumulator(BaseMetricsProcessor):
-    """Numpy-backed accumulator for inference metrics. Session_num-indexed
+    """Numpy-backed accumulator for inference metrics. Row-indexed
     NaN-sparse columnar storage; RECORD metrics get per-value stats,
     AGGREGATE metrics one scalar via :class:`AggregationKind`, DERIVED
     metrics computed from those at summarize time."""
@@ -62,8 +66,16 @@ class MetricsAccumulator(BaseMetricsProcessor):
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run=run, **kwargs)
 
-        # Session-indexed columnar storage
+        # Row-indexed columnar storage
         self._column_store = ColumnStore(initial_capacity=1024)
+
+        # Row assignment: session_num restarts at 0 in every credit phase, so
+        # in multi-phase runs a (benchmark_phase, session_num) pair — not
+        # session_num alone — identifies a record. Rows are assigned densely
+        # in arrival order; a re-delivered (phase, session_num) pair lands on
+        # its original row, matching the pre-mapping same-slot re-delivery
+        # behavior (numeric columns last-write-wins, ragged first-wins).
+        self._row_by_phase_session: dict[tuple[str, int], int] = {}
 
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
@@ -107,8 +119,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a MetricRecordsData record."""
-        idx = record.metadata.session_num
         meta = record.metadata
+        row_key = (meta.benchmark_phase, meta.session_num)
+        idx = self._row_by_phase_session.get(row_key)
+        if idx is None:
+            idx = len(self._row_by_phase_session)
+            self._row_by_phase_session[row_key] = idx
 
         # Compute generation_start_ns from wall-clock start + TTFT duration
         ttft_ns = record.metrics.get("time_to_first_token")
@@ -261,9 +277,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
             metric_type = self._tags_to_types.get(tag)
             if metric_type == MetricType.RECORD:
-                # O(1) running sum for the full dataset; np.sum for windowed
+                # O(1) running sum for the full dataset; np.sum for windowed.
+                # Stored as a MetricAggregator (not a bare float) because
+                # DerivedSumMetric requires the protocol to read ``.sum``.
                 s = store.numeric_sum(tag) if full_dataset else float(np.sum(clean))
-                scalar_dict[tag] = s
+                scalar_dict[tag] = ScalarSumAggregator(s, len(clean))
                 record_arrays[tag] = (clean, s)
             elif metric_type == MetricType.AGGREGATE:
                 scalar_dict[tag] = self._aggregate_values(tag, clean)
@@ -305,7 +323,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
             if len(filtered) == 0:
                 return
             s = float(np.sum(filtered))
-            scalar_dict[tag] = s
+            scalar_dict[tag] = ScalarSumAggregator(s, len(filtered))
             record_arrays[tag] = (filtered, s)
             return
         if not full_dataset or len(backend) == 0:
@@ -314,9 +332,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if mc is None:
             return
         sketch_results[tag] = backend.to_result(tag, mc.header, str(mc.unit))
-        # Expose the running sum so derived-sum metrics can reach it
-        # uniformly via the scalar_dict.
-        scalar_dict[tag] = float(backend.sum)
+        # Expose the running sum as a MetricAggregator so derived-sum
+        # metrics can reach it uniformly via the scalar_dict.
+        scalar_dict[tag] = ScalarSumAggregator(float(backend.sum), len(backend))
 
     def _resolve_derived_metrics(self, scalar_dict: MetricResultsDict) -> None:
         """Run derive functions over the scalar dict, logging failures."""

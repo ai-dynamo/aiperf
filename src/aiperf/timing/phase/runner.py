@@ -353,6 +353,11 @@ class PhaseRunner(TaskManagerMixin):
         )
         await strategy.setup_phase()
 
+        # Clear any cancellation latch left by a prior phase's grace-timeout
+        # drain so reconciliation and orphan recovery are active for this phase
+        # (see StickyCreditRouter.begin_phase).
+        self._credit_router.begin_phase()
+
         # Gate credit issuance on worker readiness: on fast startup the first
         # credit can otherwise be issued before any worker registers, which
         # deadlocks the phase (see StickyCreditRouter.wait_for_workers).
@@ -494,7 +499,13 @@ class PhaseRunner(TaskManagerMixin):
         """
         timed_out = False
         try:
-            if self._progress.check_all_returned_or_cancelled():
+            # DAG runs must also drain spawned branch work: the counter can read
+            # all-returned while the orchestrator still holds dispatched-but-
+            # unreturned children, and completing here would truncate the DAG.
+            if self._progress.check_all_returned_or_cancelled() and (
+                self._branch_orchestrator is None
+                or not self._branch_orchestrator.has_pending_branch_work()
+            ):
                 self.info(
                     "All credits already returned. Setting all_credits_returned_event."
                 )

@@ -112,6 +112,28 @@ def profile_results_have_successes(results: ProfileResults | None) -> bool:
     return any(record.tag == "request_count" for record in results.records or [])
 
 
+def _is_transient_control_send_error(e: Exception) -> bool:
+    """True when a control ROUTER send failed because the peer's DEALER dropped.
+
+    With ``ROUTER_MANDATORY`` set on the control ROUTER (see
+    ``_init_control_router``), sending to a peer whose TCP connection dropped
+    raises ``zmq.ZMQError`` with ``EHOSTUNREACH`` (identity no longer routable)
+    or ``ENOTCONN`` (peer disconnected mid-write) — the same peer-gone errnos
+    ``ZMQStreamingRouterClient._PEER_GONE_ERRNOS`` tolerates on the reply path.
+    The DEALER auto-reconnects (``ZMQ_RECONNECT_IVL``) and the ROUTER adopts
+    the new connection (``ZMQ_ROUTER_HANDOVER``), so a delayed retry on the
+    same identity can succeed. Everything else the send path raises —
+    ``TimeoutError`` from the response wait, ``EFSM`` socket corruption,
+    ``NotInitializedError`` — is not retryable here.
+    """
+    import zmq
+
+    return isinstance(e, zmq.ZMQError) and e.errno in (
+        zmq.EHOSTUNREACH,
+        zmq.ENOTCONN,
+    )
+
+
 class SystemController(
     SystemControllerDispatchMixin,
     SystemControllerOutputMixin,
@@ -477,6 +499,10 @@ class SystemController(
                     f"Flushing pre-CONFIGURING registration for '{sid}' "
                     f"({info.service_type})"
                 )
+                # Claim at scheduling time (not inside the task body) so a
+                # Registration retry arriving before the task runs cannot
+                # schedule a duplicate PROFILE_CONFIGURE.
+                self._configuring_ids.add(sid)
                 self._configure_scheduler.execute_async(
                     self._configure_single_service(sid)
                 )
@@ -603,12 +629,18 @@ class SystemController(
         """Send PROFILE_CONFIGURE to a single service and track completion.
 
         Called as a fire-and-forget task from the registration handler so that
-        each service begins configuration immediately upon registering.
+        each service begins configuration immediately upon registering. The
+        scheduler-side callers claim ``service_id`` in ``_configuring_ids``
+        BEFORE scheduling; the add below is an idempotent safety net for
+        direct callers.
 
-        Retries on transient ZMQ errors ("stream is closed") which occur when
-        the TCP connection between pods drops during idle periods. The DEALER
+        Retries on transient peer-gone ZMQ errors (EHOSTUNREACH / ENOTCONN,
+        see :func:`_is_transient_control_send_error`) which occur when the TCP
+        connection between pods drops during idle periods. The DEALER
         auto-reconnects (ZMQ_RECONNECT_IVL) and the ROUTER accepts the new
         connection (ZMQ_ROUTER_HANDOVER), so a retry on a new connection works.
+        On terminal failure the sid is un-claimed from ``_configuring_ids`` so
+        a later Registration retry can schedule a fresh configure.
         """
         self._configuring_ids.add(service_id)
         max_retries = 3
@@ -625,16 +657,14 @@ class SystemController(
                 )
                 if isinstance(response, CommandErr):
                     self._configure_errors.append(response)
+                    self._configuring_ids.discard(service_id)
                     self._all_configured_event.set()
                     return
                 break  # success
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
-                is_stream_error = (
-                    "stream" in str(e).lower() or "closed" in str(e).lower()
-                )
-                if is_stream_error and attempt < max_retries:
+                if attempt < max_retries and _is_transient_control_send_error(e):
                     self.warning(
                         f"PROFILE_CONFIGURE to '{service_id}' failed (attempt {attempt}): {e}. "
                         f"Retrying in 3s (DEALER will auto-reconnect)..."
@@ -643,6 +673,7 @@ class SystemController(
                     continue
                 self.error(f"PROFILE_CONFIGURE to '{service_id}' failed: {e}")
                 self._configure_errors.append(ErrorDetails.from_exception(e))
+                self._configuring_ids.discard(service_id)
                 self._all_configured_event.set()
                 return
 

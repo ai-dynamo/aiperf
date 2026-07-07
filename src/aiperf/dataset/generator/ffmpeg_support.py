@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-import platform
 import shutil
+
+from aiperf.common.constants import IS_LINUX, IS_MACOS, IS_WINDOWS
 
 
 def check_ffmpeg_availability() -> bool:
@@ -50,11 +51,10 @@ def _windows_install_instructions() -> str:
 
 def get_ffmpeg_install_instructions() -> str:
     """Get platform-specific FFmpeg installation instructions."""
-    system = platform.system().lower()
-    if system == "linux":
+    if IS_LINUX:
         return _linux_install_instructions()
-    if system == "darwin":
+    if IS_MACOS:
         return _macos_install_instructions()
-    if system == "windows":
+    if IS_WINDOWS:
         return _windows_install_instructions()
     return "Install FFmpeg using your system's package manager or download from https://ffmpeg.org"

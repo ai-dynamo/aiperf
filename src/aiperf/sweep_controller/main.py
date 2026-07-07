@@ -286,8 +286,20 @@ def _write_sweep_parent_aggregate(
 
     Conditions are owned by the operator and not yet collected here, so we
     pass ``conditions=None`` and the ``conditions.json`` sibling is omitted.
+
+    Two spec-derived keys are persisted: ``specSnapshot`` (the full
+    ``AIPerfSweepSpec`` dump — the only durable copy of the spec after the CR
+    is TTL-reaped) and ``specSummary`` (the purpose-built
+    sweep_type/dimensions/multi_run/convergence dict built by
+    ``spec_summary_snapshot``, which the operator's archived-sweep API reads
+    back verbatim).
     """
+    from aiperf.operator.models import AIPerfSweepSpec
     from aiperf.operator.results_layout import list_run_epochs, write_sweep_latest
+    from aiperf.operator.routers._sweeps_spec import (
+        SPEC_SUMMARY_KEY,
+        spec_summary_snapshot,
+    )
     from aiperf.sweep_controller.aggregator import (
         write_children_manifest,
         write_sweep_aggregate,
@@ -320,6 +332,9 @@ def _write_sweep_parent_aggregate(
         },
         "specSnapshot": spec.model_dump(mode="json")
         if hasattr(spec, "model_dump")
+        else {},
+        SPEC_SUMMARY_KEY: spec_summary_snapshot(spec)
+        if isinstance(spec, AIPerfSweepSpec)
         else {},
         "childRuns": [
             {

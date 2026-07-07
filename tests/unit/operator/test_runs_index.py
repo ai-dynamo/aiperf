@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import orjson
@@ -734,6 +735,102 @@ async def test_bootstrap_ingests_legacy_runs_without_ready_marker(
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_prunes_index_rows_for_deleted_run_dirs(
+    tmp_path: Path,
+) -> None:
+    """A completed index row whose run dir vanished from disk is pruned.
+
+    Retention deletes the run dir first and schedules the index drop second;
+    an operator crash between the two strands the row forever because the
+    forward ingest walk only ever adds. Bootstrap's reverse pass must drop it.
+    """
+    base = tmp_path / "results"
+    live = base / "ns1" / "job-a" / "1714069323"
+    live.mkdir(parents=True)
+    (live / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps({"request_throughput": {"avg": 5.0, "unit": "rps"}})
+    )
+    (base / "ns1" / "job-a" / "latest.txt").write_text("1714069323")
+
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        # Stale completed row: dir was retention-deleted, drop was crash-lost.
+        await runs_index.upsert_run_created("ns1", "job-a", "1714000000", spec={})
+        await runs_index.upsert_run_completed(
+            "ns1",
+            "job-a",
+            "1714000000",
+            summary_blob=b"",
+            metrics={"request_throughput": {"avg": 1.0, "unit": "rps"}},
+            files=["profile_export_aiperf.json"],
+            mtime_epoch=1714000001,
+        )
+        assert await runs_index.get_run("ns1", "job-a", "1714000000") is not None
+
+        await runs_index.bootstrap(base)
+
+        assert await runs_index.get_run("ns1", "job-a", "1714000000") is None, (
+            "stale row for the deleted run dir must be pruned"
+        )
+        assert await runs_index.get_run("ns1", "job-a", "1714069323") is not None, (
+            "the on-disk run must survive the prune and be (re)ingested"
+        )
+    finally:
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_prune_spares_pending_rows_without_artifacts(
+    tmp_path: Path,
+) -> None:
+    """A Pending stub (CR created, controller not yet writing results) has no
+    run dir by design and must NOT be pruned at operator restart."""
+    base = tmp_path / "results"
+    base.mkdir(parents=True)
+
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        await runs_index.upsert_run_created(
+            "ns1", "job-pending", "1714069999", spec={"benchmark": {}}
+        )
+
+        await runs_index.bootstrap(base)
+
+        row = await runs_index.get_run("ns1", "job-pending", "1714069999")
+        assert row is not None
+        assert row.phase == "Pending"
+    finally:
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_missing_base_does_not_prune(tmp_path: Path) -> None:
+    """A missing results base (PVC unmounted mid-startup) must not be treated
+    as "all runs deleted" — the prune pass is skipped entirely."""
+    db_path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(db_path)
+    try:
+        await runs_index.upsert_run_created("ns1", "job-a", "1714000000", spec={})
+        await runs_index.upsert_run_completed(
+            "ns1",
+            "job-a",
+            "1714000000",
+            summary_blob=b"",
+            metrics={"request_throughput": {"avg": 1.0, "unit": "rps"}},
+            files=[],
+            mtime_epoch=1714000001,
+        )
+
+        await runs_index.bootstrap(tmp_path / "not-mounted")
+
+        assert await runs_index.get_run("ns1", "job-a", "1714000000") is not None
+    finally:
+        await runs_index.close()
+
+
+@pytest.mark.asyncio
 async def test_leaderboard_orders_by_metric(index_path) -> None:
     for ep, tput in [("100", 10.0), ("200", 50.0), ("300", 25.0)]:
         spec = {}
@@ -791,3 +888,124 @@ async def test_compare_returns_metrics_for_named_jobs(index_path) -> None:
     rows = await runs_index.compare(["j1", "j2"], metrics=["request_throughput"])
     assert {r["job_id"] for r in rows} == {"j1", "j2"}
     assert all(r["request_throughput_avg"] == 100.0 for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Connection cleanup on failed open
+# ---------------------------------------------------------------------------
+
+
+def _spy_connect_close(monkeypatch: pytest.MonkeyPatch, closes: list[bool]) -> None:
+    """Patch runs_index's aiosqlite.connect to record close() awaits."""
+    real_connect = runs_index.aiosqlite.connect
+
+    def spying_connect(*args: object, **kwargs: object):
+        conn = real_connect(*args, **kwargs)
+        real_close = conn.close
+
+        async def tracked_close() -> None:
+            closes.append(True)
+            await real_close()
+
+        conn.close = tracked_close
+        return conn
+
+    monkeypatch.setattr(runs_index.aiosqlite, "connect", spying_connect)
+
+
+@pytest.mark.asyncio
+async def test_open_closes_connection_when_post_connect_setup_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure between connect and _DB assignment must close the connection.
+
+    aiosqlite spawns a non-daemon thread per connection and ResultsDB retries
+    open() per request, so a leak here grows unboundedly.
+    """
+    closes: list[bool] = []
+    real_connect = runs_index.aiosqlite.connect
+
+    def connect_with_failing_setup(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        real_close = conn.close
+
+        async def tracked_close() -> None:
+            closes.append(True)
+            await real_close()
+
+        async def failing_executescript(*_args, **_kwargs):
+            raise RuntimeError("simulated schema install failure")
+
+        conn.close = tracked_close
+        conn.executescript = failing_executescript
+        return conn
+
+    monkeypatch.setattr(runs_index.aiosqlite, "connect", connect_with_failing_setup)
+
+    with pytest.raises(RuntimeError, match="simulated schema install failure"):
+        await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+
+    assert closes == [True]
+    assert runs_index.is_open() is False
+
+
+@pytest.mark.asyncio
+async def test_open_readonly_closes_connection_when_meta_table_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A foreign sqlite file (no meta table) must not leak the connection."""
+    path = tmp_path / ".aiperf_index.sqlite"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE unrelated (id INTEGER)")
+    conn.commit()
+    conn.close()
+
+    closes: list[bool] = []
+    _spy_connect_close(monkeypatch, closes)
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        await runs_index.open_readonly(path)
+
+    assert closes == [True]
+    assert runs_index.is_open() is False
+
+
+@pytest.mark.asyncio
+async def test_open_readonly_closes_connection_exactly_once_on_missing_schema_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / ".aiperf_index.sqlite"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.commit()
+    conn.close()
+
+    closes: list[bool] = []
+    _spy_connect_close(monkeypatch, closes)
+
+    with pytest.raises(RuntimeError, match="missing schema_version"):
+        await runs_index.open_readonly(path)
+
+    assert closes == [True]
+    assert runs_index.is_open() is False
+
+
+@pytest.mark.asyncio
+async def test_open_closes_connection_when_schema_version_too_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(path)
+    await runs_index._conn().execute(
+        "UPDATE meta SET value = '999' WHERE key = 'schema_version'"
+    )
+    await runs_index.close()
+
+    closes: list[bool] = []
+    _spy_connect_close(monkeypatch, closes)
+
+    with pytest.raises(RuntimeError, match="schema_version=999"):
+        await runs_index.open(path)
+
+    assert closes == [True]
+    assert runs_index.is_open() is False

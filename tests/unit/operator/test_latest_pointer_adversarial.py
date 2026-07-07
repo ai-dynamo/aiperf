@@ -337,17 +337,18 @@ async def test_fetch_sweep_aggregate_empty_download_list_does_not_update_latest(
     fake_progress_client = MagicMock()
     fake_progress_client.__aenter__ = AsyncMock(return_value=fake_progress_client)
     fake_progress_client.__aexit__ = AsyncMock(return_value=None)
+    fake_progress_client.get_results_list = AsyncMock(return_value=[])
     fake_progress_client.download_all_results = AsyncMock(return_value=[])
     monkeypatch.setattr(
         _aggregate_fetch, "ProgressClient", lambda *args, **kwargs: fake_progress_client
     )
 
-    count = await _aggregate_fetch.fetch_sweep_aggregate_to_disk(
+    result = await _aggregate_fetch.fetch_sweep_aggregate_to_disk(
         sweep_name=_SWEEP_NAME,
         namespace=_NAMESPACE,
         epoch=_EPOCH_NEW,
         base_dir=base,
     )
 
-    assert count == 0
+    assert result.downloaded == 0
     assert results_layout.resolve_sweep_latest(base, _NAMESPACE, _SWEEP_NAME) is None

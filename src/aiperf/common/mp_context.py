@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-import platform
+
+from aiperf.common.constants import IS_LINUX
 
 _SPAWN_TIMEOUT = 60.0
 """Safety-net timeout for process.start(). Normal spawns complete in
@@ -78,9 +79,9 @@ def get_mp_context() -> multiprocessing.context.BaseContext:
     """
     global _mp_context
     if _mp_context is None:
-        method = "forkserver" if platform.system() == "Linux" else "spawn"
+        method = "forkserver" if IS_LINUX else "spawn"
         _mp_context = multiprocessing.get_context(method)
-        if platform.system() == "Linux":
+        if IS_LINUX:
             _mp_context.set_forkserver_preload(_FORKSERVER_PRELOAD)
             # The forkserver is a long-lived helper process that inherits
             # the parent's stdin/stdout/stderr at spawn time. If the

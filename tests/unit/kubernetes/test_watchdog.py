@@ -12,6 +12,7 @@ Focuses on:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -754,6 +755,22 @@ class TestBenchmarkWatchdogLifecycle:
         wd._task = None
         await wd.stop()
         assert wd._stopped is True
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_hung_background_tasks(
+        self, source: FakeDataSource
+    ) -> None:
+        """fetch_failure_logs tasks must not outlive the k8s_client context."""
+        wd = BenchmarkWatchdog(source, "test-ns", timeout=300, poll_interval=1.0)
+        wd.start()
+        hung = asyncio.create_task(asyncio.Event().wait())
+        wd._bg_tasks.add(hung)
+        hung.add_done_callback(wd._bg_tasks.discard)
+
+        await wd.stop()
+
+        assert hung.cancelled()
+        assert not wd._bg_tasks
 
 
 # ============================================================

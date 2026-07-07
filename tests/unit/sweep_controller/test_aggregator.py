@@ -20,7 +20,7 @@ def test_aggregator_writes_aggregate_json(tmp_path: Path) -> None:
             "completedRuns": 4,
             "failedRuns": 0,
             "completedAt": "2026-04-25T01:00:00Z",
-            "spec_snapshot": {
+            "specSummary": {
                 "sweep_type": "grid",
                 "dimensions": [{"name": "concurrency", "values": [8, 32]}],
             },

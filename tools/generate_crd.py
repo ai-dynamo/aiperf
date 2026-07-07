@@ -1557,6 +1557,36 @@ def _escape_helm_braces(yaml_str: str) -> str:
     )
 
 
+def _apply_chart_default_substitutions(yaml_str: str) -> str:
+    """Inject .Values-driven spec defaults shared by BOTH CRD templates.
+
+    AIPerfJob and AIPerfSweep share the workload spec shape, so a chart
+    deployed with a custom image/pull-policy must default them identically
+    on both kinds — applying these to only one CRD silently gives the other
+    kind's CRs the hardcoded nvcr.io fallback.
+
+    - ``spec.image``: the Pydantic default (``nvcr.io/nvidia/aiperf:latest``)
+      is replaced by the chart image (``.Values.defaults.image`` wins when set).
+    - ``spec.imagePullPolicy``: no Pydantic default (None = defer to K8s), so
+      inject a chart-controlled CRD default from
+      ``.Values.defaults.imagePullPolicy``. `with` omits the default: line
+      entirely when the value is unset/null, preserving the no-default
+      behavior for charts that opt out.
+    """
+    yaml_str = yaml_str.replace(
+        "default: nvcr.io/nvidia/aiperf:latest",
+        'default: {{ default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) .Values.defaults.image | quote }}',
+    )
+    return yaml_str.replace(
+        "              imagePullPolicy:\n                type: string\n",
+        "              imagePullPolicy:\n"
+        "                type: string\n"
+        "                {{- with .Values.defaults.imagePullPolicy }}\n"
+        "                default: {{ . | quote }}\n"
+        "                {{- end }}\n",
+    )
+
+
 def render_helm_crd_yaml(crd: dict[str, Any]) -> str:
     """Render the Helm-templated CRD variant."""
     helm_crd = copy.deepcopy(crd)
@@ -1578,24 +1608,7 @@ def render_helm_crd_yaml(crd: dict[str, Any]) -> str:
         "\x00CLOSE\x00", '{{ "}}" }}'
     )
 
-    # Helm template substitutions
-    yaml_str = yaml_str.replace(
-        "default: nvcr.io/nvidia/aiperf:latest",
-        'default: {{ default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) .Values.defaults.image | quote }}',
-    )
-
-    # spec.imagePullPolicy has no Pydantic default (None = defer to K8s), so
-    # inject a chart-controlled CRD default from .Values.defaults.imagePullPolicy.
-    # `with` omits the default: line entirely when the value is unset/null,
-    # preserving the no-default behavior for charts that opt out.
-    yaml_str = yaml_str.replace(
-        "              imagePullPolicy:\n                type: string\n",
-        "              imagePullPolicy:\n"
-        "                type: string\n"
-        "                {{- with .Values.defaults.imagePullPolicy }}\n"
-        "                default: {{ . | quote }}\n"
-        "                {{- end }}\n",
-    )
+    yaml_str = _apply_chart_default_substitutions(yaml_str)
 
     yaml_str = yaml_str.replace(
         "  name: aiperfjobs.aiperf.nvidia.com\n",
@@ -1623,8 +1636,9 @@ def render_helm_sweep_crd_yaml(crd: dict[str, Any]) -> str:
     """Render the AIPerfSweep CRD as a Helm chart template.
 
     Sibling of :func:`render_helm_crd_yaml` for AIPerfJob. Reuses the same
-    dumper and brace-escape logic, then injects the standard Helm labels block
-    after the CRD ``metadata.name`` line.
+    dumper, brace-escape logic, and chart-default substitutions
+    (:func:`_apply_chart_default_substitutions`), then injects the standard
+    Helm labels block after the CRD ``metadata.name`` line.
     """
     helm_crd = copy.deepcopy(crd)
 
@@ -1642,6 +1656,8 @@ def render_helm_sweep_crd_yaml(crd: dict[str, Any]) -> str:
     yaml_str = yaml_str.replace("\x00OPEN\x00", '{{ "{{" }}').replace(
         "\x00CLOSE\x00", '{{ "}}" }}'
     )
+
+    yaml_str = _apply_chart_default_substitutions(yaml_str)
 
     yaml_str = yaml_str.replace(
         "  name: aiperfsweeps.aiperf.nvidia.com\n",

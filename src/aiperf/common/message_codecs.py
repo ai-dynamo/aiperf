@@ -56,6 +56,14 @@ def _build_message_codec() -> MsgspecStructCodec:
     time because the concrete subclass registry is built up during module
     imports of the various message modules.
     """
+    # The credit-phase messages (CreditPhaseStartMessage, ...) live outside
+    # the eagerly-imported common/messages tree, so a caller can build the
+    # codec before anything has imported them — silently snapshotting a
+    # union that cannot decode credit-phase envelopes. Import them here;
+    # the module-level reverse import would be circular (aiperf.credit
+    # imports from aiperf.common.messages).
+    import aiperf.credit.messages  # noqa: F401, PLC0415
+
     return MsgspecStructCodec(
         decode_type=Message._union_type(),
         cache_key="msgspec-message",
@@ -69,7 +77,9 @@ def get_message_codec() -> MsgspecStructCodec:
     """Return the shared default codec for ``Message`` envelopes.
 
     Instantiated on first access so every Message subclass is registered
-    before ``Message._union_type()`` snapshots the tagged-union types.
+    before ``Message._union_type()`` snapshots the tagged-union types
+    (``_build_message_codec`` explicitly imports the credit-phase message
+    module, which lives outside the eagerly-imported common/messages tree).
     """
     global _MESSAGE_CODEC
     if _MESSAGE_CODEC is None:

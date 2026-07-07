@@ -53,7 +53,9 @@ overflow at >32k unique values (e.g. ``x_correlation_id`` on single-turn workloa
 class ColumnStore:
     """Request-indexed NaN-sparse columnar storage for per-record metrics.
 
-    Uses session_num (credit issuance index) as the canonical array index.
+    The caller owns row assignment: :class:`MetricsAccumulator` maps each
+    ``(benchmark_phase, session_num)`` pair to a dense arrival-order row so
+    phases whose session_num both start at 0 cannot overwrite each other.
     Pre-filled with NaN/None; records write to their slot on arrival in any order.
     """
 
@@ -116,7 +118,7 @@ class ColumnStore:
 
     @property
     def count(self) -> int:
-        """Number of records written (max session_num + 1)."""
+        """Number of records written (max row index + 1)."""
         return self._count
 
     def numeric(self, tag: str) -> NDArray[np.float64]:
@@ -262,7 +264,7 @@ class ColumnStore:
         end_ns: float,
         generation_start_ns: float | None,
     ) -> None:
-        """Write a record's data to slot `idx` (= session_num).
+        """Write a record's data to slot `idx` (caller-assigned row index).
 
         Grows capacity if idx >= _capacity. Dispatches metric values via cached
         per-tag setter closures — the isinstance ladder and ``_ensure_*_column``

@@ -169,6 +169,72 @@ class TestOnRegistration:
 
         scheduler.execute_async.assert_not_called()
 
+    async def test_rapid_duplicate_registrations_schedule_single_configure(
+        self, system_controller: SystemController
+    ) -> None:
+        """A Registration retry burst must dedupe at SCHEDULING time.
+
+        The claim in ``_configuring_ids`` is made when the configure task is
+        scheduled, not when its body eventually runs — otherwise a burst of
+        retries (lost RegistrationAck) schedules duplicate concurrent
+        PROFILE_CONFIGURE commands for the same sid.
+        """
+        scheduler = MagicMock()
+        system_controller._auto_configure = True
+        system_controller._configure_scheduler = scheduler
+        # Return plain sentinels (never-run "coroutines"), simulating a
+        # scheduler that has not executed anything yet.
+        system_controller._configure_single_service = MagicMock(  # type: ignore[method-assign]
+            return_value="coro"
+        )
+
+        for rid in ("r1", "r2", "r3"):
+            msg = Registration(
+                sid="svcY", rid=rid, stype="timing_manager", state="running"
+            )
+            await system_controller._handle_control_message("id_0", msg)
+
+        scheduler.execute_async.assert_called_once_with("coro")
+        assert "svcY" in system_controller._configuring_ids
+
+    async def test_replacement_reconfigures_even_when_sid_still_claimed(
+        self, system_controller: SystemController
+    ) -> None:
+        """A replacement pod's re-registration during PROFILING must reconfigure
+        even though the original pod's configure already claimed the sid in
+        ``_configuring_ids`` (claims are never removed on success)."""
+        scheduler = MagicMock()
+        system_controller._auto_configure = False
+        system_controller._system_state = SystemState.PROFILING
+        system_controller._configure_scheduler = scheduler
+        system_controller._configuring_ids.add("worker_group_manager_0")
+        system_controller._configured_ids.add("worker_group_manager_0")
+        system_controller._configure_single_service = MagicMock(  # type: ignore[method-assign]
+            return_value="coro"
+        )
+        ServiceRegistry.register(
+            service_id="worker_group_manager_0",
+            service_type="worker_group_manager",
+            first_seen_ns=1,
+            state=LifecycleState.RUNNING,
+            pod_name="old-pod",
+            pod_index="0",
+        )
+
+        msg = Registration(
+            sid="worker_group_manager_0",
+            rid="r",
+            stype="worker_group_manager",
+            state="running",
+            pod_name="new-pod",
+            pod_index="0",
+        )
+        await system_controller._handle_control_message("id_0", msg)
+
+        scheduler.execute_async.assert_called_once_with("coro")
+        assert "worker_group_manager_0" not in system_controller._configured_ids
+        assert "worker_group_manager_0" in system_controller._configuring_ids
+
     @pytest.mark.parametrize("replacement_pod_name", ["old-pod", "new-pod"])
     async def test_replacement_worker_group_reconfigures_during_profiling(
         self, system_controller: SystemController, replacement_pod_name: str

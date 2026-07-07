@@ -876,6 +876,8 @@ class TestWatchOrchestratorPollerAndSignalEdges:
         ) -> None:
             registrations.append((sig, callback))
 
+        # Pin the POSIX branch so this test passes on windows-latest CI too.
+        monkeypatch.setattr(watch_orchestrator, "IS_WINDOWS", False)
         monkeypatch.setattr(loop, "add_signal_handler", add_signal_handler)
         orchestrator = WatchOrchestrator(job_id="aiperf-bench-7f2a")
 
@@ -884,4 +886,37 @@ class TestWatchOrchestratorPollerAndSignalEdges:
         assert [sig for sig, _ in registrations] == [signal.SIGINT, signal.SIGTERM]
         for _, callback in registrations:
             callback()
+        assert orchestrator._running is False
+
+    @pytest.mark.asyncio
+    async def test_install_signal_handlers_on_windows_falls_back_to_signal_signal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_sigbreak = 21  # Windows SIGBREAK value; absent on POSIX.
+        signal_registrations: list[tuple[int, Callable[[int, object], None]]] = []
+        loop_registrations: list[tuple[object, ...]] = []
+        loop = watch_orchestrator.asyncio.get_running_loop()
+
+        def fake_signal(sig: int, handler: Callable[[int, object], None]) -> None:
+            signal_registrations.append((sig, handler))
+
+        monkeypatch.setattr(watch_orchestrator, "IS_WINDOWS", True)
+        monkeypatch.setattr(
+            loop, "add_signal_handler", lambda *args: loop_registrations.append(args)
+        )
+        monkeypatch.setattr(watch_orchestrator.signal, "signal", fake_signal)
+        monkeypatch.setattr(
+            watch_orchestrator.signal, "SIGBREAK", fake_sigbreak, raising=False
+        )
+        orchestrator = WatchOrchestrator(job_id="aiperf-bench-7f2a")
+
+        orchestrator._install_signal_handlers()
+
+        assert loop_registrations == []
+        assert [sig for sig, _ in signal_registrations] == [
+            signal.SIGINT,
+            fake_sigbreak,
+        ]
+        for sig, handler in signal_registrations:
+            handler(sig, None)
         assert orchestrator._running is False

@@ -198,28 +198,36 @@ async def open(path: Path) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     db = await aiosqlite.connect(str(path), isolation_level=None)
-    await db.execute("PRAGMA journal_mode = WAL")
-    await db.execute("PRAGMA synchronous = NORMAL")
-    await db.execute("PRAGMA busy_timeout = 5000")
-    await db.executescript(_SCHEMA_V1)
+    # Any failure after connect but before _DB is assigned must close the
+    # connection: aiosqlite spawns a non-daemon worker thread per connection,
+    # and callers (e.g. ResultsDB) retry open() per request, so a leak here
+    # accumulates threads + fds unboundedly.
+    try:
+        await db.execute("PRAGMA journal_mode = WAL")
+        await db.execute("PRAGMA synchronous = NORMAL")
+        await db.execute("PRAGMA busy_timeout = 5000")
+        await db.executescript(_SCHEMA_V1)
 
-    cur = await db.execute("SELECT value FROM meta WHERE key = 'schema_version'")
-    row = await cur.fetchone()
-    await cur.close()
-    if row is None:
-        await db.execute(
-            "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
-            (str(SCHEMA_VERSION),),
-        )
-    else:
-        # Forward-only migrations live here when SCHEMA_VERSION bumps.
-        # Today: only v1, no migration needed.
-        existing = int(row[0])
-        if existing > SCHEMA_VERSION:
-            raise RuntimeError(
-                f"runs_index DB at {path} has schema_version={existing} but this "
-                f"build only knows up to {SCHEMA_VERSION}. Refusing to open."
+        cur = await db.execute("SELECT value FROM meta WHERE key = 'schema_version'")
+        row = await cur.fetchone()
+        await cur.close()
+        if row is None:
+            await db.execute(
+                "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
             )
+        else:
+            # Forward-only migrations live here when SCHEMA_VERSION bumps.
+            # Today: only v1, no migration needed.
+            existing = int(row[0])
+            if existing > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"runs_index DB at {path} has schema_version={existing} but this "
+                    f"build only knows up to {SCHEMA_VERSION}. Refusing to open."
+                )
+    except BaseException:
+        await db.close()
+        raise
 
     _DB = db
     _DB_PATH = path
@@ -241,22 +249,27 @@ async def open_readonly(path: Path) -> None:
 
     uri = f"file:{quote(str(path), safe='/')}?mode=ro&cache=shared"
     db = await aiosqlite.connect(uri, uri=True, isolation_level=None)
-    await db.execute("PRAGMA query_only = ON")
-    await db.execute("PRAGMA busy_timeout = 5000")
+    # Same leak guard as open(): a failure between connect and _DB assignment
+    # (e.g. missing meta table on a foreign sqlite file) would otherwise leak
+    # the connection's non-daemon thread on every retry.
+    try:
+        await db.execute("PRAGMA query_only = ON")
+        await db.execute("PRAGMA busy_timeout = 5000")
 
-    cur = await db.execute("SELECT value FROM meta WHERE key = 'schema_version'")
-    row = await cur.fetchone()
-    await cur.close()
-    if row is None:
+        cur = await db.execute("SELECT value FROM meta WHERE key = 'schema_version'")
+        row = await cur.fetchone()
+        await cur.close()
+        if row is None:
+            raise RuntimeError(f"runs_index DB at {path} is missing schema_version")
+        existing = int(row[0])
+        if existing > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"runs_index DB at {path} has schema_version={existing} but this "
+                f"build only knows up to {SCHEMA_VERSION}. Refusing to open."
+            )
+    except BaseException:
         await db.close()
-        raise RuntimeError(f"runs_index DB at {path} is missing schema_version")
-    existing = int(row[0])
-    if existing > SCHEMA_VERSION:
-        await db.close()
-        raise RuntimeError(
-            f"runs_index DB at {path} has schema_version={existing} but this "
-            f"build only knows up to {SCHEMA_VERSION}. Refusing to open."
-        )
+        raise
 
     _DB = db
     _DB_PATH = path
@@ -946,12 +959,15 @@ async def list_sweep_epochs_for_sweep(namespace: str, sweep_name: str) -> list[s
 
 
 async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
-    """Walk the PVC and ingest every run + sweep variation found.
+    """Walk the PVC and converge the index on the disk truth, both directions.
 
     - ``<base>/<ns>/<job>/<epoch>/`` for runs (excludes name == 'sweeps')
     - ``<base>/<ns>/sweeps/<name>/<epoch>/`` for sweep variations
     - is_latest is set per ``latest.txt``, not "newest mtime in the table"
     - When ``force=True``, drops + recreates the tables before walking
+    - Before the forward ingest walk, :func:`_prune_stale_run_rows` drops
+      indexed runs whose run dir vanished from disk (a retention ``rmtree``
+      whose scheduled index drop was lost to an operator crash)
 
     Bootstrap intentionally does NOT require the ``.aiperf_results_ready.json``
     marker that ``lazy_backfill_run`` checks — bootstrap runs at operator
@@ -972,7 +988,12 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
     sweep_count = 0
 
     if not base.is_dir():
+        # A missing base (PVC unmounted mid-startup) must NOT trigger the
+        # prune pass — treating "nothing mounted" as "everything deleted"
+        # would wipe a perfectly valid index.
         return BootstrapStats(0, 0, time.monotonic() - started)
+
+    await _prune_stale_run_rows(base)
 
     for ns_dir in base.iterdir():
         if not ns_dir.is_dir():
@@ -989,6 +1010,49 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
         elapsed,
     )
     return BootstrapStats(runs_count, sweep_count, elapsed)
+
+
+async def _prune_stale_run_rows(base: Path) -> int:
+    """Drop ``runs`` rows whose on-disk run dir no longer exists.
+
+    Reverse pass of the ingest walk. Retention (``enforce_retention``) deletes
+    run dirs on disk first and schedules the matching index drops second
+    (``schedule_index_drops``), so a crash between the two strands rows the
+    forward walk can never repair — ingest only ever adds. Pruning is
+    restricted to rows that recorded on-disk artifacts (``mtime_epoch`` or
+    ``metrics_json`` populated by completion/bootstrap): a ``Pending`` stub
+    for an in-flight job and a ``Failed`` row for a job that died before
+    writing results legitimately have no run dir and must survive.
+
+    Runs inside bootstrap on the operator's single-writer connection, so no
+    other writer can race the deletes; the per-row directory checks are
+    offloaded to a worker thread. Returns the number of rows pruned.
+    """
+    cur = await _conn().execute(
+        "SELECT namespace, job_id, epoch FROM runs "
+        "WHERE mtime_epoch IS NOT NULL OR metrics_json IS NOT NULL"
+    )
+    rows = [(r[0], r[1], r[2]) for r in await cur.fetchall()]
+    await cur.close()
+    if not rows:
+        return 0
+
+    def _missing_on_disk() -> list[tuple[str, str, str]]:
+        return [
+            (ns, job, epoch)
+            for ns, job, epoch in rows
+            if not (base / ns / job / epoch).is_dir()
+        ]
+
+    stale = await asyncio.to_thread(_missing_on_disk)
+    for ns, job, epoch in stale:
+        await delete_run(ns, job, epoch)
+    if stale:
+        logger.info(
+            "bootstrap: pruned %d stale index row(s) with no run dir on disk",
+            len(stale),
+        )
+    return len(stale)
 
 
 async def _bootstrap_namespace_runs(base: Path, ns_dir: Path) -> int:

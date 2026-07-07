@@ -772,6 +772,127 @@ class TestFixedScheduleConfigCorrection:
         assert r._config.expected_num_sessions == 2
 
 
+class TestDagPendingBranchWorkGate:
+    """The returning-complete fast path must not close a DAG phase while the
+    branch orchestrator still holds dispatched-but-unreturned branch work.
+    Regression guard for the dropped ``has_pending_branch_work`` gate that
+    truncated DAG benchmarks."""
+
+    def _make_dag_runner(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+        *,
+        pending_branch_work: bool,
+    ) -> tuple[PhaseRunner, MagicMock]:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        orchestrator = MagicMock()
+        orchestrator.has_pending_branch_work = MagicMock(
+            return_value=pending_branch_work
+        )
+        orchestrator.snapshot_branch_stats = MagicMock(return_value=None)
+        r._branch_orchestrator = orchestrator
+        # Mirror the state _wait_for_returning_complete is entered with: sending
+        # finished with all root credits already returned, so the counter alone
+        # reads complete.
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete(timeout_triggered=False)
+        r._progress.freeze_sent_counts()
+        return r, orchestrator
+
+    async def test_fast_path_blocked_while_branch_work_pending(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r, orchestrator = self._make_dag_runner(
+            conv_src, pub, router, conc, cancel, cb, pending_branch_work=True
+        )
+
+        task = asyncio.create_task(r._wait_for_returning_complete())
+        await asyncio.sleep(0.01)
+
+        assert not task.done(), (
+            "phase declared returning-complete while the branch orchestrator "
+            "still reported pending DAG branch work"
+        )
+        assert not r._progress.all_credits_returned_event.is_set()
+        orchestrator.has_pending_branch_work.assert_called()
+
+        # Branch work drains -> the credit-return path sets the returned event
+        # and the wait completes normally.
+        orchestrator.has_pending_branch_work.return_value = False
+        r._progress.all_credits_returned_event.set()
+        await asyncio.wait_for(task, timeout=1.0)
+        pub.publish_phase_complete.assert_called_once()
+
+    async def test_fast_path_completes_when_no_branch_work_pending(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r, _ = self._make_dag_runner(
+            conv_src, pub, router, conc, cancel, cb, pending_branch_work=False
+        )
+
+        await asyncio.wait_for(r._wait_for_returning_complete(), timeout=1.0)
+
+        assert r._progress.all_credits_returned_event.is_set()
+        pub.publish_phase_complete.assert_called_once()
+
+    async def test_fast_path_unaffected_on_non_dag_runs(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        assert r._branch_orchestrator is None
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete(timeout_triggered=False)
+        r._progress.freeze_sent_counts()
+
+        await asyncio.wait_for(r._wait_for_returning_complete(), timeout=1.0)
+
+        assert r._progress.all_credits_returned_event.is_set()
+
+
+class TestCancellationEpisodeReset:
+    """Each phase must clear the router's cancellation latch before issuing
+    credits, so a grace-timeout cancel in an earlier phase does not leave
+    reconciliation and orphan recovery disabled for later phases."""
+
+    async def test_prepare_phase_calls_begin_phase_on_router(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+
+        await r._prepare_phase(MockStrategy())
+
+        router.begin_phase.assert_called_once_with()
+
+
 class TestPhaseRunnerWorkerReadiness:
     """The phase must gate credit issuance on worker readiness. Regression
     coverage for the startup-race deadlock (see PhaseRunner._prepare_phase)."""

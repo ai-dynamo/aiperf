@@ -44,7 +44,7 @@ def test_get_sweep_with_epoch(tmp_path: Path) -> None:
             "completedRuns": 4,
             "failedRuns": 0,
             "completedAt": "2026-04-25T01:00:00Z",
-            "spec_snapshot": {
+            "specSummary": {
                 "sweep_type": "grid",
                 "dimensions": [{"name": "concurrency", "values": [1, 2, 4, 8]}],
             },
@@ -61,7 +61,7 @@ def test_get_sweep_with_epoch(tmp_path: Path) -> None:
             "completedRuns": 8,
             "failedRuns": 0,
             "completedAt": "2026-04-26T01:00:00Z",
-            "spec_snapshot": {
+            "specSummary": {
                 "sweep_type": "grid",
                 "dimensions": [
                     {"name": "concurrency", "values": [1, 2, 4, 8, 16, 32, 64, 128]}
@@ -273,7 +273,7 @@ def test_get_cells_with_epoch_param(tmp_path: Path) -> None:
             "totalVariations": 1,
             "completedRuns": 1,
             "failedRuns": 0,
-            "spec_snapshot": {
+            "specSummary": {
                 "sweep_type": "grid",
                 "dimensions": [{"name": "concurrency", "values": [8]}],
             },

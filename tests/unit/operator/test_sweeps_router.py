@@ -214,7 +214,7 @@ def test_detail_archived_uses_synthesized_status(tmp_path: Path) -> None:
                 "completedRuns": 4,
                 "failedRuns": 0,
                 "completedAt": "2026-04-25T01:00:00Z",
-                "spec_snapshot": {
+                "specSummary": {
                     "sweep_type": "grid",
                     "dimensions": [{"name": "concurrency", "values": [1, 2, 4, 8]}],
                 },
@@ -240,7 +240,7 @@ def test_detail_archived_uses_synthesized_status(tmp_path: Path) -> None:
             "completedRuns": 4,
             "failedRuns": 0,
             "completedAt": "2026-04-25T01:00:00Z",
-            "spec_snapshot": {
+            "specSummary": {
                 "sweep_type": "grid",
                 "dimensions": [{"name": "concurrency", "values": [1, 2, 4, 8]}],
             },
@@ -277,7 +277,7 @@ def test_cells_archived_reads_per_cell_aggregates(tmp_path: Path) -> None:
                 "completedRuns": 4,
                 "failedRuns": 0,
                 "completedAt": "2026-04-25T01:00:00Z",
-                "spec_snapshot": {
+                "specSummary": {
                     "sweep_type": "grid",
                     "dimensions": [{"name": "concurrency", "values": [8, 32]}],
                 },

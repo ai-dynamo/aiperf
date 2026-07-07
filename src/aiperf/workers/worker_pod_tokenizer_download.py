@@ -23,6 +23,7 @@ from urllib.parse import quote
 import aiohttp
 import zstandard
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.transports.aiohttp_client import create_tcp_connector
 
 _INITIAL_BACKOFF_S = 0.5
@@ -183,15 +184,22 @@ def _extract_bundle(compressed: bytes, dest: Path) -> None:
 
 
 class _bundle_lock:
-    """Cross-container file lock + asyncio-friendly entry."""
+    """Cross-container file lock + asyncio-friendly entry.
+
+    On Windows this is a no-op: the flock exists only to serialize bundle
+    extraction across containers sharing a volume inside Linux worker pods,
+    a topology that cannot occur on Windows (dev/CI runs only), and the
+    ``fcntl`` module does not exist there.
+    """
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._fd: int | None = None
 
     async def __aenter__(self) -> _bundle_lock:
+        if IS_WINDOWS:
+            return self
         import fcntl
-        import os
 
         self._fd = os.open(self._path, os.O_CREAT | os.O_RDWR, 0o600)
         # Acquire the lock in a worker thread so we don't block the loop.
@@ -199,10 +207,9 @@ class _bundle_lock:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
-        import fcntl
-        import os
-
         if self._fd is not None:
+            import fcntl
+
             fcntl.flock(self._fd, fcntl.LOCK_UN)
             os.close(self._fd)
             self._fd = None

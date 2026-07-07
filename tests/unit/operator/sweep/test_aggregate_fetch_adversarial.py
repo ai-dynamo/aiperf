@@ -46,14 +46,29 @@ def _sweep_epoch_dir(base_dir: Path) -> Path:
     return base_dir / "aiperf-benchmarks" / "sweeps" / "latency-sweep" / "1778027124"
 
 
-def _fake_progress_client(downloaded: list[str] | BaseException) -> MagicMock:
-    """Build a ProgressClient double that records sidecar download calls."""
+def _fake_progress_client(
+    downloaded: list[str] | BaseException,
+    *,
+    listed: list[str] | None = None,
+) -> MagicMock:
+    """Build a ProgressClient double that records sidecar list+download calls.
+
+    ``listed`` defaults to mirroring ``downloaded`` (a full harvest); pass it
+    explicitly to simulate a partial harvest. When ``downloaded`` is an
+    exception, the listing raises it too (transport failures hit the first
+    HTTP call).
+    """
     fake = MagicMock()
     fake.__aenter__ = AsyncMock(return_value=fake)
     fake.__aexit__ = AsyncMock(return_value=None)
     if isinstance(downloaded, BaseException):
+        fake.get_results_list = AsyncMock(side_effect=downloaded)
         fake.download_all_results = AsyncMock(side_effect=downloaded)
     else:
+        names = listed if listed is not None else downloaded
+        fake.get_results_list = AsyncMock(
+            return_value=[{"name": name, "size": 64} for name in names]
+        )
         fake.download_all_results = AsyncMock(return_value=downloaded)
     return fake
 
@@ -98,14 +113,15 @@ class TestSweepAggregateSidecarFetch:
 
         monkeypatch.setattr(aggregate_fetch, "ProgressClient", fake_progress_client)
 
-        count = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
+        result = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
             sweep_name="latency-sweep",
             namespace="aiperf-benchmarks",
             epoch="1778027124",
             base_dir=tmp_path,
         )
 
-        assert count == 2
+        assert result.downloaded == 2
+        assert result.listed == 2
         assert constructed_ports == [
             aggregate_fetch.K8sEnvironment.PORTS.RESULTS_SIDECAR
         ]
@@ -120,24 +136,33 @@ class TestSweepAggregateSidecarFetch:
         ).read_text() == "1778027124"
 
     @pytest.mark.asyncio
-    async def test_fetch_sweep_aggregate_partial_download_advances_latest_with_count(
+    async def test_fetch_sweep_aggregate_partial_download_reports_listed_gap(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A partial harvest reports downloaded < listed so the kopf handler
+        keeps the JobSet alive; the latest-pointer still advances (the epoch
+        dir is genuinely the newest, and the re-harvest completes it)."""
         fake_client = _fake_progress_client(
-            ["aiperf-benchmarks/sweeps/latency-sweep/1778027124/aggregate.json"]
+            ["aiperf-benchmarks/sweeps/latency-sweep/1778027124/aggregate.json"],
+            listed=[
+                "aiperf-benchmarks/sweeps/latency-sweep/1778027124/aggregate.json",
+                "aiperf-benchmarks/sweeps/latency-sweep/1778027124/children.json",
+            ],
         )
         monkeypatch.setattr(
             aggregate_fetch, "ProgressClient", lambda *args, **kwargs: fake_client
         )
 
-        count = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
+        result = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
             sweep_name="latency-sweep",
             namespace="aiperf-benchmarks",
             epoch="1778027124",
             base_dir=tmp_path,
         )
 
-        assert count == 1
+        assert result.downloaded == 1
+        assert result.listed == 2
+        assert result.is_partial
         assert (
             tmp_path / "aiperf-benchmarks" / "sweeps" / "latency-sweep" / "latest.txt"
         ).read_text() == "1778027124"
@@ -164,14 +189,15 @@ class TestSweepAggregateSidecarFetch:
         )
 
         with caplog.at_level("WARNING", logger=aggregate_fetch.logger.name):
-            count = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
+            result = await aggregate_fetch.fetch_sweep_aggregate_to_disk(
                 sweep_name="latency-sweep",
                 namespace="aiperf-benchmarks",
                 epoch="1778027124",
                 base_dir=tmp_path,
             )
 
-        assert count == 0
+        assert result.downloaded == 0
+        assert result.listed == 0
         assert not (
             tmp_path / "aiperf-benchmarks" / "sweeps" / "latency-sweep" / "latest.txt"
         ).exists()
@@ -205,7 +231,11 @@ class TestSweepAggregateSidecarFetch:
     async def test_on_aiperfsweep_aggregation_complete_zero_fetch_surfaces_retry_reason(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        fetch = AsyncMock(return_value=0)
+        fetch = AsyncMock(
+            return_value=aggregate_fetch.SweepAggregateFetchResult(
+                downloaded=0, listed=0
+            )
+        )
         monkeypatch.setattr(
             aggregate_fetch,
             "fetch_sweep_aggregate_to_disk",

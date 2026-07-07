@@ -30,9 +30,11 @@ import logging
 import os
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import kopf
+import orjson
 from kopf._cogs.structs.credentials import ConnectionInfo
 
 from aiperf.kubernetes.client import APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV
@@ -217,6 +219,23 @@ async def _delete_sweep_jobset(namespace: str, jobset_name: str) -> None:
             )
 
 
+def _sweep_aggregate_on_disk(aggregate_path: Path) -> bool:
+    """True iff a parseable ``aggregate.json`` is present at ``aggregate_path``.
+
+    An ``exists()`` check alone is not enough: a fetch interrupted mid-stream
+    or an operator crash mid-write can leave a truncated ``aggregate.json``
+    that passes ``exists()`` but is unreadable — and once the sweep JobSet is
+    deleted, the only other copy (the controller pod's emptyDir) is gone.
+    Parse failure is therefore treated exactly like absence, keeping the
+    caller on the re-fetch path.
+    """
+    try:
+        orjson.loads(aggregate_path.read_bytes())
+    except (OSError, orjson.JSONDecodeError):
+        return False
+    return True
+
+
 @kopf.on.field(
     AIPERF_GROUP,
     AIPERF_VERSION,
@@ -254,7 +273,7 @@ async def on_aiperfsweep_aggregation_complete(
         )
         return
     base_dir = OperatorEnvironment.RESULTS.DIR
-    fetched_count = await _aggregate_fetch.fetch_sweep_aggregate_to_disk(
+    fetched = await _aggregate_fetch.fetch_sweep_aggregate_to_disk(
         sweep_name=name,
         namespace=namespace,
         epoch=str(epoch),
@@ -263,13 +282,14 @@ async def on_aiperfsweep_aggregation_complete(
     aggregate_marker = (
         base_dir / namespace / "sweeps" / name / str(epoch) / "aggregate.json"
     )
-    if fetched_count == 0:
+    if fetched.downloaded == 0:
         # A re-fire AFTER we deleted the JobSet (below) hits a dead sidecar
         # and gets 0 files — but the harvest already happened on the tick
         # that did the delete. Treat an already-populated dest-dir as success
         # so the handler does not loop forever on TemporaryError once the pod
-        # is gone. Only retry when the artifacts are genuinely absent.
-        if aggregate_marker.exists():
+        # is gone. Only accept a PARSEABLE aggregate: a crash-truncated file
+        # passes exists() but is useless, and must stay on the re-fetch path.
+        if _sweep_aggregate_on_disk(aggregate_marker):
             logger.info(
                 f"AIPerfSweep {namespace}/{name} aggregate already on disk "
                 f"(epoch={epoch}); sidecar gone after JobSet reap, treating as done"
@@ -281,16 +301,31 @@ async def on_aiperfsweep_aggregation_complete(
             delay=30,
         )
 
-    if not aggregate_marker.exists():
-        # A partial download (sidecar dying mid-stream, PVC write failure) can
-        # report fetched files without landing aggregate.json. The only other
-        # copy lives on the controller pod's emptyDir, so deleting the JobSet
-        # now would destroy it permanently. Keep the JobSet (retry or CR TTL
-        # reaps it) and re-harvest on the next tick.
+    if fetched.is_partial:
+        # Some advertised sibling artifacts (children.json, sweep_aggregate/
+        # exports, ...) failed to download even though others landed. The only
+        # other copy lives on the controller pod's emptyDir, so deleting the
+        # JobSet now would destroy the failed files permanently. Keep the
+        # JobSet (retry or CR TTL reaps it) and re-harvest on the next tick.
         logger.error(
-            f"AIPerfSweep {namespace}/{name} harvest fetched {fetched_count} "
-            f"file(s) but {aggregate_marker} is missing; keeping JobSet "
-            f"aiperf-{name} alive for re-harvest"
+            f"AIPerfSweep {namespace}/{name} harvest downloaded "
+            f"{fetched.downloaded}/{fetched.listed} advertised file(s); keeping "
+            f"JobSet aiperf-{name} alive for re-harvest"
+        )
+        raise kopf.TemporaryError(
+            f"AIPerfSweep {namespace}/{name} aggregate harvest partial "
+            f"({fetched.downloaded}/{fetched.listed} files downloaded); retrying",
+            delay=30,
+        )
+
+    if not _sweep_aggregate_on_disk(aggregate_marker):
+        # A download reported success without landing a usable aggregate.json
+        # (sidecar dying mid-stream, PVC write failure, crash-truncated file).
+        # Same reasoning as the partial branch: keep the JobSet alive.
+        logger.error(
+            f"AIPerfSweep {namespace}/{name} harvest fetched {fetched.downloaded} "
+            f"file(s) but {aggregate_marker} is missing or unparsable; keeping "
+            f"JobSet aiperf-{name} alive for re-harvest"
         )
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} aggregate harvest incomplete "

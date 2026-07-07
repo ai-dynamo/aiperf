@@ -87,13 +87,22 @@ class SystemControllerDispatchMixin:
             pod_index=message.pod_index,
         )
         self._record_declared_capacity(message, already_configuring)
+        if is_replacement:
+            # A replacement pod must be re-sent PROFILE_CONFIGURE even though
+            # the original pod's configure already claimed this sid. Un-claim
+            # BEFORE the should_configure check so the claim from the first
+            # run can never mask the replacement.
+            self._configured_ids.discard(message.sid)
+            self._configuring_ids.discard(message.sid)
         should_configure = (
             self._auto_configure or is_replacement
-        ) and not already_configuring
+        ) and message.sid not in self._configuring_ids
         if should_configure:
-            if is_replacement:
-                self._configured_ids.discard(message.sid)
-                self._configuring_ids.discard(message.sid)
+            # Claim at scheduling time (not inside the scheduled task): a
+            # burst of Registration retries for the same sid must dedupe
+            # here, otherwise each retry schedules its own concurrent
+            # PROFILE_CONFIGURE before the first task body ever runs.
+            self._configuring_ids.add(message.sid)
             self._configure_scheduler.execute_async(
                 self._configure_single_service(message.sid)
             )

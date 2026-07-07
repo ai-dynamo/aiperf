@@ -196,6 +196,14 @@ class BenchmarkWatchdog:
         if self._task and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        # Reap fetch_failure_logs tasks: they hold the k8s client, so leaving
+        # them running would let API calls outlive the k8s_client() context.
+        if self._bg_tasks:
+            bg_tasks = list(self._bg_tasks)
+            self._bg_tasks.clear()
+            for task in bg_tasks:
+                task.cancel()
+            await asyncio.gather(*bg_tasks, return_exceptions=True)
         self._log_final_report()
 
     @property

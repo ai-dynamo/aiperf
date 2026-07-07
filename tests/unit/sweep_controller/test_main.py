@@ -94,6 +94,103 @@ def test_mirror_strategy_aggregate_to_sweep_dir_copies_files_only(tmp_path: Path
     ]
 
 
+def _real_sweep_spec():
+    """Validated AIPerfSweepSpec matching the shape the controller reads from the CR."""
+    from aiperf.operator.models import AIPerfSweepSpec
+
+    return AIPerfSweepSpec.model_validate(
+        {
+            "benchmark": {
+                "models": {"items": [{"name": "llama-3"}]},
+                "endpoint": {"urls": ["http://server:8000/v1/chat/completions"]},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 1,
+                        "requests": 1,
+                    }
+                ],
+            },
+            "sweep": {
+                "type": "grid",
+                "variables": {"phases.profiling.concurrency": [8, 32]},
+            },
+        }
+    )
+
+
+def test_write_sweep_parent_aggregate_writes_spec_summary_contract(
+    tmp_path: Path,
+) -> None:
+    """The archived aggregate.json carries the purpose-built ``specSummary``
+    (sweep_type/dimensions/multi_run/convergence) that the operator's
+    archived-sweep API consumes verbatim, alongside the full ``specSnapshot``
+    dump kept for forensics."""
+    _write_sweep_parent_aggregate(
+        base_dir=tmp_path,
+        sweep_cr={"metadata": {"namespace": "ns", "name": "s"}},
+        spec=_real_sweep_spec(),
+        results=[
+            SimpleNamespace(
+                label="cell-0",
+                success=True,
+                error=None,
+                variation_values={},
+                variation_label="concurrency=8",
+                variation_index=0,
+                trial_index=0,
+                child_run_epoch="1714000042",
+            )
+        ],
+        plan=SimpleNamespace(configs=[object(), object()]),
+        sweep_run_epoch="1714000000",
+        with_trial_suffix=False,
+    )
+
+    aggregate_path = tmp_path / "ns" / "sweeps" / "s" / "1714000000" / "aggregate.json"
+    doc = orjson.loads(aggregate_path.read_bytes())
+    summary = doc["specSummary"]
+    assert summary["sweep_type"] == "grid"
+    assert summary["dimensions"] == [{"name": "concurrency", "values": [8, 32]}]
+    assert isinstance(summary["multi_run"], dict)
+    assert summary["convergence"] is None
+    # Full dump stays for forensics / legacy readers.
+    assert doc["specSnapshot"]["sweep"]["type"] == "grid"
+
+
+def test_write_sweep_parent_aggregate_non_model_spec_writes_empty_summary(
+    tmp_path: Path,
+) -> None:
+    """A non-AIPerfSweepSpec spec object degrades to an empty summary dict
+    rather than crashing the archive write."""
+    _write_sweep_parent_aggregate(
+        base_dir=tmp_path,
+        sweep_cr={"metadata": {"namespace": "ns", "name": "s"}},
+        spec=SimpleNamespace(model_dump=lambda mode: {}),
+        results=[
+            SimpleNamespace(
+                label="cell-0",
+                success=True,
+                error=None,
+                variation_values={},
+                variation_label="v0",
+                variation_index=0,
+                trial_index=0,
+                child_run_epoch="1714000042",
+            )
+        ],
+        plan=SimpleNamespace(configs=[object()]),
+        sweep_run_epoch="1714000000",
+        with_trial_suffix=False,
+    )
+
+    aggregate_path = tmp_path / "ns" / "sweeps" / "s" / "1714000000" / "aggregate.json"
+    doc = orjson.loads(aggregate_path.read_bytes())
+    assert doc["specSummary"] == {}
+
+
 def test_write_sweep_parent_aggregate_uses_child_run_epoch(tmp_path: Path) -> None:
     result = SimpleNamespace(
         label="cell-0",

@@ -118,6 +118,94 @@ class TestStartRealtimeTelemetryRouting:
         )
 
 
+class TestConfigureSingleServiceRetry:
+    """PROFILE_CONFIGURE retry matcher: transient peer-gone ZMQ errors retry;
+    everything else fails fast.
+
+    The control ROUTER is created with ROUTER_MANDATORY, so a dropped DEALER
+    TCP connection surfaces as ``zmq.ZMQError`` with errno EHOSTUNREACH (or
+    ENOTCONN mid-write) — never as a "stream is closed" message, which is
+    what the old substring heuristic matched (dead code).
+    """
+
+    @pytest.mark.asyncio
+    async def test_transient_zmq_error_then_success_configures(
+        self, system_controller: SystemController
+    ) -> None:
+        """First attempt EHOSTUNREACH (peer TCP dropped), second succeeds."""
+        import zmq
+
+        from aiperf.common.control_structs import CommandAck
+
+        ok = CommandAck(cid="c1", sid="test-service")
+        system_controller._send_control_command = AsyncMock(
+            side_effect=[zmq.ZMQError(zmq.EHOSTUNREACH), ok]
+        )
+
+        await system_controller._configure_single_service("test-service")
+
+        assert system_controller._send_control_command.await_count == 2
+        assert "test-service" in system_controller._configured_ids
+        assert system_controller._configure_errors == []
+
+    @pytest.mark.asyncio
+    async def test_enotconn_is_also_retried(
+        self, system_controller: SystemController
+    ) -> None:
+        import zmq
+
+        from aiperf.common.control_structs import CommandAck
+
+        ok = CommandAck(cid="c1", sid="test-service")
+        system_controller._send_control_command = AsyncMock(
+            side_effect=[zmq.ZMQError(zmq.ENOTCONN), ok]
+        )
+
+        await system_controller._configure_single_service("test-service")
+
+        assert system_controller._send_control_command.await_count == 2
+        assert "test-service" in system_controller._configured_ids
+
+    @pytest.mark.asyncio
+    async def test_non_transient_errors_fail_without_retry(
+        self, system_controller: SystemController
+    ) -> None:
+        """TimeoutError / EFSM / generic errors must not consume retries."""
+        import zmq
+
+        for error in (TimeoutError(), zmq.ZMQError(zmq.EFSM), RuntimeError("boom")):
+            system_controller._configure_errors.clear()
+            system_controller._configured_ids.clear()
+            system_controller._configuring_ids.clear()
+            system_controller._all_configured_event.clear()
+            system_controller._send_control_command = AsyncMock(side_effect=error)
+
+            await system_controller._configure_single_service("test-service")
+
+            assert system_controller._send_control_command.await_count == 1, error
+            assert len(system_controller._configure_errors) == 1, error
+            assert "test-service" not in system_controller._configured_ids
+            # Un-claimed so a Registration retry can schedule a fresh configure.
+            assert "test-service" not in system_controller._configuring_ids
+
+    @pytest.mark.asyncio
+    async def test_transient_error_exhausts_retries_then_fails(
+        self, system_controller: SystemController
+    ) -> None:
+        import zmq
+
+        system_controller._send_control_command = AsyncMock(
+            side_effect=zmq.ZMQError(zmq.EHOSTUNREACH)
+        )
+
+        await system_controller._configure_single_service("test-service")
+
+        assert system_controller._send_control_command.await_count == 3
+        assert len(system_controller._configure_errors) == 1
+        assert "test-service" not in system_controller._configured_ids
+        assert "test-service" not in system_controller._configuring_ids
+
+
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""
 
@@ -141,6 +229,8 @@ class TestSystemControllerExitScenarios:
         assert len(system_controller._configure_errors) == 1
         assert isinstance(system_controller._configure_errors[0], CommandErr)
         assert system_controller._configure_errors[0].error == str(mock_exception)
+        # A CommandErr un-claims the sid so a Registration retry can retrigger.
+        assert "test-service" not in system_controller._configuring_ids
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_start_error_response(

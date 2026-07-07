@@ -77,14 +77,20 @@ def test_build_child_spec_overrides_benchmark():
 
 
 def test_build_child_spec_strips_aiperfsweep_only_orchestration_fields():
-    """sweep, convergence, failure_policy, cancel, ttl_seconds_after_finished
-    are AIPerfSweep envelope-only and must NOT propagate to children.
+    """failurePolicy, cancel, and ttlSecondsAfterFinished are AIPerfSweep
+    envelope-only orchestration fields and must NOT propagate to children —
+    the parent's TTL would delete children before the aggregate harvest.
+
+    The apiserver stores camelCase, so both spellings must be stripped;
+    inheritable orchestration fields (skipEndpointCheck) still propagate.
     """
     cr = _sweep_cr()
-    cr["spec"]["convergence"] = {"max_runs": 5}
+    cr["spec"]["failurePolicy"] = {"onFailure": "abort"}
     cr["spec"]["failure_policy"] = {"on_failure": "abort"}
     cr["spec"]["cancel"] = True
+    cr["spec"]["ttlSecondsAfterFinished"] = 60
     cr["spec"]["ttl_seconds_after_finished"] = 60
+    cr["spec"]["skipEndpointCheck"] = True
     cr["spec"]["sweep"] = {"variables": [{"name": "c", "values": [1, 2]}]}
     executor = K8sChildJobExecutor(api=None, sweep=cr, with_trial_suffix=True)
     run = BenchmarkRun(
@@ -97,13 +103,15 @@ def test_build_child_spec_strips_aiperfsweep_only_orchestration_fields():
     )
     spec = executor._build_child_spec(run)
     for stripped in (
-        "convergence",
+        "failurePolicy",
         "failure_policy",
         "cancel",
+        "ttlSecondsAfterFinished",
         "ttl_seconds_after_finished",
     ):
         assert stripped not in spec, f"{stripped!r} must not propagate to child"
     assert spec["sweep"] is None
+    assert spec["skipEndpointCheck"] is True
 
 
 def test_build_child_metadata_sets_owner_and_labels():

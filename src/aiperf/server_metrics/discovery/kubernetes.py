@@ -202,7 +202,10 @@ def _forbidden_message(namespace: str) -> str:
         f"granting 'pods: get/list' there — the aiperf-operator chart "
         f"provisions this for benchmark namespaces automatically; for other "
         f"namespaces add them to the chart's serverMetricsDiscoveryNamespaces "
-        f"value (or benchmarkRbacNamespaces for full benchmark RBAC)."
+        f"value. Plain entries bind only the benchmark namespaces' 'default' "
+        f"ServiceAccount — pods with a custom podTemplate.serviceAccountName "
+        f"need the {{namespace, serviceAccounts}} entry form (or a manual "
+        f"RoleBinding)."
     )
 
 

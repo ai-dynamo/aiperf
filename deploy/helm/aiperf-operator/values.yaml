@@ -275,9 +275,16 @@ benchmarkRbacNamespaces: []
 # Role/RoleBinding so cross-namespace server-metrics endpoint discovery
 # (server_metrics.discovery.namespace) is authorized. Unlike
 # benchmarkRbacNamespaces, entries are NOT created by the chart and receive
-# only `pods: get/list/watch`, bound to the `default` ServiceAccount of the
-# benchmark namespace(s). Same-namespace discovery (the default) needs no
-# entry here — the benchmark Role already grants it.
+# only `pods: get/list/watch`. Each entry is either a plain namespace string,
+# which binds the `default` ServiceAccount of the benchmark namespace(s), or
+# an object binding custom ServiceAccounts (podTemplate.serviceAccountName)
+# instead:
+#   serverMetricsDiscoveryNamespaces:
+#     - dynamo-server
+#     - namespace: dynamo-staging
+#       serviceAccounts: [aiperf-bench]
+# Same-namespace discovery (the default) needs no entry here — the benchmark
+# Role already grants it.
 serverMetricsDiscoveryNamespaces: []
 
 # kueue configures Kueue gang-scheduling integration

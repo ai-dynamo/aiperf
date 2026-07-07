@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import msgspec
 import pytest
 
 from aiperf.credit.messages import (
@@ -1428,6 +1429,153 @@ class TestStickyCreditRouterWorkerReadiness:
 
         with pytest.raises(RuntimeError, match="No workers registered"):
             await router.wait_for_workers(timeout=0)
+
+
+class TestStickyCreditRouterCancellationEpisodeScoping:
+    """A grace-timeout cancel must be scoped to one cancellation episode.
+    Regression guards for the latch that stayed True forever, disabling
+    reconciliation and orphan recovery for every later phase, and for the
+    late-return dedup set being cleared on every tick mid-drain."""
+
+    async def test_begin_phase_reenables_reconciliation_after_grace_timeout_cancel(
+        self, run
+    ) -> None:
+        """Phase 1 cancels via grace timeout; phase 2 must get reconciliation back."""
+        router = StickyCreditRouter(run=run, service_id="test-router")
+        router._credit_router_client.send_to = AsyncMock()
+        on_return = AsyncMock()
+        router.set_return_callback(on_return)
+
+        router._register_worker("worker-1")
+        phase1_credit = make_credit(id=31, corr_id="session-31", phase="warmup")
+        router._track_credit_sent("worker-1", phase1_credit)
+
+        # Phase 1 hits its grace timeout and cancels all credits.
+        await router.cancel_all_credits()
+        assert router._cancellation_pending is True
+
+        # While the episode is draining, reconciliation is suppressed.
+        router._credit_router_client.send_to.reset_mock()
+        await router._send_reconciliation()
+        router._credit_router_client.send_to.assert_not_awaited()
+        assert "worker-1" not in router._pending_reconciliation
+
+        # Phase 1 drains its cancelled credit; phase 2 starts issuing.
+        await router._handle_router_message(
+            "worker-1",
+            CreditReturn(credit=phase1_credit, cancelled=True, first_token_sent=False),
+        )
+        on_return.reset_mock()
+        router.begin_phase()
+        assert router._cancellation_pending is False
+
+        phase2_credit = make_credit(id=32, corr_id="session-32", phase="profiling")
+        router._track_credit_sent("worker-1", phase2_credit)
+
+        # Reconciliation is active again in phase 2...
+        await router._send_reconciliation()
+        assert "worker-1" in router._pending_reconciliation
+        sent = router._credit_router_client.send_to.await_args.args[1]
+        assert sent.credit_ids == frozenset({phase2_credit.id})
+
+        # ...and orphan recovery fires: a worker that stops answering
+        # reconciliation is evicted and its credit is reclaimed.
+        await router._send_reconciliation()
+        await router._send_reconciliation()
+        assert "worker-1" not in router._workers
+        on_return.assert_awaited_once()
+        reclaimed = on_return.await_args.args[1]
+        assert reclaimed.credit.id == phase2_credit.id
+        assert reclaimed.cancelled is True
+        assert reclaimed.error.startswith("worker_unavailable:")
+
+    async def test_reclaimed_dedup_survives_ticks_during_cancellation_drain(
+        self, run
+    ) -> None:
+        """A reclaimed credit's dedup key must survive reconciliation ticks while
+        the cancellation episode is still draining other in-flight credits."""
+        router = StickyCreditRouter(run=run, service_id="test-router")
+        router._credit_router_client.send_to = AsyncMock()
+        on_return = AsyncMock()
+        router.set_return_callback(on_return)
+
+        router._register_worker("worker-1")
+        router._register_worker("worker-2")
+        lost_credit = make_credit(id=41, corr_id="session-41", num_turns=2)
+        draining_credit = make_credit(id=42, corr_id="session-42", num_turns=2)
+        router._track_credit_sent("worker-1", lost_credit)
+        router._track_credit_sent("worker-2", draining_credit)
+
+        # worker-1 dies with an in-flight credit and its grace window expires.
+        await router._handle_router_message(
+            "worker-1",
+            WorkerShutdown(worker_id="worker-1"),
+        )
+        router._detached_worker_deadlines_ns["worker-1"] = 0
+
+        # Phase grace timeout cancels; the drain window begins.
+        await router.cancel_all_credits()
+
+        # First tick reclaims worker-1's credit (synthetic cancelled return).
+        await router._send_reconciliation()
+        key = router._credit_id_key(lost_credit.phase, lost_credit.id)
+        assert key in router._reclaimed_credit_ids
+        on_return.assert_awaited_once()
+
+        # Later ticks in the same drain window must keep the key: worker-2's
+        # credit for the phase is still in flight, so a late return for the
+        # reclaimed credit can still arrive and must be deduplicated.
+        await router._send_reconciliation()
+        await router._send_reconciliation()
+        assert key in router._reclaimed_credit_ids
+
+        # The late real return for the reclaimed credit is dropped, not
+        # double-delivered to the timing manager.
+        on_return.reset_mock()
+        await router._handle_router_message(
+            "worker-1",
+            CreditReturn(credit=lost_credit, cancelled=False, first_token_sent=True),
+        )
+        on_return.assert_not_awaited()
+
+
+class TestStickyCreditRouterDetachedReturnRebuild:
+    """The detached-worker CreditReturn rebuild must preserve every set field,
+    not just the ones an older manual rebuild happened to enumerate."""
+
+    async def test_detached_return_preserves_request_latency_and_all_fields(
+        self, run
+    ) -> None:
+        router = StickyCreditRouter(run=run, service_id="test-router")
+        on_return = AsyncMock()
+        router.set_return_callback(on_return)
+
+        router._register_worker("worker-1")
+        credit = make_credit(id=51, corr_id="session-51", turn=0, num_turns=3)
+        router._track_credit_sent("worker-1", credit)
+
+        await router._handle_router_message(
+            "worker-1",
+            WorkerShutdown(worker_id="worker-1"),
+        )
+        assert "worker-1" in router._detached_workers
+
+        original = CreditReturn(
+            credit=credit,
+            cancelled=False,
+            first_token_sent=True,
+            error="request aborted mid-stream",
+            request_latency_ns=123_456_789,
+            worker_id="worker-1",
+        )
+        await router._handle_router_message("worker-1", original)
+
+        on_return.assert_awaited_once()
+        rebuilt = on_return.await_args.args[1]
+        assert rebuilt.worker_detached is True
+        assert rebuilt.request_latency_ns == 123_456_789
+        expected = msgspec.structs.asdict(original) | {"worker_detached": True}
+        assert msgspec.structs.asdict(rebuilt) == expected
 
     async def test_wait_for_workers_blocks_again_after_last_worker_leaves(
         self, benchmark_run

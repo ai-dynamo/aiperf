@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import subprocess
+import sys
+import textwrap
+
 from aiperf.common.channel_codecs import RECORDS_CODEC
 from aiperf.common.message_codecs import (
     MsgspecStructCodec,
@@ -108,3 +112,47 @@ class TestMessageCodecs:
     def test_get_message_codec_is_singleton(self) -> None:
         """Repeated calls to get_message_codec() return the same object."""
         assert get_message_codec() is get_message_codec()
+
+    def test_codec_built_before_credit_messages_import_round_trips(self) -> None:
+        """Codec built BEFORE aiperf.credit.messages is imported must still
+        decode credit-phase messages.
+
+        The credit-phase message module lives outside the eagerly-imported
+        common/messages tree, so without the explicit import inside
+        ``_build_message_codec`` the tagged-union snapshot would silently
+        exclude the five credit-phase message types whenever the codec
+        builder won the import race. Needs a fresh interpreter — this test
+        process has long since imported everything.
+        """
+        script = textwrap.dedent(
+            """
+            import sys
+
+            from aiperf.common.message_codecs import get_message_codec
+
+            assert "aiperf.credit.messages" not in sys.modules, (
+                "precondition broken: credit messages already imported before "
+                "the codec was built; this test no longer exercises the race"
+            )
+            codec = get_message_codec()
+
+            from aiperf.common.enums import CreditPhase
+            from aiperf.common.models import CreditPhaseStats
+            from aiperf.credit.messages import CreditPhaseProgressMessage
+
+            message = CreditPhaseProgressMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING, requests_sent=7),
+            )
+            decoded = codec.decode(codec.encode(message))
+            assert isinstance(decoded, CreditPhaseProgressMessage), type(decoded)
+            assert decoded.stats.requests_sent == 7
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr

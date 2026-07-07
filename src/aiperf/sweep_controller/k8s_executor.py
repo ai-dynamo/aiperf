@@ -201,21 +201,28 @@ class K8sChildJobExecutor(RunExecutor):
           - benchmark = the rendered per-variation BenchmarkConfig.
           - sweep = None (single variation, no further fanout).
           - Stripped: AIPerfSweep-only orchestration metadata that must not
-            propagate to children.
+            propagate to children. The parent's failurePolicy governs
+            sweep-level abort behavior, and its ttlSecondsAfterFinished would
+            delete children (and their results) out from under the sweep
+            controller before the aggregate harvest.
         """
         parent_spec = self.sweep["spec"]
+        # The apiserver stores camelCase (declared CRD property names); the
+        # snake_case spellings cover hand-built CRs and tests — strip both,
+        # mirroring how _build_child_metadata reads childMetadata.
         child_spec: dict[str, Any] = {
             k: copy.deepcopy(v)
             for k, v in parent_spec.items()
             if k
             not in {
                 "sweep",
-                "convergence",
+                "failurePolicy",
                 "failure_policy",
                 "cancel",
+                "ttlSecondsAfterFinished",
                 "ttl_seconds_after_finished",
-                "child_metadata",
                 "childMetadata",
+                "child_metadata",
             }
         }
         benchmark_dump = run.cfg.model_dump(

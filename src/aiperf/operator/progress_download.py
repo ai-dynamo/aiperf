@@ -7,6 +7,7 @@ file-size limit. These helpers stream aiohttp response bodies to disk with
 optional zstd passthrough / transcoding.
 """
 
+import os
 import zlib
 from pathlib import Path
 from typing import Protocol
@@ -89,14 +90,26 @@ async def save_decompressed(
     dest_path: Path,
     decompressor: StreamingDecompressor | None,
 ) -> None:
-    """Decompress wire encoding and save the raw bytes to ``dest_path``."""
-    async with aiofiles.open(dest_path, "wb") as f:
-        async for chunk in response.content.iter_chunked(CHUNK_SIZE):
+    """Decompress wire encoding and save the raw bytes to ``dest_path``.
+
+    Streams to a ``<name>.part`` sibling and ``os.replace``s onto the final
+    name only after the body is fully written, so readers gated on file
+    existence (e.g. the sweep-aggregate harvest checking ``aggregate.json``)
+    can never observe a truncated file. On failure the partial ``.part`` file
+    is removed and ``dest_path`` is left untouched.
+    """
+    part_path = dest_path.parent / (dest_path.name + ".part")
+    try:
+        async with aiofiles.open(part_path, "wb") as f:
+            async for chunk in response.content.iter_chunked(CHUNK_SIZE):
+                if decompressor is not None:
+                    chunk = decompressor.decompress(chunk)
+                if chunk:
+                    await f.write(chunk)
             if decompressor is not None:
-                chunk = decompressor.decompress(chunk)
-            if chunk:
-                await f.write(chunk)
-        if decompressor is not None:
-            remaining = decompressor.flush()
-            if remaining:
-                await f.write(remaining)
+                remaining = decompressor.flush()
+                if remaining:
+                    await f.write(remaining)
+        os.replace(part_path, dest_path)
+    finally:
+        part_path.unlink(missing_ok=True)

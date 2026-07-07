@@ -62,10 +62,13 @@ spec:
               image:
                 type: string
                 description: Container image for AIPerf
-                default: nvcr.io/nvidia/aiperf:latest
+                default: {{ default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) .Values.defaults.image | quote }}
                 minLength: 1
               imagePullPolicy:
                 type: string
+                {{- with .Values.defaults.imagePullPolicy }}
+                default: {{ . | quote }}
+                {{- end }}
                 description: |-
                   Kubernetes image pull policies.
 

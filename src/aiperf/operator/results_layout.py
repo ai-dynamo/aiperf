@@ -682,8 +682,9 @@ def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:
 
     Schedule onto the running loop via ``create_task``; if there's no
     running loop (sync test or CLI dry run) we simply skip — the disk is
-    the source of truth and the next bootstrap pass will re-converge the
-    index.
+    the source of truth, and ``runs_index.bootstrap`` prunes rows whose run
+    dir no longer exists (``_prune_stale_run_rows``) at the next operator
+    startup, so a skipped or crash-lost drop re-converges then.
 
     Imported lazily to keep ``results_layout`` import-cycle-free; the
     operator package re-exports ``runs_index`` so a lazy attribute load

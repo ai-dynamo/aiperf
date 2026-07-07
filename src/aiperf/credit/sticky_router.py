@@ -24,6 +24,8 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+import msgspec
+
 from aiperf.common.enums import CommAddress
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
@@ -357,6 +359,17 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
         else:
             self.debug("No in-flight credits to cancel")
 
+    def begin_phase(self) -> None:
+        """Reset the per-episode cancellation latch before a phase issues credits.
+
+        ``cancel_all_credits`` latches ``_cancellation_pending`` for the duration
+        of one cancellation episode (e.g. a phase's grace-timeout drain). Without
+        this reset, the latch would leak into every later phase, permanently
+        disabling reconciliation and orphan recovery. Called by ``PhaseRunner``
+        once per phase, before the first credit is issued.
+        """
+        self._cancellation_pending = False
+
     def mark_credits_complete(self) -> None:
         """Mark credits complete - suppresses orphan warnings during shutdown."""
         self._credits_complete = True
@@ -449,12 +462,11 @@ class StickyCreditRouter(_WorkersMixin, _ReconciliationMixin, CommunicationMixin
         if self._on_return_callback:
             callback_message = message
             if was_detached:
-                callback_message = CreditReturn(
-                    credit=message.credit,
-                    cancelled=message.cancelled,
-                    first_token_sent=message.first_token_sent,
-                    error=message.error,
-                    worker_detached=True,
+                # structs.replace preserves every other field (request_latency_ns,
+                # worker_id, ...) and survives future field additions; a manual
+                # rebuild silently dropped fields it did not enumerate.
+                callback_message = msgspec.structs.replace(
+                    message, worker_detached=True
                 )
             # Await directly instead of execute_async - credit returns release
             # concurrency slots, so delays here directly impact throughput.

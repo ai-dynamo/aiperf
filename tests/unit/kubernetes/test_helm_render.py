@@ -375,3 +375,111 @@ class TestClusterRolePrivileges:
             "list",
             "watch",
         }
+
+
+# ============================================================
+# AIPerfJob / AIPerfSweep CRD chart-default parity
+# ============================================================
+
+
+def _crd_spec_properties(docs: list[dict], crd_name: str) -> dict:
+    """Return the openAPIV3Schema spec.properties map for a rendered CRD."""
+    crd = _find(docs, "CustomResourceDefinition", crd_name)
+    schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+    return schema["properties"]["spec"]["properties"]
+
+
+class TestCrdChartDefaultParity:
+    """Both CRDs must agree on the .Values-driven spec defaults.
+
+    AIPerfJob and AIPerfSweep share the workload spec shape; the generator
+    once applied the defaults.image / defaults.imagePullPolicy substitutions
+    only to the AIPerfJob CRD, so a chart deployed with a custom image gave
+    AIPerfSweep CRs the hardcoded nvcr.io:latest default silently.
+    """
+
+    BOTH_CRDS = ("aiperfjobs.aiperf.nvidia.com", "aiperfsweeps.aiperf.nvidia.com")
+
+    def test_custom_image_repository_and_tag_propagate_to_both_crds(self) -> None:
+        docs = _helm_template(
+            "--set",
+            "image.repository=example.com/custom/aiperf",
+            "--set",
+            "image.tag=v9.9.9",
+        )
+        for crd_name in self.BOTH_CRDS:
+            props = _crd_spec_properties(docs, crd_name)
+            assert props["image"]["default"] == "example.com/custom/aiperf:v9.9.9", (
+                f"{crd_name} spec.image default must follow the chart image"
+            )
+
+    def test_defaults_image_override_propagates_to_both_crds(self) -> None:
+        docs = _helm_template("--set", "defaults.image=ghcr.io/x/aiperf:dev")
+        for crd_name in self.BOTH_CRDS:
+            props = _crd_spec_properties(docs, crd_name)
+            assert props["image"]["default"] == "ghcr.io/x/aiperf:dev"
+
+    def test_defaults_image_pull_policy_propagates_to_both_crds(self) -> None:
+        docs = _helm_template("--set", "defaults.imagePullPolicy=Always")
+        for crd_name in self.BOTH_CRDS:
+            props = _crd_spec_properties(docs, crd_name)
+            assert props["imagePullPolicy"].get("default") == "Always"
+
+    def test_unset_image_pull_policy_omits_default_on_both_crds(self) -> None:
+        docs = _helm_template("--set", "defaults.imagePullPolicy=null")
+        for crd_name in self.BOTH_CRDS:
+            props = _crd_spec_properties(docs, crd_name)
+            assert "default" not in props["imagePullPolicy"], (
+                f"{crd_name} must defer imagePullPolicy to K8s when the chart "
+                f"value is unset"
+            )
+
+
+# ============================================================
+# serverMetricsDiscoveryNamespaces RoleBinding subjects
+# ============================================================
+
+
+class TestMetricsDiscoveryRoleBindingSubjects:
+    """Cross-namespace discovery RoleBindings honor the entry's SA list.
+
+    Plain string entries keep the historical behavior (bind the benchmark
+    namespaces' `default` ServiceAccount); the object form binds the listed
+    ServiceAccounts instead so pods running under a custom
+    podTemplate.serviceAccountName are not silently denied 'pods: list'.
+    """
+
+    def test_plain_string_entry_binds_default_serviceaccount(self) -> None:
+        docs = _helm_template(
+            "--set", "serverMetricsDiscoveryNamespaces={dynamo-server}"
+        )
+        binding = _find(docs, "RoleBinding", "aiperf-operator-metrics-discovery")
+        assert binding["metadata"]["namespace"] == "dynamo-server"
+        assert {(s["name"], s["namespace"]) for s in binding["subjects"]} == {
+            ("default", "aiperf-benchmarks")
+        }
+
+    def test_object_entry_binds_listed_serviceaccounts(self) -> None:
+        docs = _helm_template(
+            "--set",
+            "serverMetricsDiscoveryNamespaces[0].namespace=dynamo-server",
+            "--set",
+            "serverMetricsDiscoveryNamespaces[0].serviceAccounts[0]=aiperf-bench",
+            "--set",
+            "serverMetricsDiscoveryNamespaces[0].serviceAccounts[1]=other-sa",
+        )
+        binding = _find(docs, "RoleBinding", "aiperf-operator-metrics-discovery")
+        assert binding["metadata"]["namespace"] == "dynamo-server"
+        assert {(s["name"], s["namespace"]) for s in binding["subjects"]} == {
+            ("aiperf-bench", "aiperf-benchmarks"),
+            ("other-sa", "aiperf-benchmarks"),
+        }
+
+    def test_object_entry_without_serviceaccounts_falls_back_to_default(self) -> None:
+        docs = _helm_template(
+            "--set", "serverMetricsDiscoveryNamespaces[0].namespace=dynamo-server"
+        )
+        binding = _find(docs, "RoleBinding", "aiperf-operator-metrics-discovery")
+        assert {(s["name"], s["namespace"]) for s in binding["subjects"]} == {
+            ("default", "aiperf-benchmarks")
+        }
