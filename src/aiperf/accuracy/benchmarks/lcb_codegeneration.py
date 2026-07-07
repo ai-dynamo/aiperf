@@ -36,13 +36,15 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 import orjson
-from datasets import Dataset, load_dataset
 
+from aiperf.accuracy.benchmarks._datasets_compat import load_dataset
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 
 if TYPE_CHECKING:
+    from datasets import Dataset
+
     from aiperf.config.resolution.plan import BenchmarkRun
 
 DATASET_NAME = "livecodebench/code_generation_lite"

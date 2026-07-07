@@ -11,13 +11,12 @@ from pathlib import Path
 
 import ffmpeg
 import numpy as np
-import soundfile as sf
 from PIL import Image, ImageDraw
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
 from aiperf.config.dataset import VIDEO_AUDIO_CODEC_MAP, VideoConfig
-from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS
+from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS, import_soundfile
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
 
 
@@ -331,6 +330,8 @@ class VideoGenerator(BaseGenerator):
         audio_data = (signal * max_val).astype(numpy_type)
 
         output_buffer = io.BytesIO()
+        sf = import_soundfile()
+
         sf.write(
             output_buffer,
             audio_data,
