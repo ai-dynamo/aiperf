@@ -100,7 +100,10 @@ class BasePhaseConfig(BaseConfig):
         Field(
             default=None,
             description="Name of dataset to use (from datasets section). "
-            "If not specified, uses first defined dataset.",
+            "If not specified, uses the first defined dataset. Per-phase "
+            "dataset selection is not yet supported in-process, so when set "
+            "this must name the first defined dataset (validated on "
+            "BenchmarkConfig).",
         ),
     ]
 

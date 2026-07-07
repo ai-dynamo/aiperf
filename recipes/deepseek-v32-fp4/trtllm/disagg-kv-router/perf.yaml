@@ -29,12 +29,8 @@ spec:
       streaming: true
       timeout: 1000.0
     datasets:
-      - name: warmup
-        type: synthetic
-        entries: 10
-        prompts:
-          isl: {mean: 10000, stddev: 0}
-          osl: {mean: 200, stddev: 0}
+      # Single dataset: the in-process runtime loads exactly one dataset,
+      # so the warmup phase draws its requests from the trace as well.
       - name: trace
         type: file
         path:
@@ -43,13 +39,11 @@ spec:
     phases:
       - name: warmup
         type: concurrency
-        dataset: warmup
         concurrency: 4
         requests: 10
         exclude_from_results: true
       - name: replay
         type: fixed_schedule
-        dataset: trace
         auto_offset: true
         seamless: true
     slos:

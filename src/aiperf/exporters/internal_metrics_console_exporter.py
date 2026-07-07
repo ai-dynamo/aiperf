@@ -16,6 +16,9 @@ class ConsoleInternalMetricsExporter(ConsoleMetricsExporter):
     It is only applicable to internal metrics and is not applicable to user-facing metrics.
     """
 
+    # Flag-driven variant: no group filter, single merged table.
+    console_groups = None
+
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config=exporter_config, **kwargs)
         self._show_internal_metrics = (

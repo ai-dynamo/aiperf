@@ -281,12 +281,12 @@ def test_hostile_worker_ids_and_text_render_as_text_not_markup(
                 "startup_state": "ready",
                 "declared_workers": 1,
                 "ready_workers": 1,
-                "task_stats": {"in_progress": 0, "completed": 1, "failed": 0},
+                "task_stats": {"total": 1, "completed": 1, "failed": 0},
                 "health": {"cpu_usage": 12.0, "memory_usage": 1024},
                 "worker_statuses": {hostile_worker: "healthy"},
                 "worker_startup_states": {hostile_worker: "ready"},
                 "worker_task_stats": {
-                    hostile_worker: {"in_progress": 0, "completed": 1, "failed": 0}
+                    hostile_worker: {"total": 1, "completed": 1, "failed": 0}
                 },
                 "worker_health": {
                     hostile_worker: {"cpu_usage": 7.0, "memory_usage": 2048}

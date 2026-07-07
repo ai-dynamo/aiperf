@@ -37,7 +37,12 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         # Must be set by the caller
         self._phase: CreditPhase = phase
-        self._exclude_from_results: bool = False
+        # Tri-state: None until the first CreditPhaseStats for this phase
+        # arrives (update_from_credit_phase_stats). A record can race its
+        # phase's start message, so "unknown" must be distinguishable from
+        # "known included" — defaulting to False would leak excluded-phase
+        # (warmup) records into results.
+        self._exclude_from_results: bool | None = None
         self._total_expected_requests: int | None = None
 
         # Timestamp fields
@@ -88,7 +93,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         """Create a new immutable RecordsPhaseStats object for the phase (for use in messages)."""
         return PhaseRecordsStats(
             phase=self._phase,
-            exclude_from_results=self._exclude_from_results,
+            exclude_from_results=bool(self._exclude_from_results),
             start_ns=self._start_ns,
             sent_end_ns=self._sent_end_ns,
             requests_end_ns=self._requests_end_ns,
@@ -184,8 +189,24 @@ class RecordsTracker:
         return dict(all_worker_stats)
 
     def is_phase_excluded(self, phase: CreditPhase) -> bool:
-        """Check whether a phase is excluded from final results."""
-        return self._get_phase_tracker(phase)._exclude_from_results
+        """Check whether a phase is positively known to be excluded from results.
+
+        Returns False for phases whose CreditPhaseStats has not arrived yet;
+        callers that must distinguish "unknown" from "included" should use
+        ``get_phase_exclusion`` instead.
+        """
+        return self.get_phase_exclusion(phase) is True
+
+    def get_phase_exclusion(self, phase: CreditPhase) -> bool | None:
+        """Tri-state exclusion lookup: True/False once the phase's stats have
+        registered, None while the phase is still unknown (e.g. a record that
+        raced its CreditPhaseStartMessage).
+
+        Does NOT create a tracker for unknown phases, so probing cannot
+        pollute phase bookkeeping (get_results_phases, completion checks).
+        """
+        tracker = self._phase_trackers.get(phase)
+        return None if tracker is None else tracker._exclude_from_results
 
     def create_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
         """Create a new immutable RecordsPhaseStats object for the phase (for use in messages)."""

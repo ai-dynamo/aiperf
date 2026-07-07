@@ -267,6 +267,33 @@ class ParsedResponse:
             self.usage = Usage(self.usage)
 
 
+def find_last_non_empty_usage(responses: list[ParsedResponse]) -> Usage | None:
+    """Return the last response chunk's usage that has any data, walking
+    the list backwards.
+
+    Streaming chunks fall into two real-world patterns: (a) ``usage = None``
+    until a single final chunk carries the full usage, or (b) cumulative
+    running totals where the last chunk holds the final values. Both
+    collapse to "find the last non-empty Usage." Reading every token count
+    off this single block keeps prompt/reasoning/completion counts mutually
+    consistent — three independent walks could mix values from DIFFERENT
+    chunks' usage blocks.
+
+    Returns None if no chunk had any usage data. An empty Usage (``{}``) is
+    falsy (dict subclass) and treated the same as no usage.
+
+    Used by:
+    - ``ParsedResponseRecord.final_usage`` (cached at the record level so
+      every metric reading the merged usage walks at most once per record)
+    - ``InferenceResultParser._compute_server_token_counts`` (called before
+      the record is constructed)
+    """
+    for response in reversed(responses):
+        if response.usage:
+            return response.usage
+    return None
+
+
 @dataclass(slots=True)
 class TokenCounts:
     """Token counts for a record."""
@@ -342,10 +369,7 @@ class ParsedResponseRecord:
         at most once per record. Returns ``None`` when no response chunk
         carried usage info.
         """
-        for response in reversed(self.responses):
-            if response.usage:
-                return response.usage
-        return None
+        return find_last_non_empty_usage(self.responses)
 
     @property
     def has_error(self) -> bool:

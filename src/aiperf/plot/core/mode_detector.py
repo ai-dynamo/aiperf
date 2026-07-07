@@ -213,6 +213,38 @@ class ModeDetector(AIPerfLoggerMixin):
             path, PROFILE_EXPORT_AIPERF_AGGREGATE_JSON
         ) and not self._is_redundant_aggregate_shadow(path)
 
+    def _aggregate_sibling_is_canonical(self, aggregate_dir: Path) -> bool:
+        """Return True when ``aggregate_dir`` carries the canonical per-cell view.
+
+        Both trials>1 sweep layouts must match:
+
+        - INDEPENDENT: ``<cell>/aggregate/`` carries the aggregate marker
+          directly.
+        - REPEATED: ``<base>/aggregate/<cell>/`` carries one marker per cell,
+          so the marker lives one level below the ``aggregate/`` dir itself.
+
+        Empty/invalid ``aggregate/`` dirs and trials==1 redundant shadows do
+        not count, so per-trial ``profile_runs/`` data is still discovered
+        when the aggregate holds nothing canonical.
+
+        Args:
+            aggregate_dir: The ``<parent>/aggregate`` candidate path (may not
+                exist).
+
+        Returns:
+            True if the aggregate dir holds the canonical per-cell view at
+            either depth, False otherwise.
+        """
+        if self._has_valid_aggregate_marker(aggregate_dir):
+            return True
+        if not aggregate_dir.is_dir():
+            return False
+        return any(
+            self._has_valid_aggregate_marker(child)
+            for child in aggregate_dir.iterdir()
+            if child.is_dir()
+        )
+
     def _is_redundant_aggregate_shadow(self, path: Path) -> bool:
         """Detect aggregate dirs that duplicate a single-run sibling cell.
 
@@ -296,7 +328,9 @@ class ModeDetector(AIPerfLoggerMixin):
             run_dirs: Accumulator list; discovered run directories are appended.
         """
         try:
-            has_aggregate_sibling = self._has_valid_aggregate_marker(path / "aggregate")
+            has_aggregate_sibling = self._aggregate_sibling_is_canonical(
+                path / "aggregate"
+            )
             for subdir in path.iterdir():
                 if not subdir.is_dir():
                     continue

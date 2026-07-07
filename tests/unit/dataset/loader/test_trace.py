@@ -1161,12 +1161,13 @@ def _make_synthesis_config(
     prefix_root_multiplier: int = 1,
     prompt_len_multiplier: float = 1.0,
     max_isl: int | None = None,
-    block_size: int = 512,
 ) -> AIPerfConfig:
-    """Helper to create AIPerfConfig with synthesis settings.
+    """Helper to create AIPerfConfig with synthesis settings on a file dataset.
 
-    For non-default block_size, uses a synthetic dataset (which has prompts.block_size).
-    For default block_size (512), uses a file dataset (block_size defaults to 512).
+    Non-default block sizes are exercised via the loader's
+    ``default_block_size`` parameter (see ``test_block_size_passed_to_synthesis``);
+    the runtime loads exactly one dataset, so a second synthetic dataset can't
+    be used to route ``prompts.block_size``.
     """
     synthesis: dict = {
         "speedup_ratio": speedup_ratio,
@@ -1176,29 +1177,6 @@ def _make_synthesis_config(
     }
     if max_isl is not None:
         synthesis["max_isl"] = max_isl
-
-    if block_size != 512:
-        # Use a synthetic dataset to set block_size via prompts config
-        return AIPerfConfig(
-            benchmark={
-                **_BASE,
-                "datasets": [
-                    {
-                        "name": "default",
-                        "type": "synthetic",
-                        "entries": 100,
-                        "prompts": {"isl": 128, "osl": 64, "block_size": block_size},
-                    },
-                    {
-                        "name": "traces",
-                        "type": "file",
-                        "path": "dummy.jsonl",
-                        "format": "mooncake_trace",
-                        "synthesis": synthesis,
-                    },
-                ],
-            }
-        )
 
     return _make_file_config(synthesis=synthesis)
 

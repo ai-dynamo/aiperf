@@ -164,3 +164,92 @@ class TestConsoleExporter:
     def test_get_title_returns_expected_string(self, mock_exporter_config):
         exporter = ConsoleMetricsExporter(mock_exporter_config)
         assert exporter._get_title() == "NVIDIA AIPerf | LLM Metrics"
+
+
+class TestConsoleGroupSections:
+    """Metrics with a non-DEFAULT MetricConsoleGroup render as separate tables."""
+
+    @pytest.fixture
+    def grouped_records(self):
+        return [
+            MetricResult(
+                tag="time_to_first_token",  # console_group=DEFAULT
+                header="Time to First Token",
+                unit="ms",
+                avg=120.5,
+            ),
+            MetricResult(
+                tag="usage_prompt_tokens",  # console_group=USAGE
+                header="Usage Prompt Tokens",
+                unit="tokens",
+                avg=550.0,
+            ),
+        ]
+
+    @pytest.fixture
+    def grouped_exporter_config(self, grouped_records, config):
+        return ExporterConfig(
+            results=ProfileResults(
+                records=grouped_records,
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            ),
+            config=config.benchmark,
+            telemetry_results=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_export_renders_one_table_per_group(
+        self, grouped_exporter_config, capsys
+    ):
+        exporter = ConsoleMetricsExporter(grouped_exporter_config)
+        await exporter.export(Console(width=200))
+        output = capsys.readouterr().out
+        assert "NVIDIA AIPerf | LLM Metrics" in output
+        assert "NVIDIA AIPerf | LLM Metrics: Usage" in output
+        assert "Time to First Token" in output
+        assert "Usage Prompt Tokens" in output
+
+    def test_get_renderable_groups_records(self, grouped_exporter_config):
+        from rich.console import Group
+
+        exporter = ConsoleMetricsExporter(grouped_exporter_config)
+        renderable = exporter.get_renderable(
+            grouped_exporter_config.results.records, Console(width=200)
+        )
+        assert isinstance(renderable, Group)
+        assert len(renderable.renderables) == 2
+
+    def test_get_renderable_single_group_returns_single_table(
+        self, sample_records, config
+    ):
+        from rich.table import Table
+
+        exporter_config = ExporterConfig(
+            results=ProfileResults(
+                records=sample_records,
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            ),
+            config=config.benchmark,
+            telemetry_results=None,
+        )
+        exporter = ConsoleMetricsExporter(exporter_config)
+        renderable = exporter.get_renderable(sample_records, Console(width=200))
+        assert isinstance(renderable, Table)
+
+    def test_get_renderable_no_visible_records_returns_none(self, config):
+        exporter_config = ExporterConfig(
+            results=ProfileResults(
+                records=[],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            ),
+            config=config.benchmark,
+            telemetry_results=None,
+        )
+        exporter = ConsoleMetricsExporter(exporter_config)
+        assert exporter.get_renderable([], Console(width=200)) is None

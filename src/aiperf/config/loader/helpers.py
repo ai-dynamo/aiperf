@@ -208,6 +208,11 @@ class BenchmarkHelpersMixin:
         return self.artifacts  # type: ignore[attr-defined]
 
     @property
-    def benchmark_id(self) -> str:
-        """Benchmark ID from artifacts config."""
+    def benchmark_id(self) -> str | None:
+        """Benchmark ID from artifacts config.
+
+        None until a ``BenchmarkRun`` wraps this config (its validator stamps
+        the run id into ``artifacts.benchmark_id``); always concrete for
+        run-wrapped configs, which is what every runtime consumer reads.
+        """
         return self.artifacts.benchmark_id  # type: ignore[attr-defined]

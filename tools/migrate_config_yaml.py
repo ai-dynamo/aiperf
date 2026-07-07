@@ -12,10 +12,15 @@ Usage:
     uv run python tools/migrate_config_yaml.py - < flat.yaml > envelope.yaml
 
 Behavior:
-- Body fields ({models, endpoint, datasets, phases, artifacts, slos, tokenizer,
-  gpu_telemetry, server_metrics, runtime, logging, metrics, accuracy}) at the
-  top level get re-indented under a `benchmark:` key.
+- Body fields (the loader's `_BODY_KEYS`: model/models, endpoint,
+  dataset/datasets, phases, artifacts, slos, tokenizer, gpu_telemetry,
+  server_metrics (plus camelCase aliases), runtime, logging, metrics,
+  accuracy) at the top level get re-indented under a `benchmark:` key.
+- Singular top-level `dataset:` is promoted to `datasets: [...]`, mirroring
+  the loader's auto-migration.
 - Envelope fields ({sweep, multi_run, variables, random_seed}) stay at top.
+- `sweep.parameters` (deprecated upstream spelling) is renamed to
+  `sweep.variables` for grid/zip sweeps.
 - `sweep.runs[i]` body keys get wrapped under `runs[i].benchmark`.
 - `sweep.variables` keys (grid) gain `benchmark.` prefix unless they start
   with `benchmark.` or `variables.` already.
@@ -33,23 +38,10 @@ from typing import Any
 from ruamel.yaml import YAML
 
 # Body fields that move under `benchmark:` in the new envelope shape.
-BODY_KEYS = frozenset(
-    {
-        "models",
-        "endpoint",
-        "datasets",
-        "phases",
-        "artifacts",
-        "slos",
-        "tokenizer",
-        "gpu_telemetry",
-        "server_metrics",
-        "runtime",
-        "logging",
-        "metrics",
-        "accuracy",
-    }
-)
+# Imported from the loader so this tool can never drift from what
+# `_auto_migrate_flat_shape` accepts (a drifted key would keep emitting the
+# loader's deprecation warning forever after migration).
+from aiperf.config.loader.core import _BODY_KEYS as BODY_KEYS
 
 # Envelope fields that stay at top level. `benchmark` is the new wrapper key.
 ENVELOPE_KEYS = frozenset(
@@ -109,9 +101,22 @@ def _migrate_in_place(data: dict[str, Any]) -> None:
     body_keys_present = [k for k in keys if k in BODY_KEYS]
     if body_keys_present:
         first_body_idx = keys.index(body_keys_present[0])
-        body_present = {k: data[k] for k in body_keys_present}
+        body_present: dict[str, Any] = {}
         for k in body_keys_present:
+            value = data[k]
             del data[k]
+            if k == "dataset":
+                # Mirror the loader's promotion of the singular `dataset:`
+                # shorthand to a one-element `datasets:` list. setdefault /
+                # plain-assign ordering matches the loader: when both forms
+                # are present the plural wins.
+                if isinstance(value, dict) and "name" not in value:
+                    value["name"] = "main"
+                body_present.setdefault(
+                    "datasets", value if isinstance(value, list) else [value]
+                )
+            else:
+                body_present[k] = value
         # Merge into existing benchmark key if user partially migrated.
         if "benchmark" in data and isinstance(data["benchmark"], dict):
             for k, v in body_present.items():
@@ -128,10 +133,36 @@ def _migrate_in_place(data: dict[str, Any]) -> None:
 
     sweep = data.get("sweep")
     if isinstance(sweep, dict):
+        rewrite_sweep_parameters_key(sweep)
         rewrite_grid_sweep_paths(sweep)
         runs = sweep.get("runs")
         if isinstance(runs, list):
             rewrite_scenario_runs(runs)
+
+
+def rewrite_sweep_parameters_key(sweep: dict[str, Any]) -> None:
+    """Rename the deprecated `sweep.parameters` key to `sweep.variables`.
+
+    Upstream pre-restructure YAML spells the grid/zip variable map
+    `parameters:`. The loader accepts it with a deprecation warning; this
+    rewrite makes the migration permanent. When both spellings are present
+    the file is left unchanged so the loader's targeted both-set error
+    surfaces instead of this tool silently picking one.
+    """
+    if sweep.get("type", "grid") not in ("grid", "zip"):
+        return
+    if "parameters" not in sweep or "variables" in sweep:
+        return
+    keys = list(sweep.keys())
+    pos = keys.index("parameters")
+    value = sweep.pop("parameters")
+    # ruamel.yaml CommentedMap supports insert(pos, key, value) to keep the
+    # key at its original position; fall back to append for vanilla dicts.
+    insert = getattr(sweep, "insert", None)
+    if callable(insert):
+        insert(pos, "variables", value)
+    else:
+        sweep["variables"] = value
 
 
 def rewrite_grid_sweep_paths(sweep: dict[str, Any]) -> None:

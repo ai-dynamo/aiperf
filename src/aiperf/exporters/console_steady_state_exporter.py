@@ -16,6 +16,12 @@ from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 
 
+class _SteadyStateMetricsTableExporter(ConsoleMetricsExporter):
+    """Steady-state window metrics: group-filtered but rendered as one table."""
+
+    split_by_group = False
+
+
 class ConsoleSteadyStateExporter(AIPerfLoggerMixin):
     """Console exporter that renders steady-state windowed metrics as a Rich table."""
 
@@ -125,12 +131,15 @@ class ConsoleSteadyStateExporter(AIPerfLoggerMixin):
         self._add_status_rows(info, meta)
         self._add_bootstrap_row(info, meta)
 
-        metrics_exporter = ConsoleMetricsExporter(exporter_config=self._exporter_config)
+        metrics_exporter = _SteadyStateMetricsTableExporter(
+            exporter_config=self._exporter_config
+        )
         table = metrics_exporter.get_renderable(self._summary.results.values(), console)
         if isinstance(table, Table):
             table.title = "NVIDIA AIPerf | Steady-State Metrics"
 
         console.print("\n")
         console.print(info)
-        console.print(table)
+        if table is not None:
+            console.print(table)
         console.file.flush()

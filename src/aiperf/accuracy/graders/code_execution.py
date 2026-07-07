@@ -7,8 +7,23 @@
 In the trt-llm benchmark recipe, ``lcb:codegeneration`` is graded by
 lighteval's ``lcb_codegen_metric``
 (``lighteval/tasks/tasks/lcb/main.py``). That metric extracts code
-from the model response, executes it inside a sandboxed subprocess
-against the public + private test cases, and reports pass@1.
+from the model response, executes it in a plain subprocess against
+the public + private test cases, and reports pass@1.
+
+SECURITY WARNING — remote code execution (RCE):
+    This grader executes UNTRUSTED, model-generated code on the host
+    running the record-processor service, with that process's full
+    privileges (filesystem, network, credentials). lighteval's
+    execution is NOT sandboxed and is not a security boundary: the
+    code runs in ordinary ``multiprocessing`` child processes guarded
+    only by lighteval's ``reliability_guard`` — a best-effort shim
+    that disables some destructive builtins and sets resource limits,
+    and whose own docstring states "This function is NOT a security
+    sandbox. Untrusted code, including model-generated code, should
+    not be blindly executed outside of one."
+    (``lighteval/tasks/tasks/lcb/codegen_metrics.py``). Only grade
+    models you trust, or isolate the entire aiperf run in a
+    disposable container/VM/dedicated user account.
 
 Wiring into aiperf:
     Aiperf's LCB loader serializes ``starter_code`` /
@@ -18,7 +33,7 @@ Wiring into aiperf:
     grader parses that payload, builds the ``Doc.specific`` shape
     lighteval's ``CodegenMetric`` expects, and forwards to
     ``CodegenMetric.compute`` — which then forks subprocesses to run
-    the generated code in a sandbox.
+    the generated code.
 
 Process model:
     ``codegen_metrics`` uses a ``ProcessPoolExecutor`` with
@@ -74,7 +89,11 @@ _LCB_NUM_PROCESSES = 8
 
 
 class CodeExecutionGrader(BaseGrader):
-    """Grades code-generation responses by sandboxed execution via lighteval.
+    """Grades code-generation responses by executing them via lighteval.
+
+    WARNING: execution is NOT sandboxed — model-generated code runs on
+    the grading host with this process's privileges. See the
+    module-level security warning before enabling this grader.
 
     Pairs with ``LCBCodeGenerationBenchmark``. Expects
     ``ground_truth`` to be the orjson payload produced by that loader's
@@ -141,7 +160,7 @@ class CodeExecutionGrader(BaseGrader):
         evaluation_sample = _build_evaluation_sample(inputs, outputs, fn_name)
         # ``generations`` is a list-of-lists: one sample, with one
         # candidate generation. Wrap the response in extract_code so
-        # we send only the code block to the sandbox.
+        # only the code block is executed.
         snippet = self.extract_answer(response_text)
         generated_code = [[snippet]]
 
@@ -156,7 +175,7 @@ class CodeExecutionGrader(BaseGrader):
         except Exception as exc:
             _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
             return _grading_failure(
-                response_text, ground_truth, f"sandboxed exec failed: {exc}"
+                response_text, ground_truth, f"code execution failed: {exc}"
             )
 
         pass_at_1 = _extract_pass_at_1(metrics)
@@ -192,10 +211,10 @@ def _run_codegen_metrics(
     — silently mislabeled as unparsed.
 
     TODO: This flag-flipping is a pragmatic workaround. The cleaner design is
-    to own the sandboxed-execution pool outside the daemon (e.g. a non-daemon
+    to own the code-execution pool outside the daemon (e.g. a non-daemon
     executor service the record processor delegates to) so no daemon state is
-    mutated. Revisit if sandboxed grading needs to scale beyond a single
-    per-record pool.
+    mutated. Revisit if execution-based grading needs to scale beyond a
+    single per-record pool.
     """
     with allow_daemon_children():
         return codegen_metrics(

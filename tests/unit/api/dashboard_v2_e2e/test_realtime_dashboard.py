@@ -111,7 +111,9 @@ def _worker_group_payload() -> dict[str, Any]:
         "startup_state": "ready",
         "declared_workers": 2,
         "ready_workers": 2,
-        "task_stats": {"in_progress": 3, "completed": 97, "failed": 1, "total": 101},
+        # Real wire shape: WorkerTaskStats serializes only total/completed/failed;
+        # in_progress is a non-serialized @property the client derives.
+        "task_stats": {"completed": 97, "failed": 1, "total": 101},
         "health": {"cpu_usage": 41.2, "memory_usage": 3_221_225_472},
         "worker_statuses": {
             "worker-dashboard-v2-a": "healthy",
@@ -122,8 +124,8 @@ def _worker_group_payload() -> dict[str, Any]:
             "worker-dashboard-v2-b": "ready",
         },
         "worker_task_stats": {
-            "worker-dashboard-v2-a": {"in_progress": 1, "completed": 51, "failed": 0},
-            "worker-dashboard-v2-b": {"in_progress": 2, "completed": 46, "failed": 1},
+            "worker-dashboard-v2-a": {"total": 52, "completed": 51, "failed": 0},
+            "worker-dashboard-v2-b": {"total": 49, "completed": 46, "failed": 1},
         },
         "worker_health": {
             "worker-dashboard-v2-a": {"cpu_usage": 32.4, "memory_usage": 1_610_612_736},
@@ -339,7 +341,7 @@ def test_gpu_worker_logs_records_and_server_metrics_render(
             _worker_group_payload(),
             {
                 "type": "processing_stats",
-                "stats": {
+                "processing_stats": {
                     "success_records": 97,
                     "error_records": 1,
                     "final_requests_completed": 98,
@@ -348,7 +350,7 @@ def test_gpu_worker_logs_records_and_server_metrics_render(
             },
             {
                 "type": "all_records_received",
-                "stats": {
+                "final_processing_stats": {
                     "success_records": 99,
                     "error_records": 1,
                     "final_requests_completed": 100,
@@ -375,6 +377,16 @@ def test_gpu_worker_logs_records_and_server_metrics_render(
     expect(workers).to_contain_text("v2-a")
     expect(workers).to_contain_text("high load")
     expect(workers).to_contain_text("97")
+    # In-flight is derived client-side as total - completed - failed because
+    # the wire WorkerTaskStats never serializes in_progress.
+    group_row = dashboard.page.locator(".worker-group-row")
+    expect(group_row.locator("td").nth(2)).to_have_text("3")
+
+    # Records totals prove the client read the real wire keys
+    # (processing_stats / final_processing_stats), not a nonexistent `stats`.
+    records_item = dashboard.page.locator(".status-item").filter(has_text="Records")
+    expect(records_item.locator(".status-val")).to_have_text("100")
+    expect(dashboard.page.locator(".status-bar")).to_contain_text("complete")
 
     server_metrics = dashboard.page.locator(".server-metrics-card")
     expect(server_metrics).to_contain_text("http://srv:8000")

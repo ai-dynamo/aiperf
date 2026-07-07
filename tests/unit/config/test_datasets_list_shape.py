@@ -57,15 +57,56 @@ def test_datasets_rejects_empty_list():
         _cfg([])
 
 
-def test_datasets_accepts_multiple_entries():
-    """Branch supports multi-dataset configs; phases reference a dataset by name."""
-    cfg = _cfg(
-        [
-            {"name": "warmup", "type": "synthetic"},
-            {"name": "main", "type": "synthetic"},
-        ]
+def test_datasets_rejects_multiple_entries():
+    """The in-process runtime loads exactly one dataset; extra entries would be
+    silently ignored, so the config fails closed instead."""
+    with pytest.raises(ValueError, match="not yet supported"):
+        _cfg(
+            [
+                {"name": "warmup", "type": "synthetic"},
+                {"name": "main", "type": "synthetic"},
+            ]
+        )
+
+
+def test_phase_dataset_ref_matching_first_dataset_is_allowed():
+    cfg = BenchmarkConfig.model_validate(
+        {
+            **_BASE,
+            "datasets": [{"name": "main", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                    "dataset": "main",
+                }
+            ],
+        }
     )
-    assert [d.name for d in cfg.datasets] == ["warmup", "main"]
+    assert cfg.phases[0].dataset == "main"
+
+
+def test_phase_dataset_ref_to_other_name_rejected():
+    """phase.dataset naming anything but the first dataset would be silently
+    ignored (every phase uses datasets[0]); reject it instead."""
+    with pytest.raises(ValueError, match="not yet supported"):
+        BenchmarkConfig.model_validate(
+            {
+                **_BASE,
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                        "dataset": "other",
+                    }
+                ],
+            }
+        )
 
 
 def test_public_dataset_uses_dataset_field_not_name():

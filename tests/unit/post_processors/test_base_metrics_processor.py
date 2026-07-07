@@ -24,9 +24,15 @@ class TestBaseMetricsProcessor:
     """Test cases for BaseMetricsProcessor."""
 
     def test_initialization(self, mock_user_config: AIPerfConfig) -> None:
-        """Test processor initialization stores user config."""
+        """Test processor initialization stores user config.
+
+        BenchmarkRun stamps its benchmark_id onto a copy of the config's
+        artifacts section, so compare against the stamped expectation.
+        """
         processor = BaseMetricsProcessor(_make_run(mock_user_config))
-        assert processor.run.cfg == mock_user_config.benchmark
+        expected = mock_user_config.benchmark.model_copy(deep=True)
+        expected.artifacts.benchmark_id = processor.run.benchmark_id
+        assert processor.run.cfg == expected
 
     @pytest.mark.parametrize(
         "endpoint_type,streaming,expected_supported_flags",

@@ -101,6 +101,11 @@ def _assert_string_keys(data: Any, path: str = "") -> None:
 # Body fields that must live under `benchmark:` in the envelope shape.
 # Includes both snake_case (canonical) and camelCase (legacy YAML alias) and
 # the singular ``dataset`` shorthand (auto-promoted to ``datasets: [...]``).
+# Must cover every BenchmarkConfig field name: AIPerfConfig forbids extras,
+# so any body key missing here makes a flat-shape config fail with an
+# "Extra inputs are not permitted" error instead of auto-migrating.
+# tools/migrate_config_yaml.py imports this set, so the migration script can
+# never drift from what this auto-migration accepts.
 _BODY_KEYS = frozenset(
     {
         "model",
@@ -109,6 +114,8 @@ _BODY_KEYS = frozenset(
         "dataset",
         "datasets",
         "phases",
+        "profiling",
+        "warmup",
         "artifacts",
         "slos",
         "tokenizer",
@@ -116,10 +123,15 @@ _BODY_KEYS = frozenset(
         "gpuTelemetry",
         "server_metrics",
         "serverMetrics",
+        "network_latency",
+        "networkLatency",
         "runtime",
         "logging",
         "metrics",
         "accuracy",
+        "otel",
+        "mlflow",
+        "wandb",
     }
 )
 

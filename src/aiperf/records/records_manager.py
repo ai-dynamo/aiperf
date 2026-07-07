@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -224,6 +225,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._last_checkpoint_records: int = 0
 
+        # Records that arrived before their phase's CreditPhaseStats
+        # registered (records race the phase-start pub/sub message). Held
+        # here until the phase is positively classified as included/excluded,
+        # then replayed through _process_metric_record_data — processing them
+        # immediately would default the unknown phase to "included" and leak
+        # warmup records into results.
+        self._pending_phase_records: defaultdict[
+            CreditPhase, list[MetricRecordsData]
+        ] = defaultdict(list)
+
     @staticmethod
     def _resolve_additional_bind_address(run: BenchmarkRun) -> str | None:
         """Resolve the extra TCP bind for dual-bind (Kubernetes) mode.
@@ -260,11 +271,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _process_metric_record_data(self, record_data: MetricRecordsData) -> None:
         """Process one metric record payload."""
+        exclusion = self._records_tracker.get_phase_exclusion(
+            record_data.metadata.benchmark_phase
+        )
+        if exclusion is None:
+            # Phase not registered yet (record raced its
+            # CreditPhaseStartMessage). Buffer and replay once the phase's
+            # stats arrive — see _replay_pending_phase_records.
+            self._pending_phase_records[record_data.metadata.benchmark_phase].append(
+                record_data
+            )
+            return
+
         self._records_tracker.update_from_record_data(record_data)
 
-        if not self._records_tracker.is_phase_excluded(
-            record_data.metadata.benchmark_phase
-        ):
+        if not exclusion:
             self._maybe_hint_missing_cache_reporting(record_data)
             await self._send_results_to_results_processors(record_data)
             # Parallel accumulator path — see ``__init__`` for why both run.
@@ -282,6 +303,28 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._handle_all_records_received(
                 record_data.metadata.benchmark_phase
             )
+
+    async def _update_phase_info_and_replay_pending(
+        self, credit_phase_stats: CreditPhaseStats
+    ) -> None:
+        """Register phase stats, then replay records buffered before registration.
+
+        Every CreditPhaseStats carrier (start/progress/sending-complete/complete)
+        routes through here so whichever message wins the race against the
+        phase's first records flushes the buffer. Replay happens after
+        update_phase_info, so get_phase_exclusion is guaranteed non-None and
+        the replayed records cannot re-buffer.
+        """
+        self._records_tracker.update_phase_info(credit_phase_stats)
+        pending = self._pending_phase_records.pop(credit_phase_stats.phase, None)
+        if not pending:
+            return
+        self.debug(
+            lambda: f"Replaying {len(pending)} records buffered before phase "
+            f"'{credit_phase_stats.phase}' registered"
+        )
+        for record_data in pending:
+            await self._process_metric_record_data(record_data)
 
     async def _send_record_to_accumulators(
         self, record_data: MetricRecordsData
@@ -471,6 +514,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         This runs as a background task to avoid blocking the message pump.
         Aggregates across all non-excluded phases.
         """
+        if self._pending_phase_records:
+            leftovers = {
+                str(phase): len(records)
+                for phase, records in self._pending_phase_records.items()
+            }
+            self.warning(
+                f"Discarding buffered records for phases that never registered "
+                f"a CreditPhaseStartMessage: {leftovers}. These records are not "
+                f"included in results."
+            )
         # Use the first results phase for the AllRecordsReceived message
         results_phases = self._records_tracker.get_results_phases()
         phase_stats = self._records_tracker.create_stats_for_phase(
@@ -659,7 +712,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, phase_start_msg: CreditPhaseStartMessage
     ) -> None:
         """Handle a credit phase start message in order to track the total number of expected requests."""
-        self._records_tracker.update_phase_info(phase_start_msg.stats)
+        await self._update_phase_info_and_replay_pending(phase_start_msg.stats)
         await self._send_timing_to_results_processors(phase_start_msg.stats)
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
 
@@ -674,7 +727,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ``_send_timing_to_results_processors`` short-circuits when no processor
         wants timing.
         """
-        self._records_tracker.update_phase_info(message.stats)
+        await self._update_phase_info_and_replay_pending(message.stats)
         await self._send_timing_to_results_processors(message.stats)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
@@ -685,7 +738,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.info(
             f"Phase '{message.stats.phase}': sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
         )
-        self._records_tracker.update_phase_info(message.stats)
+        await self._update_phase_info_and_replay_pending(message.stats)
         await self._send_timing_to_results_processors(message.stats)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
@@ -702,7 +755,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             and message.stats.phase == CreditPhase.PROFILING
         ):
             self._latest_branch_stats = message.branch_stats
-        self._records_tracker.update_phase_info(message.stats)
+        await self._update_phase_info_and_replay_pending(message.stats)
         await self._send_timing_to_results_processors(message.stats)
         phase_stats = self._records_tracker.create_stats_for_phase(message.stats.phase)
         self.info(

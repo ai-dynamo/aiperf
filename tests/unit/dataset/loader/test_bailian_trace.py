@@ -633,7 +633,6 @@ def _make_synthesis_config(
     speedup_ratio: float = 1.0,
     prefix_len_multiplier: float = 1.0,
     max_isl: int | None = None,
-    block_size: int = 16,
 ) -> AIPerfConfig:
     synthesis: dict = {
         "speedup_ratio": speedup_ratio,
@@ -651,12 +650,6 @@ def _make_synthesis_config(
                     "path": "dummy.jsonl",
                     "format": "mooncake_trace",
                     "synthesis": synthesis,
-                },
-                {
-                    "name": "synthetic",
-                    "type": "synthetic",
-                    "entries": 100,
-                    "prompts": {"isl": 128, "osl": 64, "block_size": block_size},
                 },
             ],
         },

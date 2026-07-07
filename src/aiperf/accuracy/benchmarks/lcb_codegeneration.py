@@ -22,8 +22,10 @@ Loader and grader pipeline:
 - Pair with ``CodeExecutionGrader`` (the new lighteval-backed grader
   introduced in the lighteval foundation commit on branch 874). The
   grader extracts the model's code block via lighteval's
-  ``extract_code``, then runs it via lighteval's sandboxed
-  ``codegen_metrics`` against the test cases.
+  ``extract_code``, then executes it via lighteval's
+  ``codegen_metrics`` against the test cases. That execution is NOT
+  sandboxed — model-generated code runs on the grading host; see the
+  security warning in ``aiperf.accuracy.graders.code_execution``.
 
 Reference:
     lighteval/tasks/tasks/lcb/main.py:lcb_codegeneration_prompt_fn
@@ -131,7 +133,8 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
     emits prompts byte-equal to lighteval's
     ``lcb_codegeneration_prompt_fn``. Pair with
     ``CodeExecutionGrader`` (which itself wraps lighteval's
-    ``codegen_metrics`` for sandboxed pass@1 grading).
+    ``codegen_metrics`` for execution-based pass@1 grading — NOT
+    sandboxed; see that grader's security warning).
     """
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
@@ -277,7 +280,7 @@ class LCBCodeGenerationBenchmark(AIPerfLoggerMixin):
 
         The grader (``aiperf.accuracy.graders.code_execution``) parses
         this orjson payload at grade time, lifts test cases out, and
-        forwards them to lighteval's ``codegen_metrics`` for sandboxed
+        forwards them to lighteval's ``codegen_metrics`` for
         execution. We pass the upstream fields through verbatim
         because their internal shape is grader-defined and not owned
         by this loader.

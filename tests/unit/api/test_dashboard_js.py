@@ -974,6 +974,83 @@ class TestDashboardV2ModuleAdversarial:
         )
 
     @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
+    def test_records_dispatch_reads_real_wire_keys(self, tmp_path: Path) -> None:
+        """RecordsProcessingStatsMessage / AllRecordsReceivedMessage nest their
+        counters under ``processing_stats`` / ``final_processing_stats`` on the
+        wire (never ``stats``); the dispatcher must read those keys."""
+        result = _run_v2_node_script(
+            tmp_path,
+            """
+            import { handleWsMessage } from './lib/ws-dispatch.js';
+            import { records } from './lib/state.js';
+            handleWsMessage({
+              type: 'processing_stats',
+              processing_stats: {
+                success_records: 97,
+                error_records: 1,
+                final_requests_completed: 98,
+                start_ns: 1000,
+              },
+            });
+            const mid = { ...records.value };
+            handleWsMessage({
+              type: 'all_records_received',
+              final_processing_stats: {
+                success_records: 99,
+                error_records: 1,
+                final_requests_completed: 100,
+                records_end_ns: 2000,
+              },
+            });
+            console.log(JSON.stringify({ mid, final: records.value }));
+            """,
+        )
+
+        assert result["mid"]["successRecords"] == 97
+        assert result["mid"]["errorRecords"] == 1
+        assert result["mid"]["finalRequestsCompleted"] == 98
+        assert result["mid"]["active"] is True
+        assert result["final"]["successRecords"] == 99
+        assert result["final"]["errorRecords"] == 1
+        assert result["final"]["finalRequestsCompleted"] == 100
+        assert result["final"]["endNs"] == 2000
+        assert result["final"]["complete"] is True
+
+    @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
+    def test_worker_group_in_flight_derived_from_wire_counters(
+        self, tmp_path: Path
+    ) -> None:
+        """WorkerTaskStats.in_progress is a non-serialized @property; the
+        dispatcher derives in-flight as total - completed - failed for both
+        the group row and each per-worker child."""
+        result = _run_v2_node_script(
+            tmp_path,
+            """
+            import { handleWsMessage } from './lib/ws-dispatch.js';
+            import { workerGroups } from './lib/state.js';
+            handleWsMessage({
+              type: 'worker_group_stats',
+              group_id: 'wg-primary',
+              status: 'healthy',
+              task_stats: { total: 101, completed: 97, failed: 1 },
+              worker_statuses: { 'w-a': 'healthy', 'w-b': 'healthy' },
+              worker_task_stats: {
+                'w-a': { total: 52, completed: 51, failed: 0 },
+                'w-b': { total: 49, completed: 46, failed: 1 },
+              },
+            });
+            const g = workerGroups.value['wg-primary'];
+            console.log(JSON.stringify({
+              group: g.inFlight,
+              a: g.workers['w-a'].inFlight,
+              b: g.workers['w-b'].inFlight,
+            }));
+            """,
+        )
+
+        assert result == {"group": 3, "a": 1, "b": 2}
+
+    @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
     def test_unknown_websocket_messages_log_once(self, tmp_path: Path) -> None:
         result = _run_v2_node_script(
             tmp_path,

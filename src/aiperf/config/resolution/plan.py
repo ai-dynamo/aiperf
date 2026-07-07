@@ -445,6 +445,30 @@ class BenchmarkRun(BaseModel):
         description="Runtime-computed state populated after construction.",
     )
 
+    @model_validator(mode="after")
+    def _stamp_artifacts_benchmark_id(self) -> Self:
+        """Materialize ``cfg.artifacts.benchmark_id`` from this run's id.
+
+        ``ArtifactsConfig.benchmark_id`` defaults to None so that config
+        dumps (``aiperf kube generate`` manifests, sweep-child specs) never
+        pin a shared "unique" id. Every runtime consumer reads the id off a
+        run-wrapped config (``run.cfg.artifacts.benchmark_id`` /
+        ``run.cfg.benchmark_id``), so stamping here — the single choke point
+        all construction sites pass through — guarantees a concrete,
+        per-run id at execution time. Stamps onto copies rather than
+        mutating the caller's config, which may be shared across trials.
+        A user-set id is left untouched.
+        """
+        if self.cfg.artifacts.benchmark_id is None:
+            self.cfg = self.cfg.model_copy(
+                update={
+                    "artifacts": self.cfg.artifacts.model_copy(
+                        update={"benchmark_id": self.benchmark_id}
+                    )
+                }
+            )
+        return self
+
     @property
     def comm_config(self) -> BaseZMQCommunicationConfig:
         """Build the ZMQ communication config for this run.

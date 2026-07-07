@@ -3,6 +3,7 @@
 
 from unittest.mock import Mock, mock_open, patch
 
+import orjson
 import pytest
 from pytest import param
 
@@ -280,3 +281,179 @@ class TestSynthesisValidation:
 
         # Should not raise for a trace type.
         composer._validate_synthesis_config(CustomDatasetType.MOONCAKE_TRACE)
+
+
+class TestInlineRecords:
+    """Inline `records:` datasets must compose end-to-end (no file on disk)."""
+
+    def test_inline_records_compose_end_to_end(self, mock_tokenizer):
+        """A FileDataset with inline records composes into conversations."""
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "format": "single_turn",
+                        "records": [
+                            {"text": "What is deep learning?"},
+                            {"text": "Who are you?"},
+                        ],
+                    }
+                ],
+            }
+        )
+        composer = CustomDatasetComposer(_make_run(config), mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 2
+        assert all(isinstance(c, Conversation) for c in conversations)
+        contents = sorted(
+            turn.texts[0].contents[0] for conv in conversations for turn in conv.turns
+        )
+        assert contents == ["What is deep learning?", "Who are you?"]
+        for conv in conversations:
+            for turn in conv.turns:
+                assert turn.model == "test-model"
+
+    def test_inline_records_multi_turn_format(self, mock_tokenizer):
+        """Inline records honor the declared non-default format."""
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "format": "multi_turn",
+                        "records": [
+                            {
+                                "session_id": "sess-1",
+                                "turns": [
+                                    {"text": "first turn"},
+                                    {"text": "second turn"},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        composer = CustomDatasetComposer(_make_run(config), mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 2
+
+    def test_inline_records_random_pool_multi_pool(self, mock_tokenizer):
+        """Multi-pool inline records mirror the random_pool directory layout."""
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "format": "random_pool",
+                        "entries": 4,
+                        "records": {
+                            "queries": [{"text": "q1"}, {"text": "q2"}],
+                            "passages": [{"text": "p1"}, {"text": "p2"}],
+                        },
+                    }
+                ],
+            }
+        )
+        composer = CustomDatasetComposer(_make_run(config), mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 4
+        for conv in conversations:
+            assert len(conv.turns) == 1
+            assert conv.turns[0].texts
+
+    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    def test_inline_records_mooncake_trace(self, mock_parallel_decode, mock_tokenizer):
+        """Inline mooncake_trace records flow through the trace loader."""
+        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "format": "mooncake_trace",
+                        "records": [
+                            {
+                                "timestamp": 0,
+                                "input_length": 655,
+                                "output_length": 52,
+                                "hash_ids": [46, 47],
+                            },
+                            {
+                                "timestamp": 10535,
+                                "input_length": 672,
+                                "output_length": 52,
+                                "hash_ids": [46, 47],
+                            },
+                            {
+                                "timestamp": 27482,
+                                "input_length": 655,
+                                "output_length": 52,
+                                "hash_ids": [46, 47],
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+        composer = CustomDatasetComposer(_make_run(config), mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 3
+        for conv in conversations:
+            for turn in conv.turns:
+                assert turn.max_tokens == 52
+
+
+class TestPerTurnModelOverride:
+    """dag_jsonl per-turn model overrides must survive composer finalization."""
+
+    def test_dag_jsonl_per_turn_model_survives_finalize(self, tmp_path, mock_tokenizer):
+        """A documented per-turn "model": override is kept under multi-model round-robin."""
+        record = {
+            "session_id": "root",
+            "turns": [
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "model": "special-turn-model",
+                },
+                {"messages": [{"role": "user", "content": "again"}]},
+            ],
+        }
+        path = tmp_path / "dag.jsonl"
+        path.write_bytes(orjson.dumps(record) + b"\n")
+
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "models": ["model-a", "model-b"],
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": str(path),
+                        "format": "dag_jsonl",
+                    }
+                ],
+            }
+        )
+        composer = CustomDatasetComposer(_make_run(config), mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 1
+        turns = conversations[0].turns
+        assert turns[0].model == "special-turn-model"
+        assert turns[1].model in {"model-a", "model-b"}

@@ -113,7 +113,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         ``unparsed`` reach the metrics. Without this, a run reporting 100%
         unparsed gives no clue whether the response was empty, the answer
         format didn't match, or grading raised an exception (e.g. LCB's
-        sandboxed execution failing to fork from the daemon record processor).
+        code execution failing to fork from the daemon record processor).
 
         Emits at info level under ``--accuracy-verbose`` (the flag's
         documented "per-problem grading details") and always at debug, so the

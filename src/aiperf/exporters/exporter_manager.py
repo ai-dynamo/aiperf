@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -80,12 +81,31 @@ class ExporterManager(AIPerfLoggerMixin):
     async def export_data(self) -> None:
         """Export data files using all registered data exporters.
 
+        Runs in two stages: local exporters first, then deferred exporters
+        (wandb, mlflow) so their artifacts (JSON, CSV, etc.) are on disk and
+        available for upload. The console .txt artifact is written between
+        the two stages so it is on disk before the caller stamps the K8s
+        results-ready marker (the marker contract requires ALL artifacts on
+        disk first) and so deferred exporters can upload it.
+
         Also populates exported_file_infos so callers can read file paths
         without re-instantiating exporters.
         """
         self.info("Exporting all records")
 
-        for exporter in self._instantiate_data_exporters():
+        exporters = self._instantiate_data_exporters()
+        local = [e for e in exporters if not getattr(e, "is_deferred", False)]
+        deferred = [e for e in exporters if getattr(e, "is_deferred", False)]
+
+        await self._run_data_exporters(local)
+        await self._export_console_txt_artifact()
+        await self._run_data_exporters(deferred)
+
+        self.debug("Exporting all records completed")
+
+    async def _run_data_exporters(self, exporters: list[DataExporterProtocol]) -> None:
+        """Run one batch of data exporters concurrently and wait for all."""
+        for exporter in exporters:
             self.debug(f"Creating task for exporter: {exporter.__class__.__name__}")
             task = asyncio.create_task(exporter.export())
             self._tasks.add(task)
@@ -93,7 +113,6 @@ class ExporterManager(AIPerfLoggerMixin):
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
-        self.debug("Exporting all records completed")
 
     def _instantiate_data_exporters(self) -> list[DataExporterProtocol]:
         """Instantiate all enabled data exporters, collecting file infos along the way."""
@@ -143,6 +162,11 @@ class ExporterManager(AIPerfLoggerMixin):
         return self._exported_file_infos
 
     async def export_console(self, console: Console) -> None:
+        """Render console exporters to the live console.
+
+        The .txt artifact is NOT written here — it is recorded during
+        export_data() so it is on disk before the K8s results-ready marker.
+        """
         self.info("Exporting console data")
 
         # Without a tty, Rich falls back to a default width that's typically
@@ -151,45 +175,56 @@ class ExporterManager(AIPerfLoggerMixin):
         if not console.is_terminal:
             console = Console(file=console.file, width=140)
 
-        # Fixed-width recording used only to capture the .txt artifact;
-        # live output goes to `console` directly at terminal width.
+        for exporter in self._instantiate_console_exporters():
+            self.debug(f"Creating task for exporter: {exporter.__class__.__name__}")
+            task = asyncio.create_task(exporter.export(console=console))
+            self._tasks.add(task)
+            task.add_done_callback(self._task_done_callback)
+
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        self.debug("Exporting console data completed")
+
+    async def _export_console_txt_artifact(self) -> None:
+        """Record console exporter output at fixed width and write the .txt artifact.
+
+        Called from export_data() so the .txt file exists on disk before the
+        K8s results-ready marker is written and before deferred exporters
+        upload artifacts.
+        """
         recording_console = Console(
             record=True,
-            file=__import__("io").StringIO(),
+            file=io.StringIO(),
             force_terminal=True,
             width=140,
         )
 
-        for exporter_entry, ExporterClass in plugins.iter_all(
-            PluginType.CONSOLE_EXPORTER
-        ):
-            try:
-                exporter: ConsoleExporterProtocol = ExporterClass(
-                    exporter_config=self._exporter_config
-                )
-            except ConsoleExporterDisabled:
-                self.debug(
-                    f"Console exporter {exporter_entry.name} is disabled and will not be used"
-                )
-                continue
-            except Exception as e:  # noqa: BLE001 - per-exporter; skip bad plugin and continue
-                self.error(f"Error creating console exporter: {e!r}")
-                continue
-
-            self.debug(f"Creating task for exporter: {exporter_entry.name}")
-            live_task = asyncio.create_task(exporter.export(console=console))
-            file_task = asyncio.create_task(exporter.export(console=recording_console))
-            self._tasks.add(live_task)
-            self._tasks.add(file_task)
-            live_task.add_done_callback(self._task_done_callback)
-            file_task.add_done_callback(self._task_done_callback)
+        for exporter in self._instantiate_console_exporters():
+            self.debug(f"Recording console exporter: {exporter.__class__.__name__}")
+            task = asyncio.create_task(exporter.export(console=recording_console))
+            self._tasks.add(task)
+            task.add_done_callback(self._task_done_callback)
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
         self._write_console_files(recording_console)
 
-        self.debug("Exporting console data completed")
+    def _instantiate_console_exporters(self) -> list[ConsoleExporterProtocol]:
+        """Instantiate all enabled console exporters."""
+        exporters: list[ConsoleExporterProtocol] = []
+        for exporter_entry, ExporterClass in plugins.iter_all(
+            PluginType.CONSOLE_EXPORTER
+        ):
+            try:
+                exporters.append(ExporterClass(exporter_config=self._exporter_config))
+            except ConsoleExporterDisabled:
+                self.debug(
+                    f"Console exporter {exporter_entry.name} is disabled and will not be used"
+                )
+            except Exception as e:  # noqa: BLE001 - per-exporter; skip bad plugin and continue
+                self.error(f"Error creating console exporter: {e!r}")
+        return exporters
 
     def _write_console_files(self, recording_console: Console) -> None:
         """Write recorded console output to the .txt artifact."""

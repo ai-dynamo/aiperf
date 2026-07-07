@@ -676,9 +676,17 @@
           "type": "boolean"
         },
         "benchmarkId": {
-          "description": "Unique identifier for this benchmark run, used to correlate artifacts across export formats. [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]",
-          "title": "Benchmarkid",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Unique identifier for this benchmark run, used to correlate artifacts across export formats. Default None means the id is generated at run construction: BenchmarkRun stamps its own run id here, so config dumps (e.g. `aiperf kube generate` manifests) carry no pinned id and every run/cluster-sweep child gets a distinct one. [Do not set in a CR spec unless you have a specific reason to pin the correlation id.]",
+          "title": "Benchmarkid"
         },
         "userFiles": {
           "description": "User-defined templated files materialized into the run directory before the benchmark begins.",
@@ -870,7 +878,7 @@
           "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
         },
         "datasets": {
-          "description": "Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval'). Phases reference datasets by name via ``phase.dataset``; when omitted the first defined dataset is used. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
+          "description": "Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset (multi-dataset lists are rejected). Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
           "items": {
             "discriminator": {
               "propertyName": "type",
@@ -966,7 +974,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                       "title": "Dataset"
                     },
                     "excludeFromResults": {
@@ -1255,7 +1263,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                       "title": "Dataset"
                     },
                     "excludeFromResults": {
@@ -1477,7 +1485,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                       "title": "Dataset"
                     },
                     "excludeFromResults": {
@@ -1713,7 +1721,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                       "title": "Dataset"
                     },
                     "excludeFromResults": {
@@ -1935,7 +1943,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                       "title": "Dataset"
                     },
                     "excludeFromResults": {
@@ -2164,7 +2172,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                      "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                       "title": "Dataset"
                     },
                     "excludeFromResults": {
@@ -3016,7 +3024,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -3305,7 +3313,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -3527,7 +3535,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -3763,7 +3771,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -3985,7 +3993,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -4214,7 +4222,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -4467,7 +4475,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -4756,7 +4764,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -4978,7 +4986,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -5214,7 +5222,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -5436,7 +5444,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -5665,7 +5673,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+                  "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
                   "title": "Dataset"
                 },
                 "excludeFromResults": {
@@ -6027,7 +6035,7 @@
             }
           ],
           "default": null,
-          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
           "title": "Dataset"
         },
         "excludeFromResults": {
@@ -6534,7 +6542,7 @@
             }
           ],
           "default": null,
-          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
           "title": "Dataset"
         },
         "excludeFromResults": {
@@ -7839,7 +7847,7 @@
             }
           ],
           "default": null,
-          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
           "title": "Dataset"
         },
         "excludeFromResults": {
@@ -8205,7 +8213,7 @@
             }
           ],
           "default": null,
-          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
           "title": "Dataset"
         },
         "excludeFromResults": {
@@ -8701,7 +8709,7 @@
             "items": {},
             "type": "array"
           },
-          "description": "Variables to sweep: dot-notation path -> list of values.",
+          "description": "Variables to sweep: dot-notation path -> list of values. Accepts the deprecated upstream spelling 'parameters' with a warning.",
           "minProperties": 1,
           "title": "Variables",
           "type": "object"
@@ -9022,7 +9030,7 @@
             }
           ],
           "default": null,
-          "description": "RNG seed for reproducibility. Must be non-negative; scipy's QMC engines reject negative seeds with an opaque low-level error.",
+          "description": "RNG seed for reproducibility. Must be non-negative; scipy's QMC engines reject negative seeds with an opaque low-level error. When unset, a deterministic seed is derived from a stable hash of the sweep spec (type, samples, dimensions, sampler options), so re-expanding the same spec — e.g. after a sweep-controller pod restart — reproduces identical points while different specs still get different sequences. Set explicitly to pick a sequence independent of the spec.",
           "title": "Seed",
           "x-jinja2-supported": true
         },
@@ -9310,6 +9318,7 @@
       "properties": {
         "name": {
           "description": "Model name or identifier as known to the inference server.",
+          "minLength": 1,
           "title": "Name",
           "type": "string"
         },
@@ -9335,7 +9344,7 @@
             }
           ],
           "default": null,
-          "description": "Selection weight for weighted strategy (0.0-1.0). Weights are normalized across all models. Example: weight=0.7 means ~70%% of requests to this model.",
+          "description": "Selection weight for weighted strategy (0.0-1.0). Weights must sum to 1.0 (+/-0.01) across all models; they are validated, not auto-normalized. Example: weight=0.7 means ~70%% of requests to this model.",
           "title": "Weight",
           "x-jinja2-supported": true
         },
@@ -10321,7 +10330,7 @@
             }
           ],
           "default": null,
-          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
           "title": "Dataset"
         },
         "excludeFromResults": {
@@ -12270,7 +12279,7 @@
             }
           ],
           "default": null,
-          "description": "RNG seed for reproducibility. Must be non-negative; scipy's QMC engines reject negative seeds with an opaque low-level error.",
+          "description": "RNG seed for reproducibility. Must be non-negative; scipy's QMC engines reject negative seeds with an opaque low-level error. When unset, a deterministic seed is derived from a stable hash of the sweep spec (type, samples, dimensions, sampler options), so re-expanding the same spec — e.g. after a sweep-controller pod restart — reproduces identical points while different specs still get different sequences. Set explicitly to pick a sequence independent of the spec.",
           "title": "Seed",
           "x-jinja2-supported": true
         },
@@ -13207,7 +13216,7 @@
             }
           ],
           "default": null,
-          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "description": "Name of dataset to use (from datasets section). If not specified, uses the first defined dataset. Per-phase dataset selection is not yet supported in-process, so when set this must name the first defined dataset (validated on BenchmarkConfig).",
           "title": "Dataset"
         },
         "excludeFromResults": {
@@ -14032,7 +14041,7 @@
             "items": {},
             "type": "array"
           },
-          "description": "Variables to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length.",
+          "description": "Variables to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length. Accepts the deprecated upstream spelling 'parameters' with a warning.",
           "minProperties": 1,
           "title": "Variables",
           "type": "object"

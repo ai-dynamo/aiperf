@@ -295,20 +295,30 @@ def _error_rate(summary: dict[str, Any]) -> float | None:
     return None
 
 
-def _sweep_linkage(labels: dict[str, str]) -> tuple[str | None, int | None, str | None]:
-    """Read sweep linkage labels as ``(sweep_name, variation_index, variation_label)``.
+def _label_int(labels: dict[str, str], key: str) -> int | None:
+    """Parse an integer-valued label, tolerating absent or malformed values."""
+    raw = labels.get(key)
+    try:
+        return int(raw) if raw is not None else None
+    except ValueError:
+        return None
 
-    The labels are stamped on every AIPerfJob created by the sweep-controller;
-    standalone jobs return ``(None, None, None)``.
+
+def _sweep_linkage(
+    labels: dict[str, str],
+) -> tuple[str | None, int | None, str | None, int | None]:
+    """Read sweep linkage labels as
+    ``(sweep_name, variation_index, variation_label, trial_index)``.
+
+    The labels are stamped on every AIPerfJob created by the sweep-controller
+    (``trial_index`` only for multi-trial sweeps); standalone jobs return
+    ``(None, None, None, None)``.
     """
     sweep_name = labels.get("aiperf.nvidia.com/sweep") or None
-    raw_idx = labels.get("aiperf.nvidia.com/variation-index")
-    try:
-        variation_index = int(raw_idx) if raw_idx is not None else None
-    except ValueError:
-        variation_index = None
+    variation_index = _label_int(labels, "aiperf.nvidia.com/variation-index")
     variation_label = labels.get("aiperf.nvidia.com/variation-label") or None
-    return sweep_name, variation_index, variation_label
+    trial_index = _label_int(labels, "aiperf.nvidia.com/trial-index")
+    return sweep_name, variation_index, variation_label, trial_index
 
 
 class AIPerfJobCR(K8sCamelModel):
@@ -333,7 +343,7 @@ class AIPerfJobCR(K8sCamelModel):
         summary = self.status.live_summary or self.status.summary or {}
         throughput = _summary_stat(summary, "request_throughput", "avg")
         latency = _summary_stat(summary, "request_latency", "p99")
-        sweep_name, variation_index, variation_label = _sweep_linkage(
+        sweep_name, variation_index, variation_label, trial_index = _sweep_linkage(
             self.metadata.labels
         )
 
@@ -365,6 +375,7 @@ class AIPerfJobCR(K8sCamelModel):
             sweep_name=sweep_name,
             variation_index=variation_index,
             variation_label=variation_label,
+            trial_index=trial_index,
         )
 
 
@@ -472,6 +483,14 @@ class AIPerfJobInfo(K8sCamelModel):
     variation_label: str | None = Field(
         default=None,
         description="Human-readable variation label for sweep children.",
+    )
+    trial_index: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Trial index from the aiperf.nvidia.com/trial-index label; only "
+            "set on multi-trial sweep children (serializes as trialIndex)."
+        ),
     )
 
     @property

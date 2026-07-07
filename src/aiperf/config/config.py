@@ -199,11 +199,11 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         list[DatasetConfig],
         Field(
             min_length=1,
-            description="Named dataset configurations. Each entry must have a unique 'name' "
-            "(e.g. 'main', 'eval'). Phases reference datasets by name via "
-            "``phase.dataset``; when omitted the first defined dataset is used. "
-            "Singular `dataset:` shorthand at the BenchmarkConfig top level is "
-            "normalized to a one-entry list with name='default'.",
+            description="Dataset configuration as a single-element list. The list "
+            "shape exists to share the schema between YAML and the AIPerfSweep CRD; "
+            "the runtime currently loads exactly one dataset (multi-dataset lists "
+            "are rejected). Singular `dataset:` shorthand at the BenchmarkConfig "
+            "top level is normalized to a one-entry list with name='default'.",
         ),
     ]
 
@@ -433,6 +433,34 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         See `_benchmark_normalizers.parse_datasets_input`.
         """
         return parse_datasets_input(v)
+
+    @model_validator(mode="after")
+    def validate_single_dataset_runtime_limit(self) -> Self:
+        """Fail closed on multi-dataset configs and dangling phase.dataset refs.
+
+        The in-process runtime loads exactly one dataset — every consumer goes
+        through ``get_default_dataset()`` (``datasets[0]``). Extra datasets and
+        ``phase.dataset`` references to anything but the first dataset would be
+        silently ignored, so reject them until per-phase dataset selection is
+        wired end-to-end.
+        """
+        if len(self.datasets) > 1:
+            names = [d.name for d in self.datasets]
+            raise ValueError(
+                f"Multi-dataset configs are not yet supported in-process: got "
+                f"{len(self.datasets)} datasets {names}. Define exactly one "
+                "dataset — the runtime loads only the first."
+            )
+        first_name = self.datasets[0].name
+        for phase in self.phases:
+            if phase.dataset is not None and phase.dataset != first_name:
+                raise ValueError(
+                    f"Phase '{phase.name}': dataset '{phase.dataset}' does not "
+                    f"match the only defined dataset '{first_name}'. Per-phase "
+                    "dataset selection is not yet supported in-process; all "
+                    "phases use the first defined dataset."
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_phase_names_unique(self) -> Self:

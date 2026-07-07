@@ -59,6 +59,22 @@ def _mock_control_client():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_mmap_base_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Isolate MemoryMapDatasetStore output per test.
+
+    The store derives its directory from ``benchmark_id``, which many dataset
+    tests pin to ``"test"`` — so parallel xdist workers all share
+    ``/tmp/aiperf_mmap_test`` and race: one worker truncates ``dataset.dat``
+    while another mmaps it ("cannot mmap an empty file"). Point the base path
+    at each test's ``tmp_path`` so stores never collide. ``Environment`` is an
+    import-time singleton, so patch the attribute (setenv would be a no-op).
+    """
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
+
+
 @pytest.fixture
 def dataset_config(tmp_path: Path) -> AIPerfConfig:
     """Create an AIPerfConfig for dataset testing."""

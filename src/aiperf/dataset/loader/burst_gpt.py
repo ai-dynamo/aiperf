@@ -45,7 +45,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
     # Template-method hooks (see BaseTraceDatasetLoader)
     # ------------------------------------------------------------------
 
-    def _parse_trace(self, line: str) -> BurstGPTTrace:
+    def _parse_trace(self, record: dict) -> BurstGPTTrace:
         # BurstGPT is CSV format; load_dataset() is overridden to use csv.DictReader.
         raise NotImplementedError
 

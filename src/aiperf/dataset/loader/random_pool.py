@@ -88,17 +88,22 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     def __init__(
         self,
         *,
-        filename: str,
-        run: BenchmarkRun,
+        filename: str | Path | None = None,
+        inline_records: list[dict[str, Any]]
+        | dict[str, list[dict[str, Any]]]
+        | None = None,
+        run: BenchmarkRun | None = None,
         num_conversations: int = 1,
         **kwargs,
     ):
-        super().__init__(filename=filename, run=run, **kwargs)
+        super().__init__(
+            filename=filename, inline_records=inline_records, run=run, **kwargs
+        )
         self._rng = rng.derive("dataset.loader.random_pool")
         self.num_conversations = (
             num_conversations if num_conversations is not None else 100
         )
-        dataset_config = run.cfg.get_default_dataset()
+        dataset_config = self.run.cfg.get_default_dataset()
         images_config = getattr(dataset_config, "images", None)
         prompts_config = getattr(dataset_config, "prompts", None)
         audio_config = getattr(dataset_config, "audio", None)
@@ -191,17 +196,30 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         return DatasetSamplingStrategy.SHUFFLE
 
     def load_dataset(self) -> dict[Filename, list[RandomPool]]:
-        """Load random pool data from a file or directory.
+        """Load random pool data from a file, directory, or inline records.
 
-        If filename is a file, reads and parses using the RandomPool model.
-        If filename is a directory, reads each file in the directory and merges
-        items with different modality names into combined RandomPool objects.
-
-        Returns:
-            A dictionary mapping filename to list of RandomPool objects.
+        Returns a dictionary mapping pool name to a list of RandomPool objects.
+          - File mode (single file): one pool keyed by file basename.
+          - File mode (directory): one pool per file, keyed by file basename.
+          - Inline mode (flat list): one pool keyed by ``"<inline>"``.
+          - Inline mode (dict-of-lists): one pool per dict key.
         """
-        path = Path(self.filename)
+        if self.inline_records is not None:
+            if isinstance(self.inline_records, dict):
+                return {
+                    pool_name: [
+                        RandomPool.model_validate(r)
+                        for r in self._iter_record_dicts(source=pool_name)
+                    ]
+                    for pool_name in self.inline_records
+                }
+            return {
+                "<inline>": [
+                    RandomPool.model_validate(r) for r in self._iter_record_dicts()
+                ]
+            }
 
+        path = Path(self.filename)
         if path.is_file():
             dataset_pool = self._load_dataset_from_file(path)
             return {path.name: dataset_pool}

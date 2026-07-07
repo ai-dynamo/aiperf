@@ -145,7 +145,7 @@ class TestGradeClearsDaemonFlag:
     async def test_codegen_metrics_exception_becomes_grading_failure(
         self, monkeypatch
     ) -> None:
-        """If sandboxed execution raises (e.g. the daemon-fork error), grade()
+        """If code execution raises (e.g. the daemon-fork error), grade()
         must return a clean failure result — not propagate and crash the
         record processor."""
 
@@ -164,4 +164,4 @@ class TestGradeClearsDaemonFlag:
         result = await grader.grade("```python\nprint(1)\n```", payload)
         assert result.correct is False
         assert result.unparsed is True
-        assert "sandboxed exec failed" in result.reasoning
+        assert "code execution failed" in result.reasoning

@@ -11,6 +11,7 @@ from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.dataset import FileDataset
 from aiperf.config.types import NormalDistribution
 from aiperf.dataset.generator.audio import AudioGenerator
 from aiperf.dataset.generator.image import ImageGenerator
@@ -19,6 +20,7 @@ from aiperf.dataset.generator.video import VideoGenerator
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
+    from aiperf.config.distributions import SamplingDistribution
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
@@ -164,19 +166,45 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         _, osl = self._get_turn_sequence_lengths(turn_id)
         if osl is not None:
             turn.max_tokens = int(osl)
+            return
+
+        osl_dist = self._file_osl_distribution()
+        if osl_dist is None:
+            return
+        osl_mean = int(osl_dist.expected_value)
+        if osl_mean <= 0:
+            return
+        osl_stddev = int(getattr(osl_dist, "stddev", 0.0) or 0.0)
+        turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
+            osl_mean, osl_stddev
+        )
+
+    def _file_osl_distribution(self) -> SamplingDistribution | None:
+        """OSL fallback distribution for file datasets.
+
+        File datasets carry OSL on ``FileDataset.osl`` (routed there from
+        ``--osl`` by the CLI converter) as a per-record fallback. Per-line
+        ``output_length`` values always win — ``_set_max_tokens`` returns
+        before consulting this when the turn already has ``max_tokens``.
+        """
+        if isinstance(self.dataset_config, FileDataset):
+            return self.dataset_config.osl
+        return None
 
     def _finalize_turn(self, turn: Turn) -> None:
         """Finalize a turn by populating all required metadata fields.
 
         This method handles:
-        - Model name selection
+        - Model name selection (skipped when the turn carries a per-turn
+          ``model`` override, e.g. from a dag_jsonl record)
         - Max tokens sampling based on output configuration
         - Any other turn-level metadata that needs to be set
 
         Args:
             turn: The turn object to finalize.
         """
-        turn.model = self._select_model_name()
+        if turn.model is None:
+            turn.model = self._select_model_name()
         self._set_max_tokens(turn)
 
         # Clear cached sequence lengths for this turn to free memory

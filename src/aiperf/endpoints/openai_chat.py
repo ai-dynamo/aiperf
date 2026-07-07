@@ -381,7 +381,11 @@ class ChatEndpoint(BaseEndpoint):
 
             data = first_choice.get(data_key)
             if not isinstance(data, dict):
-                return None
+                # No delta/message dict (e.g. finish_reason-only or
+                # usage-carrying final chunks): fall through to usage handling
+                # so server-reported usage is not dropped — mirrors the slow
+                # path's ``if data or usage`` semantics.
+                return self._usage_only_response(json_obj, perf_ns)
 
             return self._build_fast_parsed(data, json_obj, perf_ns)
         except (IndexError, KeyError, TypeError):
@@ -401,7 +405,8 @@ class ChatEndpoint(BaseEndpoint):
         json_obj: JsonObject, perf_ns: int
     ) -> ParsedResponse | None:
         # Final usage-only chunk (stream_options.include_usage=true)
-        # has empty choices but carries the cumulative usage totals.
+        # has empty choices — or a choice without a delta/message dict —
+        # but carries the cumulative usage totals.
         usage = json_obj.get("usage") or None
         if usage is not None:
             return ParsedResponse(perf_ns=perf_ns, data=None, usage=usage)

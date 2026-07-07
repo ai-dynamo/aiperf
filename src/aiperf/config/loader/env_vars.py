@@ -25,6 +25,14 @@ WHOLE_ENV_VAR_PATTERN = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}$")
 # silently passing the literal through.
 _UNTERMINATED_ENV_VAR_PATTERN = re.compile(r"\$\{[^}\n]*$")
 
+# ``$${`` escapes a literal ``${``: the opener is swapped for this sentinel
+# BEFORE substitution (so the escaped form is never substituted) and swapped
+# back to ``${`` AFTER the unterminated-opener check (so the restored literal
+# does not trip that error). NUL bytes cannot appear in YAML scalars, so the
+# sentinel cannot collide with user content.
+_ESCAPED_OPENER = "$${"
+_ESCAPED_OPENER_SENTINEL = "\x00aiperf-escaped-env-opener\x00"
+
 
 def substitute_env_vars(
     value: Any,
@@ -35,6 +43,7 @@ def substitute_env_vars(
 
     Processes strings, lists, and dictionaries recursively, replacing
     ${VAR} and ${VAR:default} patterns with environment variable values.
+    A ``$${`` opener escapes substitution and yields a literal ``${``.
 
     Args:
         value: Configuration value to process. Can be string, list, dict,
@@ -61,6 +70,9 @@ def substitute_env_vars(
 
         >>> substitute_env_vars(["${MY_VAR}", "static"])
         ['hello', 'static']
+
+        >>> substitute_env_vars("$${MY_VAR}")
+        '${MY_VAR}'
     """
     if isinstance(value, str):
         return _substitute_string(value, file_path)
@@ -99,6 +111,7 @@ def _substitute_string(
 
     Args:
         text: String containing ${VAR} or ${VAR:default} patterns.
+            ``$${`` escapes substitution and renders a literal ``${``.
         file_path: Path to config file for error messages.
 
     Returns:
@@ -123,17 +136,24 @@ def _substitute_string(
             # No value and no default - error
             raise MissingEnvironmentVariableError(var_name, file_path)
 
-    substituted = ENV_VAR_PATTERN.sub(replace_match, text)
+    # Protect ``$${`` escapes so the forward regex cannot substitute the
+    # trailing ``${VAR}`` inside them (the escape's whole point).
+    protected = text.replace(_ESCAPED_OPENER, _ESCAPED_OPENER_SENTINEL)
+    substituted = ENV_VAR_PATTERN.sub(replace_match, protected)
     # After substitution, scan the residue for an unterminated ``${`` opener.
     # The forward regex requires a closing ``}``, so ``${UNTERMINATED_VAR_NAME``
-    # would otherwise pass through silently as a literal string.
+    # would otherwise pass through silently as a literal string. The check
+    # runs while escapes are still sentinels, so an escaped literal never
+    # trips it.
     if _UNTERMINATED_ENV_VAR_PATTERN.search(substituted):
+        shown = substituted.replace(_ESCAPED_OPENER_SENTINEL, _ESCAPED_OPENER)
         raise ConfigurationError(
-            f"Unterminated environment variable reference in {substituted!r}: "
+            f"Unterminated environment variable reference in {shown!r}: "
             f"'${{' opener has no closing '}}'. Either close the brace or "
             f"escape the literal as '$${{'.",
             file_path=file_path,
         )
+    substituted = substituted.replace(_ESCAPED_OPENER_SENTINEL, "${")
     if WHOLE_ENV_VAR_PATTERN.fullmatch(text):
         return _coerce_scalar_string(substituted)
     return substituted

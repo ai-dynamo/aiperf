@@ -122,3 +122,27 @@ def test_rankings_specific_token_options(mock_tokenizer):
         # Query and passages should have content
         assert len(query.contents) == 1
         assert len(passages.contents) >= 1
+
+
+def test_rankings_defaults_when_config_omitted(mock_tokenizer):
+    """Rankings endpoints without an explicit rankings config use field defaults."""
+    dataset = {
+        "type": "synthetic",
+        "entries": 3,
+        "prompts": {"isl": {"mean": 10, "stddev": 2}, "osl": 64},
+    }
+    config = AIPerfConfig(
+        benchmark={**_BASE, "datasets": [{"name": "default", **dataset}]}
+    )
+    composer = SyntheticRankingsDatasetComposer(_make_run(config), mock_tokenizer)
+
+    dataset_out = composer.create_dataset()
+
+    assert len(dataset_out) == 3
+    for conv in dataset_out:
+        assert len(conv.turns) == 1
+        query, passages = conv.turns[0].texts
+        assert query.name == "query"
+        assert passages.name == "passages"
+        assert len(query.contents) == 1
+        assert len(passages.contents) >= 1

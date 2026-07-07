@@ -209,7 +209,18 @@ class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
 
 class CreditPhase(CaseInsensitiveStrEnum):
     """The type of credit phase. This is used to identify which phase of the
-    benchmark the credit is being used in, for tracking and reporting purposes."""
+    benchmark the credit is being used in, for tracking and reporting purposes.
+
+    Phase names are OPEN, not restricted to the declared members: the YAML
+    config accepts any identifier for ``phases[].name`` (docs use names like
+    ``steady_state_profile`` or ``main``), and that name travels the wire as
+    ``Credit.phase``, ``CreditPhaseStats.phase``, and
+    ``MetricRecordMetadata.benchmark_phase``. ``_missing_`` materializes a
+    pseudo-member for unknown names so msgspec/Pydantic decode accepts them
+    in every service; the declared members exist for well-known-name
+    comparisons (e.g. ``phase == CreditPhase.PROFILING``) and defaults.
+    Result-affecting behavior keys off ``exclude_from_results``, never off
+    the phase name itself."""
 
     WARMUP = "warmup"
     """The credit phase while the warmup is active. This is used to warm up the model and
@@ -224,6 +235,29 @@ class CreditPhase(CaseInsensitiveStrEnum):
     runs after profiling to let the server settle (e.g. drain queues, flush KV
     cache) before the next variation. Records are still emitted for tracking
     but never contribute to summary statistics."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> "CreditPhase | None":
+        """Materialize a pseudo-member for user-defined phase names.
+
+        Example: ``CreditPhase("steady_state_profile")`` returns a
+        ``CreditPhase`` instance with that value, so a custom-named phase
+        decodes cleanly wherever the wire type is ``CreditPhase``. Declared
+        members still win (case-insensitively) via the parent lookup.
+        """
+        member = super()._missing_(value)
+        if member is not None:
+            return member
+        if not isinstance(value, str) or not value:
+            return None
+        pseudo = str.__new__(cls, value)
+        pseudo._name_ = value
+        pseudo._value_ = value
+        # Cache in the Enum value-lookup map so repeated decodes of the same
+        # custom name (hot record path) reuse one instance instead of
+        # re-entering _missing_. Does not affect __members__ or iteration.
+        cls._value2member_map_[value] = pseudo
+        return pseudo
 
 
 class ExportLevel(CaseInsensitiveStrEnum):

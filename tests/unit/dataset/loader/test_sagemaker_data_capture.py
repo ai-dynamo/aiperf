@@ -228,19 +228,19 @@ class TestParseTrace:
         loader = self._make_loader(tmp_path)
         messages = [{"role": "user", "content": "What is 2+2?"}]
         line = _make_capture_record(messages=messages)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.messages == messages
 
     def test_parse_trace_extracts_timestamp(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(inference_time="2026-04-29T00:03:18Z")
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.timestamp == _parse_iso8601_to_ms("2026-04-29T00:03:18Z")
 
     def test_parse_trace_extracts_max_tokens_from_input(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(max_tokens=100, completion_tokens=15)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length == 100
 
     def test_parse_trace_output_length_is_none_when_no_max_tokens(
@@ -248,25 +248,25 @@ class TestParseTrace:
     ) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(max_tokens=None, completion_tokens=42)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length is None
 
     def test_parse_trace_extracts_prompt_tokens(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(prompt_tokens=128)
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.input_length == 128
 
     def test_parse_trace_extracts_event_id(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(event_id="abc-123")
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.event_id == "abc-123"
 
     def test_parse_trace_handles_base64_encoding(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record(input_encoding="BASE64", output_encoding="BASE64")
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.messages == [{"role": "user", "content": "Hello"}]
 
     def test_parse_trace_rejects_missing_messages(self, tmp_path: Path) -> None:
@@ -277,7 +277,7 @@ class TestParseTrace:
         ).decode()
         line = orjson.dumps(record).decode()
         with pytest.raises(DatasetLoaderError, match="no 'messages' key"):
-            loader._parse_trace(line)
+            loader._parse_trace(orjson.loads(line))
 
 
 class TestLoadDataset:
@@ -474,7 +474,7 @@ class TestParseTraceEdgeCases:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length is None
         assert trace.input_length is None
         assert trace.messages == [{"role": "user", "content": "hi"}]
@@ -507,7 +507,7 @@ class TestParseTraceEdgeCases:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.output_length == 200
 
     def test_parse_trace_csv_output_encoding_gives_none_usage(
@@ -535,7 +535,7 @@ class TestParseTraceEdgeCases:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.input_length is None
         assert trace.output_length is None
 
@@ -697,13 +697,13 @@ class TestToolsSupport:
             "eventVersion": "0",
         }
         line = orjson.dumps(record).decode()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.tools == tools
 
     def test_parse_trace_tools_none_when_absent(self, tmp_path: Path) -> None:
         loader = self._make_loader(tmp_path)
         line = _make_capture_record()
-        trace = loader._parse_trace(line)
+        trace = loader._parse_trace(orjson.loads(line))
         assert trace.tools is None
 
     def test_build_turn_passes_raw_tools(self, tmp_path: Path) -> None:
@@ -732,18 +732,20 @@ class TestParseTraceErrorPaths:
     def _make_loader(self, tmp_path: Path) -> SageMakerDataCaptureLoader:
         return _build_loader(str(tmp_path / "test.jsonl"))
 
-    def test_parse_trace_invalid_json_raises_dataset_loader_error(
+    def test_invalid_json_line_raises_dataset_loader_error(
         self, tmp_path: Path
     ) -> None:
+        f = tmp_path / "bad.jsonl"
+        f.write_text("not valid json {{{\n")
         loader = self._make_loader(tmp_path)
         with pytest.raises(DatasetLoaderError, match="Invalid JSON"):
-            loader._parse_trace("not valid json {{{")
+            loader._read_all_traces([f])
 
     def test_parse_trace_missing_event_metadata_raises_dataset_loader_error(
         self, tmp_path: Path
     ) -> None:
         loader = self._make_loader(tmp_path)
-        record = orjson.dumps({"captureData": {}}).decode()
+        record = {"captureData": {}}
         with pytest.raises(DatasetLoaderError, match="missing required field"):
             loader._parse_trace(record)
 
@@ -751,14 +753,12 @@ class TestParseTraceErrorPaths:
         self, tmp_path: Path
     ) -> None:
         loader = self._make_loader(tmp_path)
-        record = orjson.dumps(
-            {
-                "eventMetadata": {
-                    "eventId": "test",
-                    "inferenceTime": "2026-04-29T00:00:00Z",
-                }
+        record = {
+            "eventMetadata": {
+                "eventId": "test",
+                "inferenceTime": "2026-04-29T00:00:00Z",
             }
-        ).decode()
+        }
         with pytest.raises(DatasetLoaderError, match="captureData.endpointInput"):
             loader._parse_trace(record)
 

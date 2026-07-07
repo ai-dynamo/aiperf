@@ -166,21 +166,23 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
 
         Returns None for non-streaming datasets.
 
-        For streaming datasets, caps at the default dataset's `entries` when
-        set, falling back to any phase-level request count, to prevent
-        fetching the entire remote dataset in duration-based benchmarks.
+        For streaming datasets, caps at the largest profiling-phase request count
+        when set, otherwise the active dataset's `entries`, to prevent fetching
+        the entire remote dataset in duration-based benchmarks.
         """
         if not self.streaming:
             return None
+
+        request_counts = [
+            phase.requests
+            for phase in self.run.cfg.get_profiling_phases()
+            if getattr(phase, "requests", None) is not None
+        ]
+        if request_counts:
+            return max(request_counts)
+
         dataset = self.run.cfg.get_default_dataset()
-        entries = getattr(dataset, "entries", None)
-        if entries is not None:
-            return entries
-        for phase in self.run.cfg.phases:
-            requests = getattr(phase, "requests", None)
-            if requests is not None:
-                return requests
-        return None
+        return getattr(dataset, "entries", None)
 
     @abstractmethod
     async def convert_to_conversations(

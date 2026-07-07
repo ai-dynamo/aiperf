@@ -52,8 +52,9 @@ uv run python tools/migrate_config_yaml.py path/to/config.yaml --in-place
 ```
 
 The script:
-- Re-indents body fields under a top-level `benchmark:` key.
+- Re-indents body fields under a top-level `benchmark:` key (the exact key set the loader's auto-migration accepts, including `model`, singular `dataset:` -> `datasets: [...]` promotion, and camelCase spellings like `gpuTelemetry`/`serverMetrics`).
 - Keeps envelope keys (`sweep`, `multi_run`, `variables`, `random_seed`) at top level.
+- Renames the deprecated grid/zip `sweep.parameters` key to `sweep.variables`.
 - Prefixes grid `sweep.variables` keys with `benchmark.` (e.g. `phases.profiling.concurrency` -> `benchmark.phases.profiling.concurrency`).
 - Wraps body fields inside `sweep.runs[i]` under a per-run `benchmark:` key.
 - Preserves comments via ruamel.yaml.
@@ -73,7 +74,7 @@ The auto-migration is intended as a transitional safety net; new configs and com
 
 ## Body fields (move under `benchmark:`)
 
-`models`, `endpoint`, `datasets`, `phases`, `artifacts`, `slos`, `tokenizer`, `gpu_telemetry`, `server_metrics`, `runtime`, `logging`, `metrics`, `accuracy`, `otel`, `mlflow`, `wandb`.
+`models` (or singular `model`), `endpoint`, `datasets` (or singular `dataset`), `phases` (or the `warmup`/`profiling` shorthand siblings), `artifacts`, `slos`, `tokenizer`, `gpu_telemetry`, `server_metrics`, `network_latency`, `runtime`, `logging`, `metrics`, `accuracy`, `otel`, `mlflow`, `wandb`. CamelCase spellings (`gpuTelemetry`, `serverMetrics`, `networkLatency`) are accepted too.
 
 ## Envelope fields (stay at top level)
 

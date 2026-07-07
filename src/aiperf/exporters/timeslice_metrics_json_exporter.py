@@ -1,13 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import orjson
+
 from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models.export_models import (
     TimesliceCollectionExportData,
     TimesliceData,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
-from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
+from aiperf.exporters.metrics_json_exporter import (
+    MetricsJsonExporter,
+    _strip_none_fields,
+)
 
 
 class TimesliceMetricsJsonExporter(MetricsJsonExporter):
@@ -88,6 +94,19 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
             input_config=self._config,
         )
 
-        return export_data.model_dump_json(
-            indent=2, exclude_unset=True, exclude_none=True
+        # Same serialization contract as MetricsJsonExporter: model_dump +
+        # scrub_non_finite + orjson so NaN/inf are rewritten to null only
+        # when genuinely numerically absent.
+        payload = export_data.model_dump(
+            mode="json", exclude_unset=True, exclude_none=True
         )
+        # exclude_none does not propagate into extra="allow" dataclass values
+        # (the per-timeslice metric tags); strip their Nones to match the
+        # declared-field shape.
+        for timeslice_payload in payload.get("timeslices", []):
+            for key, value in timeslice_payload.items():
+                if isinstance(value, dict):
+                    timeslice_payload[key] = _strip_none_fields(value)
+        return orjson.dumps(
+            scrub_non_finite(payload), option=orjson.OPT_INDENT_2
+        ).decode("utf-8")

@@ -198,7 +198,7 @@ class TestLogGradingDetail:
             correct=False,
             unparsed=True,
             confidence=0.0,
-            reasoning="LCB grader failed: sandboxed exec failed: daemonic ...",
+            reasoning="LCB grader failed: code execution failed: daemonic ...",
             extracted_answer="```python\nprint(1)\n```",
             ground_truth="<lcb test cases>",
         )
@@ -212,7 +212,7 @@ class TestLogGradingDetail:
         )
         processor._log_grading_detail(0, "some response", self._result())
         assert len(logged) == 1
-        assert "sandboxed exec failed" in logged[0]
+        assert "code execution failed" in logged[0]
         assert "unparsed=True" in logged[0]
 
     def test_non_verbose_debug_disabled_is_noop(self, monkeypatch) -> None:
@@ -241,7 +241,7 @@ class TestLogGradingDetail:
         )
         processor._log_grading_detail(0, "some response", self._result())
         assert len(logged) == 1
-        assert "sandboxed exec failed" in logged[0]
+        assert "code execution failed" in logged[0]
 
 
 class TestAccuracyResultsProcessorOnDatasetConfigured:

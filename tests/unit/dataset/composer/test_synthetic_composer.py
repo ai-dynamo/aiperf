@@ -1565,3 +1565,40 @@ class TestIslAdversarial:
         assert stddev == 0
         assert stddev is not None
         assert isinstance(stddev, int)
+
+
+class TestVideoOnlyDataset:
+    """Video-only synthetic datasets are a supported modality combination."""
+
+    def test_video_only_synthetic_dataset_allowed(self, mock_tokenizer):
+        """A dataset enabling only video must pass the all-disabled init check."""
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "synthetic",
+                        "entries": 2,
+                        "video": {"width": 640, "height": 480, "batch_size": 1},
+                    }
+                ],
+            }
+        )
+        composer = SyntheticDatasetComposer(_make_run(config), mock_tokenizer)
+
+        assert composer.include_video is True
+        assert composer.include_prompt is False
+        assert composer.include_image is False
+        assert composer.include_audio is False
+
+    def test_all_disabled_error_mentions_video(self, mock_tokenizer):
+        """The all-disabled error lists video among the enableable modalities."""
+        config = AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "datasets": [{"name": "default", "type": "synthetic", "entries": 2}],
+            }
+        )
+        with pytest.raises(ValueError, match="prompt, image, audio, or video"):
+            SyntheticDatasetComposer(_make_run(config), mock_tokenizer)

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for QMC sampling sweep types (Sobol, Latin Hypercube)."""
 
+import copy
 import json
 import math
 import warnings
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config.sweep import (
     LatinHypercubeSweep,
@@ -583,3 +585,94 @@ class TestExpandSweepDispatchQMC:
         variations = expand_sweep(data)
         assert len(variations) == 6
         assert all(v.label.startswith("latin_hypercube_") for _, v in variations)
+
+
+class TestSeedlessDeterminism:
+    """seed=None must derive a stable seed from the sweep spec.
+
+    A sweep-controller pod restart re-expands the same spec; nondeterministic
+    seedless expansion would silently corrupt resume and aggregation.
+    """
+
+    def _dims(self) -> list[SamplingDimension]:
+        return [
+            SamplingDimension(
+                path="phases.profiling.concurrency",
+                lo=1,
+                hi=128,
+                scale="log",
+                kind="int",
+            ),
+            SamplingDimension(path="phases.profiling.duration", lo=10.0, hi=60.0),
+        ]
+
+    def _expand(self, *, sweep_type: str, samples: int, seed: int | None, dims=None):
+        return expand_qmc_sweep(
+            _base_data(),
+            sweep_type=sweep_type,
+            samples=samples,
+            seed=seed,
+            dimensions=dims if dims is not None else self._dims(),
+            options={"scramble": True},
+        )
+
+    @pytest.mark.parametrize(
+        "sweep_type",
+        [
+            param("sobol", id="sobol"),
+            param("latin_hypercube", id="latin_hypercube"),
+        ],
+    )  # fmt: skip
+    def test_expand_qmc_sweep_seedless_same_spec_identical(self, sweep_type):
+        a = self._expand(sweep_type=sweep_type, samples=8, seed=None)
+        b = self._expand(sweep_type=sweep_type, samples=8, seed=None)
+        assert [v.values for _, v in a] == [v.values for _, v in b]
+
+    def test_expand_qmc_sweep_seedless_different_specs_differ(self):
+        wide = self._expand(sweep_type="sobol", samples=8, seed=None)
+        narrow_dims = [
+            SamplingDimension(
+                path="phases.profiling.concurrency",
+                lo=1,
+                hi=64,
+                scale="log",
+                kind="int",
+            ),
+            SamplingDimension(path="phases.profiling.duration", lo=10.0, hi=60.0),
+        ]
+        narrow = self._expand(
+            sweep_type="sobol", samples=8, seed=None, dims=narrow_dims
+        )
+        assert [v.values for _, v in wide] != [v.values for _, v in narrow]
+
+    def test_expand_qmc_sweep_explicit_seed_still_honored(self):
+        seeded_a = self._expand(sweep_type="sobol", samples=8, seed=42)
+        seeded_b = self._expand(sweep_type="sobol", samples=8, seed=42)
+        seedless = self._expand(sweep_type="sobol", samples=8, seed=None)
+        assert [v.values for _, v in seeded_a] == [v.values for _, v in seeded_b]
+        assert [v.values for _, v in seeded_a] != [v.values for _, v in seedless]
+
+    def test_expand_sweep_seedless_yaml_block_identical_across_expansions(self):
+        data = {
+            "sweep": {
+                "type": "sobol",
+                "samples": 8,
+                "dimensions": [
+                    {
+                        "path": "phases.profiling.concurrency",
+                        "lo": 1,
+                        "hi": 128,
+                        "scale": "log",
+                        "kind": "int",
+                    },
+                ],
+            },
+            "benchmark": {
+                "model": "test-model",
+                "endpoint": {"url": "http://localhost:8000", "type": "chat"},
+                "phases": [{"name": "profiling", "concurrency": 1, "duration": 10}],
+            },
+        }
+        a = expand_sweep(copy.deepcopy(data))
+        b = expand_sweep(copy.deepcopy(data))
+        assert [v.values for _, v in a] == [v.values for _, v in b]

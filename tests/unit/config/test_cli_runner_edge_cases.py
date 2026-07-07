@@ -120,7 +120,14 @@ class TestRunBenchmarkRouting:
         mock_single.assert_called_once()
         run_arg = mock_single.call_args[0][0]
         assert isinstance(run_arg, BenchmarkRun)
-        assert run_arg.cfg is plan.configs[0]
+        # BenchmarkRun stamps its run id into a COPY of the config (so the
+        # plan's shared config is never mutated); everything except the
+        # stamped artifacts.benchmark_id must match the plan's config.
+        assert run_arg.cfg.artifacts.benchmark_id == run_arg.benchmark_id
+        assert plan.configs[0].artifacts.benchmark_id is None
+        assert run_arg.cfg.model_dump(exclude={"artifacts"}) == plan.configs[
+            0
+        ].model_dump(exclude={"artifacts"})
 
 
 # ============================================================

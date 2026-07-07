@@ -253,6 +253,15 @@ Strings are auto-coerced to the right type — `TIMEOUT=600.0` becomes a float, 
 
 If a required `${VAR}` is unset, you get a clean error naming the variable, not a silent fallback.
 
+Need a literal `${` in a value (e.g. a shell snippet passed through to the server)? Escape it as `$${`:
+
+```yaml
+benchmark:
+  endpoint:
+    extra_headers:
+      X-Template: "$${NOT_SUBSTITUTED}"   # rendered as ${NOT_SUBSTITUTED}
+```
+
 ## Reusable values and computed expressions
 
 Define values once at the top, reference them anywhere with `{{ }}` Jinja expressions:

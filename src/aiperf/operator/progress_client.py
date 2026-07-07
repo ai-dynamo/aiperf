@@ -274,7 +274,9 @@ class ProgressClient:
                 phase = CreditPhase(phase_name)
                 filtered = {k: v for k, v in phase_data.items() if k in valid_fields}
                 phases[phase] = CombinedPhaseStats(**filtered)
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, AttributeError) as e:
+                # AttributeError: phase_data is not a mapping (e.g. a bare
+                # string from a corrupted response) — .items() has no meaning.
                 logger.warning(f"Skipping malformed phase '{phase_name}': {e}")
                 continue
 

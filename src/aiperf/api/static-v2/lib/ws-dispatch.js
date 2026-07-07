@@ -104,6 +104,14 @@ function shortGroupId(id) {
   return parts.length <= 2 ? id : parts.slice(-2).join('-');
 }
 
+/** Derive in-flight tasks from a wire WorkerTaskStats dict.
+ *  Server-side ``task_stats.in_progress`` is a non-serialized @property
+ *  (total - completed - failed), so the wire payload never carries it —
+ *  recompute it client-side from the serialized counters. */
+function inFlightTasks(ts) {
+  return Math.max(0, (ts?.total ?? 0) - (ts?.completed ?? 0) - (ts?.failed ?? 0));
+}
+
 /** Replace one group entry from a WorkerGroupStatsMessage. */
 function applyGroupStats(msg) {
   const groupId = msg.group_id ?? msg.service_id;
@@ -116,7 +124,7 @@ function applyGroupStats(msg) {
       id: wid,
       status,
       startupState: (msg.worker_startup_states ?? {})[wid] ?? null,
-      inFlight: ts.in_progress ?? 0,
+      inFlight: inFlightTasks(ts),
       completed: ts.completed ?? 0,
       failed: ts.failed ?? 0,
       total: ts.total ?? 0,
@@ -130,7 +138,7 @@ function applyGroupStats(msg) {
     startupState: msg.startup_state ?? null,
     declaredWorkers: msg.declared_workers ?? 0,
     readyWorkers: msg.ready_workers ?? 0,
-    inFlight: msg.task_stats?.in_progress ?? 0,
+    inFlight: inFlightTasks(msg.task_stats),
     completed: msg.task_stats?.completed ?? 0,
     failed: msg.task_stats?.failed ?? 0,
     total: msg.task_stats?.total ?? 0,
@@ -199,7 +207,9 @@ export function handleWsMessage(msg) {
     }
 
     case 'processing_stats': {
-      const s = msg.stats ?? msg;
+      // RecordsProcessingStatsMessage carries the counters under
+      // `processing_stats` on the wire; `stats` is kept as a compat fallback.
+      const s = msg.processing_stats ?? msg.stats ?? msg;
       applyRecords({
         successRecords: Number(s.success_records) || 0,
         errorRecords: Number(s.error_records) || 0,
@@ -212,7 +222,9 @@ export function handleWsMessage(msg) {
     }
 
     case 'all_records_received': {
-      const s = msg.stats ?? msg;
+      // AllRecordsReceivedMessage carries the counters under
+      // `final_processing_stats` on the wire; `stats` is a compat fallback.
+      const s = msg.final_processing_stats ?? msg.stats ?? msg;
       applyRecords({
         successRecords: s.success_records != null
           ? Number(s.success_records) : records.value.successRecords,

@@ -8,6 +8,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.dataset.content import RankingsConfig
 from aiperf.dataset.composer.base import BaseDatasetComposer
 
 if TYPE_CHECKING:
@@ -38,12 +39,11 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         conversations: list[Conversation] = []
         num_entries = self.dataset_config.entries
 
-        # Get rankings config
-        rankings_config = getattr(self.dataset_config, "rankings", None)
-        if rankings_config is None:
-            raise ValueError(
-                "Rankings config is required for synthetic rankings dataset"
-            )
+        # Fall back to RankingsConfig field defaults when the user did not
+        # configure rankings explicitly.
+        rankings_config = (
+            getattr(self.dataset_config, "rankings", None) or RankingsConfig()
+        )
 
         for _ in range(num_entries):
             num_passages = rankings_config.passages.sample_int(self._passages_rng)
@@ -68,12 +68,11 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
 
         turn = Turn()
 
-        # Get rankings config
-        rankings_config = getattr(self.dataset_config, "rankings", None)
-        if rankings_config is None:
-            raise ValueError(
-                "Rankings config is required for synthetic rankings dataset"
-            )
+        # Fall back to RankingsConfig field defaults when the user did not
+        # configure rankings explicitly.
+        rankings_config = (
+            getattr(self.dataset_config, "rankings", None) or RankingsConfig()
+        )
 
         query_num_tokens = rankings_config.query_tokens.sample_int(
             self._query_token_rng

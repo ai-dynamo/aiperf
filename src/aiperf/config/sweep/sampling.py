@@ -171,7 +171,13 @@ class _SamplingSweepBase(_GridSweepBase):
             description=(
                 "RNG seed for reproducibility. Must be non-negative; "
                 "scipy's QMC engines reject negative seeds with an opaque "
-                "low-level error."
+                "low-level error. When unset, a deterministic seed is "
+                "derived from a stable hash of the sweep spec (type, "
+                "samples, dimensions, sampler options), so re-expanding the "
+                "same spec — e.g. after a sweep-controller pod restart — "
+                "reproduces identical points while different specs still "
+                "get different sequences. Set explicitly to pick a sequence "
+                "independent of the spec."
             ),
         ),
     ]

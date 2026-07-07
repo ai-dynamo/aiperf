@@ -17,6 +17,12 @@ def extract_metric_value(run, metric_name: str, stat: str = "p50") -> float | No
     """
     Extract a metric value from a run with specified stat.
 
+    Handles the three metric shapes ``RunData.get_metric`` can return: objects
+    with a nested ``.stats`` container, plain stat dicts (single-run exports),
+    and flat stat dataclasses like ``JsonMetricResult`` / ``MetricResult``
+    (aggregate-only sweep cells, realtime results) where ``p50``/``avg``/...
+    live directly on the object.
+
     Args:
         run: RunData object
         metric_name: Name of the metric (e.g., 'time_to_first_token')
@@ -30,11 +36,15 @@ def extract_metric_value(run, metric_name: str, stat: str = "p50") -> float | No
         return None
 
     if hasattr(metric, "stats"):
-        # MetricResult object
+        # Object with nested stats container
         return getattr(metric.stats, stat, None)
     elif isinstance(metric, dict):
         # Dict format
         return metric.get(stat)
+    elif hasattr(metric, stat):
+        # Flat stat dataclass (JsonMetricResult / MetricResult) — the shape the
+        # aggregate-only loader stores under aggregated["metrics"].
+        return getattr(metric, stat)
 
     return None
 

@@ -293,7 +293,7 @@ def _build_credit_phase_config(
     rate_ramp = getattr(phase, "rate_ramp", None)
 
     return CreditPhaseConfig(
-        phase=phase_name,
+        phase=CreditPhase(phase_name),
         exclude_from_results=exclude_from_results,
         timing_mode=timing_mode,
         arrival_pattern=arrival_pattern,

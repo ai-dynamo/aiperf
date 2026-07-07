@@ -14,6 +14,7 @@ This module joins the two by `(namespace, name)` and stamps each entry with a
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -400,7 +401,10 @@ async def list_all_jobs(
     for j in cr_jobs:
         j.source = "live"
 
-    pvc_jobs = _scan_pvc_jobs(results_dir, namespace=namespace)
+    # Full PVC walk (iterdir/stat/read per run dir) — pure filesystem work,
+    # so offload it; the UI polls this endpoint every few seconds and a
+    # synchronous scan would stall the event loop on large PVCs.
+    pvc_jobs = await asyncio.to_thread(_scan_pvc_jobs, results_dir, namespace=namespace)
 
     cr_keys = {(j.namespace, j.name) for j in cr_jobs}
     out: list[AIPerfJobInfo] = list(cr_jobs)

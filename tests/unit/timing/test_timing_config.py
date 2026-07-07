@@ -4,6 +4,7 @@
 import pytest
 from pydantic import ValidationError
 
+from aiperf.common.enums import CreditPhase
 from aiperf.config import AIPerfConfig
 from aiperf.plugin.enums import ArrivalPattern, TimingMode, URLSelectionStrategy
 from aiperf.timing.config import (
@@ -195,6 +196,26 @@ class TestTimingConfigFromConfig:
             p.request_rate,
             p.total_expected_requests,
         ) == (8, 4, 50.0, 500)
+
+    def test_custom_phase_name_coerced_to_credit_phase(self) -> None:
+        """Custom phase names (documented feature) become CreditPhase
+        pseudo-members so downstream wire structs (Credit, CreditPhaseStats)
+        carry a decodable enum value, not a bare str."""
+        cfg = TimingConfig.from_config(
+            make_config(
+                phases=[
+                    {
+                        "name": "steady_state_profile",
+                        "type": "poisson",
+                        "rate": 10.0,
+                        "requests": 100,
+                    }
+                ]
+            )
+        )
+        p = cfg.phase_configs[0]
+        assert isinstance(p.phase, CreditPhase)
+        assert p.phase == "steady_state_profile"
 
     def test_creates_warmup_from_excluded_phase(self) -> None:
         cfg = TimingConfig.from_config(

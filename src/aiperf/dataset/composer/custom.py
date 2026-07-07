@@ -26,7 +26,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         self.loader: BaseLoader | None = None
 
     def create_dataset(self) -> list[Conversation]:
-        """Create conversations from a file or directory.
+        """Create conversations from a file, directory, or inline records.
 
         Returns:
             list[Conversation]: A list of conversation objects.
@@ -39,38 +39,37 @@ class CustomDatasetComposer(BaseDatasetComposer):
             if source and hasattr(source, "path"):
                 file_path = source.path
 
-        if file_path is None:
+        inline_records = getattr(self.dataset_config, "records", None)
+        if file_path is None and inline_records is None:
             raise ValueError(
-                "Dataset config must have a 'path' field for file-based datasets"
+                "Dataset config must have a 'path' or inline 'records' field "
+                "for file-based datasets"
             )
 
-        # Use pre-resolved absolute path from resolver chain if available
-        # TODO: (future) for K8s, we need to transfer file data from SC (across node)
-        resolved_paths = self.run.resolved.dataset_file_paths
         dataset_name = self.run.cfg.get_default_dataset_name()
-        if resolved_paths and dataset_name in resolved_paths:
-            file_path = resolved_paths[dataset_name]
-        else:
-            check_file_exists(Path(file_path))
+        if inline_records is None:
+            # Use pre-resolved absolute path from resolver chain if available
+            # TODO: (future) for K8s, we need to transfer file data from SC (across node)
+            resolved_paths = self.run.resolved.dataset_file_paths
+            if resolved_paths and dataset_name in resolved_paths:
+                file_path = resolved_paths[dataset_name]
+            else:
+                check_file_exists(Path(file_path))
 
-        # Use pre-resolved dataset type from resolver chain if available
-        resolved_types = self.run.resolved.dataset_types
-        if resolved_types and dataset_name in resolved_types:
-            dataset_type = resolved_types[dataset_name]
-            self.info(f"Using pre-resolved dataset type: {dataset_type}")
-        else:
-            dataset_format = getattr(self.dataset_config, "format", None)
-            dataset_type = (
-                self._format_to_dataset_type(dataset_format) if dataset_format else None
-            )
-            if dataset_type is None:
-                dataset_type = self._infer_dataset_type(str(file_path))
-                self.info(f"Auto-detected dataset type: {dataset_type}")
+        dataset_type = self._resolve_dataset_type(
+            dataset_name=dataset_name,
+            file_path=file_path,
+            is_inline=inline_records is not None,
+        )
 
         # Validate synthesis options are only used with mooncake_trace
         self._validate_synthesis_config(dataset_type)
 
-        self._create_loader_instance(dataset_type, str(file_path))
+        self._create_loader_instance(
+            dataset_type,
+            str(file_path) if file_path is not None else None,
+            inline_records=inline_records,
+        )
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
 
@@ -89,8 +88,50 @@ class CustomDatasetComposer(BaseDatasetComposer):
             return self.loader.get_default_context_mode()
         return None
 
+    def _resolve_dataset_type(
+        self,
+        *,
+        dataset_name: str,
+        file_path: Any,
+        is_inline: bool,
+    ) -> CustomDatasetType:
+        """Resolve the loader type for the active dataset.
+
+        Precedence: resolver-chain output > explicit ``format:`` mapping >
+        structural inference from the file. Inline records have no file to
+        probe, so an unmappable format is an error there.
+        """
+        resolved_types = self.run.resolved.dataset_types
+        if resolved_types and dataset_name in resolved_types:
+            dataset_type = resolved_types[dataset_name]
+            self.info(f"Using pre-resolved dataset type: {dataset_type}")
+            return dataset_type
+
+        dataset_format = getattr(self.dataset_config, "format", None)
+        dataset_type = (
+            self._format_to_dataset_type(dataset_format) if dataset_format else None
+        )
+        if dataset_type is not None:
+            return dataset_type
+
+        if is_inline:
+            raise ValueError(
+                f"Cannot determine loader type for inline records dataset "
+                f"'{dataset_name}': format {dataset_format!r} has no matching "
+                "dataset loader. Set a supported `format:` on the dataset."
+            )
+
+        dataset_type = self._infer_dataset_type(str(file_path))
+        self.info(f"Auto-detected dataset type: {dataset_type}")
+        return dataset_type
+
     def _format_to_dataset_type(self, format_value: Any) -> CustomDatasetType | None:
-        """Convert dataset format enum to CustomDatasetType."""
+        """Convert dataset format enum to CustomDatasetType.
+
+        Formats outside the static map (e.g. dag_jsonl, bailian_trace) mirror
+        a CustomDatasetType 1:1 by value, so fall back to a direct value
+        conversion — matching ``DatasetResolver._explicit_format_to_type``.
+        """
         from aiperf.common.enums import DatasetFormat
 
         format_mapping = {
@@ -99,7 +140,13 @@ class CustomDatasetComposer(BaseDatasetComposer):
             DatasetFormat.MOONCAKE_TRACE: CustomDatasetType.MOONCAKE_TRACE,
             DatasetFormat.RANDOM_POOL: CustomDatasetType.RANDOM_POOL,
         }
-        return format_mapping.get(format_value)
+        mapped = format_mapping.get(format_value)
+        if mapped is not None:
+            return mapped
+        try:
+            return CustomDatasetType(str(format_value))
+        except ValueError:
+            return None
 
     def _infer_dataset_type(self, file_path: str) -> CustomDatasetType:
         """Infer the custom dataset type from the input file.
@@ -223,13 +270,21 @@ class CustomDatasetComposer(BaseDatasetComposer):
             )
 
     def _create_loader_instance(
-        self, dataset_type: CustomDatasetType, file_path: str
+        self,
+        dataset_type: CustomDatasetType,
+        file_path: str | None,
+        inline_records: list[dict[str, Any]]
+        | dict[str, list[dict[str, Any]]]
+        | None = None,
     ) -> None:
         """Initializes the dataset loader based on the custom dataset type.
 
         Args:
             dataset_type: The type of custom dataset to create.
-            file_path: Path to the dataset file.
+            file_path: Path to the dataset file, or None for inline records.
+            inline_records: Inline record dicts (or pool-name -> records dict
+                for random_pool) from ``FileDataset.records``. Mutually
+                exclusive with ``file_path``.
         """
         kwargs: dict[str, Any] = {}
         loader_metadata = plugins.get_dataset_loader_metadata(dataset_type)
@@ -253,8 +308,15 @@ class CustomDatasetComposer(BaseDatasetComposer):
             kwargs["category"] = loader_metadata.category
 
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
-        self.loader = LoaderClass(
-            filename=file_path,
-            run=self.run,
-            **kwargs,
-        )
+        if inline_records is not None:
+            self.loader = LoaderClass(
+                inline_records=inline_records,
+                run=self.run,
+                **kwargs,
+            )
+        else:
+            self.loader = LoaderClass(
+                filename=file_path,
+                run=self.run,
+                **kwargs,
+            )

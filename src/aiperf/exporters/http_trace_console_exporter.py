@@ -17,6 +17,9 @@ class HttpTraceConsoleExporter(ConsoleMetricsExporter):
     receiving, and total duration. It is enabled via the --show-trace-timing flag.
     """
 
+    # Flag-driven variant: no group filter, single merged table.
+    console_groups = None
+
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config=exporter_config, **kwargs)
         self._show_trace_timing = exporter_config.config.artifacts.show_trace_timing

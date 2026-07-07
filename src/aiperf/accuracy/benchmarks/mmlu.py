@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 DATASET_NAME = "lighteval/mmlu"
+TASK_NAME = "mmlu"
 
 CHOICES = [f" {c}" for c in ascii_uppercase[:4]]
 
@@ -109,6 +110,36 @@ class MMLUBenchmark(AIPerfLoggerMixin):
     async def load_problems(
         self, tasks: list[str] | None, n_shots: int, enable_cot: bool
     ) -> list[BenchmarkProblem]:
+        """Load MMLU problems lighteval-style.
+
+        Args:
+            tasks: MMLU subject names (e.g. ``["abstract_algebra"]``);
+                ``None`` / ``["all"]`` selects all 57 subjects. Unknown
+                names raise ``ValueError``.
+            n_shots: Few-shot example count, drawn from the subject's
+                dev/validation split with lighteval's balanced sampler.
+            enable_cot: Must be ``False``. lighteval's MMLU reference
+                has no chain-of-thought variant: the prompt ends with
+                ``"Answer:"``, ``generation_size=5`` caps the response
+                at five tokens, and ``MultipleChoiceGrader`` grades only
+                the first line — CoT reasoning would be truncated
+                mid-thought and every response silently mis-graded.
+
+        Raises:
+            NotImplementedError: When ``enable_cot`` is ``True``. The
+                error message is prefixed with ``"mmlu: "`` per
+                aiperf's validator-gate convention.
+        """
+        if enable_cot:
+            raise NotImplementedError(
+                f"{TASK_NAME}: --accuracy-enable-cot is not supported; "
+                "lighteval's MMLU reference has no chain-of-thought "
+                "variant (the prompt ends with 'Answer:', "
+                "generation_size=5 caps the response at five tokens, "
+                "and MultipleChoiceGrader grades only the first line, "
+                "so CoT reasoning would be truncated and mis-graded). "
+                "Omit --accuracy-enable-cot for MMLU."
+            )
         subjects = self._resolve_subjects(tasks)
         problems: list[BenchmarkProblem] = []
 
@@ -117,7 +148,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
                 load_dataset, DATASET_NAME, subject
             )
             subject_problems = await asyncio.to_thread(
-                self._build_subject_problems, ds, subject, n_shots, enable_cot
+                self._build_subject_problems, ds, subject, n_shots
             )
             problems.extend(subject_problems)
 
@@ -128,15 +159,12 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         ds: DatasetDict,
         subject: str,
         n_shots: int,
-        enable_cot: bool,
     ) -> list[BenchmarkProblem]:
         few_shots = self._build_few_shots(ds, n_shots)
         problems: list[BenchmarkProblem] = []
         for row in ds["test"]:
-            prompt = self._format_prompt(row, subject, few_shots, enable_cot)
-            raw_messages = self._build_chat_messages(
-                row, subject, few_shots, enable_cot
-            )
+            prompt = self._format_prompt(row, subject, few_shots)
+            raw_messages = self._build_chat_messages(row, subject, few_shots)
             gold_ix = (
                 ascii_uppercase.index(row["answer"])
                 if isinstance(row["answer"], str)
@@ -255,7 +283,6 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         row: dict[str, Any],
         subject: str,
         few_shots: list[dict[str, str]],
-        enable_cot: bool,
     ) -> str:
         """Build the full prompt, matching lighteval's mmlu_prompt() format.
 
@@ -277,9 +304,6 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         )
         query = f"Question: {row['question']}{choices_str}\nAnswer:"
 
-        if enable_cot:
-            query = f"Question: {row['question']}{choices_str}\nLet's think step by step.\nAnswer:"
-
         return instruction + few_shot_text + query
 
     def _build_chat_messages(
@@ -287,7 +311,6 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         row: dict[str, Any],
         subject: str,
         few_shots: list[dict[str, str]],
-        enable_cot: bool,
     ) -> list[AccuracyChatMessage]:
         """Build lighteval-style multi-turn chat messages.
 
@@ -319,10 +342,7 @@ class MMLUBenchmark(AIPerfLoggerMixin):
             for key, choice in zip(ascii_uppercase, row["choices"], strict=False)
         )
 
-        if enable_cot:
-            main_q = f"Question: {row['question']}{choices_str}\nLet's think step by step.\nAnswer:"
-        else:
-            main_q = f"Question: {row['question']}{choices_str}\nAnswer:"
+        main_q = f"Question: {row['question']}{choices_str}\nAnswer:"
 
         if not few_shots:
             main_q = instruction + main_q

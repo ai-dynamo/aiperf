@@ -561,14 +561,16 @@ class TestProgressClientParseResponse:
 
         assert progress.error == "Connection refused to endpoint"
 
-    def test_parse_invalid_phase_ignored(self) -> None:
-        """Test parsing response with invalid phase name."""
+    def test_parse_custom_phase_preserved(self) -> None:
+        """Custom phase names are first-class: CreditPhase materializes
+        pseudo-members for unknown names (configs may declare phases like
+        'steady_state_profile'), so the parser must keep them."""
         client = ProgressClient()
         progress = client._parse_progress_response(
             {
                 "phases": {
-                    "invalid_phase": {
-                        "phase": "invalid_phase",
+                    "steady_state_profile": {
+                        "phase": "steady_state_profile",
                         "requests_completed": 10,
                     },
                     "profiling": {
@@ -580,10 +582,26 @@ class TestProgressClientParseResponse:
             }
         )
 
-        # Branch convention: unknown phase names are dropped with a warning
-        # (CreditPhase rejects non-canonical values); the valid phase remains.
-        assert "invalid_phase" not in progress.phases
+        assert "steady_state_profile" in progress.phases
         assert "profiling" in progress.phases
+
+    def test_parse_malformed_phase_data_skipped(self) -> None:
+        """Non-dict phase payloads are dropped with a warning; siblings survive."""
+        client = ProgressClient()
+        progress = client._parse_progress_response(
+            {
+                "phases": {
+                    "profiling": "not-a-dict",
+                    "warmup": {
+                        "phase": "warmup",
+                        "requests_completed": 5,
+                    },
+                }
+            }
+        )
+
+        assert "profiling" not in progress.phases
+        assert "warmup" in progress.phases
 
     def test_parse_empty_phases_current_phase_is_none(self) -> None:
         """Test current_phase is None when no phases exist."""

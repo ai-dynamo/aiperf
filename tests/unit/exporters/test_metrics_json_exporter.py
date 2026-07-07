@@ -7,8 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import orjson
 import pytest
 
+from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
     EndpointData,
@@ -214,6 +216,86 @@ class TestMetricsJsonExporter:
         # Aggregate: same rule
         assert "count" not in raw["request_count"]
         assert raw["request_count"]["avg"] == 20.0
+
+    def test_summary_false_raises_data_exporter_disabled(
+        self, mock_results, mock_user_config
+    ):
+        """artifacts.summary=false must disable the JSON summary exporter."""
+        mock_user_config.benchmark.artifacts.summary = False
+        exporter_config = ExporterConfig(
+            results=mock_results,
+            config=mock_user_config.benchmark,
+            telemetry_results=None,
+        )
+        with pytest.raises(DataExporterDisabled, match="artifacts.summary"):
+            MetricsJsonExporter(exporter_config)
+
+    def test_summary_json_enabled_by_default(self, mock_results, mock_user_config):
+        """Default artifacts.summary=['json'] keeps the exporter enabled."""
+        assert mock_user_config.benchmark.artifacts.summary == ["json"]
+        exporter_config = ExporterConfig(
+            results=mock_results,
+            config=mock_user_config.benchmark,
+            telemetry_results=None,
+        )
+        MetricsJsonExporter(exporter_config)
+
+    @pytest.mark.asyncio
+    async def test_undeclared_metric_tags_omit_none_fields(self, mock_user_config):
+        """Metric tags NOT declared on JsonExportData (extra='allow' dataclass
+        values) must serialize with the same None-stripped shape as declared
+        fields — no null-flooding of unset percentile stats."""
+        records = [
+            MetricResult(  # declared field on JsonExportData
+                tag="request_latency",
+                header="Request Latency",
+                unit="ms",
+                avg=50.0,
+                p50=48.0,
+            ),
+            MetricResult(  # NOT declared on JsonExportData -> extra field
+                tag="usage_prompt_tokens",
+                header="Usage Prompt Tokens",
+                unit="tokens",
+                avg=550.0,
+                p50=540.0,
+            ),
+        ]
+
+        class _Results:
+            def __init__(self, recs):
+                self.records = recs
+                self.start_ns = None
+                self.end_ns = None
+                self.has_results = True
+                self.was_cancelled = False
+                self.error_summary = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mock_user_config.benchmark.artifacts.dir = Path(temp_dir)
+            exporter_config = ExporterConfig(
+                results=_Results(records),
+                config=mock_user_config.benchmark,
+                telemetry_results=None,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            raw = orjson.loads(
+                mock_user_config.benchmark.artifacts.profile_export_json_file.read_bytes()
+            )
+
+        assert "usage_prompt_tokens" not in JsonExportData.model_fields
+        # Same key shape for declared and undeclared tags: only set stats.
+        assert raw["request_latency"] == {"unit": "ms", "avg": 50.0, "p50": 48.0}
+        assert raw["usage_prompt_tokens"] == {
+            "unit": "tokens",
+            "avg": 550.0,
+            "p50": 540.0,
+        }
+        # No nulls anywhere in either metric entry.
+        assert None not in raw["request_latency"].values()
+        assert None not in raw["usage_prompt_tokens"].values()
 
     def test_metrics_json_exporter_inherits_from_base(self, mock_user_config):
         """Verify MetricsJsonExporter inherits from MetricsBaseExporter."""

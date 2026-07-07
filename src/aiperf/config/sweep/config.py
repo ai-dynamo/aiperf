@@ -15,7 +15,7 @@ import re
 import warnings
 from typing import Annotated, Any, ClassVar, Literal, Self
 
-from pydantic import ConfigDict, Discriminator, Field, model_validator
+from pydantic import AliasChoices, ConfigDict, Discriminator, Field, model_validator
 
 from aiperf.common.enums import OptimizationDirection, SweepMode
 from aiperf.common.finite import FiniteFloat
@@ -115,6 +115,35 @@ class _GridSweepBase(_SweepBase):
     ]
 
 
+def _coerce_legacy_parameters_key(data: Any, *, sweep_kind: str) -> Any:
+    """Accept upstream's legacy ``parameters:`` spelling for ``variables:``.
+
+    The envelope restructure renamed the grid/zip sweep key from
+    ``parameters`` to ``variables``. Existing upstream YAML still says
+    ``parameters:``; without this shim it fails with a generic
+    "Field required: variables" pydantic error. Renames the key on a copy
+    (never mutates the caller's dict) and warns so users migrate. Both
+    spellings at once is ambiguous and rejected with a targeted error.
+    """
+    if not isinstance(data, dict) or "parameters" not in data:
+        return data
+    if "variables" in data:
+        raise ValueError(
+            f"{sweep_kind} sweep: both 'variables' and its deprecated alias "
+            f"'parameters' are set; keep 'variables' and remove 'parameters'."
+        )
+    data = dict(data)
+    data["variables"] = data.pop("parameters")
+    warnings.warn(
+        f"{sweep_kind} sweep key 'parameters:' was renamed to 'variables:'; "
+        f"the old spelling is deprecated. Rewrite it (or run "
+        f"`uv run python tools/migrate_config_yaml.py <path> --in-place`).",
+        UserWarning,
+        stacklevel=2,
+    )
+    return data
+
+
 class GridSweep(_GridSweepBase):
     """Grid sweep - all combinations of parameters (Cartesian product)."""
 
@@ -123,9 +152,16 @@ class GridSweep(_GridSweepBase):
     )
     variables: dict[str, list[Any]] = Field(
         ...,
-        description="Variables to sweep: dot-notation path -> list of values.",
+        description="Variables to sweep: dot-notation path -> list of values. "
+        "Accepts the deprecated upstream spelling 'parameters' with a warning.",
         min_length=1,
+        validation_alias=AliasChoices("variables", "parameters"),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_parameters_key(cls, data: Any) -> Any:
+        return _coerce_legacy_parameters_key(data, sweep_kind="grid")
 
     @model_validator(mode="after")
     def _validate_variables(self) -> Self:
@@ -145,9 +181,16 @@ class ZipSweep(_GridSweepBase):
     type: Literal["zip"] = Field(default="zip", description="Sweep type discriminator.")
     variables: dict[str, list[Any]] = Field(
         ...,
-        description="Variables to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length.",
+        description="Variables to sweep in lockstep: dot-notation path -> list of values. All lists must have equal length. "
+        "Accepts the deprecated upstream spelling 'parameters' with a warning.",
         min_length=1,
+        validation_alias=AliasChoices("variables", "parameters"),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_parameters_key(cls, data: Any) -> Any:
+        return _coerce_legacy_parameters_key(data, sweep_kind="zip")
 
     @model_validator(mode="after")
     def _validate_variables(self) -> Self:

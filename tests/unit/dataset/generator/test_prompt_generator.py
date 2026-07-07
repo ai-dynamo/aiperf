@@ -91,7 +91,16 @@ class TestPromptGeneratorComprehensive:
         tokenizer, config = basic_config
         generator = PromptGenerator(_make_run(config), tokenizer)
 
-        assert generator.run.cfg == config.benchmark
+        # BenchmarkRun stamps artifacts.benchmark_id onto a config copy, so
+        # compare against the stamped expectation rather than raw equality.
+        expected = config.benchmark.model_copy(
+            update={
+                "artifacts": config.benchmark.artifacts.model_copy(
+                    update={"benchmark_id": generator.run.benchmark_id}
+                )
+            }
+        )
+        assert generator.run.cfg == expected
         assert generator.tokenizer == tokenizer
         assert generator._tokenized_corpus is not None
         assert generator._corpus_size > 0

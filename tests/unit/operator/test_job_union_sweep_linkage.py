@@ -88,8 +88,31 @@ def test_to_info_extracts_sweep_linkage_from_labels():
     assert info.variation_label == "concurrency-128-rate-50"
 
 
+def test_to_info_extracts_trial_index_from_label():
+    """Multi-trial sweep children carry the trial-index label onto the info."""
+    raw = {
+        "metadata": {
+            "namespace": "bench",
+            "name": "satsweep-v07-t2",
+            "labels": {
+                "aiperf.nvidia.com/sweep": "satsweep",
+                "aiperf.nvidia.com/variation-index": "07",
+                "aiperf.nvidia.com/variation-label": "concurrency-128",
+                "aiperf.nvidia.com/trial-index": "2",
+            },
+            "creationTimestamp": "2026-04-25T00:00:00Z",
+        },
+        "status": {"phase": "Running"},
+        "spec": {"benchmark": {"models": [{"name": "m"}]}},
+    }
+    info = AIPerfJobCR.model_validate(raw).to_info()
+    assert info.trial_index == 2
+    # The operator UI reads job.trialIndex, so the camelCase alias must hold.
+    assert info.model_dump(by_alias=True)["trialIndex"] == 2
+
+
 def test_to_info_no_labels_returns_none_linkage():
-    """Standalone job with no sweep labels keeps all three fields as None."""
+    """Standalone job with no sweep labels keeps all linkage fields as None."""
     raw = {
         "metadata": {
             "namespace": "bench",
@@ -103,10 +126,11 @@ def test_to_info_no_labels_returns_none_linkage():
     assert info.sweep_name is None
     assert info.variation_index is None
     assert info.variation_label is None
+    assert info.trial_index is None
 
 
 def test_to_info_invalid_variation_index_falls_back_to_none():
-    """Non-integer variation-index label is tolerated as None, not raised."""
+    """Non-integer variation-index / trial-index labels tolerated as None."""
     raw = {
         "metadata": {
             "namespace": "bench",
@@ -114,6 +138,7 @@ def test_to_info_invalid_variation_index_falls_back_to_none():
             "labels": {
                 "aiperf.nvidia.com/sweep": "s",
                 "aiperf.nvidia.com/variation-index": "not-an-int",
+                "aiperf.nvidia.com/trial-index": "not-an-int",
             },
             "creationTimestamp": "2026-04-25T00:00:00Z",
         },
@@ -123,6 +148,7 @@ def test_to_info_invalid_variation_index_falls_back_to_none():
     info = AIPerfJobCR.model_validate(raw).to_info()
     assert info.sweep_name == "s"
     assert info.variation_index is None
+    assert info.trial_index is None
 
 
 @pytest.mark.asyncio

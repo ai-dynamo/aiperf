@@ -482,3 +482,138 @@ class TestIslSamplingAtTurnLevel:
 
         _, osl = composer._get_turn_sequence_lengths(1)
         assert osl is None
+
+
+class TestFinalizeTurnRegressions:
+    """Regression tests for turn finalization semantics.
+
+    Covers two upstream behaviors that must not regress:
+    - per-turn model overrides (e.g. dag_jsonl ``"model":``) survive
+      ``_finalize_turn`` instead of being clobbered by CLI model selection;
+    - ``FileDataset.osl`` (routed from ``--osl`` by the CLI converter) acts
+      as the max_tokens fallback for file-dataset records that carry no
+      ``output_length`` of their own.
+    """
+
+    @pytest.fixture
+    def mock_tokenizer(self):
+        """Create a mock tokenizer."""
+        return MagicMock()
+
+    @pytest.fixture
+    def round_robin_config(self):
+        """Two models with round-robin selection."""
+        return _make_run(
+            AIPerfConfig(
+                benchmark={
+                    "models": {
+                        "items": [{"name": "model-a"}, {"name": "model-b"}],
+                        "strategy": ModelSelectionStrategy.ROUND_ROBIN,
+                    },
+                    **_BASE,
+                    "datasets": [
+                        {"name": "default", "type": "synthetic", "entries": 1}
+                    ],
+                }
+            )
+        )
+
+    @pytest.fixture
+    def file_osl_config(self):
+        """File dataset carrying a flat OSL fallback (routed from --osl)."""
+        return _make_run(
+            AIPerfConfig(
+                benchmark={
+                    "models": ["test-model"],
+                    **_BASE,
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "file",
+                            "path": "records.jsonl",
+                            "format": "single_turn",
+                            "osl": 777,
+                        }
+                    ],
+                }
+            )
+        )
+
+    def test_finalize_turn_preserves_per_turn_model_override(
+        self, round_robin_config, mock_tokenizer
+    ):
+        """A per-turn model override must not be clobbered by round-robin."""
+        composer = ConcreteBaseComposer(round_robin_config, mock_tokenizer)
+        turn = Turn(model="special-turn-model")
+
+        composer._finalize_turn(turn)
+
+        assert turn.model == "special-turn-model"
+
+    def test_finalize_turn_assigns_model_when_unset(
+        self, round_robin_config, mock_tokenizer
+    ):
+        """Turns without an explicit model still get the selected CLI model."""
+        composer = ConcreteBaseComposer(round_robin_config, mock_tokenizer)
+        first, second = Turn(), Turn()
+
+        composer._finalize_turn(first)
+        composer._finalize_turn(second)
+
+        assert first.model == "model-a"
+        assert second.model == "model-b"
+
+    def test_file_dataset_osl_fallback_sets_max_tokens(
+        self, file_osl_config, mock_tokenizer
+    ):
+        """FileDataset.osl caps file-dataset records without output_length."""
+        composer = ConcreteBaseComposer(file_osl_config, mock_tokenizer)
+        turn = Turn()
+
+        composer._finalize_turn(turn)
+
+        assert turn.max_tokens == 777
+
+    def test_per_record_output_length_wins_over_file_osl(
+        self, file_osl_config, mock_tokenizer
+    ):
+        """Per-record output_length takes precedence over FileDataset.osl."""
+        composer = ConcreteBaseComposer(file_osl_config, mock_tokenizer)
+        turn = Turn(max_tokens=42)
+
+        composer._finalize_turn(turn)
+
+        assert turn.max_tokens == 42
+
+    def test_file_dataset_osl_distribution_samples_positive_integers(
+        self, mock_tokenizer
+    ):
+        """A {mean, stddev} FileDataset.osl samples via the positive-normal helper."""
+        run = _make_run(
+            AIPerfConfig(
+                benchmark={
+                    "models": ["test-model"],
+                    **_BASE,
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "file",
+                            "path": "records.jsonl",
+                            "format": "single_turn",
+                            "osl": {"mean": 100, "stddev": 10},
+                        }
+                    ],
+                }
+            )
+        )
+        composer = ConcreteBaseComposer(run, mock_tokenizer)
+
+        sampled = []
+        for _ in range(50):
+            turn = Turn()
+            composer._finalize_turn(turn)
+            sampled.append(turn.max_tokens)
+
+        assert all(isinstance(v, int) and v >= 1 for v in sampled)
+        assert min(sampled) != max(sampled), "distribution should vary"
+        assert min(sampled) > 50 and max(sampled) < 150

@@ -9,12 +9,56 @@ stays isolated to QMC-only code paths.
 from __future__ import annotations
 
 import copy
+import hashlib
 from math import ceil, exp, floor, log
 from typing import TYPE_CHECKING, Any
+
+import orjson
 
 if TYPE_CHECKING:
     from aiperf.config.sweep.config import SweepVariation
     from aiperf.config.sweep.sampling import SamplingDimension
+
+
+def _derive_default_seed(
+    *,
+    sweep_type: str,
+    samples: int,
+    dimensions: list[SamplingDimension],
+    options: dict[str, Any],
+) -> int:
+    """Derive a deterministic seed from a stable hash of the sweep spec.
+
+    Why: scipy's QMC engines seeded with ``None`` draw from OS entropy, so a
+    sweep-controller pod restart would re-expand the *same* seedless sweep
+    spec into *different* points — silently corrupting resume and
+    cross-variation aggregation. Hashing the point-generating parts of the
+    spec (type, samples, dimensions, sampler options) keeps re-expansion
+    identical while distinct specs still get distinct sequences. Label
+    formatting is excluded: it changes names, not points.
+
+    Example:
+        >>> from aiperf.config.sweep.sampling import SamplingDimension
+        >>> dims = [SamplingDimension(path="phases.profiling.concurrency", lo=1, hi=64)]
+        >>> a = _derive_default_seed(
+        ...     sweep_type="sobol", samples=8, dimensions=dims, options={"scramble": True}
+        ... )
+        >>> a == _derive_default_seed(
+        ...     sweep_type="sobol", samples=8, dimensions=dims, options={"scramble": True}
+        ... )
+        True
+    """
+    canonical = orjson.dumps(
+        {
+            "type": sweep_type,
+            "samples": samples,
+            "dimensions": [dim.model_dump(mode="json") for dim in dimensions],
+            "options": options,
+        },
+        option=orjson.OPT_SORT_KEYS,
+    )
+    # 8 bytes -> non-negative int < 2**64; numpy's SeedSequence accepts it.
+    return int.from_bytes(hashlib.sha256(canonical).digest()[:8], "big")
 
 
 def _qmc_engine(sweep_type: str, d: int, seed: int | None, opts: dict[str, Any]):
@@ -84,6 +128,14 @@ def expand_qmc_sweep(
             "corner-only coverage. Prefer scramble=True unless you have a "
             "specific reason to want raw Sobol points.",
             stacklevel=2,
+        )
+
+    if seed is None:
+        seed = _derive_default_seed(
+            sweep_type=sweep_type,
+            samples=samples,
+            dimensions=dimensions,
+            options=options,
         )
 
     engine = _qmc_engine(sweep_type, d=len(dimensions), seed=seed, opts=options)

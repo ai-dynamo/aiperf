@@ -120,7 +120,9 @@ class TestCreditPhaseRecordsTrackerConstruction:
         assert tracker._grace_period_timeout_triggered is False
         assert tracker._was_cancelled is False
         assert tracker._sent_all_records_received is False
-        assert tracker._exclude_from_results is False
+        # None (not False) until CreditPhaseStats registers the phase — the
+        # tri-state lets racing records buffer instead of leaking into results.
+        assert tracker._exclude_from_results is None
         assert tracker._total_expected_requests is None
         assert tracker._worker_stats == {}
 
@@ -447,6 +449,25 @@ class TestRecordsTrackerPhaseInfo:
         rt.update_phase_info(make_credit_stats(phase=WARMUP, exclude_from_results=True))
         assert rt.is_phase_excluded(WARMUP) is True
         assert rt.is_phase_excluded(PROFILING) is False
+
+    def test_get_phase_exclusion_is_none_until_stats_register(self) -> None:
+        """Tri-state gate: unknown phases must be distinguishable from known
+        included phases so racing records can be buffered, not leaked."""
+        rt = RecordsTracker()
+        assert rt.get_phase_exclusion(PROFILING) is None
+        # A record arriving first creates the tracker but does NOT classify it.
+        rt.update_from_record_data(make_record(phase=PROFILING))
+        assert rt.get_phase_exclusion(PROFILING) is None
+
+        rt.update_phase_info(make_credit_stats(phase=PROFILING))
+        assert rt.get_phase_exclusion(PROFILING) is False
+        rt.update_phase_info(make_credit_stats(phase=WARMUP, exclude_from_results=True))
+        assert rt.get_phase_exclusion(WARMUP) is True
+
+    def test_get_phase_exclusion_probe_does_not_create_tracker(self) -> None:
+        rt = RecordsTracker()
+        assert rt.get_phase_exclusion(WARMUP) is None
+        assert WARMUP not in rt._phase_trackers
 
     def test_was_phase_cancelled_default_is_false(self) -> None:
         rt = RecordsTracker()

@@ -619,3 +619,118 @@ class TestZstRunDirectoryDetection:
         mode, run_dirs = mode_detector.detect_mode([tmp_path])
         assert mode == VisualizationMode.MULTI_RUN
         assert len(run_dirs) == 2
+
+
+def _make_single_run(run_dir: Path) -> None:
+    """Write the canonical single-run marker pair into ``run_dir``."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "profile_export.jsonl").write_text('{"metrics": {}}\n')
+    (run_dir / "profile_export_aiperf.json").write_text('{"metrics": {}}')
+
+
+def _make_aggregate_cell(cell_dir: Path) -> None:
+    """Write the per-cell confidence-aggregate marker into ``cell_dir``."""
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    (cell_dir / "profile_export_aiperf_aggregate.json").write_text('{"metrics": {}}')
+
+
+class TestSweepLayoutEnrollment:
+    """Each sweep cell must enroll exactly once across trials>1 layouts.
+
+    REPEATED trials>1 layout (``orchestrator.py`` run-dir contract):
+    per-trial runs at ``<base>/profile_runs/trial_NNNN/<cell>/`` and
+    per-variation aggregates at ``<base>/aggregate/<cell>/``. The aggregate
+    marker lives one level BELOW ``<base>/aggregate/``, so the canonical-view
+    probe must look into the aggregate dir's children, not just at the dir.
+    """
+
+    def test_repeated_sweep_trials_gt1_enrolls_each_variation_once(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """REPEATED trials=2 x 2 variations enrolls only the 2 aggregate cells."""
+        for trial in ("trial_0001", "trial_0002"):
+            for cell in ("concurrency_4", "concurrency_8"):
+                _make_single_run(tmp_path / "profile_runs" / trial / cell)
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_4")
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_8")
+
+        runs = mode_detector.find_run_directories([tmp_path])
+
+        assert runs == [
+            tmp_path / "aggregate" / "concurrency_4",
+            tmp_path / "aggregate" / "concurrency_8",
+        ]
+
+    def test_repeated_sweep_single_variation_enrolls_aggregate_once(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Degenerate REPEATED sweep with one variation enrolls exactly one run."""
+        for trial in ("trial_0001", "trial_0002"):
+            _make_single_run(tmp_path / "profile_runs" / trial / "concurrency_4")
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_4")
+
+        mode, runs = mode_detector.detect_mode([tmp_path])
+
+        assert mode == VisualizationMode.SINGLE_RUN
+        assert runs == [tmp_path / "aggregate" / "concurrency_4"]
+
+    def test_repeated_sweep_aggregate_only_tree_enrolls_cells_once(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Aggregate cells without any profile_runs subtree still enroll once."""
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_4")
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_8")
+
+        runs = mode_detector.find_run_directories([tmp_path])
+
+        assert runs == [
+            tmp_path / "aggregate" / "concurrency_4",
+            tmp_path / "aggregate" / "concurrency_8",
+        ]
+
+    def test_repeated_sweep_trials_eq1_shadow_aggregates_excluded(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """trials==1 shadow aggregates are excluded; canonical cells enroll once."""
+        _make_single_run(tmp_path / "concurrency_4")
+        _make_single_run(tmp_path / "concurrency_8")
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_4")
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_8")
+
+        runs = mode_detector.find_run_directories([tmp_path])
+
+        assert runs == [
+            tmp_path / "concurrency_4",
+            tmp_path / "concurrency_8",
+        ]
+
+    def test_independent_sweep_trials_gt1_enrolls_each_variation_once(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """INDEPENDENT trials=2 x 2 variations enrolls only per-cell aggregates."""
+        for cell in ("concurrency_4", "concurrency_8"):
+            for trial in ("trial_0001", "trial_0002"):
+                _make_single_run(tmp_path / cell / "profile_runs" / trial)
+            _make_aggregate_cell(tmp_path / cell / "aggregate")
+
+        runs = mode_detector.find_run_directories([tmp_path])
+
+        assert runs == [
+            tmp_path / "concurrency_4" / "aggregate",
+            tmp_path / "concurrency_8" / "aggregate",
+        ]
+
+    def test_repeated_sweep_explicit_profile_runs_path_opts_into_trials(
+        self, mode_detector: ModeDetector, tmp_path: Path
+    ) -> None:
+        """Passing profile_runs/ explicitly still surfaces the per-trial view."""
+        for trial in ("trial_0001", "trial_0002"):
+            _make_single_run(tmp_path / "profile_runs" / trial / "concurrency_4")
+        _make_aggregate_cell(tmp_path / "aggregate" / "concurrency_4")
+
+        runs = mode_detector.find_run_directories([tmp_path / "profile_runs"])
+
+        assert runs == [
+            tmp_path / "profile_runs" / "trial_0001" / "concurrency_4",
+            tmp_path / "profile_runs" / "trial_0002" / "concurrency_4",
+        ]

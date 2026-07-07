@@ -63,7 +63,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     def __init__(
         self,
         *,
-        filename: str | Path,
+        filename: str | Path | None = None,
         prompt_generator: PromptGenerator,
         run: BenchmarkRun,
         default_block_size: int | None = None,
@@ -126,8 +126,8 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def _parse_trace(self, line: str) -> TraceT:
-        """Parse a single JSONL line into a typed trace object."""
+    def _parse_trace(self, record: dict) -> TraceT:
+        """Parse a single record dict into the trace's typed model."""
         ...
 
     def _preprocess_trace(self, trace: TraceT) -> None:
@@ -224,24 +224,19 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._capped_max_osl = 0
         items: list[TraceT] = []
 
-        with open(self.filename) as f:
-            for line in f:
-                if (line := line.strip()) == "":
-                    continue
-
-                trace = self._parse_trace(line)
-                self._preprocess_trace(trace)
-
-                if not self._filter_and_cap_trace(trace):
-                    continue
-
-                items.append(trace)
+        for record_dict in self._iter_record_dicts():
+            trace = self._parse_trace(record_dict)
+            self._preprocess_trace(trace)
+            if not self._filter_and_cap_trace(trace):
+                continue
+            items.append(trace)
 
         data = self._group_traces(items)
         self.debug(
             lambda: (
                 f"Loaded {sum(len(v) for v in data.values()):,} traces "
-                f"across {len(data):,} sessions from {self.filename}"
+                f"across {len(data):,} sessions "
+                f"from {self.filename if self.filename else '<inline records>'}"
             )
         )
 

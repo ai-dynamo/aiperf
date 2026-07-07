@@ -332,3 +332,76 @@ class TestHFInstructionResponseAudioColumn:
         data = {"dataset": [{"problem": "test", "audio": "not-a-dict"}]}
         conversations = await loader.convert_to_conversations(data)
         assert conversations[0].turns[0].audios == []
+
+
+@pytest.mark.asyncio
+class TestStreamingFetchCap:
+    """_max_conversations must cap streaming fetches by profiling-phase load."""
+
+    def _make_streaming_loader(
+        self, run: BenchmarkRun
+    ) -> HFInstructionResponseDatasetLoader:
+        return HFInstructionResponseDatasetLoader(
+            run=run,
+            hf_dataset_name="test/data",
+            prompt_column="problem",
+            streaming=True,
+        )
+
+    async def test_cap_uses_max_profiling_phase_requests_not_first_phase(self):
+        """warmup(10) + profiling(1000) must cap at 1000, not the warmup count."""
+        run = _make_run(
+            datasets=[{"name": "default", "type": "public", "dataset": "sharegpt"}],
+            phases=[
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                },
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 1000,
+                    "concurrency": 1,
+                },
+            ],
+        )
+        loader = self._make_streaming_loader(run)
+
+        assert loader._max_conversations() == 1000
+
+    async def test_cap_falls_back_to_entries_without_request_counts(self):
+        """Duration-only profiling phases fall back to the dataset's entries."""
+        run = _make_run(
+            datasets=[
+                {
+                    "name": "default",
+                    "type": "public",
+                    "dataset": "sharegpt",
+                    "entries": 25,
+                }
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 1,
+                },
+            ],
+        )
+        loader = self._make_streaming_loader(run)
+
+        assert loader._max_conversations() == 25
+
+    async def test_non_streaming_returns_none(self):
+        """Non-streaming loaders never cap."""
+        loader = HFInstructionResponseDatasetLoader(
+            run=_make_run(),
+            hf_dataset_name="test/data",
+            prompt_column="problem",
+            streaming=False,
+        )
+
+        assert loader._max_conversations() is None

@@ -455,10 +455,10 @@ spec:
                       message: endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')
                   datasets:
                     type: array
-                    description: Named dataset configurations. Each entry must have a unique 'name' (e.g. 'main', 'eval').
-                      Phases reference datasets by name via ``phase.dataset``; when omitted the first defined dataset is used.
-                      Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with
-                      name='default'.
+                    description: Dataset configuration as a single-element list. The list shape exists to share the schema
+                      between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset (multi-dataset
+                      lists are rejected). Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to
+                      a one-entry list with name='default'.
                     items:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
@@ -531,8 +531,11 @@ spec:
                         default: false
                       benchmarkId:
                         type: string
-                        description: Unique identifier for this benchmark run, used to correlate artifacts across export formats.
-                          [auto-generated; do not set in a CR spec unless you have a specific reason to override the UUID.]
+                        description: 'Unique identifier for this benchmark run, used to correlate artifacts across export
+                          formats. Default None means the id is generated at run construction: BenchmarkRun stamps its own
+                          run id here, so config dumps (e.g. `aiperf kube generate` manifests) carry no pinned id and every
+                          run/cluster-sweep child gets a distinct one. [Do not set in a CR spec unless you have a specific
+                          reason to pin the correlation id.]'
                       userFiles:
                         type: array
                         description: User-defined templated files materialized into the run directory before the benchmark

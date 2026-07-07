@@ -46,7 +46,10 @@ class ModelItem(BaseConfig):
 
     name: Annotated[
         str,
-        Field(description="Model name or identifier as known to the inference server."),
+        Field(
+            min_length=1,
+            description="Model name or identifier as known to the inference server.",
+        ),
     ]
 
     weight: Annotated[
@@ -56,7 +59,8 @@ class ModelItem(BaseConfig):
             le=1.0,
             default=None,
             description="Selection weight for weighted strategy (0.0-1.0). "
-            "Weights are normalized across all models. "
+            "Weights must sum to 1.0 (+/-0.01) across all models; they are "
+            "validated, not auto-normalized. "
             "Example: weight=0.7 means ~70%% of requests to this model.",
         ),
     ]

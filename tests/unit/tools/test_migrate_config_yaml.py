@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import logging
 import textwrap
 
+from aiperf.config.loader.core import _BODY_KEYS, load_config_from_string
 from tools.migrate_config_yaml import (
     BODY_KEYS,
     ENVELOPE_KEYS,
@@ -14,6 +16,7 @@ from tools.migrate_config_yaml import (
     migrate_yaml_text,
     rewrite_grid_sweep_paths,
     rewrite_scenario_runs,
+    rewrite_sweep_parameters_key,
 )
 
 
@@ -21,22 +24,21 @@ class TestBodyEnvelopePartition:
     def test_constants_are_disjoint(self):
         assert BODY_KEYS.isdisjoint(ENVELOPE_KEYS)
 
-    def test_body_keys_match_spec(self):
+    def test_body_keys_match_loader(self):
+        # The tool must accept exactly the keys the loader's auto-migration
+        # accepts; a drifted key would keep the loader's deprecation warning
+        # firing forever after migration.
+        assert BODY_KEYS == _BODY_KEYS
+
+    def test_body_keys_include_loader_only_spellings(self):
+        # Regression: these were missing from the tool's own key set, so
+        # migrated files kept them flat and the loader warning looped forever.
         assert {
-            "models",
-            "endpoint",
-            "datasets",
-            "phases",
-            "artifacts",
-            "slos",
-            "tokenizer",
-            "gpu_telemetry",
-            "server_metrics",
-            "runtime",
-            "logging",
-            "metrics",
-            "accuracy",
-        } == BODY_KEYS
+            "model",
+            "dataset",
+            "gpuTelemetry",
+            "serverMetrics",
+        } <= BODY_KEYS
 
     def test_envelope_keys_match_spec(self):
         assert {
@@ -186,6 +188,123 @@ sweep:
         out = migrate_yaml_text(text)
         # benchmark key not introduced when no body keys present
         assert "benchmark:" not in out
+
+    def test_loader_only_spellings_move_under_benchmark(self):
+        flat = textwrap.dedent("""
+model: llama
+gpuTelemetry:
+  enabled: false
+serverMetrics:
+  enabled: false
+""").strip()
+        out = migrate_yaml_text(flat)
+        assert out.startswith("benchmark:")
+        assert "  model: llama" in out
+        assert "  gpuTelemetry:" in out
+        assert "  serverMetrics:" in out
+
+    def test_singular_dataset_promoted_to_datasets_list(self):
+        flat = textwrap.dedent("""
+model: llama
+dataset:
+  type: synthetic
+  entries: 100
+""").strip()
+        out = migrate_yaml_text(flat)
+        # mirrors the loader's promotion: datasets: [<entry + name: main>]
+        assert "  datasets:" in out
+        assert "name: main" in out
+        assert "\ndataset:" not in out
+
+    def test_singular_dataset_with_explicit_name_keeps_name(self):
+        flat = textwrap.dedent("""
+model: llama
+dataset:
+  name: custom
+  type: synthetic
+""").strip()
+        out = migrate_yaml_text(flat)
+        assert "name: custom" in out
+        assert "name: main" not in out
+
+    def test_migrated_output_loads_without_flat_shape_warning(self, caplog):
+        """Round-trip: old flat config -> migrate -> loads with no deprecation loop."""
+        flat = textwrap.dedent("""
+model: test-model
+endpoint:
+  urls: ["http://localhost:8000/v1/chat/completions"]
+dataset:
+  type: synthetic
+  entries: 100
+  prompts: {isl: 128, osl: 64}
+gpuTelemetry:
+  enabled: false
+serverMetrics:
+  enabled: false
+phases:
+  - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
+""").strip()
+        migrated = migrate_yaml_text(flat)
+        assert migrate_yaml_text(migrated) == migrated  # idempotent
+        with caplog.at_level(logging.WARNING):
+            config = load_config_from_string(migrated)
+        assert config.benchmark.get_model_names() == ["test-model"]
+        flat_shape_warnings = [
+            r.getMessage()
+            for r in caplog.records
+            if "flat shape" in r.getMessage() or "auto-migrated" in r.getMessage()
+        ]
+        assert not flat_shape_warnings, flat_shape_warnings
+
+
+class TestRewriteSweepParametersKey:
+    def test_legacy_parameters_renamed_to_variables(self):
+        sweep = {"type": "grid", "parameters": {"concurrency": [1, 2]}}
+        rewrite_sweep_parameters_key(sweep)
+        assert "parameters" not in sweep
+        assert sweep["variables"] == {"concurrency": [1, 2]}
+
+    def test_zip_sweep_parameters_renamed(self):
+        sweep = {"type": "zip", "parameters": {"concurrency": [1, 2]}}
+        rewrite_sweep_parameters_key(sweep)
+        assert sweep["variables"] == {"concurrency": [1, 2]}
+
+    def test_default_type_grid_parameters_renamed(self):
+        sweep = {"parameters": {"concurrency": [1, 2]}}
+        rewrite_sweep_parameters_key(sweep)
+        assert sweep["variables"] == {"concurrency": [1, 2]}
+
+    def test_scenarios_sweep_untouched(self):
+        sweep = {"type": "scenarios", "parameters": {"x": [1]}}
+        rewrite_sweep_parameters_key(sweep)
+        assert "parameters" in sweep
+
+    def test_both_spellings_left_for_loader_to_reject(self):
+        sweep = {
+            "type": "grid",
+            "variables": {"a": [1]},
+            "parameters": {"b": [2]},
+        }
+        rewrite_sweep_parameters_key(sweep)
+        assert sweep["variables"] == {"a": [1]}
+        assert sweep["parameters"] == {"b": [2]}
+
+    def test_migrate_yaml_text_rewrites_sweep_parameters(self):
+        flat = textwrap.dedent("""
+benchmark:
+  models: [llama]
+  phases:
+    - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
+sweep:
+  type: grid
+  parameters:
+    phases.profiling.concurrency: [1, 2, 4]
+""").strip()
+        out = migrate_yaml_text(flat)
+        assert "parameters:" not in out
+        assert "variables:" in out
+        # grid path prefixing applies to the migrated key too
+        assert "benchmark.phases.profiling.concurrency" in out
 
 
 class TestIsAlreadyMigrated:

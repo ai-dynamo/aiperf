@@ -61,6 +61,57 @@ def test_well_formed_env_var_default_passes() -> None:
     assert substitute_env_vars("${THIS_DOES_NOT_EXIST_X:fallback}") == "fallback"
 
 
+# ---------- env-vars: $${ escape for literal ${ ----------
+
+
+def test_escaped_opener_yields_literal_brace() -> None:
+    """``$${VAR}`` must render a literal ``${VAR}`` without substitution."""
+    assert substitute_env_vars("$${NOT_A_VAR}") == "${NOT_A_VAR}"
+
+
+def test_escaped_opener_never_reads_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The escaped form must not substitute even when the variable IS set."""
+    monkeypatch.setenv("AIPERF_ESC_TEST", "surprise")
+    assert substitute_env_vars("$${AIPERF_ESC_TEST}") == "${AIPERF_ESC_TEST}"
+
+
+def test_escaped_opener_mixed_with_real_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escaped and unescaped openers in one string: only the real one substitutes."""
+    monkeypatch.setenv("AIPERF_ESC_TEST", "value")
+    assert (
+        substitute_env_vars("literal $${KEEP} plus ${AIPERF_ESC_TEST}")
+        == "literal ${KEEP} plus value"
+    )
+
+
+def test_escaped_opener_does_not_trip_unterminated_check() -> None:
+    """``$${`` with no closing brace is an escaped literal, not an error."""
+    assert substitute_env_vars("cost is $${amount") == "cost is ${amount"
+
+
+def test_unterminated_opener_after_escape_still_raises() -> None:
+    """A real unterminated ``${`` alongside an escape must still error."""
+    with pytest.raises(ConfigurationError, match="Unterminated"):
+        substitute_env_vars("$${LITERAL} then ${BROKEN")
+
+
+def test_escaped_opener_missing_var_is_not_required() -> None:
+    """An escaped opener must not raise MissingEnvironmentVariableError."""
+    result = substitute_env_vars(
+        "$${DEFINITELY_NOT_SET_ANYWHERE_ZZZ}", file_path="cfg.yaml"
+    )
+    assert result == "${DEFINITELY_NOT_SET_ANYWHERE_ZZZ}"
+
+
+def test_escaped_opener_with_default_syntax_kept_verbatim() -> None:
+    """Nested-looking ``$${VAR:default}`` stays a literal including the default."""
+    assert substitute_env_vars("$${VAR:default}") == "${VAR:default}"
+
+
 # ---------- sweep: dotted path strictness on grid + zip ----------
 
 

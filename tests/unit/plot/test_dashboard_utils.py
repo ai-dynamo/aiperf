@@ -8,14 +8,19 @@ Tests for pure functions in aiperf.plot.dashboard.utils module.
 """
 
 import math
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import orjson
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
 from dash import html
 
+from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.models.metric_result_models import MetricResult
 from aiperf.plot.constants import PlotTheme
+from aiperf.plot.core.data_loader import DataLoader
 from aiperf.plot.dashboard.utils import (
     _convert_to_numeric,
     add_run_idx_to_figure,
@@ -95,6 +100,89 @@ class TestExtractMetricValue:
 
         result = extract_metric_value(mock_run, "metric")
         assert result == 50.0
+
+    def test_extract_from_flat_json_metric_result(self):
+        """Flat JsonMetricResult (aggregate-only loader shape) resolves stats."""
+        mock_run = MagicMock()
+        mock_run.get_metric.return_value = JsonMetricResult(
+            unit="ms", p50=42.5, avg=45.0
+        )
+
+        assert extract_metric_value(mock_run, "request_latency", "p50") == 42.5
+        assert extract_metric_value(mock_run, "request_latency", "avg") == 45.0
+
+    def test_extract_from_flat_json_metric_result_missing_stat_returns_none(self):
+        """Unset stat slots on a flat JsonMetricResult resolve to None."""
+        mock_run = MagicMock()
+        mock_run.get_metric.return_value = JsonMetricResult(unit="ms", p50=42.5)
+
+        assert extract_metric_value(mock_run, "request_latency", "p99") is None
+
+    def test_extract_from_flat_metric_result(self):
+        """Flat MetricResult (no nested .stats container) resolves stats."""
+        mock_run = MagicMock()
+        mock_run.get_metric.return_value = MetricResult(
+            tag="request_latency", header="Request Latency", unit="ms", p90=88.0
+        )
+
+        assert extract_metric_value(mock_run, "request_latency", "p90") == 88.0
+
+
+class TestAggregateCellDataFrame:
+    """Aggregate-only sweep cells must land in the dashboard dataframe."""
+
+    @pytest.fixture
+    def aggregate_cell_run(self, tmp_path: Path):
+        """Drive the real DataLoader on a synthetic per-cell aggregate dir."""
+        cell_dir = tmp_path / "aggregate" / "concurrency_4"
+        cell_dir.mkdir(parents=True)
+        payload = {
+            "schema_version": "1.0",
+            "metadata": {
+                "aggregation_type": "confidence",
+                "num_profile_runs": 2,
+                "variation_values": {"loadgen.concurrency": 4},
+                "variation_label": "concurrency_4",
+            },
+            "metrics": {
+                "request_latency_p50": {"mean": 50.0, "std": 1.0, "unit": "ms"},
+                "request_latency_avg": {"mean": 55.0, "std": 1.0, "unit": "ms"},
+                "request_throughput_avg": {
+                    "mean": 25.0,
+                    "std": 0.5,
+                    "unit": "requests/sec",
+                },
+            },
+        }
+        (cell_dir / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(payload)
+        )
+        return DataLoader().load_run(cell_dir)
+
+    def test_aggregate_cell_metrics_are_json_metric_results(self, aggregate_cell_run):
+        """The aggregate loader emits flat JsonMetricResult metric objects."""
+        metric = aggregate_cell_run.get_metric("request_latency")
+        assert isinstance(metric, JsonMetricResult)
+        assert metric.p50 == 50.0
+
+    def test_aggregate_cell_lands_in_dataframe_with_stat_values(
+        self, aggregate_cell_run
+    ):
+        """An aggregate-only cell produces a dataframe row with the right stats."""
+        result = runs_to_dataframe(
+            [aggregate_cell_run],
+            x_metric="request_throughput",
+            x_stat="avg",
+            y_metric="request_latency",
+            y_stat="p50",
+        )
+
+        df = result["df"]
+        assert len(df) == 1
+        assert result["warnings"] == []
+        assert df.iloc[0]["request_throughput"] == 25.0
+        assert df.iloc[0]["request_latency"] == 50.0
+        assert df.iloc[0]["concurrency"] == 4
 
 
 class TestCreatePlotContainerComponent:

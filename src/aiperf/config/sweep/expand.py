@@ -94,14 +94,29 @@ def _expand_explicit_sweep(
 
     sweep_type = sweep_config.get("type", "grid")
     if sweep_type == "grid":
-        return _expand_grid_sweep(data, sweep_config.get("variables", {}))
+        return _expand_grid_sweep(data, _grid_variables(sweep_config))
     if sweep_type == "zip":
-        return _expand_zip_sweep(data, sweep_config.get("variables", {}))
+        return _expand_zip_sweep(data, _grid_variables(sweep_config))
     if sweep_type == "scenarios":
         return _expand_scenario_sweep(data, sweep_config.get("runs", []))
     if sweep_type in ("sobol", "latin_hypercube"):
         return _expand_qmc_sweep_from_block(data, sweep_config, sweep_type)
     return []
+
+
+def _grid_variables(sweep_config: dict[str, Any]) -> dict[str, list[Any]]:
+    """Read a grid/zip sweep's variable map, honoring the legacy key.
+
+    Expansion runs on the RAW envelope dict (``AIPerfConfig._raw_envelope``),
+    before pydantic alias resolution, so upstream YAML using the deprecated
+    ``parameters:`` spelling must be picked up here too — otherwise the sweep
+    silently collapses to a single empty variation even though validation
+    accepted the alias.
+    """
+    variables = sweep_config.get("variables")
+    if variables is None:
+        variables = sweep_config.get("parameters", {})
+    return variables
 
 
 def _expand_qmc_sweep_from_block(

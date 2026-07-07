@@ -3,16 +3,15 @@
 
 """SteadyStateConfig - configuration for steady-state windowing.
 
-CLI-input shim with no field-level validators. Cross-field validation
-(start_pct/end_pct paired, start_pct < end_pct, implicit-enable when both
-set) is the responsibility of the config v1 resolver
-(``aiperf.config.v1._resolver``) and ``AIPerfConfig``: per the project hard rule,
-``AIPerfConfig`` is the single validation gate.
+Field-level bounds live on the Fields; the cross-field manual-window
+contract (start_pct/end_pct set together, start_pct < end_pct) is enforced
+by the ``model_validator`` below, so a half-set or inverted window fails at
+config validation rather than silently degrading to automatic detection.
 """
 
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from aiperf.config.base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
@@ -95,3 +94,34 @@ class SteadyStateConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = None
+
+    @model_validator(mode="after")
+    def _validate_manual_window(self) -> Self:
+        """Enforce the manual-window override contract.
+
+        ``start_pct``/``end_pct`` must be set together (a half-set override
+        would silently fall back to automatic detection), and the window must
+        be non-empty (``start_pct < end_pct``).
+        """
+        if (self.start_pct is None) != (self.end_pct is None):
+            set_flag, unset_flag = (
+                ("--steady-state-start-pct", "--steady-state-end-pct")
+                if self.start_pct is not None
+                else ("--steady-state-end-pct", "--steady-state-start-pct")
+            )
+            raise ValueError(
+                f"steady-state manual window: {set_flag} was set without "
+                f"{unset_flag}; the manual override requires both bounds. "
+                f"Set both, or neither to use automatic detection."
+            )
+        if (
+            self.start_pct is not None
+            and self.end_pct is not None
+            and self.start_pct >= self.end_pct
+        ):
+            raise ValueError(
+                f"steady-state manual window: start_pct ({self.start_pct}) must "
+                f"be < end_pct ({self.end_pct}); an empty or inverted window "
+                f"selects no samples."
+            )
+        return self

@@ -152,13 +152,16 @@ async def test_sweep_aggregation_complete_partial_download_keeps_jobset(
         )
 
     delete.assert_not_awaited()
+    # The sentinel is full-success-only evidence; a partial harvest must
+    # never mint it, or a later zero-download tick would treat-as-done.
+    assert not (epoch_dir / operator_main.SWEEP_HARVEST_SENTINEL_NAME).exists()
 
 
 @pytest.mark.asyncio
 async def test_sweep_aggregation_complete_full_fetch_deletes_jobset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """When aggregate.json actually landed on the PVC, the JobSet is reaped."""
+    """A full harvest writes the harvest sentinel, then reaps the JobSet."""
     from aiperf.operator import main as operator_main
     from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
@@ -183,6 +186,12 @@ async def test_sweep_aggregation_complete_full_fetch_deletes_jobset(
     )
 
     delete.assert_awaited_once_with("benchmarks", "aiperf-latency-sweep")
+    sentinel = epoch_dir / operator_main.SWEEP_HARVEST_SENTINEL_NAME
+    assert orjson.loads(sentinel.read_bytes()) == {
+        "harvestComplete": True,
+        "downloaded": 3,
+        "listed": 3,
+    }
 
 
 @pytest.mark.asyncio
@@ -222,11 +231,13 @@ async def test_sweep_aggregation_complete_truncated_aggregate_keeps_jobset(
 
 
 @pytest.mark.asyncio
-async def test_sweep_aggregation_complete_zero_fetch_with_valid_aggregate_treats_done(
+async def test_sweep_aggregation_complete_zero_fetch_with_sentinel_treats_done(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A re-fire against a dead sidecar with a parseable aggregate on disk
-    is treated as an already-finished harvest, not an endless retry loop."""
+    """A re-fire against a dead sidecar with parseable aggregate AND harvest
+    sentinel on disk is treated as an already-finished harvest, not an
+    endless retry loop. The aggregate alone is NOT enough (see the
+    no-sentinel tests below)."""
     from aiperf.operator import main as operator_main
     from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
@@ -236,6 +247,9 @@ async def test_sweep_aggregation_complete_zero_fetch_with_valid_aggregate_treats
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
     (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succeeded"}')
+    (epoch_dir / operator_main.SWEEP_HARVEST_SENTINEL_NAME).write_bytes(
+        orjson.dumps({"harvestComplete": True, "downloaded": 3, "listed": 3})
+    )
 
     fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=0, listed=0))
     monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
@@ -251,6 +265,191 @@ async def test_sweep_aggregation_complete_zero_fetch_with_valid_aggregate_treats
     )
 
     delete.assert_awaited_once_with("benchmarks", "aiperf-latency-sweep")
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_partial_then_zero_download_keeps_jobset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: the two-tick data-loss sequence must keep retrying.
+
+    Tick 1: partial harvest (5/6 files, aggregate.json landed) raises
+    TemporaryError and keeps the JobSet. Tick 2: the sidecar is transiently
+    unreachable (downloaded=0/listed=0) — the old code saw the parseable
+    aggregate.json, 'treated as done', and deleted the JobSet, destroying the
+    emptyDir-only copy of the 6th file. Now the missing harvest sentinel plus
+    the still-existing JobSet must keep the handler on the retry path.
+    """
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succeeded"}')
+
+    fetch = AsyncMock(
+        side_effect=[
+            SweepAggregateFetchResult(downloaded=5, listed=6),
+            SweepAggregateFetchResult(downloaded=0, listed=0),
+        ]
+    )
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    jobset_exists = AsyncMock(return_value=True)
+    monkeypatch.setattr(operator_main, "_sweep_jobset_exists", jobset_exists)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    # Tick 1: partial harvest — retry, no sentinel minted.
+    with pytest.raises(kopf.TemporaryError, match=r"harvest partial \(5/6"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+    assert not (epoch_dir / operator_main.SWEEP_HARVEST_SENTINEL_NAME).exists()
+
+    # Tick 2: sidecar transiently unreachable — still retry, still no delete.
+    with pytest.raises(kopf.TemporaryError, match=r"without\s+harvest sentinel"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+
+    delete.assert_not_awaited()
+    jobset_exists.assert_awaited_once_with("benchmarks", "aiperf-latency-sweep")
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_full_harvest_then_crash_then_zero_deletes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An operator that crashed AFTER a full harvest but BEFORE the JobSet
+    delete must still converge: the sentinel written on the full-success tick
+    lets the zero-download re-fire delete without re-reaching the sidecar."""
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succeeded"}')
+
+    fetch = AsyncMock(
+        side_effect=[
+            SweepAggregateFetchResult(downloaded=6, listed=6),
+            SweepAggregateFetchResult(downloaded=0, listed=0),
+        ]
+    )
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    # Simulate the crash-before-delete: tick 1's delete raises after the
+    # sentinel is already on disk, exactly the state a restarted operator sees.
+    delete = AsyncMock(side_effect=[RuntimeError("operator crashed"), None])
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    with pytest.raises(RuntimeError, match="operator crashed"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+    assert (epoch_dir / operator_main.SWEEP_HARVEST_SENTINEL_NAME).is_file()
+
+    # Re-fire on the restarted operator: dead-or-alive sidecar, zero files.
+    await operator_main.on_aiperfsweep_aggregation_complete(
+        body={},
+        status={"runEpoch": "1714064523"},
+        name="latency-sweep",
+        namespace="benchmarks",
+    )
+
+    assert delete.await_count == 2
+    delete.assert_awaited_with("benchmarks", "aiperf-latency-sweep")
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_zero_download_with_listed_files_retries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """downloaded=0 with listed>0 is a LIVE sidecar whose downloads all
+    failed — never an already-finished harvest. Must retry, even when both
+    the aggregate and the sentinel are already on disk from a prior epoch
+    state, and must never delete the JobSet."""
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succeeded"}')
+    (epoch_dir / operator_main.SWEEP_HARVEST_SENTINEL_NAME).write_bytes(
+        orjson.dumps({"harvestComplete": True, "downloaded": 6, "listed": 6})
+    )
+
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=0, listed=6))
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    with pytest.raises(kopf.TemporaryError, match=r"listed 6 file\(s\) but none"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+
+    delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_presentinel_harvest_jobset_gone_treats_done(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Back-compat: a PVC harvested by pre-sentinel operator versions has
+    aggregate.json but no sentinel. With the JobSet confirmed gone (already
+    reaped by the old code) there is nothing left to recover, so the handler
+    completes without retry — and without a pointless delete."""
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b'{"phase": "Succeeded"}')
+
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=0, listed=0))
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    jobset_exists = AsyncMock(return_value=False)
+    monkeypatch.setattr(operator_main, "_sweep_jobset_exists", jobset_exists)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    await operator_main.on_aiperfsweep_aggregation_complete(
+        body={},
+        status={"runEpoch": "1714064523"},
+        name="latency-sweep",
+        namespace="benchmarks",
+    )
+
+    jobset_exists.assert_awaited_once_with("benchmarks", "aiperf-latency-sweep")
+    delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio

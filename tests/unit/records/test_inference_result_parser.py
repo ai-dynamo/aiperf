@@ -406,14 +406,45 @@ class TestServerTokenCount:
                 completion_tokens=completion_tokens, reasoning_tokens=reasoning_tokens
             )
         ]
-        reasoning_count = setup_inference_parser._extract_server_reasoning_token_count(
+        token_counts = await setup_inference_parser._compute_server_token_counts(
             responses
         )
-        result = setup_inference_parser._extract_server_output_token_count(
-            responses, reasoning_count
+
+        assert token_counts.output == expected_output
+
+    async def test_all_counts_read_from_single_final_usage_block(
+        self, setup_inference_parser
+    ):
+        """Prompt/reasoning/completion must come from ONE usage block.
+
+        An earlier chunk carries reasoning_tokens that the final chunk does
+        not repeat. Independent per-field walkbacks would mix the stale
+        reasoning count (earlier chunk) into the final chunk's completion
+        count, corrupting the output subtraction.
+        """
+        responses = [
+            make_parsed_response(
+                text="mid",
+                perf_ns=1000,
+                completion_tokens=30,
+                reasoning_tokens=10,
+            ),
+            make_parsed_response(
+                text="final",
+                perf_ns=2000,
+                prompt_tokens=150,
+                completion_tokens=50,
+            ),
+        ]
+        token_counts = await setup_inference_parser._compute_server_token_counts(
+            responses
         )
 
-        assert result == expected_output
+        # All fields from the final chunk's usage: no reasoning there, so
+        # output stays 50 — NOT 50 - 10 from the earlier chunk's block.
+        assert token_counts.input == 150
+        assert token_counts.reasoning is None
+        assert token_counts.output == 50
 
     async def test_warning_when_no_usage_provided(
         self, server_token_parser, request_record

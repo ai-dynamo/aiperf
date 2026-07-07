@@ -236,6 +236,80 @@ def _sweep_aggregate_on_disk(aggregate_path: Path) -> bool:
     return True
 
 
+SWEEP_HARVEST_SENTINEL_NAME = ".aiperf_sweep_harvest_complete.json"
+"""Dotfile written next to ``aggregate.json`` after a FULL harvest.
+
+Follows the ``.aiperf_*`` marker convention (``.aiperf_results_ready.json``,
+``.aiperf_results_processing.json``). Its presence is the positive evidence
+that every file the sidecar advertised for this epoch landed on the
+operator's PVC — a parseable ``aggregate.json`` alone also matches a PARTIAL
+harvest (aggregate landed, sibling artifacts did not), which must never be
+treated as done while the controller pod's emptyDir still holds the only
+other copy of the missing files.
+"""
+
+
+def _sweep_harvest_sentinel_path(aggregate_path: Path) -> Path:
+    """Return the harvest-complete sentinel path for an epoch's aggregate."""
+    return aggregate_path.parent / SWEEP_HARVEST_SENTINEL_NAME
+
+
+def _write_sweep_harvest_sentinel(
+    aggregate_path: Path, *, downloaded: int, listed: int
+) -> None:
+    """Record that a full ``downloaded == listed`` harvest reached the PVC.
+
+    Written ONLY from the full-success path, immediately before the JobSet
+    delete, so an operator that crashes between the two still converges on
+    the next tick via the sentinel. A write failure is advisory: the harvest
+    itself already succeeded, and the no-sentinel fallback (JobSet-existence
+    check) still resolves later zero-download re-fires correctly.
+    """
+    sentinel = _sweep_harvest_sentinel_path(aggregate_path)
+    try:
+        sentinel.write_bytes(
+            orjson.dumps(
+                {"harvestComplete": True, "downloaded": downloaded, "listed": listed}
+            )
+        )
+    except OSError as exc:
+        logger.warning(
+            f"Failed to write sweep harvest sentinel {sentinel} "
+            f"({type(exc).__name__}: {exc}); harvest already succeeded so this "
+            f"is advisory"
+        )
+
+
+async def _sweep_jobset_exists(namespace: str, jobset_name: str) -> bool:
+    """Whether the sweep-controller's JobSet is still on the apiserver.
+
+    Returns False only on a confirmed 404. Any other outcome (found, apiserver
+    error, transient connectivity failure) counts as "exists": callers use
+    absence as the licence to stop re-harvesting the controller pod's
+    emptyDir, so ambiguity must fail toward retrying — never toward giving up
+    on files that may still be recoverable.
+    """
+    from kubernetes_asyncio import client
+    from kubernetes_asyncio.client import ApiException
+
+    from aiperf.kubernetes.client import k8s_client
+
+    try:
+        async with k8s_client() as api:
+            await client.CustomObjectsApi(api).get_namespaced_custom_object(
+                group=JOBSET_GROUP,
+                version=JOBSET_VERSION,
+                plural=JOBSET_PLURAL,
+                namespace=namespace,
+                name=jobset_name,
+            )
+    except ApiException as e:
+        return e.status != 404
+    except Exception:  # noqa: BLE001 - existence gate is fail-safe; unknown counts as exists
+        return True
+    return True
+
+
 @kopf.on.field(
     AIPERF_GROUP,
     AIPERF_VERSION,
@@ -282,20 +356,59 @@ async def on_aiperfsweep_aggregation_complete(
     aggregate_marker = (
         base_dir / namespace / "sweeps" / name / str(epoch) / "aggregate.json"
     )
+    jobset_name = f"aiperf-{name}"
     if fetched.downloaded == 0:
-        # A re-fire AFTER we deleted the JobSet (below) hits a dead sidecar
-        # and gets 0 files — but the harvest already happened on the tick
-        # that did the delete. Treat an already-populated dest-dir as success
-        # so the handler does not loop forever on TemporaryError once the pod
-        # is gone. Only accept a PARSEABLE aggregate: a crash-truncated file
-        # passes exists() but is useless, and must stay on the re-fetch path.
-        if _sweep_aggregate_on_disk(aggregate_marker):
-            logger.info(
-                f"AIPerfSweep {namespace}/{name} aggregate already on disk "
-                f"(epoch={epoch}); sidecar gone after JobSet reap, treating as done"
+        if fetched.listed > 0:
+            # The sidecar is alive and advertising files, yet none landed on
+            # the PVC — a failed download, never an already-finished harvest.
+            # Same reasoning as the partial branch below: the emptyDir holds
+            # the only other copy, so keep the JobSet and re-harvest.
+            raise kopf.TemporaryError(
+                f"AIPerfSweep {namespace}/{name} sidecar listed {fetched.listed} "
+                f"file(s) but none downloaded; retrying",
+                delay=30,
             )
-            await _delete_sweep_jobset(namespace, f"aiperf-{name}")
-            return
+        # listed == 0: the sidecar is unreachable, pre-marker, or gone after a
+        # prior tick's JobSet reap. Treating an already-harvested epoch as done
+        # keeps the handler from looping forever once the pod is gone — but a
+        # parseable aggregate.json alone is NOT proof of a full harvest: a
+        # partial harvest (5/6 files, aggregate landed) followed by transient
+        # sidecar unreachability produces the exact same on-disk shape, and
+        # deleting the JobSet then destroys the emptyDir-only copy of the
+        # missing files. Require the harvest-complete sentinel as positive
+        # evidence before the shortcut.
+        if _sweep_aggregate_on_disk(aggregate_marker):
+            if _sweep_harvest_sentinel_path(aggregate_marker).is_file():
+                # Sentinel present: a prior tick completed a downloaded ==
+                # listed harvest of this epoch's frozen file set. Covers the
+                # operator that crashed after the full harvest but before the
+                # delete below — converge by deleting now (idempotent on 404).
+                logger.info(
+                    f"AIPerfSweep {namespace}/{name} aggregate + harvest "
+                    f"sentinel already on disk (epoch={epoch}); treating as done"
+                )
+                await _delete_sweep_jobset(namespace, jobset_name)
+                return
+            # Back-compat: PVCs harvested by pre-sentinel operator versions
+            # have aggregate.json but no sentinel — indistinguishable from the
+            # partial-then-unreachable data-loss shape above. The JobSet's
+            # existence is the deciding signal: while it exists the emptyDir
+            # may still hold files we never pulled, so retry instead of
+            # deleting; once it is confirmed gone (404) there is nothing left
+            # to recover and the on-disk aggregate is the best remaining copy.
+            if not await _sweep_jobset_exists(namespace, jobset_name):
+                logger.info(
+                    f"AIPerfSweep {namespace}/{name} aggregate on disk without "
+                    f"harvest sentinel (epoch={epoch}) and JobSet {jobset_name} "
+                    f"is gone; treating pre-sentinel harvest as done"
+                )
+                return
+            raise kopf.TemporaryError(
+                f"AIPerfSweep {namespace}/{name} aggregate on disk without "
+                f"harvest sentinel and JobSet {jobset_name} still exists; "
+                f"retrying harvest instead of deleting",
+                delay=30,
+            )
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} aggregate sidecar returned no files; retrying",
             delay=30,
@@ -333,6 +446,13 @@ async def on_aiperfsweep_aggregation_complete(
             delay=30,
         )
 
+    # Full success: every advertised file landed and the aggregate parses.
+    # Record the sentinel BEFORE the delete so a crash between the two still
+    # converges on the next tick (zero-download branch above sees it).
+    _write_sweep_harvest_sentinel(
+        aggregate_marker, downloaded=fetched.downloaded, listed=fetched.listed
+    )
+
     # The aggregate is now on the operator's PVC, so the sweep-controller pod
     # has nothing left to serve. Delete its JobSet to reap the pod promptly —
     # otherwise the pod lingers until the CR's `ttlSecondsAfterFinished`
@@ -341,7 +461,7 @@ async def on_aiperfsweep_aggregation_complete(
     # `Succeeded` once ALL containers terminate. Mirrors the AIPerfJob
     # harvest's `_maybe_delete_jobset_after_success` (delete only after a
     # successful fetch, so we never tear the sidecar down before harvesting).
-    await _delete_sweep_jobset(namespace, f"aiperf-{name}")
+    await _delete_sweep_jobset(namespace, jobset_name)
 
 
 @kopf.on.field(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="status.phase")

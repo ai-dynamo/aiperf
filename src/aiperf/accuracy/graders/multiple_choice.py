@@ -29,6 +29,12 @@ class MultipleChoiceGrader(BaseGrader):
     truncated at the first newline before comparison. We replicate this by
     splitting on "\\n" and taking only the first line.
 
+    First-line extraction assumes the non-CoT MMLU template (prompt ends
+    with "Answer:", generation_size=5 token cap). Chain-of-thought
+    responses put reasoning first and the answer on a later line, which
+    this grader would silently mis-grade — MMLUBenchmark therefore
+    rejects --accuracy-enable-cot with NotImplementedError at load time.
+
     When the first-line result is not a bare A-D letter (e.g. "The answer is B."),
     a regex fallback extracts the first lone A-D letter. Responses that required
     the fallback are flagged as unparsed in GradingResult.

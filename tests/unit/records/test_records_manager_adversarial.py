@@ -42,6 +42,7 @@ to lock the wire-shape contract the source actually carries.
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -150,12 +151,14 @@ def _make_manager(
     mgr._metric_record_stream_exporters = metric_record_stream_exporters or []
     mgr._previous_realtime_records = None
     mgr._last_checkpoint_records = 0
+    mgr._pending_phase_records = defaultdict(list)
 
     mgr._records_tracker = tracker or MagicMock()
     mgr._error_tracker = error_tracker or MagicMock()
 
     # Default tracker behavior — overridden by callers.
     mgr._records_tracker.is_phase_excluded.return_value = False
+    mgr._records_tracker.get_phase_exclusion.return_value = False
     mgr._records_tracker.check_and_set_all_records_received_for_phase.return_value = (
         False
     )
@@ -225,6 +228,13 @@ def _make_manager(
     # wire the telemetry accumulator; tests that care can bind/override it.
     mgr._publish_telemetry_results = AsyncMock()
 
+    # Phase handlers route tracker updates through the replay helper; bind the
+    # real one so `update_phase_info.assert_called_*` keeps observing the
+    # forwarded call.
+    mgr._update_phase_info_and_replay_pending = (
+        RecordsManager._update_phase_info_and_replay_pending.__get__(mgr)
+    )
+
     for name in bind_methods or []:
         # Strip the @background_task / @on_command decorator wrapping by
         # accessing __wrapped__ or just calling .__func__ underlying.
@@ -249,12 +259,12 @@ class TestProcessMetricRecordData:
         """When a phase is excluded, neither the legacy nor accumulator path runs.
 
         The records-tracker still gets `update_from_record_data` because the
-        tracker is what `is_phase_excluded` reads from — but downstream
+        tracker is what `get_phase_exclusion` reads from — but downstream
         processing must short-circuit so warmup records don't leak into
         results.
         """
         mgr = _make_manager(bind_methods=["_process_metric_record_data"])
-        mgr._records_tracker.is_phase_excluded.return_value = True
+        mgr._records_tracker.get_phase_exclusion.return_value = True
         mgr._send_results_to_results_processors = AsyncMock()
         mgr._send_record_to_accumulators = AsyncMock()
         mgr._handle_all_records_received = AsyncMock()
@@ -266,6 +276,76 @@ class TestProcessMetricRecordData:
         mgr._send_record_to_accumulators.assert_not_awaited()
         # No error to track.
         mgr._error_tracker.increment_error_count_for_phase.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_phase_record_is_buffered_not_processed(self) -> None:
+        """A record racing its CreditPhaseStartMessage (phase exclusion still
+        unknown) must be buffered — processing it immediately would treat the
+        unknown phase as included and leak warmup records into results."""
+        mgr = _make_manager(bind_methods=["_process_metric_record_data"])
+        mgr._records_tracker.get_phase_exclusion.return_value = None
+        mgr._send_results_to_results_processors = AsyncMock()
+        mgr._send_record_to_accumulators = AsyncMock()
+        mgr._handle_all_records_received = AsyncMock()
+        record = _record(phase="warmup")
+
+        await mgr._process_metric_record_data(record)
+
+        assert mgr._pending_phase_records["warmup"] == [record]
+        mgr._records_tracker.update_from_record_data.assert_not_called()
+        mgr._send_results_to_results_processors.assert_not_awaited()
+        mgr._send_record_to_accumulators.assert_not_awaited()
+        mgr._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_phase_registration_replays_buffered_records(self) -> None:
+        """Once the phase's stats register, buffered records replay through the
+        normal path with the now-known exclusion — profiling records that raced
+        registration are NOT lost, and warmup records stay out of results."""
+        mgr = _make_manager(
+            bind_methods=["_process_metric_record_data"],
+        )
+        mgr._send_results_to_results_processors = AsyncMock()
+        mgr._send_record_to_accumulators = AsyncMock()
+        mgr._handle_all_records_received = AsyncMock()
+        record = _record(phase="profiling")
+
+        # Record arrives before its phase is known: buffered.
+        mgr._records_tracker.get_phase_exclusion.return_value = None
+        await mgr._process_metric_record_data(record)
+        assert mgr._pending_phase_records["profiling"] == [record]
+
+        # Phase stats arrive (results phase): replay processes the record fully.
+        mgr._records_tracker.get_phase_exclusion.return_value = False
+        stats = MagicMock(phase="profiling")
+        await mgr._update_phase_info_and_replay_pending(stats)
+
+        mgr._records_tracker.update_phase_info.assert_called_once_with(stats)
+        assert "profiling" not in mgr._pending_phase_records
+        mgr._records_tracker.update_from_record_data.assert_called_once_with(record)
+        mgr._send_results_to_results_processors.assert_awaited_once_with(record)
+        mgr._send_record_to_accumulators.assert_awaited_once_with(record)
+
+    @pytest.mark.asyncio
+    async def test_phase_registration_replays_buffered_warmup_as_excluded(self) -> None:
+        """Buffered records of a phase that registers as excluded are tracked
+        but never reach the results processors."""
+        mgr = _make_manager(bind_methods=["_process_metric_record_data"])
+        mgr._send_results_to_results_processors = AsyncMock()
+        mgr._send_record_to_accumulators = AsyncMock()
+        mgr._handle_all_records_received = AsyncMock()
+        record = _record(phase="warmup")
+
+        mgr._records_tracker.get_phase_exclusion.return_value = None
+        await mgr._process_metric_record_data(record)
+
+        mgr._records_tracker.get_phase_exclusion.return_value = True
+        await mgr._update_phase_info_and_replay_pending(MagicMock(phase="warmup"))
+
+        assert "warmup" not in mgr._pending_phase_records
+        mgr._records_tracker.update_from_record_data.assert_called_once_with(record)
+        mgr._send_results_to_results_processors.assert_not_awaited()
+        mgr._send_record_to_accumulators.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_record_with_wire_error_increments_phase_error_counter(self) -> None:
@@ -1600,6 +1680,9 @@ class TestRecordsTrackerRealRoundTrip:
         mgr._send_results_to_results_processors = AsyncMock()
         mgr._send_record_to_accumulators = AsyncMock()
         mgr._handle_all_records_received = AsyncMock()
+        # Register the phase (production ordering: CreditPhaseStartMessage
+        # precedes records; unregistered phases buffer instead of counting).
+        mgr._records_tracker.update_phase_info(CreditPhaseStats(phase="profiling"))
 
         good = _record(metrics={"request_latency": 1.0})
         bad = _record(
@@ -1630,6 +1713,8 @@ class TestRecordsTrackerRealRoundTrip:
         mgr._process_metric_record_data = (
             RecordsManager._process_metric_record_data.__get__(mgr)
         )
+        # Register the phase first — mirrors production message ordering.
+        mgr._records_tracker.update_phase_info(CreditPhaseStats(phase="profiling"))
 
         records = [_record(metrics={"request_latency": float(i)}) for i in range(5)]
         batch = MetricRecordsBatchWireMessage(service_id="rp-1", records=records)

@@ -191,6 +191,57 @@ class TestChatEndpointParseResponse:
 
         assert parsed is endpoint._FAST_PARSE_FALLBACK
 
+    @pytest.mark.parametrize(
+        "first_choice",
+        [
+            param({"index": 0, "finish_reason": "stop"}, id="no_delta_key"),
+            param({"index": 0, "delta": None}, id="delta_null"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_choice_without_delta_keeps_usage(
+        self, endpoint, first_choice
+    ):
+        """A usage-carrying chunk whose choices[0] has no delta dict must not
+        be dropped: server usage flows through exactly like the slow path's
+        ``if data or usage`` handling."""
+        json_obj = {
+            "object": "chat.completion.chunk",
+            "choices": [first_choice],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 34},
+        }
+        mock_response = create_mock_response(123456789, json_obj)
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed is not None
+        assert parsed.data is None
+        assert parsed.usage.prompt_tokens == 12
+        assert parsed.usage.completion_tokens == 34
+
+        # Byte-parity with the slow path: same data (None) and same usage.
+        slow_data = endpoint.extract_chat_response_data(json_obj)
+        slow_usage = json_obj.get("usage") or None
+        assert parsed.data == slow_data
+        assert dict(parsed.usage) == slow_usage
+
+    @pytest.mark.parametrize(
+        "first_choice",
+        [
+            param({"index": 0, "finish_reason": "stop"}, id="no_delta_key"),
+            param({"index": 0, "delta": None}, id="delta_null"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_choice_without_delta_and_no_usage_returns_none(
+        self, endpoint, first_choice
+    ):
+        """Without usage, a delta-less choice still parses to None."""
+        mock_response = create_mock_response(
+            123456789,
+            {"object": "chat.completion.chunk", "choices": [first_choice]},
+        )
+
+        assert endpoint.parse_response(mock_response) is None
+
     def test_parse_response_streaming_multiple_chunks(self, endpoint):
         """Test parsing multiple streaming chunks."""
         chunks = [

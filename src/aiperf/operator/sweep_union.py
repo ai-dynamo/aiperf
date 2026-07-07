@@ -11,6 +11,7 @@ by the sweep-controller at terminal phase. Records are joined by
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -313,7 +314,9 @@ async def list_all_sweeps(
         logger.warning("list_aiperfsweeps failed; live half empty: %s", e)
         live_crs = []
     live = [_record_from_live(cr) for cr in live_crs]
-    archived = _scan_archived(base_dir, namespace=namespace)
+    # Full archive walk (iterdir + aggregate.json reads) — pure filesystem
+    # work, so offload it off the event loop; the UI polls this per request.
+    archived = await asyncio.to_thread(_scan_archived, base_dir, namespace=namespace)
     return _merge(live, archived)
 
 

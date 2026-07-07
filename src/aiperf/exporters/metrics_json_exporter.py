@@ -4,7 +4,11 @@
 from collections.abc import Iterable
 from datetime import datetime
 
+import orjson
+
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
     JsonExportData,
@@ -21,6 +25,11 @@ class MetricsJsonExporter(MetricsBaseExporter):
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
+        summary = exporter_config.config.artifacts.summary
+        if summary is False or "json" not in summary:
+            raise DataExporterDisabled(
+                "MetricsJsonExporter disabled: 'json' not in artifacts.summary"
+            )
         super().__init__(exporter_config, **kwargs)
         self._file_path = exporter_config.config.artifacts.profile_export_json_file
         self._run = exporter_config.run
@@ -106,9 +115,31 @@ class MetricsJsonExporter(MetricsBaseExporter):
             lambda: f"Exporting data to JSON file: {export_data}",
             lambda: f"Exporting data to JSON file: {self._file_path}",
         )
-        return export_data.model_dump_json(
-            indent=2, exclude_unset=True, exclude_none=True
+        # Pydantic's model_dump_json silently coerces NaN/inf to JSON null,
+        # which collides with explicit-None ("metric was missing") semantics
+        # downstream. Round-trip through model_dump + scrub_non_finite +
+        # orjson.dumps so non-finite values are rewritten to null only when
+        # they were genuinely numerically absent.
+        payload = export_data.model_dump(
+            mode="json", exclude_unset=True, exclude_none=True
         )
+        # exclude_none does not propagate into extra="allow" values that are
+        # dataclasses (JsonMetricResult): undeclared metric tags and the
+        # multi_turn_ttft_trend map would otherwise null-flood every unset
+        # percentile field. Strip their Nones to match the declared-field shape.
+        for metric_tag in prepared_json_metrics:
+            entry = payload.get(metric_tag)
+            if isinstance(entry, dict):
+                payload[metric_tag] = _strip_none_fields(entry)
+        trend_payload = payload.get("multi_turn_ttft_trend")
+        if isinstance(trend_payload, dict):
+            payload["multi_turn_ttft_trend"] = {
+                turn: _strip_none_fields(entry) if isinstance(entry, dict) else entry
+                for turn, entry in trend_payload.items()
+            }
+        return orjson.dumps(
+            scrub_non_finite(payload), option=orjson.OPT_INDENT_2
+        ).decode("utf-8")
 
     def _prepare_metrics_for_json(
         self, metric_results: Iterable[MetricResult]
@@ -125,3 +156,12 @@ class MetricsJsonExporter(MetricsBaseExporter):
         """
         prepared = self._prepare_metrics(metric_results)
         return {tag: result.to_json_result() for tag, result in prepared.items()}
+
+
+def _strip_none_fields(entry: dict) -> dict:
+    """Drop None-valued keys from a dumped JsonMetricResult dict.
+
+    Mirrors what ``exclude_none=True`` does for declared Pydantic fields, for
+    the dataclass values Pydantic serializes without exclusion flags.
+    """
+    return {key: value for key, value in entry.items() if value is not None}
