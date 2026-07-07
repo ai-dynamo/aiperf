@@ -631,10 +631,7 @@ class TestBasetenTraceDatasetLoader:
             row(10, "pairB-t1", 20),
             row(100, "pairA-t0", 10),
             row(110, "pairA-t1", 10),
-            *(
-                row(200 + 100 * i, f"single-{i}", 31 + i)
-                for i in range(5)
-            ),
+            *(row(200 + 100 * i, f"single-{i}", 31 + i) for i in range(5)),
             *(row(1_000 + 100 * i, f"s0-t{i}", None, "s0") for i in range(3)),
         ]
         path = _write_parquet(tmp_path / "trace.parquet", rows)

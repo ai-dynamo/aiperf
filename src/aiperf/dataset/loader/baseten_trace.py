@@ -81,9 +81,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         gap_cap_s = getattr(dataset, "max_idle_gap_cap_seconds", None)
         # Keep the cap as float ms; int-truncation would turn a sub-ms cap
         # into 0 and reflow_idle_gaps rejects non-positive caps.
-        self._max_idle_gap_cap_ms = (
-            gap_cap_s * 1000 if gap_cap_s is not None else None
-        )
+        self._max_idle_gap_cap_ms = gap_cap_s * 1000 if gap_cap_s is not None else None
         self._delay_cap = DelayCapTracker(
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
