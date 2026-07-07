@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import time
+import zlib
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -431,11 +432,18 @@ def _calculate_variable_token_count(
 
 
 def _generate_seed(prompt_tokens: list[str]) -> int:
-    """Generate deterministic seed from prompt tokens."""
+    """Generate a deterministic seed from prompt tokens.
+
+    Uses crc32 rather than ``hash()``: string hashing is salted per-process
+    via PYTHONHASHSEED, so ``hash()`` made mock-server output lengths vary
+    across CI jobs. When the salted seed landed exactly on the max_tokens
+    budget (~1/1000 jobs), tests asserting ``finish_reason == "stop"`` flaked
+    with ``"length"``. crc32 is stable across processes and platforms.
+    """
     if not prompt_tokens:
         return 0
     sample = prompt_tokens[:5]
-    return hash(tuple(sample)) % 1000
+    return zlib.crc32("\x1f".join(sample).encode()) % 1000
 
 
 def _cycle_tokens(

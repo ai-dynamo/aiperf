@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
-from typing_extensions import Self
 
 from aiperf.common.finite import is_finite_value
 from aiperf.config.base import BaseConfig

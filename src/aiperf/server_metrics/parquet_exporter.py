@@ -3,7 +3,7 @@
 
 """Parquet exporter for raw server metrics with delta calculations."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -267,7 +267,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             b"aiperf.schema_version": b"1.0",
             b"aiperf.version": aiperf_version.encode("utf-8"),
             b"aiperf.benchmark_id": self.run.benchmark_id.encode("utf-8"),
-            b"aiperf.export_timestamp_utc": datetime.now(timezone.utc)
+            b"aiperf.export_timestamp_utc": datetime.now(UTC)
             .isoformat()
             .encode("utf-8"),
             b"aiperf.exporter": b"ServerMetricsParquetExporter",

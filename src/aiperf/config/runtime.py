@@ -10,10 +10,9 @@ Re-exported via :mod:`aiperf.config`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Self
 
 from pydantic import ConfigDict, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import AIPerfLogLevel
 from aiperf.config.base import BaseConfig

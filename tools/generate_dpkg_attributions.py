@@ -23,9 +23,8 @@ import csv
 import re
 import subprocess
 import sys
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 # Maps legacy Debian shorthand to canonical SPDX identifiers.
 # DEP-5 pre-dates SPDX; older packages use forms like "GPL-2+" instead of

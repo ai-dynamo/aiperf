@@ -188,7 +188,6 @@ class _PluginRegistry:
         """Discover and load plugin registries via setuptools entry points."""
         _logger.debug(lambda: f"Discovering plugins in {entry_point_group}")
 
-        # Discover entry points (Python 3.10+ API)
         eps = entry_points(group=entry_point_group)
 
         plugin_eps = list(eps)

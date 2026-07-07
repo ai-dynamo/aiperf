@@ -13,10 +13,9 @@ from __future__ import annotations
 import math
 import re
 import warnings
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import ConfigDict, Discriminator, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import OptimizationDirection, SweepMode
 from aiperf.common.finite import FiniteFloat

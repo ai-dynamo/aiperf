@@ -4,10 +4,9 @@
 from collections.abc import Callable
 from enum import Flag
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeAlias, TypeVar
 
 from pydantic import Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums.base_enums import (
     BasePydanticBackedStrEnum,
