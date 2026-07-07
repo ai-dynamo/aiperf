@@ -78,7 +78,7 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
     header = "Replay Send Schedule Offset"
     short_header = "Sched Offset"
     unit = MetricTimeUnit.NANOSECONDS
-    flags = MetricFlags.INTERNAL
+    flags = MetricFlags.INTERNAL | MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
     required_metrics = None
 
@@ -114,7 +114,7 @@ def _anchored_lag_ms(metric_results: MetricResultsDict) -> np.ndarray:
         NoMetricValue: If no absolutely-scheduled request produced an offset.
     """
     values = metric_results.get_or_raise(ReplaySendScheduleOffsetMetric)
-    data = np.asarray(getattr(values, "data", values), dtype=np.float64)
+    data = np.asarray(values.data, dtype=np.float64)
     if len(data) == 0:
         raise NoMetricValue("No absolutely-scheduled requests were recorded.")
     return (data - data.min()) / NANOS_PER_MILLIS
@@ -127,6 +127,7 @@ class _ReplaySchedLagPercentileBase(BaseDerivedMetric[float]):
     percentile: float
 
     unit = MetricTimeUnit.MILLISECONDS
+    flags = MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
     required_metrics: ClassVar[set[str]] = {ReplaySendScheduleOffsetMetric.tag}
 
@@ -181,9 +182,10 @@ class ReplaySchedDegradedMetric(BaseDerivedMetric[int]):
     schedule: anchored send-lag p99 exceeded
     :data:`REPLAY_SCHED_DEGRADED_THRESHOLD_MS`.
 
-    Logs a one-line warning with the lag percentiles when degraded, so runs
-    whose timing fidelity is compromised are called out even though these
-    metrics are hidden from the console table.
+    Logs a one-line warning (at most once per run) with the lag percentiles
+    when degraded, so runs whose timing fidelity is compromised are called out
+    even though these metrics are hidden from the console table. The metric
+    value itself stays continuous: it is re-derived on every summarize tick.
 
     Formula:
         1 if p99(offset - min(offset)) > REPLAY_SCHED_DEGRADED_THRESHOLD_MS else 0
@@ -193,14 +195,25 @@ class ReplaySchedDegradedMetric(BaseDerivedMetric[int]):
     header = "Replay Schedule Degraded"
     short_header = "Sched Degraded"
     unit = GenericMetricUnit.COUNT
+    flags = MetricFlags.FIXED_SCHEDULE_ONLY
     console_group = MetricConsoleGroup.NONE
-    required_metrics: ClassVar[set[str]] = {ReplaySendScheduleOffsetMetric.tag}
+    required_metrics: ClassVar[set[str]] = {
+        ReplaySchedLagP50Metric.tag,
+        ReplaySchedLagP90Metric.tag,
+        ReplaySchedLagP99Metric.tag,
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._warned = False
 
     def _derive_value(self, metric_results: MetricResultsDict) -> int:
-        lag_ms = _anchored_lag_ms(metric_results)
-        p50, p90, p99 = np.percentile(lag_ms, [50, 90, 99])
+        p50 = metric_results.get_or_raise(ReplaySchedLagP50Metric)
+        p90 = metric_results.get_or_raise(ReplaySchedLagP90Metric)
+        p99 = metric_results.get_or_raise(ReplaySchedLagP99Metric)
         degraded = p99 > REPLAY_SCHED_DEGRADED_THRESHOLD_MS
-        if degraded:
+        if degraded and not self._warned:
+            self._warned = True
             _logger.warning(
                 f"Replay schedule degraded: anchored send lag p50={p50:.0f} ms, "
                 f"p90={p90:.0f} ms, p99={p99:.0f} ms exceeds "

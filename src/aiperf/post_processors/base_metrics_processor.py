@@ -33,6 +33,7 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         required_flags, disallowed_flags = MetricFlags.NONE, MetricFlags.NONE
         # Disable metrics that are not applicable to the endpoint type
         from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PhaseType
 
         endpoint_metadata = plugins.get_endpoint_metadata(self.run.cfg.endpoint.type)
         if not endpoint_metadata.produces_tokens:
@@ -55,6 +56,15 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             disallowed_flags |= MetricFlags.USAGE_DIFF_ONLY
         if not Environment.DEV.MODE and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS:
             disallowed_flags |= MetricFlags.EXPERIMENTAL
+        if not any(
+            phase.type == PhaseType.FIXED_SCHEDULE
+            for phase in self.run.cfg.get_profiling_phases()
+        ):
+            # Turn timestamps can reach records in any timing mode (e.g. a
+            # timestamped trace replayed with --no-fixed-schedule), but
+            # schedule-fidelity metrics are only meaningful when dispatch
+            # actually follows the schedule.
+            disallowed_flags |= MetricFlags.FIXED_SCHEDULE_ONLY
 
         # NOTE: We don't filter out INTERNAL metrics here, because they are often required for other metrics
 

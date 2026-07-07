@@ -756,6 +756,12 @@ class MetricFlags(Flag):
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
 
+    FIXED_SCHEDULE_ONLY = 1 << 17
+    """Metrics that are only applicable when the profiling phase replays a fixed schedule of
+    absolute timestamps. Turn timestamps also reach records under other timing modes (e.g. a
+    timestamped trace run with --no-fixed-schedule), where schedule-fidelity metrics would be
+    meaningless."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

@@ -2,15 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the replay schedule send-lag metrics.
 
-Synthetic records carry an intended schedule timestamp on the dispatched turn
-(``Turn.timestamp``, ms) and an actual send wall time
-(``RequestRecord.timestamp_ns``), exactly as fixed-schedule replay produces.
+Record-metric tests drive synthetic records that carry an intended schedule
+timestamp on the dispatched turn (``Turn.timestamp``, ms) and an actual send
+wall time (``RequestRecord.timestamp_ns``), exactly as fixed-schedule replay
+produces. Derived-metric tests build ``MetricResultsDict`` entries in the
+production storage shape (``MetricArray`` for record metrics, floats for
+already-derived dependencies; see
+post_processors/metric_results_processor.py first-touch storage).
 """
+
+import logging
 
 import pytest
 from pytest import param
 
 from aiperf.common.constants import NANOS_PER_MILLIS
+from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord, Turn
 from aiperf.metrics.metric_dicts import MetricResultsDict
@@ -38,6 +45,43 @@ def _scheduled_record(
     return record
 
 
+def _offset_results(offsets_ms: list[float]) -> MetricResultsDict:
+    """Results dict holding raw send offsets as production stores them."""
+    results = MetricResultsDict()
+    results[ReplaySendScheduleOffsetMetric.tag] = create_metric_array(
+        [int(ms * NANOS_PER_MILLIS) for ms in offsets_ms]
+    )
+    return results
+
+
+def _derived_lag_results(offsets_ms: list[float]) -> MetricResultsDict:
+    """Results dict with the lag percentiles already derived, mirroring
+    update_derived_metrics' dependency-ordered store-before-dependents."""
+    results = _offset_results(offsets_ms)
+    for metric_cls in (
+        ReplaySchedLagP50Metric,
+        ReplaySchedLagP90Metric,
+        ReplaySchedLagP99Metric,
+    ):
+        results[metric_cls.tag] = metric_cls().derive_value(results)
+    return results
+
+
+def test_family_is_fixed_schedule_only():
+    # Turn timestamps reach records in every timing mode, so applicability
+    # must be gated on the run's timing mode, not on timestamp presence.
+    for metric_cls in (
+        ReplaySendScheduleOffsetMetric,
+        ReplaySchedLagP50Metric,
+        ReplaySchedLagP90Metric,
+        ReplaySchedLagP99Metric,
+        ReplaySchedDegradedMetric,
+    ):
+        assert metric_cls.has_flags(MetricFlags.FIXED_SCHEDULE_ONLY), (
+            f"{metric_cls.__name__} must be FIXED_SCHEDULE_ONLY"
+        )
+
+
 class TestReplaySendScheduleOffsetMetric:
     def test_parse_record_returns_actual_minus_intended_ns(self):
         records = [_scheduled_record(intended_ms=2, actual_send_ms=5)]
@@ -60,55 +104,29 @@ class TestReplaySendScheduleOffsetMetric:
 
 class TestReplaySchedLagPercentiles:
     def test_derive_value_anchors_at_least_late_request(self):
-        # Intended at 0/10/20/30 ms; actual lags of 5/5/15/105 ms anchor to
-        # [0, 0, 10, 100] ms (the least-late requests define zero).
-        records = [
-            _scheduled_record(intended_ms=0, actual_send_ms=5),
-            _scheduled_record(intended_ms=10, actual_send_ms=15),
-            _scheduled_record(intended_ms=20, actual_send_ms=35),
-            _scheduled_record(intended_ms=30, actual_send_ms=135),
-        ]
-
-        results = run_simple_metrics_pipeline(
-            records,
-            ReplaySchedLagP50Metric.tag,
-            ReplaySchedLagP90Metric.tag,
-            ReplaySchedLagP99Metric.tag,
-        )
+        # Send offsets of 5/5/15/105 ms anchor to [0, 0, 10, 100] ms (the
+        # least-late requests define zero).
+        results = _offset_results([5, 5, 15, 105])
 
         # np.percentile (linear interpolation) over [0, 0, 10, 100].
-        assert results[ReplaySchedLagP50Metric.tag] == pytest.approx(5.0)
-        assert results[ReplaySchedLagP90Metric.tag] == pytest.approx(73.0)
-        assert results[ReplaySchedLagP99Metric.tag] == pytest.approx(97.3)
+        assert ReplaySchedLagP50Metric().derive_value(results) == pytest.approx(5.0)
+        assert ReplaySchedLagP90Metric().derive_value(results) == pytest.approx(73.0)
+        assert ReplaySchedLagP99Metric().derive_value(results) == pytest.approx(97.3)
 
     def test_derive_value_uniform_lag_reports_zero(self):
         # A constant delay on every request is invisible after anchoring --
         # the documented limitation of the post-hoc approximation.
-        records = [
-            _scheduled_record(intended_ms=0, actual_send_ms=700),
-            _scheduled_record(intended_ms=10, actual_send_ms=710),
-            _scheduled_record(intended_ms=20, actual_send_ms=720),
-        ]
+        results = _offset_results([700, 700, 700])
 
-        results = run_simple_metrics_pipeline(records, ReplaySchedLagP99Metric.tag)
-
-        assert results[ReplaySchedLagP99Metric.tag] == 0.0
+        assert ReplaySchedLagP99Metric().derive_value(results) == 0.0
 
     def test_derive_value_no_offsets_raises_no_metric_value(self):
         with pytest.raises(NoMetricValue):
             ReplaySchedLagP99Metric().derive_value(MetricResultsDict())
 
-    def test_derive_value_metric_array_results_returns_exact_percentile(self):
-        # Production stores scalar record metrics as MetricArray, not the
-        # plain list run_simple_metrics_pipeline uses (see
-        # post_processors/metric_results_processor.py first-touch storage).
-        results = MetricResultsDict()
-        results[ReplaySendScheduleOffsetMetric.tag] = create_metric_array(
-            [5 * NANOS_PER_MILLIS, 15 * NANOS_PER_MILLIS, 105 * NANOS_PER_MILLIS]
-        )
-
-        # Anchored lag [0, 10, 100] ms -> p99 = 10 + 0.98 * 90 = 98.2.
-        assert ReplaySchedLagP99Metric().derive_value(results) == pytest.approx(98.2)
+    def test_derive_value_empty_offset_array_raises_no_metric_value(self):
+        with pytest.raises(NoMetricValue):
+            ReplaySchedLagP99Metric().derive_value(_offset_results([]))
 
 
 class TestReplaySchedDegradedMetric:
@@ -124,13 +142,28 @@ class TestReplaySchedDegradedMetric:
         self, tail_lag_ms: int, expected: int
     ):
         # Half the requests on time, half late by tail_lag_ms: p99 == tail_lag_ms.
-        records = [
-            _scheduled_record(intended_ms=i, actual_send_ms=i) for i in range(5)
-        ] + [
-            _scheduled_record(intended_ms=5 + i, actual_send_ms=5 + i + tail_lag_ms)
-            for i in range(5)
+        results = _derived_lag_results([0.0] * 5 + [float(tail_lag_ms)] * 5)
+
+        assert ReplaySchedDegradedMetric().derive_value(results) == expected
+
+    def test_derive_value_missing_percentiles_raises_no_metric_value(self):
+        with pytest.raises(NoMetricValue):
+            ReplaySchedDegradedMetric().derive_value(MetricResultsDict())
+
+    def test_degraded_warning_logged_once_per_run(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        # summarize() re-derives every realtime tick; the warning must not
+        # repeat while the metric value stays continuous.
+        results = _derived_lag_results([0.0] * 5 + [600.0] * 5)
+        metric = ReplaySchedDegradedMetric()
+
+        with caplog.at_level(logging.WARNING):
+            assert metric.derive_value(results) == 1
+            assert metric.derive_value(results) == 1
+            assert metric.derive_value(results) == 1
+
+        warnings = [
+            r for r in caplog.records if "Replay schedule degraded" in r.message
         ]
-
-        results = run_simple_metrics_pipeline(records, ReplaySchedDegradedMetric.tag)
-
-        assert results[ReplaySchedDegradedMetric.tag] == expected
+        assert len(warnings) == 1
