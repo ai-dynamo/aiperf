@@ -557,7 +557,8 @@ class CLIConfig(BaseConfig):
             "`sequential`: Iterate through dataset in order, wrapping to start after end. "
             "`random`: Randomly sample with replacement (entries may repeat before all are used). "
             "`shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. "
-            "Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).",
+            "Default behavior depends on dataset type (e.g., `sequential` for synthetic and trace datasets, "
+            "`shuffle` for random-pool datasets).",
         ),
         CLIParameter(
             name=("--dataset-sampling-strategy",),

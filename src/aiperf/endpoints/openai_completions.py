@@ -92,6 +92,14 @@ class CompletionsEndpoint(BaseEndpoint):
         if not json_obj:
             return None
 
+        # A bare-list/string/int 200-OK body (e.g. a completions endpoint
+        # pointed at a TGI/HF server, which returns ``[{...}]``) would crash
+        # ``extract_completions_response_data``'s ``json_obj.get("object")`` on
+        # the worker's unconditional post-response parse and drop every record.
+        # Degrade to a clean no-content error record instead.
+        if not isinstance(json_obj, dict):
+            return None
+
         data = self.extract_completions_response_data(json_obj)
         usage = json_obj.get("usage") or None
 

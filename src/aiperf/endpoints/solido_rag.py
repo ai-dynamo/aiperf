@@ -79,6 +79,13 @@ class SolidoEndpoint(BaseEndpoint):
             self.debug(lambda: f"No JSON in response: {response.get_raw()}")
             return None
 
+        # A bare-list/string/int 200-OK body would crash
+        # ``_extract_solido_response_data``'s ``json_obj.get("content")`` on the
+        # worker's unconditional post-response parse and drop every record.
+        # Degrade to a clean no-content error record instead.
+        if not isinstance(json_obj, dict):
+            return None
+
         data, sources = self._extract_solido_response_data(json_obj)
         return (
             ParsedResponse(perf_ns=response.perf_ns, data=data, sources=sources)

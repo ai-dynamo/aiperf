@@ -414,6 +414,53 @@ class TestMultimodalDistribution:
         with pytest.raises(ValidationError):
             _TA.validate_python({"peaks": [{"mean": 100, "stddev": 0}]})
 
+    def test_all_zero_weight_peaks_rejected(self) -> None:
+        # An all-zero-weight mixture has no normalizing constant, so
+        # expected_value/mean/repr/sample would divide by sum-of-weights=0
+        # and raise ZeroDivisionError. Reject it at validation time instead
+        # of accepting a distribution that crashes on first use.
+        with pytest.raises(ValidationError, match="positive total weight"):
+            _TA.validate_python(
+                {
+                    "peaks": [
+                        {"mean": 100, "stddev": 0, "weight": 0},
+                        {"mean": 900, "stddev": 0, "weight": 0},
+                    ]
+                }
+            )
+
+    def test_all_zero_weight_peaks_rejected_direct_construction(self) -> None:
+        # Direct model construction (not via the discriminated-union adapter)
+        # is the path that reproduced the crash: validation accepted it, then
+        # `.expected_value`/`.mean`/`repr(...)` raised ZeroDivisionError.
+        with pytest.raises(ValidationError, match="positive total weight"):
+            MultimodalDistribution(
+                peaks=[
+                    PeakEntry(
+                        distribution=NormalDistribution(mean=100, stddev=0), weight=0.0
+                    ),
+                    PeakEntry(
+                        distribution=NormalDistribution(mean=900, stddev=0), weight=0.0
+                    ),
+                ]
+            )
+
+    def test_single_zero_weight_peak_still_allowed(self) -> None:
+        # A single 0-weight peak just drops out of the mixture as long as the
+        # total is positive; expected_value collapses to the surviving peak.
+        d = _TA.validate_python(
+            {
+                "peaks": [
+                    {"mean": 100, "stddev": 0, "weight": 0},
+                    {"mean": 900, "stddev": 0, "weight": 40},
+                ]
+            }
+        )
+        assert isinstance(d, MultimodalDistribution)
+        assert d.expected_value == 900.0
+        assert d.mean == 900.0
+        assert "multimodal" in repr(d)
+
     def test_three_peaks_accepted(self) -> None:
         d = _TA.validate_python(
             {

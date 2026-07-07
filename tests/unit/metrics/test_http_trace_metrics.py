@@ -6,6 +6,12 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.inference_wire import (
+    build_inference_results_wire_message,
+    decode_inference_results_wire_message,
+    encode_inference_results_wire_message,
+    wire_message_to_request_record,
+)
 from aiperf.common.models import (
     AioHttpTraceData,
     BaseTraceData,
@@ -29,6 +35,7 @@ from aiperf.metrics.types.http_trace_metrics import (
     HttpDurationMetric,
     HttpReceivingMetric,
     HttpSendingMetric,
+    HttpTotalTimeMetric,
     HttpWaitingMetric,
 )
 from tests.unit.metrics.conftest import run_simple_metrics_pipeline
@@ -1001,3 +1008,109 @@ class TestComputedPropertyAlignment:
         export_value = export.connecting_ns
 
         assert metric_value == export_value
+
+
+class TestHttpTraceMetricsSurviveWireWithoutRawExport:
+    """Regression: http_req_* metrics compute even when --export-http-trace is OFF.
+
+    On the default run the worker forwards the trace timing subset (perf_ns
+    timestamps, chunk counts, byte totals) on the worker->record-processor wire
+    and strips only the heavy raw fields (per-chunk lists, headers, socket info).
+    A prior regression tied the whole trace payload to --export-http-trace, so a
+    default run silently dropped all 14 aggregate http_req_* metrics. These tests
+    drive a full trace through the wire codec with ``include_raw_trace_fields=False``
+    and assert every aggregate metric still resolves.
+    """
+
+    @staticmethod
+    def _slim_trace_via_wire() -> AioHttpTraceData:
+        """Round-trip a rich trace through the wire with raw export disabled."""
+        trace = create_aiohttp_trace_data(
+            pool_wait_start=1000,
+            pool_wait_end=1050,
+            tcp_start=1050,
+            tcp_end=1120,
+            dns_start=1050,
+            dns_end=1080,
+            request_send_start=1120,
+            request_send_end=1150,
+            response_receive_start=1200,
+            response_receive_end=1400,
+            request_chunks=[(1120, 32), (1150, 32)],
+            response_chunks=[(1200, 40), (1300, 40), (1400, 48)],
+        )
+        # Populate heavy raw fields that must NOT survive the slim projection.
+        trace.request_headers = {"Content-Type": "application/json"}
+        trace.response_headers = {"Server": "mock"}
+        trace.local_ip = "127.0.0.1"
+        trace.remote_ip = "127.0.0.1"
+
+        record = RequestRecord(
+            request_info=RequestInfo(
+                conversation_id="test-conversation",
+                turn_index=0,
+                credit_num=0,
+                credit_phase=CreditPhase.PROFILING,
+                x_request_id="",
+                x_correlation_id="",
+            ),
+            model_name="test-model",
+            timestamp_ns=1,
+            start_perf_ns=1,
+            trace_data=trace,
+        )
+
+        wire_message = build_inference_results_wire_message(
+            service_id="worker-1",
+            record=record,
+            include_raw_trace_fields=False,
+        )
+        _, rebuilt = wire_message_to_request_record(
+            message=decode_inference_results_wire_message(
+                encode_inference_results_wire_message(wire_message)
+            ),
+        )
+        rehydrated = rebuilt.trace_data
+        assert isinstance(rehydrated, AioHttpTraceData)
+        # Raw fields are gone; timing subset stayed.
+        assert rehydrated.request_headers is None
+        assert rehydrated.response_headers is None
+        assert rehydrated.request_chunks == []
+        assert rehydrated.response_chunks == []
+        assert rehydrated.local_ip is None
+        assert rehydrated.remote_ip is None
+        return rehydrated
+
+    def test_all_aggregate_metrics_resolve_from_slim_wire_record(self):
+        """Every http_req_* aggregate metric derives a value from the slim record."""
+        trace = self._slim_trace_via_wire()
+        record = create_record_with_trace(trace_data=trace)
+
+        record_metrics = MetricRecordDict()
+        assert HttpBlockedMetric().parse_record(record, record_metrics) == 50
+        assert HttpDnsLookupMetric().parse_record(record, record_metrics) == 30
+        assert HttpConnectingMetric().parse_record(record, record_metrics) == 70
+        assert HttpSendingMetric().parse_record(record, record_metrics) == 30
+        assert HttpWaitingMetric().parse_record(record, record_metrics) == 50
+        assert HttpReceivingMetric().parse_record(record, record_metrics) == 200
+        assert HttpDurationMetric().parse_record(record, record_metrics) == 280
+        assert HttpDataSentMetric().parse_record(record, record_metrics) == 64
+        assert HttpDataReceivedMetric().parse_record(record, record_metrics) == 128
+        assert HttpChunksSentMetric().parse_record(record, record_metrics) == 2
+        assert HttpChunksReceivedMetric().parse_record(record, record_metrics) == 3
+        assert HttpConnectionReusedMetric().parse_record(record, record_metrics) == 0
+
+        # Composite metrics depend on the individual timing values above.
+        for tag, value in (
+            ("http_req_blocked", 50),
+            ("http_req_dns_lookup", 30),
+            ("http_req_connecting", 70),
+            ("http_req_sending", 30),
+            ("http_req_waiting", 50),
+            ("http_req_receiving", 200),
+        ):
+            record_metrics[tag] = value
+        assert (
+            HttpConnectionOverheadMetric().parse_record(record, record_metrics) == 150
+        )
+        assert HttpTotalTimeMetric().parse_record(record, record_metrics) == 430

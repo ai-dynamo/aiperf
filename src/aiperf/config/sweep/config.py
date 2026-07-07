@@ -256,22 +256,41 @@ class ScenarioSweep(_GridSweepBase):
 
     @model_validator(mode="after")
     def _check_unique_run_names(self) -> Self:
-        # Cell directories are derived from `variation.label`, which falls
-        # back to the run's `name`. Duplicate names => colliding cell dirs;
-        # the second run's artifacts clobber the first. Reject here so the
-        # user sees the conflict instead of silent data loss.
-        seen: set[str] = set()
-        dups: list[str] = []
-        for run in self.runs:
+        # Cell directories are derived from `variation.label` -> the run's
+        # `name` -> `_sanitize_dir_segment(name)` (see `SweepVariation.dir_name`
+        # / `_label_dir_segment`). Uniqueness must therefore hold on the
+        # SANITIZED segment, not the raw name: two names that differ only in
+        # sanitizer-stripped chars (e.g. "run:1" and "run1", both -> "run1")
+        # collapse to the same directory, so the second run's artifacts clobber
+        # the first (all mkdir use exist_ok=True) => silent data loss while the
+        # run still reports success. Reject here so the user sees the conflict.
+        #
+        # `_label_dir_segment` falls back to a per-index `variation_{index}`
+        # when the sanitized segment is empty, so all-stripped names (e.g.
+        # ":::") never collide -- mirror that fallback here so we don't flag
+        # them. `index` enumerates the full runs list to match the positional
+        # index that expand -> `SweepVariation.index` assigns.
+        first_by_segment: dict[str, str] = {}
+        collisions: list[str] = []
+        for index, run in enumerate(self.runs):
             name = run.get("name") if isinstance(run, dict) else None
             if not isinstance(name, str):
                 continue
-            if name in seen and name not in dups:
-                dups.append(name)
-            seen.add(name)
-        if dups:
+            segment = _label_dir_segment(name, index)
+            prior = first_by_segment.get(segment)
+            if prior is None:
+                first_by_segment[segment] = name
+                continue
+            if prior == name:
+                collisions.append(f"{name!r} (duplicate name -> dir {segment!r})")
+            else:
+                collisions.append(f"{prior!r} and {name!r} both -> dir {segment!r}")
+        if collisions:
             raise ValueError(
-                f"scenario sweep runs must have unique names; duplicates: {dups!r}."
+                f"scenario sweep runs must have unique names after sanitization "
+                f"into artifact directory segments; conflicts: "
+                f"{'; '.join(collisions)}. Rename the runs so their sanitized "
+                f"directory segments differ."
             )
         return self
 

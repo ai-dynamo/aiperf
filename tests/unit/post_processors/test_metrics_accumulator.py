@@ -76,6 +76,54 @@ class TestMetricsAccumulator:
         assert list(values[~np.isnan(values)]) == [42.0, 84.0]
 
     @pytest.mark.asyncio
+    async def test_redelivered_record_avg_within_min_max(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """A re-delivered record must not inflate a RECORD metric's running sum.
+
+        A record re-delivered to the same ``(phase, session_num)`` lands on its
+        original row: the numeric column overwrites last-write-wins, so the
+        O(1) running sum must too. Under the double-count bug the read path
+        computed ``avg = sum_of_all_writes / dedup_len`` which exceeds ``max``.
+        """
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
+        processor._metric_classes = {RequestLatencyMetric.tag: RequestLatencyMetric}
+
+        # session 0: first delivery (500) then re-delivery (100) to the SAME slot
+        first = create_metric_records_message(
+            x_request_id="test-0",
+            session_num=0,
+            results=[{RequestLatencyMetric.tag: 500.0}],
+        )
+        await processor.process_record(first.to_data())
+        redelivered = create_metric_records_message(
+            x_request_id="test-0",
+            session_num=0,
+            results=[{RequestLatencyMetric.tag: 100.0}],
+        )
+        await processor.process_record(redelivered.to_data())
+
+        # session 1: a distinct record
+        second = create_metric_records_message(
+            x_request_id="test-1",
+            session_num=1,
+            request_start_ns=1_000_000_001,
+            results=[{RequestLatencyMetric.tag: 300.0}],
+        )
+        await processor.process_record(second.to_data())
+
+        summary = await processor.summarize()
+        result = summary.results[RequestLatencyMetric.tag]
+
+        # Deduped values are [100 (slot0 latest), 300 (slot1)].
+        assert result.count == 2
+        assert result.min == 100.0
+        assert result.max == 300.0
+        assert result.min <= result.avg <= result.max
+        assert result.avg == 200.0  # (100 + 300) / 2, not the inflated (500+100+300)/2
+
+    @pytest.mark.asyncio
     async def test_process_record_record_metric_list_values(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:

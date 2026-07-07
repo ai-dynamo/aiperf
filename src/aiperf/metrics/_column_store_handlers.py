@@ -33,18 +33,35 @@ def make_numeric_handler(
     counts: dict[str, int],
 ) -> Callable[[int, Any], None]:
     """Closure that writes a numeric metric value at ``idx`` and updates the
-    O(1) running sum/count side-channel.
+    O(1) running sum/count side-channel with last-write-wins semantics.
 
-    The ``float()`` cast is intentionally absent: numpy's ``__setitem__``
-    coerces Python ``int`` to ``float64`` automatically, and ``+=`` on the
-    sum dict promotes the int operand the same way. Saves a Python-level
-    function call per numeric metric per record (~5–8% on the scalar path).
+    A record can be re-delivered to the same slot (``idx``). The float64 column
+    overwrites the cell in place (last-write-wins, mirroring
+    ``GrowableArray.__setitem__``), so the running sum must mirror that too: on a
+    re-write the prior slot value is backed out of ``sums[tag]`` before the new
+    value is added, and ``counts[tag]`` is NOT incremented — it tracks the number
+    of distinct populated slots, which is the deduped column length the read path
+    (``accumulator._collect_scalars_and_arrays``) divides the sum by. Without the
+    back-out, a re-delivered record double-counts the sum and
+    ``avg = sum / dedup_len`` can exceed ``max``.
+
+    A slot is "populated" iff its current cell is non-NaN (NaN is the pre-fill /
+    missing sentinel). The ``prior == prior`` test is a NaN check — NaN is the
+    only value unequal to itself — avoiding a ``np.isnan`` call on the hot path.
+    On a re-write the prior cell is cast to ``float`` so ``sums[tag]`` stays a
+    Python float; the first-write branch keeps the cast-free fast path (numpy
+    coerces Python ``int`` to ``float64`` and the sum add promotes it the same
+    way).
     """
 
     def handler(idx: int, value: Any) -> None:
+        prior = col[idx]
+        if prior == prior:  # non-NaN: slot already populated, last-write-wins
+            sums[tag] = sums[tag] - float(prior) + value
+        else:
+            sums[tag] = sums[tag] + value
+            counts[tag] = counts[tag] + 1
         col[idx] = value
-        sums[tag] = sums[tag] + value
-        counts[tag] = counts[tag] + 1
 
     return handler
 

@@ -168,6 +168,56 @@ sweep:
             assert cfg.get_model_names() == ["test-model"]
             assert next(p for p in cfg.phases if p.name == "profiling").requests == 10
 
+    def test_yaml_scenario_names_colliding_after_sanitization_rejected(self) -> None:
+        # Two scenario runs whose names differ only in sanitizer-stripped
+        # chars ("run:1" vs "run1") both resolve to the artifact-dir segment
+        # "run1"; the second run's artifacts would clobber the first (all
+        # mkdir use exist_ok=True) => silent data loss while the run reports
+        # success. The full load -> build_benchmark_plan path must reject it.
+        yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
+sweep:
+  type: scenarios
+  runs:
+    - name: "run:1"
+      benchmark:
+        phases:
+          - name: profiling
+            concurrency: 2
+    - name: "run1"
+      benchmark:
+        phases:
+          - name: profiling
+            concurrency: 64
+""")
+        with pytest.raises((ValidationError, ConfigurationError)) as exc_info:
+            _yaml_to_plan(yaml_str)
+        message = str(exc_info.value)
+        assert "unique names" in message
+        assert "run:1" in message and "run1" in message
+
+    def test_yaml_scenario_names_distinct_segments_resolve_unique_dirs(self) -> None:
+        # Genuinely distinct names must still expand and resolve to unique
+        # artifact directories.
+        yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
+sweep:
+  type: scenarios
+  runs:
+    - name: "run:1"
+      benchmark:
+        phases:
+          - name: profiling
+            concurrency: 2
+    - name: "run:2"
+      benchmark:
+        phases:
+          - name: profiling
+            concurrency: 64
+""")
+        plan = _yaml_to_plan(yaml_str)
+        dir_names = [v.dir_name for v in plan.variations]
+        assert dir_names == ["run1", "run2"]
+        assert len(dir_names) == len(set(dir_names))
+
     def test_yaml_with_multi_run_sets_plan_fields(self) -> None:
         yaml_str = _MINIMAL_YAML + textwrap.dedent("""\
 multi_run:

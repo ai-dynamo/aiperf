@@ -672,6 +672,70 @@ class TestInspectMessageForError:
         assert exc_info.value.error_code == 502
 
 
+class TestInspectMessageForDataPayloadError:
+    """Mid-stream ``data:``-payload error detection.
+
+    A real vLLM/OpenAI stream that fails mid-generation sends a ``data:`` line
+    whose JSON body is an error object (no ``event: error`` field), then closes.
+    Without detection the partial content already accumulated makes the record
+    score as a truncated success instead of a failure.
+    """
+
+    @pytest.mark.parametrize(
+        "raw_message,expected_error_text",
+        [
+            (
+                'data: {"error": {"message": "Internal server error", "type": "server_error"}}',
+                "Internal server error",
+            ),
+            (
+                'data: {"object": "error", "message": "Engine crashed", "type": "internal", "code": 500}',
+                "Engine crashed",
+            ),
+            (
+                'data: {"error": "flat string error"}',
+                "flat string error",
+            ),
+            (
+                'data: {"error": {"code": 42}}',
+                "code",  # no message key -> stringified dict still surfaces the payload
+            ),
+        ],
+    )  # fmt: skip
+    def test_data_payload_error_raises(
+        self, raw_message: str, expected_error_text: str, base_perf_ns: int
+    ) -> None:
+        """A ``data:`` payload that is a JSON error object raises SSEResponseError."""
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert expected_error_text in str(exc_info.value)
+        assert exc_info.value.error_code == 502
+
+    @pytest.mark.parametrize(
+        "raw_message",
+        [
+            # Ordinary content chunk (OpenAI shape).
+            'data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "choices": [{"delta": {"content": "Hello"}}]}',
+            # Content that literally mentions the word error -> not an error object.
+            'data: {"choices": [{"delta": {"content": "an error occurred in the story"}}]}',
+            # Explicit null error field (some servers include it on normal chunks).
+            'data: {"error": null, "choices": [{"delta": {"content": "hi"}}]}',
+            # Terminal sentinel and empty data.
+            "data: [DONE]",
+            "data: ",
+        ],
+    )
+    def test_non_error_data_passes_through(
+        self, raw_message: str, base_perf_ns: int
+    ) -> None:
+        """Normal content chunks (even ones containing 'error' text) do not raise."""
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+        AsyncSSEStreamReader.inspect_message_for_error(message)
+
+
 @pytest.fixture
 def create_mock_sse_iterator():
     """Factory fixture for creating mock SSE async iterators."""
@@ -886,3 +950,46 @@ class TestAsyncSSEStreamReaderErrorHandling:
 
             assert len(messages) == expected_msg_count
             assert expected_error in str(exc_info.value)
+
+    async def test_content_then_data_payload_error_scored_failure(
+        self, create_mock_sse_iterator
+    ) -> None:
+        """A stream with valid content then a ``data:`` error is a FAILURE.
+
+        The error object arrives mid-stream as a ``data:`` line (no
+        ``event: error``). ``read_complete_stream`` raises so the transport
+        attaches ErrorDetails to the record instead of scoring the partial
+        content as a truncated success.
+        """
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n',
+                b'data: {"error": {"message": "Engine died mid-stream", "type": "server_error"}}\n\n',
+            )
+        )
+        with pytest.raises(SSEResponseError) as exc_info:
+            await reader.read_complete_stream()
+        assert "Engine died mid-stream" in str(exc_info.value)
+
+    async def test_clean_stream_still_succeeds(self, create_mock_sse_iterator) -> None:
+        """A clean content stream (no error payload) is still a success."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n',
+                b'data: {"choices": [{"delta": {"content": " World"}}]}\n\n',
+                b"data: [DONE]\n\n",
+            )
+        )
+        messages = await reader.read_complete_stream()
+        assert len(messages) == 3
+
+    async def test_error_only_stream_is_failure(self, create_mock_sse_iterator) -> None:
+        """An error-only stream (no content) is a failure (vLLM object=error shape)."""
+        reader = AsyncSSEStreamReader(
+            create_mock_sse_iterator(
+                b'data: {"object": "error", "message": "Bad request", "code": 400}\n\n',
+            )
+        )
+        with pytest.raises(SSEResponseError) as exc_info:
+            await reader.read_complete_stream()
+        assert "Bad request" in str(exc_info.value)

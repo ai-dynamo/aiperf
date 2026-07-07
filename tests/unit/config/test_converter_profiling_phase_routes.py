@@ -255,6 +255,37 @@ class TestRateRampRequiresRequestRate:
         prof = build_profiling(user)
         assert prof.get("rate_ramp") == {"duration": 30}
 
+    def test_rate_ramp_with_user_centric_raises(self):
+        """User-centric mode is not rate-settable; the ramp would silently
+        no-op, so build_profiling must reject the combo (matches the
+        compatibility matrix) instead of accepting-and-ignoring it."""
+        loadgen = CLIConfig(
+            user_centric_rate=10.0,
+            num_users=5,
+            request_count=20,
+            conversation_turn_mean=2,
+            request_rate_ramp_duration=30,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError,
+            match="--request-rate-ramp-duration is not supported with --user-centric-rate",
+        ):
+            build_profiling(user)
+
+    def test_user_centric_without_ramp_still_succeeds(self):
+        """The rejection is scoped to the ramp flag; plain user-centric works."""
+        loadgen = CLIConfig(
+            user_centric_rate=10.0,
+            num_users=5,
+            request_count=20,
+            conversation_turn_mean=2,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert "rate_ramp" not in prof
+
 
 class TestAdaptiveScaleRoutes:
     def test_adaptive_scale_cli_fields_route_to_profiling_phase(self):

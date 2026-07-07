@@ -15,6 +15,7 @@ from aiperf.config.dataset import SyntheticDataset
 from aiperf.config.flags._converter_dataset import _resolve_entries, build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
+from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
 def _user(*, num_conversations: int | None, request_count: int | None) -> CLIConfig:
@@ -92,3 +93,26 @@ def test_full_converter_synthetic_dataset_entries_eq_num_conversations() -> None
     main_dataset = aiperf_config.benchmark.get_default_dataset()
     assert isinstance(main_dataset, SyntheticDataset)
     assert main_dataset.entries == 10
+
+
+def test_synthetic_dataset_default_sampling_is_sequential() -> None:
+    """Synthetic datasets default to sequential sampling, not shuffle.
+
+    Synthetic bypasses the ``DatasetResolver`` (which only applies to
+    file-based/inline sources), so the effective default is the
+    ``SyntheticDataset.sampling`` field default. Pins the value the docs
+    (timing-modes-reference, cli-options, and the --dataset-sampling-strategy
+    help text) advertise.
+    """
+    ds = SyntheticDataset(name="default", type="synthetic")
+    assert ds.sampling == DatasetSamplingStrategy.SEQUENTIAL
+
+
+def test_full_converter_synthetic_effective_sampling_is_sequential() -> None:
+    """End-to-end: a CLI-only run with no dataset flags resolves the synthetic
+    ``main`` dataset to sequential sampling (not shuffle)."""
+    user = CLIConfig(model_names=["test-model"], url=["localhost:8000"])
+    aiperf_config = convert_cli_to_aiperf(user)
+    main_dataset = aiperf_config.benchmark.get_default_dataset()
+    assert isinstance(main_dataset, SyntheticDataset)
+    assert main_dataset.sampling == DatasetSamplingStrategy.SEQUENTIAL

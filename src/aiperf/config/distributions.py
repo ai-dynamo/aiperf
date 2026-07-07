@@ -351,6 +351,20 @@ class MultimodalDistribution(Distribution):
     def validate_peaks(self) -> Self:
         if len(self.peaks) < 2:
             raise ValueError("peaks requires at least 2 entries")
+        # Individual peak weights are ge=0 (a single 0-weight peak just drops
+        # out of the mixture), but the total must be strictly positive: an
+        # all-zero-weight mixture has no normalizing constant, so sampling,
+        # expected_value, mean, and repr all divide by sum-of-weights=0 and
+        # raise ZeroDivisionError. Reject it here with a clear message rather
+        # than accepting a distribution that crashes on first use. Mirrors
+        # EmpiricalPoint's gt=0.0 intent at the mixture level.
+        total_weight = math.fsum(p.weight for p in self.peaks)
+        if total_weight <= 0.0:
+            raise ValueError(
+                f"multimodal peaks must have a positive total weight, got "
+                f"{total_weight:g} (all {len(self.peaks)} peaks are weight 0); "
+                f"give at least one peak a weight > 0."
+            )
         return self
 
     def _sample_raw(self, rng: RandomGenerator) -> float:

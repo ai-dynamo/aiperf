@@ -240,7 +240,8 @@ includes an actionable hint on how to fix it.
 | `Phase '<name>' uses <type> which requires sequential sampling, but dataset '<name>' uses '<strategy>' sampling` | Non-sequential sampling with a mode that needs it (e.g. fixed schedule) | Use `--dataset-sampling-strategy sequential` |
 | `--request-cancellation-delay requires --request-cancellation-rate to be set` | Delay without cancellation rate | Add `--request-cancellation-rate`, or drop `--request-cancellation-delay` |
 | `--fixed-schedule-{auto,start,end}-offset requires --fixed-schedule.` | Fixed-schedule offsets without `--fixed-schedule` | Add `--fixed-schedule`, or drop the offset flags |
-| `--request-rate-ramp-duration can only be used with rate-controlled scheduling (--request-rate or --user-centric-rate).` | Rate ramping on a non-rate-controlled phase (e.g. concurrency or fixed-schedule) | Use `--request-rate` / `--user-centric-rate`, or drop `--request-rate-ramp-duration` |
+| `--request-rate-ramp-duration can only be used with rate-controlled scheduling (--request-rate).` | Rate ramping on a non-rate-controlled phase (e.g. concurrency or fixed-schedule) | Use `--request-rate`, or drop `--request-rate-ramp-duration` |
+| `--request-rate-ramp-duration is not supported with --user-centric-rate.` | Rate ramping in user-centric mode (paces per-user turn gaps, not a global QPS) | Drop `--request-rate-ramp-duration`, or switch to `--request-rate` |
 
 ---
 
@@ -337,7 +338,7 @@ includes an actionable hint on how to fix it.
 |--------|------|---------|-------------|
 | `--session-turns-mean` | float | 1.0 | Mean turns per session (`--user-centric-rate` requires ≥ 2) |
 | `--session-turns-stddev` | float | 0.0 | Standard deviation of turns |
-| `--dataset-sampling-strategy` | enum | shuffle | Dataset sampling: `sequential`, `shuffle` (not with `--fixed-schedule`) |
+| `--dataset-sampling-strategy` | enum | sequential | Dataset sampling: `sequential`, `random`, `shuffle` (default varies by dataset type: `sequential` for synthetic and traces, `shuffle` for random-pool; not with `--fixed-schedule`) |
 
 ### Multi-URL Load Balancing
 

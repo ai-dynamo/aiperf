@@ -4,6 +4,7 @@
 
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import SSEEventType, SSEFieldType
@@ -78,11 +79,26 @@ class AsyncSSEStreamReader:
         return messages
 
     @staticmethod
-    def inspect_message_for_error(message: SSEMessage):
-        """Check if the message contains an error event packet and raise an SSEResponseError if so.
+    def inspect_message_for_error(message: SSEMessage) -> None:
+        """Check whether the SSE message signals a request failure and raise ``SSEResponseError`` if so.
 
-        If so, look for any comment field and raise an SSEResponseError
-        with that comment as the error message, otherwise use the full message.
+        Two failure shapes are detected and treated identically to an
+        HTTP-level error (the transport catches ``SSEResponseError`` and
+        attaches ``ErrorDetails`` to the record, so the request is scored a
+        failure rather than a truncated success):
+
+        1. Event-level error — an ``event: error`` field. The accompanying
+           ``comment`` field, if present, becomes the error message; otherwise
+           the full message is used.
+        2. Data-payload error — a ``data:`` line whose JSON body is an error
+           object: a truthy top-level ``error`` key
+           (OpenAI: ``{"error": {"message", "type", "param", "code"}}``) or
+           ``object == "error"`` (vLLM: ``{"object": "error", "message", ...}``).
+           Real servers emit this mid-generation after already streaming some
+           content, then close the stream. Without this check the partial
+           content makes ``ParsedResponseRecord.valid`` return True and the
+           failed request is miscounted as a truncated success, polluting
+           latency/token stats.
         """
         has_error_event = any(
             packet.name == SSEFieldType.EVENT and packet.value == SSEEventType.ERROR
@@ -102,6 +118,46 @@ class AsyncSSEStreamReader:
             raise SSEResponseError(
                 f"Error occurred in SSE response: {error_message}", error_code=502
             )
+
+        data_error = AsyncSSEStreamReader._data_payload_error_message(message)
+        if data_error is not None:
+            raise SSEResponseError(
+                f"Error occurred in SSE response: {data_error}", error_code=502
+            )
+
+    @staticmethod
+    def _data_payload_error_message(message: SSEMessage) -> str | None:
+        """Return an error message if the message's ``data:`` payload is a JSON error object, else None.
+
+        Fast path: ordinary content chunks, ``[DONE]``, and unparsable data
+        return None without a JSON parse (the payload is only parsed when its
+        text contains the ``error`` substring, which the error-object JSON keys
+        always carry). This keeps the per-chunk streaming hot path cheap.
+        """
+        text = message.get_text()
+        if not text or "error" not in text:
+            return None
+        data = message.get_json()
+        if not isinstance(data, dict):
+            return None
+        error = data.get("error")
+        if error:
+            return AsyncSSEStreamReader._stringify_error(error)
+        obj = data.get("object")
+        if isinstance(obj, str) and obj.lower() == SSEEventType.ERROR:
+            return AsyncSSEStreamReader._stringify_error(data)
+        return None
+
+    @staticmethod
+    def _stringify_error(error: Any) -> str:
+        """Build a human-readable message from an SSE error payload (dict, str, or other)."""
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message:
+                return message
+        if isinstance(error, str) and error:
+            return error
+        return str(error)
 
     async def __aiter__(self) -> AsyncIterator[SSEMessage]:
         """Iterate over the SSE stream in a performant manner and yield parsed SSE messages as they arrive."""

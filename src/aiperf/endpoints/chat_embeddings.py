@@ -32,6 +32,13 @@ class ChatEmbeddingsEndpoint(ChatEndpoint):
         if not json_obj:
             return None
 
+        # A bare-list/string/int 200-OK body would crash
+        # ``try_extract_embeddings``'s ``json_obj.get("data")`` on the worker's
+        # unconditional post-response parse and drop every record. Degrade to a
+        # clean no-content error record instead.
+        if not isinstance(json_obj, dict):
+            return None
+
         data = self.try_extract_embeddings(json_obj)
         if data:
             return ParsedResponse(perf_ns=response.perf_ns, data=data)

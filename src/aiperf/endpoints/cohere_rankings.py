@@ -22,6 +22,13 @@ class CohereRankingsEndpoint(BaseRankingsEndpoint):
 
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract ranking results from Cohere Rankings API response."""
+        # A bare-list/string/int 200-OK body would crash ``json_obj.get(...)`` on
+        # the worker's unconditional post-response parse; degrade to an empty
+        # ranking list (BaseRankingsEndpoint.parse_response then returns None).
+        # The guard lives here, not in the shared parse_response, because
+        # HFTeiRankingsEndpoint legitimately expects a top-level list body.
+        if not isinstance(json_obj, dict):
+            return []
         results = json_obj.get("results", [])
         if not isinstance(results, list):
             return []

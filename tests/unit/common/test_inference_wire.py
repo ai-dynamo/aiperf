@@ -12,6 +12,7 @@ from aiperf.common.inference_wire import (
     wire_message_to_request_record,
 )
 from aiperf.common.models import (
+    AioHttpTraceData,
     BaseTraceData,
     BinaryResponse,
     Image,
@@ -21,6 +22,44 @@ from aiperf.common.models import (
     TextResponse,
     Turn,
 )
+
+
+def _full_aiohttp_trace() -> AioHttpTraceData:
+    """AioHttpTraceData carrying both the timing subset and the heavy raw fields.
+
+    Timing values are chosen so every ``http_req_*`` metric resolves to a
+    positive, distinct number after a wire round-trip (see the metric-level
+    regression in ``tests/unit/metrics/test_http_trace_metrics.py``).
+    """
+    return AioHttpTraceData(
+        trace_type="aiohttp",
+        reference_perf_ns=1000,
+        reference_time_ns=1_000_000_000_000,
+        # Timing subset (must always survive the wire).
+        connection_pool_wait_start_perf_ns=1000,
+        connection_pool_wait_end_perf_ns=1050,
+        tcp_connect_start_perf_ns=1050,
+        tcp_connect_end_perf_ns=1120,
+        dns_lookup_start_perf_ns=1050,
+        dns_lookup_end_perf_ns=1080,
+        request_send_start_perf_ns=1120,
+        request_send_end_perf_ns=1150,
+        response_receive_start_perf_ns=1200,
+        response_receive_end_perf_ns=1400,
+        request_chunks_count=2,
+        request_bytes_total=64,
+        response_chunks_count=3,
+        response_bytes_total=128,
+        # Heavy raw fields (gated behind include_raw_trace_fields).
+        request_chunks=[(1120, 32), (1150, 32)],
+        response_chunks=[(1200, 40), (1300, 40), (1400, 48)],
+        request_headers={"Content-Type": "application/json"},
+        response_headers={"Server": "mock"},
+        local_ip="127.0.0.1",
+        local_port=5555,
+        remote_ip="127.0.0.1",
+        remote_port=8765,
+    )
 
 
 class TestInferenceWire:
@@ -92,7 +131,7 @@ class TestInferenceWire:
             raw_payload=raw_payload,
             include_request_headers=True,
             include_status=True,
-            include_trace_data=False,
+            include_raw_trace_fields=False,
         )
         encoded = encode_inference_results_wire_message(wire_message)
         decoded = decode_inference_results_wire_message(encoded)
@@ -193,7 +232,7 @@ class TestInferenceWire:
         wire_message = build_inference_results_wire_message(
             service_id="worker-1",
             record=record,
-            include_trace_data=True,
+            include_raw_trace_fields=True,
         )
         rebuilt_service_id, rebuilt_record = wire_message_to_request_record(
             message=decode_inference_results_wire_message(
@@ -209,11 +248,119 @@ class TestInferenceWire:
         assert rebuilt_record.trace_data.request_send_start_perf_ns == 111
         assert rebuilt_record.trace_data.response_status_code == 200
 
+    def test_trace_timing_subset_always_rides_the_wire(
+        self,
+        sample_request_info,
+    ) -> None:
+        """Regression: the timing subset survives even with raw trace export OFF.
+
+        This is the behavioral-parity contract behind ``--export-http-trace``:
+        the flag gates only the heavy raw fields (per-chunk lists, headers,
+        socket info). The perf_ns timing subset, chunk counts, and byte totals
+        must always round-trip so the aggregate ``http_req_*`` metrics compute
+        on a default run.
+        """
+        request_info = copy.deepcopy(sample_request_info)
+        record = RequestRecord(
+            request_info=request_info,
+            model_name="test-model",
+            timestamp_ns=10,
+            start_perf_ns=11,
+            responses=[],
+            turns=request_info.turns,
+            trace_data=_full_aiohttp_trace(),
+        )
+
+        wire_message = build_inference_results_wire_message(
+            service_id="worker-1",
+            record=record,
+            include_raw_trace_fields=False,
+        )
+        _, rebuilt_record = wire_message_to_request_record(
+            message=decode_inference_results_wire_message(
+                encode_inference_results_wire_message(wire_message)
+            ),
+        )
+
+        trace = rebuilt_record.trace_data
+        assert isinstance(trace, AioHttpTraceData)
+        # Timing subset kept.
+        assert trace.connection_pool_wait_start_perf_ns == 1000
+        assert trace.connection_pool_wait_end_perf_ns == 1050
+        assert trace.tcp_connect_start_perf_ns == 1050
+        assert trace.tcp_connect_end_perf_ns == 1120
+        assert trace.dns_lookup_start_perf_ns == 1050
+        assert trace.dns_lookup_end_perf_ns == 1080
+        assert trace.request_send_start_perf_ns == 1120
+        assert trace.request_send_end_perf_ns == 1150
+        assert trace.response_receive_start_perf_ns == 1200
+        assert trace.response_receive_end_perf_ns == 1400
+        assert trace.request_chunks_count == 2
+        assert trace.request_bytes_total == 64
+        assert trace.response_chunks_count == 3
+        assert trace.response_bytes_total == 128
+        # Heavy raw fields dropped.
+        assert trace.request_chunks == []
+        assert trace.response_chunks == []
+        assert trace.request_headers is None
+        assert trace.response_headers is None
+        assert trace.local_ip is None
+        assert trace.local_port is None
+        assert trace.remote_ip is None
+        assert trace.remote_port is None
+        # The original record must not be mutated by the projection.
+        assert record.trace_data.request_headers == {"Content-Type": "application/json"}
+        assert record.trace_data.request_chunks == [(1120, 32), (1150, 32)]
+
+    def test_raw_trace_fields_ride_the_wire_when_enabled(
+        self,
+        sample_request_info,
+    ) -> None:
+        """With raw trace export ON, the heavy per-chunk/header/socket fields survive."""
+        request_info = copy.deepcopy(sample_request_info)
+        record = RequestRecord(
+            request_info=request_info,
+            model_name="test-model",
+            timestamp_ns=10,
+            start_perf_ns=11,
+            responses=[],
+            turns=request_info.turns,
+            trace_data=_full_aiohttp_trace(),
+        )
+
+        wire_message = build_inference_results_wire_message(
+            service_id="worker-1",
+            record=record,
+            include_raw_trace_fields=True,
+        )
+        _, rebuilt_record = wire_message_to_request_record(
+            message=decode_inference_results_wire_message(
+                encode_inference_results_wire_message(wire_message)
+            ),
+        )
+
+        trace = rebuilt_record.trace_data
+        assert isinstance(trace, AioHttpTraceData)
+        assert trace.request_chunks == [(1120, 32), (1150, 32)]
+        assert trace.response_chunks == [(1200, 40), (1300, 40), (1400, 48)]
+        assert trace.request_headers == {"Content-Type": "application/json"}
+        assert trace.response_headers == {"Server": "mock"}
+        assert trace.local_ip == "127.0.0.1"
+        assert trace.local_port == 5555
+        assert trace.remote_ip == "127.0.0.1"
+        assert trace.remote_port == 8765
+
     def test_omits_raw_export_fields_when_not_requested(
         self,
         sample_request_info,
     ) -> None:
-        """Raw-export-only baggage should stay off the wire unless explicitly requested."""
+        """Raw-export-only baggage should stay off the wire unless explicitly requested.
+
+        The trace timing subset always survives (see
+        ``test_trace_timing_subset_always_rides_the_wire``); this test asserts the
+        *other* raw-export baggage (request headers, status, raw payload) and the
+        heavy raw trace fields stay off unless requested.
+        """
         request_info = copy.deepcopy(sample_request_info)
         record = RequestRecord(
             request_info=request_info,
@@ -225,7 +372,12 @@ class TestInferenceWire:
             responses=[],
             turns=request_info.turns,
             raw_payload={"messages": [{"role": "user", "content": "hidden"}]},
-            trace_data=BaseTraceData(trace_type="httpcore"),
+            trace_data=BaseTraceData(
+                trace_type="httpcore",
+                request_send_start_perf_ns=111,
+                request_send_end_perf_ns=222,
+                request_headers={"Authorization": "Bearer secret"},
+            ),
         )
 
         wire_message = build_inference_results_wire_message(
@@ -233,7 +385,7 @@ class TestInferenceWire:
             record=record,
             include_request_headers=False,
             include_status=False,
-            include_trace_data=False,
+            include_raw_trace_fields=False,
         )
         _, rebuilt_record = wire_message_to_request_record(
             message=wire_message,
@@ -241,11 +393,15 @@ class TestInferenceWire:
 
         assert wire_message.record.request_headers is None
         assert wire_message.record.status is None
-        assert wire_message.record.trace_data is None
         assert wire_message.record.raw_payload is None
+        # Timing subset kept, but the raw trace headers stripped.
+        assert wire_message.record.trace_data is not None
+        assert wire_message.record.trace_data.request_send_start_perf_ns == 111
+        assert wire_message.record.trace_data.request_headers is None
         assert rebuilt_record.request_headers is None
         assert rebuilt_record.status is None
-        assert rebuilt_record.trace_data is None
+        assert rebuilt_record.trace_data is not None
+        assert rebuilt_record.trace_data.request_headers is None
         assert (
             not hasattr(rebuilt_record, "raw_payload")
             or rebuilt_record.raw_payload is None

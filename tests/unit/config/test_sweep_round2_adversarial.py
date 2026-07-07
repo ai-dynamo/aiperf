@@ -317,6 +317,34 @@ class TestH13ScenarioUniqueRunNames:
         sw = ScenarioSweep(runs=[{"benchmark": {}}, {"benchmark": {}}])
         assert len(sw.runs) == 2
 
+    def test_names_colliding_after_sanitization_rejected(self) -> None:
+        # `run:1` and `run1` are DISTINCT raw names (they pass the old
+        # raw-name uniqueness check) but both sanitize to the artifact-dir
+        # segment `run1`, so the second run clobbers the first on disk. The
+        # uniqueness check runs on the sanitized segment, so this is rejected.
+        with pytest.raises(ValidationError, match="unique names") as exc_info:
+            ScenarioSweep(
+                runs=[
+                    {"name": "run:1", "benchmark": {"phases": [{"name": "p"}]}},
+                    {"name": "run1", "benchmark": {"phases": [{"name": "p"}]}},
+                ]
+            )
+        message = str(exc_info.value)
+        # Error names both colliding run names and the shared segment.
+        assert "run:1" in message
+        assert "run1" in message
+
+    def test_names_with_distinct_sanitized_segments_allowed(self) -> None:
+        # Names that survive sanitization to different segments must still be
+        # accepted -- the fix must not over-reject legitimately distinct runs.
+        sw = ScenarioSweep(
+            runs=[
+                {"name": "run:1", "benchmark": {}},
+                {"name": "run:2", "benchmark": {}},
+            ]
+        )
+        assert len(sw.runs) == 2
+
 
 # -- H14: empty grid value list --------------------------------------------
 

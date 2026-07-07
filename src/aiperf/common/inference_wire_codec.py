@@ -36,6 +36,7 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
 )
+from aiperf.common.models.trace_models import AioHttpTraceData, BaseTraceData
 
 
 def _json_safe(value: Any) -> Any:
@@ -154,6 +155,35 @@ def _wire_to_response(
     raise TypeError(f"Unsupported wire response type: {type(response)}")
 
 
+def _strip_raw_trace_fields(trace: BaseTraceData) -> BaseTraceData:
+    """Return a copy of ``trace`` with heavy raw fields cleared, timing subset intact.
+
+    The aggregate ``http_req_*`` metrics only need the perf-counter timing fields,
+    chunk counts, and byte totals — all retained here so the record-processor can
+    compute them on a default run. The per-chunk content lists, request/response
+    headers, and connection socket info are dropped because they are only useful
+    for the raw ``--export-http-trace`` dump and are expensive to ship on the wire.
+
+    Example::
+
+        slim = _strip_raw_trace_fields(record.trace_data)
+        assert slim.request_send_start_perf_ns is not None  # timing kept
+        assert slim.response_headers is None                # raw dropped
+    """
+    overrides: dict[str, Any] = {
+        "request_headers": None,
+        "response_headers": None,
+        "request_chunks": [],
+        "response_chunks": [],
+    }
+    if isinstance(trace, AioHttpTraceData):
+        overrides["local_ip"] = None
+        overrides["local_port"] = None
+        overrides["remote_ip"] = None
+        overrides["remote_port"] = None
+    return msgspec.structs.replace(trace, **overrides)
+
+
 def build_inference_results_wire_message(
     *,
     service_id: str,
@@ -161,9 +191,15 @@ def build_inference_results_wire_message(
     raw_payload: dict[str, Any] | None = None,
     include_request_headers: bool = False,
     include_status: bool = False,
-    include_trace_data: bool = False,
+    include_raw_trace_fields: bool = False,
 ) -> InferenceResultsWireMessage:
-    """Project a full RequestRecord into the worker->RP wire model."""
+    """Project a full RequestRecord into the worker->RP wire model.
+
+    The HTTP trace timing subset always rides the wire so the aggregate
+    ``http_req_*`` metrics compute regardless of ``--export-http-trace``.
+    ``include_raw_trace_fields`` (wired to ``artifacts.trace``) gates only the
+    heavy raw trace fields (per-chunk lists, headers, socket info).
+    """
     request_info = record.request_info
     if request_info is None:
         raise ValueError("RequestRecord.request_info is required for wire projection")
@@ -184,7 +220,9 @@ def build_inference_results_wire_message(
             user_context_message=request_info.user_context_message,
         )
 
-    trace_data = record.trace_data if include_trace_data else None
+    trace_data = record.trace_data
+    if trace_data is not None and not include_raw_trace_fields:
+        trace_data = _strip_raw_trace_fields(trace_data)
 
     wire_record = InferenceWireRecord(
         metadata=WireRequestMetadata(

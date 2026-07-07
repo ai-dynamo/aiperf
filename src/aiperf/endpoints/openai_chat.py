@@ -210,7 +210,9 @@ class ChatEndpoint(BaseEndpoint):
 
         for response in record.responses or []:
             json_obj = response.get_json() if hasattr(response, "get_json") else None
-            if not json_obj:
+            if not isinstance(json_obj, dict):
+                # Same top-level guard as parse_response: a bare-list/string/int
+                # body would crash the ``json_obj.get("choices")`` below.
                 continue
             choices = json_obj.get("choices") or []
             # Same malformed-``choices`` degradation as the parse path: an empty
@@ -353,6 +355,16 @@ class ChatEndpoint(BaseEndpoint):
         """
         json_obj = response.get_json()
         if not json_obj:
+            return None
+
+        # A bare-list/string/int 200-OK body (e.g. a chat endpoint pointed at a
+        # TGI/HF server, which returns ``[{...}]``) would crash
+        # ``_fast_parse_data_key``'s ``json_obj.get("object")`` — the fast-path
+        # try/except catches only (IndexError, KeyError, TypeError), NOT
+        # AttributeError, so it propagates through the worker's unconditional
+        # post-response parse and drops every record. Degrade to a clean
+        # no-content error record instead (mirrors huggingface_generate.py).
+        if not isinstance(json_obj, dict):
             return None
 
         fast_parsed = self._fast_parse_response(json_obj, response.perf_ns)

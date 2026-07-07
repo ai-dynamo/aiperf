@@ -52,9 +52,14 @@ def build_inference_wire_message(
     inference_client: InferenceClient,
     record: RequestRecord,
     include_raw_export_fields: bool,
-    include_trace_data: bool,
+    include_raw_trace_fields: bool,
 ) -> InferenceResultsWireMessage:
-    """Build the msgspec worker->record-processor wire payload."""
+    """Build the msgspec worker->record-processor wire payload.
+
+    ``include_raw_trace_fields`` gates only the heavy raw HTTP-trace fields
+    (per-chunk lists, headers, socket info); the trace timing subset always
+    rides the wire so the aggregate ``http_req_*`` metrics compute by default.
+    """
     raw_payload = None
     if include_raw_export_fields and record.request_info is not None:
         # Mirror the verbatim raw_payload fast path used when sending: if the
@@ -74,7 +79,7 @@ def build_inference_wire_message(
         raw_payload=raw_payload,
         include_request_headers=include_raw_export_fields,
         include_status=include_raw_export_fields,
-        include_trace_data=include_trace_data,
+        include_raw_trace_fields=include_raw_trace_fields,
     )
 
 
@@ -84,7 +89,7 @@ def serialize_inference_wire(
     inference_client: InferenceClient,
     record: RequestRecord,
     include_raw_export_fields: bool,
-    include_trace_data: bool,
+    include_raw_trace_fields: bool,
 ) -> bytes:
     """Serialize the msgspec worker->record-processor wire payload."""
     return encode_inference_results_wire_message(
@@ -93,7 +98,7 @@ def serialize_inference_wire(
             inference_client=inference_client,
             record=record,
             include_raw_export_fields=include_raw_export_fields,
-            include_trace_data=include_trace_data,
+            include_raw_trace_fields=include_raw_trace_fields,
         )
     )
 

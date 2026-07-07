@@ -169,6 +169,12 @@ class ImageEditEndpoint(BaseEndpoint):
             )
             return None
 
+        # A bare-list/string/int 200-OK body would crash the ``json_obj.get(...)``
+        # calls below on the worker's unconditional post-response parse and drop
+        # every record. Degrade to a clean no-content error record instead.
+        if not isinstance(json_obj, dict):
+            return None
+
         images: list[ImageDataItem] = []
         for item in json_obj.get("data", []) or []:
             # Skip non-dict ``data`` items (``[None]``, ``['x']``, ``[5]``) so a

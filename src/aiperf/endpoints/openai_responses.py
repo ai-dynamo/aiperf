@@ -259,6 +259,14 @@ class ResponsesEndpoint(BaseEndpoint):
         ``response.output_text.done`` de-duplication without re-parsing the
         JSON a second time.
         """
+        # A bare-list/string/int 200-OK body would crash the ``json_obj.get(...)``
+        # calls below on the worker's unconditional post-response parse and drop
+        # every record. Degrade to a clean no-content error record instead
+        # (mirrors huggingface_generate.py). This is the shared choke point for
+        # both parse_response and extract_response_data.
+        if not isinstance(json_obj, dict):
+            return None
+
         # Streaming: events have a "type" field
         if "type" in json_obj:
             return self._parse_streaming_event(json_obj, perf_ns)
@@ -548,7 +556,9 @@ class ResponsesEndpoint(BaseEndpoint):
 
         for response in record.responses:
             json_obj = response.get_json()
-            if not json_obj:
+            if not isinstance(json_obj, dict):
+                # Same top-level guard as parse_response: a bare-list/string/int
+                # body would crash ``_replay.is_failure_event``'s ``.get(...)``.
                 continue
             if _replay.is_failure_event(json_obj):
                 return super().build_assistant_turn(record)

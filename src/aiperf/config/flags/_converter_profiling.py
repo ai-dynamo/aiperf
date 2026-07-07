@@ -142,17 +142,29 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
             "concurrency/rate timing mode."
         )
 
+    # --request-rate-ramp-duration ramps a global request rate. User-centric
+    # mode paces per-user turn gaps (UserCentricStrategy is not rate-settable),
+    # so the ramp would silently no-op — reject the combo to match the
+    # compatibility matrix rather than accept-and-ignore it.
+    if "rate_ramp" in prof and phase_type == PhaseType.USER_CENTRIC:
+        raise ValueError(
+            "--request-rate-ramp-duration is not supported with "
+            "--user-centric-rate. User-centric mode paces per-user turn gaps "
+            "rather than a global request rate, so the ramp cannot take effect. "
+            "Drop --request-rate-ramp-duration, or switch to --request-rate to "
+            "ramp a global QPS."
+        )
+
     # --request-rate-ramp-duration only ramps rate-controlled phases.
     if "rate_ramp" in prof and phase_type not in (
         PhaseType.POISSON,
         PhaseType.GAMMA,
         PhaseType.CONSTANT,
-        PhaseType.USER_CENTRIC,
     ):
         raise ValueError(
             "--request-rate-ramp-duration can only be used with rate-controlled "
-            "scheduling (--request-rate or --user-centric-rate). Pass one of "
-            "those to enable rate ramping, or drop --request-rate-ramp-duration."
+            "scheduling (--request-rate). Pass --request-rate to enable rate "
+            "ramping, or drop --request-rate-ramp-duration."
         )
 
 

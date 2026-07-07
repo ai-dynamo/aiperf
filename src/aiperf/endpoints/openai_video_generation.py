@@ -105,6 +105,12 @@ class VideoGenerationEndpoint(BaseEndpoint):
             )
             return None
 
+        # A bare-list/string/int 200-OK body would crash the ``json_obj.get(...)``
+        # calls below on the worker's unconditional post-response parse and drop
+        # every record. Degrade to a clean no-content error record instead.
+        if not isinstance(json_obj, dict):
+            return None
+
         # Parse SGLang/OpenAI VideoResponse format
         video_data = VideoResponseData(
             video_id=json_obj.get("id"),

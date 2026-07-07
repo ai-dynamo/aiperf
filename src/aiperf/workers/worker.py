@@ -1296,7 +1296,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             inference_client=self.inference_client,
             record=record,
             include_raw_export_fields=self.run.cfg.artifacts.raw,
-            include_trace_data=self.run.cfg.artifacts.trace,
+            include_raw_trace_fields=self.run.cfg.artifacts.trace,
         )
 
     def _serialize_inference_wire(self, record: RequestRecord) -> bytes:
@@ -1306,7 +1306,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             inference_client=self.inference_client,
             record=record,
             include_raw_export_fields=self.run.cfg.artifacts.raw,
-            include_trace_data=self.run.cfg.artifacts.trace,
+            include_raw_trace_fields=self.run.cfg.artifacts.trace,
         )
 
     async def _send_inference_result_message(self, record: RequestRecord) -> None:

@@ -108,6 +108,12 @@ class EmbeddingsEndpoint(BaseEndpoint):
             )
             return None
 
+        # A bare-list/string/int 200-OK body would crash ``json_obj.get("data")``
+        # below on the worker's unconditional post-response parse and drop every
+        # record. Degrade to a clean no-content error record instead.
+        if not isinstance(json_obj, dict):
+            return None
+
         data = json_obj.get("data", [])
         if not data:
             self.debug(lambda: f"No data found in response: {json_obj}")

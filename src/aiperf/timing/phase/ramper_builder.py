@@ -108,10 +108,6 @@ def _build_rate_ramper(
     start_rate = config.request_rate * (
         update_interval / config.request_rate_ramp_duration_sec
     )
-    info(
-        f"Starting request rate ramp: {start_rate:.2f} → {config.request_rate} QPS "
-        f"over {config.request_rate_ramp_duration_sec}s"
-    )
     ramp_config = TimingRampConfig(
         ramp_type=RampType.LINEAR,
         start=start_rate,
@@ -119,10 +115,17 @@ def _build_rate_ramper(
         duration_sec=config.request_rate_ramp_duration_sec,
         update_interval=update_interval,
     )
+    # Log only after confirming the strategy can actually be ramped: emitting
+    # "Starting request rate ramp" before the guard misleads users into
+    # thinking a non-rate-settable strategy (e.g. user-centric) is ramping.
     if not isinstance(strategy, RateSettableProtocol):
         warning(
             f"Strategy {strategy.__class__.__name__} does not implement RateSettableProtocol. "
             "Request rate will be fixed at the target value."
         )
         return None
+    info(
+        f"Starting request rate ramp: {start_rate:.2f} → {config.request_rate} QPS "
+        f"over {config.request_rate_ramp_duration_sec}s"
+    )
     return Ramper(setter=strategy.set_request_rate, config=ramp_config)

@@ -43,6 +43,7 @@ from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
 from aiperf.endpoints.huggingface_generate import HuggingFaceGenerateEndpoint
 from aiperf.endpoints.nim_image_retrieval import ImageRetrievalEndpoint
 from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
+from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.endpoints.openai_image_edit import ImageEditEndpoint
@@ -263,6 +264,14 @@ def _assert_text(result: ParsedResponse | None, expected: str) -> bool:
 
 VALID_BODY_CASES = [
     param(
+        ChatEndpoint,
+        EndpointType.CHAT,
+        None,
+        {"object": "chat.completion", "choices": [{"message": {"content": "chat hi"}}]},
+        lambda r: _assert_text(r, "chat hi"),
+        id="chat-valid",
+    ),
+    param(
         CompletionsEndpoint,
         EndpointType.COMPLETIONS,
         None,
@@ -370,3 +379,100 @@ def test_base_endpoint_try_extract_text_survives_non_dict_choice():
     # Happy path still extracts.
     ok = endpoint.try_extract_text({"choices": [{"text": "yes"}]})
     assert isinstance(ok, TextResponseData) and ok.text == "yes"
+
+
+# ---------------------------------------------------------------------------
+# TOP-LEVEL non-dict body (the variant wave 9 explicitly deferred).
+#
+# Wave 9 guarded malformed *list items* but left the *top-level* non-dict body
+# unguarded. A server returning HTTP 200 with a bare-list / bare-string /
+# bare-int body — e.g. a chat/completions endpoint pointed at a TGI/HF server,
+# which returns ``[{...}]`` — crashed ``parse_response`` at the very first
+# ``json_obj.get(...)`` with ``AttributeError: 'list'/'str'/'int' object has no
+# attribute 'get'``. For chat this is ``_fast_parse_data_key``'s
+# ``json_obj.get("object")``; the fast-path try/except catches only
+# (IndexError, KeyError, TypeError), NOT AttributeError, so it propagated
+# through the worker's unconditional post-response parse (``worker.py``
+# ``_request_latency_ns_for_record``) BEFORE ``_send_inference_result_message``,
+# DROPPING every record from the metrics pipeline and mislabelling the credit.
+# A chat endpoint pointed at a TGI server drops EVERY record.
+#
+# Every affected endpoint must now degrade a top-level non-dict body to
+# ``None``. ``huggingface_generate`` (top-level ``[{"generated_text": ...}]`` is
+# its valid TGI shape) and ``hf_tei_rankings`` (top-level-list passthrough) are
+# excluded — they legitimately accept a top-level list; both are pinned below.
+# ---------------------------------------------------------------------------
+
+AFFECTED_ENDPOINTS = [
+    param(ChatEndpoint, EndpointType.CHAT, None, id="chat"),
+    param(CompletionsEndpoint, EndpointType.COMPLETIONS, None, id="completions"),
+    param(EmbeddingsEndpoint, EndpointType.EMBEDDINGS, None, id="embeddings"),
+    param(ResponsesEndpoint, EndpointType.RESPONSES, None, id="responses"),
+    param(ImageGenerationEndpoint, EndpointType.IMAGE_GENERATION, None, id="image_generation"),
+    param(ImageEditEndpoint, EndpointType.IMAGE_EDIT, None, id="image_edit"),
+    param(ImageRetrievalEndpoint, EndpointType.IMAGE_RETRIEVAL, None, id="image_retrieval"),
+    param(VideoGenerationEndpoint, EndpointType.VIDEO_GENERATION, None, id="video_generation"),
+    param(CohereRankingsEndpoint, EndpointType.COHERE_RANKINGS, None, id="cohere_rankings"),
+    param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, None, id="nim_rankings"),
+    param(SolidoEndpoint, EndpointType.SOLIDO_RAG, None, id="solido_rag"),
+    param(ChatEmbeddingsEndpoint, EndpointType.CHAT_EMBEDDINGS, None, id="chat_embeddings"),
+    param(RawEndpoint, EndpointType.RAW, None, id="raw"),
+    param(
+        TemplateEndpoint,
+        EndpointType.TEMPLATE,
+        {"body": "{}", "response_field": "text"},
+        id="template",
+    ),
+]  # fmt: skip
+
+# Bare, top-level non-dict 200-OK bodies that previously crashed the first
+# ``json_obj.get(...)`` with AttributeError. ``[]`` and ``0`` are already caught
+# by the pre-existing ``if not json_obj`` falsy check; the rest are the actual
+# regression surface.
+TOP_LEVEL_NON_DICT_BODIES = [
+    param([{"generated_text": "hi"}], id="bare-list-of-dicts"),
+    param([1, 2, 3], id="bare-list-of-ints"),
+    param("oops", id="bare-string"),
+    param(5, id="bare-int"),
+    param([], id="empty-list"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("cls, endpoint_type, template", AFFECTED_ENDPOINTS)
+@pytest.mark.parametrize("body", TOP_LEVEL_NON_DICT_BODIES)
+def test_top_level_non_dict_body_degrades_to_none(cls, endpoint_type, template, body):
+    """A top-level non-dict 200 body degrades to ``None`` without raising.
+
+    Fails before the fix (raises ``AttributeError`` at the first
+    ``json_obj.get(...)``); passes after, once the top-level ``isinstance`` guard
+    degrades the body to a clean no-content error record.
+    """
+    endpoint = _make_endpoint(cls, endpoint_type, template)
+    assert _parse_without_bug_crash(endpoint, body) is None
+
+
+def test_huggingface_generate_top_level_list_still_parses():
+    """huggingface_generate legitimately treats ``[{"generated_text": ...}]`` as
+    its valid TGI shape — it is not one of the top-level-dict-only endpoints, so
+    the top-level guard must NOT reject its list body."""
+    endpoint = _make_endpoint(
+        HuggingFaceGenerateEndpoint, EndpointType.HUGGINGFACE_GENERATE
+    )
+    result = endpoint.parse_response(
+        create_mock_response(123456789, [{"generated_text": "hi there"}])
+    )
+    _assert_text(result, "hi there")
+
+
+def test_hf_tei_rankings_top_level_list_still_parses():
+    """hf_tei_rankings legitimately treats a top-level list as its ranking
+    payload — the top-level-dict guard is deliberately NOT applied to it (it
+    lives per-endpoint in cohere/nim ``extract_rankings``, not the shared base
+    ``parse_response``)."""
+    endpoint = _make_endpoint(HFTeiRankingsEndpoint, EndpointType.HF_TEI_RANKINGS)
+    result = endpoint.parse_response(
+        create_mock_response(123456789, [{"index": 0, "score": 0.9}])
+    )
+    assert result is not None
+    assert isinstance(result.data, RankingsResponseData)
+    assert result.data.rankings == [{"index": 0, "score": 0.9}]

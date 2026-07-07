@@ -520,7 +520,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--dataset-sampling-strategy` `<str>`
 
-Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
+Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for synthetic and trace datasets, `shuffle` for random-pool datasets).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
 
 #### `--random-seed` `<int>`
@@ -1831,7 +1831,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--dataset-sampling-strategy` `<str>`
 
-Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
+Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for synthetic and trace datasets, `shuffle` for random-pool datasets).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
 
 #### `--random-seed` `<int>`
@@ -3323,7 +3323,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--dataset-sampling-strategy` `<str>`
 
-Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
+Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for synthetic and trace datasets, `shuffle` for random-pool datasets).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
 
 #### `--random-seed` `<int>`
@@ -4731,7 +4731,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--dataset-sampling-strategy` `<str>`
 
-Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
+Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for synthetic and trace datasets, `shuffle` for random-pool datasets).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
 
 #### `--random-seed` `<int>`
@@ -6150,7 +6150,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--dataset-sampling-strategy` `<str>`
 
-Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
+Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for synthetic and trace datasets, `shuffle` for random-pool datasets).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
 
 #### `--random-seed` `<int>`

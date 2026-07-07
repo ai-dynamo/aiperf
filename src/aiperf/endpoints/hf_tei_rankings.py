@@ -21,4 +21,8 @@ class HFTeiRankingsEndpoint(BaseRankingsEndpoint):
 
     def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract ranking results from Huggingface TEI Rankings API response."""
-        return json_obj if isinstance(json_obj, list) else json_obj.get("results", [])
+        if isinstance(json_obj, list):
+            return json_obj
+        # A bare string/int 200-OK body degrades to no results rather than
+        # crashing .get on a non-dict, matching the other endpoints' guard.
+        return json_obj.get("results", []) if isinstance(json_obj, dict) else []

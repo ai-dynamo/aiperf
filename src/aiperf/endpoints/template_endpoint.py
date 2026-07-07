@@ -156,6 +156,14 @@ class TemplateEndpoint(BaseEndpoint):
                 )
             return None
 
+        # A bare-list/string/int 200-OK body would crash
+        # ``auto_detect_and_extract``'s ``json_obj.get(...)`` on the worker's
+        # unconditional post-response parse and drop every record. Degrade to a
+        # clean no-content error record instead. (The JMESPath branch below
+        # tolerates a non-dict root, but auto-detect does not.)
+        if not isinstance(json_obj, dict):
+            return None
+
         response_data = None
         if self._compiled_jmespath:
             # User explicitly set `template.responseField`. Honor it strictly:
