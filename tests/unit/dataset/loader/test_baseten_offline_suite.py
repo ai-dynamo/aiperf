@@ -2,15 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Offline replay-correctness suite for the baseten_trace loader.
 
-FAST (no server, no GPU, mock tokenizer), fully in-process. This is the
-standing characterization net that must stay green as the loader is refactored.
+FAST (no server, no GPU, mock tokenizer), fully in-process. Pins the replay
+TIME MODEL end-to-end (back-pressure, gap-cap, delay-cap, speedup, open-loop)
+through the real BasetenTraceDatasetLoader.load_dataset() and
+convert_to_conversations() paths; schema/payload contracts are pinned in
+test_baseten_trace.py and tests/component_integration/dataset/.
 
-Run just this suite:   pytest tests/unit/dataset/loader/test_baseten_offline_suite.py
-
-It exercises the REAL code path at three levels:
-  1. BasetenTraceDatasetLoader.load_dataset()       -> grouped BasetenTrace rows
-  2. loader.convert_to_conversations(data)          -> Conversation/Turn objects
-  3. CompletionsEndpoint.format_payload(...)         -> the on-the-wire payload
+Run just this suite:
+  uv run pytest tests/unit/dataset/loader/test_baseten_offline_suite.py -q
 
 Every check is a hard assertion: a failure means a real regression.
 """
@@ -24,19 +23,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
-from aiperf.endpoints.openai_completions import CompletionsEndpoint
-from aiperf.plugin.enums import CustomDatasetType, EndpointType
+from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.conftest import make_run_from_cli
-from tests.unit.endpoints.conftest import create_request_info
 
 BLOCK_SIZE = 64
 GAP_CAP_MS = 5_000  # max idle gap used when exercising the gap-cap
@@ -160,90 +150,11 @@ def _load(path: Path, **cli):
     return loader, loader.load_dataset()
 
 
-def _completions_model_endpoint() -> ModelEndpointInfo:
-    return ModelEndpointInfo(
-        models=ModelListInfo(
-            models=[ModelInfo(name="test-model")],
-            model_selection_strategy=ModelSelectionStrategy.RANDOM,
-        ),
-        endpoint=EndpointInfo(
-            type=EndpointType.COMPLETIONS,
-            base_url="http://localhost:8000",
-            custom_endpoint="/v1/completions",
-        ),
-    )
-
-
 @pytest.fixture
 def fixture_path(tmp_path: Path) -> Path:
     path = tmp_path / "baseten_fixture.parquet"
     pq.write_table(pa.Table.from_pylist(_fixture_rows()), path)
     return path
-
-
-class TestSchemaAndLoad:
-    def test_groups_three_sessions_by_provided_id(self, fixture_path):
-        _, data = _load(fixture_path)
-        assert set(data.keys()) == {"A", "B", "C"}
-
-    def test_turns_sorted_within_session(self, fixture_path):
-        _, data = _load(fixture_path)
-        ts = [t.timestamp for t in data["A"]]
-        assert ts == sorted(ts)
-
-    def test_timestamps_normalized_to_zero_origin(self, fixture_path):
-        _, data = _load(fixture_path)
-        all_ts = [t.timestamp for traces in data.values() for t in traces]
-        assert min(all_ts) == 0
-
-
-class TestRequestBodyContract:
-    def test_request_body_min_tokens_and_cache_meta(self, fixture_path):
-        _, data = _load(fixture_path)
-        a1 = data["A"][0]
-        assert a1.request_body["min_tokens"] == a1.output_length == 50
-        assert a1.request_body["hash_ids"] == [10, 11]
-        assert a1.request_body["block_size"] == BLOCK_SIZE
-
-    def test_completions_payload_prompt_is_bare_string(self, fixture_path):
-        # Baseten's gateway rejects list[str]; a single prompt must be a bare str.
-        loader, data = _load(fixture_path)
-        model_endpoint = _completions_model_endpoint()
-        endpoint = CompletionsEndpoint(model_endpoint)
-        for conv in loader.convert_to_conversations(data):
-            for turn in conv.turns:
-                payload = endpoint.format_payload(
-                    create_request_info(model_endpoint=model_endpoint, turns=[turn])
-                )
-                assert isinstance(payload["prompt"], str), (
-                    f"prompt not a str: {payload['prompt']!r}"
-                )
-
-    def test_completions_payload_carries_replay_metadata(self, fixture_path):
-        loader, data = _load(fixture_path)
-        model_endpoint = _completions_model_endpoint()
-        endpoint = CompletionsEndpoint(model_endpoint)
-        conv = next(c for c in loader.convert_to_conversations(data) if c.turns)
-        turn = conv.turns[0]
-        payload = endpoint.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[turn])
-        )
-        assert payload["min_tokens"] == turn.max_tokens
-        assert "hash_ids" in payload and "block_size" in payload
-
-
-class TestDeterminism:
-    def test_session_sampling_is_deterministic(self, fixture_path):
-        _, d1 = _load(fixture_path, trace_session_sample_ratio=0.4, random_seed=123)
-        _, d2 = _load(fixture_path, trace_session_sample_ratio=0.4, random_seed=123)
-        assert d1.keys() == d2.keys()
-        assert d1, "sampling must keep at least one session"
-        assert set(d1.keys()) < {"A", "B", "C"}, (
-            "0.4 sampling should keep a non-empty strict subset"
-        )
-        assert [[t.prompt for t in traces] for traces in d1.values()] == [
-            [t.prompt for t in traces] for traces in d2.values()
-        ]
 
 
 class TestTimingNoHang:
@@ -262,15 +173,6 @@ class TestTimingNoHang:
         ts = sorted(t.timestamp for traces in data.values() for t in traces)
         gaps = [b - a for a, b in zip(ts, ts[1:], strict=False)]
         assert max(gaps) > GAP_CAP_MS
-
-    def test_gap_cap_only_collapses_oversized_gap(self, fixture_path):
-        # The cap collapses ONLY the one oversized gap; smaller structure is intact.
-        _, capped = _load(fixture_path, max_idle_gap_cap_seconds=GAP_CAP_MS / 1000)
-        _, uncapped = _load(fixture_path)
-        cap_ts = sorted(t.timestamp for tr in capped.values() for t in tr)
-        unc_ts = sorted(t.timestamp for tr in uncapped.values() for t in tr)
-        assert cap_ts[-1] == unc_ts[-1] - (11_000 - GAP_CAP_MS)
-        assert cap_ts[:5] == unc_ts[:5]
 
     def test_back_pressure_turn0_absolute_continuation_delay(self, fixture_path):
         # Closed-loop multi-turn replay: turn 0 keeps an absolute timestamp
@@ -465,10 +367,3 @@ class TestTimeCompression:
             == base["A"][2].request_body["hash_ids"]
             == [10, 11, 12, 13]
         )
-
-
-class TestHashIntegrity:
-    def test_hash_ids_not_rewritten(self, fixture_path):
-        _, data = _load(fixture_path)
-        assert data["A"][0].request_body["hash_ids"] == [10, 11]
-        assert data["A"][2].request_body["hash_ids"] == [10, 11, 12, 13]

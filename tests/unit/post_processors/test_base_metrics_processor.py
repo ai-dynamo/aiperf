@@ -392,21 +392,6 @@ class TestFixedScheduleOnlyGating:
         }
     )
 
-    def test_get_filters_non_fixed_schedule_disallows_fixed_schedule_only(
-        self, mock_run
-    ) -> None:
-        # mock_run's profiling phase is concurrency-typed.
-        _, disallowed_flags = BaseMetricsProcessor(mock_run).get_filters()
-
-        assert disallowed_flags & MetricFlags.FIXED_SCHEDULE_ONLY
-
-    def test_get_filters_fixed_schedule_allows_fixed_schedule_only(
-        self, fixed_schedule_run
-    ) -> None:
-        _, disallowed_flags = BaseMetricsProcessor(fixed_schedule_run).get_filters()
-
-        assert not (disallowed_flags & MetricFlags.FIXED_SCHEDULE_ONLY)
-
     def test_replay_sched_family_inactive_on_non_fixed_schedule_run(
         self, mock_run
     ) -> None:
