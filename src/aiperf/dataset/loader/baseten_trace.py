@@ -229,6 +229,16 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
+        # Reject synthesis speedup on every config path (YAML, auto-detected
+        # type): it compounds with replay_speedup and bypasses the think-time
+        # subtraction in back-pressure.
+        synthesis_speedup = getattr(self._synthesis, "speedup_ratio", 1.0)
+        if synthesis_speedup != 1.0:
+            raise ValueError(
+                f"synthesis speedup_ratio={synthesis_speedup} is not supported "
+                "by the baseten_trace loader; use --replay-speedup for "
+                "wall-clock compression."
+            )
         self._open_loop = getattr(dataset, "open_loop_replay", True)
         self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
         self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)

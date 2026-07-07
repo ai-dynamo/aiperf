@@ -833,6 +833,38 @@ class TestBasetenTraceDatasetLoader:
         assert trace.output_length == 3
         assert trace.request_body == {"min_tokens": 3}
 
+    def test_synthesis_speedup_ratio_rejected(self, tmp_path: Path):
+        path = self._write_hinted_single_row(tmp_path)
+        # No custom_dataset_type: the auto-detected path must be rejected by
+        # the loader itself, not only by explicit CLI-flag validation.
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                input_file=str(path),
+                synthesis_speedup_ratio=10.0,
+            )
+        )
+
+        with pytest.raises(ValueError, match="--replay-speedup"):
+            BasetenTraceDatasetLoader(
+                filename=str(path),
+                run=run,
+                prompt_generator=_mock_prompt_generator(),
+            )
+
+    def test_non_speedup_synthesis_still_loads(self, tmp_path: Path):
+        path = self._write_hinted_single_row(tmp_path)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, synthesis_output_len_multiplier=2.0),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert trace.output_length == 8
+
 
 class TestBasetenTraceModel:
     def test_model_accepts_null_hashes_and_numeric_provided_session_id(self):
