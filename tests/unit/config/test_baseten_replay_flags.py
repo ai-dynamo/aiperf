@@ -20,6 +20,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.flags._converter_dataset import build_dataset
@@ -312,6 +313,38 @@ class TestOpenLoopContradictionGuard:
         )
         assert dataset.open_loop_replay is True
         assert dataset.open_loop_strict is True
+
+
+class TestMaxIdleGapCapMustBePositive:
+    """0 (or negative) silently disabled the reflow; ``gt=0`` rejects it."""
+
+    @pytest.mark.parametrize("bad", ["0", "-1"])  # fmt: skip
+    def test_cli_rejects_non_positive(self, trace_parquet: Path, bad: str) -> None:
+        from cyclopts.exceptions import ValidationError as CycloptsValidationError
+
+        with pytest.raises(
+            CycloptsValidationError, match="Input should be greater than 0"
+        ):
+            _parse_cli_args(
+                _baseten_argv(trace_parquet, "--max-idle-gap-cap-seconds", bad)
+            )
+
+    def test_file_dataset_rejects_zero(self, trace_parquet: Path) -> None:
+        from aiperf.config.dataset import FileDataset
+
+        with pytest.raises(ValidationError, match="greater than 0"):
+            FileDataset(
+                name="d",
+                type="file",
+                path=trace_parquet,
+                max_idle_gap_cap_seconds=0.0,
+            )
+
+    def test_small_positive_cap_accepted(self, trace_parquet: Path) -> None:
+        dataset = _dataset_from_argv(
+            _baseten_argv(trace_parquet, "--max-idle-gap-cap-seconds", "0.5")
+        )
+        assert dataset.max_idle_gap_cap_seconds == 0.5
 
 
 @pytest.fixture

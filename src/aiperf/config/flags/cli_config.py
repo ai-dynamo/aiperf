@@ -589,7 +589,8 @@ class CLIConfig(BaseConfig):
             "Applied at the whole-session level after rows are grouped into "
             "sessions, preserving multi-turn integrity. Useful for replaying "
             "a live 10% slice of a large production trace. Sampling is "
-            "deterministic when `--random-seed` is set.",
+            "deterministic when `--random-seed` is set. Only supported by the "
+            "baseten_trace loader.",
         ),
         CLIParameter(
             name=("--trace-session-sample-ratio",),
@@ -847,11 +848,12 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Clamp per-turn replay delays (read from JSONL trace "
-            "files) to at most this many seconds. ``None`` disables the cap. "
-            "Used by the DAG JSONL loader to keep long pre-recorded waits "
-            "from stalling the benchmark; the loader reports the clamp count "
-            "at end of load. Routes onto the active FileDataset's "
+            description="Clamp per-turn replay delays to at most this many "
+            "seconds, keeping long pre-recorded waits from stalling the "
+            "benchmark. ``None`` disables the cap. Honored by the DAG JSONL "
+            "loader (delays read from the trace file) and by the baseten_trace "
+            "loader's closed-loop back-pressure think-times; the loader reports "
+            "the clamp count at end of load. Routes onto the active FileDataset's "
             "``inter_turn_delay_cap_seconds`` field at config-resolution time.",
         ),
         CLIParameter(
@@ -864,12 +866,13 @@ class CLIConfig(BaseConfig):
         float | None,
         Field(
             default=None,
-            ge=0.0,
+            gt=0.0,
             description="Collapse global idle gaps in a trace replay schedule to "
-            "at most this many seconds. After whole-session sampling a sparse "
-            "trace otherwise replays across the original wall-clock span with "
-            "long dead-air stretches that stall fixed-schedule replay. ``None`` "
-            "disables the cap. Routes onto the active FileDataset's "
+            "at most this many seconds (must be > 0). After whole-session "
+            "sampling a sparse trace otherwise replays across the original "
+            "wall-clock span with long dead-air stretches that stall "
+            "fixed-schedule replay. ``None`` disables the cap. Only supported "
+            "by the baseten_trace loader. Routes onto the active FileDataset's "
             "``max_idle_gap_cap_seconds`` field at config-resolution time.",
         ),
         CLIParameter(
@@ -886,8 +889,9 @@ class CLIConfig(BaseConfig):
             description="Wall-clock compression factor for trace replay (e.g. 10 = "
             "replay 10x faster than recorded). Divides all normalized timestamps and "
             "inter-turn delays so a ~2h trace replays in minutes. ``None`` = real "
-            "time. Does NOT touch hash_ids (unlike synthesis speedup_ratio). Routes "
-            "onto the active FileDataset's ``replay_speedup`` at config-resolution time.",
+            "time. Does NOT touch hash_ids (unlike synthesis speedup_ratio). Only "
+            "supported by the baseten_trace loader. Routes onto the active "
+            "FileDataset's ``replay_speedup`` at config-resolution time.",
         ),
         CLIParameter(
             name=("--replay-speedup",),
@@ -899,14 +903,17 @@ class CLIConfig(BaseConfig):
         bool,
         Field(
             default=True,
-            description="Open-loop absolute-timestamp replay (the default): every "
-            "recorded request fires at its absolute (speedup-scaled) timestamp, "
-            "bypassing per-turn back-pressure. Pass `--no-open-loop-replay` for "
-            "closed-loop back-pressure: each continuation turn fires a think-time "
-            "delay after the prior turn completes (recorded start-to-start gap minus "
-            "the prior turn's recorded e2e duration). Closed-loop keeps sessions "
-            "causally ordered when replayed service times differ from recorded ones, "
-            "e.g. for A/A comparisons. Only honored by the baseten_trace loader. "
+            description="Open-loop absolute-timestamp replay (the default): each "
+            "session starts at its absolute (speedup-scaled) recorded timestamp "
+            "regardless of earlier sessions' completions; continuation turns fire "
+            "at max(recorded timestamp, prior-turn completion), so a slow server "
+            "still delays them (pass `--open-loop-strict` to fire every row at its "
+            "absolute timestamp). Pass `--no-open-loop-replay` for closed-loop "
+            "back-pressure: each continuation turn fires a think-time delay after "
+            "the prior turn completes (recorded start-to-start gap minus the prior "
+            "turn's recorded e2e duration). Closed-loop keeps sessions causally "
+            "ordered when replayed service times differ from recorded ones, e.g. "
+            "for A/A comparisons. Only honored by the baseten_trace loader. "
             "Routes onto the active FileDataset's ``open_loop_replay`` field at "
             "config-resolution time.",
         ),
@@ -1118,10 +1125,11 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`, `baseten_trace`). When `hash_ids` are provided in trace entries, "
-            "prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation "
-            "of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. "
-            "When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).",
+            description="Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached "
+            "block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length "
+            "equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is "
+            "rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata "
+            "(16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).",
         ),
         CLIParameter(
             name=(
