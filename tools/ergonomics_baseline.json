@@ -1453,11 +1453,6 @@
     ],
     [
       "keyword-only-args",
-      "src/aiperf/cli_commands/swim_lane.py",
-      "swim_lane"
-    ],
-    [
-      "keyword-only-args",
       "src/aiperf/cli_commands/turn_messages.py",
       "turn_messages"
     ],

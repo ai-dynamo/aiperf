@@ -19,6 +19,7 @@ app = App(
 @app.default
 def swim_lane(
     run_dirs: list[Path],
+    *,
     out: Annotated[Path | None, Parameter(name=["-o", "--out"])] = None,
     concurrency: Annotated[int | None, Parameter(name=["-c", "--concurrency"])] = None,
     ramp: Annotated[float | None, Parameter(name=["--ramp"])] = None,
