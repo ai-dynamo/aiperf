@@ -72,7 +72,7 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             sf.write(buf, array, sr, format="WAV")
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             return [Audio(name="", contents=[f"wav,{b64}"])]
-        except (OSError, ValueError, RuntimeError) as e:
+        except (ImportError, OSError, ValueError, RuntimeError) as e:
             self.debug(
                 lambda exc=e: f"Failed to decode audio bytes: {exc.__class__.__name__}: {exc}"
             )
@@ -88,7 +88,7 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
 
             info = sf.info(io.BytesIO(raw_bytes))
             return info.duration
-        except (OSError, ValueError, RuntimeError) as e:
+        except (ImportError, OSError, ValueError, RuntimeError) as e:
             self.debug(
                 lambda exc=e: f"Failed to estimate audio duration: {exc.__class__.__name__}: {exc}"
             )

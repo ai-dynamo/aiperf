@@ -545,9 +545,10 @@ async def test_huggingface_dataset_revision_is_pinned() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_DATASETS, reason="datasets has no Windows-on-ARM wheel")
 async def test_v2_huggingface_dataset_revision_is_pinned() -> None:
     load_dataset = MagicMock(return_value=[])
-    with patch("aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", load_dataset):
+    with patch("datasets.load_dataset", load_dataset):
         ExgenticV2DatasetLoader(
             hf_dataset_name="Exgentic/agent-llm-traces-v2",
             streaming=True,

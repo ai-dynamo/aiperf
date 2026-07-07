@@ -37,7 +37,7 @@ SUPPORTED_BIT_DEPTHS = {
 }
 
 
-def _import_soundfile() -> ModuleType:
+def import_soundfile() -> ModuleType:
     """Import soundfile lazily with a clear error when libsndfile is unavailable.
 
     soundfile bundles libsndfile, which has no prebuilt Windows-on-ARM binary,
@@ -177,7 +177,7 @@ class AudioGenerator(BaseGenerator):
         elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
 
-        sf = _import_soundfile()
+        sf = import_soundfile()
 
         sf.write(
             output_buffer,

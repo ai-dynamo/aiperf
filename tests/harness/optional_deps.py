@@ -5,26 +5,35 @@
 
 Some dependencies ship no ``win_arm64`` wheel (pyarrow, datasets, cryptography
 via trustme) or bundle a native library with no ARM build (soundfile bundles
-libsndfile). Tests and source modules that hard-depend on these cannot run on
-platforms where the dependency is unavailable.
+libsndfile). A test module that imports one of these at module top can't even
+be collected on such a platform.
 
-This module is the single source of truth for *what* is unavailable and *which*
-modules to skip. It is consumed by:
-- ``tests/unit/conftest.py`` -- ``collect_ignore`` (skip whole test modules at
-  collection, before their import chain crashes the collector).
-- ``tests/unit/test_imports.py`` -- filters the all-modules import sweep so it
-  does not attempt (and hard-crash on) modules requiring absent native libs.
+Rather than hand-maintain a list of such test files (which silently rots as new
+tests are added), we **statically scan** each test module's top-level imports
+with ``ast`` -- never importing it, so the soundfile/libsndfile load that would
+crash is avoided -- and skip the ones that import a currently-unavailable dep.
+On platforms where every gated dep is present (dev / Linux / Windows-x86) the
+scan yields nothing, so those platforms are unaffected.
+
+Consumed by:
+- ``tests/unit/conftest.py`` and ``tests/component_integration/conftest.py`` --
+  ``collect_ignore`` (skip whole modules before their imports crash collection).
+- ``tests/unit/test_imports.py`` -- filters the all-modules import sweep, which
+  imports test modules directly and would otherwise crash on the same imports.
+
+The plot subtree is handled separately (``tests/unit/plot/conftest.py``): its
+kaleido/plotly stack imports fine but hard-crashes at *render* time, so it is
+gated on ``IS_WINDOWS_ARM`` rather than on a missing import.
 """
 
+import ast
 import importlib.util
-import platform
-
-from aiperf.common.constants import IS_WINDOWS
+from pathlib import Path
 
 # Windows-on-ARM: native render/codec backends (kaleido's browser engine, etc.)
 # have no working ARM build and hard-crash (access violation) rather than
 # raising, so affected tests must be skipped by platform rather than probed.
-IS_WINDOWS_ARM = IS_WINDOWS and platform.machine() == "ARM64"
+from aiperf.common.constants import IS_WINDOWS_ARM  # noqa: F401
 
 
 def is_installed(module: str) -> bool:
@@ -58,62 +67,83 @@ HAS_DATASETS = is_installed("datasets")
 HAS_TRUSTME = is_installed("trustme")
 HAS_SOUNDFILE = soundfile_usable()
 
-# --- Unit-test modules that must be skipped when a native dep is absent -------
-#
-# Only test modules that DIRECTLY import the dep at module top are listed: src
-# modules import these deps lazily (so importing a loader no longer requires
-# them), and the import-sweep test (test_imports.py) treats marker-gated
-# ImportErrors as expected skips. The plot subtree is handled separately in
-# tests/unit/plot/conftest.py (its visualization stack hard-crashes on win-arm).
-_PYARROW_TEST_RELPATHS = ("server_metrics/test_parquet_exporter.py",)
-_TRUSTME_TEST_RELPATHS = ("transports/test_tcp_connector.py",)
-# Accuracy benchmark tests import their (datasets-backed) benchmark module, and
-# test_hf_image_feature_schemas imports ``datasets`` directly.
-_DATASETS_TEST_RELPATHS = (
-    "accuracy/test_lcb_codegeneration_benchmark.py",
-    "accuracy/test_aime_benchmark.py",
-    "accuracy/test_aime24_benchmark.py",
-    "accuracy/test_aime25_benchmark.py",
-    "accuracy/test_bigbench_benchmark.py",
-    "accuracy/test_gpqa_diamond_benchmark.py",
-    "accuracy/test_gsm8k_benchmark.py",
-    "accuracy/test_math_500_benchmark.py",
-    "dataset/loader/test_hf_image_feature_schemas.py",
-)
-# These import ``soundfile`` directly at module top.
-_SOUNDFILE_TEST_RELPATHS = (
-    "dataset/generator/test_audio_generator.py",
-    "dataset/generator/test_video_generator.py",
-    "dataset/loader/test_hf_asr_loader.py",
-)
 
+def unavailable_gated_deps() -> set[str]:
+    """Top-level module names of gated native deps unusable on this platform.
 
-def unsupported_unit_test_relpaths() -> list[str]:
-    """Unit-test modules (relative to tests/unit) to skip given absent deps.
-
-    Each directly imports, at module top, a native dependency with no
-    Windows-on-ARM build, so it crashes at collection there.
+    A test importing any of these at module top cannot be collected here.
+    Empty on platforms where all are present.
     """
-    relpaths: list[str] = []
+    unavailable: set[str] = set()
     if not HAS_PYARROW:
-        relpaths += _PYARROW_TEST_RELPATHS
-    if not HAS_TRUSTME:
-        relpaths += _TRUSTME_TEST_RELPATHS
+        unavailable.add("pyarrow")
     if not HAS_DATASETS:
-        relpaths += _DATASETS_TEST_RELPATHS
+        unavailable.add("datasets")
+    if not HAS_TRUSTME:
+        unavailable.add("trustme")
     if not HAS_SOUNDFILE:
-        relpaths += _SOUNDFILE_TEST_RELPATHS
-    return relpaths
+        unavailable.add("soundfile")
+    return unavailable
 
 
-def unsupported_test_module_names() -> set[str]:
-    """``tests.unit.*`` dotted names for ``unsupported_unit_test_relpaths()``.
+def _top_level_imports(path: Path) -> set[str]:
+    """Top-level module names a file imports, via static AST parse (not executed).
 
-    The import-sweep test (test_imports.py) imports test modules directly,
-    bypassing ``collect_ignore``; the soundfile importers raise an OSError that
-    is not a ``ModuleNotFoundError``, so they must be filtered from the sweep.
+    Only module-scope imports count: imports inside functions or
+    ``if TYPE_CHECKING:`` blocks don't run at import time, so they can't crash
+    collection and are intentionally ignored. Relative imports (first-party)
+    are ignored too.
     """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def _test_files_needing_unavailable_deps(test_dir: Path) -> list[Path]:
+    """Sorted test files under ``test_dir`` whose top-level imports need a dep
+    that is unavailable on this platform. Empty when all gated deps are present.
+    """
+    unavailable = unavailable_gated_deps()
+    if not unavailable:
+        return []
+    return [
+        path
+        for path in sorted(test_dir.rglob("test_*.py"))
+        if _top_level_imports(path) & unavailable
+    ]
+
+
+def collect_ignore_for_unavailable_deps(test_dir: str | Path) -> list[str]:
+    """``collect_ignore`` entries (relative to ``test_dir``) for test modules
+    whose top-level imports need a dependency unavailable on this platform.
+
+    New tests that add a gated top-level import self-gate with no edits here.
+    """
+    base = Path(test_dir)
+    return [
+        str(path.relative_to(base))
+        for path in _test_files_needing_unavailable_deps(base)
+    ]
+
+
+def unsupported_test_module_names(
+    test_dir: str | Path, package_prefix: str
+) -> set[str]:
+    """Dotted module names (e.g. ``tests.unit.x.test_y``) for the same files.
+
+    ``test_imports.py`` imports test modules directly (bypassing
+    ``collect_ignore``), so it must filter the same set out of its sweep.
+    """
+    base = Path(test_dir)
     return {
-        "tests.unit." + rp[: -len(".py")].replace("/", ".")
-        for rp in unsupported_unit_test_relpaths()
+        package_prefix + "." + ".".join(path.relative_to(base).with_suffix("").parts)
+        for path in _test_files_needing_unavailable_deps(base)
     }

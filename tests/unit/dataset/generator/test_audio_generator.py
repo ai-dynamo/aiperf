@@ -17,7 +17,7 @@ from aiperf.config.distributions import NormalDistribution
 from aiperf.dataset.generator import (
     AudioGenerator,
 )
-from aiperf.dataset.generator.audio import _import_soundfile
+from aiperf.dataset.generator.audio import import_soundfile
 
 
 def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
@@ -274,7 +274,7 @@ class TestSoundfileGuard:
 
     def test_import_soundfile_returns_module_when_available(self):
         """On a platform with libsndfile, the helper returns the soundfile module."""
-        assert _import_soundfile() is sf
+        assert import_soundfile() is sf
 
     def test_import_soundfile_missing_raises_configuration_error(self, monkeypatch):
         """When soundfile/libsndfile cannot load, surface an actionable error.
@@ -285,4 +285,4 @@ class TestSoundfileGuard:
         """
         monkeypatch.setitem(sys.modules, "soundfile", None)
         with pytest.raises(ConfigurationError, match="libsndfile"):
-            _import_soundfile()
+            import_soundfile()

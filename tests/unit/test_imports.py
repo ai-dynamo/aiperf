@@ -154,7 +154,7 @@ AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
 # Test modules that directly import a no-Windows-on-ARM-wheel native dep are
 # excluded from the sweep: the soundfile importers raise OSError (not caught by
 # the ModuleNotFoundError rule above), and the rest are already known-skipped.
-_UNSUPPORTED_TEST_MODULES = unsupported_test_module_names()
+_UNSUPPORTED_TEST_MODULES = unsupported_test_module_names(TESTS_DIR, "tests")
 TEST_MODULES = [
     m
     for m in sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
