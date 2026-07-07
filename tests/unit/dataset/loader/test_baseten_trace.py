@@ -264,24 +264,13 @@ class TestBasetenTraceDatasetLoader:
         }
         assert all(turn.delay is None for turn in by_prompt.values())
 
-    @pytest.mark.parametrize(
-        "open_loop_replay, open_loop_strict",
-        [
-            param(True, False, id="strict_off"),
-            param(False, True, id="strict_requires_open_loop"),
-        ],
-    )  # fmt: skip
-    def test_convert_to_conversations_open_loop_strict_gate_keeps_grouping(
-        self, tmp_path: Path, open_loop_replay: bool, open_loop_strict: bool
-    ):
+    def test_convert_to_conversations_strict_off_keeps_grouping(self, tmp_path: Path):
+        # The contradictory strict + closed-loop combo is rejected at config
+        # parse time (pinned in tests/unit/config/test_baseten_replay_flags.py).
         path = self._write_multi_turn(tmp_path)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=_make_run(
-                path,
-                open_loop_replay=open_loop_replay,
-                open_loop_strict=open_loop_strict,
-            ),
+            run=_make_run(path, open_loop_replay=True, open_loop_strict=False),
             prompt_generator=_mock_prompt_generator(),
         )
 
