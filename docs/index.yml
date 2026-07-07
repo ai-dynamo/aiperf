@@ -333,16 +333,6 @@ navigation:
     path: dev/global-invariants.md
   - page: YAML Config Future Goals
     path: dev/yaml-config-future-goals.md
-  - page: "Research-Grade Algorithms: Gap Analysis"
-    path: dev/gap-analysis-research-grade-algorithms.md
-  - page: "Proposal: Statistical Foundations"
-    path: dev/proposal-statistical-foundations.md
-  - page: "Proposal: Confidence Intervals"
-    path: dev/proposal-confidence-intervals.md
-  - page: "Proposal: Coordinated Omission & Latency Decomposition"
-    path: dev/proposal-coordinated-omission-and-latency-decomposition.md
-  - page: "Proposal: Advanced Analysis"
-    path: dev/proposal-advanced-analysis.md
 
 - section: Troubleshooting
   collapsed: true
