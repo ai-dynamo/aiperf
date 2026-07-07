@@ -8,8 +8,8 @@ Covers the open-loop default flip (``--open-loop-replay`` /
 ``--force-min-tokens`` boolean flags, the converter guard rejecting the
 baseten-only knobs (value and boolean) on non-baseten datasets, the
 contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection,
-and the resolver warning for baseten-only knobs on auto-detected non-baseten
-datasets.
+the resolver warning for baseten-only knobs on auto-detected non-baseten
+datasets, and the baseten_trace rejection of ``--synthesis-speedup-ratio``.
 """
 
 from __future__ import annotations
@@ -347,3 +347,57 @@ class TestAutoDetectedNonBasetenWarning:
         with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
             _resolve_file_dataset(tmp_path, mooncake_jsonl)
         assert not any("baseten_trace-only" in r.message for r in caplog.records)
+
+
+def _mooncake_argv(mooncake_jsonl: Path, *extra: str) -> list[str]:
+    return [
+        "--url",
+        "http://localhost:8000/test",
+        "--model",
+        "test-model",
+        "--endpoint-type",
+        "completions",
+        "--input-file",
+        str(mooncake_jsonl),
+        "--custom-dataset-type",
+        "mooncake_trace",
+        *extra,
+    ]
+
+
+class TestSynthesisSpeedupBasetenGuard:
+    """Synthesis speedup rescales raw timestamps before replay, compounding
+    with --replay-speedup and desyncing the think-time/idle-gap math that
+    divides by replay_speedup only; rejected on explicit baseten_trace."""
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            param(("--synthesis-speedup-ratio", "10"), id="synthesis-alone"),
+            param(("--replay-speedup", "10", "--synthesis-speedup-ratio", "10"), id="compounds-with-replay-speedup"),
+        ],
+    )  # fmt: skip
+    def test_rejected_on_baseten_trace(
+        self, trace_parquet: Path, extra: tuple[str, ...]
+    ) -> None:
+        cli = _parse_cli_args(_baseten_argv(trace_parquet, *extra))
+        with pytest.raises(
+            ValueError,
+            match="--synthesis-speedup-ratio is not supported with "
+            "--custom-dataset-type baseten_trace; use --replay-speedup",
+        ):
+            build_dataset(cli)
+
+    def test_accepted_on_mooncake_trace(self, mooncake_jsonl: Path) -> None:
+        dataset = _dataset_from_argv(
+            _mooncake_argv(mooncake_jsonl, "--synthesis-speedup-ratio", "10")
+        )
+        assert dataset.synthesis.speedup_ratio == 10.0
+
+    def test_non_speedup_synthesis_field_accepted_on_baseten(
+        self, trace_parquet: Path
+    ) -> None:
+        dataset = _dataset_from_argv(
+            _baseten_argv(trace_parquet, "--synthesis-prompt-len-multiplier", "2.0")
+        )
+        assert dataset.synthesis.prompt_len_multiplier == 2.0

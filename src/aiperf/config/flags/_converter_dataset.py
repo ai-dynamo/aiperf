@@ -607,6 +607,29 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
         )
 
 
+def _reject_baseten_trace_synthesis_speedup(cli: CLIConfig) -> None:
+    """Reject --synthesis-speedup-ratio on explicit baseten_trace datasets.
+
+    baseten_trace replay is paced by --replay-speedup; synthesis speedup
+    rescales the raw trace timestamps before replay, so it compounds with
+    --replay-speedup and desyncs the closed-loop think-time subtraction and
+    the open-loop idle-gap cap (both divide by replay_speedup only). Other
+    synthesis fields (prompt reconstruction) remain valid. The auto-detected
+    dataset-type path is guarded at load time by the loader.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if (
+        cli.custom_dataset_type == CustomDatasetType.BASETEN_TRACE
+        and cli.synthesis_speedup_ratio != 1.0
+    ):
+        raise ValueError(
+            "--synthesis-speedup-ratio is not supported with "
+            "--custom-dataset-type baseten_trace; use --replay-speedup to "
+            "scale replay pacing."
+        )
+
+
 def _reject_contradictory_open_loop_flags(cli: CLIConfig) -> None:
     """Reject --open-loop-strict combined with --no-open-loop-replay.
 
@@ -752,6 +775,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
+    _reject_baseten_trace_synthesis_speedup(cli)
     _reject_contradictory_open_loop_flags(cli)
     if cli.dataset_filters and not cli.public_dataset:
         raise ValueError("--dataset-filter requires --public-dataset")
