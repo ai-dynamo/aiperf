@@ -8,8 +8,9 @@ Covers the open-loop default flip (``--open-loop-replay`` /
 ``--force-min-tokens`` boolean flags, the converter guard rejecting the
 baseten-only knobs (value and boolean) on non-baseten datasets, the
 contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection,
-and the resolver warning for baseten-only knobs on auto-detected non-baseten
-datasets.
+the resolver warning for baseten-only knobs on auto-detected non-baseten
+datasets, and the baseten_trace rejections of ``--synthesis-speedup-ratio``
+and loader-colliding ``--extra-inputs`` keys.
 """
 
 from __future__ import annotations
@@ -347,3 +348,114 @@ class TestAutoDetectedNonBasetenWarning:
         with caplog.at_level(logging.WARNING, logger="aiperf.config.dataset.resolver"):
             _resolve_file_dataset(tmp_path, mooncake_jsonl)
         assert not any("baseten_trace-only" in r.message for r in caplog.records)
+
+
+def _mooncake_argv(mooncake_jsonl: Path, *extra: str) -> list[str]:
+    return [
+        "--url",
+        "http://localhost:8000/test",
+        "--model",
+        "test-model",
+        "--endpoint-type",
+        "completions",
+        "--input-file",
+        str(mooncake_jsonl),
+        "--custom-dataset-type",
+        "mooncake_trace",
+        *extra,
+    ]
+
+
+class TestSynthesisSpeedupBasetenGuard:
+    """Synthesis speedup rescales raw timestamps before replay, compounding
+    with --replay-speedup and desyncing the think-time/idle-gap math that
+    divides by replay_speedup only; rejected on explicit baseten_trace."""
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            param(("--synthesis-speedup-ratio", "10"), id="synthesis-alone"),
+            param(("--synthesis-speedup-ratio", "0.5"), id="slowdown-ratio"),
+            param(("--replay-speedup", "10", "--synthesis-speedup-ratio", "10"), id="compounds-with-replay-speedup"),
+        ],
+    )  # fmt: skip
+    def test_rejected_on_baseten_trace(
+        self, trace_parquet: Path, extra: tuple[str, ...]
+    ) -> None:
+        cli = _parse_cli_args(_baseten_argv(trace_parquet, *extra))
+        with pytest.raises(
+            ValueError,
+            match="--synthesis-speedup-ratio is not supported with "
+            "--custom-dataset-type baseten_trace; use --replay-speedup",
+        ):
+            build_dataset(cli)
+
+    def test_accepted_on_mooncake_trace(self, mooncake_jsonl: Path) -> None:
+        dataset = _dataset_from_argv(
+            _mooncake_argv(mooncake_jsonl, "--synthesis-speedup-ratio", "10")
+        )
+        assert dataset.synthesis.speedup_ratio == 10.0
+
+    def test_non_speedup_synthesis_field_accepted_on_baseten(
+        self, trace_parquet: Path
+    ) -> None:
+        dataset = _dataset_from_argv(
+            _baseten_argv(trace_parquet, "--synthesis-prompt-len-multiplier", "2.0")
+        )
+        assert dataset.synthesis.prompt_len_multiplier == 2.0
+
+
+_COLLIDING_EXTRA_INPUTS = [
+    param("min_tokens:5", "--no-force-min-tokens", id="min-tokens"),
+    param("hash_ids:999", "--omit-kv-hints", id="hash-ids"),
+    param("block_size:64", "--omit-kv-hints", id="block-size"),
+]
+
+
+class TestExtraInputsLoaderCollisionGuard:
+    """Keys the baseten_trace loader injects per-turn silently clobber user
+    --extra-inputs values on the wire; rejected unless the matching opt-out
+    flag disables the injection (max_tokens is user-wins, not guarded)."""
+
+    @pytest.mark.parametrize(("extra_input", "optout"), _COLLIDING_EXTRA_INPUTS)  # fmt: skip
+    def test_colliding_key_rejected_with_optout_hint(
+        self, trace_parquet: Path, extra_input: str, optout: str
+    ) -> None:
+        key = extra_input.split(":", 1)[0]
+        cli = _parse_cli_args(
+            _baseten_argv(trace_parquet, "--extra-inputs", extra_input)
+        )
+        with pytest.raises(
+            ValueError,
+            match=f"--extra-inputs {key} is overwritten per-turn by the "
+            f"baseten_trace loader; pass {optout} to send your value",
+        ):
+            build_dataset(cli)
+
+    @pytest.mark.parametrize(("extra_input", "optout"), _COLLIDING_EXTRA_INPUTS)  # fmt: skip
+    def test_accepted_with_optout_flag(
+        self, trace_parquet: Path, extra_input: str, optout: str
+    ) -> None:
+        cfg = convert_cli_to_aiperf(
+            _parse_cli_args(
+                _baseten_argv(trace_parquet, "--extra-inputs", extra_input, optout)
+            )
+        )
+        key, value = extra_input.split(":", 1)
+        assert cfg.benchmark.endpoint.extra[key] == int(value)
+
+    def test_max_tokens_not_rejected(self, trace_parquet: Path) -> None:
+        cfg = convert_cli_to_aiperf(
+            _parse_cli_args(
+                _baseten_argv(trace_parquet, "--extra-inputs", "max_tokens:99")
+            )
+        )
+        assert cfg.benchmark.endpoint.extra["max_tokens"] == 99
+
+    def test_non_baseten_dataset_unaffected(self, mooncake_jsonl: Path) -> None:
+        cfg = convert_cli_to_aiperf(
+            _parse_cli_args(
+                _mooncake_argv(mooncake_jsonl, "--extra-inputs", "min_tokens:5")
+            )
+        )
+        assert cfg.benchmark.endpoint.extra["min_tokens"] == 5
