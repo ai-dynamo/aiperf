@@ -31,6 +31,7 @@ from aiperf.config.distributions import (
     LogNormalDistribution,
     MultimodalDistribution,
     NormalDistribution,
+    PercentileDistribution,
     SamplingDistribution,
 )
 from aiperf.config.flags.cli_config import CLIConfig
@@ -56,6 +57,7 @@ from tests.unit.property._strategies import (
     multi_run_inputs,
     multimodal_distribution_inputs,
     normal_distribution_inputs,
+    percentile_distribution_inputs,
     sampling_dimension_inputs,
     scenario_sweep_inputs,
     search_space_dimension_inputs,
@@ -198,6 +200,14 @@ def test_lognormal_distribution_never_unhandled(data: dict) -> None:
 
 
 @PROFILE
+@given(data=percentile_distribution_inputs())
+def test_percentile_distribution_never_unhandled(data: dict) -> None:
+    # Infeasible (p50, p99, mean) triples raise ValueError from the solver,
+    # which is in ALLOWED -- _check_no_unhandled treats it as a clean rejection.
+    _check_no_unhandled(PercentileDistribution, data)
+
+
+@PROFILE
 @given(data=multimodal_distribution_inputs())
 def test_multimodal_distribution_never_unhandled(data: dict) -> None:
     _check_no_unhandled(MultimodalDistribution, data)
@@ -217,6 +227,7 @@ _DIST_ADAPTER = TypeAdapter(SamplingDistribution)
     data=fixed_distribution_inputs()
     | normal_distribution_inputs()
     | lognormal_distribution_inputs()
+    | percentile_distribution_inputs()
     | multimodal_distribution_inputs()
     | empirical_distribution_inputs()
 )

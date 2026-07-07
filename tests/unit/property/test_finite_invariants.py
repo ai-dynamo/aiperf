@@ -194,6 +194,8 @@ FINITE_FIELD_WHITELIST: dict[str, str] = {
     "NormalDistribution.max": "inherited; validated by Distribution._validate_bounds",
     "LogNormalDistribution.min": "inherited; validated by Distribution._validate_bounds",
     "LogNormalDistribution.max": "inherited; validated by Distribution._validate_bounds",
+    "PercentileDistribution.min": "inherited; validated by Distribution._validate_bounds",
+    "PercentileDistribution.max": "inherited; validated by Distribution._validate_bounds",
     "MultimodalDistribution.min": "inherited; validated by Distribution._validate_bounds",
     "MultimodalDistribution.max": "inherited; validated by Distribution._validate_bounds",
     "EmpiricalDistribution.min": "inherited; validated by Distribution._validate_bounds",
