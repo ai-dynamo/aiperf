@@ -45,6 +45,16 @@ from aiperf.server_metrics.storage import (
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
+_METRIC_DATA_CLASSES: dict[
+    PrometheusMetricType,
+    type[GaugeMetricData | CounterMetricData | HistogramMetricData | UnknownMetricData],
+] = {
+    PrometheusMetricType.GAUGE: GaugeMetricData,
+    PrometheusMetricType.UNKNOWN: UnknownMetricData,
+    PrometheusMetricType.COUNTER: CounterMetricData,
+    PrometheusMetricType.HISTOGRAM: HistogramMetricData,
+}
+
 
 class ServerMetricsAccumulator(BaseMetricsProcessor):
     """Process individual ServerMetricsRecord objects into hierarchical storage.
@@ -311,31 +321,17 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 if series_stats is None:
                     continue
 
-                if base_name not in metrics:
-                    # Create appropriate type-specific metric data
-                    match metric_entry.metric_type:
-                        case PrometheusMetricType.GAUGE:
-                            metrics[base_name] = GaugeMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.UNKNOWN:
-                            metrics[base_name] = UnknownMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.COUNTER:
-                            metrics[base_name] = CounterMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                        case PrometheusMetricType.HISTOGRAM:
-                            metrics[base_name] = HistogramMetricData(
-                                description=metric_entry.description,
-                                series=[series_stats],
-                            )
-                else:
+                if base_name in metrics:
                     metrics[base_name].series.append(series_stats)
+                    continue
+                # Create appropriate type-specific metric data; unmapped types
+                # are skipped (same semantics as the previous non-exhaustive match).
+                DataClass = _METRIC_DATA_CLASSES.get(metric_entry.metric_type)
+                if DataClass is not None:
+                    metrics[base_name] = DataClass(
+                        description=metric_entry.description,
+                        series=[series_stats],
+                    )
 
             # Unique update statistics
             unique_count = time_series._unique_update_count
