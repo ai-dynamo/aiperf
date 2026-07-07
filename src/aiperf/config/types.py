@@ -127,10 +127,12 @@ class SequenceDistributionEntry(BaseConfig):
     probability: Annotated[
         float,
         Field(
-            gt=0.0,
+            ge=0.0,
             description="Relative probability weight for this distribution bucket. "
-            "Weights are normalized across all entries and do NOT need to sum to 100 "
-            "(probability=50 alongside probability=1 yields ~98%%/2%%).",
+            "Zero disables the bucket (it is never sampled), which supports "
+            "sweep-templated configs. Weights are normalized across all entries and "
+            "do NOT need to sum to 100 (probability=50 alongside probability=1 yields "
+            "~98%%/2%%).",
         ),
     ]
 

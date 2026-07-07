@@ -44,7 +44,15 @@ class _TypedSequenceDistribution:
     def __init__(
         self, entries: list[SequenceDistributionEntry], rng_instance: RandomGenerator
     ) -> None:
-        self._entries = list(entries)
+        # Zero-weight buckets are valid config (disabled buckets in sweep
+        # templates); drop them so they never sample and never widen a
+        # cumulative interval. Config-level validation normally guarantees a
+        # positive-weight entry survives; the guard below is defensive.
+        self._entries = [e for e in entries if e.probability > 0]
+        if not self._entries:
+            raise ValueError(
+                "sequence_distribution requires at least one positive-weight entry"
+            )
         self._rng = rng_instance
         total = sum(e.probability for e in self._entries)
         cumulative = 0.0

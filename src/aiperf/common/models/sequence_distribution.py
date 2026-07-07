@@ -95,9 +95,9 @@ class SequenceLengthPair:
             raise ValueError(
                 f"Output sequence length must be positive, got {self.output_seq_len}"
             )
-        if self.probability <= 0.0:
+        if self.probability < 0.0:
             raise ValueError(
-                f"Probability weight must be positive, got {self.probability}"
+                f"Probability weight must be non-negative, got {self.probability}"
             )
         if self.input_seq_len_stddev < 0.0:
             raise ValueError(
@@ -246,17 +246,18 @@ class SequenceLengthDistribution:
             Dictionary with distribution statistics including expected values,
             variance, and individual pair information.
         """
-        # Expected values (convert percentages to fractions for calculation)
-        exp_isl = sum(p.input_seq_len * (p.probability / 100.0) for p in self._pairs)
-        exp_osl = sum(p.output_seq_len * (p.probability / 100.0) for p in self._pairs)
+        # Normalize relative weights by their actual total (they need not sum
+        # to 100); _validate_probability_weights guarantees total > 0.
+        total = sum(p.probability for p in self._pairs)
+        exp_isl = sum(p.input_seq_len * (p.probability / total) for p in self._pairs)
+        exp_osl = sum(p.output_seq_len * (p.probability / total) for p in self._pairs)
 
-        # Variance calculations
         var_isl = sum(
-            (p.probability / 100.0) * (p.input_seq_len - exp_isl) ** 2
+            (p.probability / total) * (p.input_seq_len - exp_isl) ** 2
             for p in self._pairs
         )
         var_osl = sum(
-            (p.probability / 100.0) * (p.output_seq_len - exp_osl) ** 2
+            (p.probability / total) * (p.output_seq_len - exp_osl) ** 2
             for p in self._pairs
         )
 

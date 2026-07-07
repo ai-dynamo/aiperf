@@ -27,6 +27,7 @@ Discriminator rules (checked in order):
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Self
 
@@ -302,6 +303,13 @@ _Z99 = 2.3263478740408408
 
 _SQRT2 = math.sqrt(2.0)
 
+_LOG_FLOAT_MAX = math.log(sys.float_info.max)
+"""Largest argument for which ``math.exp`` returns a finite value (~709.78).
+
+Used to reject PercentileDistribution targets whose p99/p50 ratio makes the
+fitted lognormal's mean or variance factor overflow to a non-finite value.
+"""
+
 
 def _phi(x: float) -> float:
     """Standard normal CDF via math.erf (no scipy dependency)."""
@@ -413,9 +421,26 @@ def _solve_percentile(
     otherwise a two-component mixture searched over tail weights and body
     spreads. Raises ValueError when no searched shape fits.
     """
-    sigma = math.log(p99 / p50) / _Z99
     mu = math.log(p50)
-    implied_mean = p50 * math.exp(sigma**2 / 2.0)
+    try:
+        sigma = math.log(p99 / p50) / _Z99
+        implied_mean = p50 * math.exp(sigma**2 / 2.0)
+    except OverflowError as exc:
+        raise ValueError(
+            f"Percentile targets too extreme: p99/p50 ratio {p99 / p50:g} produces a "
+            f"non-finite mean or variance. Reduce the spread between p50 ({p50:g}) "
+            f"and p99 ({p99:g})."
+        ) from exc
+    # exp(sigma**2) is the lognormal's variance factor; when sigma**2 exceeds the
+    # largest finite math.exp argument the distribution's second moment is
+    # non-finite even though the mean may still be representable. Reject so
+    # downstream `expected_value > 0` gates never see a non-finite value.
+    if not math.isfinite(implied_mean) or sigma**2 > _LOG_FLOAT_MAX:
+        raise ValueError(
+            f"Percentile targets too extreme: p99/p50 ratio {p99 / p50:g} produces a "
+            f"non-finite mean or variance. Reduce the spread between p50 ({p50:g}) "
+            f"and p99 ({p99:g})."
+        )
     if mean is None or abs(mean - implied_mean) <= 0.01 * implied_mean:
         return _PercentileSolution(kind="lognormal", mu=mu, sigma=sigma)
 

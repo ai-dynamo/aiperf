@@ -61,12 +61,12 @@ class TestSequenceLengthPair:
             SequenceLengthPair(256, -1, 50.0)
 
     def test_invalid_probability(self):
-        """Test validation of probability values (must be a positive weight)."""
-        with pytest.raises(ValueError, match="Probability weight must be positive"):
+        """Negative weights are rejected; zero is a valid disabled-bucket weight."""
+        with pytest.raises(ValueError, match="Probability weight must be non-negative"):
             SequenceLengthPair(256, 128, -10.0)
 
-        with pytest.raises(ValueError, match="Probability weight must be positive"):
-            SequenceLengthPair(256, 128, 0.0)
+        # Zero is a valid relative weight (disabled bucket); it must not raise.
+        SequenceLengthPair(256, 128, 0.0)
 
     def test_invalid_input_stddev(self):
         """Test validation of negative input sequence length standard deviation."""
@@ -250,6 +250,17 @@ class TestSequenceLengthDistribution:
         dist = SequenceLengthDistribution(pairs)
         assert dist is not None
 
+    def test_zero_weight_pair_never_sampled(self):
+        """A zero-weight pair forms a zero-width cumulative interval and is never
+        selected by np.searchsorted(side='right')."""
+        pairs = [
+            SequenceLengthPair(100, 10, 0.0),
+            SequenceLengthPair(4000, 200, 50.0),
+        ]
+        dist = SequenceLengthDistribution(pairs)
+        samples = dist.sample_batch(500)
+        assert all(isl == 4000 and osl == 200 for isl, osl in samples)
+
     def test_statistics_calculation(self):
         """Test distribution statistics calculation."""
         dist = SequenceLengthDistribution(self.multi_pair)
@@ -263,6 +274,22 @@ class TestSequenceLengthDistribution:
 
         assert stats["num_pairs"] == 2
         assert abs(stats["total_probability"] - 100.0) < 1e-10
+
+    def test_statistics_normalizes_by_actual_total_not_100(self):
+        """Relative weights that do not sum to 100 normalize by their true total.
+
+        Weights 50 and 1 -> expected values weighted by 50/51 and 1/51, not /100.
+        """
+        pairs = [
+            SequenceLengthPair(1000, 200, 50.0),
+            SequenceLengthPair(2000, 400, 1.0),
+        ]
+        dist = SequenceLengthDistribution(pairs)
+        stats = dist.get_statistics()
+
+        assert stats["expected_isl"] == pytest.approx(1000 * 50 / 51 + 2000 * 1 / 51)
+        assert stats["expected_osl"] == pytest.approx(200 * 50 / 51 + 400 * 1 / 51)
+        assert stats["total_probability"] == pytest.approx(51.0)
 
     def test_string_representation(self):
         """Test string representation."""
@@ -406,6 +433,15 @@ class TestDistributionParser:
         assert len(dist.pairs) == 2
         assert dist.pairs[0] == SequenceLengthPair(256, 128, 60.0, 10.0, 5.0)
         assert dist.pairs[1] == SequenceLengthPair(512, 256, 40.0, 20.0, 15.0)
+
+    def test_zero_weight_pair_parses_and_never_sampled(self):
+        """A legacy string with a zero-weight pair is valid; the pair never samples."""
+        dist = DistributionParser.parse("100,10:0;4000,10:50")
+
+        assert len(dist.pairs) == 2
+        assert dist.pairs[0].probability == 0.0
+        samples = dist.sample_batch(500)
+        assert all(isl == 4000 for isl, _ in samples)
 
     def test_single_pair_parsing(self):
         """Test parsing single pair."""

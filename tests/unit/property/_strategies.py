@@ -383,7 +383,10 @@ def percentile_distribution_inputs() -> st.SearchStrategy[dict]:
     return st.builds(
         _build,
         st.floats(min_value=10.0, max_value=1e6, allow_nan=False, allow_infinity=False),
-        st.floats(min_value=1.5, max_value=20.0),
+        # Ratio max is intentionally extreme (1e30) so the fuzzer drives the
+        # finite-mean/variance guard in _solve_percentile; the resulting
+        # ValueError is in the property test's ALLOWED set.
+        st.floats(min_value=1.5, max_value=1e30),
         st.one_of(st.none(), st.floats(min_value=0.05, max_value=0.3)),
     )
 

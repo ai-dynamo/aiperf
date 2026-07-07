@@ -58,6 +58,17 @@ class TestValidation:
         with pytest.raises(ValueError):
             ADAPTER.validate_python({"p50": 50000, "p99": float("inf")})
 
+    @pytest.mark.parametrize(
+        "p50,p99",
+        [
+            param(1, 1e40, id="overflow_ratio"),
+            param(100, 1e35, id="inf_implied_mean"),
+        ],
+    )  # fmt: skip
+    def test_extreme_ratio_rejected(self, p50: float, p99: float) -> None:
+        with pytest.raises(ValueError, match="too extreme|finite"):
+            PercentileDistribution(p50=p50, p99=p99)
+
 
 class TestLogNormalMode:
     """p50 + p99 without mean fits a log-normal exactly."""

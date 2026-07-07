@@ -274,3 +274,65 @@ class TestRelativeBucketWeights:
         isls = [p[0] for p in composer._turn_sequence_cache.values()]
         small_frac = sum(1 for v in isls if v == 100) / len(isls)
         assert small_frac > 0.94  # 50:1 ~ 98%
+
+
+class TestZeroWeightBuckets:
+    def test_zero_weight_bucket_validates_and_never_samples(self):
+        """A probability: 0 bucket is valid config and is never sampled."""
+        from aiperf.common import random_generator as rng
+        from aiperf.config.types import SequenceDistributionEntry
+        from aiperf.dataset.composer.base import _TypedSequenceDistribution
+
+        entries = [
+            SequenceDistributionEntry.model_validate(
+                {"isl": 100, "osl": 10, "probability": 0}
+            ),
+            SequenceDistributionEntry.model_validate(
+                {"isl": 5000, "osl": 500, "probability": 100}
+            ),
+        ]
+        dist = _TypedSequenceDistribution(entries, rng.derive("test.zero.bucket"))
+        draws = [dist.sample() for _ in range(500)]
+        assert all(isl == 5000 and osl == 500 for isl, osl in draws)
+
+    def test_zero_weight_bucket_end_to_end_via_composer(self):
+        composer = _make_composer(
+            entries=500,
+            sequence_distribution=[
+                {"isl": 100, "osl": 10, "probability": 0},
+                {"isl": 5000, "osl": 500, "probability": 100},
+            ],
+        )
+        composer.create_dataset()
+        isls = {p[0] for p in composer._turn_sequence_cache.values()}
+        assert isls == {5000}  # zero-weight bucket never contributes
+
+    def test_all_zero_list_rejected_by_validator(self):
+        from aiperf.config.types import (
+            SequenceDistributionEntry,
+            validate_probability_distribution,
+        )
+
+        entries = [
+            SequenceDistributionEntry.model_validate(
+                {"isl": 100, "osl": 10, "probability": 0}
+            ),
+            SequenceDistributionEntry.model_validate(
+                {"isl": 5000, "osl": 500, "probability": 0}
+            ),
+        ]
+        with pytest.raises(ValueError, match="positive total"):
+            validate_probability_distribution(entries)
+
+    def test_all_zero_list_rejected_by_typed_distribution(self):
+        from aiperf.common import random_generator as rng
+        from aiperf.config.types import SequenceDistributionEntry
+        from aiperf.dataset.composer.base import _TypedSequenceDistribution
+
+        entries = [
+            SequenceDistributionEntry.model_validate(
+                {"isl": 100, "osl": 10, "probability": 0}
+            ),
+        ]
+        with pytest.raises(ValueError, match="positive-weight entry"):
+            _TypedSequenceDistribution(entries, rng.derive("test.all.zero"))
