@@ -40,14 +40,6 @@ def _make_run(input_file: str | Path | None = None, **kwargs):
     return make_run_from_cli(CLIConfig(model_names=["test-model"], **kwargs))
 
 
-def _set_dataset_attr(run, **attrs) -> None:
-    """Set loader knobs on the dataset config; the CLI fields land in another
-    lane, so bypass pydantic field validation (the loader reads via getattr)."""
-    dataset = run.cfg.get_default_dataset()
-    for key, value in attrs.items():
-        object.__setattr__(dataset, key, value)
-
-
 class TestBasetenTraceDatasetLoader:
     def test_can_load_parquet_schema(self, tmp_path: Path):
         path = _write_parquet(
@@ -251,11 +243,9 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path
     ):
         path = self._write_multi_turn(tmp_path)
-        run = _make_run(path, open_loop_replay=True)
-        _set_dataset_attr(run, open_loop_strict=True)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(path, open_loop_replay=True, open_loop_strict=True),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -285,11 +275,13 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path, open_loop_replay: bool, open_loop_strict: bool
     ):
         path = self._write_multi_turn(tmp_path)
-        run = _make_run(path, open_loop_replay=open_loop_replay)
-        _set_dataset_attr(run, open_loop_strict=open_loop_strict)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(
+                path,
+                open_loop_replay=open_loop_replay,
+                open_loop_strict=open_loop_strict,
+            ),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -799,11 +791,9 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path, omit_kv_hints: bool, expected_body: dict
     ):
         path = self._write_hinted_single_row(tmp_path)
-        run = _make_run()
-        _set_dataset_attr(run, omit_kv_hints=omit_kv_hints)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(path, omit_kv_hints=omit_kv_hints),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -831,11 +821,9 @@ class TestBasetenTraceDatasetLoader:
         self, tmp_path: Path, force_min_tokens: bool, expected_body: dict
     ):
         path = self._write_hinted_single_row(tmp_path)
-        run = _make_run()
-        _set_dataset_attr(run, force_min_tokens=force_min_tokens)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=run,
+            run=_make_run(path, force_min_tokens=force_min_tokens),
             prompt_generator=_mock_prompt_generator(),
         )
 
@@ -1046,46 +1034,14 @@ class TestSynthesisHooks:
         assert result[0].timestamp == 5
         assert result[0].input_length == 50
         assert result[0].output_length == 60
-        assert result[0].request_body == {
-            "min_tokens": 60,
-            "hash_ids": [1, 2],
-            "block_size": 64,
-        }
+        # Request bodies are built once in load_dataset, after the max-OSL cap.
+        assert result[0].request_body is None
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
         # The model_dump()/model_validate round-trip must not strand aliased
         # fields in model_extra.
         assert result[0].dataset_version == "0.0.11"
-
-    def test_reconstruct_traces_omit_kv_hints_true_drops_cache_hints(
-        self, tmp_path: Path
-    ) -> None:
-        path = _write_parquet(tmp_path / "trace.parquet", [])
-        run = _make_run()
-        _set_dataset_attr(run, omit_kv_hints=True)
-        loader = BasetenTraceDatasetLoader(
-            filename=str(path),
-            run=run,
-            prompt_generator=_mock_prompt_generator(),
-        )
-        originals = [
-            BasetenTrace(
-                timestamp_start_unix_ms=100,
-                prompt="original",
-                input_tokens=10,
-                output_tokens=20,
-                total_hashes=[1, 2],
-                block_size=64,
-            )
-        ]
-        synth_dicts = [
-            {"timestamp": 5, "input_length": 50, "output_length": 60},
-        ]
-
-        result = loader._reconstruct_traces(originals, synth_dicts)
-
-        assert result[0].request_body == {"min_tokens": 60}
 
     def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
         self, tmp_path: Path

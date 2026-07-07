@@ -336,8 +336,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self,
         min_timestamp: int | None,
         session_key: str | None,
-        session_ids: set[str] | None,
-        null_rows: set[int],
+        session_ids: set[str | int] | None,
+        null_rows: set[int] | None,
     ) -> list[BasetenTrace]:
         """Read, sample, normalize, and filter trace rows from the Parquet file."""
         sampling = session_key is not None and session_ids is not None
@@ -496,7 +496,5 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             original = originals[i] if i < len(originals) else originals[-1]
             merged = original.model_dump()
             merged.update(synth_dict)
-            trace = BasetenTrace.model_validate(merged)
-            self._set_request_body(trace)
-            result.append(trace)
+            result.append(BasetenTrace.model_validate(merged))
         return result
