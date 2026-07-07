@@ -208,13 +208,13 @@ def _trace_peak_context_length(trace: WekaTrace, max_osl: int | None = None) -> 
     peak = 0
     for req in trace.requests:
         if isinstance(req, WekaNormalRequest | WekaStreamingRequest):
-            # Parent (and flat-chain) turns honor --max-osl via _cap_output, so
+            # Parent (and flat-chain) turns honor --synthesis-max-osl via _cap_output, so
             # the keep/drop decision uses the capped output they will send.
             peak = max(peak, req.input_length + capped_output(req))
         elif isinstance(req, WekaSubagentEntry):
             for child_req in req.requests:
                 # Subagent child turns emit the RECORDED output_length (they are
-                # deliberately NOT subject to --max-osl; see the child emission
+                # deliberately NOT subject to --synthesis-max-osl; see the child emission
                 # in _reconstruct_serial / the parallel worker child loop). The
                 # keep/drop decision must use that same uncapped output, or a
                 # trace that fits only under the cap would be kept and then 4xx
@@ -963,7 +963,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._configured_model_names = list(model_names)
         # max_isl/max_osl come from the dataset's ``synthesis`` sub-config, which
         # both FileDataset and PublicDataset (HF-backed weka_hf) carry, so
-        # --max-isl/--max-osl cap both file-based and HF Weka replay.
+        # --synthesis-max-isl/--synthesis-max-osl cap both file-based and HF Weka replay.
         self._max_isl = getattr(synthesis, "max_isl", None) if synthesis else None
         self._max_osl = getattr(synthesis, "max_osl", None) if synthesis else None
         self._max_context_length = getattr(dataset, "max_context_length", None)
@@ -1030,7 +1030,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._configured_trace_idle_gap_cap_seconds = getattr(
             dataset, "trace_idle_gap_cap_seconds", None
         )
-        self._use_live_assistant = Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
         self._tool_shaped_messages = Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES
 
     def _block_size_for_trace(self, trace: WekaTrace) -> int:
@@ -1058,25 +1057,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         which (a) matches the per-turn ``raw_messages`` shape this loader now
         emits and (b) correctly bypasses the preformat fast path in
         ``DatasetManager`` (deltas need at-request-time accumulation).
-
-        When ``AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES`` is set, the
-        loader emits user-only deltas and the worker threads live server
-        responses into the session's ``turn_list`` via the
-        ``DELTAS_WITHOUT_RESPONSES`` ``store_response`` path.
         """
-        if Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES:
-            return ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         return ConversationContextMode.DELTAS_WITH_RESPONSES
 
     def _resolved_context_mode(self) -> ConversationContextMode:
-        """Per-instance counterpart to ``get_default_context_mode``.
-
-        Read once at ``__init__`` time so all four ``Conversation`` construction
-        sites in this loader pick the same mode, regardless of whether the env
-        var is mutated mid-run.
-        """
-        if self._use_live_assistant:
-            return ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+        """Per-instance counterpart to ``get_default_context_mode``."""
         return ConversationContextMode.DELTAS_WITH_RESPONSES
 
     @classmethod
@@ -1834,7 +1819,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
-                emit_assistant_segments=not self._use_live_assistant,
                 tool_shaped_messages=self._tool_shaped_messages,
             )
 
@@ -2174,7 +2158,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 sample_partial_tail_tokens=self.sample_partial_tail_tokens,
                 decode_tokens_to_text=self._decode_tokens_to_text,
                 bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
-                emit_assistant_segments=not self._use_live_assistant,
                 tool_shaped_messages=self._tool_shaped_messages,
             )
             child_conv = Conversation(
@@ -2282,7 +2265,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         Mirrors the subagent-child emission with three differences: the
         decode scope is the parent trace (shared namespace), turn 0's system
         segment comes from the chain's effective namespace-group prefix, and
-        ``max_tokens`` honors ``--max-osl`` like the top-level requests these
+        ``max_tokens`` honors ``--synthesis-max-osl`` like the top-level requests these
         rows used to be.
         """
         pg = self.prompt_generator
@@ -2369,7 +2352,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             sample_partial_tail_tokens=self.sample_partial_tail_tokens,
             decode_tokens_to_text=self._decode_tokens_to_text,
             bpe_stable_terminator_tokens=self.bpe_stable_terminator_tokens,
-            emit_assistant_segments=not self._use_live_assistant,
             tool_shaped_messages=self._tool_shaped_messages,
         )
 
@@ -2530,7 +2512,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     ignore_delays=ignore_delays,
                     think_time_only=think_time_only,
                     model_map=model_map_per_trace.get(plan.trace_id, {}),
-                    emit_assistant_segments=not self._use_live_assistant,
                     tool_shaped_messages=self._tool_shaped_messages,
                     block_size=plan.block_size,
                 )
@@ -2583,7 +2564,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         ``init_tool_tokens``/``init_system_tokens`` carry the trace's
         DECLARED counts when the chain provably shares the declared prefix
         (0/0 otherwise — the system role is never fabricated);
-        ``capped_output_length`` makes its max_tokens honor ``--max-osl``
+        ``capped_output_length`` makes its max_tokens honor ``--synthesis-max-osl``
         like the top-level rows these used to be.
         """
         from aiperf.dataset.loader.weka_parallel_convert import (

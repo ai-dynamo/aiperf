@@ -5,14 +5,16 @@
 Phase-aware timing strategy for the ``agentic_replay`` timing mode (spec §4.2).
 
 Each trajectory is a wall-clock snapshot of a trace at a sampled instant t*
-(25-75% through the trace's recorded duration). Every stream (root + each
+(by default 25-75% through the trace's recorded duration; the range is
+configurable via ``trajectory_start_{min,max}_ratio`` and the
+inferencex-agentx-mvp scenario widens it to 0-100%). Every stream (root + each
 subagent chain) splits at t*: turns before t* are history, turns at/after t*
 are profiled.
 
 WARMUP: for every session active (mid-flight) at t*, replay its last request
 before t* (turn ``next_turn_index - 1``) as a session start. The chat prefix
 is rebuilt worker-side by ``UserSession.advance_turn``, and what it reproduces
-is context-mode dependent: under ``DELTAS_WITH_RESPONSES`` (the weka default)
+is context-mode dependent: under ``DELTAS_WITH_RESPONSES`` (the weka mode)
 it back-seeds the earlier turns so the warmup request carries the full prefix
 and primes the server cache to the stream's state at t*; under
 ``DELTAS_WITHOUT_RESPONSES`` the prior turns are not seeded (live responses
@@ -44,8 +46,11 @@ residual next-turn delay into profiling, so the handoff ramps instead of
 firing every live stream at once. Subsequent turns honor trace inter-turn
 ``delay_ms`` (already clamped upstream in the loader). Gated parents fire their
 join turn when blocking children complete. When a root session reaches its
-final turn, its trace_id is recycled FIFO-style and a fresh session (starting
-at turn 0) is spawned from the next trace_id in the queue.
+final turn AND its whole tree (root + every descendant subagent) has drained,
+its lane recycles: a fresh session (starting at turn 0) is spawned from the
+next root drawn from the shared dataset sampler
+(``TrajectorySource.next_recycle_conversation_id``), honoring the configured
+``sampling_strategy`` -- there is no strategy-side FIFO recycle queue.
 """
 
 from __future__ import annotations

@@ -294,10 +294,10 @@ class ExportLevel(CaseInsensitiveStrEnum):
     """Export level for benchmark data."""
 
     SUMMARY = "summary"
-    """Export only aggregated/summarized metrics (default, most compact)"""
+    """Export only aggregated/summarized metrics (most compact)"""
 
     RECORDS = "records"
-    """Export per-record metrics after aggregation with display unit conversion"""
+    """Export per-record metrics after aggregation with display unit conversion (CLI default)"""
 
     RAW = "raw"
     """Export raw parsed records with full request/response data (most detailed)"""

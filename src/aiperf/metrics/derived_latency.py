@@ -77,8 +77,8 @@ def _delta_ms(
     """Compute ``(end - begin) / 1e6`` and drop NaN entries.
 
     NaN propagates through the subtraction when either side has missing data
-    (typically ``credit_issued_ns`` absent for fixed-schedule workloads), so a
-    single ``isnan`` filter at the end suffices.
+    (a record without a ``credit_issued_ns`` timestamp), so a single ``isnan``
+    filter at the end suffices.
     """
     delta_ns = end - begin
     valid = delta_ns[~np.isnan(delta_ns)]
@@ -94,8 +94,10 @@ def compute_credit_to_start_latency(
 ) -> MetricResult | None:
     """Per-record credit-queue wait — ``request_start_ns - credit_issued_ns``.
 
-    Returns ``None`` when no records have ``credit_issued_ns`` populated
-    (e.g. fixed-schedule workloads that bypass the credit issuer).
+    Returns ``None`` when no record carries a ``credit_issued_ns`` timestamp.
+    All load modes route dispatch through the credit issuer, which stamps
+    ``issued_at_ns`` on every credit, so this is populated for concurrency,
+    request-rate, and trace-replay runs alike.
     """
     n = store.count
     if n == 0:

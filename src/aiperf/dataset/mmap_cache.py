@@ -745,9 +745,6 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "trace_idle_gap_cap_seconds": getattr(
             dataset, "trace_idle_gap_cap_seconds", None
         ),
-        "weka_live_assistant_responses": (
-            Environment.DATASET.WEKA_LIVE_ASSISTANT_RESPONSES
-        ),
         "weka_split_flattened_agents": (
             Environment.DATASET.WEKA_SPLIT_FLATTENED_AGENTS
         ),

@@ -2090,7 +2090,7 @@ public_dataset_loader:
     description: |
       SemiAnalysis Weka cc-traces, with-subagents variant — generic rolling
       alias that tracks the current default with-subagents corpus, presently
-      semianalysisai/cc-traces-weka-061526 (233 v7 traces, public, no auth).
+      semianalysisai/cc-traces-weka-062126 (393 v7 traces, public, no auth).
       v7-only + CC >= 2.1.139 + peak concurrent subagent groups <= 10, with
       WekaSubagentEntry blocks preserved — captures full parent + Task-tool
       sub-agent fan-out structure. >=20 main-agent turns per trace; non-
@@ -2098,12 +2098,12 @@ public_dataset_loader:
       at source so the OSL distribution is not polluted by the 5-10-token
       spike. Use this corpus when you want the full agentic-coding workload
       including parallel sub-agent fan-out; pin
-      semianalysis_cc_traces_weka_061526 if you need the date locked. Each row
+      semianalysis_cc_traces_weka_062126 if you need the date locked. Each row
       is a complete WekaTrace; reconstruction is delegated to WekaTraceLoader
       so file-based and HF-based replay produce byte-identical conversations.
       Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents
     metadata:
-      hf_dataset_name: semianalysisai/cc-traces-weka-061526
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126
       hf_split: train
       is_trace: true
       default_block_size: 64
@@ -2114,16 +2114,16 @@ public_dataset_loader:
     description: |
       SemiAnalysis Weka cc-traces, with-subagents 256k-capped variant — generic
       rolling alias that tracks the current default 256k-capped corpus,
-      presently semianalysisai/cc-traces-weka-061526-256k (232 v7 traces,
-      public, no auth). Derived from the 061526 parent by dropping any request
+      presently semianalysisai/cc-traces-weka-062126-256k (393 v7 traces,
+      public, no auth). Derived from the 062126 parent by dropping any request
       whose in+out exceeds 256,000 proxy-tokenizer tokens while preserving
       surviving requests' relative timestamps and subagent overlap. Designed for
       replay against servers configured with max_model_len ~ 256k (e.g.
       MiniMax-M2.5) where the unfiltered corpus would have requests rejected;
-      pin semianalysis_cc_traces_weka_061526_256k if you need the date locked.
+      pin semianalysis_cc_traces_weka_062126_256k if you need the date locked.
       Usage: --public-dataset semianalysis_cc_traces_weka_with_subagents_256k
     metadata:
-      hf_dataset_name: semianalysisai/cc-traces-weka-061526-256k
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126-256k
       hf_split: train
       is_trace: true
       default_block_size: 64
@@ -2299,7 +2299,8 @@ public_dataset_loader:
       input is capped at 990,016 tokens to strip KV-cache overcount artifacts
       while preserving surviving requests' relative timestamps. The corpus
       carries full parent + Task-tool subagent fan-out.
-      Current default corpus for full-context AgentX recipes.
+      Prior full-context AgentX corpus, retained as a date-pinned alias for
+      reproducibility. Superseded by the 062126 variant.
       Usage: --public-dataset semianalysis_cc_traces_weka_061526
     metadata:
       hf_dataset_name: semianalysisai/cc-traces-weka-061526
@@ -2319,7 +2320,8 @@ public_dataset_loader:
       tokens. Surviving requests retain their relative timestamps and subagent
       overlap; only a uniform origin shift is applied when the first request is
       filtered. Designed for servers configured with max_model_len ~ 256k.
-      Current default corpus for 256k-context AgentX recipes.
+      Prior 256k-context AgentX corpus, retained as a date-pinned alias for
+      reproducibility. Superseded by the 062126 variant.
       Usage: --public-dataset semianalysis_cc_traces_weka_061526_256k
     metadata:
       hf_dataset_name: semianalysisai/cc-traces-weka-061526-256k

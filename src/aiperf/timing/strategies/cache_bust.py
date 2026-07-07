@@ -6,11 +6,11 @@ Same (benchmark_id, recycle_pass, trajectory_index, trace_id) always yields
 the same digest - reproducible across reruns. Position controls whitespace
 placement, not the digest itself.
 
-Adding ``trace_id`` to the four-dimensional digest input ensures every
-(recycle_pass, lane, trace) combination is unique by construction. Without
-``trace_id``, two different traces landing on the same ``(recycle_pass, lane)``
-tuple at different points in time would produce the same marker — empirically
-a 33% collision rate at MVP scale.
+``trace_id`` is part of the digest because ``recycle_pass`` counts per trace:
+without it, a lane recycling from one trace to another would repeat the same
+``(recycle_pass, lane)`` tuple and reuse the marker, letting the server's
+prefix cache stay warm across the boilerplate different plays share — the
+exact cross-play warming the marker exists to defeat.
 """
 
 import hashlib

@@ -81,27 +81,6 @@ class TestComputeCacheKey:
         assert with_subagents_key is not None
         assert no_subagents_key != with_subagents_key
 
-    def test_key_changes_when_weka_live_assistant_setting_changes(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from aiperf.common.environment import Environment
-
-        run = make_run_from_cli(
-            CLIConfig(
-                model_names=["test-model"],
-                public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS,
-            )
-        )
-
-        monkeypatch.setattr(Environment.DATASET, "WEKA_LIVE_ASSISTANT_RESPONSES", False)
-        pre_canned_key = mmap_cache.compute_cache_key_from_run(run)
-        monkeypatch.setattr(Environment.DATASET, "WEKA_LIVE_ASSISTANT_RESPONSES", True)
-        live_key = mmap_cache.compute_cache_key_from_run(run)
-
-        assert pre_canned_key is not None
-        assert live_key is not None
-        assert pre_canned_key != live_key
-
     def test_key_changes_when_weka_split_flattened_agents_changes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

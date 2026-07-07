@@ -53,11 +53,17 @@ class SampledSession:
         start_turn_index: The turn index this session begins dispatching at.
             The agentic-replay engine starts a session at turn k_i (warmup) or
             resumes at k_i + 1 (profiling) without sending the leading turns.
-        cache_bust_marker: Optional per-session cache-bust marker. Set on SPAWN
-            children so each subagent context gets its own unique server-side
-            prefix and cannot share a cached prefix with siblings. Parent
-            sessions populate this through the strategy
-            (``AgenticReplayStrategy._build_turn_for_session``) instead.
+        cache_bust_marker: Optional cache-bust marker for this session's
+            trajectory TREE. The marker is a property of the tree
+            (``root_correlation_id``): the depth-0 root and every SPAWN
+            descendant (subagents, flat agents) share ONE marker, so the tree
+            is a single prefix-cache domain and a session's own turns and
+            subagents keep sharing cached prefixes; distinct trees (different
+            traces / recycled sessions) get distinct markers. Set on SPAWN
+            children to the tree root's shared marker (resolved by
+            ``BranchOrchestrator._marker_for_root``); parent sessions populate
+            this through the strategy
+            (``AgenticReplayStrategy._build_turn_for_session``).
         cache_bust_target: Where to inject the marker. Mirrors the CLI knob;
             NONE when the feature is disabled.
     """
@@ -216,10 +222,12 @@ class ConversationSource:
         single per-tree session-slot key. Defaults to ``parent_correlation_id``
         when not supplied (the live spawn path's parent is always the root).
 
-        ``cache_bust_marker`` / ``cache_bust_target`` are minted by the caller
-        (BranchOrchestrator) so each SPAWN child gets its own unique marker —
-        preventing two subagents in different traces from sharing a server
-        KV-cache prefix and inflating hit rates artificially.
+        ``cache_bust_marker`` / ``cache_bust_target`` are resolved by the caller
+        (BranchOrchestrator via ``_marker_for_root``) to the marker of the
+        child's trajectory TREE, so every SPAWN descendant of one root shares
+        the root's marker (the tree is one prefix-cache domain) while subagents
+        in different traces get distinct markers — preventing cross-trace
+        sharing of a server KV-cache prefix and artificially inflated hit rates.
         """
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(

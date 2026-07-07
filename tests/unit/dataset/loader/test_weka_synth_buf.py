@@ -1593,7 +1593,6 @@ def _make_tool_shaped_recon(bs=64):
         decode_block_tokens=_stub_decode_block_tokens,
         sample_partial_tail_tokens=_stub_partial_tail_tokens,
         decode_tokens_to_text=_stub_decode_tokens_to_text,
-        emit_assistant_segments=True,
         tool_shaped_messages=True,
     )
 

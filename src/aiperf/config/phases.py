@@ -269,7 +269,9 @@ class BasePhaseConfig(BaseConfig):
             le=1.0,
             description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
             "position within each trajectory, expressed as a fraction of the "
-            "trace's total turn count. Sampled per trajectory at trajectory-build "
+            "trace's recorded wall-clock duration (timestamped traces) or its "
+            "total turn count (legacy timestamp-less traces). Sampled per "
+            "trajectory at trajectory-build "
             "time; deterministic given --random-seed.",
         ),
     ]
@@ -282,7 +284,9 @@ class BasePhaseConfig(BaseConfig):
             le=1.0,
             description="AGENTIC_REPLAY only: upper bound (inclusive) on the random start "
             "position within each trajectory, expressed as a fraction of the "
-            "trace's total turn count. The effective per-trace ceiling is "
+            "trace's recorded wall-clock duration (timestamped traces) or its "
+            "total turn count (legacy timestamp-less traces). For the "
+            "timestamp-less path the effective per-trace ceiling is "
             "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
             "after warmup.",
         ),

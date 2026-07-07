@@ -1131,7 +1131,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.25,
-                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -1139,7 +1139,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.75,
-                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -1494,7 +1494,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.25,
-                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -1502,7 +1502,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.75,
-                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -1783,7 +1783,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.25,
-                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -1791,7 +1791,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.75,
-                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -2086,7 +2086,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.25,
-                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -2094,7 +2094,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.75,
-                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -2375,7 +2375,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.25,
-                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -2383,7 +2383,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.75,
-                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -2671,7 +2671,7 @@
                     },
                     "trajectoryStartMinRatio": {
                       "default": 0.25,
-                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                      "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartminratio",
@@ -2679,7 +2679,7 @@
                     },
                     "trajectoryStartMaxRatio": {
                       "default": 0.75,
-                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                      "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                       "maximum": 1.0,
                       "minimum": 0.0,
                       "title": "Trajectorystartmaxratio",
@@ -3808,7 +3808,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -3816,7 +3816,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -4171,7 +4171,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -4179,7 +4179,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -4460,7 +4460,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -4468,7 +4468,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -4763,7 +4763,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -4771,7 +4771,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -5052,7 +5052,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -5060,7 +5060,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -5348,7 +5348,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -5356,7 +5356,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -5661,7 +5661,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -5669,7 +5669,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -6024,7 +6024,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -6032,7 +6032,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -6313,7 +6313,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -6321,7 +6321,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -6616,7 +6616,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -6624,7 +6624,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -6905,7 +6905,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -6913,7 +6913,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -7201,7 +7201,7 @@
                 },
                 "trajectoryStartMinRatio": {
                   "default": 0.25,
-                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+                  "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartminratio",
@@ -7209,7 +7209,7 @@
                 },
                 "trajectoryStartMaxRatio": {
                   "default": 0.75,
-                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+                  "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Trajectorystartmaxratio",
@@ -7754,12 +7754,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.25,
-          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.25,
-              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -7780,12 +7780,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.75,
-          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.75,
-              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -8397,12 +8397,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.25,
-          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.25,
-              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -8423,12 +8423,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.75,
-          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.75,
-              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -9985,12 +9985,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.25,
-          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.25,
-              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -10011,12 +10011,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.75,
-          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.75,
-              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -10487,12 +10487,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.25,
-          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.25,
-              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -10513,12 +10513,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.75,
-          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.75,
-              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -12740,12 +12740,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.25,
-          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.25,
-              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -12766,12 +12766,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.75,
-          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.75,
-              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",
@@ -15866,12 +15866,12 @@
         },
         "trajectoryStartMinRatio": {
           "default": 0.25,
-          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+          "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
           "title": "Trajectorystartminratio",
           "oneOf": [
             {
               "default": 0.25,
-              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
+              "description": "AGENTIC_REPLAY only: lower bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). Sampled per trajectory at trajectory-build time; deterministic given --random-seed.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartminratio",
@@ -15892,12 +15892,12 @@
         },
         "trajectoryStartMaxRatio": {
           "default": 0.75,
-          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+          "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
           "title": "Trajectorystartmaxratio",
           "oneOf": [
             {
               "default": 0.75,
-              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's total turn count. The effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
+              "description": "AGENTIC_REPLAY only: upper bound (inclusive) on the random start position within each trajectory, expressed as a fraction of the trace's recorded wall-clock duration (timestamped traces) or its total turn count (legacy timestamp-less traces). For the timestamp-less path the effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at least one profile turn remains after warmup.",
               "maximum": 1.0,
               "minimum": 0.0,
               "title": "Trajectorystartmaxratio",

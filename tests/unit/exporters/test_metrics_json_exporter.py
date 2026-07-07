@@ -125,7 +125,7 @@ class TestMetricsJsonExporter:
         assert raw["metadata"]["dataset"] == {
             "source_type": "public_dataset",
             "loader": "semianalysis_cc_traces_weka_with_subagents",
-            "hf_dataset_name": "semianalysisai/cc-traces-weka-061526",
+            "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
             "hf_split": "train",
             "num_dataset_entries": 393,
         }

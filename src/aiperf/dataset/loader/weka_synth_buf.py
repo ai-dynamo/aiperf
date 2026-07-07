@@ -102,20 +102,9 @@ class ConversationReconstructor:
     sample_partial_tail_tokens: Callable[[int, str], list[int]]
     decode_tokens_to_text: Callable[[list[int]], str]
     bpe_stable_terminator_tokens: list[int] = field(default_factory=list)
-    emit_assistant_segments: bool = True
-    """When False, ``turn_delta`` filters role=='assistant' segments out of
-    the emitted ``delta_messages``. The segments remain in ``_segments`` for
-    LCP/truncation accounting on subsequent turns. Used to switch the weka
-    loader from pre-canned trace assistant text (preserves recorded hash_id
-    chain, but invalidates server KV every turn) to live server-generated
-    assistant turns threaded back via ``DELTAS_WITHOUT_RESPONSES`` (preserves
-    cache-hit reuse across turns at the cost of hash-id fidelity past
-    turn 0).
-    """
     tool_shaped_messages: bool = False
     """When True, ``turn_delta`` emits marked tool-result user segments in
-    the OpenAI tool-call wire shape (see weka_tool_shape). Requires emitted
-    assistant segments for pairing, so live-assistant deltas stay plain."""
+    the OpenAI tool-call wire shape (see weka_tool_shape)."""
     _segments: list[RoleSegment] = field(default_factory=list)
     _emitted_segment_count: int = 0
     _last_disturbance_at: int | None = None
@@ -468,14 +457,12 @@ class ConversationReconstructor:
             reset = False
 
         messages = [{"role": s.role, "content": s.content} for s in source]
-        if self.tool_shaped_messages and self.emit_assistant_segments:
+        if self.tool_shaped_messages:
             # A mark that cannot pair in THIS window ships plain and must
             # stay plain on every later re-emission — demote it now so reset
             # full re-emits cannot retroactively shape already-sent context.
             demote_unpaired_tool_marks(source)
             messages = tool_shape_segment_messages(messages, source)
-        if not self.emit_assistant_segments:
-            messages = [m for m in messages if m["role"] != "assistant"]
 
         self._emitted_segment_count = len(self._segments)
         self._last_disturbance_at = None

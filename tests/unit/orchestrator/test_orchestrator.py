@@ -227,7 +227,7 @@ def test_stamp_metadata_includes_public_dataset_provenance() -> None:
     assert aggregate.metadata["dataset"] == {
         "source_type": "public_dataset",
         "loader": _WEKA_LOADER,
-        "hf_dataset_name": "semianalysisai/cc-traces-weka-061526",
+        "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
         "hf_split": "train",
         "num_dataset_entries": 393,
     }
@@ -257,7 +257,7 @@ def test_stamp_metadata_omits_num_dataset_entries_when_not_explicit() -> None:
     assert aggregate.metadata["dataset"] == {
         "source_type": "public_dataset",
         "loader": _WEKA_LOADER,
-        "hf_dataset_name": "semianalysisai/cc-traces-weka-061526",
+        "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
         "hf_split": "train",
     }
     assert "num_dataset_entries" not in aggregate.metadata["dataset"]

@@ -61,15 +61,13 @@ class ConversationState:
         Warmup dispatches the stream's last request before t* -- turn
         ``next_turn_index - 1`` -- as a session start. The chat prefix is
         rebuilt worker-side by ``UserSession.advance_turn`` (the worker calls
-        it with the credit's ``turn_index`` after ``create_and_store``), and
-        what that reproduces is context-mode dependent: under
-        ``DELTAS_WITH_RESPONSES`` (the weka default) it back-seeds turns
+        it with the credit's ``turn_index`` after ``create_and_store``): under
+        ``DELTAS_WITH_RESPONSES`` (the weka mode) it back-seeds turns
         ``0..next_turn_index - 2`` so the request carries the full prefix and
-        primes the server cache to the stream's t* state; under
-        ``DELTAS_WITHOUT_RESPONSES``
-        (``AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES``) prior turns are not
-        seeded -- only that turn's delta is sent and the t* prefix is not
-        reproduced (see ``_warn_if_live_delta_snapshot_needs_prior_responses``).
+        primes the server cache to the stream's t* state. Under
+        ``DELTAS_WITHOUT_RESPONSES`` prior turns are not seeded -- only that
+        turn's delta is sent and the t* prefix is not reproduced (see
+        ``_warn_if_live_delta_snapshot_needs_prior_responses``).
         A stream whose first request is at/after t* (``next_turn_index == 0``;
         e.g. a subagent whose chain was spawned after t*) had not issued
         anything at t*, so there is nothing to warm: it dispatches turn 0
@@ -472,11 +470,10 @@ class TrajectorySource(ConversationSource):
         """Return whether ``turn_index`` can be the first request of a session.
 
         Agentic replay starts a fresh session at ``k_i`` during WARMUP and at
-        ``k_i + 1`` during PROFILING. In live-assistant mode the loader emits
-        user-only deltas, so a mid-trace turn whose delta contains only the
-        original assistant segment has ``raw_messages=[]``. That turn is valid
-        after prior live responses have been accumulated, but invalid as the
-        first request of a fresh OpenAI chat session: vLLM/Kimi rejects an
+        ``k_i + 1`` during PROFILING. A degenerate zero-new-token turn (a
+        fully block-aligned pull-back/compaction) can have
+        ``raw_messages=[]``. Such a turn is valid mid-session, but invalid as
+        the first request of a fresh OpenAI chat session: vLLM/Kimi rejects an
         empty ``messages`` array in the chat template. Metadata stores only
         ``raw_messages_count`` instead of duplicating full OpenAI payloads.
         """

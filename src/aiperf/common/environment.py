@@ -91,9 +91,10 @@ class _AccuracySettings(BaseSettings):
 class _AgentXSettings(BaseSettings):
     """Settings for the InferenceX AgentX scenario family.
 
-    Controls runtime detection knobs for the agentx scenario, currently the
-    substring allowlist used to classify a server response as a
-    context-overflow error (RFC 2026-04-26 §7).
+    Controls runtime knobs for the agentx scenario: the substring allowlist
+    and rate limit used to classify and gate context-overflow errors
+    (RFC 2026-04-26 §7), and the AgenticReplayStrategy double-recycle guard
+    window (RECYCLE_GUARD_MAX_WINDOW).
     """
 
     model_config = SettingsConfigDict(
@@ -331,19 +332,6 @@ class _DatasetSettings(BaseSettings):
         "WekaTraceLoader switches to the multi-process parallel reconstruction "
         "path. Below this, the in-process serial path is used (Pool startup "
         "overhead exceeds the speedup for tiny corpora).",
-    )
-    WEKA_LIVE_ASSISTANT_RESPONSES: bool = Field(
-        default=False,
-        description="When True, WekaTraceLoader emits user-only deltas and "
-        "selects ConversationContextMode.DELTAS_WITHOUT_RESPONSES so the "
-        "worker threads the server's live assistant response back into the "
-        "session's turn_list between turns. Preserves the server's "
-        "just-generated KV blocks across turn boundaries (real cache-hit "
-        "rate) at the cost of hash-id fidelity past turn 0 (server-generated "
-        "assistant length will not exactly match the trace's recorded "
-        "output_length, so subsequent user-turn block alignment drifts from "
-        "the trace's hash_ids). Default False preserves the pre-canned-"
-        "assistant behavior that matches recorded hash_ids byte-for-byte.",
     )
     WEKA_SPLIT_FLATTENED_AGENTS: bool = Field(
         default=True,

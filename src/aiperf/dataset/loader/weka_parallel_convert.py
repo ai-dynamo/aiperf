@@ -245,7 +245,6 @@ class _WekaTraceTask:
     think_time_only: bool
     model_map: dict[str, str]
     block_size: int
-    emit_assistant_segments: bool = True
     tool_shaped_messages: bool = False
 
 
@@ -384,7 +383,6 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
         sample_partial_tail_tokens=parent_partial,
         decode_tokens_to_text=parent_decode_text,
         bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
-        emit_assistant_segments=task.emit_assistant_segments,
         tool_shaped_messages=task.tool_shaped_messages,
     )
 
@@ -629,7 +627,6 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             sample_partial_tail_tokens=child_partial,
             decode_tokens_to_text=child_decode_text,
             bpe_stable_terminator_tokens=state.bpe_stable_terminator_tokens,
-            emit_assistant_segments=task.emit_assistant_segments,
             tool_shaped_messages=task.tool_shaped_messages,
         )
 

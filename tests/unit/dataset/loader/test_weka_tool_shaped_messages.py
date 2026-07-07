@@ -15,8 +15,8 @@ the mmap dataset cache key must include the flag.
 
 Shaping is per-current-turn only and guarded: it requires an assistant
 segment immediately before the final user segment in the same delta, so
-turn 0 (no prior assistant) and live-assistant mode (assistant segments not
-emitted) fall back to the plain user shape automatically.
+turn 0 (no prior assistant) falls back to the plain user shape
+automatically.
 """
 
 from __future__ import annotations

@@ -9,13 +9,20 @@ hash_id replay, same model mapping, same branch / spawn-join, same delay
 capping). The public loader's only job is "download + parse rows into
 WekaTrace + delegate".
 
-Two variants are registered against this class in ``plugins.yaml``:
+Many corpus variants are registered against this class in
+``plugins.yaml`` (the ``semianalysis_cc_traces_weka*`` entries). For
+example:
 
-* ``semianalysis_cc_traces_weka`` — original 042026 corpus, 739 traces
-  with full subagent fan-out structure.
-* ``semianalysis_cc_traces_weka_no_subagents`` — 051826 derivative, 98
-  traces (v5-only, CC ≥ 2.1.139, subagent blocks stripped, ≥20 turns
-  per trace). Default for the InferenceX AgentX-MVP scenario.
+* ``semianalysis_cc_traces_weka`` and
+  ``semianalysis_cc_traces_weka_no_subagents`` both map to
+  ``semianalysisai/cc-traces-weka-no-subagents-051826`` (98 traces,
+  v5-only, CC ≥ 2.1.139, subagent blocks stripped, ≥20 main-agent
+  turns per trace).
+* the date-pinned with-subagents variants (e.g.
+  ``semianalysis_cc_traces_weka_062126`` and its ``_256k`` sibling)
+  carry full parent + Task-tool subagent fan-out; ``062126`` is the
+  current default AgentX corpus, and older date pins such as ``061526``
+  remain as reproducibility aliases.
 
 Which dataset is downloaded is governed by the ``hf_dataset_name``
 plugin metadata field; the loader itself is variant-agnostic.
@@ -49,12 +56,14 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
     :class:`WekaTraceLoader`. File-based and HF-based replay are
     guaranteed byte-identical because they share one method body.
 
-    Two variants are registered against this class:
-    ``semianalysis_cc_traces_weka`` (042026, 739 traces, full subagent
-    fan-out) and ``semianalysis_cc_traces_weka_no_subagents`` (051826,
-    98 traces, v5-only + CC ≥ 2.1.139 filtered, main-agent linear
-    streams only, ≥20 turns each). The loader code is identical for
-    both — only ``hf_dataset_name`` differs.
+    Many corpus variants are registered against this class (the
+    ``semianalysis_cc_traces_weka*`` entries in plugins.yaml).
+    ``semianalysis_cc_traces_weka`` and
+    ``semianalysis_cc_traces_weka_no_subagents`` both map to the 051826
+    no-subagents corpus (98 traces, v5-only + CC ≥ 2.1.139 filtered,
+    main-agent linear streams only, ≥20 turns each); the date-pinned
+    with-subagents variants carry full subagent fan-out. The loader
+    code is identical for all of them — only ``hf_dataset_name`` differs.
     """
 
     tag: ClassVar[str] = "SemiAnalysisCCTracesWeka"
