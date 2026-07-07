@@ -70,9 +70,11 @@ def load_accumulators(
     ``record_types``.
 
     Disabled accumulators (``PluginDisabled`` / ``PostProcessorDisabled``)
-    are silently skipped — that's the explicit opt-out path. Anything else
-    is logged via ``host.error`` and skipped so one bad accumulator never
-    aborts the whole records manager.
+    are silently skipped — that's the explicit opt-out path. A construction
+    failure of the load-bearing ``metric_results`` accumulator re-raises so
+    ``RecordsManager.__init__`` fails loudly rather than silently producing
+    empty results; every other accumulator (GPU telemetry / server metrics)
+    is optional, so its failure is logged via ``host.error`` and skipped.
     """
     accumulators: dict[AccumulatorType, AccumulatorProtocol] = {}
     for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
@@ -90,8 +92,13 @@ def load_accumulators(
             )
         except (PluginDisabled, PostProcessorDisabled):
             host.debug(f"Accumulator {entry.name} is disabled and will not be used")
-        except Exception as e:  # noqa: BLE001 - one bad accumulator must not abort the records manager
+        except Exception as e:  # noqa: BLE001 - optional accumulators must not abort the records manager
             host.error(f"Failed to create accumulator {entry.name}: {e}")
+            # The metric_results accumulator is the sole summary producer; if it
+            # cannot be built there is no fallback, so fail fast instead of
+            # silently yielding empty results with exit 0.
+            if AccumulatorType(entry.name) == AccumulatorType.METRIC_RESULTS:
+                raise
     return accumulators
 
 

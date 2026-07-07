@@ -490,14 +490,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.error(f"Failed to create results processor {entry.name}: {e}")
 
         # --- agentx accumulator pipeline (the byte-exact summary engine) -------
-        # The MetricsAccumulator (accumulator:metric_results) is the primary
-        # value-computation engine for the records pipeline. The legacy
-        # results_processor:metric_results (MetricResultsProcessor) is gated OFF
-        # when the accumulator is active so the two engines never double-compute
-        # the summary (the accumulator's percentiles/throughput are the parity
-        # source of truth). Telemetry / server-metrics keep flowing through main's
-        # gpu_telemetry_processor / server_metrics_processor side-channels for
-        # #803 efficiency metrics — the accumulator drive here is metric_records-only.
+        # The MetricsAccumulator (accumulator:metric_results) is the SOLE summary
+        # producer for the records pipeline — the final ProfileResults come only
+        # from summarizing it. The legacy results_processor:metric_results
+        # (MetricResultsProcessor) is never summarized (no summarize() is ever
+        # called on the _metric_results_processors list), so it is a dead
+        # per-record dispatch once the accumulator is present and there is NO
+        # fallback summary path if the accumulator is missing. Telemetry /
+        # server-metrics keep flowing through main's gpu_telemetry_processor /
+        # server_metrics_processor side-channels for #803 efficiency metrics —
+        # the accumulator drive here is metric_records-only.
         self._accumulators: dict[AccumulatorType, AccumulatorProtocol] = (
             load_accumulators(self)
         )
@@ -523,8 +525,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self._stream_exporters, "server_metrics"
         )
 
-        # Gate the legacy MetricResultsProcessor off when the accumulator engine
-        # is driving the summary, to avoid double-compute / divergent numbers.
+        # The accumulator is the sole summary producer, and the legacy
+        # MetricResultsProcessor is never summarized — so gating it off simply
+        # removes a dead per-record dispatch (it is not a fallback and does not
+        # otherwise contribute to the results).
         if AccumulatorType.METRIC_RESULTS in self._accumulators:
             # Exact-type check, deliberately NOT isinstance: subclasses like
             # TimesliceMetricResultsProcessor (results_processor:timeslice)
