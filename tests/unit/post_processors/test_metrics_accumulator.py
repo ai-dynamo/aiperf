@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pytest
 
-from aiperf.common.accumulator_protocols import ExportContext
+from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, CreditPhase, MetricType
 from aiperf.common.exceptions import NoMetricValue
@@ -200,6 +200,61 @@ class TestMetricsAccumulator:
 
         assert warmup.results[RequestLatencyMetric.tag].avg == pytest.approx(100.0)
         assert profiling.results[RequestLatencyMetric.tag].avg == pytest.approx(200.0)
+
+    @pytest.mark.asyncio
+    async def test_summarize_realtime_phase_scoped_excludes_warmup(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        """Realtime summarize scoped to PROFILING must exclude warmup records so
+        the live view is not diluted by warmup latencies/counts. Pre-fix,
+        summarize built no phase mask and averaged warmup+profiling together."""
+        processor = MetricsAccumulator(mock_run)
+        processor._tags_to_types = {
+            RequestLatencyMetric.tag: MetricType.RECORD,
+            RequestCountMetric.tag: MetricType.AGGREGATE,
+        }
+        processor._metric_classes = {
+            RequestLatencyMetric.tag: RequestLatencyMetric,
+            RequestCountMetric.tag: RequestCountMetric,
+        }
+        processor._aggregation_kinds = {RequestCountMetric.tag: AggregationKind.SUM}
+
+        warmup_msg = create_metric_records_message(
+            session_num=0,
+            benchmark_phase=CreditPhase.WARMUP,
+            request_start_ns=1_000_000_000,
+            request_end_ns=1_100_000_000,
+            results=[
+                {
+                    RequestLatencyMetric.tag: 100_000_000.0,
+                    RequestCountMetric.tag: 1,
+                }
+            ],
+        )
+        profiling_msg = create_metric_records_message(
+            session_num=0,
+            benchmark_phase=CreditPhase.PROFILING,
+            request_start_ns=2_000_000_000,
+            request_end_ns=2_200_000_000,
+            results=[
+                {
+                    RequestLatencyMetric.tag: 200_000_000.0,
+                    RequestCountMetric.tag: 1,
+                }
+            ],
+        )
+
+        await processor.process_record(warmup_msg.to_data())
+        await processor.process_record(profiling_msg.to_data())
+
+        assert processor.record_count == 2
+
+        summary = await processor.summarize(SummaryContext(phase=CreditPhase.PROFILING))
+
+        # Pre-fix: no phase mask → warmup+profiling averaged to 150.0.
+        assert summary.results[RequestLatencyMetric.tag].avg == pytest.approx(200.0)
+        # Request count reflects only the single profiling record, not both.
+        assert summary.results[RequestCountMetric.tag].avg == pytest.approx(1.0)
 
 
 class TestComputeResultsWindowBounds:
