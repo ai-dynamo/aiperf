@@ -245,8 +245,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 continue
 
             session_first_ts[session_id] = min(
-                timestamp,
-                session_first_ts.get(session_id, timestamp),
+                timestamp, session_first_ts.get(session_id, timestamp)
             )
 
         if self._session_sample_ratio is None or self._session_sample_ratio >= 1.0:
@@ -260,10 +259,7 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             return min_timestamp, None, None, None
 
         session_entries = sorted(
-            (
-                (first_ts, session_id)
-                for session_id, first_ts in session_first_ts.items()
-            ),
+            ((ts, sid) for sid, ts in session_first_ts.items()),
             key=lambda item: (item[0], str(item[1])),
         )
         original_count = len(session_entries)
@@ -276,9 +272,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         if not sampled_entries and original_count > 0:
             sampled_entries = [self._rng.choice(session_entries)]
 
-        # Null-session rows become synthesized single-turn sessions downstream,
-        # so sample each (keyed by file row order) at the same ratio instead of
-        # letting the pyarrow "in" filter drop them all.
+        # Null-session rows become synthesized single-turn sessions downstream, so
+        # sample each (keyed by stable file row order) at the same ratio instead
+        # of letting the pyarrow "in" filter drop them all.
         sampled_null_rows = {
             ordinal
             for ordinal in range(null_row_count)
@@ -288,8 +284,8 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self.info(
             f"Sampled {len(sampled_entries):,} of {original_count:,} sessions and "
             f"{len(sampled_null_rows):,} of {null_row_count:,} null-session rows "
-            f"using {session_key} "
-            f"with trace_session_sample_ratio={self._session_sample_ratio}"
+            f"using {session_key} with "
+            f"trace_session_sample_ratio={self._session_sample_ratio}"
         )
         return (
             min_timestamp,
