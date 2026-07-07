@@ -92,7 +92,7 @@ def load_accumulators(
             )
         except (PluginDisabled, PostProcessorDisabled):
             host.debug(f"Accumulator {entry.name} is disabled and will not be used")
-        except Exception as e:  # noqa: BLE001 - optional accumulators must not abort the records manager
+        except Exception as e:
             host.error(f"Failed to create accumulator {entry.name}: {e}")
             # The metric_results accumulator is the sole summary producer; if it
             # cannot be built there is no fallback, so fail fast instead of
@@ -128,7 +128,7 @@ def load_stream_exporters(
             )
         except (PluginDisabled, PostProcessorDisabled):
             host.debug(f"Stream exporter {entry.name} is disabled and will not be used")
-        except Exception as e:  # noqa: BLE001 - one bad exporter must not abort the records manager
+        except Exception as e:
             host.error(f"Failed to create stream exporter {entry.name}: {e}")
     return exporters
 

@@ -806,7 +806,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if not credit_context.cancelled and not credit_context.record_emitted:
                 try:
                     await self._emit_credit_failure_record(credit_context)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     self.exception(
                         f"Failed to emit lockstep failure record for credit "
                         f"{credit_context.credit.id}: {e!r}"

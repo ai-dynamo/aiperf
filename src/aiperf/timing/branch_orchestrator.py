@@ -1159,7 +1159,7 @@ class BranchOrchestrator:
         for child_id in branch.child_conversation_ids:
             try:
                 meta = self._cs.get_metadata(child_id)
-            except Exception:  # noqa: BLE001,S112 - missing metadata = no timing evidence
+            except Exception:  # noqa: S112 - missing metadata = no timing evidence
                 continue
             ts = _turn0_timestamp_ms(meta)
             if ts is not None:
@@ -1220,7 +1220,7 @@ class BranchOrchestrator:
         async with self._parent_locks[parent_corr]:
             try:
                 result = await self._dispatch_first_turn(child)
-            except Exception as exc:  # noqa: BLE001 - classified like the gather path
+            except Exception as exc:
                 result = exc
             if result is not True:
                 self._rollback_failed_first_turn(child, result, parent_corr)
@@ -1588,7 +1588,7 @@ class BranchOrchestrator:
             return
         try:
             observer()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("abort observer raised: %s", exc)
 
     def _notify_drain(self) -> None:
@@ -1598,7 +1598,7 @@ class BranchOrchestrator:
             return
         try:
             observer()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("drain observer raised: %s", exc)
 
     def has_pending_branch_work(self) -> bool:

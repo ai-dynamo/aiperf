@@ -371,7 +371,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 scalar_dict[tag] = derive_func(scalar_dict)
             except NoMetricValue as e:
                 self.debug(f"No metric value for derived metric '{tag}': {e!r}")
-            except Exception as e:  # noqa: BLE001 - one bad derive must not abort the rest of the summary
+            except Exception as e:
                 self.warning(f"Error deriving metric '{tag}': {e!r}")
 
     def compute_results_for_mask(

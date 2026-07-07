@@ -738,7 +738,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         try:
             await self.publish(ProfileCancelCommand(service_id=self.service_id))
-        except Exception as exc:  # noqa: BLE001 - publish failure must not abort the per-record path
+        except Exception as exc:
             self.warning(
                 f"Failed to publish ProfileCancelCommand for threshold abort: {exc!r}"
             )
@@ -1021,7 +1021,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             for record in telemetry_records:
                 try:
                     await exporter.process_record(record)
-                except Exception as exc:  # noqa: BLE001 - best-effort fan-out; CancelledError must propagate
+                except Exception as exc:
                     self.error(
                         f"Stream exporter {exporter.__class__.__name__} failed for "
                         f"gpu_telemetry record: {exc!r}"
@@ -1051,7 +1051,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         for exporter in self._server_metrics_stream_exporters:
             try:
                 await exporter.process_record(record)
-            except Exception as exc:  # noqa: BLE001 - best-effort fan-out; CancelledError must propagate
+            except Exception as exc:
                 self.error(
                     f"Stream exporter {exporter.__class__.__name__} failed for "
                     f"server_metrics record: {exc!r}"
@@ -1340,7 +1340,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
             if callable(snapshot_fn):
                 server_snapshot = snapshot_fn(start_ns=start_ns) or {}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.debug(lambda exc=exc: f"server_snapshot failed: {exc!r}")
         return server_snapshot
 
@@ -1500,7 +1500,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
             self.debug(f"Completed summarize for accumulator {acc_type}: {name}")
             return acc_type, res
-        except Exception as e:  # noqa: BLE001 - one bad accumulator must not abort the rest
+        except Exception as e:
             self.error(f"Error in summarize for accumulator {acc_type} ({name}): {e!r}")
             return acc_type, e
 
@@ -1648,7 +1648,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     results=result,
                 )
             )
-        except Exception as e:  # noqa: BLE001 - publish failure must not abort the per-record result path
+        except Exception as e:
             self.error(f"Failed to publish ProcessAllResultsMessage: {e!r}")
 
     def _deliver_network_rtt_to_processors(self) -> None:
@@ -1918,7 +1918,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         try:
             server_metrics_result = await self._process_server_metrics_results()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.exception(f"Failed to process server metrics results: {e!r}")
             server_metrics_result = ProcessServerMetricsResult(results=None)
         self.debug(

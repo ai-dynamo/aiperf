@@ -89,7 +89,7 @@ class RecordExportJSONLWriter(
             # Write using the buffered writer mixin (handles batching and flushing)
             await self.buffered_write(record_info)
 
-        except Exception as e:  # noqa: BLE001 - per-record; skip bad record and continue
+        except Exception as e:
             self.error(f"Failed to write record metrics: {e}")
 
     # Registered as a ``stream_exporter`` (fed via ``process_record`` with

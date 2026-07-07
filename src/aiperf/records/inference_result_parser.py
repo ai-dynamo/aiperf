@@ -157,7 +157,7 @@ class InferenceResultParser(CommunicationMixin):
                 request_record.context_overflow = is_context_overflow_response(
                     body=request_record.error.message,
                 )
-            except Exception:  # noqa: BLE001 - detection is best-effort, never a parse error
+            except Exception:
                 request_record.context_overflow = False
 
         # One payload decode + walk per record, shared by the ISL tokeniser and
@@ -441,7 +441,7 @@ class InferenceResultParser(CommunicationMixin):
                 tokenize=True,
                 add_generation_prompt=True,
             )
-        except Exception as exc:  # noqa: BLE001 - best-effort; fall back to bare encode
+        except Exception as exc:
             self.debug(
                 lambda exc=exc: f"Chat-template tokenization unavailable, "
                 f"falling back to bare-text encode: {exc!r}"

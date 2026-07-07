@@ -95,7 +95,7 @@ def _preload() -> None:
             file=sys.stderr,
             flush=True,
         )
-    except Exception as e:  # noqa: BLE001 - preload must never crash the forkserver helper
+    except Exception as e:
         print(
             f"[aiperf.loader_tokenizer_preload] failed to preload '{name}': {e!r}; "
             "workers will load on demand",

@@ -179,7 +179,7 @@ class ExporterManager(AIPerfLoggerMixin):
                     f"Console exporter {exporter_entry.name} is disabled and will not be used"
                 )
                 continue
-            except Exception as e:  # noqa: BLE001 - one bad exporter must not abort the others
+            except Exception as e:
                 self.error(f"Error creating console exporter: {e!r}")
                 continue
 

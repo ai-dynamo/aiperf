@@ -89,7 +89,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self._drop_agentic_overflow_records = (
                     str(spec.timing_mode) == "agentic_replay"
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # Unknown scenario names are validated elsewhere; record
                 # processing degrades to default error-emission behavior here.
                 self._drop_agentic_overflow_records = False
@@ -163,7 +163,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 continue
             try:
                 await flush()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self.error(f"Failed to flush child {child}: {e!r}")
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
@@ -260,7 +260,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             await self._process_and_forward_record(
                 message, record, last_response_perf_ns
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # Never drop the record: the worker already returned this credit as
             # completed, so forward an error record to keep the records-side
             # count in lockstep and let the completion barrier converge.
@@ -274,7 +274,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 await self._forward_failed_record(
                     message, record, last_response_perf_ns, e
                 )
-            except Exception as forward_exc:  # noqa: BLE001
+            except Exception as forward_exc:
                 self.exception(
                     f"Failed to forward error record; dropping to avoid escaping handler: {forward_exc!r}"
                 )
@@ -354,7 +354,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             metadata = self._create_metric_record_metadata(
                 record, message.service_id, last_response_perf_ns
             )
-        except Exception as meta_exc:  # noqa: BLE001
+        except Exception as meta_exc:
             # Metadata creation itself can fail (e.g. request_info is None, which
             # was often the original failure cause). Fall back to a minimal record
             # built only from always-available fields so lockstep is preserved.
