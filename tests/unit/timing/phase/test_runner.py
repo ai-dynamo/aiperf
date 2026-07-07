@@ -654,6 +654,51 @@ class TestEdgeCases:
                 await r.run(is_final_phase=True)
             mock_ramper.stop.assert_called_once()
 
+    async def test_timeout_skips_cancel_drain_when_all_credits_returned(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(dur=1.0), conv_src, pub, router, conc, cancel, cb)
+        stats = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            start_ns=1,
+            sent_end_ns=2,
+            requests_end_ns=3,
+            final_requests_sent=94,
+            requests_sent=94,
+            requests_completed=94,
+            requests_cancelled=0,
+            final_requests_completed=94,
+            final_requests_cancelled=0,
+            final_request_errors=0,
+            final_sent_sessions=1,
+            final_completed_sessions=1,
+            final_cancelled_sessions=0,
+        )
+        r._progress.create_stats = MagicMock(return_value=stats)
+        # Force the post-timeout cancel branch: pretend credits are still
+        # outstanding at the initial check, time out the wait, then recompute
+        # need == 0 so the empty-drain guard sets the event without waiting.
+        r._progress.check_all_returned_or_cancelled = MagicMock(return_value=False)
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+
+        with patch.object(
+            r,
+            "_wait_for_event_with_timeout",
+            new=AsyncMock(return_value=True),
+        ):
+            await r._wait_for_returning_complete()
+
+        router.cancel_all_credits.assert_awaited_once()
+        assert r._progress.all_credits_returned_event.is_set()
+        r._concurrency_manager.release_stuck_slots.assert_not_called()
+
 
 class TestFixedScheduleConfigCorrection:
     """Tests for FIXED_SCHEDULE mode config correction using actual dataset size."""
@@ -830,3 +875,39 @@ class TestPhaseRunnerWorkerReadiness:
         real_router._register_worker("worker-1")
         await asyncio.wait_for(run_task, timeout=5.0)
         assert strategy.execute_called
+
+
+class TestWarmupProgressHeartbeat:
+    """Warmup emits a throttled INFO heartbeat in _progress_report_loop
+    (AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL, default 30s, 0 disables) so
+    headless warmup stays observable when no interactive UI consumes progress.
+    """
+
+    def test_format_warmup_progress_includes_returned_target_and_elapsed(self):
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=40,
+            requests_completed=30,
+            requests_cancelled=2,
+            request_errors=1,
+            total_expected_requests=50,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "Phase warmup progress" in msg
+        assert "returned=32/50" in msg  # completed + cancelled / target
+        assert "sent=40" in msg
+        assert "errors=1" in msg
+        assert "elapsed=" in msg
+
+    def test_format_warmup_progress_without_target(self):
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=5,
+            requests_completed=3,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "returned=3" in msg and "returned=3/" not in msg  # no target
+
+    def test_warmup_log_interval_env_field_exists(self):
+        # 0 disables; default is a positive heartbeat cadence.
+        assert Environment.SERVICE.WARMUP_PROGRESS_LOG_INTERVAL >= 0.0
