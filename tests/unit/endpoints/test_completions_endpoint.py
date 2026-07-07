@@ -42,7 +42,7 @@ class TestCompletionsEndpoint:
 
         assert payload["model"] == "completion-model"
         assert payload["stream"] is False
-        assert payload["prompt"] == ["Once upon a time"]
+        assert payload["prompt"] == "Once upon a time"
 
     def test_format_payload_multiple_prompts(self, endpoint, model_endpoint):
         """Test multiple prompts are all included."""
@@ -80,6 +80,20 @@ class TestCompletionsEndpoint:
             f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nPrompt 1",
             f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nPrompt 2",
         ]
+
+    def test_format_payload_warmup_single_prompt_prefixed_string(
+        self, endpoint, model_endpoint
+    ):
+        turn = Turn(texts=[Text(contents=["Prompt 1"])], model="completion-model")
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            credit_phase=CreditPhase.WARMUP,
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nPrompt 1"
 
     def test_format_payload_filters_empty_prompts(self, endpoint, model_endpoint):
         """Test that empty strings are filtered from prompts."""

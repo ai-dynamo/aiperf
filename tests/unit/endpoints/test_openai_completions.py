@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 
-from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -43,7 +43,7 @@ class TestCompletionsEndpoint:
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
-            "prompt": ["Hello, world!"],
+            "prompt": "Hello, world!",
             "model": "test-model",
             "stream": False,
         }
@@ -62,7 +62,7 @@ class TestCompletionsEndpoint:
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
-            "prompt": ["Hello, world!"],
+            "prompt": "Hello, world!",
             "model": "test-model",
             "stream": True,
             "max_tokens": 50,
@@ -81,7 +81,7 @@ class TestCompletionsEndpoint:
 
         payload = endpoint.format_payload(request_info)
 
-        assert payload["prompt"] == ["second"]
+        assert payload["prompt"] == "second"
         assert payload["max_tokens"] == 33
         assert payload["hash_ids"] == [1, 2]
         assert payload["block_size"] == 64
@@ -105,38 +105,29 @@ class TestCompletionsEndpoint:
         assert payload["block_size"] == 64
         assert payload["temperature"] == 0.7
 
-    def test_format_payload_warmup_prefix_survives_extra_body_prompt(
-        self, model_endpoint
+    @pytest.mark.parametrize(
+        "credit_phase",
+        [
+            param(CreditPhase.PROFILING, id="profiling"),
+            param(CreditPhase.WARMUP, id="warmup"),
+        ],
+    )  # fmt: skip
+    def test_format_payload_extra_body_prompt_overrides_in_every_phase(
+        self, model_endpoint, credit_phase
     ):
-        """WARMUP prefix must not be clobbered by an extra_body carrying `prompt`."""
+        """Extra body merges last and wins in all credit phases, warmup included."""
         endpoint = CompletionsEndpoint(model_endpoint)
         request_info = create_request_info(
             model_endpoint=model_endpoint,
             texts=["recorded"],
-            credit_phase=CreditPhase.WARMUP,
-            extra_body={"prompt": "recorded", "hash_ids": [1, 2]},
-        )
-
-        payload = endpoint.format_payload(request_info)
-
-        assert payload["prompt"] == [f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\nrecorded"]
-        # Non-prompt extra_body knobs still forward during warmup.
-        assert payload["hash_ids"] == [1, 2]
-
-    def test_format_payload_non_warmup_extra_body_prompt_still_overrides(
-        self, model_endpoint
-    ):
-        """Outside warmup, extra_body retains its override semantics for `prompt`."""
-        endpoint = CompletionsEndpoint(model_endpoint)
-        request_info = create_request_info(
-            model_endpoint=model_endpoint,
-            texts=["recorded"],
-            extra_body={"prompt": "overridden"},
+            credit_phase=credit_phase,
+            extra_body={"prompt": "overridden", "hash_ids": [1, 2]},
         )
 
         payload = endpoint.format_payload(request_info)
 
         assert payload["prompt"] == "overridden"
+        assert payload["hash_ids"] == [1, 2]
 
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",
