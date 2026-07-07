@@ -10,10 +10,21 @@ from aiperf.dataset.loader._baseten_replay_timemodel import reflow_idle_gaps
 
 
 class TestReflowIdleGaps:
-    @pytest.mark.parametrize("cap", [None, 0, -5])
-    def test_identity_when_cap_disabled(self, cap):
+    def test_identity_when_cap_disabled(self):
         ts = [0, 100, 5000, 5050]
-        assert reflow_idle_gaps(ts, cap) == ts
+        assert reflow_idle_gaps(ts, None) == ts
+
+    @pytest.mark.parametrize("cap", [0, -5, 0.0])
+    def test_non_positive_cap_rejected(self, cap):
+        # A user passing 0 wants back-to-back replay, not a silent no-op;
+        # the config layer enforces > 0, so a non-positive cap here is a bug.
+        with pytest.raises(ValueError, match="cap_ms"):
+            reflow_idle_gaps([0, 100, 5000], cap)
+
+    def test_sub_millisecond_cap_rounds_up_to_one_ms(self):
+        # int-ms timestamps cannot express sub-ms gaps; round the cap up
+        # instead of truncating it to a 0ms collapse-everything cap.
+        assert reflow_idle_gaps([0, 100_000], 0.5) == [0, 1]
 
     def test_empty(self):
         assert reflow_idle_gaps([], 1000) == []
