@@ -95,7 +95,11 @@ otel = [
 ]
 test = [
   "httpx>=0.27.0",
-  "hypothesis>=6.0.0",
+  # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
+  # build and no sdist, so it can't install on Windows-on-ARM. Cap it there to
+  # the last pure-Python release (6.155.x); leave it unconstrained elsewhere.
+  "hypothesis>=6.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
+  "hypothesis>=6.0.0,<6.156; platform_system == 'Windows' and platform_machine == 'ARM64'",
   "jsonschema>=4.0.0",
   "looptime>=0.5",
   "pytest>=7.0.0",
