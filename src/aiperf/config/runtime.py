@@ -207,9 +207,16 @@ class RuntimeConfig(BaseConfig):
     def apply_stats_interval(self) -> Self:
         """Write stats_interval through to Environment.UI.REALTIME_METRICS_INTERVAL."""
         if self.stats_interval is not None:
+            import os
+
             from aiperf.common.environment import Environment
 
+            # The parent's already-instantiated Environment singleton won't
+            # re-read env, so mutate the global directly (fork children inherit
+            # it). Also write os.environ so spawn children rebuilding
+            # _Environment() from the environment pick up the flag.
             Environment.UI.REALTIME_METRICS_INTERVAL = self.stats_interval
+            os.environ["AIPERF_UI_REALTIME_METRICS_INTERVAL"] = str(self.stats_interval)
         return self
 
 

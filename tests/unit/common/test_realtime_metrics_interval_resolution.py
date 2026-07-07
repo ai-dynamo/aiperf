@@ -12,9 +12,11 @@ Ported from agentx onto v2, keeping both halves of the surface:
   overriding the per-UIType auto-default.
 """
 
+import os
+
 import pytest
 
-from aiperf.common.environment import Environment
+from aiperf.common.environment import Environment, _UISettings
 from aiperf.config.runtime import RuntimeConfig
 from aiperf.plugin.enums import UIType
 
@@ -22,7 +24,9 @@ from aiperf.plugin.enums import UIType
 @pytest.fixture(autouse=True)
 def _reset_interval(monkeypatch):
     monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", None)
+    monkeypatch.delenv("AIPERF_UI_REALTIME_METRICS_INTERVAL", raising=False)
     yield
+    os.environ.pop("AIPERF_UI_REALTIME_METRICS_INTERVAL", None)
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +52,36 @@ def test_runtime_stats_interval_zero_writes_through_env(monkeypatch) -> None:
 def test_runtime_unset_stats_interval_leaves_env_alone(monkeypatch) -> None:
     RuntimeConfig()
     assert Environment.UI.REALTIME_METRICS_INTERVAL is None
+
+
+# ---------------------------------------------------------------------------
+# stats_interval also writes os.environ so spawn children (which rebuild
+# Environment from os.environ, and do not re-run model validators on unpickle)
+# honor the flag.
+# ---------------------------------------------------------------------------
+
+
+def test_apply_stats_interval_writes_through_os_environ() -> None:
+    RuntimeConfig(stats_interval=7.0)
+    assert os.environ["AIPERF_UI_REALTIME_METRICS_INTERVAL"] == "7.0"
+
+
+def test_apply_stats_interval_spawn_child_rebuild_honors_flag() -> None:
+    RuntimeConfig(stats_interval=1.0)
+    child = _UISettings()
+    assert child.REALTIME_METRICS_INTERVAL == 1.0
+    assert child.realtime_metrics_interval(UIType.DASHBOARD) == 1.0
+
+
+def test_apply_stats_interval_zero_spawn_child_rebuild_disables_log_block() -> None:
+    RuntimeConfig(stats_interval=0.0)
+    child = _UISettings()
+    assert child.realtime_metrics_interval(UIType.DASHBOARD) == 0.0
+
+
+def test_apply_stats_interval_unset_leaves_os_environ_absent() -> None:
+    RuntimeConfig()
+    assert "AIPERF_UI_REALTIME_METRICS_INTERVAL" not in os.environ
 
 
 # ---------------------------------------------------------------------------
