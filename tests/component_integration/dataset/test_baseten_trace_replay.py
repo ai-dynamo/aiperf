@@ -73,10 +73,11 @@ class TestBasetenTraceReplay:
         assert len(result.raw_records) == 2
 
         payloads = [record.payload for record in result.raw_records]
-        # The Baseten loader coerces each single prompt to a bare string (via
-        # extra_body) for the serverless /v1/completions gateway, which rejects
-        # the list[str] form. The endpoint itself is left byte-identical to
-        # upstream; the override happens at dispatch.
+        # On-wire invariant: a single recorded prompt is sent as the exact bare
+        # string (canonical OpenAI form; Baseten's /v1/completions gateway
+        # rejects list[str]). CompletionsEndpoint emits the string natively, so
+        # this holds whether or not the loader also carries the prompt through
+        # extra_body.
         assert [payload["prompt"] for payload in payloads] == [
             "first prompt",
             "second prompt",
