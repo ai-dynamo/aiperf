@@ -58,8 +58,9 @@ lives in the controller pod's process memory plus the on-disk
 `search_history.json`. A controller restart loses in-memory GP state but
 re-reads `search_history.json` on the next boot so the trajectory survives.
 
-The skopt dependency is pulled in through the AIPerf `[bo]` extra and is
-present on the controller-pod image; operator pods do not need it.
+The optimization stack is pulled in through the AIPerf `[botorch]` extra
+(alias `[optuna]`) and is present on the controller-pod image; operator
+pods do not need it.
 
 ## Minimal `AIPerfSweep` CR
 

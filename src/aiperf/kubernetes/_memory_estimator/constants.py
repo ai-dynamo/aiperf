@@ -4,7 +4,7 @@
 
 All values are static (formulas derived from code inspection, not runtime
 profiling). Constants can be recalibrated against real RSS measurements via
-``src/aiperf/analysis/calibrate_memory_estimates.py``.
+``tools/calibrate_memory_estimates.py``.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ _BYTES_PER_WORKER_TRACKING = 256
 # Wrapper-class overhead atop a numpy-backed time-series array
 # (``MetricArray``, ``GpuMetricTimeSeries``, ``ScalarTimeSeries``,
 # ``HistogramTimeSeries``). Calibrated via
-# ``src/aiperf/analysis/rebaseline_memory_constants.py`` — at fully-filled
+# ``tools/rebaseline_memory_constants.py`` — at fully-filled
 # capacity the wrapper class adds ~0-2% above the raw numpy bytes (dict
 # of metric names, bucket-le tuple, sum tracker, etc.).
 #
@@ -74,7 +74,7 @@ _BYTES_PER_CONNECTION = 1024
 
 # Per-request base overhead: msgspec.Struct RequestRecord shell + metadata
 # fields, with empty turns/responses lists.
-# Calibrated via ``src/aiperf/analysis/rebaseline_memory_constants.py``;
+# Calibrated via ``tools/rebaseline_memory_constants.py``;
 # pympler-measured deep size of an empty RequestRecord is 504 B.
 _REQUEST_RECORD_BASE_BYTES = 504
 

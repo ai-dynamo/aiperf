@@ -123,9 +123,6 @@ botorch = [
   "gpytorch>=1.11",
   "torch>=2.0",
 ]
-bo = [
-  "scikit-optimize>=0.10",
-]
 optuna = [
   "aiperf[botorch]",
 ]

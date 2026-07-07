@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.analysis.rebaseline_memory_constants import (
+from tools.rebaseline_memory_constants import (
     _CHARS_PER_TOKEN,
     Calibration,
     _linear_fit,
@@ -120,7 +120,7 @@ class TestLinearFit:
         # Stub pympler.asizeof.asizeof to return n itself so the implied
         # "size" function is size(n) = 100 + 7*n. We model the factory's
         # output as a wrapper carrying n; asizeof returns 100 + 7*n.
-        import aiperf.analysis.rebaseline_memory_constants as mod
+        import tools.rebaseline_memory_constants as mod
 
         def fake_asizeof(obj: int) -> int:
             return 100 + 7 * obj
@@ -136,7 +136,7 @@ class TestLinearFit:
     def test_linear_fit_uses_at_zero_override(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import aiperf.analysis.rebaseline_memory_constants as mod
+        import tools.rebaseline_memory_constants as mod
 
         # Make asizeof return a constant — irrelevant for at_zero=42 override.
         monkeypatch.setattr(mod.asizeof, "asizeof", lambda _obj: 200)
@@ -149,7 +149,7 @@ class TestLinearFit:
     def test_linear_fit_inserts_zero_when_missing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import aiperf.analysis.rebaseline_memory_constants as mod
+        import tools.rebaseline_memory_constants as mod
 
         # asizeof returns 50 + 3*n.
         def fake_asizeof(obj: int) -> int:

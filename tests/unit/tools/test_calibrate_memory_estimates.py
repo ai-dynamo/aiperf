@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.analysis.calibrate_memory_estimates import (
+from tools.calibrate_memory_estimates import (
     _CHARS_PER_TOKEN,
     SCENARIOS,
     Scenario,
@@ -216,7 +216,7 @@ class TestMeasureRecordsManager:
     ) -> None:
         # Force the cap to be tiny so we exercise the extrapolation branch.
         # We also stub asizeof.asizeof to a fixed value for determinism.
-        import aiperf.analysis.calibrate_memory_estimates as mod
+        import tools.calibrate_memory_estimates as mod
 
         monkeypatch.setattr(mod.asizeof, "asizeof", lambda _obj: 1_000_000)
 

@@ -439,8 +439,8 @@ class _K8sEnvironment(BaseSettings):
     #
     # These are the container-level requests/limits applied to K8s manifests.
     # Guaranteed QoS: requests == limits (no throttling, dedicated resources).
-    # Calibrated via ``src/aiperf/analysis/measure_cpu_usage.py`` and
-    # ``src/aiperf/analysis/calibrate_memory_estimates.py``; cross-checked
+    # Calibrated via ``tools/measure_cpu_usage.py`` and
+    # ``tools/calibrate_memory_estimates.py``; cross-checked
     # against real-cluster RSS measurements (2026-04-30 ISL/OSL memory sweep).
     #
     # Controller pod: one container per control-plane service.

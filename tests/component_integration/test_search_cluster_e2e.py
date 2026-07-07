@@ -14,10 +14,11 @@ from pathlib import Path
 
 import pytest
 
-skopt = pytest.importorskip("skopt")
+pytest.importorskip("optuna")
 
-# Imports below depend on skopt being importable; pytest.importorskip must
-# precede them so the whole module is skipped when the `bo` extra is absent.
+# Imports below depend on optuna being importable (BayesianSearchPlanner
+# subclasses OptunaSearchPlanner); pytest.importorskip must precede them so
+# the whole module is skipped when the `optuna`/`botorch` extra is absent.
 import orjson  # noqa: E402
 
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402

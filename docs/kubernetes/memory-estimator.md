@@ -32,7 +32,7 @@ The estimator answers three related questions:
 
 The model is purely static: formulas are derived from code inspection and
 calibrated against real RSS measurements via
-`scripts/calibrate_memory_estimates.py`. No runtime profiling is required at
+`tools/calibrate_memory_estimates.py`. No runtime profiling is required at
 estimate time.
 
 **Consumers of estimator output:**
@@ -434,7 +434,7 @@ worker-pod memory limit — there is no per-process cache deduplication.
 ### "The estimator disagrees with measured RSS"
 
 Constants are calibrated but static. Re-run
-`scripts/calibrate_memory_estimates.py` against a real cluster run to update
+`tools/calibrate_memory_estimates.py` against a real cluster run to update
 the calibration constants; do not edit the formulas ad-hoc.
 
 ---

@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from aiperf.analysis.validate_memory_estimator_against_findings import (
+from tools.validate_memory_estimator_against_findings import (
     _FINDINGS,
     _HIGH_ERROR_CELLS,
     _SWEEP_CONNECTIONS_PER_WORKER,
@@ -133,7 +133,7 @@ class TestMain:
         # Inject a synthetic finding row whose measured values guarantee a
         # ratio outside [1/1.001, 1.001]. We monkeypatch _FINDINGS to a
         # one-row list with a clearly wrong measured WP value.
-        import aiperf.analysis.validate_memory_estimator_against_findings as mod
+        import tools.validate_memory_estimator_against_findings as mod
 
         # Build a row that will not fall in the tight tolerance band.
         synthetic: list[tuple[Any, ...]] = [

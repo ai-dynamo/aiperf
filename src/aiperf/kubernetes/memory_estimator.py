@@ -13,7 +13,7 @@ This module is a thin facade. Implementation lives in
 ``aiperf.kubernetes._memory_estimator`` split across several files for
 file-size ergonomics. Re-exported symbols — including underscore-prefixed
 calibration helpers consumed by
-``src/aiperf/analysis/calibrate_memory_estimates.py`` and the unit tests —
+``tools/calibrate_memory_estimates.py`` and the unit tests —
 are considered part of the stable surface.
 """
 

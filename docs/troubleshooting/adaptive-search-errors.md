@@ -41,10 +41,8 @@ sampler needs the optional `botorch` extra (`optuna-integration`,
 `botorch`, `gpytorch`, `torch`), which is NOT pulled in by default — the
 optimization stack is heavy, so BO is opt-in to keep the base wheel small.
 
-Note: there is no `bo` extra for the current engine. The `[bo]` extra
-installs `scikit-optimize`, which the current Optuna/BoTorch planner does
-NOT use — installing `[bo]` will not enable BO. Use `[botorch]` (or its
-alias `[optuna]`).
+Note: there is no `bo` extra. The Optuna/BoTorch planner does not use
+`scikit-optimize`; use `[botorch]` (or its alias `[optuna]`).
 
 ### Fix
 
