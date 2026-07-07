@@ -153,8 +153,9 @@ session_routing:
     multiple replicas can pin every turn of a session to one worker.
     Selected via --session-routing; parameterized via repeatable
     --session-routing-opt key=value validated against the plugin's
-    Options model. Body-mutating plugins (mutates_body=True) mutate request
-    bodies and are incompatible with any verbatim-bytes request path.
+    Options model. mutates_body is protocol metadata marking a mode as
+    body-mutating / incompatible with any verbatim-bytes request path; it is
+    not currently enforced by any gate on this codebase.
 
 # =============================================================================
 # Processing Categories

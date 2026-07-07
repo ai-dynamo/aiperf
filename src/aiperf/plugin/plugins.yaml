@@ -458,8 +458,9 @@ session_routing:
       Dynamo session affinity via nvext.session_control request-body
       metadata: bind on every non-final turn, close on the final turn.
       Only for Dynamo builds that implement session_control (current
-      upstream main does not; use dynamo_headers there). Mutates request
-      bodies, so it is incompatible with any verbatim-bytes request path.
+      upstream main does not; use dynamo_headers there). Sets mutates_body
+      (protocol metadata: body-mutating / incompatible with any verbatim-bytes
+      request path; not enforced by any gate on this codebase today).
       Option: timeout_seconds (default 300).
 
   smg_routing_key:

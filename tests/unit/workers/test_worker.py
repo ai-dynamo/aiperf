@@ -312,6 +312,37 @@ class TestReleaseAndEvictForTerminal:
             credit.x_correlation_id
         )
 
+    async def test_raising_on_session_end_does_not_block_eviction(
+        self, mock_worker, sample_credit_context
+    ):
+        """A routing plugin whose on_session_end raises must not abort the
+        worker's eviction: the InferenceClient hook swallows + warns, so the
+        session still gets evicted."""
+        from aiperf.workers.inference_client import InferenceClient
+
+        credit = sample_credit_context.credit
+        fake_client = MagicMock()
+        fake_client._routing.on_session_end.side_effect = RuntimeError("plugin boom")
+        fake_client._routing_mode = "dynamo_headers"
+        # Drive the REAL hook logic (try/except-log) bound to the fake client.
+        fake_client.notify_session_end = InferenceClient.notify_session_end.__get__(
+            fake_client
+        )
+        mock_worker.inference_client = fake_client
+        mock_worker.session_manager.get = Mock(return_value=None)
+        mock_worker.session_manager.evict = Mock()
+
+        # Must not raise despite the plugin fault.
+        mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
+
+        mock_worker.session_manager.evict.assert_called_once_with(
+            credit.x_correlation_id
+        )
+        fake_client._routing.on_session_end.assert_called_once_with(
+            credit.x_correlation_id
+        )
+        fake_client.warning.assert_called_once()
+
 
 class TestSessionRoutingTerminalHooks:
     """Every terminal disposition this codebase has reaches

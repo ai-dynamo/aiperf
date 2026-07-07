@@ -74,9 +74,12 @@ class SessionRoutingBase(ABC, Generic[OptionsT]):  # noqa: B024  # ABC marks the
     """Base for session-routing plugins (``session_routing`` category)."""
 
     mutates_body: ClassVar[bool] = False
-    """True when ``transform_body`` changes the payload. Gates the plugin off
-    the verbatim PAYLOAD_BYTES mmap fast path at dataset build, cache hit,
-    and runtime."""
+    """Protocol metadata: True when ``transform_body`` changes the payload,
+    marking the mode as body-mutating / incompatible with any verbatim-bytes
+    request path. NOT currently enforced by any gate on this codebase -- no such
+    verbatim-bytes send path exists here today (the chokepoint always
+    re-serializes). It exists so a future pre-serialized-bytes path can refuse a
+    body-mutating mode instead of silently dropping its transform."""
 
     # ClassVar cannot reference the OptionsT type parameter, so the base type
     # is kept here; subclasses narrow it via their Generic parameterization.

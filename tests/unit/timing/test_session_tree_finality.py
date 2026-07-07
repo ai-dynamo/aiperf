@@ -94,9 +94,64 @@ def test_release_all_retires_open_trees_without_slot_release():
     assert registry.open_count() == 0
 
 
+def test_final_turn_spawn_resurrects_retired_tree_for_grandchild_finality():
+    """Regression: root done -> last-outstanding child C's final turn declares a
+    SPAWN grandchild. The callback order retires the tree on C's own
+    on_descendant_done (step 4b) BEFORE the return-intercept registers C's
+    grandchildren (step 5); register_descendants must RESURRECT the retired tree
+    so the grandchild's genuinely-last credit can still stamp is_tree_final=True.
+    """
+    registry = _registry_with_tree(descendants=1)  # root + one live child C
+    registry.on_root_terminal("root-1")  # root's terminal turn returns; C still live
+
+    # C is the last outstanding descendant; its final-turn return decrements it,
+    # draining and retiring the tree (step 4b, before C's spawn intercept).
+    assert registry.on_descendant_done("root-1") is True
+    assert not registry.has_tree("root-1")
+
+    # Step 5: C's final-turn SPAWN registers the grandchild AFTER that retire.
+    # Old behavior buffered it into a retired root nothing drains; now it
+    # resurrects the tree root-terminal with the grandchild outstanding.
+    registry.register_descendants("root-1", n=1)
+    assert registry.has_tree("root-1")
+    assert registry.root_terminal("root-1") is True
+
+    # The grandchild's genuinely-last (non-branching final) credit CAN now be
+    # stamped tree-final -- root terminal, sole outstanding descendant.
+    assert registry.is_last_tree_request(
+        "root-1", is_final_turn=True, is_root_credit=False, has_branches=False
+    )
+
+    # The grandchild finishing re-drains and re-retires the tree coherently.
+    assert registry.on_descendant_done("root-1") is True
+    assert not registry.has_tree("root-1")
+    assert registry.late_events == 0
+
+
+def test_release_all_drains_pending_descendants():
+    """release_all must clear the pre-open descendant buffer, not just _trees."""
+    registry = _make_registry()
+    # No open_tree first: register_descendants buffers into _pending_descendants
+    # (the defensive pre-open path).
+    registry.register_descendants("orphan-root", n=2)
+    assert registry._pending_descendants  # buffered, not yet folded into a tree
+
+    registry.release_all()
+
+    assert registry._pending_descendants == {}
+    assert registry._retired_roots == {}
+
+
 def test_finality_flows_credit_to_request_info():
-    """REAL structs end-to-end: a Credit stamped with finality must surface
-    on the RequestInfo the worker builds. Catches a missed plumb touch."""
+    """Schema guard: the three lineage-finality fields exist on BOTH the Credit
+    struct and the RequestInfo model, so the worker has fields to copy between.
+
+    This asserts field-NAME presence only -- it does NOT verify a value is
+    actually copied (deleting the plumb kwargs in ``worker._create_request_info``
+    keeps this green). The value-level plumb guard is
+    ``test_worker.py::test_create_request_info_plumbs_finality_from_credit``,
+    which stamps a REAL Credit and asserts the values surface on the RequestInfo.
+    """
     from aiperf.common.models.record_models import RequestInfo
     from aiperf.credit.structs import Credit
 

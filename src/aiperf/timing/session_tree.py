@@ -79,6 +79,15 @@ class SessionTreeRegistry:
         # spawn only happens on a parent turn RETURN), so this buffer is a
         # defensive belt that keeps the branch's state transitions identical.
         self._pending_descendants: dict[str, int] = {}
+        # Roots whose tree already RETIRED (drained), mapped to the phase they
+        # were opened under. A descendant's final-turn SPAWN registers its
+        # grandchildren AFTER that descendant's own on_descendant_done drained
+        # the tree (callback order: the child-completion decrement precedes the
+        # return-intercept that spawns). Without this ledger those grandchildren
+        # would buffer into a retired root that nothing drains, and is_tree_final
+        # could never answer True for them. register_descendants consults it to
+        # RESURRECT the tree root-terminal instead. Cleared at teardown.
+        self._retired_roots: dict[str, CreditPhase] = {}
         # Peak simultaneously-open trees == peak tree concurrency; logged at
         # teardown so any overshoot is visible.
         self._peak_open: int = 0
@@ -112,6 +121,9 @@ class SessionTreeRegistry:
             return
         state = _TreeState(phase=phase, root_pending=root_pending)
         state.outstanding += self._pending_descendants.pop(root_corr, 0)
+        # A freshly-opened tree supersedes any stale retired record for the same
+        # id (correlation ids are unique, so this is defensive).
+        self._retired_roots.pop(root_corr, None)
         self._trees[root_corr] = state
         if len(self._trees) > self._peak_open:
             self._peak_open = len(self._trees)
@@ -172,18 +184,35 @@ class SessionTreeRegistry:
         """Add ``n`` descendants (spawned under one root) to a tree.
 
         Called when a parent turn spawns children, keyed by the tree's root id.
-        Tolerant of unknown trees: buffers the count so a later ``open_tree``
-        folds it in (defensive -- on main the tree is always open first).
+        Three cases when the tree is not live:
+          - RETIRED root (in ``_retired_roots``): resurrect it root-terminal.
+            A descendant's final-turn SPAWN registers its grandchildren after
+            that descendant's own ``on_descendant_done`` drained the tree; the
+            root was terminal at retire (``drained`` requires ``not
+            root_pending``), so recreate the tree with ``root_pending=False``
+            and these descendants outstanding -- keeping ``is_tree_final``
+            answerable and the count coherent (the grandchildren re-drain it
+            when they finish).
+          - Unopened root: buffer the count so a later ``open_tree`` folds it in
+            (defensive -- on main the tree is always open first).
         """
         if n <= 0:
             return
         state = self._trees.get(root_corr)
-        if state is None:
-            self._pending_descendants[root_corr] = (
-                self._pending_descendants.get(root_corr, 0) + n
-            )
+        if state is not None:
+            state.outstanding += n
             return
-        state.outstanding += n
+        retired_phase = self._retired_roots.pop(root_corr, None)
+        if retired_phase is not None:
+            self._trees[root_corr] = _TreeState(
+                phase=retired_phase, root_pending=False, outstanding=n
+            )
+            if len(self._trees) > self._peak_open:
+                self._peak_open = len(self._trees)
+            return
+        self._pending_descendants[root_corr] = (
+            self._pending_descendants.get(root_corr, 0) + n
+        )
 
     def on_descendant_done(self, root_corr: str) -> bool:
         """Account one descendant terminally completing (leaf / error / stopped /
@@ -225,6 +254,9 @@ class SessionTreeRegistry:
             return False
         state.released = True
         self._trees.pop(root_corr, None)
+        # Remember the retired root (with its phase) so a late final-turn SPAWN
+        # can RESURRECT it instead of silently buffering. See register_descendants.
+        self._retired_roots[root_corr] = state.phase
         return True
 
     def release_all(self, phase: CreditPhase | None = None) -> int:
@@ -245,6 +277,19 @@ class SessionTreeRegistry:
             if state is None or state.released:
                 continue
             state.released = True
+        # Drop the transient buffers: with the trees above retired, any
+        # pending/retired descendant accounting refers to no live tree. On a
+        # full teardown (``phase is None`` -- the common per-phase call, since
+        # the registry is created per-phase) clear both; a phase-scoped call
+        # clears only that phase's retired roots (``_pending_descendants``
+        # carries no phase and is left untouched then).
+        if phase is None:
+            self._pending_descendants.clear()
+            self._retired_roots.clear()
+        else:
+            self._retired_roots = {
+                r: p for r, p in self._retired_roots.items() if p != phase
+            }
         return len(to_release)
 
     def open_count(self, phase: CreditPhase | None = None) -> int:

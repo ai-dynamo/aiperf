@@ -377,14 +377,18 @@ async def test_child_final_turn_spawning_grandchild_not_tree_final():
     assert child_credit1.is_tree_final is False  # grandchild pending
 
     # Production return order: leaf-reached fires BEFORE intercept spawns the
-    # grandchild (callback handler step 4b before step 5); the whole flow must
-    # stay consistent (no late events) through the grandchild's drain.
+    # grandchild (callback handler step 4b before step 5). The child is the last
+    # outstanding descendant, so its leaf-reached decrement drains and retires
+    # the tree; intercept's register_descendants then RESURRECTS it (root already
+    # terminal). The grandchild -- a single-turn, sole-remaining, genuinely-last
+    # request -- is therefore correctly stamped tree-final (previously the
+    # resurrect was missing and it was wrongly under-fired to False).
     await orch.on_child_leaf_reached(child_x)
     await orch.intercept(child_credit1)
     grandchild_credits = [c for c in router.sent if c.agent_depth == 2]
     assert len(grandchild_credits) == 1
     assert grandchild_credits[0].root_correlation_id == "root-b"
-    assert grandchild_credits[0].is_tree_final is False
+    assert grandchild_credits[0].is_tree_final is True
     await orch.on_child_leaf_reached(grandchild_credits[0].x_correlation_id)
     assert not registry.has_tree("root-b")
     assert registry.late_events == 0

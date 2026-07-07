@@ -32,7 +32,10 @@ _TOKENIZER = "openai/gpt-oss-120b"  # pre-cached + offline in integration confte
 
 _NUM_SESSIONS = 2
 _TURNS_PER_SESSION = 3
-_TIMEOUT_SECONDS = 300
+# Non-default (plugin default is 300) so the assertions prove the CLI ->
+# config -> worker numeric plumb actually carries this value to the wire,
+# rather than coinciding with the default.
+_TIMEOUT_SECONDS = 123
 
 
 def _build_cmd(url: str, *, mode: str, opts: Sequence[str]) -> str:
