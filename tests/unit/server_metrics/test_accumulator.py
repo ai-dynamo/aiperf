@@ -236,6 +236,49 @@ class TestServerMetricsResultsProcessor:
         assert result.endpoint_summaries
         assert result.warmup_endpoint_summaries is None
 
+    async def test_export_results_degenerate_profiling_window_does_not_raise(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """A degenerate profiling window (start == export_end) must not raise.
+
+        The parquet-export TimeRangeFilter in export_results is built eagerly as
+        a call argument, so for a zero-duration profiling window where
+        ``start_ns >= max(end_ns, last_update_ns)`` it raised ValueError even when
+        Parquet export is disabled. That raise propagated out of export_results
+        and records_manager swallowed it into a None result (total server-metrics
+        loss). export_results must instead return a ServerMetricsResults object
+        (regression for R1-3 / F13).
+        """
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, value in (
+            (500_000_000, 0.1),
+            (1_000_000_000, 0.2),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"cache_usage": gauge},
+            )
+            await processor.process_server_metrics_record(record)
+
+        # start_ns == end_ns == last_update_ns => export_end_ns collapses to
+        # start_ns, a degenerate window for the eager parquet TimeRangeFilter.
+        result = await processor.export_results(
+            start_ns=1_000_000_000,
+            end_ns=1_000_000_000,
+        )
+
+        assert result is not None
+        assert isinstance(result, ServerMetricsResults)
+
     async def test_export_results_with_error_summary(
         self,
         mock_cfg: BenchmarkRun,
