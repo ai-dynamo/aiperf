@@ -20,24 +20,24 @@ _JSON_STRINGIFY_RE = re.compile(r"JSON\.stringify\(")
 _ALLOWED_JSON_STRINGIFY_CALLS = {
     ("components/artifacts-card.js", 184),
     ("components/artifacts-card.js", 228),
-    ("components/job-table.js", 49),
+    ("components/job-table.js", 52),
     ("components/relaunch-button.js", 147),
-    ("components/server-metrics/helpers.js", 170),
-    ("lib/api.js", 109),
+    ("components/server-metrics/helpers.js", 173),
+    ("lib/api.js", 112),
     ("lib/job-ws.js", 127),
 }
 
 # Existing debt: dependency is a short list of child names, not full child objects.
 # Keep this explicit so future large-object stringify dependencies fail closed.
 _ALLOWED_JSON_STRINGIFY_EFFECT_DEPS = {
-    ("pages/sweep-detail.js", 302),
+    ("pages/sweep-detail.js", 305),
 }
 
 # Module-singleton listeners live for the app lifetime; component listeners must clean up.
 _ALLOWED_APP_LIFETIME_LISTENERS = {
-    ("lib/router.js", 66),
-    ("lib/router.js", 67),
-    ("lib/theme-switch.js", 75),
+    ("lib/router.js", 69),
+    ("lib/router.js", 70),
+    ("lib/theme-switch.js", 78),
 }
 
 

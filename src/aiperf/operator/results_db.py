@@ -11,6 +11,7 @@ SELECTs. The wrapper exists so the FastAPI routers in
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
 from collections.abc import Iterator
@@ -54,7 +55,12 @@ class ResultsDB:
         return True
 
     async def leaderboard(self, *args, **kwargs) -> list[dict[str, Any]]:
-        disk_rows = self._leaderboard_from_disk(*args, **kwargs)
+        # The disk fallback scans + zstd-decompresses every run's export;
+        # offload to a worker thread (pure filesystem reads, no shared
+        # mutable state) so one request can't stall the results-server loop.
+        disk_rows = await asyncio.to_thread(
+            self._leaderboard_from_disk, *args, **kwargs
+        )
         if not await self._ensure_readonly_index():
             return disk_rows
         try:
@@ -76,7 +82,7 @@ class ResultsDB:
         return rows[:limit]
 
     async def history(self, *args, **kwargs) -> list[dict[str, Any]]:
-        disk_rows = self._history_from_disk(*args, **kwargs)
+        disk_rows = await asyncio.to_thread(self._history_from_disk, *args, **kwargs)
         if not await self._ensure_readonly_index():
             return disk_rows
         try:
@@ -97,7 +103,7 @@ class ResultsDB:
         return rows[:limit]
 
     async def compare(self, *args, **kwargs) -> list[dict[str, Any]]:
-        disk_rows = self._compare_from_disk(*args, **kwargs)
+        disk_rows = await asyncio.to_thread(self._compare_from_disk, *args, **kwargs)
         if not await self._ensure_readonly_index():
             return disk_rows
         try:
@@ -147,7 +153,7 @@ class ResultsDB:
         return await self._summary_from_disk(namespace, job_id, epoch)
 
     async def index_entries(self) -> list[dict[str, Any]]:
-        disk_rows = self._index_from_disk()
+        disk_rows = await asyncio.to_thread(self._index_from_disk)
         if not await self._ensure_readonly_index():
             return disk_rows
         try:

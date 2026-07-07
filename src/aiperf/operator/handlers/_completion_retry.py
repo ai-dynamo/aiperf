@@ -60,21 +60,6 @@ def _claim_age_seconds(body: dict[str, Any]) -> float | None:
     return (datetime.now(UTC) - claimed_at).total_seconds()
 
 
-def _coerce_settings_float(value: Any, *, default: float = 0.0) -> float:
-    """Read a settings field as a float, defaulting if not coercible.
-
-    Existing tests stub ``OperatorEnvironment.RESULTS`` with a partial
-    MagicMock; auto-attrs for the new transient-retry fields are MagicMock
-    instances that fail numeric comparison. Coercing keeps the new path
-    inert in those tests instead of requiring every existing patch to learn
-    about the new fields.
-    """
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def maybe_raise_for_transient_fetch_failure(
     *,
     body: dict[str, Any],
@@ -99,23 +84,17 @@ def maybe_raise_for_transient_fetch_failure(
         4. Wall-clock claim age below the budget.
     """
     # Cheap pre-check on the result shape avoids reading env settings at
-    # all on the happy path. Tests that mock OperatorEnvironment.RESULTS
-    # without setting the new fields therefore never trip on the budget
-    # attribute access below.
+    # all on the happy path.
     has_partial_progress = bool(result.metrics) or bool(result.downloaded)
     if flags.has_files or (not flags.has_error and not has_partial_progress):
         return
-    budget = _coerce_settings_float(
-        OperatorEnvironment.RESULTS.TRANSIENT_FETCH_RETRY_BUDGET_SEC
-    )
+    budget = OperatorEnvironment.RESULTS.TRANSIENT_FETCH_RETRY_BUDGET_SEC
     if budget <= 0:
         return
     age = _claim_age_seconds(body)
     if age is None or age >= budget:
         return
-    delay = _coerce_settings_float(
-        OperatorEnvironment.RESULTS.TRANSIENT_FETCH_RETRY_DELAY_SEC, default=5.0
-    )
+    delay = OperatorEnvironment.RESULTS.TRANSIENT_FETCH_RETRY_DELAY_SEC
     msg = (
         f"transient results fetch failure for {namespace}/{job_id} "
         f"(claim age {age:.1f}s of {budget:.0f}s budget): "

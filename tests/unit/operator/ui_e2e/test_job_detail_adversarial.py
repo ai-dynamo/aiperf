@@ -31,6 +31,7 @@ the router; the test stays red until the fix lands.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from pytest import param
@@ -40,6 +41,18 @@ from tests.unit.operator.ui_e2e.conftest import FakeLiveCR, good_summary
 # Canonical good epochs used across tests.
 _EPOCH_A = "1714069323"
 _EPOCH_B = "1714069999"
+
+
+def _safe_seed_name(prefix: str, token: object) -> str:
+    """Build a DNS-1123-valid job name from an arbitrary token.
+
+    Job names are validated as Kubernetes object names by the results API,
+    so a name derived from a raw test value (``NoneType``, ``{'avg': 0}``,
+    ``"a string"``) must be lowercased and stripped to ``[a-z0-9-]`` before
+    it can be used as a PVC/CR identifier.
+    """
+    suffix = re.sub(r"[^a-z0-9]+", "-", str(token).lower()).strip("-")
+    return f"{prefix}-{suffix}" if suffix else prefix
 
 
 # ---------------------------------------------------------------------------
@@ -161,12 +174,11 @@ def test_pinned_epoch_with_malformed_kpi_dicts_renders(harness, kpi_block):
     aggregation."""
     summary = good_summary()
     summary["request_throughput"] = kpi_block
-    harness.seed_run(
-        name=f"kpi-shape-{type(kpi_block).__name__}", epoch=_EPOCH_A, summary=summary
-    )
+    name = _safe_seed_name("kpi-shape", type(kpi_block).__name__)
+    harness.seed_run(name=name, epoch=_EPOCH_A, summary=summary)
     page = harness.goto_job_detail(
         harness.ns,
-        f"kpi-shape-{type(kpi_block).__name__}",
+        name,
         epoch=_EPOCH_A,
     )
     page.wait_for_selector("[data-testid=page-job-detail]", timeout=10_000)
@@ -288,7 +300,7 @@ def test_conditions_malformed_shape_renders_without_crashing(harness, raw_bytes)
     """conditions.json with a non-list/non-dict-with-conditions shape — the
     router silently leaves conditions=None (jobs.py:379-382). Page must still
     render without console errors."""
-    name = f"conds-bad-{raw_bytes[:5].decode(errors='replace')}"
+    name = _safe_seed_name("conds-bad", raw_bytes[:6].decode(errors="replace"))
     harness.seed_run(
         name=name,
         epoch=_EPOCH_A,
@@ -354,8 +366,9 @@ def test_sweep_marker_non_int_variation_index_does_not_crash(harness, variation_
     """job_union._sweep_linkage_from_marker (lines 64-67) coerces variation_index
     through int(), trapping TypeError/ValueError. Non-int values must NOT
     propagate to the UI — the page should still render."""
+    name = _safe_seed_name("sweep-child", variation_value)
     harness.seed_run(
-        name=f"sweep-child-{variation_value}",
+        name=name,
         epoch=_EPOCH_A,
         summary=good_summary(),
         sweep_marker={
@@ -364,9 +377,7 @@ def test_sweep_marker_non_int_variation_index_does_not_crash(harness, variation_
             "variation_label": "x=1",
         },
     )
-    page = harness.goto_job_detail(
-        harness.ns, f"sweep-child-{variation_value}", epoch=_EPOCH_A
-    )
+    page = harness.goto_job_detail(harness.ns, name, epoch=_EPOCH_A)
     page.wait_for_selector("[data-testid=page-job-detail]", timeout=10_000)
     body = page.locator("[data-testid=page-job-detail]").inner_text()
     # Page links to the sweep name; the variation_index null/garbage falls
@@ -449,19 +460,20 @@ def test_pinned_historical_epoch_ignores_live_cr_phase(harness):
 @pytest.mark.parametrize(
     "ns,name,expect_status",
     [
-        # Hyphen in ns is canonical; should work.
+        # Hyphen in ns is canonical, dot is legal in a DNS-1123 subdomain name;
+        # both route to a clean 404 for a missing job.
         param("ns-with-hyphen", "okay-job", 404, id="hyphen-in-ns-404-on-missing"),
-        # Plus and dot are reserved in URL paths but are legal in K8s names.
-        param("ns-plain", "name+plus", 404, id="plus-in-name"),
         param("ns-plain", "name.dot", 404, id="dot-in-name"),
+        # Plus is NOT legal in a K8s object name — the path validator rejects
+        # it with a 400 before any lookup, never a 500.
+        param("ns-plain", "name+plus", 400, id="plus-in-name-rejected"),
     ],
 )  # fmt: skip
 def test_path_encoding_special_chars_yield_clean_404(harness, ns, name, expect_status):
-    """Special chars (hyphen, dot, plus) in path segments must yield a clean
-    404 from the API — not a 400 or 500. Confirms the route accepts the
-    encoded form."""
+    """Legal K8s-name special chars (hyphen, dot) yield a clean 404; illegal
+    ones (plus) yield a 400 from the path validator — never a 500."""
     # `harness.ns` is the seeded one — but for the API_GET path we just want
-    # to verify a 404 response for the special-char name.
+    # to verify the rejection/404 response for the special-char name.
     status, _ = harness.api_get(f"/api/v1/jobs/{ns}/{name}?epoch={_EPOCH_A}")
     assert status == expect_status, status
 
@@ -475,10 +487,11 @@ def test_namespace_with_encoded_slash_is_400_or_404(harness):
 
 
 def test_utf8_name_in_path_does_not_500(harness):
-    """UTF-8 name segments (e.g. accented chars) must round-trip the router
-    cleanly. Encoded `kafé` should produce 404 (no such job), not 500."""
+    """UTF-8 name segments (e.g. accented chars) are not legal K8s names, so
+    the path validator rejects `kafé` with a 400 — a clean rejection, not a
+    500. (A 404 is equally acceptable if routing rejects it first.)"""
     status, _ = harness.api_get(f"/api/v1/jobs/{harness.ns}/kaf%C3%A9")
-    assert status == 404, status
+    assert status in (400, 404), status
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +583,7 @@ def test_request_count_variants_render_phase_block(harness, rc_value):
     must produce a phases.benchmark entry that the page can render."""
     summary = good_summary()
     summary["request_count"] = rc_value
-    name = f"rc-{str(rc_value).replace(' ', '')[:10]}"
+    name = _safe_seed_name("rc", str(rc_value)[:16])
     harness.seed_run(name=name, epoch=_EPOCH_A, summary=summary)
     page = harness.goto_job_detail(harness.ns, name, epoch=_EPOCH_A)
     page.wait_for_selector("[data-testid=page-job-detail]", timeout=10_000)

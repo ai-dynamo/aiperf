@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ from aiperf.operator.results_layout import (
     enforce_retention,
     epoch_key_from_body,
     run_dir,
+    schedule_index_drops,
     write_latest,
 )
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder, parse_timestamp
@@ -247,6 +249,12 @@ async def _apply_completion_results(
         has_metrics=flags.has_metrics,
         has_files=flags.has_files,
     )
+    epoch = epoch_key_from_body(body)
+    # Retention lives here (not in the sync _record_results_on_status) so the
+    # rmtree walk can run off-loop; the materialized gate mirrors the
+    # latest.txt/runEpoch gate inside _record_results_on_status.
+    if flags.has_files and _key_files_materialized(namespace, job_id, epoch):
+        await _run_retention_pass(namespace, job_id, epoch)
     _set_results_phase_and_condition(
         body=body,
         jobset_name=jobset_name,
@@ -257,7 +265,6 @@ async def _apply_completion_results(
         has_error=flags.has_error,
         success=flags.success,
     )
-    epoch = epoch_key_from_body(body)
     summary_blob, mtime_epoch, end_time, total_size_bytes = _gather_index_inputs(
         namespace, job_id, epoch
     )
@@ -471,15 +478,22 @@ def _record_results_on_status(
         sb.set_results_path(str(dest_dir))
         write_latest(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
         sb.set_run_epoch(int(epoch))
-        _run_retention_pass(namespace, job_id, epoch)
         events.results_stored(body, str(dest_dir), len(result.downloaded))
         logger.info(f"Downloaded {len(result.downloaded)} result files to {dest_dir}")
 
 
-def _run_retention_pass(namespace: str, job_id: str, epoch: str) -> None:
-    """Trim old run dirs after a successful write; never fatal on failure."""
+async def _run_retention_pass(namespace: str, job_id: str, epoch: str) -> None:
+    """Trim old run dirs after a successful write; never fatal on failure.
+
+    The rmtree walk runs in a worker thread so a slow PVC prune cannot stall
+    the kopf event loop. Index-drop scheduling happens back on the loop via
+    ``schedule_index_drops`` — ``asyncio.get_running_loop()`` raises inside
+    ``asyncio.to_thread``, so drops scheduled from the worker thread would
+    silently be skipped.
+    """
     try:
-        deleted = enforce_retention(
+        deleted = await asyncio.to_thread(
+            enforce_retention,
             OperatorEnvironment.RESULTS.DIR,
             namespace,
             job_id,
@@ -495,6 +509,7 @@ def _run_retention_pass(namespace: str, job_id: str, epoch: str) -> None:
             exc_info=True,
         )
         return
+    schedule_index_drops(namespace, job_id, deleted)
     if deleted:
         logger.info(
             "retention: trimmed %d old runs for %s/%s",

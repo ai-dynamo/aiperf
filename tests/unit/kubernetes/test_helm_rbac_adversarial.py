@@ -211,6 +211,27 @@ class TestOperatorClusterRoleLeastPrivilege:
         assert len(status_rules) == 1
         assert _verbs(status_rules[0]) == {"get", "list", "watch"}
 
+    def test_clusterrole_grants_kueue_localqueues_read_for_preflight(self) -> None:
+        """Preflight reads Kueue LocalQueues; without this grant the check 403s.
+
+        Also asserts the unused ``workloads`` grant is gone — nothing in the
+        operator reads Kueue Workloads.
+        """
+        docs = _helm_template()
+        cluster_role = _find(docs, "ClusterRole", "aiperf-operator")
+
+        localqueue_rules = _resource_rules(
+            cluster_role, api_group="kueue.x-k8s.io", resource_name="localqueues"
+        )
+        assert len(localqueue_rules) == 1
+        assert {"get", "list"}.issubset(_verbs(localqueue_rules[0]))
+
+        for rule in _rules(cluster_role):
+            if "kueue.x-k8s.io" in _api_groups(rule):
+                assert "workloads" not in _resources(rule), (
+                    "operator ClusterRole still grants unused kueue workloads"
+                )
+
 
 # ============================================================
 # Benchmark namespace Role contracts

@@ -31,10 +31,13 @@ rules:
   resources: ["jobsets/status"]
   verbs: ["get", "list", "watch"]
 
-# Kueue Workloads - monitor admission status for gang-scheduling
+# Kueue LocalQueues - preflight verifies scheduling.queueName exists and
+#   probes Kueue installation (get_namespaced_custom_object + list with
+#   limit=1 in preflight/_infra.py). Without this the queue check always
+#   403s and degrades to WARN.
 - apiGroups: ["kueue.x-k8s.io"]
-  resources: ["workloads"]
-  verbs: ["get", "list", "watch"]
+  resources: ["localqueues"]
+  verbs: ["get", "list"]
 
 # Jobs - monitor JobSet-created Jobs
 - apiGroups: ["batch"]

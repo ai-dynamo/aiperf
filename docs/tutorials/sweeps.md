@@ -209,7 +209,7 @@ benchmark:
     summary: [json]
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency: [8, 32, 64, 128]
     phases.profiling.rate: [10, 50, 100]
 ```
@@ -225,7 +225,7 @@ The most-swept phase fields have bare-name shortcuts that expand to the full `ph
 ```yaml
 sweep:
   type: grid
-  parameters:
+  variables:
     concurrency: [8, 32, 64, 128]      # sugar
     rate: [10, 50, 100]                # sugar
 ```
@@ -233,7 +233,7 @@ sweep:
 ```yaml
 sweep:
   type: grid
-  parameters:
+  variables:
     phases.profiling.concurrency: [8, 32, 64, 128]
     phases.profiling.rate: [10, 50, 100]
 ```
@@ -331,7 +331,7 @@ benchmark:
     summary: [json]
 sweep:
   type: zip
-  parameters:
+  variables:
     dataset.prompts.isl: [128, 512, 2048]
     dataset.prompts.osl: [128, 256, 512]
 ```
@@ -450,7 +450,7 @@ benchmark:
     summary: [json]
 sweep:
   type: grid
-  parameters:
+  variables:
     dataset.prompts.isl: [128, 512, 2048]
 ```
 
@@ -647,7 +647,7 @@ benchmark:
     summary: [json]
 sweep:
   type: grid
-  parameters:
+  variables:
     concurrency: [16, 64, 128]
 
 multi_run:
@@ -715,7 +715,7 @@ random_seed: 42
 sweep:
   type: grid
   same_seed: true
-  parameters:
+  variables:
     concurrency: [10, 20, 30, 40]
 ```
 
@@ -733,7 +733,7 @@ The CLI equivalents for ad-hoc invocations are `--random-seed N` and `--paramete
 sweep:
   type: grid
   cooldown_seconds: 30.0    # between variations
-  parameters:
+  variables:
     concurrency: [10, 20, 30, 40]
 
 multi_run:
@@ -813,7 +813,7 @@ benchmark:
 
 sweep:
   type: grid
-  parameters:
+  variables:
     concurrency: [16, 32, 64, 128]
 
 multi_run:

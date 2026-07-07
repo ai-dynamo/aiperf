@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from aiperf.operator.results_layout import EPOCH_RE, resolve_sweep_dir
+from aiperf.operator.routers._path_params import validate_results_path_params
 from aiperf.operator.routers.results_files_io import (
     _list_artifact_files,
     _read_profile_export_bytes,
@@ -36,6 +37,7 @@ def _validate_epoch_param(epoch: str) -> None:
 def _resolve_sweep_epoch_dir(
     base_dir: Path, namespace: str, name: str, epoch: str
 ) -> Path:
+    validate_results_path_params(namespace, name)
     _validate_epoch_param(epoch)
     sweep_dir = resolve_sweep_dir(base_dir, namespace, name, epoch=epoch)
     if sweep_dir is None:

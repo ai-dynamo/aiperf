@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 const RUNNING_PHASES = new Set(['pending', 'running', 'aggregating']);
 const CHILD_RUNNING_PHASES = new Set(['profiling', 'processing', 'running', 'aggregating']);
 const CHILD_PENDING_PHASES = new Set(['pending', 'queued', 'initializing', '']);

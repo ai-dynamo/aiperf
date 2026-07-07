@@ -309,21 +309,23 @@ class TestArtifactListingUrlAndMalformedRuns:
     async def test_list_historical_files_url_encoded_namespace_and_job_preserve_names(
         self, tmp_path: Path, client: httpx.AsyncClient
     ) -> None:
+        # Names are valid Kubernetes identifiers (DNS-1123); the dot in the job
+        # name still exercises percent-decoding while passing path validation.
         _seed_run(
             tmp_path,
-            namespace="bench prod+gpu",
-            job_id="llama 3.1+8b load",
+            namespace="bench-prod",
+            job_id="llama-3.1-8b-load",
             files={"profile_export_aiperf.json": b'{"status":"Succeeded"}'},
         )
 
         response = await client.get(
-            _artifact_list_url(namespace="bench prod+gpu", job_id="llama 3.1+8b load")
+            _artifact_list_url(namespace="bench-prod", job_id="llama-3.1-8b-load")
         )
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["namespace"] == "bench prod+gpu"
-        assert body["job_id"] == "llama 3.1+8b load"
+        assert body["namespace"] == "bench-prod"
+        assert body["job_id"] == "llama-3.1-8b-load"
         assert [entry["name"] for entry in body["files"]] == [
             "profile_export_aiperf.json"
         ]

@@ -52,8 +52,11 @@ def _raise_mutating_route_error(exc: httpx.HTTPStatusError) -> None:
     raise RuntimeError(
         "Operator index rebuild is protected by results-server mutating-route auth. "
         f"Set {_MUTATING_ROUTES_TOKEN_ENV} to the bearer token configured on the "
-        "operator, or ask an administrator to enable resultsServer.mutatingRoutes "
-        "and provide the token."
+        "operator, or ask an administrator to set "
+        "AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED=1 and "
+        f"{_MUTATING_ROUTES_TOKEN_ENV} on the results-server container "
+        "(the Helm chart does not template these; see "
+        "docs/kubernetes/results-api.md)."
     ) from exc
 
 

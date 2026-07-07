@@ -26,6 +26,7 @@ from aiperf.kubernetes.client import get_raw_aiperfjob
 from aiperf.operator import runs_index
 from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
 from aiperf.operator.results_layout import resolve_run_dir
+from aiperf.operator.routers._path_params import validate_results_path_params
 from aiperf.operator.routers.results_schemas import (
     CompareResponse,
     HistoryEntry,
@@ -305,6 +306,7 @@ def _register_summary_route(router: APIRouter, get_db: Callable[[], ResultsDB]) 
         ),
     ) -> dict[str, Any]:
         """Get the full aggregated summary for a single job."""
+        validate_results_path_params(namespace, job_id)
         result = await get_db().summary(namespace, job_id, epoch=epoch)
         if result is None:
             raise HTTPException(404, f"No summary for {namespace}/{job_id}")
@@ -383,6 +385,7 @@ def _register_job_config_route(
            whose artifacts haven't been persisted yet (e.g. dashboard hero
            SLO chips for the currently-running CR).
         """
+        validate_results_path_params(namespace, job_id)
         spec = await _get_run_spec_from_index(base_dir, namespace, job_id, epoch)
         if spec is not None:
             return {"source": "index", "spec": _redact_exposed_spec(spec)}

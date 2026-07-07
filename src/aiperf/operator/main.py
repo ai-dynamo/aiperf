@@ -260,16 +260,16 @@ async def on_aiperfsweep_aggregation_complete(
         epoch=str(epoch),
         base_dir=base_dir,
     )
+    aggregate_marker = (
+        base_dir / namespace / "sweeps" / name / str(epoch) / "aggregate.json"
+    )
     if fetched_count == 0:
         # A re-fire AFTER we deleted the JobSet (below) hits a dead sidecar
         # and gets 0 files — but the harvest already happened on the tick
         # that did the delete. Treat an already-populated dest-dir as success
         # so the handler does not loop forever on TemporaryError once the pod
         # is gone. Only retry when the artifacts are genuinely absent.
-        sweep_epoch_dir = (
-            base_dir / namespace / "sweeps" / name / str(epoch) / "aggregate.json"
-        )
-        if sweep_epoch_dir.exists():
+        if aggregate_marker.exists():
             logger.info(
                 f"AIPerfSweep {namespace}/{name} aggregate already on disk "
                 f"(epoch={epoch}); sidecar gone after JobSet reap, treating as done"
@@ -278,6 +278,23 @@ async def on_aiperfsweep_aggregation_complete(
             return
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} aggregate sidecar returned no files; retrying",
+            delay=30,
+        )
+
+    if not aggregate_marker.exists():
+        # A partial download (sidecar dying mid-stream, PVC write failure) can
+        # report fetched files without landing aggregate.json. The only other
+        # copy lives on the controller pod's emptyDir, so deleting the JobSet
+        # now would destroy it permanently. Keep the JobSet (retry or CR TTL
+        # reaps it) and re-harvest on the next tick.
+        logger.error(
+            f"AIPerfSweep {namespace}/{name} harvest fetched {fetched_count} "
+            f"file(s) but {aggregate_marker} is missing; keeping JobSet "
+            f"aiperf-{name} alive for re-harvest"
+        )
+        raise kopf.TemporaryError(
+            f"AIPerfSweep {namespace}/{name} aggregate harvest incomplete "
+            f"(aggregate.json not on disk after fetch); retrying",
             delay=30,
         )
 
@@ -483,9 +500,13 @@ async def open_runs_index(**_: Any) -> None:
             return
         exc = t.exception()
         if exc is not None:
+            # Do NOT suggest `aiperf kube index rebuild` here: that CLI hits
+            # the results-server container, whose /admin/index/rebuild is
+            # mounted with allow_rebuild=False and always returns 503. Only a
+            # fresh bootstrap in this (writer) process can rebuild the index.
             logger.exception(
                 "runs_index bootstrap task crashed (operator continues without "
-                "rebuilt index; trigger `aiperf kube index rebuild` to recover): %s",
+                "rebuilt index; restart the operator pod to re-run bootstrap): %s",
                 exc,
             )
 

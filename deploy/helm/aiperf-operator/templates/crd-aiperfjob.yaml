@@ -71,6 +71,9 @@ spec:
                 minLength: 1
               imagePullPolicy:
                 type: string
+                {{- with .Values.defaults.imagePullPolicy }}
+                default: {{ . | quote }}
+                {{- end }}
                 description: |-
                   Kubernetes image pull policies.
 

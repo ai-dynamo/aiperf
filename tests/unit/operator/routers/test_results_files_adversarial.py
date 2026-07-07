@@ -132,6 +132,96 @@ class TestResultsFilesPathTraversal:
 # ============================================================
 
 
+class TestResultsFilesNamespaceJobTraversal:
+    """namespace/job_id path parameters must not escape the results base dir."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "namespace",
+        [
+            param("%2E%2E", id="encoded-dot-namespace"),
+            param("bench_prod", id="underscore-illegal-namespace"),
+            param("Bench-Prod", id="uppercase-illegal-namespace"),
+            param("team.alpha", id="dotted-namespace-not-a-label"),
+        ],
+    )  # fmt: skip
+    async def test_list_historical_files_bad_namespace_returns_400_not_secret(
+        self, tmp_path: Path, client: httpx.AsyncClient, namespace: str
+    ) -> None:
+        _seed_run(tmp_path, files={"profile_export_aiperf.json": b'{"ok": true}'})
+        (tmp_path / "secret-token.txt").write_text("operator-service-account-token")
+
+        response = await client.get(
+            f"/api/v1/results/{namespace}/llama-3-8b-load/runs/{_EPOCH_NEW}"
+        )
+
+        assert response.status_code == 400
+        assert b"operator-service-account-token" not in response.content
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "job_id",
+        [
+            param("bad_job", id="underscore-illegal-job"),
+            param("Bad-Job", id="uppercase-illegal-job"),
+        ],
+    )  # fmt: skip
+    async def test_download_historical_file_bad_job_returns_400_not_secret(
+        self, tmp_path: Path, client: httpx.AsyncClient, job_id: str
+    ) -> None:
+        _seed_run(tmp_path, files={"profile_export_aiperf.json": b'{"ok": true}'})
+        (tmp_path / "secret-token.txt").write_text("operator-service-account-token")
+
+        response = await client.get(
+            f"/api/v1/results/bench-prod/{job_id}/runs/{_EPOCH_NEW}"
+            "/profile_export_aiperf.json"
+        )
+
+        assert response.status_code == 400
+        assert b"operator-service-account-token" not in response.content
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "namespace,job_id",
+        [
+            param("..%2F..", "llama-3-8b-load", id="encoded-parent-namespace"),
+            param("bench-prod", "..%2F..", id="encoded-parent-job"),
+        ],
+    )  # fmt: skip
+    async def test_encoded_slash_traversal_never_returns_secret(
+        self,
+        tmp_path: Path,
+        client: httpx.AsyncClient,
+        namespace: str,
+        job_id: str,
+    ) -> None:
+        """Encoded-slash traversal is always rejected and never leaks a secret.
+
+        Depending on how the encoded ``%2F`` re-splits the path it may be
+        caught by the path validator (400), by route matching (404), or by the
+        epoch-required guard (409) — the invariant is a >= 400 rejection that
+        never returns the operator token file.
+        """
+        _seed_run(tmp_path, files={"profile_export_aiperf.json": b'{"ok": true}'})
+        (tmp_path / "secret-token.txt").write_text("operator-service-account-token")
+
+        response = await client.get(
+            f"/api/v1/results/{namespace}/{job_id}/runs/{_EPOCH_NEW}"
+        )
+
+        assert response.status_code >= 400
+        assert b"operator-service-account-token" not in response.content
+
+    @pytest.mark.asyncio
+    async def test_list_runs_raw_dotdot_namespace_returns_400(
+        self, tmp_path: Path, client: httpx.AsyncClient
+    ) -> None:
+        """A single raw ``..`` segment (no slash) must be rejected before joins."""
+        response = await client.get("/api/v1/results/../llama-3-8b-load/runs")
+        assert response.status_code in (400, 404)
+        assert b"operator-service-account-token" not in response.content
+
+
 class TestResultsFilesReadyMarkerGate:
     """Top-level final artifacts are hidden until ready; checkpoints bypass."""
 
@@ -350,23 +440,24 @@ class TestResultsFilesUrlEncoding:
     async def test_list_historical_files_url_encoded_namespace_and_job_returns_files(
         self, tmp_path: Path, client: httpx.AsyncClient
     ) -> None:
+        """Percent-encoded legal characters decode to the same on-disk names."""
         _seed_run(
             tmp_path,
-            namespace="team.alpha+gpu",
-            job_id="llama-3.1+8b-load",
+            namespace="team-alpha",
+            job_id="llama-3.1-8b-load",
             files={
                 "profile_export_aiperf.json": b'{"request_throughput": {"avg": 42}}'
             },
         )
 
         response = await client.get(
-            f"/api/v1/results/team.alpha%2Bgpu/llama-3.1%2B8b-load/runs/{_EPOCH_NEW}"
+            f"/api/v1/results/team%2Dalpha/llama-3%2E1-8b-load/runs/{_EPOCH_NEW}"
         )
 
         assert response.status_code == 200
         body = response.json()
-        assert body["namespace"] == "team.alpha+gpu"
-        assert body["job_id"] == "llama-3.1+8b-load"
+        assert body["namespace"] == "team-alpha"
+        assert body["job_id"] == "llama-3.1-8b-load"
         assert {entry["name"] for entry in body["files"]} >= {
             "profile_export_aiperf.json"
         }

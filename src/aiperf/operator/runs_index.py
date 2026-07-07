@@ -1534,6 +1534,26 @@ async def _upsert_grouped_sweep_rows(
     return indexed_rows
 
 
+def _collect_sweep_rows_from_disk(
+    epoch_dir: Path,
+) -> tuple[dict[str, Any], list[SweepRow]] | None:
+    """Read aggregate/children/child-export files for one sweep epoch dir.
+
+    Pure filesystem reads + zstd decompression — no sqlite access, no module
+    state — so :func:`_index_sweep_from_disk` can offload it via
+    ``asyncio.to_thread`` without racing the single-writer connection.
+    Returns ``(source_agg, rows)`` or ``None`` when there is nothing to ingest.
+    """
+    aggregate_path = epoch_dir / "aggregate.json"
+    if not aggregate_path.exists():
+        return None
+    try:
+        parent_agg = orjson.loads(aggregate_path.read_bytes())
+    except (OSError, orjson.JSONDecodeError):
+        return None
+    return _select_sweep_rows(epoch_dir, parent_agg)
+
+
 async def _index_sweep_from_disk(
     namespace: str, sweep_name: str, sweep_epoch: str, epoch_dir: Path
 ) -> int:
@@ -1544,16 +1564,16 @@ async def _index_sweep_from_disk(
     and per-cell metrics in the child runs' ``profile_export_aiperf.json`` files;
     legacy archives may use ``profile_export_aiperf_sweep.json`` or put
     ``per_combination_metrics`` directly in ``aggregate.json``.
+
+    The row collection (read + decompress every child run's export) runs in a
+    worker thread so a large sweep cannot stall the kopf event loop; the
+    sqlite upserts stay on the loop/writer path.
     """
-    aggregate_path = epoch_dir / "aggregate.json"
-    if not aggregate_path.exists():
-        return 0
-    try:
-        parent_agg = orjson.loads(aggregate_path.read_bytes())
-    except (OSError, orjson.JSONDecodeError):
+    collected = await asyncio.to_thread(_collect_sweep_rows_from_disk, epoch_dir)
+    if collected is None:
         return 0
 
-    source_agg, rows = _select_sweep_rows(epoch_dir, parent_agg)
+    source_agg, rows = collected
     grouped_rows = _group_sweep_rows(namespace, sweep_name, sweep_epoch, rows)
     indexed_rows = await _upsert_grouped_sweep_rows(
         namespace,

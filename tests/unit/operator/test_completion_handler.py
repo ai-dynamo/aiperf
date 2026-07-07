@@ -11,6 +11,7 @@ import pytest
 import zstandard
 
 from aiperf.kubernetes.constants import Annotations
+from aiperf.operator.environment import _ResultsSettings
 from aiperf.operator.handlers.completion import handle_completion
 from aiperf.operator.models import ControllerFetchResult
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder
@@ -19,6 +20,17 @@ from aiperf.operator.status import ConditionType, Phase, StatusBuilder
 # so the epoch-keyed run dir under results_layout.run_dir is deterministic.
 _FIXTURE_CREATION_TS = "2024-04-25T17:02:03Z"
 _FIXTURE_BODY = {"metadata": {"creationTimestamp": _FIXTURE_CREATION_TS}}
+
+
+def _results_settings(tmp_path: Path, **overrides: float) -> _ResultsSettings:
+    """Build REAL results settings for patching OperatorEnvironment.RESULTS.
+
+    A partial MagicMock stub auto-creates whatever field the handler reads, so
+    field-name drift or numeric-comparison bugs silently no-op; a real
+    ``_ResultsSettings`` instance raises AttributeError on unknown reads and
+    keeps every unset field at its production default.
+    """
+    return _ResultsSettings(DIR=tmp_path, RETAIN_RUNS=5, **overrides)
 
 
 @pytest.mark.asyncio
@@ -95,8 +107,7 @@ async def test_handle_completion_has_files_with_error_marks_failed(
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
+            new=_results_settings(tmp_path),
         ),
         patch(
             "aiperf.operator.handlers.completion.events.results_failed",
@@ -165,8 +176,7 @@ async def test_handle_completion_index_failure_sets_condition_and_event(
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
+            new=_results_settings(tmp_path),
         ),
         patch("aiperf.operator.handlers.completion.events.results_stored"),
         patch("aiperf.operator.handlers.completion.events.completed"),
@@ -277,10 +287,11 @@ async def test_handle_completion_transient_fetch_failure_raises_temporary_error(
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            new=_results_settings(
+                tmp_path,
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            ),
         ),
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
@@ -343,10 +354,11 @@ async def test_handle_completion_partial_results_missing_key_exports_raises_temp
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            new=_results_settings(
+                tmp_path,
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            ),
         ),
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
@@ -430,10 +442,11 @@ async def test_handle_completion_transient_fetch_recovers_from_on_disk_key_expor
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=0.0,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            new=_results_settings(
+                tmp_path,
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=0.0,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            ),
         ),
         patch(
             "aiperf.operator.handlers.completion.events.results_failed",
@@ -504,10 +517,11 @@ async def test_handle_completion_transient_fetch_failure_after_budget_marks_fail
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            new=_results_settings(
+                tmp_path,
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            ),
         ),
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
@@ -559,10 +573,11 @@ async def test_handle_completion_transient_fetch_no_claim_annotation_falls_throu
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            new=_results_settings(
+                tmp_path,
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            ),
         ),
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
@@ -609,10 +624,11 @@ async def test_handle_completion_transient_retry_disabled_marks_failed(
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=0.0,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            new=_results_settings(
+                tmp_path,
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=0.0,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            ),
         ),
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
@@ -662,10 +678,11 @@ async def test_handle_completion_partial_fetch_with_files_does_not_retry(
     with (
         patch(
             "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
-            DIR=tmp_path,
-            RETAIN_RUNS=5,
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            new=_results_settings(
+                tmp_path,
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=60.0,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=5.0,
+            ),
         ),
         patch("aiperf.operator.handlers.completion.events.results_failed"),
         patch("aiperf.operator.handlers.completion.events.completed"),
@@ -691,3 +708,73 @@ async def test_handle_completion_partial_fetch_with_files_does_not_retry(
 
     # has_files + has_error -> legacy Failed path (authoritative error).
     assert patch_obj.status["phase"] == Phase.FAILED
+
+
+@pytest.mark.asyncio
+async def test_run_retention_pass_offloads_prune_and_schedules_index_drops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rmtree prune must run OFF the event loop, and index drops must
+    still be scheduled ON the loop for every deleted epoch.
+
+    Regression lock for the to_thread offload: `_schedule_index_drop`
+    resolves `asyncio.get_running_loop()`, which raises inside a worker
+    thread — if scheduling stayed inside `enforce_retention` (as it did
+    before the offload), the drops would silently no-op and the index would
+    keep rows for pruned runs until the next bootstrap.
+    """
+    import asyncio
+    import os
+    import threading
+
+    from aiperf.operator import runs_index
+    from aiperf.operator.handlers import completion
+
+    epochs = ["1714000000", "1714000060", "1714000120"]
+    for i, epoch in enumerate(epochs):
+        run = tmp_path / "ns" / "job-a" / epoch
+        run.mkdir(parents=True)
+        os.utime(run, (i + 1, i + 1))  # strictly increasing mtimes
+
+    monkeypatch.setattr(
+        completion.OperatorEnvironment,
+        "RESULTS",
+        _ResultsSettings(DIR=tmp_path, RETAIN_RUNS=1, RETAIN_DAYS=0),
+    )
+
+    # _schedule_index_drop lazily imports the REAL runs_index module; gate it
+    # open and record delete_run calls.
+    delete_run = AsyncMock()
+    monkeypatch.setattr(runs_index, "is_open", lambda: True)
+    monkeypatch.setattr(runs_index, "is_readonly", lambda: False)
+    monkeypatch.setattr(runs_index, "delete_run", delete_run)
+
+    # Track which thread performs the rmtree so we can assert the prune ran
+    # off-loop (a slow PVC delete must not stall kopf).
+    import shutil as _shutil
+
+    loop_thread = threading.current_thread()
+    prune_threads: list[threading.Thread] = []
+    real_rmtree = _shutil.rmtree
+
+    def _tracking_rmtree(path, *args, **kwargs):
+        prune_threads.append(threading.current_thread())
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("shutil.rmtree", _tracking_rmtree)
+
+    await completion._run_retention_pass("ns", "job-a", epochs[-1])
+
+    # Let the fire-and-forget delete_run tasks run to completion.
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert len(prune_threads) == 2, "keep=1 must prune the two oldest epochs"
+    assert all(t is not loop_thread for t in prune_threads), (
+        "retention rmtree must run in a worker thread, not on the kopf loop"
+    )
+    dropped = {call.args for call in delete_run.await_args_list}
+    assert dropped == {("ns", "job-a", epochs[0]), ("ns", "job-a", epochs[1])}
+    assert not (tmp_path / "ns" / "job-a" / epochs[0]).exists()
+    assert not (tmp_path / "ns" / "job-a" / epochs[1]).exists()
+    assert (tmp_path / "ns" / "job-a" / epochs[2]).exists()

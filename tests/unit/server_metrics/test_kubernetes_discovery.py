@@ -8,12 +8,14 @@ import pytest
 from pytest import param
 
 from aiperf.server_metrics.discovery.kubernetes import (
+    ALL_NAMESPACES,
     _is_eligible,
     _normalize_path,
     _pod_to_urls,
     _resolve_port,
     discover_kubernetes_endpoints,
     is_running_in_kubernetes,
+    resolve_own_namespace,
 )
 
 
@@ -322,6 +324,22 @@ class TestPodToUrl:
         )
         assert _pod_to_urls(pod, None) == []
 
+    def test_ipv6_pod_ip_is_bracketed(self):
+        pod = _make_pod(
+            pod_ip="fd00:10:244::7",
+            image="vllm/vllm-openai:latest",
+            ports=[{"containerPort": 8000}],
+        )
+        assert _pod_to_urls(pod, None) == ["http://[fd00:10:244::7]:8000/metrics"]
+
+    def test_ipv4_pod_ip_is_not_bracketed(self):
+        pod = _make_pod(
+            pod_ip="10.244.0.7",
+            image="vllm/vllm-openai:latest",
+            ports=[{"containerPort": 8000}],
+        )
+        assert _pod_to_urls(pod, None) == ["http://10.244.0.7:8000/metrics"]
+
     def test_multi_path_annotation(self):
         # The metrics-paths annotation is itself an opt-in signal.
         pod = _make_pod(
@@ -349,9 +367,72 @@ class TestPodToUrl:
 
 
 # ---------------------------------------------------------------------------
+# resolve_own_namespace
+# ---------------------------------------------------------------------------
+class TestResolveOwnNamespace:
+    def test_env_var_wins(self, tmp_path):
+        ns_file = tmp_path / "namespace"
+        ns_file.write_text("file-ns")
+        with (
+            patch.dict("os.environ", {"AIPERF_NAMESPACE": "env-ns"}),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.SERVICE_ACCOUNT_NAMESPACE_FILE",
+                str(ns_file),
+            ),
+        ):
+            assert resolve_own_namespace() == "env-ns"
+
+    def test_falls_back_to_serviceaccount_file(self, tmp_path):
+        ns_file = tmp_path / "namespace"
+        ns_file.write_text("file-ns\n")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.SERVICE_ACCOUNT_NAMESPACE_FILE",
+                str(ns_file),
+            ),
+        ):
+            assert resolve_own_namespace() == "file-ns"
+
+    def test_returns_none_when_unresolvable(self, tmp_path):
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.SERVICE_ACCOUNT_NAMESPACE_FILE",
+                str(tmp_path / "missing"),
+            ),
+        ):
+            assert resolve_own_namespace() is None
+
+
+# ---------------------------------------------------------------------------
 # discover_kubernetes_endpoints (integration-level)
 # ---------------------------------------------------------------------------
 class TestDiscoverKubernetesEndpoints:
+    @pytest.fixture(autouse=True)
+    def _own_namespace_env(self):
+        """Default-namespace resolution needs the operator-injected env var."""
+        with patch.dict("os.environ", {"AIPERF_NAMESPACE": "test-ns"}):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_skips_discovery_when_namespace_unresolvable(self, tmp_path):
+        """No default cluster-scoped fallback: unresolvable namespace = no-op."""
+        mock_client = MagicMock(side_effect=AssertionError("must not be called"))
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.SERVICE_ACCOUNT_NAMESPACE_FILE",
+                str(tmp_path / "missing"),
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                new=mock_client,
+            ),
+        ):
+            assert await discover_kubernetes_endpoints() == []
+        mock_client.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_returns_empty_when_api_unavailable(self):
         def _raise(*_, **__):
@@ -463,7 +544,7 @@ class TestDiscoverKubernetesEndpoints:
                 namespace="inference", label_selector="app=vllm"
             )
 
-        mock_list.assert_called_once_with(mock_api, "inference", "app=vllm")
+        mock_list.assert_called_once_with(mock_api, "inference", "app=vllm", 30.0)
 
     @pytest.mark.asyncio
     async def test_skips_ineligible_pods(self):
@@ -510,7 +591,7 @@ class TestListRunningPods:
         ):
             from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
 
-            pods = await _list_running_pods(mock_api, None, None)
+            pods = await _list_running_pods(mock_api, ALL_NAMESPACES, None)
             assert pods == []
 
     @pytest.mark.asyncio
@@ -525,15 +606,16 @@ class TestListRunningPods:
         ):
             from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
 
-            await _list_running_pods(mock_api, "test-ns", "app=vllm")
+            await _list_running_pods(mock_api, "test-ns", "app=vllm", 12.5)
 
         kwargs = mock_core_list.call_args.kwargs
         assert kwargs["namespace"] == "test-ns"
         assert kwargs["field_selector"] == "status.phase=Running"
         assert kwargs["label_selector"] == "app=vllm"
+        assert kwargs["_request_timeout"] == 12.5
 
     @pytest.mark.asyncio
-    async def test_uses_all_namespaces_when_no_namespace(self):
+    async def test_uses_all_namespaces_for_star_sentinel(self):
         mock_api = MagicMock()
         mock_all_ns = AsyncMock(return_value=_PodList(items=[]))
         mock_core = MagicMock(list_pod_for_all_namespaces=mock_all_ns)
@@ -544,7 +626,65 @@ class TestListRunningPods:
         ):
             from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
 
-            await _list_running_pods(mock_api, None, None)
+            await _list_running_pods(mock_api, ALL_NAMESPACES, None)
 
         mock_all_ns.assert_called_once()
         assert mock_all_ns.call_args.kwargs["field_selector"] == "status.phase=Running"
+        assert mock_all_ns.call_args.kwargs["_request_timeout"] == 30.0
+
+    @pytest.mark.asyncio
+    async def test_forbidden_namespaced_list_warns_actionably(self, caplog):
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
+
+        mock_api = MagicMock()
+        mock_core = MagicMock(
+            list_namespaced_pod=AsyncMock(side_effect=ApiException(status=403))
+        )
+
+        with (
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            caplog.at_level(
+                "WARNING", logger="aiperf.server_metrics.discovery.kubernetes"
+            ),
+        ):
+            pods = await _list_running_pods(mock_api, "dynamo-server", None)
+
+        assert pods == []
+        warning = caplog.text
+        assert "'dynamo-server'" in warning
+        assert "pods: list" in warning
+        assert "ServiceAccount" in warning
+        assert "serverMetricsDiscoveryNamespaces" in warning
+
+    @pytest.mark.asyncio
+    async def test_forbidden_all_namespaces_list_warns_about_cluster_grant(
+        self, caplog
+    ):
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        from aiperf.server_metrics.discovery.kubernetes import _list_running_pods
+
+        mock_api = MagicMock()
+        mock_core = MagicMock(
+            list_pod_for_all_namespaces=AsyncMock(side_effect=ApiException(status=403))
+        )
+
+        with (
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+            caplog.at_level(
+                "WARNING", logger="aiperf.server_metrics.discovery.kubernetes"
+            ),
+        ):
+            pods = await _list_running_pods(mock_api, ALL_NAMESPACES, None)
+
+        assert pods == []
+        assert "ClusterRole" in caplog.text
+        assert "pods: list" in caplog.text

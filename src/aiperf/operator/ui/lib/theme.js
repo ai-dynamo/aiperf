@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 // AIPerf dark theme - NVIDIA design system
 export const palette = {
   // Base layers (neutral grays, no blue tint)

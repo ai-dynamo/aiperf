@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 function detectBackends(metrics) {
   const out = { dynamoFrontend: false, dynamoComponent: false, vllm: false, sglang: false, trtllm: false, kvbm: false };
   if (!metrics || typeof metrics !== 'object') return out;

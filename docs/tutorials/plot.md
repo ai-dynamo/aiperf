@@ -308,7 +308,7 @@ artifacts/
 
 **Advanced**: Use `group_extraction_pattern` to aggregate variants:
 ```yaml
-group_extraction_pattern: "^(treatment_\d+)"  # Groups treatment_1_varA + treatment_1_varB → "treatment_1"
+group_extraction_pattern: '^(treatment_\d+)'  # Groups treatment_1_varA + treatment_1_varB → "treatment_1"
 ```
 
 > [!TIP]

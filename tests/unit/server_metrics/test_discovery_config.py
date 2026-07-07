@@ -39,6 +39,26 @@ class TestServerMetricsDiscoveryConfig:
         assert cfg.mode == ServerMetricsDiscoveryMode.AUTO
         assert cfg.label_selector is None
         assert cfg.namespace is None
+        assert cfg.timeout_seconds == 30.0
+
+    def test_all_namespaces_sentinel_accepted(self):
+        cfg = ServerMetricsDiscoveryConfig(mode="kubernetes", namespace="*")
+        assert cfg.namespace == "*"
+
+    def test_timeout_seconds_override(self):
+        cfg = ServerMetricsDiscoveryConfig(timeout_seconds=5.5)
+        assert cfg.timeout_seconds == 5.5
+
+    @pytest.mark.parametrize(
+        "timeout",
+        [
+            param(0, id="zero"),
+            param(-1.0, id="negative"),
+        ],
+    )  # fmt: skip
+    def test_timeout_seconds_must_be_positive(self, timeout: float):
+        with pytest.raises(ValidationError, match="timeout_seconds"):
+            ServerMetricsDiscoveryConfig(timeout_seconds=timeout)
 
     @pytest.mark.parametrize(
         "mode",

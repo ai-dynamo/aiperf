@@ -92,6 +92,7 @@ multi_run:
 
 ```yaml
 multi_run:
+  num_runs: 10
   cooldown_seconds: 30
   convergence:
     metric: ttft_p99

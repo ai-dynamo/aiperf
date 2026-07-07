@@ -393,6 +393,47 @@ class TestRBACSpec:
                     )
 
 
+class TestKubernetesDeploymentRBACServiceAccount:
+    """get_rbac_spec must bind the SA the benchmark pods actually run under."""
+
+    def test_get_rbac_spec_defaults_to_default_sa(self, sample_config) -> None:
+        """No custom SA in podTemplate binds the RoleBinding to 'default'."""
+        deployment = KubernetesDeployment(
+            job_id="rbac1",
+            namespace="bench",
+            config=sample_config,
+            deployment=DeploymentConfig(image="aiperf:latest"),
+        )
+        rbac = deployment.get_rbac_spec()
+        assert rbac.service_account == "default"
+        subject = rbac.to_role_binding_manifest()["subjects"][0]
+        assert subject["name"] == "default"
+        assert subject["namespace"] == "bench"
+
+    def test_get_rbac_spec_uses_pod_template_service_account(
+        self, sample_config
+    ) -> None:
+        """A custom podTemplate.serviceAccountName flows into the RoleBinding.
+
+        Regression: the per-job RoleBinding previously hardcoded 'default',
+        leaving custom-SA deployments with zero namespace RBAC.
+        """
+        deployment = KubernetesDeployment(
+            job_id="rbac2",
+            namespace="bench",
+            config=sample_config,
+            deployment=DeploymentConfig(
+                image="aiperf:latest",
+                pod_template=PodTemplateConfig(service_account_name="aiperf-runner"),
+            ),
+        )
+        rbac = deployment.get_rbac_spec()
+        assert rbac.service_account == "aiperf-runner"
+        subject = rbac.to_role_binding_manifest()["subjects"][0]
+        assert subject["name"] == "aiperf-runner"
+        assert subject["namespace"] == "bench"
+
+
 class TestKubernetesDeployment:
     """Tests for KubernetesDeployment model."""
 

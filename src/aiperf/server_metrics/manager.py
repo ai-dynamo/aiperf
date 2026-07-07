@@ -249,11 +249,17 @@ class ServerMetricsManager(BaseComponentService):
           not running in a cluster.
         - ``auto`` (default): discover only when running inside Kubernetes.
 
+        The whole discovery call is bounded by
+        ``discovery.timeout_seconds`` — this runs inside the fail-fast
+        PROFILE_CONFIGURE phase, so a hung apiserver must degrade to a
+        warning instead of stalling configure until its timeout.
+
         Returns:
             Discovered endpoint URLs (already full scrape URLs, e.g.
             ``http://10.0.3.7:8081/metrics``); empty list when discovery is
-            skipped or fails. Failures never propagate — discovery is
-            best-effort on top of explicitly configured endpoints.
+            skipped, times out, or fails. Failures never propagate —
+            discovery is best-effort on top of explicitly configured
+            endpoints.
         """
         discovery = self.run.cfg.server_metrics.discovery
 
@@ -272,10 +278,21 @@ class ServerMetricsManager(BaseComponentService):
 
         self.info("Server Metrics: Running Kubernetes endpoint discovery...")
         try:
-            return await discover_kubernetes_endpoints(
-                namespace=discovery.namespace,
-                label_selector=discovery.label_selector,
+            return await asyncio.wait_for(
+                discover_kubernetes_endpoints(
+                    namespace=discovery.namespace,
+                    label_selector=discovery.label_selector,
+                    request_timeout=discovery.timeout_seconds,
+                ),
+                timeout=discovery.timeout_seconds,
             )
+        except TimeoutError:
+            self.warning(
+                f"Server Metrics: Kubernetes discovery timed out after "
+                f"{discovery.timeout_seconds}s; continuing with configured "
+                f"endpoints only (tune server_metrics.discovery.timeout_seconds)"
+            )
+            return []
         except Exception as e:  # noqa: BLE001 - discovery is best-effort; never block configure
             self.warning(f"Server Metrics: Kubernetes discovery failed: {e}")
             return []

@@ -43,6 +43,7 @@ from aiperf.operator.results_layout import (
     list_runs_async,
     resolve_run_dir,
 )
+from aiperf.operator.routers._path_params import validate_results_path_params
 from aiperf.operator.routers.jobs_logs import get_pod_logs_impl
 from aiperf.operator.routers.jobs_models import (
     ActiveJobListResponse,
@@ -886,6 +887,7 @@ def _register_job_detail_routes(
     async def get_job(
         namespace: str, name: str, epoch: str | None = None
     ) -> JobDetailResponse:
+        validate_results_path_params(namespace, name)
         if epoch is not None and not EPOCH_RE.match(epoch):
             raise HTTPException(400, f"Invalid epoch: {epoch!r}")
         return await _get_job_impl(
@@ -898,6 +900,7 @@ def _register_job_detail_routes(
         response_model_by_alias=True,
     )
     async def list_job_epochs(namespace: str, name: str) -> JobEpochsResponse:
+        validate_results_path_params(namespace, name)
         return await _list_job_epochs_impl(optional_api(), results_dir, namespace, name)
 
 
@@ -915,6 +918,7 @@ def _register_job_action_routes(
         dependencies=list(mutating_dependencies),
     )
     async def cancel_job(namespace: str, name: str) -> CancelResponse:
+        validate_results_path_params(namespace, name)
         return await _cancel_job_impl(require_api(), results_dir, namespace, name)
 
     @router.get("/jobs/{namespace}/{name}/events", response_model=JobEventsResponse)

@@ -222,20 +222,21 @@ class TestSweepsRouterPathEncoding:
         ) -> dict[str, object] | None:
             del api
             assert namespace == "bench-prod"
-            assert name == "llama-3.1+grid"
+            assert name == "llama-3.1-grid"
             return None
 
         monkeypatch.setattr(union_mod, "find_aiperfsweep", fake_find_aiperfsweep)
         monkeypatch.setattr(mod, "list_all_jobs", _no_jobs)
         monkeypatch.setattr(mod, "fetch_sweep_pod_summaries", _no_pods)
-        _seed_archived_sweep(tmp_path, name="llama-3.1+grid")
+        # Valid Kubernetes name; the encoded dot still exercises percent-decoding.
+        _seed_archived_sweep(tmp_path, name="llama-3.1-grid")
 
-        response = await client.get("/api/v1/sweeps/bench-prod/llama-3.1%2Bgrid")
+        response = await client.get("/api/v1/sweeps/bench-prod/llama-3%2E1-grid")
 
         assert response.status_code == 200
         body = response.json()
         assert body["sweep"]["namespace"] == "bench-prod"
-        assert body["sweep"]["name"] == "llama-3.1+grid"
+        assert body["sweep"]["name"] == "llama-3.1-grid"
         assert body["sweep"]["source"] == "archived"
 
     @pytest.mark.asyncio

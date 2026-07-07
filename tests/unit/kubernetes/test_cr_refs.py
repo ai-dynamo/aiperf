@@ -112,12 +112,20 @@ class TestFormatInvariants:
 def _load_crd_manifest(manifest: Path) -> dict:
     """Parse a Helm-templated CRD manifest into a dict.
 
-    The generated CRDs are plain YAML except for a handful of Helm expressions
-    (chart labels, the templated ``spec.image`` default); replacing every
-    ``{{ ... }}`` with a scalar placeholder yields valid YAML.
+    The generated CRDs are plain YAML except for a handful of Helm expressions.
+    Two shapes appear: standalone control-flow lines (``{{- with ... }}``,
+    ``{{- end }}``, ``{{- include ... }}``) that must be dropped entirely so
+    they don't leave a dangling scalar, and inline expressions (the templated
+    ``spec.image`` / ``spec.imagePullPolicy`` defaults) that are replaced with a
+    scalar placeholder. The result is valid YAML.
     """
     assert manifest.exists(), f"CRD manifest not found at {manifest}"
-    cleaned = re.sub(r"{{[^}]*}}", "PLACEHOLDER", manifest.read_text())
+    lines = [
+        line
+        for line in manifest.read_text().splitlines()
+        if not line.lstrip().startswith("{{-")
+    ]
+    cleaned = re.sub(r"{{[^}]*}}", "PLACEHOLDER", "\n".join(lines))
     return yaml.safe_load(cleaned)
 
 

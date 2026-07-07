@@ -59,16 +59,22 @@ async def handle(
     except ValidationError as e:
         raise kopf.PermanentError(f"AIPerfSweep spec invalid: {e}") from e
 
-    base_benchmark = validated.benchmark.model_dump(
-        by_alias=True, exclude_none=True, exclude_defaults=True
-    )
+    # Mirror `sweep_controller.plan_builder.build_plan_from_sweep`:
+    # `expand_sweep` expects the envelope shape — body under `benchmark`,
+    # cross-variation fields (sweep, variables, random_seed) at envelope
+    # level. A flattened dict hides datasets/phases from expand_sweep's
+    # scenario-merge logic, spuriously rejecting specs the controller accepts.
+    sweep_input: dict[str, Any] = {
+        "benchmark": validated.benchmark.model_dump(
+            by_alias=True, exclude_none=True, exclude_defaults=True
+        )
+    }
     if validated.sweep is not None:
-        sweep_input = {
-            **base_benchmark,
-            "sweep": validated.sweep.model_dump(by_alias=True),
-        }
-    else:
-        sweep_input = dict(base_benchmark)
+        sweep_input["sweep"] = validated.sweep.model_dump(by_alias=True)
+    if validated.variables:
+        sweep_input["variables"] = validated.variables
+    if validated.random_seed is not None:
+        sweep_input["random_seed"] = validated.random_seed
 
     n_variations, max_total_runs = _compute_cardinality(validated, sweep_input)
 
@@ -157,7 +163,15 @@ def _compute_cardinality(
     if isinstance(sweep, AdaptiveSearchSweep):
         n_variations = sweep.max_iterations
     else:
-        n_variations = len(expand_sweep(sweep_input))
+        try:
+            n_variations = len(expand_sweep(sweep_input))
+        except ValueError as e:
+            # expand_sweep validation failures (bad dotted path, mismatched
+            # zip lengths, unmergeable scenario overrides) are spec bugs, not
+            # transient conditions — retrying the same spec can never succeed.
+            raise kopf.PermanentError(
+                f"AIPerfSweep sweep expansion rejected the spec: {e}"
+            ) from e
 
     if n_variations > _MAX_VARIATIONS:
         raise kopf.PermanentError(

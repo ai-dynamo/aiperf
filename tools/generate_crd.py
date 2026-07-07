@@ -1584,6 +1584,19 @@ def render_helm_crd_yaml(crd: dict[str, Any]) -> str:
         'default: {{ default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) .Values.defaults.image | quote }}',
     )
 
+    # spec.imagePullPolicy has no Pydantic default (None = defer to K8s), so
+    # inject a chart-controlled CRD default from .Values.defaults.imagePullPolicy.
+    # `with` omits the default: line entirely when the value is unset/null,
+    # preserving the no-default behavior for charts that opt out.
+    yaml_str = yaml_str.replace(
+        "              imagePullPolicy:\n                type: string\n",
+        "              imagePullPolicy:\n"
+        "                type: string\n"
+        "                {{- with .Values.defaults.imagePullPolicy }}\n"
+        "                default: {{ . | quote }}\n"
+        "                {{- end }}\n",
+    )
+
     yaml_str = yaml_str.replace(
         "  name: aiperfjobs.aiperf.nvidia.com\n",
         "  name: aiperfjobs.aiperf.nvidia.com\n"

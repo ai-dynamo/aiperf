@@ -13,26 +13,26 @@ The research basis is an industry survey plus academic citations (SCOOT, DistSer
 ```bash
 # Default: smooth-isotonic SLA search (PAVA-denoised + PCHIP root-find;
 # strictly more accurate than `monotonic` under noise)
-aiperf profile --models my-model --url http://infer.example.com --streaming \
+aiperf profile --model my-model --url http://infer.example.com --streaming \
   --search-recipe max-concurrency-under-sla --ttft-sla-ms 200
 
 # Monotonic style: 1D exponential probe + bisection (~10 iterations on
 # [1, 1000] at 5% precision). Cheaper but margin-magnitude-blind.
-aiperf profile --models my-model --url http://infer.example.com --streaming \
+aiperf profile --model my-model --url http://infer.example.com --streaming \
   --search-recipe max-concurrency-under-sla --search-style monotonic --ttft-sla-ms 200
 
 # BO style: optimize WITHIN the feasibility region (best when you also want
 # to maximize throughput, not only locate the boundary)
-aiperf profile --models my-model --url http://infer.example.com --streaming \
+aiperf profile --model my-model --url http://infer.example.com --streaming \
   --search-recipe max-concurrency-under-sla --search-style bo --ttft-sla-ms 200
 
 # Grid style: 8 log-spaced points + sla_breach.json artifact for plotting
-aiperf profile --models my-model --url http://infer.example.com --streaming \
+aiperf profile --model my-model --url http://infer.example.com --streaming \
   --search-recipe max-concurrency-under-sla --search-style grid --ttft-sla-ms 200
 
 # Goodput formulation (DistServe canonical: per-request TTFT/TPOT/E2E SLOs +
 # attainment-fraction; objective is the goodput metric itself)
-aiperf profile --models my-model --url http://infer.example.com --streaming \
+aiperf profile --model my-model --url http://infer.example.com --streaming \
   --search-recipe max-goodput-under-slo \
   --ttft-sla-ms 500 --tpot-sla-ms 15 --e2e-sla-ms 2000 \
   --slo-attainment-fraction 0.95
@@ -55,7 +55,7 @@ The four issue-named SLA flags are sugar over the generic `--search-sla` syntax.
 ```bash
 # Compose: TTFT p95 < 200ms AND error rate p99 < 1%, on the explicit
 # --search-space path (no recipe).
-aiperf profile --models my-model --streaming \
+aiperf profile --model my-model --streaming \
   --search-space "phases.profiling.concurrency:1,1000:int" \
   --search-sla "time_to_first_token:p95:lt:200" \
   --search-sla "request_error_rate:p99:lt:0.01" \

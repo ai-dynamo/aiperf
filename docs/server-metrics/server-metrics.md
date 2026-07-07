@@ -216,16 +216,54 @@ Configure via the `server_metrics.discovery` block in YAML:
 server_metrics:
   discovery:
     mode: auto          # auto (default) | kubernetes | disabled
-    namespace: inference  # optional; all namespaces when omitted
+    namespace: inference  # optional; the pod's own namespace when omitted, "*" = all namespaces
     label_selector: app=vllm  # optional server-side filter
+    timeout_seconds: 30  # optional; bound on the discovery API calls
 ```
 
 - `auto` (default) — discover only when running in-cluster; no-op locally.
 - `kubernetes` — force K8s API discovery; logs a warning and discovers nothing outside a cluster.
 - `disabled` — use only explicit URLs (`namespace`/`label_selector` are rejected in this mode).
 
-Discovery is best-effort: API errors are logged as warnings and the benchmark
-proceeds with the explicitly configured endpoints.
+When `namespace` is omitted, discovery searches the benchmark pod's **own
+namespace** (resolved from the operator-injected `AIPERF_NAMESPACE` env var,
+falling back to the pod's ServiceAccount namespace file). The `"*"` sentinel
+explicitly requests a cluster-scoped search of all namespaces.
+
+Discovery is best-effort: API errors and timeouts are logged as warnings and
+the benchmark proceeds with the explicitly configured endpoints.
+`timeout_seconds` (default 30) bounds the whole discovery call so a hung
+apiserver cannot stall benchmark configuration.
+
+#### RBAC prerequisites
+
+Discovery lists pods through the Kubernetes API using the benchmark pod's
+ServiceAccount, so it needs `pods: get/list` where it searches:
+
+| `discovery.namespace` | Searches | RBAC required |
+|---|---|---|
+| omitted (default) | The benchmark pod's own namespace | None — works out of the box: the aiperf-operator chart's benchmark Role already grants `pods: get/list/watch` in every benchmark namespace |
+| `<other-namespace>` (e.g. Dynamo in `dynamo-server`) | That namespace | Add the inference namespace to the chart's `serverMetricsDiscoveryNamespaces` value — it provisions a read-only pods Role there, bound to the benchmark namespaces' `default` ServiceAccount. (Or create an equivalent Role/RoleBinding manually.) |
+| `"*"` | All namespaces | A cluster-scoped grant: ClusterRole with `pods: list` bound to the benchmark ServiceAccount. The chart does not provision this. |
+
+```bash
+# Cross-namespace example: benchmarks in aiperf-benchmarks scraping Dynamo pods
+# in dynamo-server.
+helm upgrade aiperf-operator deploy/helm/aiperf-operator -n aiperf-system \
+  --reuse-values \
+  --set 'serverMetricsDiscoveryNamespaces={dynamo-server}'
+```
+
+then point discovery at the inference namespace:
+
+```yaml
+server_metrics:
+  discovery:
+    namespace: dynamo-server
+```
+
+A denied pod list never fails the benchmark — it degrades to a warning naming
+the namespace and the missing grant.
 
 ### Disabling Server Metrics
 

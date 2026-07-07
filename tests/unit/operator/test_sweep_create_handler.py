@@ -101,6 +101,94 @@ async def test_handle_rejects_invalid_spec(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_scenarios_sweep_with_singular_dataset_override(monkeypatch):
+    """Regression: the handler must feed ``expand_sweep`` the envelope shape.
+
+    ``expand_sweep`` expects ``{"benchmark": <body>, "sweep": ...}`` (what
+    ``sweep_controller.plan_builder`` builds). The old flattened input hid
+    the base ``datasets:`` list from the scenario-merge logic, so a run
+    overriding singular ``benchmark.dataset:`` (valid — the controller
+    resolves the name from the single base dataset) was spuriously rejected
+    at admission with "base with multiple datasets ([])".
+    """
+    body = _valid_body()
+    body["spec"]["sweep"] = {
+        "type": "scenarios",
+        "runs": [
+            {"name": "small", "benchmark": {"dataset": {"type": "synthetic"}}},
+            {"name": "large", "benchmark": {"dataset": {"type": "synthetic"}}},
+        ],
+    }
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+
+    await sweep_create.handle(
+        body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+    )
+
+    assert patch.status["totalVariations"] == 2
+    assert patch.status["maxTotalRuns"] == 6  # 2 scenarios x numRuns=3
+
+
+@pytest.mark.asyncio
+async def test_handle_expand_sweep_valueerror_becomes_permanent_error(monkeypatch):
+    """A ValueError from expand_sweep is a spec bug — kopf must stop retrying.
+
+    Before the fix it escaped as a generic exception, so kopf retried a
+    permanently-invalid spec forever.
+    """
+    body = _valid_body()
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+
+    def _reject(_data):
+        raise ValueError("zip sweep parameters must all have equal length")
+
+    monkeypatch.setattr(sweep_create, "expand_sweep", _reject)
+
+    with pytest.raises(
+        kopf.PermanentError,
+        match=r"sweep expansion rejected the spec: zip sweep parameters",
+    ):
+        await sweep_create.handle(
+            body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_sweep_input_mirrors_plan_builder_envelope(monkeypatch):
+    """The expand_sweep input must be envelope-shaped with variables/random_seed
+    parity so admission-time cardinality matches the sweep-controller's plan."""
+    body = _valid_body()
+    body["spec"]["variables"] = {"region": "us-east"}
+    body["spec"]["randomSeed"] = 42
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+
+    captured: dict = {}
+    real_expand = sweep_create.expand_sweep
+
+    def _capture(data):
+        captured["input"] = data
+        return real_expand(data)
+
+    monkeypatch.setattr(sweep_create, "expand_sweep", _capture)
+
+    await sweep_create.handle(
+        body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+    )
+
+    sweep_input = captured["input"]
+    assert set(sweep_input) == {"benchmark", "sweep", "variables", "random_seed"}
+    assert "phases" in sweep_input["benchmark"]
+    assert sweep_input["variables"] == {"region": "us-east"}
+    assert sweep_input["random_seed"] == 42
+
+
+@pytest.mark.asyncio
 async def test_epoch_from_creation_timestamp():
     """`metadata.creationTimestamp` parses to a decimal epoch in status.runEpoch."""
     from datetime import datetime
@@ -198,9 +286,13 @@ def test_service_settings_reads_aiperf_operator_base_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_computes_max_total_runs_grid_x_trials(monkeypatch):
     body = _valid_body()
+    # The path must name a real phase from _valid_body ("profiling"). The
+    # pre-fix flattened expand_sweep input hid the benchmark body, so a
+    # nonexistent phase name was silently tolerated here; the envelope shape
+    # resolves paths against the real body exactly like the sweep-controller.
     body["spec"]["sweep"] = {
         "type": "grid",
-        "variables": {"benchmark.phases.default.concurrency": [1, 2, 3, 4]},
+        "variables": {"benchmark.phases.profiling.concurrency": [1, 2, 3, 4]},
     }
     body["spec"]["multiRun"]["numRuns"] = 5
     patch = kopf.Patch()

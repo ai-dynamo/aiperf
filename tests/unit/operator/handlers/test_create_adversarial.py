@@ -16,6 +16,7 @@ Out of scope: monitor/completion state-machine transitions, covered by
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -351,6 +352,30 @@ class TestCreatePartialFailure:
         assert harness.role.await_count == 1
         assert harness.role_binding.await_count == 1
         assert harness.configmap.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_on_create_sqlite_error_from_index_upsert_raises_temporary_error(
+        self,
+    ) -> None:
+        """A transient sqlite failure (e.g. locked index DB while bootstrap
+        runs) must surface as ``kopf.TemporaryError`` so the valid job is
+        retried — not fall through to ``on_create``'s catch-all, which
+        converts it to ``kopf.PermanentError`` and permanently fails the job.
+        """
+        patch = _patch_obj()
+
+        async with _patched_create_dependencies() as harness:
+            harness.upsert_index.side_effect = sqlite3.OperationalError(
+                "database is locked"
+            )
+            with pytest.raises(
+                kopf.TemporaryError, match=r"Persisting job spec/index failed"
+            ):
+                await _call_on_create(patch=patch)
+
+        assert "observedGeneration" not in patch.status
+        harness.save_spec.assert_awaited_once()
+        harness.jobset.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_on_create_idempotent_retry_reinvokes_all_resource_helpers(

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1128,6 +1129,7 @@ class TestMetricsDiscovery:
         mock_discover.assert_called_once_with(
             namespace="inference",
             label_selector="app=vllm",
+            request_timeout=30.0,
         )
 
     @pytest.mark.asyncio
@@ -1158,6 +1160,115 @@ class TestMetricsDiscovery:
             return_value=False,
         ):
             assert await manager._run_metrics_discovery() == []
+
+    @pytest.mark.asyncio
+    async def test_default_namespace_resolves_to_own_namespace(self):
+        """With namespace unset, discovery lists pods in the pod's OWN namespace.
+
+        Regression: the default used to be a cluster-scoped
+        list_pod_for_all_namespaces, which the namespaced benchmark Role can
+        never authorize — every default in-cluster run got a swallowed 403.
+        """
+        run = make_benchmark_run(
+            extra={"server_metrics": {"discovery": {"mode": "kubernetes"}}},
+        )
+        manager = ServerMetricsManager(run=run)
+        mock_list = AsyncMock(return_value=MagicMock(items=[]))
+        mock_core = MagicMock(list_namespaced_pod=mock_list)
+
+        @asynccontextmanager
+        async def _fake_client():
+            yield MagicMock()
+
+        with (
+            patch.dict("os.environ", {"AIPERF_NAMESPACE": "bench-ns"}),
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                new=_fake_client,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+        ):
+            assert await manager._run_metrics_discovery() == []
+
+        mock_list.assert_called_once()
+        assert mock_list.call_args.kwargs["namespace"] == "bench-ns"
+        assert mock_list.call_args.kwargs["_request_timeout"] == 30.0
+
+    @pytest.mark.asyncio
+    async def test_explicit_star_namespace_lists_all_namespaces(self):
+        """Only the explicit '*' sentinel triggers the cluster-scoped list."""
+        run = make_benchmark_run(
+            extra={
+                "server_metrics": {
+                    "discovery": {"mode": "kubernetes", "namespace": "*"},
+                },
+            },
+        )
+        manager = ServerMetricsManager(run=run)
+        mock_all_ns = AsyncMock(return_value=MagicMock(items=[]))
+        mock_core = MagicMock(list_pod_for_all_namespaces=mock_all_ns)
+
+        @asynccontextmanager
+        async def _fake_client():
+            yield MagicMock()
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.k8s_client",
+                new=_fake_client,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.client.CoreV1Api",
+                return_value=mock_core,
+            ),
+        ):
+            assert await manager._run_metrics_discovery() == []
+
+        mock_all_ns.assert_called_once()
+        assert mock_all_ns.call_args.kwargs["_request_timeout"] == 30.0
+
+    @pytest.mark.asyncio
+    async def test_discovery_timeout_degrades_to_warning(self):
+        """A hung apiserver must not stall PROFILE_CONFIGURE past the bound."""
+        run = make_benchmark_run(
+            extra={
+                "server_metrics": {
+                    "discovery": {"mode": "kubernetes", "timeout_seconds": 0.05},
+                },
+            },
+        )
+        manager = ServerMetricsManager(run=run)
+        manager.warning = MagicMock()
+
+        async def _hang(**_: object) -> list[str]:
+            await asyncio.Event().wait()
+            return []
+
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                new=_hang,
+            ),
+        ):
+            assert await manager._run_metrics_discovery() == []
+
+        manager.warning.assert_called_once()
+        assert "timed out" in manager.warning.call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_discovery_exception_handled_gracefully(self):

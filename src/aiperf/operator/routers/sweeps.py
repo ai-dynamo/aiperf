@@ -25,6 +25,7 @@ from aiperf.operator.results_layout import (
     list_sweep_epochs_async,
     resolve_sweep_dir,
 )
+from aiperf.operator.routers._path_params import validate_results_path_params
 from aiperf.operator.routers._sweeps_artifacts import register_sweep_artifact_routes
 from aiperf.operator.routers._sweeps_diagnostics import (
     fetch_sweep_pod_summaries,
@@ -405,6 +406,7 @@ def _register_sweep_read_routes(
     async def get_sweep(
         namespace: str, name: str, epoch: str | None = None
     ) -> SweepDetailResponse:
+        validate_results_path_params(namespace, name)
         if epoch is not None and not EPOCH_RE.match(epoch):
             raise HTTPException(400, f"Invalid epoch: {epoch!r}")
         return await _get_sweep_impl(
@@ -419,6 +421,7 @@ def _register_sweep_read_routes(
     async def list_sweep_epochs_endpoint(
         namespace: str, name: str
     ) -> SweepEpochsResponse:
+        validate_results_path_params(namespace, name)
         return await _list_sweep_epochs_impl(base_dir, namespace, name)
 
 
@@ -436,6 +439,7 @@ def _register_sweep_cell_routes(
     async def get_sweep_cells(
         namespace: str, name: str, epoch: str | None = None
     ) -> CellAggregatesResponse:
+        validate_results_path_params(namespace, name)
         if epoch is not None and not EPOCH_RE.match(epoch):
             raise HTTPException(400, f"Invalid epoch: {epoch!r}")
         return await _get_cells_impl(
@@ -450,6 +454,7 @@ def _register_sweep_cell_routes(
     async def get_sweep_children(
         namespace: str, name: str, epoch: str | None = None
     ) -> ChildrenManifestResponse:
+        validate_results_path_params(namespace, name)
         if epoch is not None and not EPOCH_RE.match(epoch):
             raise HTTPException(400, f"Invalid epoch: {epoch!r}")
         return await _get_children_impl(

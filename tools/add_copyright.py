@@ -223,7 +223,14 @@ register(
     lambda lic: prefix_lines(lic, "# "),
     insert_after_shebang,
 )
-register(has_ext([".cc", ".h", ".cpp", ".hpp"]), lambda lic: prefix_lines(lic, "// "))
+register(
+    has_ext([".cc", ".h", ".cpp", ".hpp", ".js", ".mjs"]),
+    lambda lic: prefix_lines(lic, "// "),
+)
+register(
+    has_ext([".css"]),
+    lambda lic: "/* " + "\n   ".join(lic.splitlines()) + " */",
+)
 register(has_ext([".tpl"]), lambda lic: "{{/*\n" + prefix_lines(lic, "# ") + "\n*/}}")
 register(
     has_ext([".html", ".md"]), lambda lic: "<!--\n" + prefix_lines(lic, "# ") + "\n-->"

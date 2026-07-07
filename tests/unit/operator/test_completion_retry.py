@@ -11,8 +11,6 @@ exercise:
   budget check, not skip it.
 - budget gating: 0 disables; over budget → silent return; within budget → raise.
 - claim age parsing: missing / unparsable annotation → silent return.
-- settings coercion: MagicMock-shaped settings (the legacy test pattern) must
-  fall through to default behavior, not crash.
 - error-message content: the ``TemporaryError`` message must name the namespace,
   job_id, claim age, budget, and the upstream error string for ops debuggability.
 """
@@ -21,12 +19,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import kopf
 import pytest
 
 from aiperf.kubernetes.constants import Annotations
+from aiperf.operator.environment import _ResultsSettings
 from aiperf.operator.handlers._completion_retry import (
     maybe_raise_for_transient_fetch_failure,
 )
@@ -90,8 +89,10 @@ def env_with_budget():
     def _set(budget: float = 60.0, delay: float = 5.0) -> None:
         p = patch(
             "aiperf.operator.handlers._completion_retry.OperatorEnvironment.RESULTS",
-            TRANSIENT_FETCH_RETRY_BUDGET_SEC=budget,
-            TRANSIENT_FETCH_RETRY_DELAY_SEC=delay,
+            new=_ResultsSettings(
+                TRANSIENT_FETCH_RETRY_BUDGET_SEC=budget,
+                TRANSIENT_FETCH_RETRY_DELAY_SEC=delay,
+            ),
         )
         p.start()
         patches.append(p)
@@ -227,28 +228,6 @@ class TestClaimAgeParsing:
             result=_result(),
             flags=_flags(),
         )
-
-
-class TestSettingsCoercion:
-    def test_magicmock_budget_treated_as_zero(self) -> None:
-        """Existing tests stub OperatorEnvironment.RESULTS with a partial MagicMock;
-        the new fields auto-create as MagicMock instances. Coercion must keep the
-        retry path inert in that scenario, not crash."""
-        fake_results = MagicMock()
-        fake_results.TRANSIENT_FETCH_RETRY_BUDGET_SEC = MagicMock()
-        fake_results.TRANSIENT_FETCH_RETRY_DELAY_SEC = MagicMock()
-        with patch(
-            "aiperf.operator.handlers._completion_retry.OperatorEnvironment.RESULTS",
-            new=fake_results,
-        ):
-            # Should not raise — budget coerces to 0.0, gate disables.
-            maybe_raise_for_transient_fetch_failure(
-                body=_body(_now_iso(-1)),
-                namespace="ns",
-                job_id="job",
-                result=_result(),
-                flags=_flags(),
-            )
 
 
 class TestErrorMessageContent:

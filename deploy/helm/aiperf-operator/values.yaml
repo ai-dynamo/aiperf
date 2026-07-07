@@ -270,6 +270,16 @@ benchmarkNamespace:
 # against benchmarkNamespace.name.
 benchmarkRbacNamespaces: []
 
+# serverMetricsDiscoveryNamespaces lists EXISTING inference namespaces (e.g. a
+# Dynamo deployment namespace) where benchmark pods get a read-only pods
+# Role/RoleBinding so cross-namespace server-metrics endpoint discovery
+# (server_metrics.discovery.namespace) is authorized. Unlike
+# benchmarkRbacNamespaces, entries are NOT created by the chart and receive
+# only `pods: get/list/watch`, bound to the `default` ServiceAccount of the
+# benchmark namespace(s). Same-namespace discovery (the default) needs no
+# entry here — the benchmark Role already grants it.
+serverMetricsDiscoveryNamespaces: []
+
 # kueue configures Kueue gang-scheduling integration
 kueue:
   # kueue.defaultQueueName is the default Kueue LocalQueue name.

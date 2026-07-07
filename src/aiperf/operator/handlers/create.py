@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Callable
 from typing import Any
 
@@ -307,7 +308,16 @@ async def _persist_spec_and_index(
         epoch = epoch_key_from_body(body)
         await save_job_spec_file(namespace, job_id, plain_spec, epoch=epoch)
         await runs_index.upsert_run_created(namespace, job_id, epoch, spec=plain_spec)
-    except (OSError, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
+    except (
+        # sqlite3.Error covers aiosqlite index writes (e.g. OperationalError
+        # "database is locked" during bootstrap) — transient, same retry
+        # semantics as disk/network failures per the docstring's promise.
+        sqlite3.Error,
+        OSError,
+        aiohttp.ClientError,
+        ConnectionError,
+        TimeoutError,
+    ) as e:
         logger.warning(f"Transient persistence failure for {namespace}/{name}: {e}")
         raise kopf.TemporaryError(
             f"Persisting job spec/index failed: {e}", delay=10

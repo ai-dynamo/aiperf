@@ -435,17 +435,19 @@ class TestAnalyticsFilteringAndEncoding:
     async def test_summary_url_encoded_namespace_and_job_returns_exact_payload(
         self, tmp_path: Path, client: httpx.AsyncClient
     ) -> None:
+        # Valid Kubernetes identifiers; the dot in the job name still exercises
+        # percent-decoding while passing path validation.
         _seed_summary_run(
             tmp_path,
-            namespace="team.alpha+gpu",
-            job_id="llama-3.1+8b-load",
+            namespace="team-alpha",
+            job_id="llama-3.1-8b-load",
             payload=_summary_payload(
                 metric_value=444.0, model="meta-llama/Llama-3.1-8B"
             ),
         )
 
         response = await client.get(
-            "/api/v1/analytics/summary/team.alpha%2Bgpu/llama-3.1%2B8b-load"
+            "/api/v1/analytics/summary/team%2Dalpha/llama-3%2E1-8b-load"
         )
 
         assert response.status_code == 200

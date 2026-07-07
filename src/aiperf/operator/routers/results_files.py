@@ -17,6 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME, ready_marker_path
 from aiperf.operator.results_layout import EPOCH_RE, resolve_run_dir
+from aiperf.operator.routers._path_params import validate_results_path_params
 from aiperf.operator.routers.results_files_io import (
     PROFILE_EXPORT_FILENAME,
     _display_name,
@@ -52,7 +53,12 @@ def _resolve_job_dir(
 
     Callers serving concrete result files must pass an explicit epoch so the
     UI/API cannot silently drift to a different run via ``latest.txt``.
+
+    Rejects with 400 any ``namespace``/``job_id`` that is not a valid
+    Kubernetes name BEFORE the path join — a decoded ``..%2F..`` traversal
+    segment must never reach ``resolve_run_dir``.
     """
+    validate_results_path_params(namespace, job_id)
     resolved = resolve_run_dir(base_dir, namespace, job_id, epoch=epoch)
     if resolved is None:
         target = f"{namespace}/{job_id}" + (f"/runs/{epoch}" if epoch else "")
@@ -111,6 +117,7 @@ async def _build_run_history_response(
     """Resolve every run dir for a job, raising 404 when none exist."""
     from aiperf.operator.results_layout import list_runs_async
 
+    validate_results_path_params(namespace, job_id)
     runs = await list_runs_async(base_dir, namespace, job_id)
     if not runs:
         raise HTTPException(404, f"No runs for {namespace}/{job_id}")

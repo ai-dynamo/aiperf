@@ -40,7 +40,7 @@ def _make_config(concurrency: int | None = 8) -> MagicMock:
     config = MagicMock()
     config.benchmark.phases = [phase]
     config.benchmark.endpoint.urls = ["http://svc:8000/v1/chat/completions"]
-    config.get_model_names.return_value = ["test-model"]
+    config.benchmark.get_model_names.return_value = ["test-model"]
     # model_dump (used by _prepare_direct_deploy before apply_k8s_runtime_config)
     config.model_dump.return_value = {"phases": [{"concurrency": concurrency}]}
     return config
@@ -589,6 +589,8 @@ class TestDeployDirect:
         assert captured.get("namespace") == "passed-ns"
         assert captured.get("job_id") == "bench"
         assert captured.get("worker_replicas") == 1
+        # Model names come from config.benchmark.get_model_names()
+        assert captured.get("model_names") == ["test-model"]
 
     @pytest.mark.asyncio
     async def test_image_override_appears_in_submission_summary(self) -> None:
@@ -679,3 +681,76 @@ class TestDeployDirect:
                 attach_port=0,
                 skip_endpoint_check=True,
             )
+
+    @pytest.mark.asyncio
+    async def test_real_config_model_names_reach_deployment(self) -> None:
+        """Attr-path drift guard using a REAL AIPerfConfig, not a MagicMock.
+
+        MagicMock configs auto-create whatever attribute path the source reads
+        (``config.get_model_names`` vs ``config.benchmark.get_model_names``
+        both "work"), so path drift silently no-ops. Here a real config flows
+        through the unmocked ``_prepare_direct_deploy`` and the model names
+        read by ``deploy_direct`` must land in the KubernetesDeployment params.
+        """
+        from aiperf.cli_commands.kube.profile_deploy_direct import deploy_direct
+        from aiperf.config import AIPerfConfig
+
+        config = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["test-model"],
+                    "endpoint": {
+                        "urls": ["http://svc:8000/v1/chat/completions"],
+                        "type": "chat",
+                    },
+                    "datasets": [
+                        {
+                            "name": "default",
+                            "type": "synthetic",
+                            "entries": 10,
+                            "prompts": {"isl": 64, "osl": 16},
+                        }
+                    ],
+                    "phases": [
+                        {
+                            "name": "default",
+                            "type": "concurrency",
+                            "concurrency": 2,
+                            "requests": 10,
+                        }
+                    ],
+                }
+            }
+        )
+        assert config.benchmark.get_model_names() == ["test-model"]
+
+        deployment = MagicMock()
+        deployment.effective_namespace = "ns"
+        deployment.get_all_manifests.return_value = []
+        captured: dict[str, Any] = {}
+
+        def _factory(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return deployment
+
+        # _prepare_direct_deploy runs UNMOCKED: model_dump -> k8s overlay ->
+        # AIPerfConfig.model_validate -> apply_worker_config, all on the real
+        # config. dry_run=True keeps the K8s API out of the picture.
+        with (
+            patch("aiperf.kubernetes.resources.KubernetesDeployment", _factory),
+            patch(
+                "aiperf.cli_commands.kube.profile_deploy_direct._print_manifests_yaml"
+            ),
+        ):
+            await deploy_direct(
+                config,
+                _make_kube_options(),
+                "bench",
+                "ns",
+                dry_run=True,
+                detach=False,
+                no_wait=False,
+                attach_port=0,
+            )
+
+        assert captured.get("model_names") == ["test-model"]

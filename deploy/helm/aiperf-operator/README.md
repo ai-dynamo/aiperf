@@ -24,6 +24,7 @@ All values are documented inline in [`values.yaml`](./values.yaml). Common overr
 | `operator.watchNamespaces` | Namespaces to watch for `AIPerfJob` CRs. Empty list (default) watches all namespaces. |
 | `benchmarkNamespace.name` / `.create` | Namespace where chart creates `AIPerfJob` RBAC (and optionally the namespace itself). |
 | `benchmarkRbacNamespaces` | Extra namespaces to provision benchmark RBAC in (e.g. multi-team setups). |
+| `serverMetricsDiscoveryNamespaces` | Existing inference namespaces (e.g. a Dynamo deployment) where benchmark pods get read-only `pods` RBAC for cross-namespace server-metrics endpoint discovery. Namespaces are not created by the chart. |
 | `storage.enabled` | Default `true`: back the results volume with a `PersistentVolumeClaim` so benchmark results survive operator restarts. Set `false` to fall back to `emptyDir` (ephemeral, useful for clusters with no default `StorageClass`). |
 | `kueue.createQueues` | Chart-manage `ResourceFlavor` / `ClusterQueue` / `LocalQueue`. Gated on the `kueue.x-k8s.io/v1beta1` API being present. |
 | `serviceMonitor.enabled` | Create a Prometheus Operator `ServiceMonitor`. Gated on `monitoring.coreos.com/v1`. |

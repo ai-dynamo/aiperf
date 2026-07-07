@@ -147,7 +147,7 @@ accepts `--queue-name` and `--priority-class`:
 
 ```bash
 aiperf kube profile \
-  --endpoint-url http://my-server:8000/v1 \
+  --url http://my-server:8000/v1 \
   --model Qwen/Qwen3-0.6B \
   --queue-name aiperf-queue \
   --priority-class aiperf-high

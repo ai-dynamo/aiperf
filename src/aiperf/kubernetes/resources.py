@@ -399,11 +399,19 @@ class KubernetesDeployment(AIPerfBaseModel):
         return spec
 
     def get_rbac_spec(self) -> RBACSpec:
-        """Get the RBAC spec."""
+        """Get the RBAC spec.
+
+        Binds the Role to the ServiceAccount the benchmark pods actually run
+        under (``podTemplate.serviceAccountName``), falling back to
+        ``default``. Binding only ``default`` would leave custom-SA
+        deployments with zero RBAC.
+        """
         return RBACSpec(
             name=self.jobset_name,
             namespace=self.effective_namespace,
             job_id=self.job_id,
+            service_account=self.deployment.pod_template.service_account_name
+            or "default",
         )
 
     def get_jobset_spec(self) -> AIPerfJobSetSpec:

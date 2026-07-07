@@ -12091,8 +12091,33 @@
             }
           ],
           "default": null,
-          "description": "Kubernetes namespace to search. If not specified, searches all namespaces.",
+          "description": "Kubernetes namespace to search. If not specified, searches the benchmark pod's own namespace (the only namespace the default benchmark RBAC can list pods in). Use '*' to search all namespaces — requires a cluster-scoped 'pods: list' grant on the benchmark ServiceAccount.",
           "title": "Namespace"
+        },
+        "timeoutSeconds": {
+          "default": 30.0,
+          "description": "Maximum seconds to wait for Kubernetes endpoint discovery before proceeding without discovered endpoints. Bounds the pod-list API calls during configure so a hung apiserver cannot stall the benchmark; on timeout a warning is logged and only explicitly configured endpoints are used.",
+          "title": "Timeoutseconds",
+          "oneOf": [
+            {
+              "default": 30.0,
+              "description": "Maximum seconds to wait for Kubernetes endpoint discovery before proceeding without discovered endpoints. Bounds the pod-list API calls during configure so a hung apiserver cannot stall the benchmark; on timeout a warning is logged and only explicitly configured endpoints are used.",
+              "exclusiveMinimum": 0,
+              "title": "Timeoutseconds",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
         }
       },
       "title": "ServerMetricsDiscoveryConfig",

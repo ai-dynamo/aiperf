@@ -66,6 +66,7 @@ __all__ = [
     "resolve_sweep_dir",
     "resolve_sweep_latest",
     "run_dir",
+    "schedule_index_drops",
     "write_latest",
     "write_sweep_latest",
 ]
@@ -563,6 +564,12 @@ def enforce_retention(
     strings. I/O failures on individual deletions are logged and swallowed
     so one corrupt dir never blocks retention on the rest.
 
+    Pure filesystem work only — safe to offload via ``asyncio.to_thread``.
+    Callers on an event loop must pass the returned epochs to
+    :func:`schedule_index_drops` so the runs index converges with disk;
+    scheduling cannot happen here because there is no running loop inside
+    a worker thread.
+
     Example:
         >>> enforce_retention(Path("/data"), "bench", "warmup-7f2a", keep=10, protect_epoch="1714069323")
         ['1714000000', '1714000060']
@@ -599,7 +606,6 @@ def enforce_retention(
         try:
             shutil.rmtree(child)
             deleted.append(child.name)
-            _schedule_index_drop(namespace, name, child.name)
         except OSError as exc:
             logger.warning(
                 "retention: failed to remove %s/%s/%s: %s",
@@ -654,15 +660,30 @@ def _schedule_lazy_backfill_runs(
             )
 
 
+def schedule_index_drops(namespace: str, name: str, epochs: list[str]) -> None:
+    """Fire-and-forget ``runs_index.delete_run`` for retention-deleted epochs.
+
+    Companion to :func:`enforce_retention`: the prune itself is pure
+    filesystem work that completion offloads via ``asyncio.to_thread``, so
+    index-drop scheduling must happen back on the event loop — inside a
+    worker thread ``asyncio.get_running_loop()`` raises and the drops would
+    silently be skipped.
+
+    Example:
+        >>> deleted = enforce_retention(Path("/data"), "bench", "warmup-7f2a", keep=10, protect_epoch="1714069323")
+        >>> schedule_index_drops("bench", "warmup-7f2a", deleted)
+    """
+    for epoch in epochs:
+        _schedule_index_drop(namespace, name, epoch)
+
+
 def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:
     """Best-effort fire-and-forget ``runs_index.delete_run`` after retention rmtree.
 
-    ``enforce_retention`` is sync (called from the sync helper in
-    ``handlers/completion._run_retention_pass`` inside an async kopf
-    handler) so we cannot ``await``. Schedule onto the running loop via
-    ``create_task``; if there's no running loop (sync test or CLI dry
-    run) we simply skip — the disk is the source of truth and the next
-    bootstrap pass will re-converge the index.
+    Schedule onto the running loop via ``create_task``; if there's no
+    running loop (sync test or CLI dry run) we simply skip — the disk is
+    the source of truth and the next bootstrap pass will re-converge the
+    index.
 
     Imported lazily to keep ``results_layout`` import-cycle-free; the
     operator package re-exports ``runs_index`` so a lazy attribute load

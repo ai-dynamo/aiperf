@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 import { html } from 'htm/preact';
 
 const SIZE_PRESETS = { xs: 10, sm: 12, md: 16, lg: 20, xl: 28 };

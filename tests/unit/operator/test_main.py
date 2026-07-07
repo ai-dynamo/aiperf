@@ -79,6 +79,64 @@ async def test_sweep_aggregation_complete_zero_fetch_raises_temporary_error(
     fetch.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_sweep_aggregation_complete_partial_fetch_keeps_jobset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A fetch that reports files but never landed aggregate.json must NOT
+    delete the JobSet — the emptyDir-backed controller pod holds the only
+    other copy, so deleting on a partial download destroys it. The handler
+    retries the harvest instead.
+    """
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+
+    fetch = AsyncMock(return_value=3)  # files fetched, but no aggregate.json
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    with pytest.raises(kopf.TemporaryError, match=r"aggregate harvest incomplete"):
+        await operator_main.on_aiperfsweep_aggregation_complete(
+            body={},
+            status={"runEpoch": "1714064523"},
+            name="latency-sweep",
+            namespace="benchmarks",
+        )
+
+    fetch.assert_awaited_once()
+    delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_aggregation_complete_full_fetch_deletes_jobset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When aggregate.json actually landed on the PVC, the JobSet is reaped."""
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(b"{}")
+
+    fetch = AsyncMock(return_value=3)
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    delete = AsyncMock()
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", delete)
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    await operator_main.on_aiperfsweep_aggregation_complete(
+        body={},
+        status={"runEpoch": "1714064523"},
+        name="latency-sweep",
+        namespace="benchmarks",
+    )
+
+    delete.assert_awaited_once_with("benchmarks", "aiperf-latency-sweep")
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -1081,11 +1139,18 @@ class TestOnDeleteHandler:
     """Tests for on_delete kopf handler."""
 
     @pytest.mark.asyncio
-    async def test_logs_deletion(self) -> None:
-        """Verify logs deletion message."""
+    async def test_delegates_to_lifecycle_on_delete(self) -> None:
+        """Verify on_delete forwards name/namespace/status to lifecycle.on_delete."""
         from aiperf.operator.main import on_delete
 
-        await on_delete(name="test-job", namespace="default", status={})
+        with mock_patch(
+            "aiperf.operator.main.lifecycle.on_delete", new_callable=AsyncMock
+        ) as mock_lifecycle_delete:
+            await on_delete(name="test-job", namespace="default", status={})
+
+        mock_lifecycle_delete.assert_awaited_once_with(
+            name="test-job", namespace="default", status={}
+        )
 
 
 class TestOnCancelHandler:

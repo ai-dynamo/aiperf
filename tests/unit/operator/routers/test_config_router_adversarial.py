@@ -281,12 +281,14 @@ class TestConfigRouterEncodingAndSchema:
         subject = _make_config_route_subject(tmp_path)
         try:
             with TestClient(subject.app) as client:
+                # Valid Kubernetes identifiers; the encoded dash/dot still
+                # exercises percent-decoding while passing path validation.
                 response = client.get(
-                    "/api/v1/config/team.alpha%2Bgpu/llama-3.1%2B8b-draft"
+                    "/api/v1/config/team%2Dalpha/llama-3%2E1-8b-draft"
                 )
 
             assert response.status_code == 200
-            assert captured == [("team.alpha+gpu", "llama-3.1+8b-draft")]
+            assert captured == [("team-alpha", "llama-3.1-8b-draft")]
             assert response.json()["source"] == "cr"
         finally:
             subject.db.close()

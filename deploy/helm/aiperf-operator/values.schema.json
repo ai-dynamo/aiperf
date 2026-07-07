@@ -146,6 +146,7 @@
             "required": ["name"]
         },
         "benchmarkRbacNamespaces": {"type": "array", "items": {"type": "string"}},
+        "serverMetricsDiscoveryNamespaces": {"type": "array", "items": {"type": "string"}},
         "kueue": {
             "type": "object",
             "additionalProperties": false,

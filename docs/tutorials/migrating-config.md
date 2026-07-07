@@ -89,7 +89,8 @@ variables:
 benchmark:
   phases:
     - name: profiling
-      type: rate
+      type: constant
+      duration: 120
       rate: "{{ rate }}"  # still works
 ```
 
@@ -102,5 +103,5 @@ The envelope shape mirrors how AIPerfSweep CRDs are structured on the K8s side: 
 ## Common gotchas
 
 - **Scenario `runs[i]` body keys must be wrapped under `benchmark:`.** A run carrying `phases:` directly raises `sweep run [0]: unknown field(s) ['phases']; allowed: ['benchmark', 'name', 'values', 'variables'].` Use `runs: [{benchmark: {phases: [...]}}]`.
-- **Grid `sweep.variables` paths must be envelope-rooted.** `phases.profiling.rate: [...]` raises `non-sweepable subtree`. Use `benchmark.phases.profiling.rate`.
+- **Grid `sweep.variables` paths resolve against the `benchmark:` body.** Both `phases.profiling.rate` and the explicit `benchmark.phases.profiling.rate` form target the same field; pick one style and stay consistent.
 - **`AIPerfJob` CRDs no longer carry sweep blocks inside `spec.benchmark`.** For sweeps on Kubernetes, use `AIPerfSweep`.
