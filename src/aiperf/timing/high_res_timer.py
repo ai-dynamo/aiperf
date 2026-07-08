@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import ctypes
 import os
+import threading
 import time
 
 _CLOCK_MONOTONIC = 1
@@ -102,3 +103,66 @@ class TimerFdPacer:
         self._closed = True
         self._loop.remove_reader(self._fd)
         os.close(self._fd)
+
+
+class ThreadPacer:
+    """Cross-platform fallback: absolute-deadline sleeps in a dedicated thread.
+
+    ``time.sleep`` in a plain thread bypasses the event loop's ~1ms timer
+    wheel entirely: CPython backs it with ``clock_nanosleep`` on POSIX
+    (~50-100us wakeup precision, ``mach``-timer based on macOS) and
+    high-resolution waitable timers on Windows (~0.5ms, Python 3.11+). The
+    thread wakes the event loop via ``call_soon_threadsafe``, which every
+    loop implementation supports — including the Windows proactor loop,
+    where fd-reader integration (the timerfd approach) is unavailable.
+
+    Same contract as :class:`TimerFdPacer`: construct inside a running event
+    loop, one waiter at a time, ``close()`` when done.
+    """
+
+    def __init__(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._tick = asyncio.Event()
+        self._deadline: float | None = None
+        self._wakeup = threading.Event()
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run, name="aiperf-rate-pacer", daemon=True
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            self._wakeup.wait()
+            self._wakeup.clear()
+            if self._closed:
+                return
+            deadline = self._deadline
+            if deadline is None:
+                continue
+            # Loop compensates for undersleep; oversleep is bounded by the
+            # platform's thread-sleep precision, not the event-loop timer wheel.
+            while not self._closed:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    break
+                time.sleep(remaining)
+            # The loop may already be closing during teardown.
+            with contextlib.suppress(RuntimeError):
+                self._loop.call_soon_threadsafe(self._tick.set)
+
+    async def sleep_until(self, deadline_perf_s: float) -> None:
+        """Sleep until an absolute ``time.perf_counter()`` deadline.
+
+        Returns immediately if the deadline is already in the past.
+        """
+        self._tick.clear()
+        self._deadline = deadline_perf_s
+        self._wakeup.set()
+        await self._tick.wait()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._wakeup.set()

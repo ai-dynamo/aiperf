@@ -178,18 +178,31 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                 self._pacer = None
 
     def _create_high_res_pacer(self):
-        """Create the timerfd pacer when enabled and supported, else None."""
-        if not (Environment.TIMING.HIGH_RES_TIMER and IS_LINUX):
-            return None
-        try:
-            from aiperf.timing.high_res_timer import TimerFdPacer
+        """Create the best available high-resolution pacer, else None.
 
-            pacer = TimerFdPacer()
-            self.info("Rate loop pacing via timerfd (kernel hrtimer)")
+        Selection order: Linux timerfd (kernel hrtimer, in-loop fd) ->
+        dedicated sleep thread (all platforms) -> event-loop timers (None).
+        """
+        if not Environment.TIMING.HIGH_RES_TIMER:
+            return None
+        if IS_LINUX:
+            try:
+                from aiperf.timing.high_res_timer import TimerFdPacer
+
+                pacer = TimerFdPacer()
+                self.info("Rate loop pacing via timerfd (kernel hrtimer)")
+                return pacer
+            except OSError as e:
+                self.warning(f"timerfd unavailable ({e}); trying pacing thread")
+        try:
+            from aiperf.timing.high_res_timer import ThreadPacer
+
+            pacer = ThreadPacer()
+            self.info("Rate loop pacing via dedicated sleep thread")
             return pacer
-        except OSError as e:
+        except (OSError, RuntimeError) as e:
             self.warning(
-                f"timerfd unavailable ({e}); falling back to event-loop timers"
+                f"high-res pacing unavailable ({e}); falling back to event-loop timers"
             )
             return None
 

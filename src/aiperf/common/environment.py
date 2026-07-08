@@ -899,11 +899,11 @@ class _TimingSettings(BaseSettings):
     )
     HIGH_RES_TIMER: bool = Field(
         default=True,
-        description="Use a Linux timerfd (kernel hrtimer, ~50us wakeup precision) for rate-loop "
-        "pacing instead of event-loop timers, which quantize sub-millisecond sleeps to ~1ms "
-        "granularity. Restores exact rate delivery and arrival-distribution fidelity at high "
-        "request rates. Linux-only; silently falls back to event-loop timers elsewhere. "
-        "Set to false to force event-loop timer pacing.",
+        description="Use high-resolution rate-loop pacing instead of event-loop timers, which "
+        "quantize sub-millisecond sleeps to ~1ms granularity. Restores exact rate delivery and "
+        "arrival-distribution fidelity at high request rates. Uses a Linux timerfd (kernel "
+        "hrtimer, ~50us wakeup precision) when available, and a dedicated sleep thread on other "
+        "platforms (~100us POSIX, ~0.5ms Windows). Set to false to force event-loop timer pacing.",
     )
     MAX_CATCHUP_SECONDS: float = Field(
         ge=0.0,
