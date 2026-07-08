@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from aiperf.config import BenchmarkConfig
 from aiperf.config.gpu_telemetry import GpuTelemetryConfig
+from aiperf.config.phases import ConcurrencyPhase
 from aiperf.config.resolution.plan import BenchmarkRun, ResolvedConfig
 from aiperf.config.resolution.resolvers import (
     ArtifactDirResolver,
@@ -23,9 +24,12 @@ from aiperf.config.resolution.resolvers import (
     GpuMetricsResolver,
     TimingResolver,
     TokenizerResolver,
+    _describe_phase,
+    _describe_rate_phase,
     build_default_resolver_chain,
 )
 from aiperf.config.tokenizer import TokenizerConfig
+from aiperf.plugin.enums import PhaseType
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -817,3 +821,37 @@ class TestDeriveRunMeta:
         monkeypatch.setenv("AIPERF_NAMESPACE", "")
         meta = _derive_run_meta(Path("/tmp/bench"))
         assert meta.namespace == ""
+
+
+class TestRatePhaseDescriptor:
+    """The artifact-dir descriptor for rate phases (poisson/gamma/constant) must
+    read the v2 phase field `rate` (NOT the v1 `request_rate`, which v2 renamed),
+    or the `request_rate{N}` slug token is silently dropped from the run dir."""
+
+    def _rate_phase(self, request_rate: float = 25.0):
+        from aiperf.config.flags.cli_config import CLIConfig
+        from aiperf.config.flags.converter import convert_cli_to_aiperf
+
+        cfg = convert_cli_to_aiperf(
+            CLIConfig(model_names=["m"], request_rate=request_rate, request_count=20)
+        )
+        return next(
+            p
+            for p in cfg.benchmark.phases
+            if not getattr(p, "exclude_from_results", False)
+        )
+
+    def test_rate_appears_in_descriptor(self):
+        phase = self._rate_phase(25.0)
+        assert phase.rate == 25.0
+        assert "request_rate25.0" in _describe_phase(phase)
+
+    def test_describe_rate_phase_stray_rate_attr_on_non_rate_phase_omits_rate(self):
+        """The descriptor must delegate to get_phase_rate (isinstance-gated):
+        a rate-shaped attribute on a non-rate phase type must not render a
+        request_rate slug token, as raw getattr probing would."""
+        phase = ConcurrencyPhase(
+            name="profiling", type=PhaseType.CONCURRENCY, concurrency=4, requests=10
+        )
+        object.__setattr__(phase, "rate", 7.5)
+        assert _describe_rate_phase(phase) == "concurrency4"

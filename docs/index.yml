@@ -11,6 +11,8 @@ navigation:
     path: tutorial.md
   - page: "AIPerf: Comprehensive LLM Benchmarking"
     path: comprehensive-llm-benchmarking.md
+  - page: Interactive Chat Sanity Checks
+    path: tutorials/interactive-chat.md
   - page: Migrating from GenAI-Perf
     path: migrating.md
   - page: GenAI-Perf vs AIPerf CLI Feature Comparison Matrix
