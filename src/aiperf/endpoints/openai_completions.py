@@ -47,7 +47,9 @@ class CompletionsEndpoint(BaseEndpoint):
         extra = model_endpoint.endpoint.extra
 
         payload = {
-            "prompt": prompts,
+            # Single prompt as plain string: some OpenAI-compatible servers
+            # (e.g. llm-d-inference-sim) reject the JSON-array form.
+            "prompt": prompts[0] if len(prompts) == 1 else prompts,
             "model": turn.model or model_endpoint.get_model_names()[0],
             "stream": model_endpoint.endpoint.streaming,
         }

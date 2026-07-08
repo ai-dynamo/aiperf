@@ -40,7 +40,9 @@ class TestCompletionsEndpoint:
 
         assert payload["model"] == "completion-model"
         assert payload["stream"] is False
-        assert payload["prompt"] == ["Once upon a time"]
+        # Single prompt is sent as a plain string: some OpenAI-compatible
+        # servers (e.g. llm-d-inference-sim) reject the JSON-array form.
+        assert payload["prompt"] == "Once upon a time"
 
     def test_format_payload_multiple_prompts(self, endpoint, model_endpoint):
         """Test multiple prompts are all included."""

@@ -35,7 +35,7 @@ class TestCompletionsEndpoint:
         request_info = create_request_info(config=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
-            "prompt": ["Hello, world!"],
+            "prompt": "Hello, world!",
             "model": "test-model",
             "stream": False,
         }
@@ -58,7 +58,7 @@ class TestCompletionsEndpoint:
         request_info = create_request_info(config=cfg, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
-            "prompt": ["Hello, world!"],
+            "prompt": "Hello, world!",
             "model": "test-model",
             "stream": True,
             "max_tokens": 50,
