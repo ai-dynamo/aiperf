@@ -226,8 +226,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Detecting first token requires parsing each SSE chunk, so only enable
         # FirstToken messages when a downstream consumer needs them.
         self._first_token_observation_enabled: bool = any(
-            _phase_needs_first_token_callback(phase)
-            for phase in self.run.cfg.phases
+            _phase_needs_first_token_callback(phase) for phase in self.run.cfg.phases
         )
 
         # Only used as a fallback when dataset client is not initialized
