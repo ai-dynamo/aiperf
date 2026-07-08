@@ -48,12 +48,15 @@ class TestEnrichRequestRecord:
         ri = _make_request_info()
         record = RequestRecord()
         enriched = InferenceClient._enrich_request_record(record, ri)
-        # downcast strips model_endpoint / endpoint_headers / drop_perf_ns,
-        # but ``turns``, ``system_message``, ``user_context_message`` were
-        # hoisted onto RecordContext (records pipeline reads them) and
-        # therefore survive the downcast.
+        # Downcast strips RequestInfo-only transport/payload-builder fields while
+        # keeping the hoisted scalar inputs the records pipeline reads.
         dump = enriched.request_info.model_dump()
         assert "model_endpoint" not in dump
         assert "endpoint_headers" not in dump
         assert "drop_perf_ns" not in dump
-        assert "turns" in dump
+        assert "turns" not in dump
+        assert "system_message" not in dump
+        assert "user_context_message" not in dump
+        assert "payload_bytes" in dump
+        assert "max_tokens" in dump
+        assert "audio_duration_seconds" in dump

@@ -206,10 +206,12 @@ class InferenceClient(AIPerfLifecycleMixin):
         the record before the ZMQ hop to the record processor.
 
         The full ``RequestInfo`` carries transport-only extras
-        (``model_endpoint``, ``turns``, ``endpoint_headers``,
-        ``endpoint_params``, ``drop_perf_ns``, ``cancel_after_ns``, ...) that
-        the record-processor pipeline never reads; downcasting saves
-        ~500-900 bytes per record at high throughput.
+        (``model_endpoint``, ``turns``, ``system_message``,
+        ``user_context_message``, ``endpoint_headers``, ``endpoint_params``,
+        ``drop_perf_ns``, ``cancel_after_ns``, ...) that the record-processor
+        pipeline never reads; downcasting saves ~500-900 bytes per record at
+        high throughput. The full ``turns`` list never travels — live records
+        drive off the canonical ``payload_bytes``.
         """
         ctx_field_names = set(RecordContext.model_fields.keys())
         ri_dump = request_info.model_dump(include=ctx_field_names)
@@ -243,10 +245,6 @@ class InferenceClient(AIPerfLifecycleMixin):
         # after dispatch.
         if self.strip_record_payload_bytes and record.request_info is not None:
             record.request_info.payload_bytes = None
-
-        # Copy turns with stripped multimodal data to avoid mutating original session
-        # and reduce memory usage (placeholders instead of large image/audio/video data)
-        record.turns = [turn.copy_with_stripped_media() for turn in request_info.turns]
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

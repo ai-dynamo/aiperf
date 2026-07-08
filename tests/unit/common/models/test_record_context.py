@@ -48,14 +48,18 @@ class TestRequestInfoIsRecordContext:
         ri_fields = set(RequestInfo.model_fields.keys())
         ctx_fields = set(RecordContext.model_fields.keys())
         extras = ri_fields - ctx_fields
-        # ``turns``, ``system_message``, ``user_context_message`` were hoisted
-        # onto RecordContext because the records pipeline reads them
-        # post-transport. The remaining transport-only extras are the
-        # endpoint/URL/timing fields.
+        # ``turns``, ``system_message``, ``user_context_message`` live ONLY on
+        # RequestInfo (worker-side) so the full Turn list never crosses the ZMQ
+        # hop to the record processor — only the canonical ``payload_bytes`` (a
+        # RecordContext field) travels. They are transport-only extras here.
         assert {"model_endpoint", "endpoint_headers", "drop_perf_ns"}.issubset(extras)
-        assert "turns" not in extras
-        assert "system_message" not in extras
-        assert "user_context_message" not in extras
+        assert "turns" in extras
+        assert "system_message" in extras
+        assert "user_context_message" in extras
+        # The hoisted scalars stay on RecordContext (they cross the wire).
+        assert "max_tokens" not in extras
+        assert "audio_duration_seconds" not in extras
+        assert "payload_bytes" not in extras
 
 
 class TestRequestRecordHoldsRecordContext:
