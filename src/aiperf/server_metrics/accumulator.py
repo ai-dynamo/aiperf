@@ -384,7 +384,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             )
 
         except DataExporterDisabled as e:
-            self.debug(f"Parquet export disabled: {e}")
+            # Parquet was explicitly requested (checked above), so surface the
+            # reason it was skipped (e.g. pyarrow unavailable on Windows-on-ARM)
+            # rather than hiding it at debug level.
+            self.warning(f"Parquet export disabled: {e}")
         except ImportError as e:
             self.warning(f"Failed to import Parquet exporter dependencies: {e}")
         except Exception as e:

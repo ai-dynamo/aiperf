@@ -50,6 +50,15 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
 | `AIPERF_API_SERVER_POST_COMPLETE_GRACE` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the API listener stays open after a benchmark terminates so polling clients can observe the final status before the server shuts down. Set to 0 to skip the grace window and shut down immediately. |
 
+## CHAT
+
+Settings for the interactive ``aiperf chat`` command.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_CHAT_CONNECT_TIMEOUT` | `10.0` | > 0.0 | Seconds to wait to establish a connection to the endpoint before a turn fails. Kept short so an unreachable URL fails fast. |
+| `AIPERF_CHAT_READ_TIMEOUT` | `300.0` | > 0.0 | Seconds to wait for the next streamed chunk before a turn fails. No overall (total) timeout is applied, so long generations are never truncated mid-reply; this only fires if the server stalls. |
+
 ## COMPRESSION
 
 Compression settings for streaming file transfers. Controls chunk size and compression levels for zstd and gzip encodings used in dataset and results file transfers.
