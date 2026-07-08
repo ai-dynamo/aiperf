@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 from pydantic import Field
 
 from aiperf.common.enums import MessageType
@@ -8,6 +10,8 @@ from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import (
     PhaseRecordsStats,
+    ServerMetricsResults,
+    TelemetryExportData,
     WorkerProcessingStats,
 )
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
@@ -53,3 +57,37 @@ class ProcessRecordsResultMessage(BaseServiceMessage):
     message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
 
     results: ProcessRecordsResult = Field(..., description="The process records result")
+
+
+class ProcessAllResultsMessage(BaseServiceMessage):
+    """Unified message carrying all accumulator results from RecordsManager to SystemController.
+
+    The ``exported_artifacts`` map is typed as ``Any`` to keep this foundation
+    module out of the ``aiperf.exporters`` import graph; producers/consumers
+    cast to the concrete types they own (``dict[str, FileExportInfo]``).
+    """
+
+    message_type: MessageTypeT = MessageType.PROCESS_ALL_RESULTS
+
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Timestamp of the request in nanoseconds",
+    )
+    results: ProcessRecordsResult = Field(
+        ...,
+        description="Per-record metric results aggregated by the MetricsAccumulator",
+    )
+    telemetry_results: TelemetryExportData | None = Field(
+        default=None,
+        description="Aggregated GPU telemetry summary, or None when telemetry was disabled",
+    )
+    server_metrics_results: ServerMetricsResults | None = Field(
+        default=None,
+        description="Aggregated server-side Prometheus metrics, or None when server metrics were disabled",
+    )
+    exported_artifacts: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Map of exporter-name to FileExportInfo for files written during this run "
+        "(typed Any-valued to avoid pulling exporter types into the foundation graph)",
+    )

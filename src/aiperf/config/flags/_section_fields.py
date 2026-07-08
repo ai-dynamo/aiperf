@@ -138,6 +138,7 @@ OUTPUT_FIELDS: frozenset[str] = frozenset(
 
 TOKENIZER_FIELDS: frozenset[str] = frozenset(
     {
+        "apply_chat_template",
         "tokenizer_name",
         "tokenizer_revision",
         "trust_remote_code",

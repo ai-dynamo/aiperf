@@ -71,6 +71,7 @@ from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
@@ -181,6 +182,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.inference_client: InferenceClient = InferenceClient(
             model_endpoint=self.model_endpoint,
             service_id=self.service_id,
+            strip_record_payload_bytes=resolve_strip_record_payload_bytes(
+                self.run.cfg, self.model_endpoint
+            ),
         )
         self.attach_child_lifecycle(self.inference_client)
         self.debug(

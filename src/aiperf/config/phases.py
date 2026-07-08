@@ -51,6 +51,7 @@ __all__ = [
     "_normalize_duration",
     "_normalize_ramp",
     "_parse_duration",
+    "get_phase_rate",
 ]
 
 
@@ -468,3 +469,12 @@ PhaseConfig = Annotated[
     | FixedSchedulePhase,
     Discriminator("type"),
 ]
+
+
+def get_phase_rate(phase: BasePhaseConfig) -> float | None:
+    """Return the configured request rate for a phase, or None for non-rate phases.
+
+    Single accessor for the ``rate`` field so a future rename fails fast here
+    instead of being silently swallowed by scattered ``getattr(..., None)`` reads.
+    """
+    return phase.rate if isinstance(phase, RatePhaseConfig) else None

@@ -333,7 +333,10 @@ def _ramp_duration(ramp: object | None) -> float | None:
 
 def _phase_request_rate(phase: PhaseConfig) -> float | None:
     """Return the configured request rate for a phase, if any."""
-    return getattr(phase, "rate", None)
+    # Lazy import: aiperf.config.phases is only a TYPE_CHECKING import here.
+    from aiperf.config.phases import get_phase_rate
+
+    return get_phase_rate(phase)
 
 
 def _phase_arrival_pattern(phase: PhaseConfig) -> ArrivalPattern:

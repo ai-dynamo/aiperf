@@ -21,7 +21,10 @@ class TTFTMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 100
-    flags = MetricFlags.STREAMING_TOKENS_ONLY
+    flags = (
+        MetricFlags.STREAMING_TOKENS_ONLY
+        | MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS
+    )
     required_metrics = None
 
     def _parse_record(
