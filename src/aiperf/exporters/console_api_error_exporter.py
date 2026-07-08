@@ -77,11 +77,64 @@ class MaxCompletionTokensDetector:
         return None
 
 
+class DynamoSessionControlDetector:
+    @staticmethod
+    def detect(error_summary: list[ErrorDetailsCount]) -> ErrorInsight | None:
+        if not error_summary or not isinstance(error_summary, list):
+            return None
+
+        for item in error_summary:
+            err = getattr(item, "error_details", None)
+            if err is None:
+                continue
+
+            raw_msg = err.message or ""
+            parsed = None
+            with contextlib.suppress(Exception):
+                parsed = orjson.loads(raw_msg)
+
+            backend_msg = None
+            if isinstance(parsed, dict):
+                backend_msg = parsed.get("message")
+
+            error_blob = str(backend_msg or raw_msg).lower()
+
+            # serde rejects the unknown enum value with e.g.
+            # `unknown variant `bind`, expected `open` or `close``.
+            if "unknown variant" in error_blob and "bind" in error_blob:
+                return ErrorInsight(
+                    title="Unsupported Dynamo session_control action: bind",
+                    problem=(
+                        "The Dynamo frontend rejected nvext.session_control with "
+                        "action='bind'. This Dynamo build's SessionAction only "
+                        "accepts 'open' and 'close' -- the 'bind' action was added "
+                        "after the v1.2.x release line (first available in "
+                        "v1.3.0-dev / upstream commit d97c889ba)."
+                    ),
+                    causes=[
+                        "--use-dynamo-conv-aware-routing emits action='bind' on every non-final turn.",
+                        "The target Dynamo server predates the 'bind' action (e.g. v1.2.1).",
+                    ],
+                    investigation=[
+                        "Check the Dynamo frontend version and its supported SessionAction values.",
+                        "Inspect request payloads in profile_export.jsonl -> nvext.session_control.",
+                    ],
+                    fixes=[
+                        "Upgrade Dynamo to a build that supports action='bind' (>= v1.3.0-dev, upstream commit d97c889ba).",
+                        "Or run with --use-legacy-dynamo-session-control to emit the v1.2.x-compatible open/close lifecycle (requires the worker to expose a session_control endpoint).",
+                        "Or disable --use-dynamo-conv-aware-routing.",
+                    ],
+                )
+
+        return None
+
+
 class ConsoleApiErrorExporter(AIPerfLoggerMixin):
     """Displays helpful diagnostic panels for known API error patterns."""
 
     DETECTORS: ClassVar[list] = [
         MaxCompletionTokensDetector,
+        DynamoSessionControlDetector,
     ]
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs):

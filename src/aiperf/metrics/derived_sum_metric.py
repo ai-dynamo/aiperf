@@ -51,14 +51,17 @@ class DerivedSumMetric(
 
         super().__init_subclass__(**kwargs)
 
-    def _derive_value(self, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
-        metric_values = metric_results.get(self.record_metric_type.tag)
-        if metric_values is None:
-            raise ValueError(
-                f"{self.record_metric_type.tag} is missing in the metrics."
-            )
-        if not isinstance(metric_values, MetricAggregator):
-            raise ValueError(
-                f"{self.record_metric_type.tag} is not a MetricAggregator."
-            )
-        return metric_values.sum
+    @classmethod
+    def _derive_value(cls, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
+        value = metric_results.get(cls.record_metric_type.tag)
+        if value is None:
+            raise ValueError(f"{cls.record_metric_type.tag} is missing in the metrics.")
+        # Two engines feed this: the MetricsAccumulator pipeline already stores
+        # the running-sum scalar in ``scalar_dict[tag]`` (see
+        # ``MetricsAccumulator._collect_scalars_and_arrays``), so the value
+        # already IS the sum. The legacy ``MetricResultsProcessor`` (kept alive
+        # for the otel / timeslice side-channel) instead stores a
+        # ``MetricAggregator`` (e.g. ``MetricArray``) whose ``.sum`` must be read.
+        if isinstance(value, MetricAggregator):
+            return value.sum
+        return value

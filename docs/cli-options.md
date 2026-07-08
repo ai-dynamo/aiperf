@@ -395,6 +395,11 @@ Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e
 Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.
 <br/>_Flag (no value required)_
 
+#### `--apply-chat-template`
+
+Apply the HuggingFace tokenizer's chat template when counting input tokens. When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, EOT, generation-prompt suffix) and the record processor reports ISL using `apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. When disabled (default), both paths use bare-text encoding, so reported ISL matches the prompt content the user asked for and ignores template overhead. Requires an HF tokenizer with a chat template configured; no-ops on tiktoken / un-templated models.
+<br/>_Flag (no value required)_
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -1504,6 +1509,11 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
 
+#### `--stats-interval` `<float>`
+
+Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.
+<br/>_Constraints: ≥ 0.0, ≤ 1000.0_
+
 ### Workers
 
 #### `--workers-max`, `--max-workers` `<int>`
@@ -1614,7 +1624,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1792,6 +1802,11 @@ Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e
 Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.
 <br/>_Flag (no value required)_
 
+#### `--apply-chat-template`
+
+Apply the HuggingFace tokenizer's chat template when counting input tokens. When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, EOT, generation-prompt suffix) and the record processor reports ISL using `apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. When disabled (default), both paths use bare-text encoding, so reported ISL matches the prompt content the user asked for and ignores template overhead. Requires an HF tokenizer with a chat template configured; no-ops on tiktoken / un-templated models.
+<br/>_Flag (no value required)_
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -2900,6 +2915,11 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 #### `--api-host` `<str>`
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
+
+#### `--stats-interval` `<float>`
+
+Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.
+<br/>_Constraints: ≥ 0.0, ≤ 1000.0_
 
 ### Workers
 

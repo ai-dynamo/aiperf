@@ -368,6 +368,7 @@ class MessageType(CaseInsensitiveStrEnum):
     PROCESS_RECORDS_RESULT = "process_records_result"
     PROCESS_TELEMETRY_RESULT = "process_telemetry_result"
     PROCESS_SERVER_METRICS_RESULT = "process_server_metrics_result"
+    PROCESS_ALL_RESULTS = "process_all_results"
     PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"
     REALTIME_METRICS = "realtime_metrics"

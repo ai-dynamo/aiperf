@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import contextlib
 import json
 import tempfile
 from pathlib import Path
@@ -131,3 +132,89 @@ class TestBufferedJSONLWriterMixin:
 
         assert writer.lines_written == 1
         assert temp_output_file.exists(), "File with content should be preserved"
+
+    @pytest.mark.asyncio
+    async def test_periodic_flush_loop_survives_unexpected_error(
+        self, temp_output_file
+    ):
+        """A non-cancel error in one periodic-flush iteration must not kill the loop.
+
+        Mirrors ``_background_task_loop`` semantics: the error is logged and the
+        loop keeps draining the buffer on subsequent intervals, rather than the
+        whole task dying for the rest of the run after one transient failure.
+
+        Drives ``_flush_buffer_periodically`` directly (instead of relying on the
+        auto-started background task's scheduling) so the contract is exercised
+        deterministically: a flush that raises, followed by one that succeeds.
+        """
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=1000,  # never auto-flush; only the periodic loop drains
+            flush_interval=0.0,  # sleep(0) per iteration: pure event-loop yield
+        )
+        await writer.initialize()
+
+        # The first periodic flush raises; later ones succeed. The events let us
+        # advance the loop one observable step at a time without depending on
+        # wall-clock timing (asyncio.sleep is patched to a no-op in unit tests).
+        real_flush = writer._flush_buffer
+        flush_attempts: list[int] = []
+        first_flush_failed = asyncio.Event()
+        recovered = asyncio.Event()
+
+        async def flaky_flush(buffer_to_flush):
+            flush_attempts.append(len(buffer_to_flush))
+            if len(flush_attempts) == 1:
+                first_flush_failed.set()
+                raise RuntimeError("transient flush failure")
+            await real_flush(buffer_to_flush)
+            recovered.set()
+
+        writer._flush_buffer = flaky_flush
+
+        async def yield_until(event: asyncio.Event) -> None:
+            # asyncio.sleep is patched to a no-op in unit tests, so yield the
+            # event loop (bounded) until the periodic task sets the event or
+            # unexpectedly dies.
+            for _ in range(10_000):
+                if event.is_set() or loop_task.done():
+                    return
+                await asyncio.sleep(0)
+
+        loop_task = asyncio.create_task(writer._flush_buffer_periodically())
+        try:
+            # First record drives the failing iteration; the loop must survive it.
+            writer._buffer.append(b'{"id": 1, "value": "boom"}')
+            await yield_until(first_flush_failed)
+            assert first_flush_failed.is_set(), "failing flush iteration never ran"
+            assert not loop_task.done(), "loop should survive the unexpected error"
+
+            # A record written after the failure must still be drained by the
+            # still-alive loop on a subsequent iteration.
+            writer._buffer.append(b'{"id": 2, "value": "ok"}')
+            await yield_until(recovered)
+            assert recovered.is_set(), "loop did not resume draining after the error"
+            assert len(flush_attempts) >= 2, "loop did not flush again after error"
+            assert not writer._buffer, "later record was not flushed"
+            assert not loop_task.done()
+        finally:
+            loop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await loop_task
+            writer._flush_buffer = real_flush
+            await writer.stop()
+
+    @pytest.mark.asyncio
+    async def test_close_waits_only_for_flush_tasks(self, temp_output_file):
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=10,
+        )
+        await writer.initialize()
+        unrelated_task = writer.execute_async(asyncio.Event().wait())
+
+        await asyncio.wait_for(writer._close_file(), timeout=0.1)
+
+        assert not unrelated_task.done()
+        await writer.cancel_all_tasks()
+        await asyncio.gather(unrelated_task, return_exceptions=True)
