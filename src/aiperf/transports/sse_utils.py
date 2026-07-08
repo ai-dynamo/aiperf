@@ -13,6 +13,12 @@ from aiperf.common.models import SSEMessage
 
 _logger = AIPerfLogger(__name__)
 
+# Plain-string copies of the hot enum values: SSE field checks run per chunk
+# (>1M/s under load) and C-level str equality beats the enum __eq__ path.
+_SSE_DATA = str(SSEFieldType.DATA)
+_SSE_EVENT = str(SSEFieldType.EVENT)
+_SSE_ERROR = str(SSEEventType.ERROR)
+
 
 class AsyncSSEStreamReader:
     """Parse Server-Sent Events (SSE) stream with per-message timestamps.
@@ -100,10 +106,21 @@ class AsyncSSEStreamReader:
            failed request is miscounted as a truncated success, polluting
            latency/token stats.
         """
-        has_error_event = any(
-            packet.name == SSEFieldType.EVENT and packet.value == SSEEventType.ERROR
-            for packet in message.packets
-        )
+        # Hot path (>1M msgs/s under load): exact plain-string compares first;
+        # the .lower() fallback preserves the enum's case-insensitive semantics
+        # and only runs when the exact match misses.
+        has_error_event = False
+        packets = message.packets
+        if not (len(packets) == 1 and packets[0].name == _SSE_DATA):
+            for packet in packets:
+                name, value = packet.name, packet.value
+                if (
+                    (name == _SSE_EVENT or (name and name.lower() == _SSE_EVENT))
+                    and value
+                    and (value == _SSE_ERROR or value.lower() == _SSE_ERROR)
+                ):
+                    has_error_event = True
+                    break
 
         if has_error_event:
             error_message = None

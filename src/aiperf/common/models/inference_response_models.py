@@ -12,6 +12,10 @@ from aiperf.common.enums import SSEFieldType
 from aiperf.common.types import JsonObject
 from aiperf.common.utils import load_json_str
 
+# Plain-string copy of the hot enum value: SSE field-name checks run per chunk
+# (>1M/s under load) and C-level str equality beats the enum __eq__ path.
+_SSE_DATA = str(SSEFieldType.DATA)
+
 
 @runtime_checkable
 class InferenceServerResponse(Protocol):
@@ -197,7 +201,10 @@ class SSEMessage(
             # ignore_eos=True and the model emits weird tokens.
             if (
                 message.packets
-                and message.packets[-1].name == SSEFieldType.DATA
+                and (
+                    message.packets[-1].name == _SSE_DATA
+                    or message.packets[-1].name.lower() == _SSE_DATA
+                )
                 and prev_value
                 and prev_value.startswith("{")
                 and not prev_value.endswith("}")
@@ -236,10 +243,23 @@ class SSEMessage(
         Returns:
             str: The combined data contents of the SSE message, joined by newlines.
         """
+        packets = self.packets
+        # Fast path: the overwhelmingly common shape is one data field per SSE
+        # message; skip the generator + join machinery for it. Exact string
+        # compare first; .lower() fallback keeps the enum's case-insensitive
+        # semantics without paying normalization on every chunk.
+        if len(packets) == 1:
+            packet = packets[0]
+            if packet.value and (
+                packet.name == _SSE_DATA or packet.name.lower() == _SSE_DATA
+            ):
+                return packet.value
+            return ""
         return "\n".join(
             packet.value
             for packet in self.packets
-            if packet.name == SSEFieldType.DATA and packet.value
+            if packet.value
+            and (packet.name == _SSE_DATA or packet.name.lower() == _SSE_DATA)
         )
 
     def get_raw(self) -> Any | None:
