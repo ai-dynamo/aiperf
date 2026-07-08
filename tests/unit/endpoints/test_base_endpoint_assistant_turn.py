@@ -282,6 +282,10 @@ class TestExtractPayloadInputs:
         out = endpoint.extract_payload_inputs(payload)
         assert "lookup" in out.texts
         assert '{"q":"x"}' in out.texts
+        # Also tracked separately so the chat-template ISL path can count
+        # tool text the role/content messages view omits.
+        assert "lookup" in out.tool_texts
+        assert '{"q":"x"}' in out.tool_texts
 
     def test_tools_schema_collected(self, endpoint):
         payload = {
@@ -303,3 +307,7 @@ class TestExtractPayloadInputs:
         assert "weather lookup" in out.texts
         # parameters serialised
         assert any('"type"' in t and '"object"' in t for t in out.texts)
+        # Tool schema text is mirrored into tool_texts; message content is not.
+        assert "get_weather" in out.tool_texts
+        assert "weather lookup" in out.tool_texts
+        assert "hi" not in out.tool_texts
