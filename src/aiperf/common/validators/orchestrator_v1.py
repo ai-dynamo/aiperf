@@ -212,26 +212,35 @@ def _check_prereqs(
 
 def _collect_turn_declared_spawn_edges(
     metadata: DatasetMetadata,
-) -> dict[str, set[str]]:
+) -> tuple[dict[str, set[str]], dict[tuple[str, str], list[str]]]:
     """Collect spawn-graph edges restricted to turn-declared branches.
 
     Maps each conversation_id to the set of child conversation_ids reachable
-    through branches whose ``branch_id`` at least one turn declares.
-    Descriptors whose ``branch_id`` no turn declares are excluded: both
-    orchestrator dispatch paths (``get_branch_ids`` and pre-session dispatch)
-    gate on ``turn.branch_ids`` membership, so an undeclared descriptor never
-    spawns and its children are not runtime edges.
+    through branches whose ``branch_id`` at least one turn declares, plus the
+    branch declaration context for each edge. Descriptors whose ``branch_id``
+    no turn declares are excluded: both orchestrator dispatch paths
+    (``get_branch_ids`` and pre-session dispatch) gate on ``turn.branch_ids``
+    membership, so an undeclared descriptor never spawns and its children are
+    not runtime edges.
     """
     spawn_edges: dict[str, set[str]] = {}
+    edge_contexts: dict[tuple[str, str], list[str]] = {}
     for conv in metadata.conversations:
-        declared = {b_id for turn in conv.turns for b_id in turn.branch_ids}
+        branch_declaration_turn: dict[str, int] = {}
+        for turn_idx, turn in enumerate(conv.turns):
+            for b_id in turn.branch_ids:
+                branch_declaration_turn.setdefault(b_id, turn_idx)
         for branch in conv.branches:
-            if branch.branch_id not in declared:
+            decl_idx = branch_declaration_turn.get(branch.branch_id)
+            if decl_idx is None:
                 continue
-            spawn_edges.setdefault(conv.conversation_id, set()).update(
-                branch.child_conversation_ids
-            )
-    return spawn_edges
+            for child_id in branch.child_conversation_ids:
+                spawn_edges.setdefault(conv.conversation_id, set()).add(child_id)
+                edge_contexts.setdefault((conv.conversation_id, child_id), []).append(
+                    f"conversation '{conv.conversation_id}' turn {decl_idx} "
+                    f"branch '{branch.branch_id}' -> '{child_id}'"
+                )
+    return spawn_edges, edge_contexts
 
 
 def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
@@ -247,7 +256,7 @@ def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
     ``_collect_turn_declared_spawn_edges``, which excludes descriptors no
     turn declares.
     """
-    spawn_edges = _collect_turn_declared_spawn_edges(metadata)
+    spawn_edges, edge_contexts = _collect_turn_declared_spawn_edges(metadata)
 
     # color: absent=unvisited, 1=on current DFS path, 2=fully explored.
     color: dict[str, int] = {}
@@ -264,11 +273,19 @@ def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
                 state = color.get(nxt, 0)
                 if state == 1:
                     cycle = path[path.index(nxt) :] + [nxt]
+                    cycle_edge_contexts: list[str] = []
+                    for src, dst in zip(cycle, cycle[1:], strict=False):
+                        cycle_edge_contexts.extend(
+                            edge_contexts.get(
+                                (src, dst), [f"conversation '{src}' -> '{dst}'"]
+                            )
+                        )
+                    declarations = "; ".join(cycle_edge_contexts)
                     raise NotImplementedError(
                         f"spawn graph contains a cycle ({' -> '.join(cycle)}); "
-                        f"the v1 orchestrator spawns children recursively with "
-                        f"no acyclicity guard, so a cyclic spawn graph would "
-                        f"recurse without bound"
+                        f"declarations: {declarations}; the v1 orchestrator "
+                        f"spawns children recursively with no acyclicity guard, "
+                        f"so a cyclic spawn graph would recurse without bound"
                     )
                 if state == 0:
                     color[nxt] = 1
@@ -371,8 +388,9 @@ def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
         >>> from aiperf.common.validators import validate_for_orchestrator_v1
         >>> validate_for_orchestrator_v1(metadata)  # raises on first violation
 
-    Rules enforced (each violation raises ``NotImplementedError`` with a
-    ``"conversation '<id>' turn <N>: <reason>"`` location prefix):
+    Rules enforced (violations name the affected conversation/turn/branch when
+    a single authoring site exists; graph-wide checks include the relevant
+    declarations):
 
     - prerequisite kinds other than ``SPAWN_JOIN`` (TIMER, EXTERNAL_EVENT, ...)
     - per-child / barrier / timer / event reserved fields on ``TurnPrerequisite``

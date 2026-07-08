@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.enums import (
     ConversationBranchMode,
@@ -181,8 +182,6 @@ def test_pre_dispatch_background_spawn_valid_shape_accepted():
 
 def test_dispatch_timing_invalid_literal_pydantic_rejects():
     """Pydantic enforces the ``Literal["pre", "post"]`` type."""
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         ConversationBranchInfo(
             branch_id="r:0",
@@ -262,8 +261,8 @@ def test_validator_rejects_child_conversation_ids_field():
 
 @pytest.mark.parametrize(
     "kind",
-    [k for k in PrerequisiteKind if k != PrerequisiteKind.SPAWN_JOIN],
-)
+    [param(k, id=k.name) for k in PrerequisiteKind if k != PrerequisiteKind.SPAWN_JOIN],
+)  # fmt: skip
 def test_validator_rejects_non_spawn_join_kinds(kind: PrerequisiteKind):
     p = TurnPrerequisite(kind=kind, branch_id="r:0")
     md = _md(
@@ -326,8 +325,6 @@ def test_validator_accepts_unicode_branch_id_when_resolved():
 
 def test_invalid_branch_mode_pydantic_rejects():
     """Branch ``mode`` outside the enum is rejected at model construction."""
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         ConversationBranchInfo(
             branch_id="r:0",
@@ -754,6 +751,8 @@ def test_two_node_spawn_cycle_rejected():
     ) as exc:
         validate_for_orchestrator_v1(md)
     assert "(r -> c -> r)" in str(exc.value)
+    assert "conversation 'r' turn 0 branch 'r:0' -> 'c'" in str(exc.value)
+    assert "conversation 'c' turn 0 branch 'c:0' -> 'r'" in str(exc.value)
 
 
 def test_spawn_cycle_downstream_of_dfs_start_rejected():

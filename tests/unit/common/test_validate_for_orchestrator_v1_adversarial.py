@@ -4,8 +4,7 @@
 
 Complements the shipped happy-path tests in
 ``test_validate_for_orchestrator_v1.py`` with edge cases, unicode inputs,
-degenerate shapes, and xfail-strict markers for post-fix behavior that
-Task 7/8 will introduce.
+degenerate shapes, and post-fix regression coverage for Task 7/8 behavior.
 """
 
 import pytest
@@ -384,7 +383,7 @@ def test_validator_rejects_barrier_id_before_checking_multi_source_count():
         validate_for_orchestrator_v1(md)
 
 
-# --- 13. xfail: same-turn self-reference (Task 7) ----------------------------
+# --- 13. same-turn self-reference (Task 7) -----------------------------------
 
 
 def test_validator_rejects_same_turn_prereq_reference_post_fix():
@@ -414,7 +413,7 @@ def test_validator_rejects_same_turn_prereq_reference_post_fix():
         validate_for_orchestrator_v1(md)
 
 
-# --- 14. xfail: forward prereq reference (Task 7) ----------------------------
+# --- 14. forward prereq reference (Task 7) -----------------------------------
 
 
 def test_validator_rejects_forward_prereq_reference_post_fix():
@@ -507,7 +506,7 @@ def test_validator_accepts_fork_mode_branch_with_matching_prereq():
     validate_for_orchestrator_v1(md)
 
 
-# --- 17. xfail: forward ref across multi-turn chain (Task 7) -----------------
+# --- 17. forward ref across multi-turn chain (Task 7) ------------------------
 
 
 def test_validator_rejects_prereq_pointing_at_declared_branch_on_later_turn_chain():
