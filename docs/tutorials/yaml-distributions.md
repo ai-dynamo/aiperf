@@ -203,11 +203,22 @@ prompts:
   isl: {mean: 300, stddev: 100}               # each subsequent turn's new input
 ```
 
+With `sequence_distribution`, put the seed context on the bucket instead — one bucket per conversation, first turn from its `first_turn_isl`, later turns from its `isl`:
+
+```yaml
+prompts:
+  sequence_distribution:
+    - first_turn_isl: {p50: 20000, p99: 100000, mean: 30000}
+      isl: {mean: 300, stddev: 100}
+      osl: {mean: 250, stddev: 80}
+      probability: 50
+```
+
 - The **first** turn of every conversation draws its ISL from `first_turn_isl`; **every subsequent** turn draws from `isl`.
 - Both fields accept any distribution shape on this page — the example pairs a percentile opener with a small normal follow-up.
 - `first_turn_isl` **requires `isl`** to be set (it only redefines the first turn; `isl` still sizes the rest). Setting it alone fails at config-validation time.
 - When `first_turn_isl` is unset, `isl` applies to all turns.
-- `first_turn_isl` is ignored when `sequence_distribution` is specified (that path drives ISL/OSL for every turn from its buckets).
+- `first_turn_isl` cannot be combined with `sequence_distribution` (config error). Buckets carry their own seed context instead — each `sequence_distribution` entry accepts a per-bucket `first_turn_isl`; see [Sequence Length Distributions](sequence-distributions.md).
 
 ## Disambiguation cheat-sheet
 
@@ -221,6 +232,7 @@ If AIPerf can't figure out what shape you meant, it errors at config-load time w
 | `isl: {value: 512, mean: 600}` | Error — `value` selects Fixed, but `mean` is unknown to Fixed. |
 | `isl: {p50: 50000, p99: 400000, mean: 40000}` | Error — a percentile `mean` must be greater than `p50` (right-skewed shapes only). |
 | Passing a string like `"128,64:50;512,128:50"` | Error — that's the legacy `sequence_distribution` string format (semicolon-separated relative-weight `ISL,OSL:prob` pairs), not a sampling distribution. See [Sequence Length Distributions](sequence-distributions.md). |
+| `first_turn_isl` next to `sequence_distribution` | Error — seed context lives on each bucket's own `first_turn_isl` when buckets are in play. |
 
 When in doubt, run:
 
