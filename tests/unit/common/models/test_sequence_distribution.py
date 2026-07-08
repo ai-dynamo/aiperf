@@ -14,6 +14,7 @@ This test suite covers all aspects of the sequence distribution feature includin
 
 import numpy as np
 import pytest
+from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.models.sequence_distribution import (
@@ -62,23 +63,54 @@ class TestSequenceLengthPair:
 
     def test_invalid_probability(self):
         """Negative weights are rejected; zero is a valid disabled-bucket weight."""
-        with pytest.raises(ValueError, match="Probability weight must be non-negative"):
+        with pytest.raises(
+            ValueError, match="Probability weight must be finite and non-negative"
+        ):
             SequenceLengthPair(256, 128, -10.0)
 
         # Zero is a valid relative weight (disabled bucket); it must not raise.
         SequenceLengthPair(256, 128, 0.0)
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param(float("nan"), id="nan"),
+            param(float("inf"), id="inf"),
+            param(float("-inf"), id="neg-inf"),
+        ],
+    )  # fmt: skip
+    def test_non_finite_probability_rejected(self, bad):
+        """NaN/inf weights poison cumulative normalization; reject at construction."""
+        with pytest.raises(ValueError, match="Probability weight must be finite"):
+            SequenceLengthPair(256, 128, bad)
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param(float("nan"), id="nan"),
+            param(float("inf"), id="inf"),
+        ],
+    )  # fmt: skip
+    def test_non_finite_stddev_rejected(self, bad):
+        """NaN/inf stddevs poison per-request length sampling; reject at construction."""
+        with pytest.raises(ValueError, match="stddev must be finite"):
+            SequenceLengthPair(256, 128, 50.0, input_seq_len_stddev=bad)
+        with pytest.raises(ValueError, match="stddev must be finite"):
+            SequenceLengthPair(256, 128, 50.0, output_seq_len_stddev=bad)
+
     def test_invalid_input_stddev(self):
         """Test validation of negative input sequence length standard deviation."""
         with pytest.raises(
-            ValueError, match="Input sequence length stddev must be non-negative"
+            ValueError,
+            match="Input sequence length stddev must be finite and non-negative",
         ):
             SequenceLengthPair(256, 128, 50.0, input_seq_len_stddev=-1.0)
 
     def test_invalid_output_stddev(self):
         """Test validation of negative output sequence length standard deviation."""
         with pytest.raises(
-            ValueError, match="Output sequence length stddev must be non-negative"
+            ValueError,
+            match="Output sequence length stddev must be finite and non-negative",
         ):
             SequenceLengthPair(256, 128, 50.0, output_seq_len_stddev=-2.0)
 
@@ -467,6 +499,8 @@ class TestDistributionParser:
             "256:50",  # Missing OSL
             "invalid",
             "256,128:-10",  # Invalid probability weight (must be positive)
+            "256,128:inf",  # Non-finite probability weight
+            "256,128:nan",  # Non-finite probability weight
             '{"invalid": "json"}',  # Invalid JSON structure
             "256|,128:100",  # Empty stddev
             "256|-5,128:100",  # Negative stddev

@@ -32,6 +32,7 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -68,9 +69,9 @@ def _validate_probability_weights(pairs: list[SequenceLengthPair]) -> None:
     """
     total_prob = sum(pair.probability for pair in pairs)
 
-    if total_prob <= 0:
+    if not math.isfinite(total_prob) or total_prob <= 0:
         raise ValueError(
-            f"Probability weights must have a positive total, got {total_prob:.6f}. "
+            f"Probability weights must have a finite positive total, got {total_prob:.6f}. "
             f"Pairs: {[str(p) for p in pairs]}"
         )
 
@@ -95,17 +96,25 @@ class SequenceLengthPair:
             raise ValueError(
                 f"Output sequence length must be positive, got {self.output_seq_len}"
             )
-        if self.probability < 0.0:
+        if not math.isfinite(self.probability) or self.probability < 0.0:
             raise ValueError(
-                f"Probability weight must be non-negative, got {self.probability}"
+                f"Probability weight must be finite and non-negative, got {self.probability}"
             )
-        if self.input_seq_len_stddev < 0.0:
+        if (
+            not math.isfinite(self.input_seq_len_stddev)
+            or self.input_seq_len_stddev < 0.0
+        ):
             raise ValueError(
-                f"Input sequence length stddev must be non-negative, got {self.input_seq_len_stddev}"
+                f"Input sequence length stddev must be finite and non-negative, "
+                f"got {self.input_seq_len_stddev}"
             )
-        if self.output_seq_len_stddev < 0.0:
+        if (
+            not math.isfinite(self.output_seq_len_stddev)
+            or self.output_seq_len_stddev < 0.0
+        ):
             raise ValueError(
-                f"Output sequence length stddev must be non-negative, got {self.output_seq_len_stddev}"
+                f"Output sequence length stddev must be finite and non-negative, "
+                f"got {self.output_seq_len_stddev}"
             )
 
     def __str__(self) -> str:

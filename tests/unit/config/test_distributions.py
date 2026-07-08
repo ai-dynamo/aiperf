@@ -31,7 +31,10 @@ from aiperf.config.distributions import (
     PeakEntry,
     SamplingDistribution,
 )
-from aiperf.config.types import SequenceDistributionEntry
+from aiperf.config.types import (
+    SequenceDistributionEntry,
+    validate_probability_distribution,
+)
 
 # TypeAdapter for the discriminated union
 _TA = TypeAdapter(SamplingDistribution)
@@ -582,6 +585,34 @@ def test_legacy_string_parser_accepts_relative_weights():
 # ============================================================
 # 10. Per-bucket first_turn_isl + top-level exclusivity
 # ============================================================
+
+
+class TestSequenceDistributionEntryFiniteWeights:
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param(float("nan"), id="nan"),
+            param(float("inf"), id="inf"),
+            param(float("-inf"), id="neg-inf"),
+        ],
+    )  # fmt: skip
+    def test_non_finite_probability_rejected(self, bad):
+        """inf/inf normalizes to NaN in _TypedSequenceDistribution; reject at config."""
+        with pytest.raises(ValidationError):
+            SequenceDistributionEntry.model_validate(
+                {"isl": 128, "osl": 64, "probability": bad}
+            )
+
+    def test_overflowing_total_rejected(self):
+        """Per-entry weights can be finite while their sum overflows to inf."""
+        entries = [
+            SequenceDistributionEntry.model_validate(
+                {"isl": 128, "osl": 64, "probability": 1e308}
+            )
+            for _ in range(2)
+        ]
+        with pytest.raises(ValueError, match="finite positive total"):
+            validate_probability_distribution(entries)
 
 
 class TestSequenceDistributionEntryFirstTurnIsl:

@@ -11,6 +11,7 @@ validation utilities.
 
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any
 
 from pydantic import ConfigDict, Field, model_validator
@@ -141,6 +142,7 @@ class SequenceDistributionEntry(BaseConfig):
         float,
         Field(
             ge=0.0,
+            allow_inf_nan=False,
             description="Relative probability weight for this distribution bucket. "
             "Zero disables the bucket (it is never sampled), which supports "
             "sweep-templated configs. Weights are normalized across all entries and "
@@ -179,9 +181,9 @@ def validate_probability_distribution(
     if not entries:
         raise ValueError("Sequence distribution must contain at least one entry.")
     total = sum(entry.probability for entry in entries)
-    if total <= 0:
+    if not math.isfinite(total) or total <= 0:
         raise ValueError(
-            f"Sequence distribution weights must have a positive total, got {total}. "
+            f"Sequence distribution weights must have a finite positive total, got {total}. "
             f"Individual probabilities: {[e.probability for e in entries]}"
         )
     return entries
