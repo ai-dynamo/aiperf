@@ -148,6 +148,7 @@ class TestDeliverNetworkRttToProcessors:
         manager.warning = MagicMock()
         manager._network_latency_accumulator = None
         manager._metric_results_processors = []
+        manager._metric_record_accumulators = []
         return manager
 
     def test_disabled_is_noop(self) -> None:
@@ -184,6 +185,17 @@ class TestDeliverNetworkRttToProcessors:
         processor.set_network_rtt_ns.assert_called_once_with(1_750_000.0)
         manager.notice.assert_called_once()
         manager.warning.assert_not_called()
+
+    def test_metric_accumulator_also_receives_rtt(self) -> None:
+        """The MetricsAccumulator engine (not just legacy processors) is the
+        primary consumer — it injects network_adjusted_* in its summarize()."""
+        accumulator = MagicMock()
+        manager = self._make_manager(SimpleNamespace(enabled=True, mean_ms=2.5))
+        manager._metric_record_accumulators = [accumulator]
+
+        manager._deliver_network_rtt_to_processors()
+
+        accumulator.set_network_rtt_ns.assert_called_once_with(2.5 * 1e6)
 
     def test_zero_successful_samples_warns_and_applies_no_adjustment(self) -> None:
         processor = MagicMock()

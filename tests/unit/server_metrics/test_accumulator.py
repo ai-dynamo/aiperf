@@ -147,6 +147,138 @@ class TestServerMetricsResultsProcessor:
         assert result.endpoint_summaries is not None
         assert len(result.endpoint_summaries) == 1
 
+    async def test_export_results_includes_warmup_endpoint_summaries(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """Test export_results computes separate profiling and warmup summaries."""
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, value in (
+            (1_000_000_000, 0.1),
+            (1_500_000_000, 0.2),
+            (2_500_000_000, 0.8),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"cache_usage": gauge},
+            )
+            await processor.process_server_metrics_record(record)
+
+        result = await processor.export_results(
+            start_ns=2_000_000_000,
+            end_ns=3_000_000_000,
+            warmup_start_ns=1_000_000_000,
+            warmup_end_ns=2_000_000_000,
+        )
+
+        assert result is not None
+        assert result.endpoint_summaries is not None
+        assert result.warmup_endpoint_summaries is not None
+        assert result.warmup_start_ns == 1_000_000_000
+        assert result.warmup_end_ns == 2_000_000_000
+
+        endpoint_key = next(iter(result.endpoint_summaries))
+        profiling_summary = result.endpoint_summaries[endpoint_key]
+        warmup_summary = result.warmup_endpoint_summaries[endpoint_key]
+        profiling_avg = profiling_summary.metrics["cache_usage"].series[0].stats.avg
+        warmup_avg = warmup_summary.metrics["cache_usage"].series[0].stats.avg
+        assert profiling_avg == pytest.approx(0.8)
+        assert warmup_avg == pytest.approx(0.15)
+
+    async def test_export_results_degenerate_warmup_window_preserves_profiling(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """A degenerate warmup window (start == end) must not lose profiling results.
+
+        The degenerate window previously raised ValueError inside TimeRangeFilter,
+        which records_manager swallowed into a None result (total server-metrics
+        loss). Profiling summaries must survive; warmup summaries drop to None
+        (regression for F13).
+        """
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, value in (
+            (1_000_000_000, 0.1),
+            (1_500_000_000, 0.2),
+            (2_500_000_000, 0.8),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"cache_usage": gauge},
+            )
+            await processor.process_server_metrics_record(record)
+
+        result = await processor.export_results(
+            start_ns=2_000_000_000,
+            end_ns=3_000_000_000,
+            warmup_start_ns=1_000_000_000,
+            warmup_end_ns=1_000_000_000,  # degenerate: start == end
+        )
+
+        assert result is not None
+        assert isinstance(result, ServerMetricsResults)
+        assert result.endpoint_summaries
+        assert result.warmup_endpoint_summaries is None
+
+    async def test_export_results_degenerate_profiling_window_does_not_raise(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """A degenerate profiling window (start == export_end) must not raise.
+
+        The parquet-export TimeRangeFilter in export_results is built eagerly as
+        a call argument, so for a zero-duration profiling window where
+        ``start_ns >= max(end_ns, last_update_ns)`` it raised ValueError even when
+        Parquet export is disabled. That raise propagated out of export_results
+        and records_manager swallowed it into a None result (total server-metrics
+        loss). export_results must instead return a ServerMetricsResults object
+        (regression for R1-3 / F13).
+        """
+        processor = ServerMetricsAccumulator(mock_cfg)
+
+        for timestamp_ns, value in (
+            (500_000_000, 0.1),
+            (1_000_000_000, 0.2),
+        ):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=value)],
+            )
+            record = ServerMetricsRecord(
+                endpoint_url="http://node1:8081/metrics",
+                timestamp_ns=timestamp_ns,
+                endpoint_latency_ns=5_000_000,
+                metrics={"cache_usage": gauge},
+            )
+            await processor.process_server_metrics_record(record)
+
+        # start_ns == end_ns == last_update_ns => export_end_ns collapses to
+        # start_ns, a degenerate window for the eager parquet TimeRangeFilter.
+        result = await processor.export_results(
+            start_ns=1_000_000_000,
+            end_ns=1_000_000_000,
+        )
+
+        assert result is not None
+        assert isinstance(result, ServerMetricsResults)
+
     async def test_export_results_with_error_summary(
         self,
         mock_cfg: BenchmarkRun,

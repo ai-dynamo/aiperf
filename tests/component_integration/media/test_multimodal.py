@@ -7,6 +7,7 @@ import pytest
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
+from tests.harness.optional_deps import HAS_SOUNDFILE
 from tests.harness.utils import AIPerfCLI
 
 
@@ -14,6 +15,10 @@ from tests.harness.utils import AIPerfCLI
 class TestMultimodal:
     """Tests for multimodal inputs (images, audio)."""
 
+    @pytest.mark.skipif(
+        not HAS_SOUNDFILE,
+        reason="soundfile/libsndfile unavailable (e.g. Windows-on-ARM)",
+    )
     def test_images_and_audio(self, cli: AIPerfCLI):
         """Chat with combined image and audio inputs.
 

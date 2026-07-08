@@ -50,6 +50,7 @@ from aiperf.common.enums.enums import (
     WorkerStatus,
 )
 from aiperf.common.enums.metric_enums import (
+    AggregationKind,
     BaseMetricUnit,
     BaseMetricUnitInfo,
     EnergyMetricUnit,
@@ -130,6 +131,7 @@ __all__ = [
     "MetricValueTypeT",
     "MetricValueTypeVarT",
     "MetricConsoleGroup",
+    "AggregationKind",
     "ModelSelectionStrategy",
     "OptimizationDirection",
     "PlotMetricDirection",

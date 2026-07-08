@@ -7,13 +7,22 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
+
+try:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except ImportError:  # pragma: no cover - platform-dependent
+    # pyarrow has no Windows-on-ARM wheel (apache/arrow#47195) and source-builds
+    # fail there. Import lazily-tolerant so AIPerf still installs and runs without
+    # it; the exporter self-disables in __init__ when pyarrow is unavailable.
+    pa = None
+    pq = None
 
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
+from aiperf.config.phases import get_phase_rate
 from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.server_metrics.storage import (
     HistogramTimeSeries,
@@ -85,6 +94,17 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         if ServerMetricsFormat.PARQUET not in self.run.cfg.server_metrics.formats:
             raise DataExporterDisabled(
                 "Server metrics Parquet export disabled: format not selected"
+            )
+
+        # pyarrow is optional on platforms without a wheel (Windows-on-ARM). If
+        # parquet was explicitly requested but pyarrow isn't installed, disable
+        # this exporter with an actionable message rather than crashing.
+        if pa is None or pq is None:
+            raise DataExporterDisabled(
+                "Server metrics Parquet export requires pyarrow, which is not "
+                "installed (no Windows-on-ARM wheel is published; see "
+                "apache/arrow#47195). Install pyarrow, or drop 'parquet' from "
+                "the server-metrics export formats."
             )
 
         super().__init__(**kwargs)
@@ -322,7 +342,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             getattr(head_phase, "concurrency", None)
         ).encode("utf-8")
 
-        request_rate = getattr(head_phase, "request_rate", None)
+        request_rate = get_phase_rate(head_phase)
         if request_rate is not None:
             metadata[b"aiperf.request_rate"] = str(request_rate).encode("utf-8")
 
@@ -661,6 +681,8 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
             reference_idx, final_idx = time_series.get_indices_for_filter(
                 self._time_filter
             )
+            if final_idx is None:
+                return []
             # Find first index in filter range
             first_idx = np.searchsorted(
                 time_series.timestamps, self._time_filter.start_ns, side="left"

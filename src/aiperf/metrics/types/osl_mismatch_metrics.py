@@ -53,11 +53,13 @@ class RequestedOSLMetric(BaseRecordMetric[int]):
             NoMetricValue: If max_tokens is not set in the request.
         """
         request_info = record.request.request_info
-        if request_info is None or not request_info.turns:
-            raise NoMetricValue("Request info or turns not available in record.")
+        if request_info is None:
+            raise NoMetricValue("Request info not available in record.")
 
-        # Get max_tokens from the last turn (the one that was sent)
-        max_tokens = request_info.turns[-1].max_tokens
+        # ``request_info.turns`` is dropped before the ZMQ hop to the record
+        # processor (see ``inference_client._finalize_request_record``), so the
+        # last turn's ``max_tokens`` is hoisted onto ``RequestInfo`` itself.
+        max_tokens = request_info.max_tokens
         if max_tokens is None:
             raise NoMetricValue("max_tokens not set in request (--osl not used).")
 

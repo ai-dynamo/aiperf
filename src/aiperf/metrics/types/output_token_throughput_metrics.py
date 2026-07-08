@@ -38,15 +38,8 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
         metric_results: MetricResultsDict,
     ) -> float:
         total_osl = metric_results.get_or_raise(TotalOutputSequenceLengthMetric)
-        benchmark_duration_converted = metric_results.get_converted_or_raise(
-            BenchmarkDurationMetric,
-            self.unit.time_unit,  # type: ignore
-        )
-        if benchmark_duration_converted == 0:
-            raise NoMetricValue(
-                "Benchmark duration is zero, cannot calculate output token throughput metric"
-            )
-        return total_osl / benchmark_duration_converted  # type: ignore
+        duration = metric_results.observation_duration(self.unit.time_unit)  # type: ignore
+        return total_osl / duration  # type: ignore
 
 
 class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):

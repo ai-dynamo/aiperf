@@ -16,6 +16,10 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
+### [`chat`](#aiperf-chat)
+
+Chat interactively with an endpoint, printing per-turn speed stats.
+
 ### [`config init`](#aiperf-config-init)
 
 Generate, list, or search bundled AIPerf config templates.
@@ -94,6 +98,57 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
+
+<hr/>
+
+## `aiperf chat`
+
+Chat interactively with an endpoint, printing per-turn speed stats.
+
+A lightweight sanity-check sibling of ``aiperf profile``: send one message at a time and see TTFT, TPS, generated tokens, and end-to-end latency for each reply. Multi-turn by default (history retained and resent each turn); pass ``--no-history`` for stateless turns, or ``--quick`` for a single request. For full benchmarking, use ``aiperf profile``.
+
+**Examples:**
+
+```bash
+# Interactive multi-turn chat
+aiperf chat --model Qwen/Qwen3-0.6B --url http://localhost:8000
+
+# Stateless turns (no history retained between messages)
+aiperf chat --model Qwen/Qwen3-0.6B --no-history
+
+# Single-shot sanity check
+aiperf chat --model Qwen/Qwen3-0.6B --quick "hello, who are you?"
+```
+
+#### `-m`, `--model` `<str>` _(Required)_
+
+Model name served by the endpoint.
+
+#### `-u`, `--url` `<str>`
+
+Base URL of the OpenAI-compatible server (e.g. http://localhost:8000), matching `aiperf profile`.
+<br/>_Default: `http://localhost:8000`_
+
+#### `--system-prompt` `<str>`
+
+Optional system prompt prepended to the conversation.
+
+#### `-q`, `--quick` `<str>`
+
+Send a single MESSAGE and print the response + stats, then exit.
+
+#### `--history`, `--no-history`
+
+Retain and resend conversation history each turn (default). Pass --no-history for stateless, completion-style turns. Ignored with --quick.
+<br/>_Default: `True`_
+
+#### `--api-key` `<str>`
+
+API key sent as a Bearer token. Defaults to the OPENAI_API_KEY environment variable.
+
+#### `--tokenizer` `<str>`
+
+Tokenizer for client-side token counts. Defaults to the model name. Pass `builtin` for a zero-network tokenizer.
 
 <hr/>
 
@@ -340,6 +395,11 @@ Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e
 Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.
 <br/>_Flag (no value required)_
 
+#### `--apply-chat-template`
+
+Apply the HuggingFace tokenizer's chat template when counting input tokens. When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, EOT, generation-prompt suffix) and the record processor reports ISL using `apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. When disabled (default), both paths use bare-text encoding, so reported ISL matches the prompt content the user asked for and ignores template overhead. Requires an HF tokenizer with a chat template configured; no-ops on tiktoken / un-templated models.
+<br/>_Flag (no value required)_
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -1449,6 +1509,11 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
 
+#### `--stats-interval` `<float>`
+
+Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.
+<br/>_Constraints: ≥ 0.0, ≤ 1000.0_
+
 ### Workers
 
 #### `--workers-max`, `--max-workers` `<int>`
@@ -1559,7 +1624,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1737,6 +1802,11 @@ Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e
 Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.
 <br/>_Flag (no value required)_
 
+#### `--apply-chat-template`
+
+Apply the HuggingFace tokenizer's chat template when counting input tokens. When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, EOT, generation-prompt suffix) and the record processor reports ISL using `apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. When disabled (default), both paths use bare-text encoding, so reported ISL matches the prompt content the user asked for and ignores template overhead. Requires an HF tokenizer with a chat template configured; no-ops on tiktoken / un-templated models.
+<br/>_Flag (no value required)_
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -2845,6 +2915,11 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 #### `--api-host` `<str>`
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
+
+#### `--stats-interval` `<float>`
+
+Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.
+<br/>_Constraints: ≥ 0.0, ≤ 1000.0_
 
 ### Workers
 
