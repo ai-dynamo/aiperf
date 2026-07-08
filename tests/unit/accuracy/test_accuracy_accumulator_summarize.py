@@ -3,13 +3,13 @@
 
 import pytest
 
-from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
+from aiperf.accuracy.accuracy_accumulator import AccuracyAccumulator
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
 
-def _make_processor() -> AccuracyResultsProcessor:
-    return AccuracyResultsProcessor(
+def _make_processor() -> AccuracyAccumulator:
+    return AccuracyAccumulator(
         run=make_benchmark_run(
             model_names=["test-model"],
             endpoint_type=EndpointType.COMPLETIONS,
@@ -20,7 +20,7 @@ def _make_processor() -> AccuracyResultsProcessor:
 
 
 @pytest.mark.asyncio
-class TestAccuracyResultsProcessorSummarize:
+class TestAccuracyAccumulatorSummarize:
     async def test_empty_returns_no_results(self) -> None:
         processor = _make_processor()
         results = await processor.summarize()

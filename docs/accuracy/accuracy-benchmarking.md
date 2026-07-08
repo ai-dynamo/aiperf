@@ -252,7 +252,7 @@ CSV file: `<artifact_dir>/accuracy_results.csv`
 ```text
 AccuracyDatasetLoader          → Conversation/Turn objects (dataset pipeline)
 AccuracyRecordProcessor        → grades each response (record pipeline)
-AccuracyResultsProcessor       → aggregates per-task accuracy (results pipeline)
+AccuracyAccumulator            → aggregates per-task accuracy (accumulator pipeline)
 AccuracyConsoleExporter         → Rich table output
 AccuracyDataExporter            → CSV export
 ```

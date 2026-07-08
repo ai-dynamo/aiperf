@@ -1023,12 +1023,6 @@ results_processor:
       time slices, enabling time-series analysis of benchmark performance.
       Enabled when timeslice config is set.
 
-  accuracy_results:
-    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
-    description: |
-      Accuracy results processor that aggregates grading results and computes
-      summary accuracy metrics. Self-disables when accuracy mode is off.
-
 # =============================================================================
 # Accumulators
 # =============================================================================
@@ -1064,6 +1058,16 @@ accumulator:
       and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
     metadata:
       record_types: [server_metrics]
+
+  accuracy_results:
+    class: aiperf.accuracy.accuracy_accumulator:AccuracyAccumulator
+    description: |
+      Accuracy accumulator that ingests per-record grading results
+      (accuracy.correct / accuracy.unparsed stamped by AccuracyRecordProcessor)
+      and summarizes per-task and overall accuracy MetricResults into
+      ProfileResults.records. Self-disables when accuracy mode is off.
+    metadata:
+      record_types: [metric_records]
 
 # =============================================================================
 # Stream Exporters
