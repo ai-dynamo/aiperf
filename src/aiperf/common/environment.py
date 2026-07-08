@@ -40,11 +40,10 @@ Examples:
 """
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
@@ -53,6 +52,9 @@ from aiperf.config.loader.parsing import (
     parse_str_or_csv_list,
 )
 from aiperf.plugin.enums import ServiceType
+
+if TYPE_CHECKING:
+    from aiperf.plugin.enums import UIType
 
 _logger = AIPerfLogger(__name__)
 
@@ -120,6 +122,28 @@ class _APIServerSettings(BaseSettings):
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
         "Set to 0 to skip the grace window and shut down immediately.",
+    )
+
+
+class _ChatSettings(BaseSettings):
+    """Settings for the interactive ``aiperf chat`` command."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_CHAT_",
+    )
+
+    CONNECT_TIMEOUT: float = Field(
+        gt=0.0,
+        default=10.0,
+        description="Seconds to wait to establish a connection to the endpoint "
+        "before a turn fails. Kept short so an unreachable URL fails fast.",
+    )
+    READ_TIMEOUT: float = Field(
+        gt=0.0,
+        default=300.0,
+        description="Seconds to wait for the next streamed chunk before a turn "
+        "fails. No overall (total) timeout is applied, so long generations are "
+        "never truncated mid-reply; this only fires if the server stalls.",
     )
 
 
@@ -544,6 +568,16 @@ class _MetricsSettings(BaseSettings):
         default=500,
         description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
     )
+    LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
+        default="ragged",
+        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
+    )
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.05,
+        le=60.0,
+        default=1.0,
+        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
+    )
 
 
 class _OTelSettings(BaseSettings):
@@ -642,6 +676,20 @@ class _RecordSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for processing record results",
+    )
+    STRIP_PAYLOAD_BYTES: bool | None = Field(
+        default=None,
+        description="Tri-state control for omitting canonical request payload "
+        "bytes from RecordContext after a request is sent, which substantially "
+        "reduces record-pipeline memory for very large prompts. None (default) "
+        "auto-detects: bytes are stripped only when no downstream record consumer "
+        "needs them (client-side input tokenization disabled, no synthetic image/"
+        "audio/video inputs, and raw payload export off). True forces stripping "
+        "even when a consumer wants the bytes, disabling client-side input "
+        "tokenization, media counting from request bodies, and raw request "
+        "payload export. False always retains them. Auto-detection does not see "
+        "media embedded in custom dataset payloads under server-token-count mode; "
+        "set False explicitly for that case.",
     )
 
 
@@ -757,6 +805,54 @@ class _ServerMetricsSettings(BaseSettings):
         le=300.0,
         default=5.0,
         description="Delay in seconds before shutting down server metrics service to allow command response transmission",
+    )
+
+
+class _NetworkLatencySettings(BaseSettings):
+    """Network latency calibration configuration.
+
+    Controls the TCP-handshake RTT probes used to estimate the client-to-endpoint
+    network round-trip time so it can be subtracted from latency metrics. Probes run
+    throughout the profiling phase. Enable with `--network-latency-automatic`.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_NETWORK_LATENCY_",
+        env_parse_enums=True,
+    )
+
+    DEFAULT_PROBE_INTERVAL: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=1.0,
+        description="Default seconds between RTT probes when --network-latency-ping-interval is unset (default: 1.0s, ~1Hz)",
+    )
+    MIN_SAMPLES: int = Field(
+        ge=1,
+        le=100000,
+        default=5,
+        description="Minimum number of successful RTT samples to collect; extra probes are issued at "
+        "profile completion if a short run did not reach this floor",
+    )
+    CONNECT_TIMEOUT: float = Field(
+        ge=0.001,
+        le=300.0,
+        default=5.0,
+        description="Timeout in seconds for a single TCP-handshake RTT probe",
+    )
+    COMPLETE_TOPUP_TIMEOUT: float = Field(
+        ge=0.0,
+        le=30.0,
+        default=3.0,
+        description="Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes "
+        "at PROFILE_COMPLETE, kept well under the command-response budget so a slow "
+        "endpoint cannot stall completion",
+    )
+    EXPORT_BATCH_SIZE: int = Field(
+        ge=1,
+        le=1000000,
+        default=100,
+        description="Batch size for the network latency jsonl writer export results processor",
     )
 
 
@@ -1084,21 +1180,46 @@ class _UISettings(BaseSettings):
         default=3,
         description="Duration in seconds to display UI notifications before auto-dismissing",
     )
-    REALTIME_METRICS_INTERVAL: float = Field(
-        ge=1.0,
+    REALTIME_METRICS_INTERVAL: float | None = Field(
+        ge=0.0,
         le=1000.0,
-        default=5.0,
-        description="Interval in seconds between real-time metrics messages",
+        default=None,
+        description=(
+            "Interval in seconds between real-time metrics messages (and the "
+            "per-tick stats log block). 0 disables the log block; dashboards "
+            "still poll. When None, ``realtime_metrics_interval(ui_type)`` "
+            "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
+        ),
     )
     REALTIME_METRICS_ENABLED: bool = Field(
         default=False,
         description="Enable real-time metrics collection and reporting despite UI type",
     )
+
+    def realtime_metrics_interval(self, ui_type: "UIType") -> float:
+        """Resolve the realtime metrics tick interval, applying the auto-default by UI type."""
+        if self.REALTIME_METRICS_INTERVAL is not None:
+            return self.REALTIME_METRICS_INTERVAL
+        from aiperf.plugin.enums import UIType as _UIType  # local import: avoid cycle
+
+        return 5.0 if ui_type == _UIType.DASHBOARD else 30.0
+
     SPINNER_REFRESH_RATE: float = Field(
         ge=0.1,
         le=100.0,
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
+    )
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
     )
 
 
@@ -1329,6 +1450,10 @@ class _Environment(BaseSettings):
         default_factory=_APIServerSettings,
         description="API server settings",
     )
+    CHAT: _ChatSettings = Field(
+        default_factory=_ChatSettings,
+        description="Interactive `aiperf chat` command settings",
+    )
     COMPRESSION: _CompressionSettings = Field(
         default_factory=_CompressionSettings,
         description="Compression settings for streaming file transfers",
@@ -1380,6 +1505,10 @@ class _Environment(BaseSettings):
     SEARCH_PLANNER: _SearchPlannerSettings = Field(
         default_factory=_SearchPlannerSettings,
         description="Adaptive-search planner tunables",
+    )
+    NETWORK_LATENCY: _NetworkLatencySettings = Field(
+        default_factory=_NetworkLatencySettings,
+        description="Network latency calibration settings",
     )
     SERVER_METRICS: _ServerMetricsSettings = Field(
         default_factory=_ServerMetricsSettings,

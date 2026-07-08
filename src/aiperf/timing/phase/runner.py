@@ -317,6 +317,8 @@ class PhaseRunner(TaskManagerMixin):
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
             branch_orchestrator=self._branch_orchestrator,
+            concurrency_manager=self._concurrency_manager,
+            progress=self._progress,
         )
 
     def _register_strategy_with_callback_handler(
@@ -673,7 +675,7 @@ class PhaseRunner(TaskManagerMixin):
                     self.info(
                         f"All cancelled credits returned for phase {self._config.phase}"
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self.error(
                         f"Timeout waiting {drain_timeout}s for cancelled credits to return. "
                         f"Some credits may be stuck. Forcing phase completion."
@@ -753,7 +755,7 @@ class PhaseRunner(TaskManagerMixin):
             self.debug(lambda: f"Event '{name}' set before timeout of {timeout}s")
             return False
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return _on_timeout()
 
         except Exception as e:

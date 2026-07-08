@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -32,6 +34,9 @@ _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("users", "num_users"),
     ("rate", "request_rate"),
     ("rate", "user_centric_rate"),
+    ("adaptive_scale", "adaptive_scale"),
+    ("adaptive_sustain_duration", "adaptive_sustain_duration"),
+    ("adaptive_assessment_period", "adaptive_assessment_period"),
 )
 
 
@@ -64,6 +69,8 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
+    if cli.adaptive_scale:
+        return PhaseType.CONCURRENCY
     if cli.fixed_schedule:
         return PhaseType.FIXED_SCHEDULE
     if cli.user_centric_rate is not None:
@@ -86,6 +93,18 @@ def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
             prof[key] = {"duration": getattr(cli, field)}
 
 
+def _apply_adaptive_scale_sla(prof: dict[str, Any], cli: CLIConfig) -> None:
+    if not prof.get("adaptive_scale"):
+        return
+    if "adaptive_scale_sla" not in cli.model_fields_set or not cli.adaptive_scale_sla:
+        return
+
+    prof["sla"] = [
+        parse_sla_filter(value).model_dump(mode="json")
+        for value in cli.adaptive_scale_sla
+    ]
+
+
 def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Reject CLI flags whose load-generator partner wasn't supplied.
 
@@ -102,6 +121,20 @@ def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) ->
     # --num-users only makes sense with --user-centric-rate. Without
     # user-centric mode the resolved phase has no ``users`` field, so
     # routing it through would crash PhaseConfig with extra_forbidden.
+    if prof.get("adaptive_scale") and phase_type != PhaseType.CONCURRENCY:
+        raise ValueError("--adaptive-scale requires concurrency timing mode")
+    if prof.get("adaptive_scale") and "concurrency" not in prof:
+        raise ValueError("--adaptive-scale requires --concurrency")
+    if (
+        prof.get("adaptive_scale")
+        and "search_sla" in fields_set
+        and "adaptive_scale_sla" not in fields_set
+    ):
+        raise ValueError(
+            "--adaptive-scale uses --adaptive-scale-sla; --search-sla is reserved "
+            "for adaptive-search/grid runs"
+        )
+
     if "num_users" in fields_set and phase_type != PhaseType.USER_CENTRIC:
         raise ValueError(
             "--num-users requires --user-centric-rate. Pass --user-centric-rate "
@@ -411,6 +444,7 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
     _apply_profiling_ramps(prof, cli)
 
     prof["type"] = _profiling_phase_type(cli)
+    _apply_adaptive_scale_sla(prof, cli)
 
     _reject_orphan_load_generator_flags(prof, cli)
 

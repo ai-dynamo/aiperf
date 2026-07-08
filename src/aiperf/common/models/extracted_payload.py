@@ -20,6 +20,15 @@ class ExtractedPayload(AIPerfBaseModel):
         description="Tokenisable text strings (prompt content, instructions, "
         "tool schemas, replayed assistant tool_calls).",
     )
+    tool_texts: list[str] = Field(
+        default_factory=list,
+        description="Subset of ``texts`` contributed by tool machinery: "
+        "replayed ``tool_calls`` / ``function_call`` items and top-level "
+        "``tools`` schemas. These strings are NOT part of the ``messages`` "
+        "role/content view, so the chat-template ISL path tokenises them "
+        "separately on top of the templated count; the bare-text path "
+        "already covers them via ``texts``.",
+    )
     image_count: int = Field(
         default=0,
         description="Count of image content parts in the payload.",
@@ -39,4 +48,14 @@ class ExtractedPayload(AIPerfBaseModel):
         "These bypass the tokeniser entirely - the count is the sum of inner "
         "list lengths and is added to ISL (Input Sequence Length) by the "
         "consumer alongside any ``texts`` it tokenises.",
+    )
+    messages: list[dict[str, str]] | None = Field(
+        default=None,
+        description="Role/content view of the payload, populated only for "
+        "chat-shape payloads (the ``messages`` / ``input`` items array on "
+        "chat / Responses endpoints). Enables the record processor to run the "
+        "tokenizer's ``apply_chat_template`` so the reported ISL reflects the "
+        "wrapped wire payload (template tokens included), not just the bare "
+        "text. ``None`` for non-chat shapes (completions, embeddings, rankings, "
+        "HF inputs) - the parser falls back to bare text encoding.",
     )

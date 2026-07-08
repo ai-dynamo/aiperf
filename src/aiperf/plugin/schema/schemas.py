@@ -435,6 +435,10 @@ class PublicDatasetLoaderMetadata(BaseModel):
             "Use false (default) for small datasets to leverage HF caching and len() support."
         ),
     )
+    has_timing_data: bool = Field(
+        default=False,
+        description="Whether the loader emits timestamps suitable for fixed-schedule replay.",
+    )
     prompt_template: str | None = Field(
         default=None,
         description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
@@ -486,6 +490,28 @@ class GPUTelemetryCollectorMetadata(BaseModel):
     )
 
 
+class RecordRoutingMetadata(BaseModel):
+    """Metadata schema for record routing in accumulator and stream exporter plugins.
+
+    Defines which record types an accumulator or stream exporter accepts. Used by
+    RecordsManager to build a routing table: incoming records are dispatched to all
+    accumulators and stream exporters whose record_types include the matching type.
+    The role (accumulator vs stream_exporter) is determined by the plugin category.
+
+    Referenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class
+    Used in: plugins.yaml accumulator and stream_exporter entries
+    """
+
+    record_types: list[str] = Field(
+        description=(
+            "Record type identifiers this accumulator or stream exporter accepts for routing. "
+            "RecordsManager dispatches incoming records to all accumulators and stream exporters "
+            "whose record_types include the matching type. "
+            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
+        ),
+    )
+
+
 # =============================================================================
 # Re-exports
 # =============================================================================
@@ -501,5 +527,6 @@ from aiperf.plugin.schema._orchestrator_schemas import (  # noqa: E402
 __all__ = [
     "ConvergenceCriterionMetadata",
     "GPUTelemetryCollectorMetadata",
+    "RecordRoutingMetadata",
     "SearchPlannerMetadata",
 ]

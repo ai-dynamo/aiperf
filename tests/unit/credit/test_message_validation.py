@@ -127,16 +127,21 @@ class TestCreditReturnValidation:
             first_token_sent=first_token_sent,
             cancelled=cancelled,
             error=error,
+            request_latency_ns=123_000_000,
         )
 
         assert credit_return.first_token_sent is first_token_sent
         assert credit_return.cancelled is cancelled
         assert credit_return.error == error
+        assert credit_return.request_latency_ns == 123_000_000
 
-    def test_credit_return_serialization_roundtrip(self, sample_credit):
+    def test_credit_return_serialization_roundtrip(self, sample_credit: Credit) -> None:
         """CreditReturn preserves all fields through msgpack serialization."""
         original = CreditReturn(
-            credit=sample_credit, first_token_sent=True, cancelled=False
+            credit=sample_credit,
+            first_token_sent=True,
+            cancelled=False,
+            request_latency_ns=456_000_000,
         )
         decoded = msgspec.msgpack.decode(
             msgspec.msgpack.encode(original), type=CreditReturn
@@ -144,6 +149,7 @@ class TestCreditReturnValidation:
 
         assert decoded.first_token_sent == original.first_token_sent
         assert decoded.cancelled == original.cancelled
+        assert decoded.request_latency_ns == original.request_latency_ns
 
 
 # =============================================================================

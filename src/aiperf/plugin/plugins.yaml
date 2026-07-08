@@ -52,6 +52,17 @@ service:
       required: false
       auto_start: true
 
+  network_latency_manager:
+    class: aiperf.network_latency.manager:NetworkLatencyManager
+    description: |
+      Network latency calibration service. Probes the endpoint's TCP-handshake
+      RTT throughout the profiling phase so the mean network round-trip can be
+      subtracted from latency metrics. Only spawned when network latency
+      calibration is enabled with active probing (no mean_ms).
+    metadata:
+      required: false
+      auto_start: true
+
   record_processor:
     class: aiperf.records.record_processor_service:RecordProcessor
     description: |
@@ -861,6 +872,11 @@ timing_strategy:
       A mode where the TimingManager will send requests using a request rate generator based on various modes.
       Optionally, a max concurrency limit can be specified as well.
 
+  adaptive_scale:
+    class: aiperf.timing.strategies.adaptive_scale:AdaptiveScaleStrategy
+    description: |
+      Single-run adaptive scale controller that discovers and sustains an SLA boundary.
+
   user_centric_rate:
     class: aiperf.timing.strategies.user_centric_rate:UserCentricStrategy
     description: |
@@ -973,19 +989,19 @@ results_processor:
       GPU telemetry accumulator that aggregates GPU telemetry records and computes
       metrics in a hierarchical structure. Loaded when telemetry is enabled.
 
-  gpu_telemetry_jsonl_writer:
-    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
-    description: |
-      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
-      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
-      export config.
-
   metric_results:
     class: aiperf.post_processors.metric_results_processor:MetricResultsProcessor
     description: |
       Results processor that computes metrics from MetricType.DERIVED and
       aggregates results from all record processors. Final stage of metrics
       pipeline. Always loaded.
+
+  network_latency_jsonl_writer:
+    class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter
+    description: |
+      Network latency JSONL writer that exports per-sample TCP-handshake RTT
+      probes to a JSONL file. Enabled when network latency calibration is
+      actively probing (no mean_ms).
 
   otel_metrics_streamer:
     class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
@@ -994,23 +1010,11 @@ results_processor:
       with periodic export.
       Enabled when --otel-url is configured.
 
-  record_export:
-    class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
-    description: |
-      Record export processor that writes per-record metrics to JSONL files with
-      display unit conversion and filtering. Enabled when export_level is RECORDS.
-
   server_metrics_accumulator:
     class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
     description: |
       Server metrics accumulator that aggregates Prometheus server metrics records
       and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
-
-  server_metrics_jsonl_writer:
-    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
-    description: |
-      Server metrics JSONL writer that exports per-record server metrics data to
-      JSONL files in slim format.
 
   timeslice:
     class: aiperf.post_processors.timeslice_metric_results_processor:TimesliceMetricResultsProcessor
@@ -1026,6 +1030,75 @@ results_processor:
       summary accuracy metrics. Self-disables when accuracy mode is off.
 
 # =============================================================================
+# Accumulators
+# =============================================================================
+# Accumulators ingest records, support time-range queries, and produce summaries.
+# Primary data stores in the records pipeline (RecordsManager). The
+# MetricsAccumulator is the summary engine for the records pipeline; the legacy
+# results_processor:metric_results (MetricResultsProcessor) is gated OFF when
+# the accumulator path is active to avoid double-compute.
+# One-to-many mapping: multiple accumulators loaded simultaneously.
+# =============================================================================
+accumulator:
+  gpu_telemetry:
+    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
+    description: |
+      GPU telemetry accumulator that aggregates GPU telemetry records and computes
+      metrics in a hierarchical structure. Loaded when telemetry is enabled.
+    metadata:
+      record_types: [gpu_telemetry]
+
+  metric_results:
+    class: aiperf.metrics.accumulator:MetricsAccumulator
+    description: |
+      Numpy-backed metrics accumulator that ingests inference metric records,
+      stores per-tag time series with timestamps, and produces summaries with
+      optional timeslicing. Always loaded.
+    metadata:
+      record_types: [metric_records]
+
+  server_metrics:
+    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
+    description: |
+      Server metrics accumulator that aggregates Prometheus server metrics records
+      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
+    metadata:
+      record_types: [server_metrics]
+
+# =============================================================================
+# Stream Exporters
+# =============================================================================
+# Stream exporters write each record to an external sink (e.g. JSONL files)
+# as it arrives. Finalized after all records are processed.
+# One-to-many mapping: multiple exporters loaded simultaneously.
+# =============================================================================
+stream_exporter:
+  gpu_telemetry_jsonl_writer:
+    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
+    description: |
+      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
+      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
+      export config.
+    metadata:
+      record_types: [gpu_telemetry]
+
+  record_export:
+    class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
+    description: |
+      Record export JSONL writer that writes per-record metrics to JSONL files with
+      display unit conversion and filtering. Enabled when export_level is RECORDS.
+    metadata:
+      record_types: [metric_records]
+
+  server_metrics_jsonl_writer:
+    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
+    description: |
+      Server metrics JSONL writer that exports per-record server metrics data to
+      JSONL files in slim format.
+    metadata:
+      record_types: [server_metrics]
+
+# =============================================================================
 # GPU Telemetry Processors
 # =============================================================================
 # GPU telemetry processors aggregate and export GPU telemetry records locally
@@ -1037,13 +1110,6 @@ gpu_telemetry_processor:
     description: |
       GPU telemetry accumulator that aggregates GPU telemetry records and computes
       metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-  gpu_telemetry_jsonl_writer:
-    class: aiperf.gpu_telemetry.jsonl_writer:GPUTelemetryJSONLWriter
-    description: |
-      GPU telemetry JSONL writer that exports per-record GPU telemetry data to
-      JSONL files as it arrives from GPUTelemetryManager. Enabled with telemetry
-      export config.
 
 # =============================================================================
 # Server Metrics Processors
@@ -1057,12 +1123,6 @@ server_metrics_processor:
     description: |
       Server metrics accumulator that aggregates Prometheus server metrics records
       and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
-
-  server_metrics_jsonl_writer:
-    class: aiperf.server_metrics.jsonl_writer:ServerMetricsJSONLWriter
-    description: |
-      Server metrics JSONL writer that exports per-record server metrics data to
-      JSONL files in slim format.
 
 # =============================================================================
 # Artifact Publishers
@@ -1671,6 +1731,30 @@ communication_client:
 # local file. Selected via --public-dataset configuration option.
 # =============================================================================
 public_dataset_loader:
+  exgentic_v2:
+    class: aiperf.dataset.loader.exgentic_v2:ExgenticV2DatasetLoader
+    description: |
+      Exgentic v2 agent LLM traces from HuggingFace. Replays complete recorded
+      message and tool snapshots with source request controls and timing.
+    metadata:
+      hf_dataset_name: Exgentic/agent-llm-traces-v2
+      hf_split: train
+      streaming: true
+      has_timing_data: true
+
+  exgentic:
+    class: aiperf.dataset.loader.exgentic:ExgenticDatasetLoader
+    description: |
+      Exgentic agent LLM traces from HuggingFace. Replays complete recorded
+      message and tool snapshots with recorded output limits. Fixed-schedule
+      mode preserves call timestamps and overlaps; other modes replay sessions
+      closed-loop with recorded inter-turn delays.
+    metadata:
+      hf_dataset_name: Exgentic/agent-llm-traces
+      hf_split: train
+      streaming: true
+      has_timing_data: true
+
   sharegpt:
     class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
     description: |

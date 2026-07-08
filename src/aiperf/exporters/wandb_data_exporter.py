@@ -90,6 +90,10 @@ class WandbDataExporter(AIPerfLoggerMixin):
             dir=str(self._artifact_directory),
             config=self._build_config_payload(),
             tags=self._build_tags(),
+            settings=wandb.Settings(
+                x_disable_meta=True,
+                save_code=False,
+            ),
         )
         artifact_files: list[Path] = []
         try:

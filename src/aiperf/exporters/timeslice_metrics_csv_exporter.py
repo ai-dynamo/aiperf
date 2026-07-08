@@ -16,19 +16,20 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
     """Exports timeslice metrics to a single CSV file in tidy/long format.
 
     Creates one CSV file with all timeslices in a tidy data format:
-        Timeslice,Metric,Unit,Stat,Value
-        0,Request Latency,ms,avg,45.2
-        0,Request Latency,ms,min,12.1
-        1,Request Latency,ms,avg,48.5
+        Timeslice,Start_NS,End_NS,Metric,Unit,Stat,Value
+        0,...,...,Request Latency,ms,avg,45.2
+        0,...,...,Request Latency,ms,min,12.1
+        1,...,...,Request Latency,ms,avg,48.5
         ...
 
     This format is optimal for data science tools (pandas, R, Tableau, etc.)
-    System metrics (with single values) use stat='avg'.
+    System metrics (with single values) use stat='avg'. Reads
+    ``ProfileResults.timeslices`` produced by the MetricsAccumulator engine.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        if not self._results.timeslice_metric_results:
+        if not self._results or not self._results.timeslices:
             raise DataExporterDisabled(
                 "TimesliceMetricsCsvExporter disabled: no timeslice metric results found"
             )
@@ -51,7 +52,7 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
     def _generate_content(self) -> str:
         """Generate tidy/long format CSV content from all timeslices.
 
-        Uses instance data member self._results.timeslice_metric_results.
+        Uses instance data member self._results.timeslices.
 
         Returns:
             str: Complete CSV content in tidy format
@@ -59,17 +60,15 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Write header with 5 columns
-        writer.writerow(["Timeslice", "Metric", "Unit", "Stat", "Value"])
+        # Write header
+        writer.writerow(
+            ["Timeslice", "Start_NS", "End_NS", "Metric", "Unit", "Stat", "Value"]
+        )
 
-        # Process each timeslice in sorted order
-        for timeslice_index in sorted(self._results.timeslice_metric_results.keys()):
-            metric_results_list = self._results.timeslice_metric_results[
-                timeslice_index
-            ]
-
+        # Slices are stored in chronological order. Position == slice index.
+        for timeslice_index, ts in enumerate(self._results.timeslices):
             # Convert to display units and filter exportable metrics
-            prepared_metrics = self._prepare_metrics(metric_results_list)
+            prepared_metrics = self._prepare_metrics(ts.metric_results.values())
 
             # Write rows for each metric
             for tag, metric in sorted(prepared_metrics.items()):
@@ -83,6 +82,8 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
                         writer.writerow(
                             [
                                 timeslice_index,
+                                ts.start_ns,
+                                ts.end_ns,
                                 metric_name,
                                 unit,
                                 stat,

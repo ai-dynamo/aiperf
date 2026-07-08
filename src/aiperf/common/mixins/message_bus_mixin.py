@@ -100,7 +100,7 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
                         f"Connection probe for {self.id} succeeded after {attempt_count} attempts ({elapsed_time:.1f}s)"
                     )
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Compute from count to avoid floating point accumulation errors
                 elapsed_time = attempt_count * probe_interval
 

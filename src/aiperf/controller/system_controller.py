@@ -32,6 +32,7 @@ from aiperf.common.messages import (
     CommandResponse,
     CommandSuccessResponse,
     HeartbeatMessage,
+    ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
@@ -259,6 +260,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         else:
             self.info("Server metrics disabled via --no-server-metrics")
             self._should_wait_for_server_metrics = False
+
+        if self.run.cfg.network_latency.should_probe:
+            self.debug("Starting optional NetworkLatencyManager service")
+            await self.service_manager.run_service(ServiceType.NETWORK_LATENCY_MANAGER)
 
         # Start AIPerf API if enabled
         api_port = self.run.cfg.runtime.api_port or Environment.API_SERVER.PORT
@@ -581,6 +586,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.service_manager.stop_service(ServiceType.WORKER)
         if self.scale_record_processors_with_workers:
             await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
+
+    @on_message(MessageType.PROCESS_ALL_RESULTS)
+    async def _on_process_all_results_message(
+        self, message: ProcessAllResultsMessage
+    ) -> None:
+        """Receive the unified results message from RecordsManager.
+
+        Supplements the per-stream PROCESS_RECORDS_RESULT / PROCESS_TELEMETRY_RESULT
+        / PROCESS_SERVER_METRICS_RESULT handlers — those still own the shutdown
+        trigger.
+        """
+        self.trace_or_debug(
+            lambda: f"Received unified results message: {message}",
+            lambda: "Received unified results message",
+        )
 
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
     async def _on_process_records_result_message(
@@ -995,7 +1015,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             # mask MemoryError, AssertionError from test injection, and any
             # other real bugs in the reporting code path.
             self.error(f"Post-shutdown reporting failed (continuing to exit): {e!r}")
-        except Exception:  # noqa: BLE001 - last-chance guard; logs full traceback
+        except Exception:  # last-chance guard; logs full traceback
             # Anything else: log full traceback to the file handler so the
             # bug is recoverable instead of being reduced to a one-line repr.
             self.exception(

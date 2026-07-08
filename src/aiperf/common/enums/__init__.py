@@ -25,6 +25,7 @@ from aiperf.common.enums.enums import (
     GPUTelemetryMode,
     ImageFormat,
     ImageSource,
+    ImageSourceSamplingStrategy,
     IPVersion,
     LifecycleState,
     MediaType,
@@ -49,6 +50,7 @@ from aiperf.common.enums.enums import (
     WorkerStatus,
 )
 from aiperf.common.enums.metric_enums import (
+    AggregationKind,
     BaseMetricUnit,
     BaseMetricUnitInfo,
     EnergyMetricUnit,
@@ -110,6 +112,7 @@ __all__ = [
     "IPVersion",
     "ImageFormat",
     "ImageSource",
+    "ImageSourceSamplingStrategy",
     "LifecycleState",
     "MediaType",
     "MessageType",
@@ -128,6 +131,7 @@ __all__ = [
     "MetricValueTypeT",
     "MetricValueTypeVarT",
     "MetricConsoleGroup",
+    "AggregationKind",
     "ModelSelectionStrategy",
     "OptimizationDirection",
     "PlotMetricDirection",

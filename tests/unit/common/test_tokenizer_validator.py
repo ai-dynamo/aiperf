@@ -95,7 +95,7 @@ class _SyncExecutor:
         future: concurrent.futures.Future = concurrent.futures.Future()
         try:
             future.set_result(fn(*args, **kwargs))
-        except BaseException as e:  # noqa: BLE001 - mirror real executor behavior
+        except BaseException as e:  # mirror real executor behavior
             future.set_exception(e)
         return future
 
@@ -476,6 +476,19 @@ class TestValidatorFakeModelFallback:
 class TestInitWorker:
     """_init_worker must not raise and must configure the root logger."""
 
+    @pytest.fixture(autouse=True)
+    def _restore_root_logger(self):
+        # _init_worker mutates the process-global root logger (level +
+        # handlers). Snapshot and restore so a raised level (e.g. ERROR) can't
+        # leak into later tests and silently swallow their caplog assertions.
+        root = logging.getLogger()
+        level, handlers = root.level, root.handlers[:]
+        try:
+            yield
+        finally:
+            root.setLevel(level)
+            root.handlers[:] = handlers
+
     @pytest.mark.parametrize(
         "level",
         ["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -486,12 +499,8 @@ class TestInitWorker:
 
     def test_init_worker_configures_root_logger(self) -> None:
         root = logging.getLogger()
-        original_level = root.level
-        try:
-            _init_worker("WARNING")
-            assert root.level == logging.WARNING
-        finally:
-            root.setLevel(original_level)
+        _init_worker("WARNING")
+        assert root.level == logging.WARNING
 
 
 @pytest.mark.network
@@ -509,7 +518,7 @@ class TestCacheTokenizerCauseChainPreservation:
             future = pool.submit(
                 _cache_tokenizer, "clearly-not-a-real-model", False, "main"
             )
-            with pytest.raises(Exception) as exc_info:  # noqa: BLE001
+            with pytest.raises(Exception) as exc_info:
                 future.result()
 
         e = exc_info.value

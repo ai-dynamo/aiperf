@@ -17,6 +17,8 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
+from aiperf.common.utils import allow_daemon_children
+
 if TYPE_CHECKING:
     from aiperf.common.tokenizer import Tokenizer
 
@@ -123,8 +125,8 @@ def parallel_decode(
 
     num_workers = max_workers or min(mp.cpu_count() or 4, 8)
 
-    # Temporarily clear the daemon flag so ProcessPoolExecutor can spawn workers.
-    # Python's multiprocessing refuses to spawn children from daemon processes,
+    # ``allow_daemon_children`` clears the daemon flag so ProcessPoolExecutor
+    # can spawn workers: Python refuses to spawn children from daemon processes,
     # and AIPerf services run as daemons.
     #
     # Alternatives considered:
@@ -132,29 +134,16 @@ def parallel_decode(
     #   BrokenProcessPool on macOS due to terminal FD inheritance issues.
     # - loky: robust reusable executor, but still requires the same daemon flag
     #   hack, so no advantage over stdlib.
-    was_daemon = mp.current_process().daemon
-    try:
-        if was_daemon:
-            _set_daemon(False)
-        with ProcessPoolExecutor(
+    with (
+        allow_daemon_children(),
+        ProcessPoolExecutor(
             max_workers=num_workers,
             initializer=_init_worker,
             initargs=(tokenizer_name, trust_remote_code, revision),
-        ) as executor:
-            results = list(
-                executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
-            )
-    finally:
-        if was_daemon:
-            _set_daemon(True)
+        ) as executor,
+    ):
+        results = list(
+            executor.map(_decode_tokens, token_sequences, chunksize=chunksize)
+        )
 
     return results
-
-
-def _set_daemon(daemon: bool) -> None:
-    """Set the daemon flag on the current process."""
-    try:
-        mp.current_process().daemon = daemon
-    except AssertionError:
-        # Fallback to using the internal _config dictionary if assertions are enabled
-        mp.current_process()._config["daemon"] = daemon

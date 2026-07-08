@@ -55,6 +55,11 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
+from aiperf.common.models.network_latency_models import (
+    NetworkLatencyResults,
+    NetworkLatencySample,
+    NetworkLatencyTargetSummary,
+)
 from aiperf.common.models.prerequisites import TurnPrerequisite
 from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
 from aiperf.common.models.record_models import (
@@ -65,6 +70,7 @@ from aiperf.common.models.record_models import (
     ImageResponseData,
     ImageRetrievalResponseData,
     InferenceServerResponse,
+    MediaCounts,
     MetricRecordInfo,
     MetricRecordMetadata,
     MetricResult,
@@ -84,6 +90,7 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
     TextResponseData,
+    TimesliceResult,
     TokenCounts,
     ToolCallResponseData,
     VideoResponseData,
@@ -205,9 +212,13 @@ __all__ = [
     "MetricResult",
     "MetricSample",
     "MetricValue",
+    "MediaCounts",
     "ModelEndpointInfo",
     "ModelInfo",
     "ModelListInfo",
+    "NetworkLatencyResults",
+    "NetworkLatencySample",
+    "NetworkLatencyTargetSummary",
     "ParsedResponse",
     "ParsedResponseRecord",
     "PhaseRecordsStats",
@@ -248,6 +259,7 @@ __all__ = [
     "TimeRangeFilter",
     "TimesliceCollectionExportData",
     "TimesliceData",
+    "TimesliceResult",
     "TokenCounts",
     "ToolCallResponseData",
     "TraceDataExport",
