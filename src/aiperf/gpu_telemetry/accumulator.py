@@ -138,7 +138,9 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         here before the loop, mirroring the records-manager task; otherwise the
         ``asyncio.sleep(0)`` tail would busy-spin re-summarizing every tick.
         """
-        interval = Environment.UI.realtime_metrics_interval(self.run.cfg.runtime.ui)
+        interval = self.run.cfg.runtime.realtime_metrics_interval(
+            self.run.cfg.runtime.ui
+        )
         if interval == 0:
             return
         while not self.stop_requested:
@@ -188,7 +190,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         2. Real-time dashboard updates when --gpu-telemetry dashboard is enabled
 
         Async and runs periodically under the dashboard cadence
-        (`REALTIME_METRICS_INTERVAL`). Emits one MetricResult per GPU per
+        (`RuntimeConfig.realtime_metrics_interval`). Emits one MetricResult per GPU per
         signal. Contrast with `compute_efficiency_metrics` below, which is
         sync, runs once per profiling phase, and aggregates across GPUs
         into cross-GPU totals.

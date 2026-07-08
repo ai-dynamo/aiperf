@@ -203,21 +203,21 @@ class RuntimeConfig(BaseConfig):
             raise ValueError("api_host requires api_port to be set")
         return self
 
-    @model_validator(mode="after")
-    def apply_stats_interval(self) -> Self:
-        """Write stats_interval through to Environment.UI.REALTIME_METRICS_INTERVAL."""
+    def realtime_metrics_interval(self, ui_type: UIType) -> float:
+        """Resolve the realtime stats tick interval for this config.
+
+        Precedence: ``stats_interval`` (this config), then
+        ``AIPERF_UI_REALTIME_METRICS_INTERVAL``, then the per-UI auto-default
+        (5s under ``--ui dashboard``, 30s otherwise). Scoped to the config so
+        one run's ``--stats-interval`` cannot leak into a later config built
+        in the same process; child services see the value via the serialized
+        ``BenchmarkRun`` config, not process globals.
+        """
         if self.stats_interval is not None:
-            import os
+            return self.stats_interval
+        from aiperf.common.environment import Environment  # local import: avoid cycle
 
-            from aiperf.common.environment import Environment
-
-            # The parent's already-instantiated Environment singleton won't
-            # re-read env, so mutate the global directly (fork children inherit
-            # it). Also write os.environ so spawn children rebuilding
-            # _Environment() from the environment pick up the flag.
-            Environment.UI.REALTIME_METRICS_INTERVAL = self.stats_interval
-            os.environ["AIPERF_UI_REALTIME_METRICS_INTERVAL"] = str(self.stats_interval)
-        return self
+        return Environment.UI.realtime_metrics_interval(ui_type)
 
 
 __all__ = [

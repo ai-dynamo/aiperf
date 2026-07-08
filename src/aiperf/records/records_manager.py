@@ -1135,7 +1135,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ``realtime_metrics_interval`` returns when unset), so a
         ``--ui dashboard --stats-interval 0`` run still drives the live panel.
         """
-        configured_interval = Environment.UI.realtime_metrics_interval(
+        configured_interval = self.run.cfg.runtime.realtime_metrics_interval(
             self.run.cfg.ui_type
         )
         log_block_enabled = configured_interval != 0
