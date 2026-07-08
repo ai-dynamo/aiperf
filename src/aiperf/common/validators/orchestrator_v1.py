@@ -210,6 +210,95 @@ def _check_prereqs(
             )
 
 
+def _collect_turn_declared_spawn_edges(
+    metadata: DatasetMetadata,
+) -> tuple[dict[str, set[str]], dict[tuple[str, str], list[str]]]:
+    """Collect spawn-graph edges restricted to turn-declared branches.
+
+    Maps each conversation_id to the set of child conversation_ids reachable
+    through branches whose ``branch_id`` at least one turn declares, plus the
+    branch declaration context for each edge. Descriptors whose ``branch_id``
+    no turn declares are excluded: both orchestrator dispatch paths
+    (``get_branch_ids`` and pre-session dispatch) gate on ``turn.branch_ids``
+    membership, so an undeclared descriptor never spawns and its children are
+    not runtime edges.
+    """
+    spawn_edges: dict[str, set[str]] = {}
+    edge_contexts: dict[tuple[str, str], list[str]] = {}
+    for conv in metadata.conversations:
+        branch_declaration_turn: dict[str, int] = {}
+        for turn_idx, turn in enumerate(conv.turns):
+            for b_id in turn.branch_ids:
+                branch_declaration_turn.setdefault(b_id, turn_idx)
+        for branch in conv.branches:
+            decl_idx = branch_declaration_turn.get(branch.branch_id)
+            if decl_idx is None:
+                continue
+            for child_id in branch.child_conversation_ids:
+                spawn_edges.setdefault(conv.conversation_id, set()).add(child_id)
+                edge_contexts.setdefault((conv.conversation_id, child_id), []).append(
+                    f"conversation '{conv.conversation_id}' turn {decl_idx} "
+                    f"branch '{branch.branch_id}' -> '{child_id}'"
+                )
+    return spawn_edges, edge_contexts
+
+
+def _assert_spawn_graph_acyclic(metadata: DatasetMetadata) -> None:
+    """Reject any cycle in the spawn graph.
+
+    A turn-declared branch's ``child_conversation_ids`` are directed edges
+    (the declaring conversation -> each child conversation). The v1
+    orchestrator spawns children recursively at ``agent_depth + 1`` with no
+    cycle guard, so a self-spawn (``r -> r``) or any spawn cycle
+    (``r -> c -> r``) would recurse without bound at replay time. Detected
+    here at load time via an iterative DFS so a deep acyclic chain cannot
+    overflow the stack. Edges come from
+    ``_collect_turn_declared_spawn_edges``, which excludes descriptors no
+    turn declares.
+    """
+    spawn_edges, edge_contexts = _collect_turn_declared_spawn_edges(metadata)
+
+    # color: absent=unvisited, 1=on current DFS path, 2=fully explored.
+    color: dict[str, int] = {}
+    for start in spawn_edges:
+        if color.get(start, 0) != 0:
+            continue
+        color[start] = 1
+        path = [start]
+        stack = [(start, iter(sorted(spawn_edges.get(start, ()))))]
+        while stack:
+            node, neighbors = stack[-1]
+            descended = False
+            for nxt in neighbors:
+                state = color.get(nxt, 0)
+                if state == 1:
+                    cycle = path[path.index(nxt) :] + [nxt]
+                    cycle_edge_contexts: list[str] = []
+                    for src, dst in zip(cycle, cycle[1:], strict=False):
+                        cycle_edge_contexts.extend(
+                            edge_contexts.get(
+                                (src, dst), [f"conversation '{src}' -> '{dst}'"]
+                            )
+                        )
+                    declarations = "; ".join(cycle_edge_contexts)
+                    raise NotImplementedError(
+                        f"spawn graph contains a cycle ({' -> '.join(cycle)}); "
+                        f"declarations: {declarations}; the v1 orchestrator "
+                        f"spawns children recursively with no acyclicity guard, "
+                        f"so a cyclic spawn graph would recurse without bound"
+                    )
+                if state == 0:
+                    color[nxt] = 1
+                    path.append(nxt)
+                    stack.append((nxt, iter(sorted(spawn_edges.get(nxt, ())))))
+                    descended = True
+                    break
+            if not descended:
+                color[node] = 2
+                stack.pop()
+                path.pop()
+
+
 def _check_global_fork_single_parent(metadata: DatasetMetadata) -> None:
     """Defense-in-depth across conversations. The loader's
     _resolve_and_validate already enforces this for jsonl input, but
@@ -245,7 +334,37 @@ def _validate_conversation(
             branch_ids_by_turn[idx] = list(turn.branch_ids)
     _check_unique_branch_ids_per_turn(conv, branch_ids_by_turn)
 
+    # Duplicate branch *descriptor* check: two ConversationBranchInfo objects
+    # in one conversation sharing a branch_id silently collapse under the
+    # dict-comp below (and in the orchestrator), dropping all but the last and
+    # never spawning the dropped branch's children.
+    seen_branch_descriptor_ids: set[str] = set()
+    for b in conv.branches:
+        if b.branch_id in seen_branch_descriptor_ids:
+            raise NotImplementedError(
+                f"conversation '{conv.conversation_id}': branch_id "
+                f"'{b.branch_id}' is declared by multiple "
+                f"ConversationBranchInfo objects; each branch_id must map "
+                f"to a single branch descriptor"
+            )
+        seen_branch_descriptor_ids.add(b.branch_id)
+
     branches_by_id = {b.branch_id: b for b in conv.branches}
+
+    # Dangling branch_id check: every branch_id declared on a turn's
+    # branch_ids must resolve to a ConversationBranchInfo, otherwise the
+    # orchestrator's branches_by_id.get(b_id) returns None and the authored
+    # branch silently never spawns.
+    for decl_idx, branch_ids in branch_ids_by_turn.items():
+        for b_id in branch_ids:
+            if b_id not in branches_by_id:
+                raise NotImplementedError(
+                    f"conversation '{conv.conversation_id}' turn "
+                    f"{decl_idx}: branch_id '{b_id}' is declared in "
+                    f"branch_ids but has no matching ConversationBranchInfo; "
+                    f"every declared branch_id must resolve to a branch "
+                    f"descriptor"
+                )
     # Map each branch_id to the earliest turn that declares it, for
     # enforcing strictly-prior-turn spawn references below.
     branch_declaration_turn: dict[str, int] = {}
@@ -269,8 +388,9 @@ def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
         >>> from aiperf.common.validators import validate_for_orchestrator_v1
         >>> validate_for_orchestrator_v1(metadata)  # raises on first violation
 
-    Rules enforced (each violation raises ``NotImplementedError`` with a
-    ``"conversation '<id>' turn <N>: <reason>"`` location prefix):
+    Rules enforced (violations name the affected conversation/turn/branch when
+    a single authoring site exists; graph-wide checks include the relevant
+    declarations):
 
     - prerequisite kinds other than ``SPAWN_JOIN`` (TIMER, EXTERNAL_EVENT, ...)
     - per-child / barrier / timer / event reserved fields on ``TurnPrerequisite``
@@ -280,11 +400,15 @@ def validate_for_orchestrator_v1(metadata: DatasetMetadata) -> None:
     - ``SPAWN_JOIN`` whose referenced branch is on the same or later turn
     - pre-session SPAWN (``dispatch_timing='pre'``) on a non-root or non-turn-0
     - multiple FORK parents claiming the same child across the dataset
+    - self-spawn / cyclic spawn graphs (the recursive spawn would not terminate)
 
     Raises:
         NotImplementedError: First unsupported construct found (fail-fast).
         ValueError: Duplicate ``SPAWN_JOIN`` prereq for the same branch on one turn.
     """
+    # Reject self-spawn / cyclic spawn graphs up front (v1 has no runtime
+    # acyclicity guard, so a cycle recurses without bound).
+    _assert_spawn_graph_acyclic(metadata)
     all_conversation_ids = {c.conversation_id for c in metadata.conversations}
     for conv in metadata.conversations:
         _validate_conversation(conv, all_conversation_ids)
