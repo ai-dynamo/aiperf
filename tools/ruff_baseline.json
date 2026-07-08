@@ -467,7 +467,7 @@
     [
       "C901",
       "src/aiperf/records/records_manager.py",
-      "RecordsManager._process_results"
+      "_render_realtime_block"
     ],
     [
       "C901",
@@ -483,6 +483,11 @@
       "C901",
       "src/aiperf/server_metrics/export_stats.py",
       "_compute_histogram_stats"
+    ],
+    [
+      "C901",
+      "src/aiperf/server_metrics/export_stats.py",
+      "_compute_histogram_timeslices"
     ],
     [
       "C901",

@@ -1,13 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import sys
 from abc import ABC
-
-if sys.version_info >= (3, 11):
-    from asyncio import timeout as async_timeout
-else:
-    from async_timeout import timeout as async_timeout
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
@@ -184,7 +178,7 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         try:
             # Wait for the response future to be set by the command response message handler.
             return await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             return ErrorDetails.from_exception(e)
         finally:
             future.cancel()
@@ -218,7 +212,7 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
                 ),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             return [ErrorDetails.from_exception(e) for _ in range(len(service_ids))]
         finally:
             # Clean up the response futures.
@@ -254,18 +248,18 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
         seen: set[str] = set()
 
         try:
-            async with async_timeout(timeout):
+            async with asyncio.timeout(timeout):
                 for coro in asyncio.as_completed(futures.values()):
                     response = await coro
                     seen.add(response.service_id)
                     yield (response.service_id, response)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Yield timeout errors for services that didn't respond
             for service_id in service_ids:
                 if service_id not in seen:
                     yield (
                         service_id,
-                        ErrorDetails.from_exception(asyncio.TimeoutError()),
+                        ErrorDetails.from_exception(TimeoutError()),
                     )
         finally:
             for future in futures.values():

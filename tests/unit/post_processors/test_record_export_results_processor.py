@@ -881,3 +881,32 @@ class TestRecordExportResultsProcessorLifecycle:
             assert record.metadata.conversation_id == f"conv-{i}"
             assert record.metadata.turn_index == 0
             assert "inter_token_latency" in record.metrics
+
+
+class TestRecordExportSingleRegistration:
+    """Double-write reversion guard: the per-record JSONL must be produced by
+    exactly ONE registered plugin. RecordExportResultsProcessor (results_processor)
+    and RecordExportJSONLWriter (stream_exporter) once BOTH wrote it, duplicating
+    every record. The results_processor registration was removed; the class still
+    exists for direct use/tests but must NOT be auto-instantiated by the registry.
+    """
+
+    def test_record_export_registered_exactly_once(self) -> None:
+        from aiperf.plugin import plugins
+
+        record_export_entries = [
+            (entry.category, entry.name)
+            for entry in plugins.iter_entries()
+            if "RecordExport" in (entry.class_path or "")
+        ]
+        assert record_export_entries == [("stream_exporter", "record_export")], (
+            f"RecordExport must be registered exactly once (a duplicate "
+            f"reintroduces the per-record double-write): {record_export_entries}"
+        )
+
+    def test_results_processor_has_no_record_export(self) -> None:
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        names = [e.name for e in plugins.iter_entries(PluginType.RESULTS_PROCESSOR)]
+        assert "record_export" not in names

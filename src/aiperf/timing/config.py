@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -327,7 +326,10 @@ def _ramp_duration(ramp: object | None) -> float | None:
 
 def _phase_request_rate(phase: PhaseConfig) -> float | None:
     """Return the configured request rate for a phase, if any."""
-    return getattr(phase, "rate", None)
+    # Lazy import: aiperf.config.phases is only a TYPE_CHECKING import here.
+    from aiperf.config.phases import get_phase_rate
+
+    return get_phase_rate(phase)
 
 
 def _phase_arrival_pattern(phase: PhaseConfig) -> ArrivalPattern:

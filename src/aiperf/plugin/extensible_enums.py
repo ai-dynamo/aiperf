@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Iterator
 from enum import Enum
-
-from typing_extensions import Self
+from typing import Self
 
 
 def _normalize_name(value: str) -> str:

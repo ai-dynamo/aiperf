@@ -10762,6 +10762,7 @@
     },
     "PublicDatasetType": {
       "enum": [
+        "exgentic_v2",
         "exgentic",
         "sharegpt",
         "aimo",
@@ -11171,6 +11172,32 @@
           "default": null,
           "description": "Lower bound on worker processes for the adaptive ramp. Distinct from `workers` (the upper bound / target total).",
           "title": "Workersmin",
+          "x-jinja2-supported": true
+        },
+        "statsInterval": {
+          "anyOf": [
+            {
+              "maximum": 1000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.",
+          "title": "Statsinterval",
           "x-jinja2-supported": true
         }
       },
@@ -12746,6 +12773,12 @@
           "default": false,
           "description": "Allow execution of custom tokenizer code from the repository. Required for some models but poses security risk. Only enable for trusted sources.",
           "title": "Trustremotecode",
+          "type": "boolean"
+        },
+        "applyChatTemplate": {
+          "default": false,
+          "description": "Apply the HuggingFace tokenizer's chat template when counting input tokens. When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, EOT, generation-prompt suffix) and the record processor reports ISL using `apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. When disabled (default), both paths use bare-text encoding, so reported ISL matches the prompt content the user asked for and ignores template overhead. Requires an HF tokenizer with a chat template configured; no-ops on tiktoken / un-templated models.",
+          "title": "Applychattemplate",
           "type": "boolean"
         }
       },

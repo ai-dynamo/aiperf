@@ -3,11 +3,10 @@
 
 import logging
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 import numpy as np
 from numpy.typing import NDArray
-from typing_extensions import Self
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import PrometheusMetricType
@@ -495,6 +494,7 @@ class HistogramTimeSeries:
         self._size: int = 0
         self._bucket_les: tuple[str, ...] | None = None
         self._bucket_counts: np.ndarray | None = None
+        self._bucket_schema_mismatch_warned = False
         self._logger = logging.getLogger(__name__)
 
     def append(self, timestamp_ns: int, sample: MetricSample) -> None:
@@ -538,20 +538,9 @@ class HistogramTimeSeries:
         expected_bucket_keys = set(self._bucket_les)
 
         if sample_bucket_keys != expected_bucket_keys:
-            missing_in_sample = expected_bucket_keys - sample_bucket_keys
-            extra_in_sample = sample_bucket_keys - expected_bucket_keys
-
-            if missing_in_sample:
-                self._logger.warning(
-                    f"Histogram bucket schema mismatch: sample is missing buckets {sorted(missing_in_sample)}. "
-                    f"Missing buckets will be filled with 0.0. Expected schema: {self._bucket_les}"
-                )
-
-            if extra_in_sample:
-                self._logger.warning(
-                    f"Histogram bucket schema mismatch: sample has unexpected buckets {sorted(extra_in_sample)}. "
-                    f"Extra buckets will be ignored. Expected schema: {self._bucket_les}"
-                )
+            self._warn_on_bucket_schema_mismatch(
+                sample_bucket_keys, expected_bucket_keys
+            )
 
         # Convert dict to row (order matches _bucket_les, 0.0 for missing buckets)
         bucket_row = np.array([sample.buckets.get(le, 0.0) for le in self._bucket_les])
@@ -600,6 +589,33 @@ class HistogramTimeSeries:
         self._counts[idx] = sample.count or 0.0
         self._bucket_counts[idx] = bucket_row
         self._size += 1
+
+    def _warn_on_bucket_schema_mismatch(
+        self, sample_bucket_keys: set[str], expected_bucket_keys: set[str]
+    ) -> None:
+        if self._bucket_schema_mismatch_warned:
+            return
+
+        missing_in_sample = expected_bucket_keys - sample_bucket_keys
+        extra_in_sample = sample_bucket_keys - expected_bucket_keys
+        mismatch_details: list[str] = []
+
+        if missing_in_sample:
+            mismatch_details.append(
+                f"Histogram bucket schema mismatch: sample is missing buckets {sorted(missing_in_sample)}. "
+                "Missing buckets will be filled with 0.0."
+            )
+        if extra_in_sample:
+            mismatch_details.append(
+                f"Histogram bucket schema mismatch: sample has unexpected buckets {sorted(extra_in_sample)}. "
+                "Extra buckets will be ignored."
+            )
+
+        self._logger.warning(
+            f"{' '.join(mismatch_details)} Expected schema: {self._bucket_les}. "
+            "Further schema mismatch warnings for this histogram series will be suppressed."
+        )
+        self._bucket_schema_mismatch_warned = True
 
     def get_bucket_dict(self, idx: int) -> dict[str, float]:
         """Get bucket snapshot at index as dict for percentile estimation.
@@ -694,7 +710,7 @@ class HistogramTimeSeries:
 
     def get_indices_for_filter(
         self, time_filter: TimeRangeFilter | None
-    ) -> tuple[int | None, int]:
+    ) -> tuple[int | None, int | None]:
         """Get (reference_idx, final_idx) indices for time-filtered histogram processing.
 
         For histogram metrics (cumulative counters), we need:
@@ -712,7 +728,8 @@ class HistogramTimeSeries:
         Returns:
             Tuple of (reference_idx, final_idx) where:
             - reference_idx: Index of last sample < start_ns, or None if none exists
-            - final_idx: Index of last sample <= end_ns, or last index if no end bound
+            - final_idx: Index of last sample <= end_ns, last index if no end bound,
+              or None if end_ns is before the first sample
         """
         reference_idx = None
         final_idx = self._size - 1
@@ -730,7 +747,7 @@ class HistogramTimeSeries:
                 insert_pos = int(
                     np.searchsorted(timestamps, time_filter.end_ns, side="right")
                 )
-                final_idx = insert_pos - 1 if insert_pos > 0 else self._size - 1
+                final_idx = insert_pos - 1 if insert_pos > 0 else None
 
         return reference_idx, final_idx
 
@@ -757,6 +774,8 @@ class HistogramTimeSeries:
             Empty array if fewer than 2 samples or all intervals have zero duration.
         """
         ref_idx, final_idx = self.get_indices_for_filter(time_filter)
+        if final_idx is None:
+            return np.array([], dtype=np.float64)
         start_idx = ref_idx if ref_idx is not None else 0
 
         ts = self.timestamps[start_idx : final_idx + 1]

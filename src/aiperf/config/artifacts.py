@@ -240,6 +240,7 @@ class ArtifactsConfig(BaseConfig):
         "_gpu_telemetry.jsonl",
         "_timeslices.csv",
         "_timeslices.json",
+        "_console.txt",
         "_raw.jsonl",
         ".parquet",
         ".csv",
@@ -269,13 +270,6 @@ class ArtifactsConfig(BaseConfig):
         """Path for the JSON summary export file."""
         base = self._base()
         name = f"{base}.json" if base else "profile_export_aiperf.json"
-        return self.dir / name
-
-    @property
-    def profile_export_console_txt_file(self) -> Path:
-        """Path for the plain-text console output capture file."""
-        base = self._base()
-        name = f"{base}_console.txt" if base else "profile_export_console.txt"
         return self.dir / name
 
     @property
@@ -320,6 +314,13 @@ class ArtifactsConfig(BaseConfig):
         """Path for the raw request/response JSONL export file."""
         base = self._base()
         name = f"{base}_raw.jsonl" if base else "profile_export_raw.jsonl"
+        return self.dir / name
+
+    @property
+    def profile_export_console_txt_file(self) -> Path:
+        """Path for the plain-text console output capture file."""
+        base = self._base()
+        name = f"{base}_console.txt" if base else "profile_export_console.txt"
         return self.dir / name
 
     @property
