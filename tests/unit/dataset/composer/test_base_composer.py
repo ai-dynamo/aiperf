@@ -75,8 +75,10 @@ class TestBaseDatasetComposer:
         # via DistributionParser.parse, which only accepts strings). Each bucket
         # has stddev 0, so sampling is deterministic per bucket: every draw must
         # be one of the two configured (isl, osl) pairs and both must appear.
-        assert composer._seq_distribution is not None
-        samples = {composer._seq_distribution.sample() for _ in range(100)}
+        # Buckets are drawn per conversation (sticky), then lengths per turn.
+        dist = composer._seq_distribution
+        assert dist is not None
+        samples = {dist.sample_lengths(dist.sample_bucket()) for _ in range(100)}
         assert samples == {(100, 25), (200, 50)}
 
     def test_model_selection_round_robin(self, base_config, mock_tokenizer):

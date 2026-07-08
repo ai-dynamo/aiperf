@@ -89,17 +89,23 @@ The string/CLI formats above only support fixed or `mean|stddev` (normal) ISL/OS
 ```yaml
 prompts:
   sequence_distribution:
-    # tied buckets: long-ISL requests get short OSL (inverse correlation)
-    - {isl: {p50: 5000, p99: 40000, mean: 6000}, osl: {mean: 256, stddev: 64}, probability: 50}
+    # Conversation classes: one bucket drawn per conversation, kept for life.
+    - first_turn_isl: {p50: 20000, p99: 100000, mean: 30000}  # turn 1 seed context
+      isl: {mean: 300, stddev: 100}                           # turns 2+ new input
+      osl: {mean: 250, stddev: 80}                            # every turn's output cap
+      probability: 50
     - {isl: {mean: 400000, stddev: 20000}, osl: 64, probability: 1}
 ```
 
 Key behaviors:
 
-- **ISL and OSL are tied per bucket.** Each request first draws *one* bucket (weighted by `probability`), then draws *both* its ISL and its OSL from that bucket's distributions. This is how you model correlations like "longer input → shorter output" — pair a large-ISL bucket with a small-OSL one, as above.
+- **One bucket per conversation ("sticky").** Each conversation draws a single bucket at creation (weighted by `probability`) and keeps it for every turn — its ISL and OSL are drawn from that bucket's distributions on each turn. This is how you model correlations like "longer input → shorter output": a huge-context conversation never gets another class's outputs.
+- **`first_turn_isl` sizes the seed context.** When a bucket sets `first_turn_isl`, turn 1 draws its ISL from it and turns 2+ draw from `isl` (the per-turn growth). When unset, `isl` applies to all turns of that bucket.
 - **Each bucket samples its full shape.** A `{p50, p99, mean}` percentile or `{mean, median}` log-normal bucket is sampled from that distribution on every draw — nothing is flattened to a single mean.
-- **`probability` weights are relative.** They are normalized across all buckets at sampling time and do **not** need to sum to 100 (each must be positive). Above, `50` alongside `1` yields ~98%/2%.
-- When `sequence_distribution` is set, it drives ISL/OSL for every turn — the plain `isl`/`osl` and `first_turn_isl` fields are ignored.
+- **`probability` weights are relative.** Normalized across buckets; no need to sum to 100 (each must be positive; `probability: 0` disables a bucket).
+- When `sequence_distribution` is set it drives ISL/OSL for every turn: the plain `isl`/`osl` fields are ignored, and combining it with a top-level `first_turn_isl` is a config error — set `first_turn_isl` per bucket instead.
+
+> **Behavior change:** older releases drew a fresh bucket for every *turn* of a multi-turn conversation. Buckets are now drawn once per *conversation*. Single-turn workloads are unaffected.
 
 ## Examples
 

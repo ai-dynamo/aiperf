@@ -13,6 +13,7 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config.types import SequenceDistributionEntry
 
 
 def _expected(distribution: object | None) -> float:
@@ -104,6 +105,13 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         for _ in range(self._num_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
+            # The conversation's workload class: drawn once, kept for all turns.
+            bucket = (
+                self._seq_distribution.sample_bucket()
+                if self._seq_distribution is not None
+                else None
+            )
+
             num_turns = (
                 self._turns_dist.sample_int(self._turn_sampler_rng)
                 if self._turns_dist is not None
@@ -112,7 +120,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
             for turn_idx in range(num_turns):
-                turn = self._create_turn(is_first=(turn_idx == 0))
+                turn = self._create_turn(is_first=(turn_idx == 0), bucket=bucket)
                 conversation.turns.append(turn)
             conversations.append(conversation)
 
@@ -120,7 +128,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._finalize_conversations(conversations)
         return conversations
 
-    def _create_turn(self, is_first: bool) -> Turn:
+    def _create_turn(
+        self, is_first: bool, bucket: SequenceDistributionEntry | None = None
+    ) -> Turn:
         """Create a turn object that contains synthetic payloads to send.
 
         It generates multi-modal data (e.g. text, image, audio) using synthetic
@@ -128,6 +138,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         Args:
             is_first: Whether the turn is the first turn in the conversation.
+            bucket: The conversation's sticky sequence_distribution bucket
+                (None when no sequence_distribution is configured).
 
         Returns:
             Turn: A dataset representation of a single turn.
@@ -135,7 +147,7 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn = Turn()
 
         if self.include_prompt:
-            turn.texts.append(self._generate_text_payloads(turn, is_first))
+            turn.texts.append(self._generate_text_payloads(turn, is_first, bucket))
         if self.include_image:
             turn.images.append(self._generate_image_payloads())
         if self.include_audio:
@@ -158,16 +170,23 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "setting the mean to a positive value."
             )
 
-        self._finalize_turn(turn)
+        self._finalize_turn(turn, bucket)
 
         return turn
 
-    def _generate_text_payloads(self, turn: Turn, is_first: bool) -> Text:
+    def _generate_text_payloads(
+        self,
+        turn: Turn,
+        is_first: bool,
+        bucket: SequenceDistributionEntry | None = None,
+    ) -> Text:
         """Generate text payloads for a single turn.
 
         Args:
             turn: The turn object (used for caching sequence lengths)
             is_first: Whether the turn is the first turn in the conversation.
+            bucket: The conversation's sticky sequence_distribution bucket
+                (None when no sequence_distribution is configured).
 
         Returns:
             Text: A text payload object.
@@ -185,7 +204,9 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         # Sample ISL/OSL pair for this request (cached for consistency)
         turn_id = id(turn)
-        isl, _ = self._get_turn_sequence_lengths(turn_id, is_first=is_first)
+        isl, _ = self._get_turn_sequence_lengths(
+            turn_id, is_first=is_first, bucket=bucket
+        )
 
         # `isl` was already drawn from the full typed distribution inside
         # `_get_turn_sequence_lengths` via `sample_int(rng)`. Passing a

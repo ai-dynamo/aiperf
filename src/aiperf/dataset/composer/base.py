@@ -61,13 +61,26 @@ class _TypedSequenceDistribution:
             cumulative += entry.probability / total
             self._cumulative.append(cumulative)
 
-    def sample(self) -> tuple[int, int]:
+    def sample_bucket(self) -> SequenceDistributionEntry:
+        """Draw one weighted bucket. Called once per conversation: the bucket
+        is the conversation's workload class and stays fixed for its life."""
         r = self._rng.random()
         idx = bisect.bisect_right(self._cumulative, r)
-        entry = self._entries[min(idx, len(self._entries) - 1)]
+        return self._entries[min(idx, len(self._entries) - 1)]
+
+    def sample_lengths(
+        self, bucket: SequenceDistributionEntry, *, is_first: bool = False
+    ) -> tuple[int, int]:
+        """Draw one (ISL, OSL) pair from the held bucket. The first turn's ISL
+        comes from the bucket's first_turn_isl (seed context) when set."""
+        isl_dist = (
+            bucket.first_turn_isl
+            if is_first and bucket.first_turn_isl is not None
+            else bucket.isl
+        )
         return (
-            entry.isl.sample_int(self._rng),
-            entry.osl.sample_int(self._rng),
+            isl_dist.sample_int(self._rng),
+            bucket.osl.sample_int(self._rng),
         )
 
 
@@ -125,9 +138,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         # ``PromptConfig.sequence_distribution`` is a
         # ``list[SequenceDistributionEntry]`` of typed ``SamplingDistribution``
-        # objects. The runtime sampler draws each bucket's ISL/OSL from their
-        # full distribution shape (lognormal/multimodal/empirical/percentile),
-        # not a flattened mean+stddev.
+        # objects. Each conversation draws ONE bucket at creation and keeps it
+        # for every turn (sticky per-conversation workload class); the runtime
+        # sampler draws that bucket's ISL/OSL from their full distribution shape
+        # (lognormal/multimodal/empirical/percentile), not a flattened
+        # mean+stddev.
         self._seq_distribution: _TypedSequenceDistribution | None = (
             self._build_sequence_distribution()
         )
@@ -200,7 +215,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             raise ValueError(f"Invalid model selection strategy: {strategy}.")
 
     def _get_turn_sequence_lengths(
-        self, turn_id: int, *, is_first: bool = False
+        self,
+        turn_id: int,
+        *,
+        is_first: bool = False,
+        bucket: SequenceDistributionEntry | None = None,
     ) -> tuple[int, int]:
         """Sample (or return the cached) ISL/OSL pair for a specific turn.
 
@@ -211,9 +230,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         Args:
             turn_id: Unique identifier for the turn
-            is_first: When True and ``prompts.first_turn_isl`` is set, the ISL is
-                drawn from that starting-context distribution instead of ``isl``.
-                Only affects the plain isl/osl path (sequence_distribution ignores it).
+            is_first: When True the ISL is drawn from the first-turn starting-
+                context distribution instead of ``isl`` (``prompts.first_turn_isl``
+                on the plain path, ``bucket.first_turn_isl`` on the
+                sequence_distribution path).
+            bucket: The conversation's sticky sequence_distribution bucket.
+                Required on the sequence_distribution path when the cache is
+                cold; None falls back to a fresh bucket draw (non-synthetic
+                composers that never threaded one, e.g. rankings max_tokens).
 
         Returns:
             Tuple of (input_seq_len, output_seq_len)
@@ -243,7 +267,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             )
             seq_lengths = (isl, osl if osl is not None else max(128, isl // 2))
         else:
-            seq_lengths = self._seq_distribution.sample()
+            if bucket is None:
+                bucket = self._seq_distribution.sample_bucket()
+            seq_lengths = self._seq_distribution.sample_lengths(
+                bucket, is_first=is_first
+            )
 
         self._turn_sequence_cache[turn_id] = seq_lengths
         return seq_lengths
@@ -256,7 +284,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         self._turn_sequence_cache.pop(turn_id, None)
 
-    def _set_max_tokens(self, turn: Turn) -> None:
+    def _set_max_tokens(
+        self, turn: Turn, bucket: SequenceDistributionEntry | None = None
+    ) -> None:
         """Set max_tokens for the turn based on the sequence distribution or output configuration.
 
         If the turn already has max_tokens set (e.g., from per-line input data),
@@ -265,6 +295,8 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         Args:
             turn: The turn object to finalize.
+            bucket: The conversation's sticky sequence_distribution bucket, so the
+                cached OSL comes from the same class the turn's ISL was drawn from.
         """
         if turn.max_tokens is not None:
             return
@@ -272,7 +304,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         if self._seq_distribution is not None:
             # Use cached sequence distribution to get OSL (ensures ISL/OSL pairing consistency)
             turn_id = id(turn)
-            _, osl = self._get_turn_sequence_lengths(turn_id)
+            _, osl = self._get_turn_sequence_lengths(turn_id, bucket=bucket)
             if osl > 0:
                 turn.max_tokens = osl
         else:
@@ -281,7 +313,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 _, osl = self._get_turn_sequence_lengths(id(turn))
                 turn.max_tokens = osl
 
-    def _finalize_turn(self, turn: Turn) -> None:
+    def _finalize_turn(
+        self, turn: Turn, bucket: SequenceDistributionEntry | None = None
+    ) -> None:
         """Finalize a turn by populating all required metadata fields.
 
         This method handles:
@@ -291,10 +325,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         Args:
             turn: The turn object to finalize.
+            bucket: The conversation's sticky sequence_distribution bucket,
+                forwarded so max_tokens is drawn from the same class.
         """
         if turn.model is None:
             turn.model = self._select_model_name()
-        self._set_max_tokens(turn)
+        self._set_max_tokens(turn, bucket)
 
         # Clear cached sequence lengths for this turn to free memory
         turn_id = id(turn)

@@ -711,13 +711,24 @@ class TestSequenceCaching:
             def create_dataset(self):
                 return []
 
-        # Set up composer with distribution
+        # Set up composer with distribution. The runtime _seq_distribution is a
+        # _TypedSequenceDistribution (fixed-scalar buckets here for determinism).
+        from aiperf.config.types import SequenceDistributionEntry
+        from aiperf.dataset.composer.base import _TypedSequenceDistribution
+
         composer = MockComposer.__new__(MockComposer)
-        dist = DistributionParser.parse("128,64:50;256,128:50")
-        composer._seq_distribution = dist
+        entries = [
+            SequenceDistributionEntry.model_validate(
+                {"isl": 128, "osl": 64, "probability": 50}
+            ),
+            SequenceDistributionEntry.model_validate(
+                {"isl": 256, "osl": 128, "probability": 50}
+            ),
+        ]
+        composer._seq_distribution = _TypedSequenceDistribution(
+            entries, rng.derive("test_composer")
+        )
         composer._turn_sequence_cache = {}
-        # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer")
 
         # Create a turn and get its ID
         turn = Turn()
@@ -754,15 +765,20 @@ class TestSequenceCaching:
             def create_dataset(self):
                 return []
 
-        # Set up composer with distribution
+        # Set up composer with a single fixed bucket for predictable results.
+        from aiperf.config.types import SequenceDistributionEntry
+        from aiperf.dataset.composer.base import _TypedSequenceDistribution
+
         composer = MockComposer.__new__(MockComposer)
-        dist = DistributionParser.parse(
-            "100,50:100"
-        )  # Single pair for predictable results
-        composer._seq_distribution = dist
+        composer._seq_distribution = _TypedSequenceDistribution(
+            [
+                SequenceDistributionEntry.model_validate(
+                    {"isl": 100, "osl": 50, "probability": 100}
+                )
+            ],
+            rng.derive("test_composer2"),
+        )
         composer._turn_sequence_cache = {}
-        # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer2")
 
         # Create two different turns
         turn1 = Turn()

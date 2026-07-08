@@ -292,7 +292,7 @@ class TestZeroWeightBuckets:
             ),
         ]
         dist = _TypedSequenceDistribution(entries, rng.derive("test.zero.bucket"))
-        draws = [dist.sample() for _ in range(500)]
+        draws = [dist.sample_lengths(dist.sample_bucket()) for _ in range(500)]
         assert all(isl == 5000 and osl == 500 for isl, osl in draws)
 
     def test_zero_weight_bucket_end_to_end_via_composer(self):
