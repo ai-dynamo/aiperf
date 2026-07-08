@@ -180,9 +180,10 @@ class MetricsSummary:
     those tags written verbatim — same shape, fewer keys — so the UI reads
     every metric through the single path ``summary[tag][stat]``.
 
-    Two derived top-level scalars are bolted on:
-    ``error_rate`` (errors / requests) and ``total_requests`` (request count).
-    These aren't AIPerf metric tags; they're computed from the raw counts.
+    Two derived top-level scalars are bolted on: ``total_requests``
+    (successful + failed requests) and ``error_rate`` (fraction of that
+    total that failed, 0..1). These aren't AIPerf metric tags; they're
+    computed from the raw success/error counts.
     """
 
     data: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -345,18 +346,45 @@ def _derived_scalars(
 ) -> dict[str, Any]:
     """Compute the two derived top-level scalars: ``total_requests`` and ``error_rate``.
 
-    Prefers the live counts (``request_count``/``error_request_count`` metric
-    tags); falls back to the top-level scalars ``profile_export_aiperf.json``
-    keeps for completed runs. Non-finite derived values (e.g. an
-    ``error_request_count`` of NaN) are dropped rather than written.
+    ``total_requests`` is *successes + errors*. ``request_count`` counts only
+    successful requests (see :class:`RequestCountMetric`) and
+    ``error_request_count`` counts only failures, so their sum is the grand
+    total the export and console report — using ``request_count`` alone would
+    undercount by every failed request.
+
+    ``error_rate`` is the fraction (0..1) of that grand total that failed.
+    When the authoritative ``request_error_rate`` metric tag (a percent,
+    ``100 * errors / total``) is present it is mirrored verbatim (``rate/100``)
+    so ``status.summary`` agrees with the export exactly; otherwise it falls
+    back to ``errors / total``.
+
+    Prefers the live per-tag counts; falls back to the top-level scalars a
+    round-tripped ``status.summary`` / ``profile_export_aiperf.json`` keeps for
+    completed runs. A fully-failed run (``request_count`` absent, only
+    ``error_request_count`` present) still reports its total and a 1.0 error
+    rate. A counter that is *absent* contributes 0; a counter that is *present
+    but non-finite* (e.g. an ``error_request_count`` of NaN) is treated as
+    unknown, so ``error_rate`` is dropped rather than fabricated from a
+    NaN-as-zero.
     """
     out: dict[str, Any] = {}
     rc = (by_tag.get("request_count") or {}).get("avg")
     ec = (by_tag.get("error_request_count") or {}).get("avg")
-    if isinstance(rc, (int, float)) and rc > 0:
-        out["total_requests"] = int(rc)
-        if is_finite_value(ec):
-            out["error_rate"] = float(ec) / float(rc)
+    rer = (by_tag.get("request_error_rate") or {}).get("avg")
+    # Distinguish "absent" (None -> counts as 0) from "present but non-finite"
+    # (NaN/inf -> unknown): a NaN error count must not surface as a bogus 0.0
+    # error rate that hides real failures.
+    rc_bad = rc is not None and not is_finite_value(rc)
+    ec_bad = ec is not None and not is_finite_value(ec)
+    successes = float(rc) if is_finite_value(rc) else 0.0
+    errors = float(ec) if is_finite_value(ec) else 0.0
+    total = successes + errors
+    if total > 0:
+        out["total_requests"] = int(total)
+        if is_finite_value(rer):
+            out["error_rate"] = float(rer) / 100.0
+        elif not rc_bad and not ec_bad:
+            out["error_rate"] = errors / total
     if "error_rate" not in out and is_finite_value(metrics.get("error_rate")):
         out["error_rate"] = float(metrics["error_rate"])
     if "total_requests" not in out and isinstance(

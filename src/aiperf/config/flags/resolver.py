@@ -66,8 +66,6 @@ def resolve_config(
         Fully resolved `AIPerfConfig` ready for downstream use.
     """
     from aiperf.config.flags.converter import (
-        _promote_cli_dataset_magic_lists,
-        _promote_magic_lists_to_sweep_block,
         _wrap_under_envelope,
         convert_cli_to_aiperf,
     )
@@ -79,17 +77,27 @@ def resolve_config(
         return convert_cli_to_aiperf(cli_config)
 
     from aiperf.config import AIPerfConfig
-    from aiperf.config.loader import load_config_dict
+    from aiperf.config.loader import load_config_dict_capture_pre_jinja
 
-    yaml_dict = load_config_dict(config_file)
+    # Capture BOTH the post-Jinja dict (feeds Pydantic validation — templates
+    # would fail int/float field validation) AND the post-env-var/pre-Jinja
+    # dict (`{{ var }}` references intact). The pre-Jinja envelope is stashed
+    # on `_raw_envelope` below so sweep expansion can re-render swept
+    # `variables.*` body fields per variation — exactly as
+    # `load_config_from_string` does (core.py `config._raw_envelope =
+    # pre_jinja`). Without it, `aiperf profile --config`/`aiperf kube profile
+    # --config` collapse every Jinja-templated sweep variation to the base
+    # value, disagreeing with `aiperf config expand` for the same file.
+    yaml_dict, raw_yaml_dict = load_config_dict_capture_pre_jinja(config_file)
     # Normalize the benchmark body's shorthand forms (dataset:/flat phases:/
-    # model:) up front: the override walks below (_apply_phase_loadgen_overrides,
-    # promote_benchmark_magic_lists) require the normalized list shapes.
-    # Historically they got them via a side effect — model_validate's
-    # before-normalizer mutated this very dict in place; the normalizers now
-    # operate on copies, so the normalization must be explicit here.
-    if isinstance(yaml_dict.get("benchmark"), dict):
-        yaml_dict["benchmark"] = normalize_benchmark_input(yaml_dict["benchmark"])
+    # model:) up front on BOTH dicts: the override walks below
+    # (_apply_phase_loadgen_overrides, promote_benchmark_magic_lists) require
+    # the normalized list shapes. Historically they got them via a side
+    # effect — model_validate's before-normalizer mutated this very dict in
+    # place; the normalizers now operate on copies, so the normalization must
+    # be explicit here.
+    _normalize_envelope_benchmark(yaml_dict)
+    _normalize_envelope_benchmark(raw_yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
@@ -98,7 +106,8 @@ def resolve_config(
     # whenever ``base.yaml`` has ``streaming: false``. Building only the
     # endpoint/input overlay (no recipe / no sweep) keeps this preliminary
     # validation cheap and avoids a chicken-and-egg dependency on the
-    # recipe's own outputs.
+    # recipe's own outputs. The recipe view uses the POST-Jinja dict because
+    # it feeds Pydantic validation.
     pre_overrides: dict[str, Any] = {}
     _apply_endpoint_overrides(pre_overrides, cli_config)
     _apply_input_overrides(pre_overrides, cli_config)
@@ -111,8 +120,52 @@ def resolve_config(
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
-    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
-    merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
+
+    # Apply the identical override pipeline to both envelopes so the validated
+    # config and the pre-Jinja `_raw_envelope` describe the same benchmark:
+    # same CLI overrides deep-merged, same phase/loadgen/magic-list promotion.
+    merged = _merge_overrides_into_envelope(yaml_dict, overrides, cli_config)
+    raw_merged = _merge_overrides_into_envelope(raw_yaml_dict, overrides, cli_config)
+
+    config = AIPerfConfig.model_validate(merged)
+    config._raw_envelope = raw_merged
+    return config
+
+
+def _normalize_envelope_benchmark(envelope: dict[str, Any]) -> None:
+    """Normalize the ``benchmark`` body's shorthand forms in place.
+
+    Applied to both the post-Jinja and pre-Jinja envelope dicts so the two
+    downstream plans stay structurally identical. ``normalize_benchmark_input``
+    only rewrites shape (model->models, dataset->datasets, flat phases), never
+    leaf values, so it is safe to run on the pre-Jinja dict whose phase fields
+    still hold ``{{ var }}`` template strings.
+    """
+    if isinstance(envelope.get("benchmark"), dict):
+        envelope["benchmark"] = normalize_benchmark_input(envelope["benchmark"])
+
+
+def _merge_overrides_into_envelope(
+    envelope: dict[str, Any],
+    overrides: dict[str, Any] | None,
+    cli_config: CLIConfig,
+) -> dict[str, Any]:
+    """Deep-merge CLI ``overrides`` onto one envelope dict and apply the
+    phase/dataset/magic-list promotion pipeline.
+
+    Runs identically on the post-Jinja envelope (fed to validation) and the
+    pre-Jinja envelope (stashed on ``_raw_envelope``). ``overrides`` is
+    deep-copied per call so the in-place promotion mutators can never leak
+    a shared sub-object from one pass into the other.
+    """
+    from aiperf.config.flags.converter import (
+        _promote_cli_dataset_magic_lists,
+        _promote_magic_lists_to_sweep_block,
+    )
+
+    overrides = copy.deepcopy(overrides) if overrides else overrides
+    envelope = normalize_server_metrics_base_for_override(envelope, overrides)
+    merged = deep_merge(envelope, overrides) if overrides else envelope
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
     promote_benchmark_magic_lists(
@@ -122,7 +175,7 @@ def resolve_config(
         promote_magic_lists_to_sweep_block=_promote_magic_lists_to_sweep_block,
         retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
     )
-    return AIPerfConfig.model_validate(merged)
+    return merged
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

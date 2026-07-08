@@ -1094,9 +1094,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         record.clock_offset_ns = self.clock_offset_tracker.offset_ns
         await self._send_inference_result_message(record)
 
-        # Copy request-level errors to credit context for CreditReturn tracking
+        # Copy request-level errors to credit context for CreditReturn tracking.
+        # A client-side cancellation (--request-cancellation-rate) surfaces as a
+        # was_cancelled record carrying a code-499 RequestCancellationError.
+        # Mark the credit cancelled so the CreditReturn routes to the dedicated
+        # cancelled bucket (CreditCounter.increment_returned) instead of the
+        # error/goodput denominator.
         if record.error is not None:
             credit_context.error = record.error
+        credit_context.cancelled = credit_context.cancelled or record.was_cancelled
 
         if session.should_store_response() and (
             resp_turn := await self._process_response(record)

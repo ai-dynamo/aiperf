@@ -539,6 +539,47 @@ def load_config_dict(
     return _expand_with_recursion_guard(data, file_path, substitute_env=substitute_env)
 
 
+def load_config_dict_capture_pre_jinja(
+    file_path: Path | str,
+    *,
+    substitute_env: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Like ``load_config_dict`` but also return the pre-Jinja envelope dict.
+
+    Returns ``(post_jinja, pre_jinja)``: the first is the fully-expanded dict
+    (env-var + Jinja rendered) used for Pydantic validation; the second is the
+    post-env-var, PRE-Jinja snapshot with ``{{ var }}`` references still intact.
+
+    ``resolve_config`` uses this so it can stash the pre-Jinja envelope on
+    ``AIPerfConfig._raw_envelope`` -- exactly as ``load_config_from_string``
+    does (see ``load_config_from_string`` where it sets ``config._raw_envelope
+    = pre_jinja``) -- keeping the ``--config`` + CLI-flag path's sweep
+    expansion identical to the string-loader path's.
+
+    Raises ``ConfigurationError`` if the file is missing/unreadable; YAML/Jinja
+    errors propagate from the underlying loaders.
+    """
+    file_path = Path(file_path)
+    if not file_path.exists():
+        raise ConfigurationError(
+            f"Configuration file not found: {file_path}", file_path=file_path
+        )
+    if not file_path.is_file():
+        raise ConfigurationError(
+            f"Path is not a file: {file_path}", file_path=file_path
+        )
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ConfigurationError(
+            f"Failed to read configuration file: {e}", file_path=file_path
+        ) from e
+
+    data = _parse_yaml_mapping(content, file_path)
+    _auto_migrate_flat_shape(data, file_path)
+    return _expand_capture_pre_jinja(data, file_path, substitute_env=substitute_env)
+
+
 def dump_config(
     config: AIPerfConfig,
     *,

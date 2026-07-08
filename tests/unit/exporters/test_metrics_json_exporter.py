@@ -2,14 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import os
 import tempfile
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import orjson
 import pytest
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import (
@@ -122,6 +125,65 @@ class TestMetricsJsonExporter:
             # assert data["input_config"]["output"]["artifact_directory"] == str(
             #     output_dir
             # )
+
+    @pytest.mark.asyncio
+    async def test_start_end_time_are_timezone_independent_utc(
+        self, mock_results, mock_user_config
+    ):
+        """Exported start_time/end_time are absolute UTC, not naive local time.
+
+        Regression guard: writing ``datetime.fromtimestamp(ns)`` (no tz) produced
+        an offset-less local-time string whose meaning depended on the exporting
+        host's timezone. A downstream consumer could not recover the true instant.
+        The fix pins tz=UTC so the encoded value is offset-aware and identical
+        regardless of the ``TZ`` the exporter runs under.
+        """
+        # Fixed instant: 2023-11-14T22:13:20 UTC, plus 30 s.
+        mock_results.start_ns = 1_700_000_000_000_000_000
+        mock_results.end_ns = 1_700_000_030_000_000_000
+
+        exporter_config = ExporterConfig(
+            results=mock_results,
+            config=mock_user_config.benchmark,
+            telemetry_results=None,
+        )
+        exporter = MetricsJsonExporter(exporter_config)
+
+        original_tz = os.environ.get("TZ")
+
+        def _exported_times(tz: str) -> tuple[str, str]:
+            os.environ["TZ"] = tz
+            time.tzset()
+            payload = orjson.loads(exporter._generate_content())
+            return payload["start_time"], payload["end_time"]
+
+        try:
+            utc_start, utc_end = _exported_times("UTC")
+            kolkata_start, kolkata_end = _exported_times("Asia/Kolkata")
+        finally:
+            if original_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = original_tz
+            time.tzset()
+
+        # TZ-independent: the same absolute instant regardless of process TZ.
+        assert utc_start == kolkata_start
+        assert utc_end == kolkata_end
+        # Offset-aware UTC (unambiguous), never a naive local-time string. The
+        # serializer emits the "Z" (Zulu) UTC form; fromisoformat parses it to a
+        # tz-aware datetime with a zero offset.
+        parsed_start = datetime.fromisoformat(utc_start)
+        parsed_end = datetime.fromisoformat(utc_end)
+        assert parsed_start.utcoffset() == UTC.utcoffset(None)
+        assert parsed_end.utcoffset() == UTC.utcoffset(None)
+        # The encoded instant matches the source epoch ns.
+        assert parsed_start == datetime.fromtimestamp(
+            mock_results.start_ns / NANOS_PER_SECOND, tz=UTC
+        )
+        assert parsed_end == datetime.fromtimestamp(
+            mock_results.end_ns / NANOS_PER_SECOND, tz=UTC
+        )
 
     @pytest.mark.asyncio
     async def test_json_export_count_sum_per_metric_type(self, mock_user_config):

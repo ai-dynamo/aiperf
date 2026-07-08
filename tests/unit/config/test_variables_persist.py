@@ -4,8 +4,35 @@
 """Variables block must persist on the resolved config so run-time renderers can use it."""
 
 from aiperf.config import AIPerfConfig
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader import build_benchmark_plan, load_config_from_string
 from aiperf.config.loader.jinja import expand_config_dict
+
+# YAML exercising a Jinja-templated body field swept via `variables.*`. Shared
+# by the resolve_config regression tests below so the `--config` CLI path and
+# the string-loader path are driven off byte-identical input.
+_SWEPT_JINJA_YAML = """
+variables:
+  load: 100
+sweep:
+  type: grid
+  variables:
+    variables.load: [10, 50, 100]
+benchmark:
+  models: [llama]
+  endpoint:
+    type: chat
+    urls: ["http://x:8000/v1/chat/completions"]
+  datasets:
+    - name: main
+      type: synthetic
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: "{{ load * 5 }}"
+      concurrency: "{{ load }}"
+"""
 
 _BASE_YAML = """
 benchmark:
@@ -181,3 +208,50 @@ benchmark:
     assert all(c.phases[0].requests == 1000 for c in plan.configs)
     # The bare-path sweep on concurrency still wins over the YAML default.
     assert [c.phases[0].concurrency for c in plan.configs] == [1, 2]
+
+
+def test_resolve_config_swept_jinja_variable_sweeps(tmp_path):
+    """HIGH regression: `aiperf profile --config` must sweep Jinja-templated
+    body fields, not collapse them to the base variable value.
+
+    Pre-fix bug: `resolve_config` loaded via `load_config_dict` (post-Jinja
+    only) and never populated `_raw_envelope`, so `build_benchmark_plan` fell
+    back to `model_dump` where the templates were already gone. Every variation
+    re-rendered against the SAME (base) `variables.load`, so concurrency was
+    [100, 100, 100] instead of [10, 50, 100] -- the sweep silently didn't
+    sweep. `aiperf config expand` (load_config) disagreed with the very plan
+    that `aiperf profile`/`aiperf kube profile` execute.
+    """
+    config_file = tmp_path / "swept.yaml"
+    config_file.write_text(_SWEPT_JINJA_YAML, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(), config_file=config_file)
+    assert config._raw_envelope is not None
+    plan = build_benchmark_plan(config)
+
+    assert len(plan.configs) == 3
+    assert [c.phases[0].concurrency for c in plan.configs] == [10, 50, 100]
+    assert [c.phases[0].requests for c in plan.configs] == [50, 250, 500]
+
+
+def test_resolve_config_matches_load_config_from_string_plan(tmp_path):
+    """`aiperf profile --config` (resolve_config) and `aiperf config expand`
+    (load_config_from_string) must produce IDENTICAL plans for the same file.
+
+    Locks in the parity the config.py docstring + docs promise: expand mirrors
+    the profile pipeline. Both paths must stash the same pre-Jinja envelope on
+    `_raw_envelope` so the swept variations agree.
+    """
+    config_file = tmp_path / "swept.yaml"
+    config_file.write_text(_SWEPT_JINJA_YAML, encoding="utf-8")
+
+    resolved_plan = build_benchmark_plan(
+        resolve_config(CLIConfig(), config_file=config_file)
+    )
+    string_plan = build_benchmark_plan(load_config_from_string(_SWEPT_JINJA_YAML))
+
+    def _phase_values(plan):
+        return [(c.phases[0].concurrency, c.phases[0].requests) for c in plan.configs]
+
+    assert _phase_values(resolved_plan) == _phase_values(string_plan)
+    assert len(resolved_plan.configs) == len(string_plan.configs) == 3

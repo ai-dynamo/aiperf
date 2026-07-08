@@ -450,15 +450,19 @@ class AIPerfJobInfo(K8sCamelModel):
     total_requests: int | None = Field(
         default=None,
         description=(
-            "Total successful + failed requests issued so far "
-            "(derived ``total_requests``, falling back to request_count.avg)."
+            "Total successful + failed requests issued so far. Derived as "
+            "request_count.avg + error_request_count.avg (successes + errors) "
+            "by ``MetricsSummary.from_metrics``, falling back to "
+            "request_count.avg on older statuses."
         ),
     )
     error_rate: float | None = Field(
         default=None,
         description=(
-            "Fraction of requests that errored (0..1). Derived as "
-            "error_count / request_count by ``MetricsSummary.from_metrics``."
+            "Fraction of requests that errored (0..1). Derived by "
+            "``MetricsSummary.from_metrics`` from the authoritative "
+            "request_error_rate metric (rate/100) when present, else as "
+            "error_count / (successes + errors)."
         ),
     )
     model: str | None = Field(default=None, description="Target model name from spec.")

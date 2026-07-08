@@ -251,6 +251,23 @@ _ERROR_TYPE_MAP: dict[str, str] = {
 }
 
 
+def _classify_http_status(code: Any) -> str | None:
+    """Map an HTTP status code to a coarse spec bucket, or None if not applicable.
+
+    Guards on ``isinstance(code, int)`` because the caller's ``.code`` is typed
+    Any — a non-integer code (e.g. the string "timeout") would raise TypeError
+    on the range comparison and crash the fanout. bool is a subclass of int but
+    meaningless as a status code, so it is excluded.
+    """
+    if not isinstance(code, int) or isinstance(code, bool):
+        return None
+    if 500 <= code <= 599:
+        return "http_5xx"
+    if 400 <= code <= 499:
+        return "http_4xx"
+    return None
+
+
 def _classify_error_type(error: Any | None) -> str | None:
     """Classify an ErrorDetails into a spec error.type value.
 
@@ -263,15 +280,16 @@ def _classify_error_type(error: Any | None) -> str | None:
     error_type = getattr(error, "type", None)
     cause_chain = getattr(error, "cause_chain", None) or []
 
-    # HTTP status code classification. Guard on isinstance(code, int) because
-    # the input type is Any — a non-integer `.code` (e.g. a string "timeout")
-    # would raise TypeError on the range comparison, crashing the fanout.
-    # bool is a subclass of int but is meaningless as a status code.
-    if isinstance(code, int) and not isinstance(code, bool):
-        if 500 <= code <= 599:
-            return "http_5xx"
-        if 400 <= code <= 499:
-            return "http_4xx"
+    # Client-side cancellations (--request-cancellation-rate) surface as HTTP
+    # 499 (Client Closed Request) with a RequestCancellationError type. Classify
+    # them BEFORE the numeric range check, otherwise 499 collapses into the
+    # generic http_4xx bucket alongside real 4xx server errors.
+    if code == 499 or error_type == "RequestCancellationError":
+        return "cancelled"
+
+    http_bucket = _classify_http_status(code)
+    if http_bucket is not None:
+        return http_bucket
 
     # Check error type string
     if error_type and error_type in _ERROR_TYPE_MAP:

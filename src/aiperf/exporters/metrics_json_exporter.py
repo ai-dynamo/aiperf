@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 
 import orjson
 
@@ -58,12 +58,12 @@ class MetricsJsonExporter(MetricsBaseExporter):
         )
 
         start_time = (
-            datetime.fromtimestamp(self._results.start_ns / NANOS_PER_SECOND)
+            datetime.fromtimestamp(self._results.start_ns / NANOS_PER_SECOND, tz=UTC)
             if self._results.start_ns
             else None
         )
         end_time = (
-            datetime.fromtimestamp(self._results.end_ns / NANOS_PER_SECOND)
+            datetime.fromtimestamp(self._results.end_ns / NANOS_PER_SECOND, tz=UTC)
             if self._results.end_ns
             else None
         )

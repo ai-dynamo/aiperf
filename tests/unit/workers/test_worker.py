@@ -35,7 +35,9 @@ from aiperf.credit.messages import (
     WorkerUndispatchable,
 )
 from aiperf.credit.structs import Credit, CreditContext
-from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceRunType
+from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceRunType, TimingMode
+from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.phase.credit_counter import CreditCounter
 from aiperf.workers.worker import Worker
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
@@ -472,6 +474,100 @@ class TestConversationFetchErrorStats:
         assert mock_worker.task_stats.failed == 1
         assert mock_worker.task_stats.completed == 0
         assert mock_worker.task_stats.in_progress == 0
+
+
+@pytest.mark.asyncio
+class TestDispatchTurnCancellationAccounting:
+    """Regression: a client-side cancellation (``--request-cancellation-rate``)
+    yields a ``was_cancelled`` record carrying a code-499 RequestCancellationError.
+
+    ``_dispatch_turn`` must set ``credit_context.cancelled`` so the resulting
+    ``CreditReturn`` routes to the dedicated cancelled bucket instead of the
+    error / goodput-denominator bucket. A genuine error record must still set
+    ``error`` and leave ``cancelled`` False.
+    """
+
+    @staticmethod
+    def _wire_worker(mock_worker, record: RequestRecord) -> MagicMock:
+        """Stub out the I/O around ``_dispatch_turn`` and return a fake session."""
+        session = MagicMock()
+        session.should_store_response.return_value = False
+        mock_worker._create_request_info = Mock()
+        mock_worker.inference_client = MagicMock()
+        mock_worker.inference_client.send_request = AsyncMock(return_value=record)
+        mock_worker._request_latency_ns_for_record = Mock(return_value=None)
+        mock_worker.clock_offset_tracker = MagicMock()
+        mock_worker.clock_offset_tracker.offset_ns = 0
+        mock_worker._send_inference_result_message = AsyncMock()
+        return session
+
+    @staticmethod
+    def _route(credit_context: CreditContext) -> CreditCounter:
+        """Route the credit through the counter exactly as the callback handler
+        does (``cancelled=credit_return.cancelled``, ``errored=error is not None``).
+        """
+        counter = CreditCounter(
+            CreditPhaseConfig(
+                phase=CreditPhase.PROFILING, timing_mode=TimingMode.REQUEST_RATE
+            )
+        )
+        counter.increment_returned(
+            credit_context.credit.is_final_turn,
+            credit_context.cancelled,
+            errored=credit_context.error is not None,
+        )
+        return counter
+
+    async def test_cancelled_record_sets_cancelled_and_is_not_counted_as_error(
+        self, mock_worker, sample_credit_context
+    ):
+        record = RequestRecord(
+            cancellation_perf_ns=123,
+            error=ErrorDetails(
+                message="Request cancelled",
+                code=499,
+                type="RequestCancellationError",
+            ),
+        )
+        session = self._wire_worker(mock_worker, record)
+
+        await mock_worker._dispatch_turn(
+            session=session,
+            credit_context=sample_credit_context,
+            x_request_id="req-cancel",
+            first_token_callback=None,
+        )
+
+        assert record.was_cancelled is True
+        assert sample_credit_context.cancelled is True
+        assert sample_credit_context.error is not None
+
+        counter = self._route(sample_credit_context)
+        assert counter.requests_cancelled == 1
+        assert counter.request_errors == 0
+
+    async def test_genuine_error_record_sets_error_and_not_cancelled(
+        self, mock_worker, sample_credit_context
+    ):
+        record = RequestRecord(
+            error=ErrorDetails(message="boom", code=500, type="HTTPStatusError"),
+        )
+        session = self._wire_worker(mock_worker, record)
+
+        await mock_worker._dispatch_turn(
+            session=session,
+            credit_context=sample_credit_context,
+            x_request_id="req-error",
+            first_token_callback=None,
+        )
+
+        assert record.was_cancelled is False
+        assert sample_credit_context.cancelled is False
+        assert sample_credit_context.error is not None
+
+        counter = self._route(sample_credit_context)
+        assert counter.requests_cancelled == 0
+        assert counter.request_errors == 1
 
 
 class TestKubernetesMode:

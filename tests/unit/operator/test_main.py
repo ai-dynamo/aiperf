@@ -4458,3 +4458,63 @@ class TestFetchProgressServerMetricsLogging:
         )
         # Server metrics must not be written to status on failure
         assert "serverMetrics" not in kopf_patch.status
+
+
+class TestOpenRunsIndexSelfHeal:
+    """`open_runs_index` must survive a corrupt on-disk runs index.
+
+    Regression: the self-heal ran *after* `runs_index.open()`, which raises
+    "file is not a database" on a corrupt DB — so the recovery was dead code
+    and a corrupt index made the operator crash-loop at startup. The check
+    must run before open().
+    """
+
+    @pytest.fixture(autouse=True)
+    async def _isolate_runs_index(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """Stub the fire-and-forget bootstrap scan and guarantee a clean close."""
+        from aiperf.operator import runs_index
+
+        monkeypatch.setattr(runs_index, "bootstrap", AsyncMock())
+        yield
+        await runs_index.close()
+
+    async def test_open_runs_index_self_heals_corrupt_db(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A corrupt runs index is renamed to `.broken-*` and a fresh DB opens."""
+        from aiperf.operator import main as operator_main
+        from aiperf.operator import runs_index
+
+        monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+        db_path = tmp_path / ".aiperf_index.sqlite"
+        corrupt_bytes = b"corrupt garbage " * 128
+        db_path.write_bytes(corrupt_bytes)
+        # A stale WAL sidecar that would re-corrupt the fresh DB if replayed.
+        (tmp_path / ".aiperf_index.sqlite-wal").write_bytes(b"stale wal")
+
+        await operator_main.open_runs_index()
+
+        # A fresh, working index is now open at the original path.
+        assert await runs_index.integrity_check(db_path) is True
+        assert await runs_index.get_meta("schema_version") == "1"
+
+        # The corrupt file was preserved for forensics under a `.broken-*` name.
+        broken = list(tmp_path.glob(".aiperf_index.sqlite.broken-*"))
+        assert len(broken) == 1
+        assert broken[0].read_bytes() == corrupt_bytes
+
+    async def test_open_runs_index_fresh_boot_opens_without_broken_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """First boot (no DB yet) opens a fresh index and leaves no `.broken-*`."""
+        from aiperf.operator import main as operator_main
+        from aiperf.operator import runs_index
+
+        monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+        db_path = tmp_path / ".aiperf_index.sqlite"
+        assert not db_path.exists()
+
+        await operator_main.open_runs_index()
+
+        assert await runs_index.get_meta("schema_version") == "1"
+        assert list(tmp_path.glob(".aiperf_index.sqlite.broken-*")) == []

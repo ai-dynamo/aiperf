@@ -1,17 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import statistics
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.common import random_generator as rng
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Turn
-from aiperf.common.models.sequence_distribution import (
-    SequenceLengthDistribution,
-)
 from aiperf.config import AIPerfConfig
-from aiperf.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset.composer.base import (
+    BaseDatasetComposer,
+    _SequenceDistributionSampler,
+)
 from tests.unit.dataset.composer.conftest import _make_run
 
 _BASE = dict(
@@ -101,8 +103,8 @@ class TestBaseDatasetComposer:
         composer = ConcreteBaseComposer(sequence_dist_config, mock_tokenizer)
 
         assert composer._seq_distribution is not None
-        assert isinstance(composer._seq_distribution, SequenceLengthDistribution)
-        assert len(composer._seq_distribution.pairs) == 2
+        assert isinstance(composer._seq_distribution, _SequenceDistributionSampler)
+        assert len(composer._seq_distribution._entries) == 2
         assert len(composer._turn_sequence_cache) == 0
 
     def test_model_selection_round_robin(self, base_config, mock_tokenizer):
@@ -617,3 +619,257 @@ class TestFinalizeTurnRegressions:
         assert all(isinstance(v, int) and v >= 1 for v in sampled)
         assert min(sampled) != max(sampled), "distribution should vary"
         assert min(sampled) > 50 and max(sampled) < 150
+
+
+# ============================================================================
+# Distribution-fidelity regression tests
+#
+# Two collapse bugs used to flatten a configured non-normal ISL/OSL:
+#   1. ``sequence_distribution`` reduced each isl/osl to (mean, stddev-if-normal),
+#      turning uniform/lognormal/multimodal/empirical buckets into a constant.
+#   2. The file-dataset OSL fallback re-sampled a NORMAL from expected_value,
+#      collapsing an empirical/lognormal/multimodal fallback to a normal.
+#
+# These tests generate a large sample from the composer and compare the actual
+# lengths against the CONFIGURED distribution via a goodness-of-fit check
+# (KS for continuous shapes, chi-square for discrete uniforms). The normal and
+# fixed happy paths are pinned so the fix cannot regress them, and a
+# same-seed determinism test guards reproducibility.
+# ============================================================================
+
+_UNIFORM_POINTS = [128, 256, 384, 512, 640, 768, 896, 1024]
+
+
+def _seq_dist_run(isl, osl=64):
+    """One-bucket sequence_distribution run carrying a full ISL distribution."""
+    return _prompts_config(
+        sequence_distribution=[{"isl": isl, "osl": osl, "probability": 100}]
+    )
+
+
+def _file_osl_run(osl):
+    """File-dataset run whose OSL fallback is the given distribution."""
+    return _make_run(
+        AIPerfConfig(
+            benchmark={
+                **_BASE,
+                "models": ["test-model"],
+                "datasets": [
+                    {
+                        "name": "default",
+                        "type": "file",
+                        "path": "records.jsonl",
+                        "format": "single_turn",
+                        "osl": osl,
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _reference_samples(distribution, n):
+    """Draw ``n`` ints straight from a SamplingDistribution for GoF comparison."""
+    ref_rng = rng.derive("test.distribution.reference")
+    return [distribution.sample_int(ref_rng) for _ in range(n)]
+
+
+class TestDistributionFidelity:
+    """Non-normal ISL/OSL must be sampled from the configured distribution."""
+
+    N = 4000
+
+    @pytest.fixture
+    def mock_tokenizer(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def scipy_stats(self):
+        return pytest.importorskip("scipy.stats")
+
+    def _sample_isls(self, composer, n):
+        return [composer._get_turn_sequence_lengths(300_000 + i)[0] for i in range(n)]
+
+    def _sample_osls(self, composer, n):
+        osls = []
+        for _ in range(n):
+            turn = Turn()
+            composer._finalize_turn(turn)
+            osls.append(turn.max_tokens)
+        return osls
+
+    # ---- DEFECT 1: sequence_distribution ISL ------------------------------
+
+    def test_multimodal_isl_matches_configured_distribution(
+        self, scipy_stats, mock_tokenizer
+    ):
+        """A bimodal ISL bucket must produce both peaks, not the collapsed mean."""
+        isl = {
+            "peaks": [
+                {"mean": 128, "stddev": 5, "weight": 50},
+                {"mean": 2048, "stddev": 20, "weight": 50},
+            ]
+        }
+        composer = ConcreteBaseComposer(_seq_dist_run(isl), mock_tokenizer)
+        isls = self._sample_isls(composer, self.N)
+
+        isl_dist = composer.dataset_config.prompts.sequence_distribution[0].isl
+        pvalue = scipy_stats.ks_2samp(isls, _reference_samples(isl_dist, self.N)).pvalue
+
+        low = sum(1 for v in isls if v < 500)
+        high = sum(1 for v in isls if v > 1500)
+        middle = sum(1 for v in isls if 500 <= v <= 1500)
+        # Collapse bug would yield exactly one value (the mixture mean ~1088).
+        assert len(set(isls)) > 20, "ISL collapsed to (near-)constant"
+        assert low > self.N * 0.4, f"low peak underpopulated: {low}"
+        assert high > self.N * 0.4, f"high peak underpopulated: {high}"
+        assert middle < self.N * 0.02, f"{middle} samples in gap — shape lost"
+        assert pvalue > 0.01, f"KS rejected configured distribution (p={pvalue:.3e})"
+
+    def test_uniform_isl_matches_configured_distribution(
+        self, scipy_stats, mock_tokenizer
+    ):
+        """A discrete-uniform (empirical) ISL must hit every value ~equally."""
+        isl = {"points": [{"value": v, "weight": 1} for v in _UNIFORM_POINTS]}
+        composer = ConcreteBaseComposer(_seq_dist_run(isl), mock_tokenizer)
+        isls = self._sample_isls(composer, self.N)
+
+        assert set(isls) == set(_UNIFORM_POINTS), (
+            f"expected exactly {_UNIFORM_POINTS}, got {sorted(set(isls))}"
+        )
+        observed = [isls.count(v) for v in _UNIFORM_POINTS]
+        expected = [self.N / len(_UNIFORM_POINTS)] * len(_UNIFORM_POINTS)
+        pvalue = scipy_stats.chisquare(observed, expected).pvalue
+        assert pvalue > 0.01, f"chi-square rejected uniformity (p={pvalue:.3e})"
+
+    def test_lognormal_isl_matches_configured_distribution(
+        self, scipy_stats, mock_tokenizer
+    ):
+        """A lognormal ISL must stay right-skewed, not collapse to its mean."""
+        isl = {"mean": 1000, "median": 400}
+        composer = ConcreteBaseComposer(_seq_dist_run(isl), mock_tokenizer)
+        isls = self._sample_isls(composer, self.N)
+
+        isl_dist = composer.dataset_config.prompts.sequence_distribution[0].isl
+        pvalue = scipy_stats.ks_2samp(isls, _reference_samples(isl_dist, self.N)).pvalue
+
+        assert statistics.median(isls) < 800, "skew lost (collapsed to mean?)"
+        assert statistics.stdev(isls) > 50, "variance collapsed"
+        assert pvalue > 0.01, f"KS rejected configured lognormal (p={pvalue:.3e})"
+
+    # ---- DEFECT 2: file-dataset OSL fallback ------------------------------
+
+    def test_multimodal_osl_file_fallback_matches_configured(
+        self, scipy_stats, mock_tokenizer
+    ):
+        """A bimodal file-OSL fallback must produce both peaks."""
+        osl = {
+            "peaks": [
+                {"mean": 50, "stddev": 2, "weight": 50},
+                {"mean": 500, "stddev": 5, "weight": 50},
+            ]
+        }
+        composer = ConcreteBaseComposer(_file_osl_run(osl), mock_tokenizer)
+        osls = self._sample_osls(composer, self.N)
+
+        osl_dist = composer._file_osl_distribution()
+        pvalue = scipy_stats.ks_2samp(osls, _reference_samples(osl_dist, self.N)).pvalue
+
+        low = sum(1 for v in osls if v < 200)
+        high = sum(1 for v in osls if v > 300)
+        # Collapse bug would yield exactly one value (~275).
+        assert len(set(osls)) > 20, "OSL collapsed to (near-)constant"
+        assert low > self.N * 0.4, f"low peak underpopulated: {low}"
+        assert high > self.N * 0.4, f"high peak underpopulated: {high}"
+        assert pvalue > 0.01, f"KS rejected configured distribution (p={pvalue:.3e})"
+
+    def test_uniform_osl_file_fallback_matches_configured(
+        self, scipy_stats, mock_tokenizer
+    ):
+        """A discrete-uniform (empirical) file-OSL fallback must hit every value."""
+        osl = {"points": [{"value": v, "weight": 1} for v in _UNIFORM_POINTS]}
+        composer = ConcreteBaseComposer(_file_osl_run(osl), mock_tokenizer)
+        osls = self._sample_osls(composer, self.N)
+
+        assert set(osls) == set(_UNIFORM_POINTS), (
+            f"expected exactly {_UNIFORM_POINTS}, got {sorted(set(osls))}"
+        )
+        observed = [osls.count(v) for v in _UNIFORM_POINTS]
+        expected = [self.N / len(_UNIFORM_POINTS)] * len(_UNIFORM_POINTS)
+        pvalue = scipy_stats.chisquare(observed, expected).pvalue
+        assert pvalue > 0.01, f"chi-square rejected uniformity (p={pvalue:.3e})"
+
+    # ---- Happy-path (must not regress) ------------------------------------
+
+    def test_normal_isl_no_regression(self, scipy_stats, mock_tokenizer):
+        """normal(512, 64) ISL still samples a matching normal after the fix."""
+        composer = ConcreteBaseComposer(
+            _seq_dist_run({"mean": 512, "stddev": 64}), mock_tokenizer
+        )
+        isls = self._sample_isls(composer, self.N)
+
+        isl_dist = composer.dataset_config.prompts.sequence_distribution[0].isl
+        pvalue = scipy_stats.ks_2samp(isls, _reference_samples(isl_dist, self.N)).pvalue
+
+        assert 500 <= statistics.fmean(isls) <= 524, "mean drifted from 512"
+        assert 56 <= statistics.stdev(isls) <= 72, "stddev drifted from 64"
+        assert pvalue > 0.01, f"KS rejected configured normal (p={pvalue:.3e})"
+
+    def test_normal_osl_file_fallback_no_regression(self, scipy_stats, mock_tokenizer):
+        """normal(200, 20) file-OSL fallback still samples a matching normal."""
+        composer = ConcreteBaseComposer(
+            _file_osl_run({"mean": 200, "stddev": 20}), mock_tokenizer
+        )
+        osls = self._sample_osls(composer, self.N)
+
+        osl_dist = composer._file_osl_distribution()
+        pvalue = scipy_stats.ks_2samp(osls, _reference_samples(osl_dist, self.N)).pvalue
+
+        assert 194 <= statistics.fmean(osls) <= 206, "mean drifted from 200"
+        assert 17 <= statistics.stdev(osls) <= 23, "stddev drifted from 20"
+        assert pvalue > 0.01, f"KS rejected configured normal (p={pvalue:.3e})"
+
+    def test_fixed_osl_file_fallback_stays_constant(self, mock_tokenizer):
+        """A fixed file-OSL fallback still produces the literal value every turn."""
+        composer = ConcreteBaseComposer(_file_osl_run(777), mock_tokenizer)
+        osls = self._sample_osls(composer, 200)
+        assert set(osls) == {777}, f"fixed OSL drifted: {sorted(set(osls))}"
+
+    def test_fixed_isl_sequence_distribution_stays_constant(self, mock_tokenizer):
+        """A fixed ISL bucket still produces the literal value every turn."""
+        composer = ConcreteBaseComposer(_seq_dist_run(333), mock_tokenizer)
+        isls = self._sample_isls(composer, 200)
+        assert set(isls) == {333}, f"fixed ISL drifted: {sorted(set(isls))}"
+
+    # ---- Determinism -------------------------------------------------------
+
+    def test_sequence_distribution_deterministic_same_seed(self, mock_tokenizer):
+        """Same seed (RNG=42) yields identical ISL/OSL sequences across composers."""
+        isl = {
+            "peaks": [
+                {"mean": 128, "stddev": 5, "weight": 50},
+                {"mean": 2048, "stddev": 20, "weight": 50},
+            ]
+        }
+        first = ConcreteBaseComposer(_seq_dist_run(isl), mock_tokenizer)
+        second = ConcreteBaseComposer(_seq_dist_run(isl), mock_tokenizer)
+
+        pairs_first = [
+            first._get_turn_sequence_lengths(400_000 + i) for i in range(500)
+        ]
+        pairs_second = [
+            second._get_turn_sequence_lengths(400_000 + i) for i in range(500)
+        ]
+        assert pairs_first == pairs_second
+
+    def test_file_osl_fallback_deterministic_same_seed(self, mock_tokenizer):
+        """Same seed yields identical file-OSL fallback samples across composers."""
+        osl = {
+            "peaks": [
+                {"mean": 50, "stddev": 2, "weight": 50},
+                {"mean": 500, "stddev": 5, "weight": 50},
+            ]
+        }
+        first = ConcreteBaseComposer(_file_osl_run(osl), mock_tokenizer)
+        second = ConcreteBaseComposer(_file_osl_run(osl), mock_tokenizer)
+        assert self._sample_osls(first, 500) == self._sample_osls(second, 500)

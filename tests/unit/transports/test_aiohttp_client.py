@@ -583,3 +583,83 @@ class TestFirstTokenCallback:
         # All messages should be collected
         assert len(record.responses) == 2
         assert record.error is None
+
+
+class _FakeClock:
+    """Deterministic stand-in for the module ``time`` used by the client.
+
+    Both clocks advance together (via :meth:`advance`) so the wall-vs-perf
+    offset stays constant, mirroring real hardware. Injected into
+    ``aiperf.transports.aiohttp_client.time`` so a test can force a measurable
+    gap between record construction and the post-session-build re-pairing.
+    """
+
+    def __init__(self, perf_ns: int, wall_ns: int) -> None:
+        self._perf = perf_ns
+        self._wall = wall_ns
+
+    def perf_counter_ns(self) -> int:
+        return self._perf
+
+    def time_ns(self) -> int:
+        return self._wall
+
+    def advance(self, ns: int) -> None:
+        self._perf += ns
+        self._wall += ns
+
+
+class TestRequestStartClockPairing:
+    """Regression guard for PR #867 (commit a63eeba03).
+
+    ``_execute_request`` re-samples ``record.start_perf_ns`` after the session
+    is built; it must re-sample ``record.timestamp_ns`` at the same instant so
+    the (wall, perf) pair fed to ``compute_time_ns`` stays consistent. Dropping
+    the ``timestamp_ns`` companion lets the two clocks drift by the whole
+    session-build duration.
+    """
+
+    async def test_timestamp_ns_is_repaired_with_start_perf_ns_after_build(
+        self, aiohttp_client: AioHttpClient
+    ) -> None:
+        perf0 = 1_000_000_000
+        wall0 = 1_700_000_000_000_000_000
+        build_ns = 250_000_000  # session setup consumes 250 ms of both clocks
+        fake = _FakeClock(perf_ns=perf0, wall_ns=wall0)
+
+        mock_response = create_mock_response()
+
+        resp_ctx = AsyncMock()
+        resp_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        resp_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        session_obj = AsyncMock()
+        session_obj.request = Mock(return_value=resp_ctx)
+
+        def _enter_session(*_args, **_kwargs):
+            # Session build moves start_perf_ns forward; timestamp_ns must follow.
+            fake.advance(build_ns)
+            return session_obj
+
+        session_ctx = AsyncMock()
+        session_ctx.__aenter__ = AsyncMock(side_effect=_enter_session)
+        session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("aiperf.transports.aiohttp_client.time", fake),
+            patch("aiohttp.ClientSession", return_value=session_ctx),
+        ):
+            record = await aiohttp_client.post_request(
+                "http://test.com/v1/chat/completions",
+                b'{"prompt": "hi"}',
+                {"Content-Type": "application/json"},
+            )
+
+        assert record.error is None
+        # start_perf_ns re-sampled after the build advance.
+        assert record.start_perf_ns == perf0 + build_ns
+        # The #867 fix: timestamp_ns re-sampled at the SAME instant. Without it,
+        # timestamp_ns would keep its construction-time value and this fails.
+        assert record.timestamp_ns == wall0 + build_ns
+        # Pairing preserved: the wall-vs-perf offset is exactly the original.
+        assert record.timestamp_ns - record.start_perf_ns == wall0 - perf0

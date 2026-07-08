@@ -56,18 +56,33 @@ class RaggedSeries:
         return self._offsets[: self._offsets_capacity]
 
     def extend(self, idx: int, values: list[float]) -> None:
-        """Append values for session_num ``idx``."""
+        """Append values for session_num ``idx``, first-wins on re-delivery.
+
+        A record can be re-delivered to an already-populated ``idx`` (at-least-
+        once messaging replays the identical payload). First-wins dedup: the
+        re-delivery is skipped entirely, so the slot contributes its values
+        EXACTLY ONCE. Without the skip a duplicate block was appended under the
+        same ``record_indices`` code, so ``get_values_for_mask`` returned the
+        values twice (biasing pooled percentiles) and ``grouped_cumsum``
+        resolved the duplicate block against the FIRST block's ``offsets`` start,
+        corrupting the per-request cumsum reset for ICL sweeps.
+
+        First-wins (not last-wins) mirrors the observable dedup of the numeric
+        handler in ``_column_store_handlers.make_numeric_handler``: re-delivery
+        carries an identical payload, so keeping the first equals keeping the
+        last. It is also the only semantic implementable on the sibling
+        :class:`~aiperf.metrics.list_metric_aggregation.TDigestListMetricAggregator`
+        backend, whose sketch has no value-removal op — so both list backends
+        agree, and neither disagrees with ``MetricsAccumulator.record_count``.
+        """
         n = len(values)
         if n == 0:
             return
         if idx >= self._offsets_capacity:
             self._grow_offsets(idx)
-        # First-wins: a re-delivered/late record for an already-seen session_num
-        # appends more values but must keep its original start offset, or values
-        # from the first append would resolve to the second append's start and
-        # corrupt the per-request cumsum reset in grouped_cumsum / ICL sweeps.
-        if self._offsets[idx] < 0:
-            self._offsets[idx] = len(self._values)
+        if self._offsets[idx] >= 0:  # slot already populated: skip re-delivery
+            return
+        self._offsets[idx] = len(self._values)
         val_arr = np.asarray(values, dtype=np.float64)
         idx_arr = np.full(n, idx, dtype=np.int32)
         self._values.extend(val_arr)

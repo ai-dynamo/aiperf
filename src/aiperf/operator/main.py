@@ -634,13 +634,24 @@ async def open_runs_index(**_: Any) -> None:
     """
     base = OperatorEnvironment.RESULTS.DIR
     db_path = base / ".aiperf_index.sqlite"
-    await runs_index.open(db_path)
-    if not await runs_index.integrity_check():
-        logger.warning("runs_index corrupt; renaming and rebuilding")
+    # Self-heal a corrupt on-disk index BEFORE open(): open() runs the schema
+    # script, which raises "file is not a database" / "disk image is malformed"
+    # on a corrupt file and would crash operator startup. integrity_check()
+    # opens its own throwaway connection and never raises, so it is the only
+    # safe probe here. Guarded on exists() so a first boot (no file yet) skips
+    # straight to open(), which creates the parent dir + a fresh DB.
+    if db_path.exists() and not await runs_index.integrity_check(db_path):
+        logger.warning(
+            "runs_index corrupt at %s; renaming aside and rebuilding", db_path
+        )
         broken = base / f".aiperf_index.sqlite.broken-{int(time.time())}"
         db_path.rename(broken)
-        await runs_index.close()
-        await runs_index.open(db_path)
+        # Orphan the corrupt DB's WAL/SHM sidecars too: a stale -wal would be
+        # replayed against the fresh DB and re-corrupt it.
+        for suffix in ("-wal", "-shm"):
+            sidecar = db_path.with_name(db_path.name + suffix)
+            sidecar.unlink(missing_ok=True)
+    await runs_index.open(db_path)
 
     # Fire-and-forget bootstrap with a done-callback so any unhandled
     # exception lands in the operator's log instead of asyncio's "Task

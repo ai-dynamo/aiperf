@@ -240,3 +240,31 @@ class TestTDigestListMetricAggregator:
         agg.extend([1.0, 2.0, 3.0, 4.0, 5.0])
         # Property is exposed and returns the running side-channel sum.
         assert agg.sum == pytest.approx(15.0)
+
+    def test_add_for_record_dedups_redelivery(self) -> None:
+        """``add_for_record`` is first-wins on re-delivery to the same ``idx``.
+
+        The t-digest has no value-removal op, so re-delivery cannot be last-
+        wins; first-wins keeps it idempotent, matching :class:`RaggedSeries`
+        and the numeric column-store handler. A 3-chunk record delivered twice
+        contributes its samples EXACTLY once (count 3 / sum 60, not 6 / 120).
+        """
+        agg = TDigestListMetricAggregator()
+        agg.add_for_record(0, [10.0, 20.0, 30.0])
+        agg.add_for_record(0, [10.0, 20.0, 30.0])  # re-delivery of the same record
+        result = agg.to_result(tag="inter_chunk_latency", header="ICL", unit="ms")
+        assert result.count == 3
+        assert result.sum == pytest.approx(60.0)
+
+    def test_add_for_record_distinct_idx_accumulate_and_grow(self) -> None:
+        """Distinct records accumulate; the dedup bitmap grows past its cap.
+
+        ``idx=1000`` exceeds the initial 256-slot ``_seen`` bitmap, exercising
+        ``_grow_seen`` before the re-delivery skip fires.
+        """
+        agg = TDigestListMetricAggregator()
+        agg.add_for_record(0, [1.0])
+        agg.add_for_record(1000, [2.0])  # idx beyond initial _seen cap -> grow
+        agg.add_for_record(1000, [2.0])  # re-delivery after grow -> skipped
+        assert len(agg) == 2
+        assert agg.sum == pytest.approx(3.0)

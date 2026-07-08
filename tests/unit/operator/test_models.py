@@ -104,7 +104,13 @@ class TestMetricsSummary:
         assert result["e2e_output_token_throughput"]["unit"] == "tokens/sec/user"
 
     def test_from_metrics_derives_error_rate_and_total_requests(self) -> None:
-        """``error_rate`` and ``total_requests`` are computed from raw counts."""
+        """``total_requests`` is successes + errors; ``error_rate`` is errors / total.
+
+        ``request_count`` counts successful requests only, so the grand total
+        is ``request_count + error_request_count`` (1000 + 50 = 1050) and the
+        error rate is ``50 / 1050`` — matching the authoritative
+        RequestErrorRateMetric, not the old ``errors / successes`` arithmetic.
+        """
         metrics = {
             "metrics": {
                 "request_count": {"avg": 1000},
@@ -112,8 +118,45 @@ class TestMetricsSummary:
             }
         }
         result = MetricsSummary.from_metrics(metrics).to_status_dict()
-        assert result["total_requests"] == 1000
-        assert result["error_rate"] == 0.05
+        assert result["total_requests"] == 1050
+        assert result["error_rate"] == pytest.approx(50 / 1050)
+
+    def test_from_metrics_mirrors_authoritative_request_error_rate(self) -> None:
+        """When the ``request_error_rate`` metric (a percent) is present it is
+        mirrored verbatim as ``error_rate = rate / 100`` so status.summary
+        agrees with the export, and ``total_requests`` stays successes + errors.
+        """
+        metrics = {
+            "metrics": {
+                "request_count": {"avg": 30},
+                "error_request_count": {"avg": 30},
+                "request_error_rate": {"unit": "%", "avg": 50.0},
+            }
+        }
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert result["total_requests"] == 60
+        assert result["error_rate"] == pytest.approx(0.5)
+
+    def test_from_metrics_export_parity_30_success_30_error(self) -> None:
+        """A 30-success / 30-error run reports total=60 and error_rate=0.5,
+        matching what the console table and profile export show (the export's
+        RequestErrorRateMetric = 100 * 30 / 60 = 50%)."""
+        metrics = {
+            "request_count": {"unit": "requests", "avg": 30.0},
+            "error_request_count": {"unit": "requests", "avg": 30.0},
+        }
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert result["total_requests"] == 60
+        assert result["error_rate"] == pytest.approx(0.5)
+
+    def test_from_metrics_all_errors_no_request_count(self) -> None:
+        """A fully-failed run (``request_count`` absent, only
+        ``error_request_count`` present) still reports its total and a 1.0
+        error rate rather than dropping both scalars."""
+        metrics = {"error_request_count": {"unit": "requests", "avg": 9.0}}
+        result = MetricsSummary.from_metrics(metrics).to_status_dict()
+        assert result["total_requests"] == 9
+        assert result["error_rate"] == pytest.approx(1.0)
 
     def test_from_metrics_handles_zero_request_count(self) -> None:
         """Zero requests means no derived scalars (avoids ZeroDivisionError)."""

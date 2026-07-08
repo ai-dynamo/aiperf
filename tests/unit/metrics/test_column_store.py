@@ -13,9 +13,13 @@ stays deduped, and the read path (``metric_result_from_array``) computes
 from __future__ import annotations
 
 import numpy as np
+import pytest
+from pytest import param
 
-from aiperf.metrics.column_store import ColumnStore
+from aiperf.metrics.column_store import ColumnStore, ListMetricBackendT
+from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.metric_dicts import metric_result_from_array
+from aiperf.metrics.ragged_series import RaggedSeries
 
 
 def _ingest(store: ColumnStore, idx: int, tag: str, value: float) -> None:
@@ -27,6 +31,33 @@ def _ingest(store: ColumnStore, idx: int, tag: str, value: float) -> None:
         end_ns=2.0,
         generation_start_ns=None,
     )
+
+
+def _ingest_list(store: ColumnStore, idx: int, tag: str, values: list[float]) -> None:
+    """Write a single list-valued metric to ``idx`` with dummy timestamps."""
+    store.ingest(
+        idx,
+        record_metrics={tag: values},
+        start_ns=1.0,
+        end_ns=2.0,
+        generation_start_ns=None,
+    )
+
+
+def _list_sample_count(store: ColumnStore, tag: str) -> int:
+    """Number of list samples stored for ``tag`` — backend-agnostic."""
+    backend = store.ragged(tag)
+    if getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
+        return len(backend.values)
+    return len(backend)
+
+
+def _list_sample_sum(store: ColumnStore, tag: str) -> float:
+    """Sum of list samples stored for ``tag`` — backend-agnostic."""
+    backend = store.ragged(tag)
+    if getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
+        return float(backend.values.sum())
+    return float(backend.sum)
 
 
 class TestColumnStoreNumericReDelivery:
@@ -125,3 +156,60 @@ class TestColumnStoreNumericReDelivery:
         assert result.avg == 128.0
         assert result.max == 128.0
         assert result.count == 1
+
+
+@pytest.mark.parametrize(
+    "backend_cls",
+    [
+        param(RaggedSeries, id="ragged"),
+        param(TDigestListMetricAggregator, id="tdigest"),
+    ],
+)  # fmt: skip
+class TestColumnStoreListReDelivery:
+    """First-wins dedup for list-valued RECORD metrics on slot re-delivery.
+
+    Sibling of the numeric last-write-wins fix: ``make_list_handler`` routes to
+    ``backend.add_for_record(idx, values)``. Before the fix a re-delivered
+    record's list was appended a second time, so the pooled sample count (and
+    thus percentiles) counted one request's chunks twice, disagreeing with the
+    deduped numeric store and ``record_count``. First-wins (not last-wins)
+    because re-delivery replays an identical payload and the t-digest backend
+    has no value-removal op, so both list backends share the semantic.
+    """
+
+    def test_redelivered_list_counted_once(
+        self, backend_cls: type[ListMetricBackendT]
+    ) -> None:
+        """The same 3-chunk record delivered twice contributes 3 samples, not 6."""
+        store = ColumnStore(initial_capacity=8, list_backend_cls=backend_cls)
+        _ingest_list(store, 0, "inter_chunk_latency", [10.0, 20.0, 30.0])
+        _ingest_list(store, 0, "inter_chunk_latency", [10.0, 20.0, 30.0])  # re-delivery
+
+        assert _list_sample_count(store, "inter_chunk_latency") == 3
+        assert _list_sample_sum(store, "inter_chunk_latency") == 60.0
+
+    def test_distinct_slots_accumulate(
+        self, backend_cls: type[ListMetricBackendT]
+    ) -> None:
+        """Distinct records each contribute their own list samples."""
+        store = ColumnStore(initial_capacity=8, list_backend_cls=backend_cls)
+        _ingest_list(store, 0, "inter_chunk_latency", [10.0, 20.0, 30.0])
+        _ingest_list(store, 1, "inter_chunk_latency", [5.0, 5.0])
+
+        assert _list_sample_count(store, "inter_chunk_latency") == 5
+        assert _list_sample_sum(store, "inter_chunk_latency") == 70.0
+
+    def test_redelivery_survives_backend_grow(
+        self, backend_cls: type[ListMetricBackendT]
+    ) -> None:
+        """A slot index beyond the backend's initial dedup capacity still dedups.
+
+        Exercises ``RaggedSeries._grow_offsets`` and
+        ``TDigestListMetricAggregator._grow_seen`` (both start at 256).
+        """
+        store = ColumnStore(initial_capacity=8, list_backend_cls=backend_cls)
+        _ingest_list(store, 500, "inter_chunk_latency", [1.0, 2.0])
+        _ingest_list(store, 500, "inter_chunk_latency", [1.0, 2.0])  # re-delivery
+
+        assert _list_sample_count(store, "inter_chunk_latency") == 2
+        assert _list_sample_sum(store, "inter_chunk_latency") == 3.0

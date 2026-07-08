@@ -363,7 +363,7 @@ class DatasetResolver:
             if Path(file_path).is_dir():
                 return False
             try:
-                with open(file_path) as f:
+                with open(file_path, encoding="utf-8") as f:
                     for line in f:
                         if line := line.strip():
                             record = load_json_str(line)
@@ -394,7 +394,7 @@ class DatasetResolver:
         session_ids: set[str] = set()
 
         try:
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue
@@ -500,7 +500,7 @@ def _collect_dag_session_and_fork_ids(file_path: str) -> tuple[set[str], set[str
 
     all_ids: set[str] = set()
     referenced_ids: set[str] = set()
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         for raw in f:
             if not (line := raw.strip()):
                 continue

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import bisect
 import inspect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -12,15 +13,58 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import FileDataset
-from aiperf.config.types import NormalDistribution
 from aiperf.dataset.generator.audio import AudioGenerator
 from aiperf.dataset.generator.image import ImageGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.generator.video import VideoGenerator
 
 if TYPE_CHECKING:
+    from aiperf.common.random_generator import RandomGenerator
     from aiperf.config import BenchmarkRun
     from aiperf.config.distributions import SamplingDistribution
+    from aiperf.config.types import SequenceDistributionEntry
+
+
+class _SequenceDistributionSampler:
+    """Draw (ISL, OSL) pairs from a configured ``sequence_distribution``.
+
+    Each entry carries a ``probability`` weight plus full ``isl``/``osl``
+    :class:`SamplingDistribution` objects. ``sample`` picks a bucket by weight,
+    then draws ISL and OSL from that bucket's distributions via
+    ``sample_int(rng)`` so non-normal shapes (uniform/lognormal/multimodal/
+    empirical) are reproduced faithfully instead of being collapsed to their
+    means. The RNG is the composer's own ``self._max_tokens_rng`` so a fixed
+    seed yields identical samples.
+
+    Example:
+        >>> sampler = _SequenceDistributionSampler(entries, max_tokens_rng)
+        >>> isl, osl = sampler.sample()  # e.g. (2041, 64) from a bimodal ISL
+    """
+
+    def __init__(
+        self, entries: list[SequenceDistributionEntry], rng: RandomGenerator
+    ) -> None:
+        if not entries:
+            raise ValueError(
+                "sequence_distribution sampler requires at least one entry; got an "
+                "empty list. Check that prompts.sequence_distribution is populated."
+            )
+        self._entries = entries
+        self._rng = rng
+        total = sum(entry.probability for entry in entries)
+        running = 0.0
+        cumulative: list[float] = []
+        for entry in entries:
+            running += entry.probability / total
+            cumulative.append(running)
+        self._cumulative = cumulative
+
+    def sample(self) -> tuple[int, int]:
+        """Sample one (ISL, OSL) pair, preserving each bucket's distribution shape."""
+        idx = bisect.bisect_right(self._cumulative, self._rng.random())
+        idx = min(idx, len(self._entries) - 1)
+        entry = self._entries[idx]
+        return (entry.isl.sample_int(self._rng), entry.osl.sample_int(self._rng))
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
@@ -42,30 +86,15 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         self.turn_count = 0
 
-        # Initialize sequence distribution from prompts config if available
-        self._seq_distribution = None
+        # Initialize sequence distribution from prompts config if available.
+        # Carry the full isl/osl SamplingDistribution objects so non-normal
+        # shapes are sampled faithfully rather than reduced to (mean, stddev).
+        self._seq_distribution: _SequenceDistributionSampler | None = None
         prompts_config = getattr(self.dataset_config, "prompts", None)
         if prompts_config is not None and prompts_config.sequence_distribution:
-            from aiperf.common.models.sequence_distribution import (
-                SequenceLengthDistribution,
-                SequenceLengthPair,
+            self._seq_distribution = _SequenceDistributionSampler(
+                list(prompts_config.sequence_distribution), self._max_tokens_rng
             )
-
-            pairs = [
-                SequenceLengthPair(
-                    input_seq_len=int(entry.isl.mean),
-                    output_seq_len=int(entry.osl.mean),
-                    probability=entry.probability,
-                    input_seq_len_stddev=entry.isl.stddev
-                    if isinstance(entry.isl, NormalDistribution)
-                    else 0.0,
-                    output_seq_len_stddev=entry.osl.stddev
-                    if isinstance(entry.osl, NormalDistribution)
-                    else 0.0,
-                )
-                for entry in prompts_config.sequence_distribution
-            ]
-            self._seq_distribution = SequenceLengthDistribution(pairs)
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
@@ -171,12 +200,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         osl_dist = self._file_osl_distribution()
         if osl_dist is None:
             return
-        osl_mean = int(osl_dist.expected_value)
-        if osl_mean <= 0:
-            return
-        osl_stddev = int(getattr(osl_dist, "stddev", 0.0) or 0.0)
-        turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
-            osl_mean, osl_stddev
+        # Sample directly from the configured OSL distribution (same object the
+        # primary path uses) so an empirical/lognormal/multimodal fallback keeps
+        # its shape instead of collapsing to a normal around expected_value.
+        turn.max_tokens = self._max_tokens_rng and osl_dist.sample_int(
+            self._max_tokens_rng
         )
 
     def _file_osl_distribution(self) -> SamplingDistribution | None:

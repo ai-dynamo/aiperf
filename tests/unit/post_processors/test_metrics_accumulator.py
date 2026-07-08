@@ -1484,6 +1484,65 @@ class TestListMetricBackendSwitch:
             assert "inter_chunk_latency" in processor._column_store.ragged_tags()
             assert _get_icl_data(processor._column_store) is None
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend_name", ["ragged", "tdigest"])
+    async def test_redelivered_list_record_agrees_with_numeric_count(
+        self,
+        backend_name: str,
+        mock_metric_registry: Mock,
+        mock_user_config: UserConfig,
+    ) -> None:
+        """A re-delivered ICL record contributes its list samples exactly once.
+
+        The list path was the sibling gap the numeric last-write-wins fix left
+        open: ``make_list_handler`` re-appended a re-delivered record's list, so
+        one request's chunks were pooled twice — the ITL sample count then
+        disagreed with the deduped numeric store and ``record_count``. Both list
+        backends now dedup first-wins, keeping every store consistent.
+        """
+        with patch(
+            "aiperf.common.environment.Environment.METRICS.LIST_BACKEND",
+            backend_name,
+        ):
+            processor = MetricsAccumulator(run=_make_run(mock_user_config))
+            processor._tags_to_types = {
+                "inter_chunk_latency": MetricType.RECORD,
+                RequestLatencyMetric.tag: MetricType.RECORD,
+            }
+
+            # One 3-chunk request carrying both a list metric (ICL) and a
+            # scalar RECORD metric (latency), delivered twice to the same slot.
+            record = create_metric_records_message(
+                x_request_id="test-0",
+                session_num=0,
+                results=[
+                    {
+                        "inter_chunk_latency": [10.0, 20.0, 30.0],
+                        RequestLatencyMetric.tag: 100.0,
+                    }
+                ],
+            )
+            await processor.process_record(record.to_data())
+            await processor.process_record(record.to_data())  # re-delivery
+
+            backend = processor._column_store.ragged("inter_chunk_latency")
+            if backend.SUPPORTS_PER_RECORD_REPLAY:
+                itl_count = len(backend.values)
+                itl_sum = float(backend.values.sum())
+            else:
+                itl_count = len(backend)
+                itl_sum = float(backend.sum)
+
+            # ITL: 3 samples / sum 60 (not the double-counted 6 / 120).
+            assert itl_count == 3
+            assert itl_sum == 60.0
+            # Every store agrees the run holds exactly one request.
+            numeric_count = processor._column_store.numeric_count(
+                RequestLatencyMetric.tag
+            )
+            assert numeric_count == 1
+            assert processor.record_count == 1
+
 
 class TestMetadataColumnEncoding:
     """Verify per-record metadata routes to the right column backing:

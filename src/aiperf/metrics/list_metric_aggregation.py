@@ -57,6 +57,14 @@ class TDigestListMetricAggregator:
         self._m2: float = 0.0
         self._min: float | None = None
         self._max: float | None = None
+        # First-wins dedup bitmap for ``add_for_record``: a record re-delivered
+        # to an already-seen ``idx`` must not double-count into the sketch. The
+        # t-digest has no value-removal op, so last-wins is impossible — first-
+        # wins is the only idempotent semantic (and matches RaggedSeries).
+        # A 1-byte-per-record bool array preserves the backend's bounded-memory
+        # guarantee at 1 M-request scale (a Python ``set[int]`` would not).
+        self._seen = np.zeros(256, dtype=np.bool_)
+        self._seen_capacity = 256
 
     @property
     def sum(self) -> float:
@@ -114,14 +122,34 @@ class TDigestListMetricAggregator:
         self._min = batch_min if self._min is None else min(self._min, batch_min)
         self._max = batch_max if self._max is None else max(self._max, batch_max)
 
-    def add_for_record(self, idx: int, values: list[float]) -> None:  # noqa: ARG002 - idx unused
+    def add_for_record(self, idx: int, values: list[float]) -> None:
         """Record-keyed ingest entry point shared with :class:`RaggedSeries`.
 
-        ``idx`` is ignored: the t-digest is a global sketch with no per-record
-        structure. The accumulator routes every list-valued metric through this
-        method regardless of backend, which is why the signature has to match.
+        First-wins dedup on re-delivery: a record delivered twice to the same
+        ``idx`` (at-least-once messaging replays the identical payload) is
+        counted once. The t-digest is a global sketch with no per-value removal,
+        so last-wins is impossible — first-wins is the only idempotent semantic,
+        and it matches :class:`RaggedSeries` (so both list backends agree and
+        neither disagrees with ``MetricsAccumulator.record_count``). The
+        accumulator routes every list-valued metric through this method
+        regardless of backend, which is why the signature has to match.
         """
+        if idx >= self._seen_capacity:
+            self._grow_seen(idx)
+        if self._seen[idx]:  # slot already populated: skip re-delivery
+            return
+        self._seen[idx] = True
         self.extend(values)
+
+    def _grow_seen(self, min_idx: int) -> None:
+        """Grow the first-wins ``_seen`` bitmap to accommodate ``min_idx``."""
+        new_cap = self._seen_capacity
+        while new_cap <= min_idx:
+            new_cap *= 2
+        new_seen = np.zeros(new_cap, dtype=np.bool_)
+        new_seen[: self._seen_capacity] = self._seen
+        self._seen = new_seen
+        self._seen_capacity = new_cap
 
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
         """Return a :class:`MetricResult` with the same field set as

@@ -73,8 +73,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # in multi-phase runs a (benchmark_phase, session_num) pair — not
         # session_num alone — identifies a record. Rows are assigned densely
         # in arrival order; a re-delivered (phase, session_num) pair lands on
-        # its original row, matching the pre-mapping same-slot re-delivery
-        # behavior (numeric columns last-write-wins, ragged first-wins).
+        # its original row. On that row the numeric columns are last-write-wins
+        # (the cell overwrites; the running sum backs out the prior value) while
+        # the list backends are first-wins (re-delivery skipped): re-delivery
+        # replays an identical payload, so first == last, and both are counted
+        # exactly once — no store disagrees with ``record_count``.
         self._row_by_phase_session: dict[tuple[str, int], int] = {}
 
         # Derive functions for DERIVED metrics
