@@ -19,6 +19,7 @@ from aiperf.dataset.loader.exgentic import (
 )
 from aiperf.dataset.loader.exgentic_v2 import ExgenticV2DatasetLoader
 from aiperf.plugin.enums import PublicDatasetType
+from tests.harness.optional_deps import HAS_DATASETS
 from tests.unit.conftest import make_run_from_cli
 
 
@@ -527,9 +528,10 @@ async def test_invalid_row_shapes_raise_clear_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_DATASETS, reason="datasets has no Windows-on-ARM wheel")
 async def test_huggingface_dataset_revision_is_pinned() -> None:
     load_dataset = MagicMock(return_value=[])
-    with patch("aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", load_dataset):
+    with patch("datasets.load_dataset", load_dataset):
         _loader()._load_hf_dataset()
 
     load_dataset.assert_called_once_with(
@@ -543,9 +545,10 @@ async def test_huggingface_dataset_revision_is_pinned() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_DATASETS, reason="datasets has no Windows-on-ARM wheel")
 async def test_v2_huggingface_dataset_revision_is_pinned() -> None:
     load_dataset = MagicMock(return_value=[])
-    with patch("aiperf.dataset.loader.base_hf_dataset.hf_load_dataset", load_dataset):
+    with patch("datasets.load_dataset", load_dataset):
         ExgenticV2DatasetLoader(
             hf_dataset_name="Exgentic/agent-llm-traces-v2",
             streaming=True,

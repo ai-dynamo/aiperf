@@ -9,6 +9,10 @@ from aiperf.common.enums.enums import CreditPhase
 IS_WINDOWS: bool = _platform.system() == "Windows"
 IS_MACOS: bool = _platform.system() == "Darwin"
 IS_LINUX: bool = _platform.system() == "Linux"
+# Windows-on-ARM: several native stacks (pyarrow/datasets wheels, libsndfile,
+# kaleido's browser engine) have no working ARM64 build, so features relying on
+# them must gate on this rather than crash.
+IS_WINDOWS_ARM: bool = IS_WINDOWS and _platform.machine() == "ARM64"
 
 NANOS_PER_SECOND = 1_000_000_000
 NANOS_PER_MILLIS = 1_000_000
