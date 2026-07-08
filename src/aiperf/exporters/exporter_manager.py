@@ -176,7 +176,12 @@ class ExporterManager(AIPerfLoggerMixin):
 
         await self._write_console_txt(recording_console)
 
-        styled = recording_console.export_text(styles=console.is_terminal)
+        styles_enabled = (
+            console.is_terminal
+            and not console.no_color
+            and console.color_system is not None
+        )
+        styled = recording_console.export_text(styles=styles_enabled)
         if styled.strip():
             console.file.write(styled)
             console.file.flush()

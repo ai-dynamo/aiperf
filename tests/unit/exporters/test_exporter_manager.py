@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest import param
 from rich.console import Console
 
 from aiperf.common.models import MetricResult, ProfileResults
@@ -225,7 +226,7 @@ class TestExportConsoleArtifactAndStyling:
         real_to_thread = asyncio.to_thread
         to_thread_calls: list[tuple[Any, tuple, dict]] = []
 
-        async def _recording_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        async def _recording_to_thread(func: Any, /, *args: Any, **kwargs) -> Any:
             to_thread_calls.append((func, args, kwargs))
             return await real_to_thread(func, *args, **kwargs)
 
@@ -308,4 +309,38 @@ class TestExportConsoleArtifactAndStyling:
         assert STYLED_LINE in replayed
         assert ANSI_ESCAPE_PREFIX in replayed, (
             "terminal console replay must preserve ANSI styling"
+        )
+
+    @pytest.mark.parametrize(
+        "console_kwargs",
+        [
+            param({"force_terminal": True, "no_color": True}, id="no-color"),
+            param(
+                {"force_terminal": True, "color_system": None},
+                id="no-color-system",
+            ),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_export_console_terminal_without_color_replays_plain_text(
+        self, sample_records, mock_cfg, console_kwargs
+    ):
+        buffer = io.StringIO()
+        console = Console(file=buffer, **console_kwargs)
+        assert console.is_terminal
+        assert console.no_color or console.color_system is None
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[
+                (SimpleNamespace(name="styled_console"), _StyledConsoleExporter)
+            ],
+        ):
+            manager = _make_manager(sample_records, mock_cfg)
+            await manager.export_console(console)
+
+        replayed = buffer.getvalue()
+        assert STYLED_LINE in replayed
+        assert ANSI_ESCAPE_PREFIX not in replayed, (
+            "color-disabled terminal replay must be plain text, not ANSI-styled"
         )
