@@ -897,6 +897,13 @@ class _TimingSettings(BaseSettings):
         default=1.0,
         description="Interval in seconds between reconciliation ticks in the sticky credit router",
     )
+    HIGH_RES_TIMER: bool = Field(
+        default=False,
+        description="Use a Linux timerfd (kernel hrtimer, ~50us wakeup precision) for rate-loop "
+        "pacing instead of event-loop timers, which quantize sub-millisecond sleeps to ~1ms "
+        "granularity. Improves inter-arrival fidelity at high request rates (>2k req/s). "
+        "Linux-only; silently falls back to event-loop timers elsewhere.",
+    )
     MAX_CATCHUP_SECONDS: float = Field(
         ge=0.0,
         le=10.0,

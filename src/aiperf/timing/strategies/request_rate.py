@@ -8,7 +8,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
-from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
+from aiperf.common.constants import IS_LINUX, MILLIS_PER_SECOND, NANOS_PER_SECOND
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
@@ -129,6 +129,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             PluginType.ARRIVAL_PATTERN, interval_config.arrival_pattern
         )
         self._rate_generator = GeneratorClass(interval_config)
+        # timerfd pacer for sub-millisecond sleep precision; created lazily in
+        # execute_phase (requires a running event loop), closed when it exits.
+        self._pacer = None
 
     async def setup_phase(self) -> None:
         """Setup the phase."""
@@ -149,23 +152,46 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         if self._lifecycle.started_at_perf_ns is None:
             raise RuntimeError("started_at_perf_ns is not set in the lifecycle")
 
+        self._pacer = self._create_high_res_pacer()
+
         perf_start = self._lifecycle.started_at_perf_ns / NANOS_PER_SECOND
         next_target_perf = perf_start + self._rate_generator.next_interval()
 
         # The first turn of the next new session. Cached to avoid wasting samples from shuffle/sequential samplers.
         next_new_session_turn = self._conversation_source.next().build_first_turn()
 
-        while True:
-            next_target_perf = await self._wait_for_next_interval(next_target_perf)
-            # Schedule next interval BEFORE issuing credit. This way, variable
-            # credit issuance latency doesn't affect the timing of the next interval.
-            next_target_perf += self._rate_generator.next_interval()
+        try:
+            while True:
+                next_target_perf = await self._wait_for_next_interval(next_target_perf)
+                # Schedule next interval BEFORE issuing credit. This way, variable
+                # credit issuance latency doesn't affect the timing of the next interval.
+                next_target_perf += self._rate_generator.next_interval()
 
-            done, next_new_session_turn = await self._issue_next_credit(
-                next_new_session_turn
+                done, next_new_session_turn = await self._issue_next_credit(
+                    next_new_session_turn
+                )
+                if done:
+                    return
+        finally:
+            if self._pacer is not None:
+                self._pacer.close()
+                self._pacer = None
+
+    def _create_high_res_pacer(self):
+        """Create the timerfd pacer when enabled and supported, else None."""
+        if not (Environment.TIMING.HIGH_RES_TIMER and IS_LINUX):
+            return None
+        try:
+            from aiperf.timing.high_res_timer import TimerFdPacer
+
+            pacer = TimerFdPacer()
+            self.info("Rate loop pacing via timerfd (kernel hrtimer)")
+            return pacer
+        except OSError as e:
+            self.warning(
+                f"timerfd unavailable ({e}); falling back to event-loop timers"
             )
-            if done:
-                return
+            return None
 
     async def _wait_for_next_interval(self, next_target_perf: float) -> float:
         """Sleep until the next target perf time, returning the (possibly reset) target.
@@ -185,7 +211,10 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         sleep_duration = next_target_perf - now
         if sleep_duration > 0:
-            await asyncio.sleep(sleep_duration)
+            if self._pacer is not None:
+                await self._pacer.sleep_until(next_target_perf)
+            else:
+                await asyncio.sleep(sleep_duration)
         else:
             # CRITICAL: Always yield to event loop to allow callbacks to run.
             # Without this, CONCURRENCY_BURST mode (0 interval) busy-loops and
