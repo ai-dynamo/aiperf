@@ -13,12 +13,72 @@ from aiperf.common.models import (
     SSEMessage,
     TextResponseData,
 )
+from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
-from aiperf.workers.worker import Worker
+from aiperf.workers.worker import Worker, _phase_needs_first_token_callback
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
+
+
+@pytest.mark.parametrize(
+    ("phase_data", "expected"),
+    [
+        (
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "requests": 1,
+                "concurrency": 4,
+                "prefill_concurrency": 2,
+            },
+            True,
+        ),
+        (
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": True,
+                "adaptive_sustain_duration": 120,
+                "sla": [
+                    {
+                        "metric_tag": "time_to_first_token",
+                        "stat": "p95",
+                        "op": "le",
+                        "threshold": 30000,
+                    }
+                ],
+            },
+            True,
+        ),
+        (
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": True,
+                "adaptive_sustain_duration": 120,
+                "sla": [
+                    {
+                        "metric_tag": "request_latency",
+                        "stat": "p95",
+                        "op": "le",
+                        "threshold": 30000,
+                    }
+                ],
+            },
+            False,
+        ),
+    ],
+)
+def test_phase_needs_first_token_callback(phase_data, expected):
+    phase = ConcurrencyPhase.model_validate(phase_data)
+
+    assert _phase_needs_first_token_callback(phase) is expected
 
 
 @pytest.fixture

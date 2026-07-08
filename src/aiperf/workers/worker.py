@@ -56,6 +56,9 @@ from aiperf.common.protocols import (
     StreamingDealerClientProtocol,
     StreamingPushClientProtocol,
 )
+from aiperf.config.adaptive_scale_phase import (
+    sla_filters_require_first_token_observation,
+)
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -73,6 +76,15 @@ from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+def _phase_needs_first_token_callback(phase) -> bool:
+    if phase.prefill_concurrency is not None:
+        return True
+    return bool(
+        getattr(phase, "adaptive_scale", False)
+        and sla_filters_require_first_token_observation(phase.sla)
+    )
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -211,15 +223,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
 
-        # Only send FirstToken messages when prefill concurrency limiting is active.
-        # Detecting first token requires parsing each SSE chunk, so skip this overhead
-        # when the orchestrator doesn't need TTFT events for slot management.
-        # ``prefill_concurrency`` lives per-phase (warmup phases produce
-        # results-excluded entries alongside profiling ones), so probe every
-        # phase to decide whether prefill-concurrency limiting is active
-        # anywhere in the run.
-        self._prefill_concurrency_enabled: bool = any(
-            getattr(phase, "prefill_concurrency", None) is not None
+        # Detecting first token requires parsing each SSE chunk, so only enable
+        # FirstToken messages when a downstream consumer needs them.
+        self._first_token_observation_enabled: bool = any(
+            _phase_needs_first_token_callback(phase)
             for phase in self.run.cfg.phases
         )
 
@@ -458,19 +465,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         x_correlation_id = credit_context.credit.x_correlation_id
         credit = credit_context.credit
 
-        # First token callback - only needed when prefill concurrency is enabled
-        # Sends FirstToken to router for prefill concurrency slot release
-        # Returns True when meaningful content is found to stop looking for first token
         first_token_callback = None
-        if self._prefill_concurrency_enabled:
+        if self._first_token_observation_enabled:
 
             async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
-                # Use endpoint to check if message has meaningful content
                 parsed = self.inference_client.endpoint.parse_response(message)
                 if parsed is None or parsed.data is None:
-                    return False  # Keep looking for meaningful content
+                    return False
 
-                # Meaningful content found - send FirstToken to router
                 await self.credit_return_push_client.send(
                     FirstToken(
                         credit_id=credit.id,
@@ -478,9 +480,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         ttft_ns=ttft_ns,
                     )
                 )
-                # Track that FirstToken was sent so CreditReturn can report it
                 credit_context.first_token_sent = True
-                return True  # Stop looking, first token found
+                return True
 
         try:
             session = self.session_manager.get(x_correlation_id)

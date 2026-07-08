@@ -11,6 +11,18 @@ from pydantic import Field, model_validator
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.timing.adaptive_types import AdaptiveControlVariable
 
+_FIRST_TOKEN_SLA_METRICS = frozenset({"time_to_first_token", "ttft"})
+
+
+def is_first_token_sla_metric(metric_tag: str) -> bool:
+    return metric_tag in _FIRST_TOKEN_SLA_METRICS
+
+
+def sla_filters_require_first_token_observation(
+    sla_filters: list[SLAFilter] | tuple[SLAFilter, ...],
+) -> bool:
+    return any(is_first_token_sla_metric(sla.metric_tag) for sla in sla_filters)
+
 
 def normalize_adaptive_sla(sla: dict[str, object]) -> list[SLAFilter]:
     """Lower compact metric/stat/op SLA YAML into SLAFilter objects."""

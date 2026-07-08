@@ -416,6 +416,33 @@ class TestFirstTokenHandling:
             CreditPhase.PROFILING
         )
 
+    async def test_first_token_notifies_strategy_hook(
+        self,
+        callback_handler,
+        mock_progress,
+        mock_lifecycle,
+        mock_stop_checker,
+        mock_strategy,
+    ):
+        """Strategies with a first-token hook should receive TTFT observations."""
+        mock_strategy.handle_first_token = AsyncMock()
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=mock_progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=mock_strategy,
+        )
+        first_token = FirstToken(
+            credit_id=1,
+            phase=CreditPhase.PROFILING,
+            ttft_ns=1000000,
+        )
+
+        await callback_handler.on_first_token(first_token)
+
+        mock_strategy.handle_first_token.assert_awaited_once_with(first_token)
+
 
 # =============================================================================
 # Test: Edge Cases
