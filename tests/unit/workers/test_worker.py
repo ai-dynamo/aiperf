@@ -208,7 +208,7 @@ def setup_mock_endpoint(worker: Worker, monkeypatch, parse_response_return):
         parse_response_return: Return value or side_effect for parse_response
     """
     mock_endpoint = Mock()
-    if isinstance(parse_response_return, list):
+    if isinstance(parse_response_return, list) or callable(parse_response_return):
         mock_endpoint.parse_response = Mock(side_effect=parse_response_return)
     else:
         mock_endpoint.parse_response = Mock(return_value=parse_response_return)
@@ -292,12 +292,18 @@ class TestWorkerRequestLatency:
     async def test_request_latency_uses_last_parsed_content_response(
         self, monkeypatch, mock_worker
     ):
-        parse_returns = [
-            ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
-            ParsedResponse(perf_ns=200, data=None),
-            ParsedResponse(perf_ns=250, data=TextResponseData(text="last")),
-        ]
-        setup_mock_endpoint(mock_worker, monkeypatch, parse_returns)
+        # Keyed by the response being parsed (not call order): the scan
+        # direction is an implementation detail of _request_latency_ns_for_record.
+        parse_by_perf_ns = {
+            150: ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
+            200: ParsedResponse(perf_ns=200, data=None),
+            250: ParsedResponse(perf_ns=250, data=TextResponseData(text="last")),
+        }
+        setup_mock_endpoint(
+            mock_worker,
+            monkeypatch,
+            lambda response: parse_by_perf_ns[response.perf_ns],
+        )
         record = RequestRecord(
             start_perf_ns=100,
             responses=[

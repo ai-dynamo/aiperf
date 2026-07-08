@@ -9,6 +9,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.constants import MILLIS_PER_SECOND, NANOS_PER_SECOND
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.credit.structs import Credit, TurnToSend
@@ -169,13 +170,17 @@ class RequestRateStrategy(AIPerfLoggerMixin):
     async def _wait_for_next_interval(self, next_target_perf: float) -> float:
         """Sleep until the next target perf time, returning the (possibly reset) target.
 
-        Resets the target to `now` if we're behind schedule to avoid catch-up bursts.
+        Resets the target to `now` only when we are behind schedule by more than
+        the bounded catch-up window. Small deficits are kept on the original
+        schedule: event-loop timers oversleep sub-millisecond waits (~1ms
+        granularity under uvloop/libuv), and unconditionally re-anchoring after
+        every oversleep permanently forfeits schedule, silently under-delivering
+        high request rates. Genuine stalls beyond the window still re-anchor so
+        we never fire an unbounded burst storm to catch up.
         """
         now = time.perf_counter()
 
-        # Behind schedule: reset to now instead of sending a burst to catch up.
-        # This sacrifices inter-arrival distribution accuracy for stable throughput.
-        if next_target_perf < now:
+        if next_target_perf < now - Environment.TIMING.MAX_CATCHUP_SECONDS:
             next_target_perf = now
 
         sleep_duration = next_target_perf - now

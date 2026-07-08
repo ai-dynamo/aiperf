@@ -1112,10 +1112,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     def _request_latency_ns_for_record(self, record: RequestRecord) -> int | None:
         """Return the same latency sample used by RequestLatencyMetric."""
         final_response_perf_ns = None
-        for response in record.responses:
+        # Scan backwards and stop at the first content-bearing response: this
+        # finds the same "last response with data" as a forward scan, but for
+        # streaming records it parses ~2 trailing chunks ([DONE]/usage) instead
+        # of re-JSON-parsing all N chunks on the worker's hot path.
+        for response in reversed(record.responses):
             parsed = self.inference_client.endpoint.parse_response(response)
             if parsed is not None and parsed.data:
                 final_response_perf_ns = parsed.perf_ns
+                break
         if final_response_perf_ns is None:
             return None
         if final_response_perf_ns < record.start_perf_ns:

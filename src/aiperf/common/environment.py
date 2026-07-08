@@ -897,6 +897,16 @@ class _TimingSettings(BaseSettings):
         default=1.0,
         description="Interval in seconds between reconciliation ticks in the sticky credit router",
     )
+    MAX_CATCHUP_SECONDS: float = Field(
+        ge=0.0,
+        le=10.0,
+        default=0.01,
+        description="Maximum schedule backlog in seconds the rate loop is allowed to catch up on "
+        "before re-anchoring to the current time. Event-loop timers oversleep sub-millisecond "
+        "waits (~1ms granularity under uvloop/libuv); without a catch-up window every oversleep "
+        "permanently forfeits schedule and high request rates silently under-deliver. Bounded so "
+        "a genuine multi-second stall still re-anchors instead of firing a burst storm.",
+    )
 
 
 class _ServiceSettings(BaseSettings):

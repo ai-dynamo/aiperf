@@ -188,6 +188,16 @@ class SSEMessage(
         if isinstance(raw_message, bytes):
             raw_message = raw_message.decode("utf-8")
 
+        # Fast path for the canonical LLM streaming chunk — a single
+        # `data: {...}` line with no embedded newlines. This shape is >99% of
+        # messages at high stream rates; skip the splitlines/continuation
+        # machinery for it.
+        if raw_message.startswith("data:") and "\n" not in raw_message:
+            return cls(
+                perf_ns=perf_ns,
+                packets=[SSEField(name=_SSE_DATA, value=raw_message[5:].strip())],
+            )
+
         message = cls(perf_ns=perf_ns)
         for line in raw_message.splitlines():
             if not (line := line.strip()):
