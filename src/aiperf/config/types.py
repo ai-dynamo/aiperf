@@ -54,7 +54,8 @@ class SequenceDistributionEntry(BaseConfig):
         sequence_distribution:
           - {isl: 128, osl: 64, probability: 40}
           - {isl: {mean: 512, stddev: 50}, osl: 256, probability: 35}
-          - {isl: {mean: 2048, median: 1800}, osl: 512, probability: 25}
+          - {first_turn_isl: {p50: 20000, p99: 100000}, isl: {mean: 300, stddev: 100},
+             osl: 512, probability: 25}
     """
 
     isl: Annotated[
@@ -74,6 +75,18 @@ class SequenceDistributionEntry(BaseConfig):
             description="Shorthand for ISL standard deviation. "
             "If provided when isl is an integer, creates a normal distribution. "
             "Cannot be used when isl is already a distribution dict.",
+        ),
+    ]
+
+    first_turn_isl: Annotated[
+        SamplingDistribution | None,
+        Field(
+            default=None,
+            description="Input sequence length for the FIRST turn of conversations "
+            "drawn from this bucket. Sets the starting-context size of the "
+            "conversation class while `isl` sizes each subsequent turn's new input. "
+            "When unset, `isl` applies to all turns. Accepts a fixed integer or any "
+            "distribution shape, including percentile {p50, p99, mean}.",
         ),
     ]
 

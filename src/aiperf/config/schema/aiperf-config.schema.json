@@ -10751,7 +10751,7 @@
             }
           ],
           "default": null,
-          "description": "Input sequence length for the FIRST turn of each conversation. In multi-turn benchmarks with growing context (e.g. user-centric mode), this sets the starting-context size while `isl` controls each subsequent turn's new input. When unset, `isl` applies to all turns. Requires `isl` to be set. Ignored when sequence_distribution is specified.",
+          "description": "Input sequence length for the FIRST turn of each conversation. In multi-turn benchmarks with growing context (e.g. user-centric mode), this sets the starting-context size while `isl` controls each subsequent turn's new input. When unset, `isl` applies to all turns. Requires `isl` to be set. Cannot be combined with sequence_distribution (set it per bucket there instead).",
           "title": "Firstturnisl"
         },
         "osl": {
@@ -11798,7 +11798,7 @@
     },
     "SequenceDistributionEntry": {
       "additionalProperties": false,
-      "description": "Defines a single entry in an ISL/OSL probability distribution.\n\nAIPerf supports multi-modal token length distributions, allowing\ndifferent ISL/OSL combinations with relative frequencies for\nrealistic workload modeling.\n\nYAML Representation:\n    sequence_distribution:\n      - {isl: 128, osl: 64, probability: 40}\n      - {isl: {mean: 512, stddev: 50}, osl: 256, probability: 35}\n      - {isl: {mean: 2048, median: 1800}, osl: 512, probability: 25}",
+      "description": "Defines a single entry in an ISL/OSL probability distribution.\n\nAIPerf supports multi-modal token length distributions, allowing\ndifferent ISL/OSL combinations with relative frequencies for\nrealistic workload modeling.\n\nYAML Representation:\n    sequence_distribution:\n      - {isl: 128, osl: 64, probability: 40}\n      - {isl: {mean: 512, stddev: 50}, osl: 256, probability: 35}\n      - {first_turn_isl: {p50: 20000, p99: 100000}, isl: {mean: 300, stddev: 100},\n         osl: 512, probability: 25}",
       "examples": [
         {
           "isl": 128,
@@ -11874,6 +11874,38 @@
           "title": "Islstddev",
           "x-jinja2-supported": true
         },
+        "firstTurnIsl": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FixedDistribution"
+                },
+                {
+                  "$ref": "#/$defs/NormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
+                  "$ref": "#/$defs/MultimodalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/EmpiricalDistribution"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Input sequence length for the FIRST turn of conversations drawn from this bucket. Sets the starting-context size of the conversation class while `isl` sizes each subsequent turn's new input. When unset, `isl` applies to all turns. Accepts a fixed integer or any distribution shape, including percentile {p50, p99, mean}.",
+          "title": "Firstturnisl"
+        },
         "osl": {
           "description": "Output sequence length (tokens). Can be a fixed integer, a {mean, stddev} distribution, or any typed distribution.",
           "oneOf": [
@@ -11935,12 +11967,12 @@
           "x-jinja2-supported": true
         },
         "probability": {
-          "description": "Relative probability weight for this distribution bucket. Weights are normalized across all entries and do NOT need to sum to 100 (probability=50 alongside probability=1 yields ~98%%/2%%).",
+          "description": "Relative probability weight for this distribution bucket. Zero disables the bucket (it is never sampled), which supports sweep-templated configs. Weights are normalized across all entries and do NOT need to sum to 100 (probability=50 alongside probability=1 yields ~98%%/2%%).",
           "title": "Probability",
           "oneOf": [
             {
-              "description": "Relative probability weight for this distribution bucket. Weights are normalized across all entries and do NOT need to sum to 100 (probability=50 alongside probability=1 yields ~98%%/2%%).",
-              "exclusiveMinimum": 0.0,
+              "description": "Relative probability weight for this distribution bucket. Zero disables the bucket (it is never sampled), which supports sweep-templated configs. Weights are normalized across all entries and do NOT need to sum to 100 (probability=50 alongside probability=1 yields ~98%%/2%%).",
+              "minimum": 0.0,
               "title": "Probability",
               "type": "number"
             },

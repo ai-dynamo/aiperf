@@ -85,7 +85,8 @@ class PromptConfig(BaseConfig):
             "In multi-turn benchmarks with growing context (e.g. user-centric mode), "
             "this sets the starting-context size while `isl` controls each subsequent "
             "turn's new input. When unset, `isl` applies to all turns. "
-            "Requires `isl` to be set. Ignored when sequence_distribution is specified.",
+            "Requires `isl` to be set. Cannot be combined with sequence_distribution "
+            "(set it per bucket there instead).",
         ),
     ]
 
@@ -148,7 +149,13 @@ class PromptConfig(BaseConfig):
         return v
 
     @model_validator(mode="after")
-    def validate_first_turn_isl_requires_isl(self) -> PromptConfig:
+    def validate_first_turn_isl_constraints(self) -> PromptConfig:
+        if self.first_turn_isl is not None and self.sequence_distribution is not None:
+            raise ValueError(
+                "first_turn_isl cannot be combined with sequence_distribution; "
+                "set first_turn_isl on individual sequence_distribution entries "
+                "instead (each bucket accepts its own first_turn_isl)."
+            )
         if self.first_turn_isl is not None and self.isl is None:
             raise ValueError(
                 "first_turn_isl requires isl to be set: first_turn_isl sizes the "

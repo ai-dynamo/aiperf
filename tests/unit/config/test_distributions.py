@@ -577,3 +577,71 @@ def test_legacy_string_parser_accepts_relative_weights():
     samples = [dist.sample() for _ in range(2000)]
     small = sum(1 for isl, _ in samples if isl == 100) / len(samples)
     assert small > 0.94
+
+
+# ============================================================
+# 10. Per-bucket first_turn_isl + top-level exclusivity
+# ============================================================
+
+
+class TestSequenceDistributionEntryFirstTurnIsl:
+    def test_entry_accepts_first_turn_isl_distribution(self):
+        entry = SequenceDistributionEntry.model_validate(
+            {
+                "first_turn_isl": {"p50": 20000, "p99": 100000, "mean": 30000},
+                "isl": {"mean": 300, "stddev": 100},
+                "osl": {"mean": 250, "stddev": 80},
+                "probability": 50,
+            }
+        )
+        assert entry.first_turn_isl is not None
+        assert entry.first_turn_isl.expected_value == pytest.approx(30000, rel=0.01)
+
+    def test_entry_first_turn_isl_defaults_to_none(self):
+        entry = SequenceDistributionEntry.model_validate(
+            {"isl": 128, "osl": 64, "probability": 100}
+        )
+        assert entry.first_turn_isl is None
+
+    def test_entry_first_turn_isl_scalar_coerces_to_fixed(self):
+        entry = SequenceDistributionEntry.model_validate(
+            {"first_turn_isl": 40000, "isl": 128, "osl": 64, "probability": 100}
+        )
+        assert entry.first_turn_isl.expected_value == 40000
+
+
+class TestPromptConfigFirstTurnIslSeqDistConflict:
+    def test_top_level_first_turn_isl_with_sequence_distribution_rejected(self):
+        with pytest.raises(
+            ValueError, match="cannot be combined with sequence_distribution"
+        ):
+            PromptConfig.model_validate(
+                {
+                    "first_turn_isl": {"mean": 20000, "stddev": 100},
+                    "isl": {"mean": 300, "stddev": 100},
+                    "sequence_distribution": [
+                        {"isl": 128, "osl": 64, "probability": 100}
+                    ],
+                }
+            )
+
+    def test_per_bucket_first_turn_isl_with_sequence_distribution_accepted(self):
+        cfg = PromptConfig.model_validate(
+            {
+                "sequence_distribution": [
+                    {
+                        "first_turn_isl": {"mean": 20000, "stddev": 100},
+                        "isl": 128,
+                        "osl": 64,
+                        "probability": 100,
+                    }
+                ]
+            }
+        )
+        assert cfg.sequence_distribution[0].first_turn_isl is not None
+
+    def test_first_turn_isl_without_isl_still_rejected(self):
+        with pytest.raises(ValueError, match="first_turn_isl requires isl"):
+            PromptConfig.model_validate(
+                {"first_turn_isl": {"mean": 20000, "stddev": 100}}
+            )
