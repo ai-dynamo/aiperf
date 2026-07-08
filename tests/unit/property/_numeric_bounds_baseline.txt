@@ -269,6 +269,8 @@ PlotSpec.ci_level: numeric field has no ge/gt/le/lt bound and is not FiniteFloat
 PluginEntry.priority: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 PluginSpec.priority: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 PowerMetricUnitInfo.watts: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+PrefixPromptConfig.shared_system_length: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+PrefixPromptConfig.user_context_length: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessingStats.errors: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessingStats.processed: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessRecordsCommand.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.

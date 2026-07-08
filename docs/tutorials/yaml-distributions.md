@@ -23,6 +23,8 @@ Any field in a YAML config typed as a sampling distribution accepts the full set
 | `turn_delay` | `dataset` | Delay between turns, in milliseconds |
 | `width`, `height` | `dataset.images` | Synthetic image dimensions, in pixels |
 | `length` | `dataset.audio` | Synthetic audio duration, in seconds |
+| `shared_system_length` | `dataset.prefix_prompts` | Shared system prompt size, in tokens — sampled once per run (identical across sessions) |
+| `user_context_length` | `dataset.prefix_prompts` | Per-session user context size, in tokens — sampled once per session |
 | `passages`, `passage_tokens`, `query_tokens` | `dataset.rankings` | Rankings/reranking endpoint shapes |
 
 Wherever you see `{mean: ..., stddev: ...}` in a template, you can swap in any other shape from this page.

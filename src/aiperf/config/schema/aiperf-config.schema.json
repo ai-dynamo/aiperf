@@ -10635,52 +10635,66 @@
         "sharedSystemLength": {
           "anyOf": [
             {
-              "minimum": 1,
-              "type": "integer"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FixedDistribution"
+                },
+                {
+                  "$ref": "#/$defs/NormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
+                  "$ref": "#/$defs/MultimodalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/EmpiricalDistribution"
+                }
+              ]
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
           "default": null,
-          "description": "Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. First part of a two-part prefix structure with high cache hit rate expected. Mutually exclusive with pool_size/length.",
-          "title": "Sharedsystemlength",
-          "x-jinja2-supported": true
+          "description": "Length of shared system prompt in tokens. Accepts a fixed integer or any sampling distribution; sampled ONCE per run so the prompt stays identical across all sessions (its cache-hit purpose). First part of a two-part prefix structure with high cache hit rate expected. Mutually exclusive with pool_size/length.",
+          "title": "Sharedsystemlength"
         },
         "userContextLength": {
           "anyOf": [
             {
-              "minimum": 1,
-              "type": "integer"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FixedDistribution"
+                },
+                {
+                  "$ref": "#/$defs/NormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/LogNormalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/PercentileDistribution"
+                },
+                {
+                  "$ref": "#/$defs/MultimodalDistribution"
+                },
+                {
+                  "$ref": "#/$defs/EmpiricalDistribution"
+                }
+              ]
             },
             {
               "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
           "default": null,
-          "description": "Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Second part of two-part prefix structure with lower cache hit rate expected. Mutually exclusive with pool_size/length.",
-          "title": "Usercontextlength",
-          "x-jinja2-supported": true
+          "description": "Length of per-session user context prompt in tokens. Accepts a fixed integer or any sampling distribution; sampled once PER SESSION so each conversation gets a unique context prompt with its own size. Second part of two-part prefix structure with lower cache hit rate expected. Mutually exclusive with pool_size/length.",
+          "title": "Usercontextlength"
         }
       },
       "title": "PrefixPromptConfig",

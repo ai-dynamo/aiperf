@@ -204,24 +204,24 @@ class PrefixPromptConfig(BaseConfig):
     ]
 
     shared_system_length: Annotated[
-        int | None,
+        SamplingDistribution | None,
         Field(
-            ge=1,
             default=None,
-            description="Length of shared system prompt in tokens. "
-            "This prompt is identical across all sessions and appears as a system message. "
+            description="Length of shared system prompt in tokens. Accepts a fixed "
+            "integer or any sampling distribution; sampled ONCE per run so the "
+            "prompt stays identical across all sessions (its cache-hit purpose). "
             "First part of a two-part prefix structure with high cache hit rate expected. "
             "Mutually exclusive with pool_size/length.",
         ),
     ]
 
     user_context_length: Annotated[
-        int | None,
+        SamplingDistribution | None,
         Field(
-            ge=1,
             default=None,
-            description="Length of per-session user context prompt in tokens. "
-            "Each dataset entry gets a unique user context prompt. "
+            description="Length of per-session user context prompt in tokens. Accepts "
+            "a fixed integer or any sampling distribution; sampled once PER SESSION "
+            "so each conversation gets a unique context prompt with its own size. "
             "Second part of two-part prefix structure with lower cache hit rate expected. "
             "Mutually exclusive with pool_size/length.",
         ),
@@ -238,6 +238,13 @@ class PrefixPromptConfig(BaseConfig):
                 "pool_size/length and shared_system_length/user_context_length "
                 "are mutually exclusive"
             )
+        for name in ("shared_system_length", "user_context_length"):
+            dist = getattr(self, name)
+            if dist is not None and dist.expected_value < 1:
+                raise ValueError(
+                    f"{name} must have an expected value >= 1, "
+                    f"got {dist.expected_value}"
+                )
         return self
 
 

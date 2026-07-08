@@ -19,7 +19,7 @@ from pydantic import TypeAdapter, ValidationError
 from pytest import param
 
 from aiperf.common import random_generator as rng
-from aiperf.config.dataset.content import PromptConfig
+from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.config.distributions import (
     Distribution,
     EmpiricalDistribution,
@@ -644,4 +644,35 @@ class TestPromptConfigFirstTurnIslSeqDistConflict:
         with pytest.raises(ValueError, match="first_turn_isl requires isl"):
             PromptConfig.model_validate(
                 {"first_turn_isl": {"mean": 20000, "stddev": 100}}
+            )
+
+
+class TestPrefixPromptLengthDistributions:
+    def test_scalar_lengths_still_parse_as_fixed(self):
+        cfg = PrefixPromptConfig.model_validate(
+            {"shared_system_length": 2048, "user_context_length": 512}
+        )
+        assert cfg.shared_system_length.expected_value == 2048
+        assert cfg.user_context_length.expected_value == 512
+
+    def test_distribution_lengths_accepted(self):
+        cfg = PrefixPromptConfig.model_validate(
+            {
+                "shared_system_length": {"mean": 2048, "stddev": 512, "min": 512},
+                "user_context_length": {"p50": 4000, "p99": 32000, "mean": 6000},
+            }
+        )
+        assert cfg.shared_system_length.expected_value == pytest.approx(2048, rel=0.01)
+        assert cfg.user_context_length.expected_value == pytest.approx(6000, rel=0.01)
+
+    def test_sub_one_expected_value_rejected(self):
+        with pytest.raises(ValueError, match="expected value >= 1"):
+            PrefixPromptConfig.model_validate(
+                {"user_context_length": {"mean": 0.2, "stddev": 0}}
+            )
+
+    def test_pool_fields_remain_ints(self):
+        with pytest.raises(ValueError):
+            PrefixPromptConfig.model_validate(
+                {"pool_size": 4, "length": {"mean": 100, "stddev": 10}}
             )

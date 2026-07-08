@@ -477,8 +477,8 @@ benchmark:
         ds = config.benchmark.get_dataset("main")
         assert ds.prompts.batch_size == 4
         assert ds.prompts.block_size == 128
-        assert ds.prefix_prompts.shared_system_length == 100
-        assert ds.prefix_prompts.user_context_length == 50
+        assert ds.prefix_prompts.shared_system_length.expected_value == 100
+        assert ds.prefix_prompts.user_context_length.expected_value == 50
         assert ds.turn_delay.expected_value == 200.0
         assert ds.turn_delay_ratio == 2.0
 
