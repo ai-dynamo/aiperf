@@ -255,6 +255,64 @@ async def test_handle_under_cap_grid_still_expands(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_rejects_multidim_grid_by_product_not_sum(monkeypatch):
+    """The cheap cardinality guard counts a MULTI-dimensional grid by the
+    PRODUCT of per-dimension lengths, not the sum.
+
+    4 variables x 50 values -> product 6_250_000 (>> the 200 cap), while the
+    per-dimension length SUM is only 200 (== the cap, which would NOT trip a
+    strict ``> cap`` check). A ``math.prod`` -> ``sum`` regression in
+    ``_cheap_variation_count`` would let this 6.25M-variation grid through and
+    OOM / liveness-kill the operator pod at ``expand_sweep`` time. Pins the
+    product semantic both at the helper and end-to-end through ``handle``.
+
+    The single-dimension over-cap test above (201 values -> 201) cannot catch a
+    ``prod`` -> ``sum`` swap: for one dimension the product and the sum are
+    equal, so only a multi-dimensional grid distinguishes them.
+    """
+    from aiperf.config.sweep import GridSweep
+
+    grid = GridSweep(
+        variables={
+            "phases.profiling.concurrency": list(range(50)),
+            "phases.profiling.rate": list(range(50)),
+            "phases.profiling.requests": list(range(50)),
+            "phases.profiling.duration": list(range(50)),
+        }
+    )
+    # Product 50**4, NOT the per-dimension length sum (50 * 4 == 200).
+    assert sweep_create._cheap_variation_count(grid) == 6_250_000
+    assert sweep_create._cheap_variation_count(grid) != 200
+
+    body = _valid_body()
+    body["spec"]["sweep"] = {
+        "type": "grid",
+        "variables": {
+            "benchmark.phases.profiling.concurrency": list(range(50)),
+            "benchmark.phases.profiling.rate": list(range(50)),
+            "benchmark.phases.profiling.requests": list(range(50)),
+            "benchmark.phases.profiling.duration": list(range(50)),
+        },
+    }
+    patch = kopf.Patch()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", AsyncMock())
+    expand_spy = MagicMock(
+        side_effect=AssertionError("expand_sweep must not run for an over-cap grid")
+    )
+    monkeypatch.setattr(sweep_create, "expand_sweep", expand_spy)
+
+    with pytest.raises(
+        kopf.PermanentError,
+        match=r"expands to 6250000 variations, exceeding the 200-variation",
+    ):
+        await sweep_create.handle(
+            body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+        )
+    expand_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_handle_sweep_input_mirrors_plan_builder_envelope(monkeypatch):
     """The expand_sweep input must be envelope-shaped with variables/random_seed
     parity so admission-time cardinality matches the sweep-controller's plan."""

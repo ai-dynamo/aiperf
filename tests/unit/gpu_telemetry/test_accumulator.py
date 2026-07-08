@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -381,3 +382,39 @@ class TestGPUTelemetryAccumulator:
 
         assert len(gpu0_results) > 0
         assert len(gpu1_results) > 0
+
+
+class TestTelemetryExportTimestampsAreUtc:
+    """Exported telemetry summary timestamps must be offset-aware UTC.
+
+    Regression: ``export_results`` built ``start_time`` / ``end_time`` with a
+    bare ``datetime.fromtimestamp(...)`` and ``datetime.now()`` (naive local
+    time), so the exported window drifted by the local-UTC offset. The fix
+    passes ``tz=UTC`` on both the timestamp conversion and the ``now()`` path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_explicit_window_is_offset_aware_utc(
+        self, mock_run, mock_pub_client, sample_telemetry_record
+    ) -> None:
+        processor = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+        await processor.process_telemetry_record(sample_telemetry_record)
+
+        export = processor.export_results(
+            start_ns=1_700_000_000_000_000_000, end_ns=1_700_000_001_000_000_000
+        )
+        for value in (export.summary.start_time, export.summary.end_time):
+            assert value.tzinfo is not None, "telemetry timestamp must be offset-aware"
+            assert value.utcoffset() == timedelta(0), "telemetry timestamp must be UTC"
+
+    @pytest.mark.asyncio
+    async def test_none_window_defaults_to_offset_aware_utc_now(
+        self, mock_run, mock_pub_client, sample_telemetry_record
+    ) -> None:
+        processor = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+        await processor.process_telemetry_record(sample_telemetry_record)
+
+        export = processor.export_results(start_ns=None, end_ns=None)
+        for value in (export.summary.start_time, export.summary.end_time):
+            assert value.tzinfo is not None, "default now() must be offset-aware"
+            assert value.utcoffset() == timedelta(0), "default now() must be UTC"

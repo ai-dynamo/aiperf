@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import orjson
 
@@ -107,10 +107,10 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             endpoints_configured=endpoints_configured,
             endpoints_successful=endpoints_successful,
             start_time=datetime.fromtimestamp(
-                self._server_metrics_results.start_ns / NANOS_PER_SECOND
+                self._server_metrics_results.start_ns / NANOS_PER_SECOND, tz=UTC
             ),
             end_time=datetime.fromtimestamp(
-                self._server_metrics_results.end_ns / NANOS_PER_SECOND
+                self._server_metrics_results.end_ns / NANOS_PER_SECOND, tz=UTC
             ),
             endpoint_info=endpoint_info if endpoint_info else None,
         )

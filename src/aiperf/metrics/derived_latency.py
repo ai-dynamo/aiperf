@@ -117,6 +117,13 @@ def compute_effective_latency(store: ColumnStore) -> MetricResult | None:
     ``credit_issued_ns``, so the queue wait is part of the perceived latency.
     Compare to ``request_latency`` (``end_ns - start_ns``) to see how much
     of perceived latency is queue-induced vs server-induced.
+
+    Failed requests are excluded (mirroring the success-only distribution that
+    ``request_latency`` is built over): a failed request never truly finished,
+    so its ``end_ns`` is defaulted to ``start_ns`` and would inject a near-zero
+    fake latency that corrupts the min/avg. Returns ``None`` when every record
+    errored (no successful sample survives the mask), matching
+    ``request_latency``'s all-error behavior.
     """
     n = store.count
     if n == 0:
@@ -124,7 +131,8 @@ def compute_effective_latency(store: ColumnStore) -> MetricResult | None:
     issued_col = store.metadata_numeric("credit_issued_ns")
     if issued_col.size == 0:
         return None
-    values_ms = _delta_ms(store.end_ns[:n], issued_col)
+    success = store.metadata_bool("has_error")[:n] != 1
+    values_ms = _delta_ms(store.end_ns[:n][success], issued_col[success])
     if values_ms.size == 0:
         return None
     return _array_to_metric_result(

@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import numpy as np
 from numpy.typing import NDArray
 
-from aiperf.analysis.sweepline import SweepLineCurves
+from aiperf.analysis.sweepline import (
+    ACTIVE_VARIANT_SPECS,
+    SWEEP_LINE_METRIC_SPECS,
+    SweepLineCurves,
+)
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     AggregationKind,
@@ -55,6 +59,21 @@ _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
     AggregationKind.MAX: lambda a: float(np.max(a)),
     AggregationKind.MIN: lambda a: float(np.min(a)),
 }
+
+
+# effective_concurrency is the only sweep metric computed purely from request
+# start/end timestamps; every other sweep metric needs generation_start_ns
+# (first-token timing). That timing is only recorded for streaming token
+# responses (TTFT is STREAMING_TOKENS_ONLY), so in non-streaming runs those
+# metrics would export a misleading 0.0 while effective_concurrency stays
+# non-zero — breaking metric decomposition. They are omitted instead, mirroring
+# the record-level STREAMING_TOKENS_ONLY drop. A new request-level sweep metric
+# must be added here to avoid being wrongly dropped.
+_REQUEST_LEVEL_SWEEP_TAGS: frozenset[str] = frozenset({"effective_concurrency"})
+_STREAMING_ONLY_SWEEP_TAGS: frozenset[str] = (
+    frozenset(spec.tag for spec in (*SWEEP_LINE_METRIC_SPECS, *ACTIVE_VARIANT_SPECS))
+    - _REQUEST_LEVEL_SWEEP_TAGS
+)
 
 
 class MetricsAccumulator(BaseMetricsProcessor):
@@ -426,17 +445,45 @@ class MetricsAccumulator(BaseMetricsProcessor):
         """Export final metrics results. Delegates to summarize()."""
         return await self.summarize()
 
+    def _has_streaming_timing(self) -> bool:
+        """True when first-token (generation-start) timing exists for any record.
+
+        Non-streaming runs never record TTFT (STREAMING_TOKENS_ONLY), so
+        ``generation_start_ns`` stays all-NaN and the streaming-only sweep
+        metrics would otherwise export a misleading 0.0. Gate them on this.
+        """
+        n = self._column_store.count
+        if n == 0:
+            return False
+        return bool(np.isfinite(self._column_store.generation_start_ns[:n]).any())
+
+    @staticmethod
+    def _drop_streaming_only_sweep_metrics(
+        results: dict[MetricTagT, MetricResult],
+    ) -> None:
+        """Remove streaming-only sweep metrics in-place (non-streaming runs)."""
+        for tag in _STREAMING_ONLY_SWEEP_TAGS:
+            results.pop(tag, None)
+
     def _inject_sweep_metrics(
         self,
         results: dict[MetricTagT, MetricResult],
         sweeps: SweepLineCurves,
     ) -> None:
-        """Inject time-weighted sweep metrics into results."""
+        """Inject time-weighted sweep metrics into results.
+
+        Omits the streaming-only sweep metrics (decode/prefill/generation
+        throughput, tokens_in_flight) when no first-token timing was recorded,
+        so non-streaming runs don't export a misleading 0.0 for them.
+        """
         if len(sweeps.concurrency_ts) == 0:
             return
         window_start = float(sweeps.concurrency_ts[0])
         window_end = float(sweeps.concurrency_ts[-1])
-        results.update(sweeps.compute_metrics(window_start, window_end))
+        sweep_metrics = sweeps.compute_metrics(window_start, window_end)
+        if not self._has_streaming_timing():
+            self._drop_streaming_only_sweep_metrics(sweep_metrics)
+        results.update(sweep_metrics)
 
     def _compute_timeslices(
         self,
@@ -483,6 +530,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         timeslice_results: list[dict[MetricTagT, MetricResult]] = []
         timeslice_windows: list[TimesliceWindow] = []
         filled_indices = np.where(filled)[0]
+        has_streaming = self._has_streaming_timing()
 
         for bin_idx in range(len(edges) - 1):
             bin_mask_local = bins == bin_idx
@@ -504,7 +552,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
             if len(results) == 0:
                 continue
-            results.update(sweeps.compute_metrics(window_start, window_end))
+            sweep_metrics = sweeps.compute_metrics(window_start, window_end)
+            if not has_streaming:
+                self._drop_streaming_only_sweep_metrics(sweep_metrics)
+            results.update(sweep_metrics)
 
             timeslice_results.append(results)
             timeslice_windows.append(

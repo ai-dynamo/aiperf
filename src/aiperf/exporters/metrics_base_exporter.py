@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import contextlib
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 
@@ -56,8 +58,13 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
     async def export(self) -> None:
         """Export inference and telemetry data to file.
 
-        Creates output directory, generates content, and writes to file.
-        Handles common file writing logic for all exporters.
+        Creates output directory, generates content, and atomically publishes
+        the file via a ``.partial`` sidecar + ``os.replace``. The atomic swap
+        matters for the key exports (``profile_export_aiperf.json``/``.csv``):
+        a mid-write ENOSPC or kill truncates only the sidecar, never the final
+        artifact the K8s results-ready marker and the operator's
+        ``_key_files_materialized`` gate depend on. On failure the sidecar is
+        removed so a truncated file never lingers under the key name.
 
         Raises:
             Exception: If file writing fails
@@ -66,14 +73,17 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
 
         self.debug(lambda: f"Exporting data to file: {self._file_path}")
 
+        tmp_path = self._file_path.with_name(f"{self._file_path.name}.partial")
         try:
             content = self._generate_content()
 
-            async with aiofiles.open(
-                self._file_path, "w", newline="", encoding="utf-8"
-            ) as f:
+            async with aiofiles.open(tmp_path, "w", newline="", encoding="utf-8") as f:
                 await f.write(content)
+
+            os.replace(tmp_path, self._file_path)
 
         except Exception as e:
             self.error(f"Failed to export to {self._file_path}: {e}")
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
             raise

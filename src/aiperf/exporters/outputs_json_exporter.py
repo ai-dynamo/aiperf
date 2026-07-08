@@ -103,7 +103,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         """Read all fragment JSONL files and return parsed dicts."""
         fragments: list[JsonObject] = []
         for file in fragment_files:
-            with open(file) as f:
+            with open(file, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -118,7 +118,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             self.debug("profile_export.jsonl not found, metrics will be empty")
             return metrics_map
 
-        with open(self._jsonl_path) as f:
+        with open(self._jsonl_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

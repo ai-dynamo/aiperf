@@ -58,7 +58,8 @@ class _FakeExporterManager:
     ) -> None:
         self._file_infos = file_infos or []
         self.export_console = AsyncMock()
-        self.export_data = AsyncMock()
+        # export_data() now returns a list of ExporterFailure (empty on success).
+        self.export_data = AsyncMock(return_value=[])
 
     def get_exported_file_infos(self) -> list[_FakeFileInfo]:
         return self._file_infos
@@ -84,6 +85,8 @@ class _FakeHost(SystemControllerOutputMixin):
     _memory_tracker: MemoryTracker = field(default_factory=MemoryTracker)
     _controller_pss_at_start: int | None = None
 
+    service_id: str = "system_controller"
+
     def __post_init__(self) -> None:
         self.run = SimpleNamespace(
             cli_command=self.cli_command,
@@ -93,6 +96,28 @@ class _FakeHost(SystemControllerOutputMixin):
                 ),
             ),
         )
+
+    def warning(self, *_a: Any, **_kw: Any) -> None:
+        """Logger stub (AIPerfLoggerMixin.warning on the real controller)."""
+
+    def error(self, *_a: Any, **_kw: Any) -> None:
+        """Logger stub (AIPerfLoggerMixin.error on the real controller)."""
+
+    def _surface_export_failures(self, failures: list[Any]) -> bool:
+        """Faithful stand-in for ``SystemController._surface_export_failures``."""
+        marker_blocking = False
+        for failure in failures:
+            if failure.is_deferred:
+                continue
+            marker_blocking = True
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails.from_exception(failure.error),
+                    operation=f"export:{failure.exporter}",
+                    service_id=self.service_id,
+                )
+            )
+        return marker_blocking
 
 
 def _make_profile_results(

@@ -277,6 +277,85 @@ def test_build_row_handles_missing_metrics() -> None:
     assert row == ["32", "", "", "", "", "1"]
 
 
+def _headline_run_result(
+    label: str,
+    *,
+    concurrency: int,
+    ott_avg: float,
+    ttft_p99: float,
+    itl_p99: float,
+    req_lat_p95: float,
+    success: bool = True,
+) -> Any:
+    """RunResult carrying the four HEADLINE_METRICS with real top-level names."""
+    from aiperf.common.models.export_models import JsonMetricResult
+    from aiperf.orchestrator.models import RunResult
+
+    return RunResult(
+        label=label,
+        success=success,
+        summary_metrics={
+            "output_token_throughput": JsonMetricResult(
+                unit="tokens/sec", avg=ott_avg, min=ott_avg, max=ott_avg
+            ),
+            "time_to_first_token": JsonMetricResult(
+                unit="ms", avg=ttft_p99 - 5, p99=ttft_p99, min=ttft_p99, max=ttft_p99
+            ),
+            "inter_token_latency": JsonMetricResult(
+                unit="ms", avg=itl_p99 - 1, p99=itl_p99, min=itl_p99, max=itl_p99
+            ),
+            "request_latency": JsonMetricResult(
+                unit="ms",
+                avg=req_lat_p95 - 10,
+                p95=req_lat_p95,
+                min=req_lat_p95,
+                max=req_lat_p95,
+            ),
+        },
+        variation_label=f"concurrency={concurrency}",
+        variation_values={"concurrency": concurrency},
+        trial_index=0,
+    )
+
+
+@pytest.mark.parametrize(
+    "n_trials",
+    [param(1, id="single-trial"), param(3, id="multi-trial")],
+)  # fmt: skip
+def test_headline_metrics_render_for_single_and_multi_trial(n_trials: int) -> None:
+    """Regression (DEFECT 2): HEADLINE_METRICS columns must render non-blank for
+    BOTH single- and multi-trial cells.
+
+    ``_aggregate_group_to_stats`` unifies its output so the nested
+    ``stats[metric][stat]`` keys HEADLINE_METRICS reads exist for both trial
+    counts. Before the fix the multi-trial ConfidenceAggregation path emitted
+    ONLY flattened ``<metric>_<stat>`` keys, so every headline column came back
+    "" for multi-trial cells while single-trial (nested-keyed) worked.
+    """
+    from aiperf.cli_runner._sweep_aggregate import _aggregate_group_to_stats
+    from aiperf.cli_runner._sweep_table import HEADLINE_METRICS, _format_metric_value
+
+    group = [
+        _headline_run_result(
+            f"c10_t{i}",
+            concurrency=10,
+            ott_avg=1400.0 + i,
+            ttft_p99=50.0 + i,
+            itl_p99=20.0 + i,
+            req_lat_p95=400.0 + i,
+        )
+        for i in range(n_trials)
+    ]
+    stats = _aggregate_group_to_stats(group, confidence_level=0.95)
+    assert stats is not None
+
+    for metric, stat in HEADLINE_METRICS:
+        rendered = _format_metric_value(stats, metric, stat)
+        assert rendered != "", (
+            f"HEADLINE ({metric}, {stat}) rendered blank for n_trials={n_trials}"
+        )
+
+
 def _make_run_result_stub(metric_value: float) -> SimpleNamespace:
     """Minimal stub that the patched _aggregate_cell_stats can consume."""
     return SimpleNamespace(metric_value=metric_value)

@@ -22,6 +22,13 @@ class GoodRequestFractionMetric(BaseDerivedMetric[float]):
     look "good" simply because the survivors stayed under the latency
     budget.
 
+    Client-cancelled requests (``--request-cancellation-rate``) are excluded
+    from the denominator: the record-processor routes them to
+    :class:`CancelledRequestCountMetric` (``CANCELLED_ONLY``) rather than the
+    error path, so they never reach ``error_request_count`` or ``request_count``.
+    Deliberate cancellations therefore do not deflate goodput, matching the
+    credit-side ``cancelled`` bucket.
+
     No counter is declared in `required_metrics` because each one can be
     legitimately absent. `error_request_count` is `MetricFlags.ERROR_ONLY`,
     so it is absent on a clean zero-error run. `good_request_count` and

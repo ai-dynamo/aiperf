@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as get_version
 from pathlib import Path
@@ -84,12 +84,12 @@ def generate_json_export_data(
         aiperf_version = "unknown"
 
     start_time = (
-        datetime.fromtimestamp(profile_results.start_ns / NANOS_PER_SECOND)
+        datetime.fromtimestamp(profile_results.start_ns / NANOS_PER_SECOND, tz=UTC)
         if profile_results.start_ns
         else None
     )
     end_time = (
-        datetime.fromtimestamp(profile_results.end_ns / NANOS_PER_SECOND)
+        datetime.fromtimestamp(profile_results.end_ns / NANOS_PER_SECOND, tz=UTC)
         if profile_results.end_ns
         else None
     )

@@ -1303,6 +1303,7 @@ good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
 **Notes:**
 - Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
 - Returns `0.0` when no requests were attempted (`request_count + error_request_count == 0`).
+- Client-cancelled requests (`--request-cancellation-rate`) are excluded from the denominator (they are counted by [Cancelled Request Count](#cancelled-request-count)), so deliberate cancellations do not deflate goodput.
 - Hidden from console output (`NO_CONSOLE`); appears in JSON, CSV, and Parquet exports.
 - Powers the SLA-feasibility gate of the [`max-goodput-under-slo`](sweeping/search-recipes.md) search recipe (`good_request_fraction:avg:ge:<attainment>`); without it, the recipe filter dereferences a missing tag and Bayesian optimization treats every iteration as infeasible.
 
@@ -1424,11 +1425,28 @@ The total number of failed/error requests encountered during the benchmark. This
 
 **Formula:**
 ```python
-error_request_count = sum(1 for r in records if not r.valid)
+error_request_count = sum(1 for r in records if not r.valid and not r.was_cancelled)
 ```
 
 **Notes:**
 - The error rate is available directly as the built-in [Request Error Rate](#request-error-rate) (`request_error_rate`) metric; no manual computation is required.
+- Client-cancelled requests (`--request-cancellation-rate`) are **not** counted here. They carry a code-499 `RequestCancellationError` (so they are technically invalid) but a deliberate cancellation is not a server error, so they are routed to [Cancelled Request Count](#cancelled-request-count) instead.
+
+---
+
+### Cancelled Request Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+The total number of requests that were cancelled client-side via `--request-cancellation-rate` (simulated client disconnections, surfaced as a code-499 `RequestCancellationError`). Mirrors the credit-side `cancelled` bucket, so the export agrees with the PhaseRunner log instead of counting deliberate cancellations as errors.
+
+**Formula:**
+```python
+cancelled_request_count = sum(1 for r in records if r.was_cancelled)
+```
+
+**Notes:**
+- Kept separate from [Error Request Count](#error-request-count); cancellations are excluded from both the [Request Error Rate](#request-error-rate) numerator/denominator and the [Good Request Fraction](#good-request-fraction) denominator so they do not pollute error rate or deflate goodput.
 
 ---
 
@@ -1462,6 +1480,7 @@ request_error_rate = 100.0 * error_request_count / (request_count + error_reques
 **Notes:**
 - Reported as a percentage (0-100).
 - Not produced when there are no completed requests (both counts zero).
+- Client-cancelled requests (`--request-cancellation-rate`) are excluded from both the numerator and the denominator (they are counted by [Cancelled Request Count](#cancelled-request-count)), so a cancel-only run reports 0%.
 - Pair with the `adj_*` percentile band on flagged latency metrics for a full picture of failure-contaminated tail behavior.
 
 ---

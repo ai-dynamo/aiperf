@@ -147,7 +147,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.GOODPUT,
             ),
-            # Test exclude_error_metrics=True
+            # Test exclude_error_metrics=True (valid path drops error AND cancelled)
             (
                 False,
                 True,
@@ -158,6 +158,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.PRODUCES_VIDEO_ONLY
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.ERROR_ONLY
+                | MetricFlags.CANCELLED_ONLY
                 | MetricFlags.GOODPUT,
             ),
             # Test both flags (error_metrics_only takes precedence)
@@ -206,6 +207,25 @@ class TestBaseMetricsProcessor:
             expected_disallowed | MetricFlags.EXPERIMENTAL,
             MetricType.RECORD,
         )
+
+    def test_setup_metrics_cancelled_metrics_only_requires_cancelled_flag(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config: AIPerfConfig,
+    ) -> None:
+        """cancelled_metrics_only requires CANCELLED_ONLY and adds no error/cancelled disallow."""
+        mock_metric_registry.tags_applicable_to.return_value = set()
+        processor = BaseMetricsProcessor(_make_run(mock_user_config))
+        processor._setup_metrics(MetricType.RECORD, cancelled_metrics_only=True)
+
+        required_flags = mock_metric_registry.tags_applicable_to.call_args[0][0]
+        disallowed_flags = mock_metric_registry.tags_applicable_to.call_args[0][1]
+
+        assert required_flags == MetricFlags.CANCELLED_ONLY
+        # The cancelled bucket must not disallow ERROR_ONLY/CANCELLED_ONLY (it
+        # requires CANCELLED_ONLY), and error_request_count (ERROR_ONLY, no
+        # CANCELLED_ONLY) is naturally excluded by the required flag.
+        assert not (disallowed_flags & MetricFlags.CANCELLED_ONLY)
 
     def test_setup_metrics_empty_result(
         self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig

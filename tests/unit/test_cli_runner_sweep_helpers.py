@@ -116,6 +116,69 @@ async def test_aggregate_sweep_and_export_two_variations_one_trial(tmp_path, log
 
 
 @pytest.mark.asyncio
+async def test_single_trial_sweep_populates_best_and_pareto(tmp_path, logger):
+    """Regression (DEFECT 1): the DEFAULT single-trial sweep (trials=1) must
+    populate ``best_configurations`` + ``pareto_optimal`` in the aggregate export.
+
+    Before the fix, the single-trial branch keyed per-cell stats by the
+    TOP-LEVEL metric name (``request_throughput``) while ``SweepAnalyzer`` reads
+    the flattened ``request_throughput_avg`` / ``time_to_first_token_p99``
+    shape the multi-trial path emits — so best/pareto came out EMPTY for the
+    common default. ``_result`` uses the real top-level metric names, so this
+    exercises the exact broken path (unlike the pre-flattened workaround in
+    ``test_aggregate_sweep_logs_best_configurations`` above).
+    """
+    plan = _make_plan()
+    results = [
+        _result("c10", concurrency=10, throughput=100.0, ttft_p99=50.0),
+        _result("c20", concurrency=20, throughput=180.0, ttft_p99=80.0),
+    ]
+
+    out_dir = await aggregate_sweep_and_export(results, plan, tmp_path, logger)
+    data = json.loads((out_dir / "profile_export_aiperf_sweep.json").read_text())
+
+    best = data["best_configurations"]
+    pareto = data["pareto_optimal"]
+    assert best, "single-trial sweep must populate best_configurations, not {}"
+    assert pareto, "single-trial sweep must populate pareto_optimal, not []"
+    # Highest throughput (180) -> concurrency=20; lowest TTFT-p99 (50) -> c=10.
+    assert best["best_throughput"]["parameters"] == {"concurrency": 20}
+    assert best["best_throughput"]["metric"] == 180.0
+    assert best["best_latency_p99"]["parameters"] == {"concurrency": 10}
+    assert best["best_latency_p99"]["metric"] == 50.0
+    # Both cells are non-dominated (c10 wins latency, c20 wins throughput).
+    assert {"concurrency": 10} in pareto
+    assert {"concurrency": 20} in pareto
+
+
+@pytest.mark.asyncio
+async def test_multi_trial_sweep_still_populates_best_and_pareto(tmp_path, logger):
+    """No-regression companion to the single-trial fix: the multi-trial
+    ConfidenceAggregation path must keep populating best/pareto after the
+    single-trial branch was normalized to the same flattened key shape."""
+    plan = _make_plan()
+    results = []
+    for i, tput in enumerate([100.0, 105.0, 95.0]):
+        r = _result(f"c10_t{i}", concurrency=10, throughput=tput, ttft_p99=50.0 + i)
+        r.trial_index = i
+        results.append(r)
+    for i, tput in enumerate([180.0, 175.0, 185.0]):
+        r = _result(f"c20_t{i}", concurrency=20, throughput=tput, ttft_p99=80.0 + i)
+        r.trial_index = i
+        results.append(r)
+
+    out_dir = await aggregate_sweep_and_export(results, plan, tmp_path, logger)
+    data = json.loads((out_dir / "profile_export_aiperf_sweep.json").read_text())
+
+    assert data["best_configurations"], "multi-trial best_configurations regressed"
+    assert data["pareto_optimal"], "multi-trial pareto_optimal regressed"
+    # c20 mean throughput (180) beats c10 (~100).
+    assert data["best_configurations"]["best_throughput"]["parameters"] == {
+        "concurrency": 20
+    }
+
+
+@pytest.mark.asyncio
 async def test_aggregate_sweep_and_export_two_variations_three_trials(tmp_path, logger):
     """Two variations × 3 trials: ConfidenceAggregation runs inside each cell."""
     plan = _make_plan()

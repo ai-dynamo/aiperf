@@ -54,12 +54,34 @@ class MetricRecordProcessor(BaseMetricsProcessor):
             )
         ]
 
+        # Store a reference to the parse_record function for cancelled metrics.
+        # A client-cancelled request (--request-cancellation-rate) is NOT a
+        # server error: it carries a code-499 RequestCancellationError so
+        # record.valid is False, but routing it to the error path would inflate
+        # error_request_count and deflate goodput, contradicting the credit-side
+        # `cancelled` bucket. It gets its own parse funcs (CANCELLED_ONLY).
+        self.cancelled_parse_funcs: list[
+            tuple[MetricTagT, Callable[[ParsedResponseRecord, MetricRecordDict], Any]]
+        ] = [
+            (metric.tag, metric.parse_record)  # type: ignore
+            for metric in self._setup_metrics(
+                MetricType.RECORD, MetricType.AGGREGATE, cancelled_metrics_only=True
+            )
+        ]
+
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
     ) -> MetricRecordDict:
         """Process a response record from the inference results parser."""
         record_metrics: MetricRecordDict = MetricRecordDict()
-        parse_funcs = self.valid_parse_funcs if record.valid else self.error_parse_funcs
+        # Check cancellation before validity: a cancelled record is invalid
+        # (has a RequestCancellationError) but must not count as an error.
+        if record.request.was_cancelled:
+            parse_funcs = self.cancelled_parse_funcs
+        elif record.valid:
+            parse_funcs = self.valid_parse_funcs
+        else:
+            parse_funcs = self.error_parse_funcs
         # NOTE: Need to parse the record in a loop, as the parse_record function may depend on the results of previous metrics.
         for tag, parse_func in parse_funcs:
             try:

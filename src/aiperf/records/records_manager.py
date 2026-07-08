@@ -290,7 +290,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._send_results_to_results_processors(record_data)
             # Parallel accumulator path — see ``__init__`` for why both run.
             await self._send_record_to_accumulators(record_data)
-        if record_data.error:
+        # Cancellations carry a RequestCancellationError but are a distinct
+        # bucket, not a server error — keep them out of the error summary so it
+        # agrees with error_request_count / request_error_rate.
+        if record_data.error and not record_data.metadata.was_cancelled:
             domain_error = wire_error_to_domain_error(record_data.error)
             if domain_error is not None:
                 self._error_tracker.increment_error_count_for_phase(

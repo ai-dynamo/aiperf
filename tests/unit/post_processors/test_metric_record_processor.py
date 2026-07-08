@@ -9,6 +9,9 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.config import AIPerfConfig
 from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.types.cancelled_request_count_metric import (
+    CancelledRequestCountMetric,
+)
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
@@ -54,8 +57,71 @@ class TestMetricRecordProcessor:
             ).parse_record
         )
 
-        assert mock_metric_registry.tags_applicable_to.call_count == 2
-        assert mock_metric_registry.create_dependency_order_for.call_count == 2
+        # Three setup passes: valid, error, cancelled.
+        assert mock_metric_registry.tags_applicable_to.call_count == 3
+        assert mock_metric_registry.create_dependency_order_for.call_count == 3
+
+    def test_initialization_caches_cancelled_parse_functions(
+        self, mock_metric_registry: Mock, mock_user_config: AIPerfConfig
+    ) -> None:
+        """The cancelled path caches its own parse funcs (CANCELLED_ONLY)."""
+        setup_mock_registry_sequences(
+            mock_metric_registry,
+            [RequestLatencyMetric],
+            [ErrorRequestCountMetric],
+            [CancelledRequestCountMetric],
+        )
+
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
+
+        assert len(processor.cancelled_parse_funcs) == 1
+        assert processor.cancelled_parse_funcs[0][0] == CancelledRequestCountMetric.tag
+
+    @pytest.mark.asyncio
+    async def test_process_cancelled_record_uses_cancelled_funcs(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config: AIPerfConfig,
+        cancelled_parsed_record: ParsedResponseRecord,
+    ) -> None:
+        """A cancelled record counts as cancelled, never as an error."""
+        setup_mock_registry_sequences(
+            mock_metric_registry,
+            [],
+            [ErrorRequestCountMetric],
+            [CancelledRequestCountMetric],
+        )
+
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
+        metadata = create_metric_metadata()
+        result = await processor.process_record(cancelled_parsed_record, metadata)
+
+        assert isinstance(result, MetricRecordDict)
+        assert result[CancelledRequestCountMetric.tag] == 1
+        # The error counter must NOT fire for a client-cancelled request.
+        assert ErrorRequestCountMetric.tag not in result
+
+    @pytest.mark.asyncio
+    async def test_process_error_record_not_counted_as_cancelled(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config: AIPerfConfig,
+        error_parsed_record: ParsedResponseRecord,
+    ) -> None:
+        """A genuine (non-cancelled) error stays on the error path."""
+        setup_mock_registry_sequences(
+            mock_metric_registry,
+            [],
+            [ErrorRequestCountMetric],
+            [CancelledRequestCountMetric],
+        )
+
+        processor = MetricRecordProcessor(_make_run(mock_user_config))
+        metadata = create_metric_metadata()
+        result = await processor.process_record(error_parsed_record, metadata)
+
+        assert result[ErrorRequestCountMetric.tag] == 1
+        assert CancelledRequestCountMetric.tag not in result
 
     @pytest.mark.asyncio
     async def test_process_valid_record(

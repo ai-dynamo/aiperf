@@ -4,6 +4,9 @@
 from pytest import approx
 
 from aiperf.metrics.metric_dicts import MetricResultsDict
+from aiperf.metrics.types.cancelled_request_count_metric import (
+    CancelledRequestCountMetric,
+)
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
 from aiperf.metrics.types.good_request_fraction_metric import GoodRequestFractionMetric
@@ -73,6 +76,19 @@ class TestGoodRequestFractionMetric:
         results = MetricResultsDict()
         results[RequestCountMetric.tag] = 20
         assert metric.derive_value(results) == approx(0.0)
+
+    def test_cancellations_excluded_from_denominator(self):
+        # 18 good / (20 valid + 5 errors) == 18/25. The 32 deliberate
+        # cancellations must NOT enter the denominator (they are routed to
+        # cancelled_request_count, never request_count/error_request_count), so
+        # goodput is not deflated by them: the fraction stays 18/25, not 18/57.
+        metric = GoodRequestFractionMetric()
+        results = MetricResultsDict()
+        results[GoodRequestCountMetric.tag] = 18
+        results[RequestCountMetric.tag] = 20
+        results[ErrorRequestCountMetric.tag] = 5
+        results[CancelledRequestCountMetric.tag] = 32
+        assert metric.derive_value(results) == approx(18 / 25)
 
     def test_registered_in_metric_registry(self):
         from aiperf.metrics.metric_registry import MetricRegistry

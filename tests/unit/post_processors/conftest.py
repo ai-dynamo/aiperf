@@ -524,6 +524,55 @@ def error_parsed_record() -> ParsedResponseRecord:
     )
 
 
+@pytest.fixture
+def cancelled_parsed_record() -> ParsedResponseRecord:
+    """Create a client-cancelled ParsedResponseRecord for testing.
+
+    Mirrors what the transport writes on ``--request-cancellation-rate``: a
+    code-499 ``RequestCancellationError`` plus ``cancellation_perf_ns`` set, so
+    ``was_cancelled`` is True and ``valid`` is False.
+    """
+    from aiperf.common.models import Text, Turn
+
+    error_details = ErrorDetails(
+        type="RequestCancellationError",
+        message="Request cancelled by external signal",
+        code=499,
+    )
+
+    turns = [
+        Turn(
+            texts=[Text(contents=["This will be cancelled"])],
+            role="user",
+            model="test-model",
+        )
+    ]
+
+    request = RequestRecord(
+        request_info=_create_test_request_info(
+            conversation_id="test-conversation-cancelled",
+            turns=turns,
+        ),
+        model_name="test-model",
+        start_perf_ns=DEFAULT_START_TIME_NS,
+        timestamp_ns=DEFAULT_START_TIME_NS,
+        end_perf_ns=DEFAULT_START_TIME_NS,
+        status=None,
+        error=error_details,
+        cancellation_perf_ns=DEFAULT_START_TIME_NS,
+    )
+
+    return ParsedResponseRecord(
+        request=request,
+        responses=[],
+        token_counts=TokenCounts(
+            input=None,
+            output=None,
+            reasoning=None,
+        ),
+    )
+
+
 def create_exporter_config(config: AIPerfConfig) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
     return ExporterConfig(
@@ -564,31 +613,49 @@ def setup_mock_registry_sequences(
     mock_registry: Mock,
     valid_metric_types: list[type[BaseMetric]],
     error_metric_types: list[type[BaseMetric]],
-) -> tuple[list[str], list[str]]:
-    """Setup mock registry for processors that need both valid and error metrics.
+    cancelled_metric_types: list[type[BaseMetric]] | None = None,
+) -> tuple[list[str], list[str], list[str]]:
+    """Setup mock registry for processors that split valid/error/cancelled metrics.
+
+    ``MetricRecordProcessor`` calls ``_setup_metrics`` three times at init
+    (valid, error, then cancelled), so the registry mock is primed with three
+    ordered ``side_effect`` sequences.
 
     Args:
         mock_registry: The mock registry to configure
         valid_metric_types: list of valid metric class types
         error_metric_types: list of error metric class types
+        cancelled_metric_types: list of cancelled metric class types (defaults empty)
 
     Returns:
-        tuple of (valid_tags, error_tags)
+        tuple of (valid_tags, error_tags, cancelled_tags)
     """
+    cancelled_metric_types = cancelled_metric_types or []
     valid_tags = [metric_type.tag for metric_type in valid_metric_types]
     error_tags = [metric_type.tag for metric_type in error_metric_types]
+    cancelled_tags = [metric_type.tag for metric_type in cancelled_metric_types]
 
     # Create lookup map for all metric instances
     all_metric_instances = {
         metric_type.tag: metric_type()
-        for metric_type in valid_metric_types + error_metric_types
+        for metric_type in valid_metric_types
+        + error_metric_types
+        + cancelled_metric_types
     }
 
-    mock_registry.tags_applicable_to.side_effect = [valid_tags, error_tags]
-    mock_registry.create_dependency_order_for.side_effect = [valid_tags, error_tags]
+    mock_registry.tags_applicable_to.side_effect = [
+        valid_tags,
+        error_tags,
+        cancelled_tags,
+    ]
+    mock_registry.create_dependency_order_for.side_effect = [
+        valid_tags,
+        error_tags,
+        cancelled_tags,
+    ]
     mock_registry.get_instance.side_effect = lambda tag: all_metric_instances[tag]
 
-    return valid_tags, error_tags
+    return valid_tags, error_tags, cancelled_tags
 
 
 def create_accumulator_with_metrics(config: AIPerfConfig, *metrics: type[BaseMetric]):

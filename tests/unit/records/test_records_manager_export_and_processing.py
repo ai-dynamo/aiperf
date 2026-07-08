@@ -22,6 +22,10 @@ focuses on:
 from __future__ import annotations
 
 import asyncio
+import os
+import time
+from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -314,6 +318,72 @@ class TestExportGenerateJsonExportData:
         )
         # No tag means no auto-attach: schema/aiperf_version still populated
         assert export.schema_version is not None
+
+
+@contextmanager
+def _temp_tz(tz_name: str):
+    """Temporarily set the process time zone, restoring it on exit.
+
+    ``datetime.fromtimestamp`` without ``tz=`` is interpreted in local time, so
+    switching ``TZ`` is what surfaces the naive-vs-aware regression.
+    """
+    if not hasattr(time, "tzset"):  # pragma: no cover - non-Unix
+        pytest.skip("time.tzset unavailable on this platform")
+    original = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = tz_name
+        time.tzset()
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
+
+class TestExportTimestampsAreUtc:
+    """The checkpoint export must emit offset-aware UTC, not naive local time.
+
+    Regression: ``generate_json_export_data`` built ``start_time`` /
+    ``end_time`` with a bare ``datetime.fromtimestamp(...)`` (naive local time),
+    so a checkpoint-salvaged export disagreed with a normal export of the same
+    run by the local-UTC offset. The fix passes ``tz=UTC``.
+    """
+
+    def test_start_end_time_are_offset_aware_utc(self) -> None:
+        export = generate_json_export_data(
+            [],
+            ProfileResults(
+                completed=1,
+                start_ns=1_700_000_000_000_000_000,
+                end_ns=1_700_000_001_000_000_000,
+            ),
+            _make_benchmark_config(),
+        )
+        for value in (export.start_time, export.end_time):
+            assert value is not None
+            assert value.tzinfo is not None, "export timestamp must be offset-aware"
+            assert value.utcoffset() == timedelta(0), "export timestamp must be UTC"
+
+    def test_start_time_is_tz_independent(self) -> None:
+        profile_results = ProfileResults(
+            completed=1,
+            start_ns=1_700_000_000_000_000_000,
+            end_ns=1_700_000_001_000_000_000,
+        )
+        config = _make_benchmark_config()
+
+        with _temp_tz("UTC"):
+            under_utc = generate_json_export_data(
+                [], profile_results, config
+            ).start_time
+        with _temp_tz("Asia/Kolkata"):
+            under_kolkata = generate_json_export_data(
+                [], profile_results, config
+            ).start_time
+
+        assert under_utc == under_kolkata
 
 
 # ============================================================

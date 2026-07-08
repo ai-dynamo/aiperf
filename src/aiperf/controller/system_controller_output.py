@@ -102,7 +102,8 @@ class SystemControllerOutputMixin:
                 server_metrics_results=self._server_metrics_results,
                 run=self.run,
             )
-            await self._exporter_manager.export_data()
+            failures = await self._exporter_manager.export_data()
+            self._surface_export_failures(failures)
             self._results_exported = True
 
         await self._exporter_manager.export_console(console=console)

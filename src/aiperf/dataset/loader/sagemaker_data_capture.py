@@ -90,7 +90,7 @@ class SageMakerDataCaptureLoader(
             else:
                 return False
             try:
-                with open(target) as f:
+                with open(target, encoding="utf-8") as f:
                     for line in f:
                         if not (line := line.strip()):
                             continue
@@ -231,7 +231,7 @@ class SageMakerDataCaptureLoader(
         """Parse all records from the given files."""
         items: list[SageMakerDataCaptureTrace] = []
         for file in files:
-            with open(file) as f:
+            with open(file, encoding="utf-8") as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue

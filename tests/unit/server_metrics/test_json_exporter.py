@@ -795,3 +795,33 @@ class TestServerMetricsJsonExporterInputConfig:
             "models",
             "phases",
         }.issubset(set(input_config.keys()))
+
+
+class TestServerMetricsJsonExporterTimestampsAreUtc:
+    """Summary timestamps must be offset-aware UTC, not naive local time.
+
+    Regression: ``_generate_content`` built ``start_time`` / ``end_time`` with a
+    bare ``datetime.fromtimestamp(...)`` (naive local time), so the exported
+    value drifted by the local-UTC offset across time zones. The fix passes
+    ``tz=UTC``; pydantic then serializes it with a ``Z``/``+00:00`` suffix.
+    """
+
+    def test_summary_start_end_time_serialized_as_utc(
+        self,
+        mock_cfg,
+        mock_profile_results,
+        server_metrics_results_with_summaries,
+    ):
+        config = create_exporter_config(
+            profile_results=mock_profile_results,
+            cli_config=mock_cfg,
+            server_metrics_results=server_metrics_results_with_summaries,
+        )
+        exporter = ServerMetricsJsonExporter(config)
+        summary = orjson.loads(exporter._generate_content())["summary"]
+
+        for key in ("start_time", "end_time"):
+            value = summary[key]
+            assert value.endswith("Z") or value.endswith("+00:00"), (
+                f"summary.{key}={value!r} must be offset-aware UTC"
+            )

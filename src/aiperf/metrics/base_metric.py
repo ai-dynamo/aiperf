@@ -133,9 +133,14 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         )
 
     def _require_valid_record(self, record: ParsedResponseRecord) -> None:
-        """Check that the record is valid."""
-        if (not record or not record.valid) and not self.has_flags(
-            MetricFlags.ERROR_ONLY
+        """Check that the record is valid.
+
+        Invalid records are allowed through for ``ERROR_ONLY`` metrics (errored
+        records) and ``CANCELLED_ONLY`` metrics (client-cancelled records), which
+        are computed precisely on the records the valid path skips.
+        """
+        if (not record or not record.valid) and not self.has_any_flags(
+            MetricFlags.ERROR_ONLY | MetricFlags.CANCELLED_ONLY
         ):
             raise NoMetricValue(
                 f"{type(self).__name__}: parsed response record is missing or "

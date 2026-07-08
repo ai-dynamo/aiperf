@@ -88,14 +88,66 @@ def _key_files_materialized(namespace: str, job_id: str, epoch: str) -> bool:
     its own PVC — otherwise a transport race that reports the file without
     landing it would point readers at an empty directory. Checks both the raw
     and ``.zst`` on-disk names, mirroring :func:`_has_key_result_files`.
+
+    Existence alone is NOT sufficient: a mid-write disk-full leaves a truncated
+    file on disk, and serving it as a complete result is a data-integrity bug.
+    A key artifact only counts as materialized when :func:`_key_artifact_valid`
+    confirms it is non-empty and (for the JSON export) parses to a non-empty
+    dict, mirroring the wave-9/10 JSONL-degradation and harvest marker-parse
+    hardening. Returns True on the FIRST valid key so a csv-authoritative run
+    still succeeds without a readable JSON summary.
     """
     dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
     if not dest_dir.exists():
         return False
-    return any(
-        (dest_dir / key).is_file() or (dest_dir / f"{key}.zst").is_file()
-        for key in _KEY_RESULT_FILES
-    )
+    for key in _KEY_RESULT_FILES:
+        for candidate in ((dest_dir / key), (dest_dir / f"{key}.zst")):
+            if candidate.is_file() and _key_artifact_valid(candidate):
+                return True
+    return False
+
+
+def _key_artifact_valid(path: Path) -> bool:
+    """Return True when a key result artifact is fully materialized (not truncated).
+
+    A truncated ENOSPC write leaves a non-empty-but-corrupt file on disk, so
+    existence is not enough. Validation:
+
+    - Empty file (0 bytes) → invalid.
+    - ``.json`` / ``.json.zst`` → must decode (zstd, if compressed) and
+      ``orjson.loads`` to a non-empty dict.
+    - ``.csv`` / ``.csv.zst`` → non-empty is sufficient (no cheap structural
+      parse; the JSON export is the operator's authoritative summary).
+
+    A truncated/unparsable JSON export MUST NOT count as materialized so the
+    operator neither advances ``latest.txt`` nor serves corrupt results.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    if not raw:
+        return False
+
+    is_zst = path.suffix == ".zst"
+    logical_name = path.name[: -len(".zst")] if is_zst else path.name
+
+    # CSV export: non-empty payload is sufficient. Do NOT require a valid zstd
+    # frame here — treat the compressed CSV as an opaque, present artifact.
+    if logical_name.endswith(".csv"):
+        return True
+
+    if is_zst:
+        try:
+            raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(raw)).read()
+        except (zstandard.ZstdError, OSError):
+            return False
+
+    try:
+        data = orjson.loads(raw)
+    except (orjson.JSONDecodeError, ValueError):
+        return False
+    return isinstance(data, dict) and bool(data)
 
 
 def _recover_result_from_disk(

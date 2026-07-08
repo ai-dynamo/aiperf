@@ -93,7 +93,7 @@ from aiperf.controller.system_controller_raw_records import (
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_config import FileExportInfo
-from aiperf.exporters.exporter_manager import ExporterManager
+from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol
@@ -1820,14 +1820,26 @@ class SystemController(
             steady_state_results=self._steady_state_results,
             energy_efficiency_results=self._energy_efficiency_results,
         )
-        await self._exporter_manager.export_data()
+        failures = await self._exporter_manager.export_data()
+        export_failed = self._surface_export_failures(failures)
         if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
             from aiperf.kubernetes.results_sidecar import write_ready_marker
 
-            write_ready_marker(
-                self.run.cfg.artifacts.artifact_directory,
-                was_cancelled=self._was_cancelled,
-            )
+            # Data-integrity gate: a truncated/failed on-disk export (e.g. ENOSPC
+            # mid-write of profile_export_aiperf.json) must NOT be advertised as
+            # ready. Without the marker the results-sidecar refuses to serve
+            # top-level files and the operator classifies the run as Failed
+            # instead of serving corrupt artifacts as a Complete benchmark.
+            if export_failed:
+                self.error(
+                    "Export reported failures; withholding K8s results-ready "
+                    "marker so the operator does not serve truncated artifacts"
+                )
+            else:
+                write_ready_marker(
+                    self.run.cfg.artifacts.artifact_directory,
+                    was_cancelled=self._was_cancelled,
+                )
         self._results_exported = True
         # Publish AFTER the readiness marker is on disk so the operator's
         # JobProgress.is_complete gate can only flip True once artifacts are
@@ -1840,6 +1852,42 @@ class SystemController(
             )
         )
         self.info("Results exported to disk")
+
+    def _surface_export_failures(self, failures: list[ExporterFailure]) -> bool:
+        """Record export failures as exit errors; return True if any block the marker.
+
+        Local (non-deferred) exporters write the on-disk artifacts the operator
+        serves and the CLI reads, so their failure means the result set is
+        truncated/incomplete: append an ``ExitErrorInfo`` so the run exits
+        non-zero and report ``True`` so the caller withholds the K8s
+        results-ready marker. Deferred (remote-upload) failures do not corrupt
+        local artifacts — log a warning but do not block the ready signal.
+
+        Example:
+            >>> failed = self._surface_export_failures(
+            ...     [ExporterFailure("MetricsJsonExporter", OSError(28, "ENOSPC"), False)]
+            ... )
+            >>> failed
+            True
+        """
+        marker_blocking = False
+        for failure in failures:
+            if failure.is_deferred:
+                self.warning(
+                    f"Deferred exporter '{failure.exporter}' failed "
+                    f"(remote upload); local results are unaffected: "
+                    f"{failure.error!r}"
+                )
+                continue
+            marker_blocking = True
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails.from_exception(failure.error),
+                    operation=f"export:{failure.exporter}",
+                    service_id=self.service_id,
+                )
+            )
+        return marker_blocking
 
     async def _kill(self, *, error: ErrorDetails | None = None) -> None:
         """Kill the system controller."""

@@ -168,7 +168,7 @@ def _load_isl_osl_from_jsonl(
     isl_values: list[float] = []
     osl_values: list[float] = []
     try:
-        with open(profile_path) as f:
+        with open(profile_path, encoding="utf-8") as f:
             for line in f:
                 try:
                     record = orjson.loads(line.encode("utf-8"))

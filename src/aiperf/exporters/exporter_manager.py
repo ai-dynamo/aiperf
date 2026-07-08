@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -31,6 +32,34 @@ if TYPE_CHECKING:
     from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
     from aiperf.config import BenchmarkConfig, BenchmarkRun
     from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
+
+
+@dataclass(frozen=True, slots=True)
+class ExporterFailure:
+    """A single data-exporter failure surfaced from ``export_data()``.
+
+    Existence of a failure is a data-integrity signal: a mid-write ENOSPC on
+    ``profile_export_aiperf.json`` leaves a TRUNCATED artifact on disk, so the
+    caller (``SystemController``) must gate the K8s results-ready marker on the
+    absence of non-deferred failures — never advertise a corrupt export as a
+    complete, fetchable result.
+
+    ``is_deferred`` distinguishes local on-disk writers (json/csv, whose
+    artifacts the operator serves) from deferred remote uploaders (wandb,
+    mlflow). Only local failures corrupt the fetchable result set; a remote
+    upload outage must not block the local results-ready signal.
+
+    Example:
+        >>> ExporterFailure(
+        ...     exporter="MetricsJsonExporter",
+        ...     error=OSError(28, "No space left on device"),
+        ...     is_deferred=False,
+        ... )
+    """
+
+    exporter: str
+    error: BaseException
+    is_deferred: bool
 
 
 class ExporterManager(AIPerfLoggerMixin):
@@ -78,7 +107,7 @@ class ExporterManager(AIPerfLoggerMixin):
         else:
             self.debug(f"Exported records: {task.result()}")
 
-    async def export_data(self) -> None:
+    async def export_data(self) -> list[ExporterFailure]:
         """Export data files using all registered data exporters.
 
         Runs in two stages: local exporters first, then deferred exporters
@@ -87,6 +116,13 @@ class ExporterManager(AIPerfLoggerMixin):
         the two stages so it is on disk before the caller stamps the K8s
         results-ready marker (the marker contract requires ALL artifacts on
         disk first) and so deferred exporters can upload it.
+
+        Returns the list of per-exporter failures (empty on full success)
+        instead of only logging them. The caller MUST inspect this: a
+        non-empty non-deferred failure means an on-disk artifact is truncated
+        or missing, so the K8s results-ready marker must NOT be written and
+        the run must exit non-zero. Ordering is preserved — local failures
+        precede deferred failures.
 
         Also populates exported_file_infos so callers can read file paths
         without re-instantiating exporters.
@@ -97,22 +133,52 @@ class ExporterManager(AIPerfLoggerMixin):
         local = [e for e in exporters if not getattr(e, "is_deferred", False)]
         deferred = [e for e in exporters if getattr(e, "is_deferred", False)]
 
-        await self._run_data_exporters(local)
+        failures: list[ExporterFailure] = []
+        failures.extend(await self._run_data_exporters(local, is_deferred=False))
         await self._export_console_txt_artifact()
-        await self._run_data_exporters(deferred)
+        failures.extend(await self._run_data_exporters(deferred, is_deferred=True))
 
+        if failures:
+            self.error(
+                f"{len(failures)} data exporter(s) failed during export_data: "
+                + ", ".join(f"{f.exporter} ({f.error!r})" for f in failures)
+            )
         self.debug("Exporting all records completed")
+        return failures
 
-    async def _run_data_exporters(self, exporters: list[DataExporterProtocol]) -> None:
-        """Run one batch of data exporters concurrently and wait for all."""
+    async def _run_data_exporters(
+        self, exporters: list[DataExporterProtocol], *, is_deferred: bool
+    ) -> list[ExporterFailure]:
+        """Run one batch of data exporters concurrently and return failures.
+
+        Each exporter's task is paired with its class name so a raised
+        exception can be surfaced as an ``ExporterFailure`` rather than only
+        logged by the done-callback. ``is_deferred`` tags the batch so the
+        caller can tell local on-disk write failures (marker-blocking) from
+        deferred remote-upload failures (non-blocking).
+        """
+        batch: list[tuple[str, asyncio.Task]] = []
         for exporter in exporters:
-            self.debug(f"Creating task for exporter: {exporter.__class__.__name__}")
+            name = exporter.__class__.__name__
+            self.debug(f"Creating task for exporter: {name}")
             task = asyncio.create_task(exporter.export())
             self._tasks.add(task)
             task.add_done_callback(self._task_done_callback)
+            batch.append((name, task))
 
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*(task for _, task in batch), return_exceptions=True)
         self._tasks.clear()
+
+        failures: list[ExporterFailure] = []
+        for name, task in batch:
+            if task.cancelled():
+                continue
+            error = task.exception()
+            if error is not None:
+                failures.append(
+                    ExporterFailure(exporter=name, error=error, is_deferred=is_deferred)
+                )
+        return failures
 
     def _instantiate_data_exporters(self) -> list[DataExporterProtocol]:
         """Instantiate all enabled data exporters, collecting file infos along the way."""

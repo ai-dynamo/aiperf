@@ -190,6 +190,60 @@ class TestTDigestListMetricAggregator:
         assert r_batched.avg == pytest.approx(r_streamed.avg, rel=1e-12)
         assert r_batched.std == pytest.approx(r_streamed.std, rel=1e-9)
 
+    def test_batched_std_welford_parallel_combine_matches_numpy(self) -> None:
+        """Multi-batch ``extend`` must combine per-batch M2 via Welford's
+        parallel-combine term (list_metric_aggregation.py:117:
+        ``self._m2 += m2_b + delta * delta * n_a * n_b / new_count``).
+
+        The existing single-``extend`` std tests only hit the ``n_a == 0``
+        first-batch branch (lines 110-112); ``test_repeated_extend_accumulates``
+        crosses the combine branch but only asserts count/sum/min/max -- never
+        std. So the mean-difference term on line 117 was untested.
+
+        Two batches with DIFFERING means AND sizes make the cross term
+        (``delta**2 * n_a * n_b / new_count``) dominant. Dropping it (the
+        mutation) collapses std from the true ~149.0 to ~84.5 -- caught by the
+        1e-9 tolerance against numpy's population std.
+        """
+        batch_a = [1.0, 2.0, 3.0]  # mean 2, n 3
+        batch_b = [100.0, 200.0, 300.0, 400.0]  # mean 250, n 4 -- large offset
+        agg = TDigestListMetricAggregator()
+        agg.extend(batch_a)
+        agg.extend(batch_b)
+        result = agg.to_result(tag="t", header="T", unit="ms")
+
+        all_values = np.array(batch_a + batch_b)
+        assert result.count == 7
+        assert result.std == pytest.approx(float(np.std(all_values, ddof=0)), rel=1e-9)
+
+    def test_multibatch_std_matches_single_extend_and_numpy(self) -> None:
+        """Three batches of differing means/sizes must give the same std as a
+        single ``extend`` of the concatenation and as numpy's population std.
+
+        A second, independent pin on the line-117 parallel-combine term: any
+        wrong batch merge (dropped cross term, wrong ``n_a``/``n_b`` weighting)
+        makes the incremental path diverge from the whole-array reference.
+        """
+        rng = np.random.default_rng(7)
+        b1 = rng.normal(loc=0.0, scale=1.0, size=500)
+        b2 = rng.normal(loc=1000.0, scale=5.0, size=1500)
+        b3 = rng.normal(loc=-50.0, scale=20.0, size=800)
+
+        incremental = TDigestListMetricAggregator()
+        incremental.extend(b1.tolist())
+        incremental.extend(b2.tolist())
+        incremental.extend(b3.tolist())
+        r_incremental = incremental.to_result(tag="t", header="T", unit="ms")
+
+        all_values = np.concatenate([b1, b2, b3])
+        single = TDigestListMetricAggregator()
+        single.extend(all_values.tolist())
+        r_single = single.to_result(tag="t", header="T", unit="ms")
+
+        assert r_incremental.count == all_values.size
+        assert r_incremental.std == pytest.approx(float(np.std(all_values)), rel=1e-9)
+        assert r_incremental.std == pytest.approx(r_single.std, rel=1e-9)
+
     def test_welford_std_is_stable_on_large_offset_distribution(self) -> None:
         """The textbook ``sum_sq/count - avg^2`` formula collapses to zero
         for large-offset, low-spread data because of catastrophic

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiperf.cli_runner._pareto import _resolve_pareto_axes
+from aiperf.common.constants import STAT_KEYS
 from aiperf.orchestrator.models import VariationKey, _variation_key
 
 if TYPE_CHECKING:
@@ -274,10 +275,83 @@ def _json_metric_to_stats(metric: Any) -> dict[str, Any]:
     return out
 
 
+def _single_trial_flattened_stats(single: RunResult) -> dict[str, dict[str, Any]]:
+    """Flattened ``<metric>_<stat>`` stats for a single run (std=0, CI=mean).
+
+    Mirrors :meth:`ConfidenceAggregation._aggregate_metrics_single_run`'s
+    degraded single-run shape so the single-trial path emits the SAME
+    flattened keys SweepAnalyzer reads on the multi-trial path
+    (``request_throughput_avg``, ``time_to_first_token_p99``, ...). Without
+    these, the default single-trial sweep (``trials=1``) produced only
+    top-level metric keys (``request_throughput``) and SweepAnalyzer's
+    best-config / pareto / latency-ranking lookups came back empty.
+
+    Each flattened value collapses to the point estimate (``std``/``cv``
+    zero, ``ci_low``/``ci_high`` at the mean) — a single observation has no
+    spread — matching :func:`_confidence_metric_to_stats`'s field set.
+    """
+    flattened: dict[str, dict[str, Any]] = {}
+    for metric_name, metric_result in single.summary_metrics.items():
+        for stat_key in STAT_KEYS:
+            value = getattr(metric_result, stat_key, None)
+            if value is None:
+                continue
+            v = float(value)
+            flattened[f"{metric_name}_{stat_key}"] = {
+                "mean": v,
+                "std": 0.0,
+                "min": v,
+                "max": v,
+                "cv": 0.0,
+                "ci_low": v,
+                "ci_high": v,
+                "unit": metric_result.unit,
+            }
+    return flattened
+
+
+def _nested_from_flattened(
+    flattened: dict[str, dict[str, Any]], metric_names: set[str]
+) -> dict[str, dict[str, Any]]:
+    """Reconstruct nested ``<metric> -> {stat: value}`` from flattened stats.
+
+    The live sweep table's ``HEADLINE_METRICS`` reads nested
+    ``stats[metric][stat]`` (e.g. ``stats["time_to_first_token"]["p99"]``),
+    but the multi-trial :class:`ConfidenceAggregation` path produces ONLY
+    flattened ``<metric>_<stat>`` keys — so without this reconstruction the
+    table's headline columns render blank for every multi-trial cell. Each
+    nested stat carries the across-trial mean of that stat (the value the
+    table should display); ``unit`` is copied from the first flattened
+    entry seen for the metric.
+    """
+    nested: dict[str, dict[str, Any]] = {}
+    for metric_name in metric_names:
+        for stat_key in STAT_KEYS:
+            entry = flattened.get(f"{metric_name}_{stat_key}")
+            if entry is None:
+                continue
+            bucket = nested.setdefault(metric_name, {})
+            bucket[stat_key] = entry.get("mean")
+            bucket.setdefault("unit", entry.get("unit"))
+    return nested
+
+
 def _aggregate_group_to_stats(
     group: list[RunResult], confidence_level: float
 ) -> dict[str, Any] | None:
     """Reduce a single variation group to its per-metric stats dict.
+
+    The returned dict carries BOTH key shapes so its two consumers agree:
+
+    - Flattened ``<metric>_<stat>`` keys (``request_throughput_avg``,
+      ``time_to_first_token_p99``) — read by
+      :meth:`SweepAnalyzer.compute` for best-config / pareto / latency ranking.
+    - Nested ``<metric>`` keys mapping ``{stat: value}`` — read by the live
+      sweep table's ``HEADLINE_METRICS`` (``stats["time_to_first_token"]["p99"]``).
+
+    Both single- and multi-trial branches emit both shapes; historically each
+    branch emitted only one, so single-trial sweeps had empty best/pareto and
+    multi-trial live tables rendered blank headline columns.
 
     Routes:
       - ``len(group) == 1`` → read the single result's ``summary_metrics`` directly.
@@ -288,7 +362,8 @@ def _aggregate_group_to_stats(
 
     Example:
         >>> # Concurrency=10, 3 trials: throughput=[100, 110, 105]
-        >>> # → {"request_throughput_avg": {"mean": 105.0, "std": 5.0, ...}}
+        >>> # → {"request_throughput_avg": {"mean": 105.0, "std": 5.0, ...},
+        >>> #    "request_throughput": {"avg": 105.0, ...}}
     """
     from aiperf.orchestrator.aggregation.confidence import ConfidenceAggregation
 
@@ -299,20 +374,30 @@ def _aggregate_group_to_stats(
         single = group[0]
         if not single.success or not single.summary_metrics:
             return None
-        return {
+        nested = {
             metric_name: _json_metric_to_stats(metric_result)
             for metric_name, metric_result in single.summary_metrics.items()
         }
+        flattened = _single_trial_flattened_stats(single)
+        return {**nested, **flattened}
 
     aggregation = ConfidenceAggregation(confidence_level=confidence_level)
     try:
         agg_result = aggregation.aggregate(group)
     except ValueError:
         return None
-    return {
+    flattened = {
         metric_name: _confidence_metric_to_stats(metric)
         for metric_name, metric in agg_result.metrics.items()
     }
+    metric_names = {
+        name
+        for result in group
+        if result.success and result.summary_metrics
+        for name in result.summary_metrics
+    }
+    nested = _nested_from_flattened(flattened, metric_names)
+    return {**nested, **flattened}
 
 
 def _build_per_combination_stats(

@@ -12,7 +12,7 @@ import pytest
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, MetricType
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import MetricResult, TimesliceWindow
+from aiperf.common.models import ErrorDetails, MetricResult, TimesliceWindow
 from aiperf.config import AIPerfConfig as UserConfig
 from aiperf.metrics.accumulator import (
     _AGGREGATE_FUNCS,
@@ -1093,10 +1093,11 @@ class TestTimesliceSweepMetrics:
         assert ts0["effective_throughput"].avg > 0.0
 
     @pytest.mark.asyncio
-    async def test_timeslice_sweep_metrics_zero_throughput_without_tokens(
+    async def test_timeslice_sweep_metrics_omit_streaming_only_without_ttft(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Without output_tokens, throughput avg is 0 but concurrency is nonzero."""
+        """Without first-token timing, streaming-only sweeps are omitted (not 0)
+        while request-level effective_concurrency stays nonzero."""
         mock_user_config.benchmark.artifacts.slice_duration = 1.0
         latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_user_config, latency_cls)
@@ -1112,7 +1113,8 @@ class TestTimesliceSweepMetrics:
         summary = await acc.summarize()
         assert summary.timeslices is not None
         ts0 = summary.timeslices[0]
-        assert ts0["effective_throughput"].avg == 0.0
+        assert "effective_throughput" not in ts0
+        assert "tokens_in_flight" not in ts0
         assert ts0["effective_concurrency"].avg > 0.0
 
     @pytest.mark.asyncio
@@ -1265,10 +1267,11 @@ class TestOverallSweepMetrics:
         assert summary.results["effective_throughput"].avg > 0.0
 
     @pytest.mark.asyncio
-    async def test_overall_zero_throughput_without_tokens(
+    async def test_overall_omit_streaming_only_without_ttft(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Without output_tokens, throughput avg is 0 but concurrency is nonzero."""
+        """Without first-token timing, streaming-only sweeps are omitted (not 0)
+        while request-level effective_concurrency stays nonzero."""
         latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_user_config, latency_cls)
 
@@ -1281,8 +1284,53 @@ class TestOverallSweepMetrics:
         await acc.process_record(msg.to_data())
 
         summary = await acc.summarize()
-        assert summary.results["effective_throughput"].avg == 0.0
+        assert "effective_throughput" not in summary.results
+        assert "tokens_in_flight" not in summary.results
         assert summary.results["effective_concurrency"].avg > 0.0
+
+    @pytest.mark.asyncio
+    async def test_streaming_only_sweep_family_gated_on_ttft(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """The full streaming-only sweep family is omitted without first-token
+        timing and emitted (non-zero) with it; effective_concurrency is always
+        present because it is computed from request start/end alone."""
+        from aiperf.metrics.accumulator import _STREAMING_ONLY_SWEEP_TAGS
+
+        latency_cls, output_cls, ttft_cls, isl_cls = _make_sweep_metric_classes()
+
+        async def _summarize(*, with_ttft: bool):
+            acc = create_accumulator_with_metrics(
+                mock_user_config, latency_cls, output_cls, ttft_cls, isl_cls
+            )
+            for i, (start, end) in enumerate([(0.1, 0.9), (0.5, 1.3)]):
+                results = {
+                    "request_latency": (end - start) * NANOS_PER_SECOND,
+                    "output_sequence_length": 100.0,
+                    "input_sequence_length": 200.0,
+                }
+                if with_ttft:
+                    results["time_to_first_token"] = 50_000_000.0
+                msg = create_metric_records_message(
+                    session_num=i,
+                    request_start_ns=int(start * NANOS_PER_SECOND),
+                    request_end_ns=int(end * NANOS_PER_SECOND),
+                    results=[results],
+                )
+                await acc.process_record(msg.to_data())
+            return (await acc.summarize()).results
+
+        non_streaming = await _summarize(with_ttft=False)
+        for tag in _STREAMING_ONLY_SWEEP_TAGS:
+            assert tag not in non_streaming, f"{tag} should be omitted without TTFT"
+        assert non_streaming["effective_concurrency"].avg > 0.0
+
+        streaming = await _summarize(with_ttft=True)
+        for tag in _STREAMING_ONLY_SWEEP_TAGS:
+            assert tag in streaming, f"{tag} should be present with TTFT"
+        assert streaming["effective_throughput"].avg > 0.0
+        assert streaming["effective_prefill_throughput"].avg > 0.0
+        assert streaming["tokens_in_flight"].avg > 0.0
 
     @pytest.mark.asyncio
     async def test_overall_sweep_metrics_not_present_when_empty(
@@ -1731,6 +1779,80 @@ class TestDerivedLatencyMetrics:
         assert eff.unit == "ms"
         assert eff.count == 50
         assert eff.avg == pytest.approx(105.0, abs=1e-9)
+
+    @pytest.mark.asyncio
+    async def test_effective_latency_excludes_error_records(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """effective_latency masks out failed requests (whose end_ns is a fake
+        equal to start_ns) so its min/avg match the success-only distribution;
+        credit_to_start_latency stays unmasked (its value is legit for errors)."""
+        from aiperf.common.metric_records_wire import MetricRecordMetadata
+
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        # 8 successes: 100 ms request, 5 ms credit gap -> effective 105 ms.
+        # 4 errors: end defaulted to start (never finished), same 5 ms credit gap.
+        for i in range(12):
+            base = 1_000_000_000 + i * 200_000_000
+            is_error = i >= 8
+            meta = MetricRecordMetadata(
+                session_num=i,
+                request_start_ns=base,
+                request_end_ns=base if is_error else base + 100_000_000,
+                credit_issued_ns=base - 5_000_000,
+                worker_id="w1",
+                record_processor_id="rp1",
+                benchmark_phase="profiling",
+                turn_index=0,
+            )
+            msg = create_metric_records_message(
+                metadata=meta,
+                error=ErrorDetails(code=500, message="boom") if is_error else None,
+            )
+            await processor.process_record(msg.to_data())
+
+        summary = await processor.summarize()
+        eff = summary.results["effective_latency"]
+        assert eff.count == 8  # errors excluded
+        assert eff.min == pytest.approx(105.0, abs=1e-9)
+        assert eff.avg == pytest.approx(105.0, abs=1e-9)
+
+        # credit_to_start is legit for errors (real start, real credit) -> all 12.
+        c2s = summary.results["credit_to_start_latency"]
+        assert c2s.count == 12
+        assert c2s.avg == pytest.approx(5.0, abs=1e-9)
+
+    @pytest.mark.asyncio
+    async def test_effective_latency_absent_when_all_errors(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """An all-error record set yields no effective_latency (mirroring how
+        request_latency drops out when every record failed), while
+        credit_to_start_latency survives."""
+        from aiperf.common.metric_records_wire import MetricRecordMetadata
+
+        processor = MetricsAccumulator(run=_make_run(mock_user_config))
+        for i in range(6):
+            base = 1_000_000_000 + i * 200_000_000
+            meta = MetricRecordMetadata(
+                session_num=i,
+                request_start_ns=base,
+                request_end_ns=base,  # fake end == start
+                credit_issued_ns=base - 5_000_000,
+                worker_id="w1",
+                record_processor_id="rp1",
+                benchmark_phase="profiling",
+                turn_index=0,
+            )
+            msg = create_metric_records_message(
+                metadata=meta,
+                error=ErrorDetails(code=500, message="boom"),
+            )
+            await processor.process_record(msg.to_data())
+
+        summary = await processor.summarize()
+        assert "effective_latency" not in summary.results
+        assert "credit_to_start_latency" in summary.results
 
     @pytest.mark.asyncio
     async def test_multi_turn_ttft_trend_per_turn(

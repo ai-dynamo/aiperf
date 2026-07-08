@@ -18,6 +18,14 @@ class RequestErrorRateMetric(BaseDerivedMetric[float]):
     flagged latency metrics (see ``MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS``)
     for a full picture of failure-contaminated tail behavior.
 
+    Client-cancelled requests (``--request-cancellation-rate``) are excluded
+    from BOTH the numerator and the denominator: the record-processor routes
+    them to :class:`CancelledRequestCountMetric` (``CANCELLED_ONLY``), so they
+    never reach ``error_request_count`` (numerator) or ``request_count``
+    (denominator). A 40%-cancel/0-error run therefore reports 0%, matching the
+    credit-side ``cancelled`` bucket instead of treating deliberate
+    cancellations as server errors.
+
     See https://github.com/ai-dynamo/aiperf/issues/688.
     """
 

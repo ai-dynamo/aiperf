@@ -11,7 +11,7 @@ from rich.console import Console
 
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.exporter_config import FileExportInfo
-from aiperf.exporters.exporter_manager import ExporterManager
+from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin.enums import PluginType
 
 
@@ -212,6 +212,170 @@ class TestExporterManager:
 
         assert manager._exporter_config.steady_state_results is sentinel_steady
         assert manager._exporter_config.energy_efficiency_results is sentinel_energy
+
+
+class TestExporterFailurePropagation:
+    """export_data() must SURFACE per-exporter failures, not only log them.
+
+    Regression: when the disk fills mid-export, a data exporter raises
+    OSError(ENOSPC) after leaving a truncated artifact. The old code gathered
+    tasks with ``return_exceptions=True`` and only logged the exception in a
+    done-callback, so ``export_data()`` returned None and the caller stamped a
+    lying K8s results-ready marker over corrupt files.
+    """
+
+    def _profile_results(self, sample_records) -> ProfileResults:
+        return ProfileResults(
+            records=sample_records,
+            start_ns=0,
+            end_ns=0,
+            completed=0,
+            was_cancelled=False,
+            error_summary=[],
+        )
+
+    @pytest.mark.asyncio
+    async def test_export_data_surfaces_local_exporter_failure(
+        self, sample_records, config, tmp_path
+    ):
+        config.benchmark.artifacts.dir = tmp_path
+
+        class ENOSPCExporter:
+            is_deferred = False
+
+            def __init__(self, exporter_config) -> None:
+                pass
+
+            def get_export_info(self) -> FileExportInfo:
+                return FileExportInfo(
+                    export_type="JSON Export",
+                    file_path=tmp_path / "profile_export_aiperf.json",
+                )
+
+            async def export(self) -> None:
+                # Mimic a truncated write followed by a full disk.
+                (tmp_path / "profile_export_aiperf.json").write_text('{"metr')
+                raise OSError(28, "No space left on device")
+
+        entry = MagicMock()
+        entry.name = "json_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            side_effect=_iter_all_by_type(
+                {PluginType.DATA_EXPORTER: [(entry, ENOSPCExporter)]}
+            ),
+        ):
+            manager = ExporterManager(
+                results=self._profile_results(sample_records),
+                config=config.benchmark,
+                telemetry_results=None,
+            )
+            failures = await manager.export_data()
+
+        assert len(failures) == 1
+        failure = failures[0]
+        assert isinstance(failure, ExporterFailure)
+        assert failure.exporter == "ENOSPCExporter"
+        assert failure.is_deferred is False
+        assert isinstance(failure.error, OSError)
+        assert failure.error.errno == 28
+
+    @pytest.mark.asyncio
+    async def test_export_data_returns_empty_on_success(
+        self, sample_records, config, tmp_path
+    ):
+        """A clean export surfaces no failures (empty list, never None)."""
+        config.benchmark.artifacts.dir = tmp_path
+
+        mock_instance = MagicMock()
+        mock_instance.export = AsyncMock()
+        mock_instance.is_deferred = False
+        mock_class = MagicMock(return_value=mock_instance)
+        mock_class.__name__ = "OkExporter"
+        entry = MagicMock()
+        entry.name = "ok_exporter"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            side_effect=_iter_all_by_type(
+                {PluginType.DATA_EXPORTER: [(entry, mock_class)]}
+            ),
+        ):
+            manager = ExporterManager(
+                results=self._profile_results(sample_records),
+                config=config.benchmark,
+                telemetry_results=None,
+            )
+            failures = await manager.export_data()
+
+        assert failures == []
+
+    @pytest.mark.asyncio
+    async def test_export_data_tags_deferred_failure_and_keeps_ordering(
+        self, sample_records, config, tmp_path
+    ):
+        """A deferred (remote-upload) failure is tagged is_deferred=True and a
+        surviving local exporter still runs; failures preserve local-before-
+        deferred ordering."""
+        config.benchmark.artifacts.dir = tmp_path
+        events: list[str] = []
+
+        class LocalOk:
+            is_deferred = False
+
+            def __init__(self, exporter_config) -> None:
+                pass
+
+            def get_export_info(self) -> FileExportInfo:
+                return FileExportInfo(export_type="Local", file_path=Path("local.json"))
+
+            async def export(self) -> None:
+                events.append("local")
+
+        class DeferredBoom:
+            is_deferred = True
+
+            def __init__(self, exporter_config) -> None:
+                pass
+
+            def get_export_info(self) -> FileExportInfo:
+                return FileExportInfo(
+                    export_type="Deferred", file_path=Path("remote.json")
+                )
+
+            async def export(self) -> None:
+                events.append("deferred")
+                raise RuntimeError("wandb upload failed")
+
+        local_entry = MagicMock()
+        local_entry.name = "local"
+        deferred_entry = MagicMock()
+        deferred_entry.name = "deferred"
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            side_effect=_iter_all_by_type(
+                {
+                    PluginType.DATA_EXPORTER: [
+                        (deferred_entry, DeferredBoom),
+                        (local_entry, LocalOk),
+                    ]
+                }
+            ),
+        ):
+            manager = ExporterManager(
+                results=self._profile_results(sample_records),
+                config=config.benchmark,
+                telemetry_results=None,
+            )
+            failures = await manager.export_data()
+
+        assert events == ["local", "deferred"]
+        assert len(failures) == 1
+        assert failures[0].exporter == "DeferredBoom"
+        assert failures[0].is_deferred is True
+        assert isinstance(failures[0].error, RuntimeError)
 
 
 class TestConsoleExportToFile:

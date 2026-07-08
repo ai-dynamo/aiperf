@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -255,14 +255,14 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         # Build summary
         # When start_ns/end_ns is None, use current time as the timestamp
         start_time = (
-            datetime.fromtimestamp(start_ns / NANOS_PER_SECOND)
+            datetime.fromtimestamp(start_ns / NANOS_PER_SECOND, tz=UTC)
             if start_ns is not None
-            else datetime.now()
+            else datetime.now(tz=UTC)
         )
         end_time = (
-            datetime.fromtimestamp(end_ns / NANOS_PER_SECOND)
+            datetime.fromtimestamp(end_ns / NANOS_PER_SECOND, tz=UTC)
             if end_ns is not None
-            else datetime.now()
+            else datetime.now(tz=UTC)
         )
         summary = TelemetrySummary(
             endpoints_configured=list(self._hierarchy.dcgm_endpoints.keys()),

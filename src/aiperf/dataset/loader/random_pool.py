@@ -237,7 +237,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """
         dataset_pool: list[RandomPool] = []
 
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if (line := line.strip()) == "":
                     continue  # Skip empty lines

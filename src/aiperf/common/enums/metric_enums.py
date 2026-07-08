@@ -748,6 +748,16 @@ class MetricFlags(Flag):
     Used for latency-style metrics (issue #688) so the failure-inflated tail
     is visible alongside the success-only distribution."""
 
+    CANCELLED_ONLY = 1 << 18
+    """Metrics that are only applicable to cancelled records (client-side
+    ``--request-cancellation-rate`` disconnections, surfaced as a code-499
+    ``RequestCancellationError``). Symmetric to ``ERROR_ONLY``: by default a
+    metric runs only on valid records; ``ERROR_ONLY`` runs it on errored
+    (invalid) records, ``CANCELLED_ONLY`` runs it on cancelled records. A
+    cancellation is deliberately NOT a server error, so a ``CANCELLED_ONLY``
+    counter is kept out of ``error_request_count`` and out of the error-rate /
+    goodput denominators, matching the credit-side ``cancelled`` bucket."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

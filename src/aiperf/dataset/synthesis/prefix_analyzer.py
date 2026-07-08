@@ -50,7 +50,7 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         trace_file = Path(trace_file)
 
         # First pass: collect all data
-        with open(trace_file) as f:
+        with open(trace_file, encoding="utf-8") as f:
             for line_number, line in enumerate(f, start=1):
                 if line.strip():
                     self._process_trace_first_pass(

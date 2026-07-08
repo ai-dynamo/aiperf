@@ -281,6 +281,83 @@ class TestCompletionMetricFileCandidateResilience:
 
 
 # =============================================================================
+# Key-artifact materialization: existence is not enough
+# =============================================================================
+
+
+class TestKeyFilesMaterializedValidation:
+    """A truncated/unparsable key artifact must NOT count as materialized.
+
+    Regression: a disk-full mid-write leaves a truncated
+    ``profile_export_aiperf.json`` on disk. The old check passed on file
+    EXISTENCE only, so the operator advanced ``latest.txt``/``runEpoch`` and
+    served corrupt bytes as a Complete benchmark. Materialization now requires
+    the JSON export to decode and parse to a non-empty dict.
+    """
+
+    def _materialized(self, tmp_path: Path) -> bool:
+        with mock_patch(
+            "aiperf.operator.handlers.completion.OperatorEnvironment.RESULTS",
+            DIR=tmp_path,
+        ):
+            return completion._key_files_materialized(
+                _FIXTURE_NAMESPACE, _FIXTURE_JOB_ID, _FIXTURE_EPOCH
+            )
+
+    def test_missing_run_dir_not_materialized(self, tmp_path: Path) -> None:
+        assert self._materialized(tmp_path) is False
+
+    def test_truncated_json_not_materialized(self, tmp_path: Path) -> None:
+        _write_result_file(
+            tmp_path, "profile_export_aiperf.json", b'{"metrics": {"request_throughp'
+        )
+        assert self._materialized(tmp_path) is False
+
+    def test_empty_json_not_materialized(self, tmp_path: Path) -> None:
+        _write_result_file(tmp_path, "profile_export_aiperf.json", b"")
+        assert self._materialized(tmp_path) is False
+
+    def test_corrupt_json_zst_not_materialized(self, tmp_path: Path) -> None:
+        # Non-empty bytes that are not a valid zstd frame → truncated .zst.
+        _write_result_file(tmp_path, "profile_export_aiperf.json.zst", b"not-zstd")
+        assert self._materialized(tmp_path) is False
+
+    def test_valid_json_materialized(self, tmp_path: Path) -> None:
+        _write_result_file(tmp_path, "profile_export_aiperf.json", _metrics_payload())
+        assert self._materialized(tmp_path) is True
+
+    def test_valid_json_zst_materialized(self, tmp_path: Path) -> None:
+        _write_result_file(
+            tmp_path,
+            "profile_export_aiperf.json.zst",
+            _metrics_payload(),
+            compress=True,
+        )
+        assert self._materialized(tmp_path) is True
+
+    def test_csv_only_still_materialized(self, tmp_path: Path) -> None:
+        # A csv-authoritative run has no readable JSON summary but is still a
+        # valid completion; a non-empty CSV counts as materialized.
+        _write_result_file(
+            tmp_path, "profile_export_aiperf.csv", b"metric,value\nrequest_count,8192\n"
+        )
+        assert self._materialized(tmp_path) is True
+
+    def test_truncated_json_beside_valid_csv_is_materialized(
+        self, tmp_path: Path
+    ) -> None:
+        # The truncated JSON does not count, but the valid CSV does → the run
+        # is materialized on the csv-authoritative path.
+        _write_result_file(
+            tmp_path, "profile_export_aiperf.json", b'{"metrics": {"request_throughp'
+        )
+        _write_result_file(
+            tmp_path, "profile_export_aiperf.csv", b"metric,value\nrequest_count,8192\n"
+        )
+        assert self._materialized(tmp_path) is True
+
+
+# =============================================================================
 # Missing files and partial artifact trees
 # =============================================================================
 
