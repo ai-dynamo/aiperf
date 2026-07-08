@@ -93,14 +93,16 @@ def _parse_adaptive_scale_sla_filter(value: str) -> dict[str, Any]:
 
 
 def _apply_adaptive_scale_sla(prof: dict[str, Any], cli: CLIConfig) -> None:
-    if not prof.get("adaptive_scale"):
-        return
     if "adaptive_scale_sla" not in cli.model_fields_set or not cli.adaptive_scale_sla:
         return
 
-    prof["sla"] = [
+    parsed_sla = [
         _parse_adaptive_scale_sla_filter(value) for value in cli.adaptive_scale_sla
     ]
+    if not prof.get("adaptive_scale"):
+        raise ValueError("--adaptive-scale-sla requires --adaptive-scale")
+
+    prof["sla"] = parsed_sla
 
 
 def _apply_adaptive_scale_control(prof: dict[str, Any], cli: CLIConfig) -> None:

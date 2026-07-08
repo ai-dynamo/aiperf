@@ -174,6 +174,50 @@ def test_basic_adaptive_cli_overrides_preserve_advanced_yaml(tmp_path: Path) -> 
     assert phase.adaptive_scale_step_percent == 50
 
 
+def test_adaptive_cli_sla_overrides_nested_yaml_sla(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "adaptive.yaml"
+    cfg_file.write_text(
+        textwrap.dedent(
+            """\
+            benchmark:
+              models:
+                - test-model
+              endpoint:
+                urls:
+                  - http://localhost:8000/v1/chat/completions
+                streaming: true
+              datasets:
+                - name: default
+                  type: synthetic
+                  entries: 100
+                  prompts:
+                    isl: 128
+                    osl: 64
+              phases:
+                - name: profiling
+                  type: concurrency
+                  duration: 60
+                  concurrency: 8
+                  adaptive_scale:
+                    enabled: true
+                    min_concurrency: 2
+                    max_concurrency: 8
+                    sustain_duration: 20
+                    sla:
+                      request_latency:
+                        p95:
+                          le: 0.000001
+            """
+        )
+    )
+    user = CLIConfig(adaptive_scale_sla=["request_latency:p95:le:1000000"])
+
+    config = resolve_config(user, cfg_file)
+    phase = config.benchmark.phases[0]
+
+    assert phase.sla[0].threshold == 1000000
+
+
 def test_adaptive_cli_compact_control_overrides_yaml(tmp_path: Path) -> None:
     cfg_file = tmp_path / "adaptive.yaml"
     cfg_file.write_text(_YAML_ADVANCED_ADAPTIVE)

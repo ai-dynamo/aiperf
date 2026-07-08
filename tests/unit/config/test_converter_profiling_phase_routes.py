@@ -389,6 +389,32 @@ class TestAdaptiveScaleRoutes:
         with pytest.raises(ValueError, match="--adaptive-scale-sla"):
             build_profiling(user)
 
+    def test_adaptive_scale_sla_requires_adaptive_scale(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            benchmark_duration=600.0,
+            concurrency=200,
+            adaptive_scale_sla=["request_latency:p95:le:30000"],
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="--adaptive-scale-sla requires"):
+            build_profiling(user)
+
+    def test_adaptive_scale_sla_still_reports_malformed_filter_without_adaptive_scale(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            benchmark_duration=600.0,
+            concurrency=200,
+            adaptive_scale_sla=["bad"],
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(TypeError, match="--adaptive-scale-sla"):
+            build_profiling(user)
+
     def test_adaptive_scale_cli_accepts_itl_and_goodput_slas(
         self: TestAdaptiveScaleRoutes,
     ) -> None:

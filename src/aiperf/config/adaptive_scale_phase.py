@@ -15,12 +15,14 @@ _FIRST_TOKEN_SLA_METRICS = frozenset({"time_to_first_token", "ttft"})
 
 
 def is_first_token_sla_metric(metric_tag: str) -> bool:
+    """Return True when an SLA metric requires first-token observations."""
     return metric_tag in _FIRST_TOKEN_SLA_METRICS
 
 
 def sla_filters_require_first_token_observation(
     sla_filters: list[SLAFilter] | tuple[SLAFilter, ...],
 ) -> bool:
+    """Return True when any SLA filter needs first-token observations."""
     return any(is_first_token_sla_metric(sla.metric_tag) for sla in sla_filters)
 
 

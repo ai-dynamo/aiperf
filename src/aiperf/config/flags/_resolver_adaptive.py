@@ -148,3 +148,6 @@ def _apply_adaptive_sla(
             message = str(exc).replace("--search-sla", "--adaptive-scale-sla")
             raise TypeError(message) from exc
     target["sla"] = parsed_sla
+    adaptive_block = _current_adaptive_block(target)
+    if adaptive_block is not None:
+        adaptive_block["sla"] = parsed_sla
