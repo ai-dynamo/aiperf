@@ -3,8 +3,6 @@
 import tempfile
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 from pytest import param
 
@@ -437,6 +435,10 @@ class TestCustomDatasetComposerInferDatasetType:
 
     def test_infer_from_parquet_file(self, create_cfg_and_composer, tmp_path):
         """Test inferring Baseten trace type from a Parquet file."""
+        # Local skip (not module-level) so the mooncake/bailian/speed_bench
+        # detection coverage above still runs on platforms without pyarrow.
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
         parquet_path = tmp_path / "trace.parquet"
         pq.write_table(
             pa.Table.from_pylist(

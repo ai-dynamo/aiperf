@@ -19,9 +19,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
+pytest.importorskip("pyarrow")
+
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader

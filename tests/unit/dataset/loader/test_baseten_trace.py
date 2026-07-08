@@ -4,9 +4,12 @@
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
+pytest.importorskip("pyarrow")
+
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
@@ -1009,3 +1012,96 @@ class TestSynthesisHooks:
         assert result[1].output_length == 61
         assert result[1].prompt == "only-original"
         assert result[1].poor_man_session_id == 7
+
+
+class TestExtraInputsCollisionGuardAutoDetect:
+    """The CLI converter guard (_reject_baseten_trace_extra_input_collisions)
+    only sees explicit --custom-dataset-type baseten_trace; auto-detected
+    Parquet traces bypass it, so the loader mirrors the same rejection at
+    construction time."""
+
+    def _write_single_row(self, tmp_path: Path) -> Path:
+        return _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "hello",
+                    "input_tokens": 3,
+                    "output_tokens": 4,
+                    "total_hashes": [1, 2],
+                    "block_size": 64,
+                }
+            ],
+        )
+
+    def _autodetect_run(self, path: Path, **kwargs):
+        # No custom_dataset_type: mirrors `aiperf ... --input-file x.parquet`
+        # with type auto-detection, which the converter guard cannot see.
+        return make_run_from_cli(
+            CLIConfig(model_names=["test-model"], input_file=str(path), **kwargs)
+        )
+
+    def _make_loader(self, path: Path, **cli_kwargs) -> BasetenTraceDatasetLoader:
+        return BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=self._autodetect_run(path, **cli_kwargs),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+    def test_min_tokens_collision_rejected_on_auto_detected_trace(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write_single_row(tmp_path)
+        with pytest.raises(
+            ValueError,
+            match="--extra-inputs min_tokens is overwritten per-turn by the "
+            "baseten_trace loader; pass --no-force-min-tokens to send your value",
+        ):
+            self._make_loader(path, extra_inputs=["min_tokens:5"])
+
+    def test_min_tokens_collision_cleared_by_no_force_min_tokens(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write_single_row(tmp_path)
+        loader = self._make_loader(
+            path, extra_inputs=["min_tokens:5"], force_min_tokens=False
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert "min_tokens" not in trace.request_body
+
+    def test_hash_ids_collision_rejected_on_auto_detected_trace(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write_single_row(tmp_path)
+        with pytest.raises(
+            ValueError,
+            match="--extra-inputs hash_ids is overwritten per-turn by the "
+            "baseten_trace loader; pass --omit-kv-hints to send your value",
+        ):
+            self._make_loader(path, extra_inputs=["hash_ids:999"])
+
+    def test_hash_ids_collision_cleared_by_omit_kv_hints(self, tmp_path: Path) -> None:
+        path = self._write_single_row(tmp_path)
+        loader = self._make_loader(
+            path, extra_inputs=["hash_ids:999"], omit_kv_hints=True
+        )
+
+        dataset = loader.load_dataset()
+
+        trace = next(iter(dataset.values()))[0]
+        assert "hash_ids" not in trace.request_body
+
+    def test_block_size_collision_rejected_on_auto_detected_trace(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write_single_row(tmp_path)
+        with pytest.raises(
+            ValueError,
+            match="--extra-inputs block_size is overwritten per-turn by the "
+            "baseten_trace loader; pass --omit-kv-hints to send your value",
+        ):
+            self._make_loader(path, extra_inputs=["block_size:16"])

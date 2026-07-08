@@ -350,7 +350,9 @@ class FileDataset(BaseConfig):
             default=None,
             description="Trace synthesis/transformation configuration. "
             "Allows scaling timestamps and token lengths before replay. "
-            "Only used with mooncake_trace format.",
+            "Applies to trace formats such as mooncake_trace and baseten_trace, "
+            "except speedup_ratio, which is rejected for baseten_trace "
+            "(use replay_speedup / --replay-speedup to scale replay pacing there).",
         ),
     ]
 
@@ -522,6 +524,19 @@ class FileDataset(BaseConfig):
         if records_set and isinstance(self.records, list) and not self.records:
             raise ValueError("`records:` must contain at least one record.")
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_open_loop_strict_requires_open_loop(self) -> FileDataset:
+        # open_loop_strict is an open-loop-only modifier; the loader would
+        # silently ignore it in closed-loop replay. Strict defaults False and
+        # open-loop defaults True, so strict=True with open-loop=False can
+        # only come from an explicitly contradictory config.
+        if self.open_loop_strict and not self.open_loop_replay:
+            raise ValueError(
+                "--open-loop-strict requires open-loop replay; remove "
+                "--no-open-loop-replay (or drop --open-loop-strict)."
+            )
         return self
 
     @model_validator(mode="after")

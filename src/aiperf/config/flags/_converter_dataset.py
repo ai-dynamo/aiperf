@@ -664,21 +664,6 @@ def _reject_baseten_trace_extra_input_collisions(cli: CLIConfig) -> None:
         )
 
 
-def _reject_contradictory_open_loop_flags(cli: CLIConfig) -> None:
-    """Reject --open-loop-strict combined with --no-open-loop-replay.
-
-    ``open_loop_strict`` is an open-loop-only modifier; the loader would
-    silently ignore it in closed-loop replay. Strict defaults False and
-    open-loop defaults True, so strict=True with open-loop=False can only
-    come from explicitly contradictory flags.
-    """
-    if cli.open_loop_strict and not cli.open_loop_replay:
-        raise ValueError(
-            "--open-loop-strict requires open-loop replay; remove "
-            "--no-open-loop-replay (or drop --open-loop-strict)."
-        )
-
-
 def _apply_file_osl(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--osl`` onto ``FileDataset.osl`` when --input-file is set.
 
@@ -811,7 +796,6 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _reject_baseten_only_trace_flags(cli)
     _reject_baseten_trace_synthesis_speedup(cli)
     _reject_baseten_trace_extra_input_collisions(cli)
-    _reject_contradictory_open_loop_flags(cli)
     if cli.dataset_filters and not cli.public_dataset:
         raise ValueError("--dataset-filter requires --public-dataset")
 

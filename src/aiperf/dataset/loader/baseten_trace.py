@@ -9,9 +9,19 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Annotated, Any
 
-import pyarrow as pa
-import pyarrow.compute as pc
-import pyarrow.parquet as pq
+try:
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+except ImportError:  # pragma: no cover - platform-dependent
+    # pyarrow has no Windows-on-ARM wheel (apache/arrow#47195) and source-builds
+    # fail there. Import lazily-tolerant so AIPerf still installs and runs without
+    # it; the loader self-disables (can_load returns False, __init__ raises) when
+    # pyarrow is unavailable.
+    pa = None
+    pc = None
+    pq = None
+
 from pydantic import ConfigDict, Field, field_validator
 
 from aiperf.common import random_generator as rng
@@ -185,6 +195,8 @@ def choose_baseten_session_key(
 
 def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int]:
     """Return row and session counts for a Baseten Parquet trace file."""
+    if pq is None:  # pragma: no cover - platform-dependent
+        return 0, 0
     try:
         parquet_file = pq.ParquetFile(file_path)
         row_count = parquet_file.metadata.num_rows
@@ -216,6 +228,12 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     """Loader for Baseten completion traces exported as Parquet."""
 
     def __init__(self, *args, **kwargs) -> None:
+        if pq is None:
+            raise ValueError(
+                "baseten_trace requires pyarrow, which is not installed (no "
+                "Windows-on-ARM wheel is published; see apache/arrow#47195). "
+                "Install pyarrow to replay Parquet traces."
+            )
         super().__init__(*args, **kwargs)
         dataset = self.run.cfg.get_default_dataset()
         self._session_sample_ratio = getattr(
@@ -243,6 +261,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
         self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
         self._force_min_tokens = getattr(dataset, "force_min_tokens", True)
+        # Mirror of the CLI converter's collision guard
+        # (_reject_baseten_trace_extra_input_collisions), which only sees
+        # explicit --custom-dataset-type baseten_trace; this catches
+        # auto-detected Parquet traces too.
+        self._reject_extra_input_collisions()
         self._rng = rng.derive("dataset.loader.baseten_trace.session_sampling")
         self._floored_zero_osl = 0
         # Session key used to filter rows during sampling; grouping must reuse
@@ -250,10 +273,41 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
         # column and silently shred the sessions sampling kept whole.
         self._sampled_session_key: str | None = None
 
+    def _reject_extra_input_collisions(self) -> None:
+        """Reject endpoint extra-inputs keys this loader injects per-turn.
+
+        Loader-injected per-turn values (``min_tokens`` from the recorded
+        output length, ``hash_ids``/``block_size`` KV hints) overwrite
+        endpoint-level extras, so the user's value would be silently clobbered
+        on the wire. Each collision has an opt-out flag that stops the
+        injection so the user value goes through. ``max_tokens`` is not
+        guarded: user extras win over the loader for that key.
+        """
+        extra = self.run.cfg.endpoint.extra or {}
+        collisions: list[tuple[str, str]] = []
+        if self._force_min_tokens and "min_tokens" in extra:
+            collisions.append(("min_tokens", "--no-force-min-tokens"))
+        if not self._omit_kv_hints:
+            collisions.extend(
+                (key, "--omit-kv-hints")
+                for key in ("hash_ids", "block_size")
+                if key in extra
+            )
+        if collisions:
+            raise ValueError(
+                "; ".join(
+                    f"--extra-inputs {key} is overwritten per-turn by the "
+                    f"baseten_trace loader; pass {flag} to send your value instead"
+                    for key, flag in collisions
+                )
+            )
+
     @classmethod
     def can_load(
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
     ) -> bool:
+        if pq is None:  # pragma: no cover - platform-dependent
+            return False
         if filename is None or Path(filename).suffix.lower() != ".parquet":
             return False
 

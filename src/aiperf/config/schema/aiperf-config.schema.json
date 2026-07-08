@@ -2747,7 +2747,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
                 },
                 "entries": {
                   "anyOf": [
@@ -7482,7 +7482,7 @@
             }
           ],
           "default": null,
-          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
         },
         "entries": {
           "anyOf": [

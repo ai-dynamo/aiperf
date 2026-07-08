@@ -7,7 +7,8 @@ Covers the open-loop default flip (``--open-loop-replay`` /
 ``--no-open-loop-replay``), the ``--open-loop-strict`` / ``--omit-kv-hints`` /
 ``--force-min-tokens`` boolean flags, the converter guard rejecting the
 baseten-only knobs (value and boolean) on non-baseten datasets, the
-contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection,
+contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection
+(a ``FileDataset`` model validator, so YAML configs are covered too),
 the resolver warning for baseten-only knobs on auto-detected non-baseten
 datasets, and the baseten_trace rejections of ``--synthesis-speedup-ratio``
 and loader-colliding ``--extra-inputs`` keys.
@@ -230,7 +231,56 @@ class TestOpenLoopContradictionGuard:
             match="--open-loop-strict requires open-loop replay; remove "
             "--no-open-loop-replay",
         ):
-            build_dataset(cli)
+            convert_cli_to_aiperf(cli)
+
+    def test_direct_model_construction_rejected(self, trace_parquet: Path) -> None:
+        """YAML-path bypass: the combo must be rejected at the model level,
+        not just by the CLI converter guard."""
+        from aiperf.config.dataset import FileDataset
+
+        with pytest.raises(
+            ValidationError,
+            match="--open-loop-strict requires open-loop replay; remove "
+            "--no-open-loop-replay",
+        ):
+            FileDataset(
+                name="d",
+                type="file",
+                path=trace_parquet,
+                open_loop_strict=True,
+                open_loop_replay=False,
+            )
+
+    def test_yaml_dict_dataset_rejected(self, trace_parquet: Path) -> None:
+        """Dict validation (the YAML ingestion path) hits the same validator."""
+        from aiperf.config import BenchmarkConfig
+
+        with pytest.raises(
+            ValidationError,
+            match="--open-loop-strict requires open-loop replay; remove "
+            "--no-open-loop-replay",
+        ):
+            BenchmarkConfig(
+                models=["test-model"],
+                endpoint={"urls": ["http://localhost:8000/v1/completions"]},
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "file",
+                        "path": str(trace_parquet),
+                        "open_loop_strict": True,
+                        "open_loop_replay": False,
+                    }
+                ],
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 1,
+                        "concurrency": 1,
+                    }
+                ],
+            )
 
     def test_strict_with_explicit_open_loop_accepted(self, trace_parquet: Path) -> None:
         dataset = _dataset_from_argv(

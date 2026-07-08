@@ -4,9 +4,12 @@
 
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("pyarrow")
+
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
