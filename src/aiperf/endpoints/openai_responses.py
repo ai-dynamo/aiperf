@@ -286,16 +286,18 @@ class ResponsesEndpoint(BaseEndpoint):
         as the terminal ``response.output_text.done`` event. Tokenising both
         doubles client-side output tokens (OSL / output-token-throughput ~2x).
 
-        Once any delta has carried text we treat the terminal ``done`` as a
-        structural envelope - mirroring the ``response.function_call_arguments.done``
-        exclusion in ``_streaming_event_data``. When NO delta carried text (a
-        server that emits only the ``done`` event, or the non-streaming
-        convenience field parsed by ``_extract_response_content``) the ``done``
-        event stays the sole text carrier, so output is still counted exactly
-        once.
+        Once a delta has carried text for an output/content part we treat that
+        part's terminal ``done`` as a structural envelope - mirroring the
+        ``response.function_call_arguments.done`` exclusion in
+        ``_streaming_event_data``. Tracking is keyed per
+        ``(output_index, content_index)`` so a done-only part (a server that
+        emits only the ``done`` event for that item, or deltas dropped under
+        load) is NOT suppressed by a sibling part that did stream - it stays the
+        sole text carrier and is still counted exactly once. The same holds for
+        the non-streaming convenience field, which emits no deltas at all.
 
-        The single forward pass is correct because the ``done`` event always
-        trails its deltas in SSE arrival order, which ``record.responses``
+        The single forward pass is correct because a part's ``done`` event
+        always trails its deltas in SSE arrival order, which ``record.responses``
         preserves.
 
         ``parse_response`` itself is intentionally left emitting the ``done``
@@ -304,17 +306,18 @@ class ResponsesEndpoint(BaseEndpoint):
         tokens, so they see no behavioral change.
         """
         parsed: list[ParsedResponse] = []
-        saw_output_text_delta = False
+        streamed_parts: set[tuple[Any, Any]] = set()
         for response in record.responses:
             json_obj = response.get_json()
             if not json_obj:
                 continue
             if isinstance(json_obj, dict):
                 event_type = json_obj.get("type")
+                part = (json_obj.get("output_index"), json_obj.get("content_index"))
                 if event_type == "response.output_text.delta" and json_obj.get("delta"):
-                    saw_output_text_delta = True
+                    streamed_parts.add(part)
                 elif (
-                    event_type == "response.output_text.done" and saw_output_text_delta
+                    event_type == "response.output_text.done" and part in streamed_parts
                 ):
                     continue
             if result := self._route_parsed_json(json_obj, response.perf_ns):

@@ -197,6 +197,60 @@ class TestResponsesStreamingOutputTokenDedup:
         assert "".join(output_texts) == OUTPUT_TEXT
         assert _token_count(tokenizer, output_texts) == EXPECTED_OUTPUT_TOKENS
 
+    def test_done_only_part_not_suppressed_by_a_sibling_streamed_part(
+        self, endpoint, tokenizer
+    ):
+        """De-dup must be per ``(output_index, content_index)``, not global.
+
+        A single response can carry multiple output parts. If part 0 streams
+        deltas + done and part 1 emits only a ``done`` (deltas dropped under
+        load, or the server streamed just one part), a global "saw a delta"
+        flag would wrongly suppress part 1's ``done`` and drop its text. Each
+        part's output must be counted exactly once: part 0 via its deltas
+        (its ``done`` skipped), part 1 via its sole ``done``.
+        """
+        part0_deltas = ["Alpha ", "beta"]
+        part0_text = "".join(part0_deltas)
+        part1_text = "Gamma delta epsilon"
+        events = [
+            {"type": "response.created", "response": {}},
+            *[
+                {
+                    "type": "response.output_text.delta",
+                    "delta": d,
+                    "output_index": 0,
+                    "content_index": 0,
+                }
+                for d in part0_deltas
+            ],
+            {
+                "type": "response.output_text.done",
+                "text": part0_text,
+                "output_index": 0,
+                "content_index": 0,
+            },
+            # Part 1: done-only (no deltas) at a different output_index.
+            {
+                "type": "response.output_text.done",
+                "text": part1_text,
+                "output_index": 1,
+                "content_index": 0,
+            },
+            {
+                "type": "response.completed",
+                "response": {"usage": {"input_tokens": 5, "output_tokens": 8}},
+            },
+        ]
+
+        parsed = endpoint.extract_response_data(_record(events))
+        output_texts, _ = _client_output_and_reasoning_texts(parsed)
+
+        # Both parts present, neither doubled: part 0's deltas + part 1's done.
+        assert "".join(output_texts) == part0_text + part1_text
+        assert _token_count(tokenizer, output_texts) == _token_count(
+            tokenizer, [*part0_deltas, part1_text]
+        )
+
     def test_reasoning_alongside_output_counted_separately(self, endpoint, tokenizer):
         """Reasoning deltas and output deltas (plus a redundant output
         ``done``) are bucketed separately: reasoning tokens are not conflated
