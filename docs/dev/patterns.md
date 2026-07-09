@@ -115,6 +115,20 @@ Then:
 - The CLI-to-envelope converter is the only module outside `cli_commands/` that may
   read `CLIConfig` attributes.
 
+## Adaptive Scale Implementation Pattern
+
+Adaptive scale is a timing strategy plus CLI/YAML configuration surface. When changing adaptive control variables, SLA semantics, artifacts, or CLI/YAML precedence, update [Adaptive Scale](../tutorials/adaptive-scale.md) and keep these invariants intact:
+
+- Exactly one adaptive control variable is active per phase. Supported variables are `concurrency`, `prefill_concurrency`, `request_rate`, and `users`.
+- Compact `--adaptive-scale-control variable:min,max:type` flags and expanded `--adaptive-control-*` flags are mutually exclusive.
+- `--adaptive-scale-sla` requires `--adaptive-scale`; it must raise a configuration error rather than silently no-op.
+- CLI SLA overrides must update both the phase-level `sla` filters and nested `adaptive_scale.sla` semantics after YAML lowering.
+- TTFT adaptive SLA requires `FirstToken` observations even when no static `prefill_concurrency` is configured.
+- TTFT and ITL SLA samples come from successful completed requests only. Reliability is represented separately by `success_rate`, `error_rate`, and `cancellation_rate`.
+- `goodput` is throughput of successful requests that pass configured quality filters. `success_rate` and `goodput_ratio` are ratios, not throughput values.
+- Adaptive artifact fields are orchestration-facing. Renaming schema fields such as `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, or `first_failing_value` needs migration and backcompat thought.
+
+
 ## Service Pattern
 
 Services run in separate processes via `bootstrap.py`:
