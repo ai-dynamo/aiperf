@@ -319,6 +319,17 @@ class ResponsesEndpoint(BaseEndpoint):
                 elif (
                     event_type == "response.output_text.done" and part in streamed_parts
                 ):
+                    # This part's deltas already carried the text: drop the
+                    # duplicate TEXT but keep an empty-text response at the done
+                    # timestamp so content-timing metrics (request_latency uses
+                    # content_responses[-1].perf_ns; inter_chunk_latency walks
+                    # the gaps) are byte-for-byte unchanged from the pre-dedup
+                    # behavior. Empty text contributes zero output tokens.
+                    parsed.append(
+                        ParsedResponse(
+                            perf_ns=response.perf_ns, data=TextResponseData(text="")
+                        )
+                    )
                     continue
             if result := self._route_parsed_json(json_obj, response.perf_ns):
                 parsed.append(result)

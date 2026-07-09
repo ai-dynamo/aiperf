@@ -109,7 +109,9 @@ class TestResponsesStreamingOutputTokenDedup:
         This is the core regression: before the fix ``extract_response_data``
         returned the 3 delta ``TextResponseData`` plus a 4th for the ``done``
         event whose ``text`` repeats the full output, so the concatenation
-        (and hence the token count) doubled.
+        (and hence the token count) doubled. The dedup keeps the ``done`` as a
+        ZERO-TEXT placeholder at its own timestamp (so content-timing metrics
+        are unchanged) while contributing no output tokens.
         """
         events = [
             {"type": "response.created", "response": {}},
@@ -128,12 +130,23 @@ class TestResponsesStreamingOutputTokenDedup:
                 "response": {"usage": {"input_tokens": 5, "output_tokens": 8}},
             },
         ]
+        done_idx = next(
+            i for i, e in enumerate(events) if e["type"] == "response.output_text.done"
+        )
 
         parsed = endpoint.extract_response_data(_record(events))
 
+        # The 3 deltas carry text; the redundant ``done`` is kept only as a
+        # zero-text placeholder (no doubled tokens), preserving its timestamp.
         text_items = [p for p in parsed if isinstance(p.data, TextResponseData)]
-        # Only the 3 deltas survive; the redundant ``done`` is dropped.
-        assert len(text_items) == len(OUTPUT_DELTAS)
+        assert [p.data.text for p in text_items] == [*OUTPUT_DELTAS, ""]
+        # RequestLatencyMetric uses content_responses[-1].perf_ns (content =
+        # responses with truthy data; the usage-only completed event is
+        # excluded). The zero-text placeholder keeps the done timestamp as the
+        # last content response, so latency/inter-chunk timing is unchanged.
+        last_content = [p for p in parsed if p.data][-1]
+        assert last_content.perf_ns == done_idx
+        assert last_content.data.get_text() == ""
 
         output_texts, reasoning_texts = _client_output_and_reasoning_texts(parsed)
         # Reconstructed output is the true text exactly ONCE (not doubled).
