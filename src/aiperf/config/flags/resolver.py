@@ -393,6 +393,9 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("num_users", "users"),
     ("adaptive_sustain_duration", "adaptive_sustain_duration"),
     ("adaptive_assessment_period", "adaptive_assessment_period"),
+    ("adaptive_control_variable", "adaptive_control_variable"),
+    ("adaptive_control_min", "adaptive_control_min"),
+    ("adaptive_control_max", "adaptive_control_max"),
 )
 
 
