@@ -131,7 +131,6 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
 
     def _init_window_state(self) -> None:
         self._window_latency_ns: list[int] = []
-        self._window_ttft_ns: list[int] = []
         self._window_itl_ns: list[float] = []
         self._window_ttft_by_credit_id: dict[int, int] = {}
         self._window_successful_requests: list[WindowRequestSample] = []
@@ -201,8 +200,6 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
         if observed is None or sla.threshold == 0:
             return None
         threshold = abs(sla.threshold)
-        if threshold == 0:
-            return None
         if sla.op in {"lt", "le"}:
             return (sla.threshold - observed) / threshold
         return (observed - sla.threshold) / threshold
@@ -298,7 +295,6 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
 
     async def handle_first_token(self, first_token: FirstToken) -> None:
         async with self._lock:
-            self._window_ttft_ns.append(first_token.ttft_ns)
             self._window_ttft_by_credit_id[first_token.credit_id] = first_token.ttft_ns
 
     async def _assessment_loop(self) -> None:
@@ -335,19 +331,23 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
         async with self._lock:
             now = time.perf_counter()
             end_ns = time.time_ns()
+            successful_requests = self._window_successful_requests
             stats = WindowStats(
                 samples=self._window_latency_ns,
                 errors=self._window_errors,
-                ttft_samples=self._window_ttft_ns,
+                ttft_samples=[
+                    sample.ttft_ns
+                    for sample in successful_requests
+                    if sample.ttft_ns is not None
+                ],
                 itl_samples=self._window_itl_ns,
-                successful_requests=self._window_successful_requests,
+                successful_requests=successful_requests,
                 cancelled=self._window_cancelled,
                 elapsed_sec=now - self._window_started_at,
                 start_ns=self._window_started_at_ns,
                 end_ns=end_ns,
             )
             self._window_latency_ns = []
-            self._window_ttft_ns = []
             self._window_itl_ns = []
             self._window_successful_requests = []
             self._window_errors = 0

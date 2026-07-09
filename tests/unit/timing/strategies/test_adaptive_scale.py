@@ -549,6 +549,63 @@ async def test_handle_credit_result_records_itl_and_quality_sample(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_take_window_excludes_ttft_from_errored_requests(tmp_path) -> None:
+    strategy = _strategy(tmp_path)
+    successful_credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c1",
+        x_correlation_id="x1",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+    errored_credit = Credit(
+        id=2,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c2",
+        x_correlation_id="x2",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+    cancelled_credit = Credit(
+        id=3,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c3",
+        x_correlation_id="x3",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+
+    await strategy.handle_first_token(
+        FirstToken(credit_id=1, phase=CreditPhase.PROFILING, ttft_ns=180_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(credit=successful_credit, request_latency_ns=200_000_000)
+    )
+    await strategy.handle_first_token(
+        FirstToken(credit_id=2, phase=CreditPhase.PROFILING, ttft_ns=20_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(credit=errored_credit, error="stream failed")
+    )
+    await strategy.handle_first_token(
+        FirstToken(credit_id=3, phase=CreditPhase.PROFILING, ttft_ns=30_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(credit=cancelled_credit, cancelled=True)
+    )
+
+    stats = await strategy._take_window()
+
+    assert stats.ttfts == [180_000_000]
+    assert stats.errors == 1
+    assert stats.cancelled == 1
+
+
+@pytest.mark.asyncio
 async def test_adaptive_window_reports_itl_and_goodput_sla_values(tmp_path) -> None:
     strategy = _strategy(tmp_path, threshold=100.0)
     latency_sla = strategy._primary_sla
