@@ -607,26 +607,58 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
         )
 
 
-def _reject_baseten_trace_synthesis_speedup(cli: CLIConfig) -> None:
-    """Reject --synthesis-speedup-ratio on explicit baseten_trace datasets.
+def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
+    """Reject synthesis knobs that cannot apply to baseten_trace replay.
 
     baseten_trace replay is paced by --replay-speedup; synthesis speedup
     rescales the raw trace timestamps before replay, so it compounds with
     --replay-speedup and desyncs the closed-loop think-time subtraction and
-    the open-loop idle-gap cap (both divide by replay_speedup only). Other
-    synthesis fields (prompt reconstruction) remain valid. The auto-detected
-    dataset-type path is guarded at load time by the loader.
+    the open-loop idle-gap cap (both divide by replay_speedup only).
+    Prompt-shaping multipliers reshape hash_ids while the wire still sends
+    the original recorded prompt, so the forwarded KV hints would desync
+    from the prompt. Output-length synthesis and the max-ISL/OSL filter/cap
+    remain valid. The auto-detected dataset-type path is guarded at load
+    time by the loader.
     """
     from aiperf.plugin.enums import CustomDatasetType
 
-    if (
-        cli.custom_dataset_type == CustomDatasetType.BASETEN_TRACE
-        and cli.synthesis_speedup_ratio != 1.0
-    ):
+    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+        return
+    if cli.synthesis_speedup_ratio != 1.0:
         raise ValueError(
             "--synthesis-speedup-ratio is not supported with "
             "--custom-dataset-type baseten_trace; use --replay-speedup to "
             "scale replay pacing."
+        )
+    reshaping_flags = [
+        flag
+        for attr, flag, default in (
+            (
+                "synthesis_prefix_len_multiplier",
+                "--synthesis-prefix-len-multiplier",
+                1.0,
+            ),
+            (
+                "synthesis_prefix_root_multiplier",
+                "--synthesis-prefix-root-multiplier",
+                1,
+            ),
+            (
+                "synthesis_prompt_len_multiplier",
+                "--synthesis-prompt-len-multiplier",
+                1.0,
+            ),
+        )
+        if getattr(cli, attr) != default
+    ]
+    if reshaping_flags:
+        verb = "is" if len(reshaping_flags) == 1 else "are"
+        raise ValueError(
+            f"{', '.join(reshaping_flags)} {verb} not supported with "
+            "--custom-dataset-type baseten_trace: it replays recorded "
+            "prompts verbatim, so hash-reshaping synthesis cannot change "
+            "the sent prompt and would desync the forwarded hash_ids KV "
+            "hints."
         )
 
 
@@ -794,7 +826,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
-    _reject_baseten_trace_synthesis_speedup(cli)
+    _reject_baseten_trace_unsupported_synthesis(cli)
     _reject_baseten_trace_extra_input_collisions(cli)
     if cli.dataset_filters and not cli.public_dataset:
         raise ValueError("--dataset-filter requires --public-dataset")

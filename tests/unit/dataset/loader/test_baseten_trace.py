@@ -904,6 +904,64 @@ class TestBasetenTraceDatasetLoader:
         trace = next(iter(dataset.values()))[0]
         assert trace.output_length == 8
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            param("synthesis_prefix_len_multiplier", 2.0, id="prefix-len"),
+            param("synthesis_prefix_root_multiplier", 2, id="prefix-root"),
+            param("synthesis_prompt_len_multiplier", 2.0, id="prompt-len"),
+        ],
+    )  # fmt: skip
+    def test_hash_reshaping_synthesis_rejected(
+        self, tmp_path: Path, field: str, value: float | int
+    ):
+        path = self._write_hinted_single_row(tmp_path)
+        # No custom_dataset_type: the auto-detected path must be rejected by
+        # the loader itself, not only by explicit CLI-flag validation.
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                input_file=str(path),
+                **{field: value},
+            )
+        )
+
+        with pytest.raises(ValueError, match="hash_ids"):
+            BasetenTraceDatasetLoader(
+                filename=str(path),
+                run=run,
+                prompt_generator=_mock_prompt_generator(),
+            )
+
+    def test_output_len_synthesis_keeps_hash_ids_verbatim(self, tmp_path: Path):
+        # The wire still sends the recorded prompt under output-length
+        # synthesis, so the forwarded KV hints must stay the recorded ones.
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 100,
+                    "prompt": "hinted",
+                    "input_tokens": 5,
+                    "output_tokens": 4,
+                    "total_hashes": [1, 2, 3],
+                    "block_size": 64,
+                }
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path, synthesis_output_len_multiplier=2.0),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        dataset = loader.load_dataset()
+        trace = next(iter(dataset.values()))[0]
+
+        assert trace.request_body["hash_ids"] == [1, 2, 3]
+        assert trace.input_length == 5
+        assert trace.output_length == 8
+
 
 class TestBasetenTraceModel:
     def test_model_accepts_null_hashes_and_numeric_provided_session_id(self):

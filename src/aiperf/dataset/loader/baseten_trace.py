@@ -247,9 +247,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
             cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
         )
         self._speedup = getattr(dataset, "replay_speedup", None) or 1.0
-        # Reject synthesis speedup on every config path (YAML, auto-detected
-        # type): it compounds with replay_speedup and bypasses the think-time
-        # subtraction in back-pressure.
+        # Reject unsupported synthesis on every config path (YAML,
+        # auto-detected type). Speedup compounds with replay_speedup and
+        # bypasses the think-time subtraction in back-pressure.
         synthesis_speedup = getattr(self._synthesis, "speedup_ratio", 1.0)
         if synthesis_speedup != 1.0:
             raise ValueError(
@@ -257,6 +257,22 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 "by the baseten_trace loader; use --replay-speedup for "
                 "wall-clock compression."
             )
+        # Prompt-shaping multipliers reshape hash_ids while the wire still
+        # sends the original recorded prompt, desyncing the KV hints.
+        for attr, default in (
+            ("prefix_len_multiplier", 1.0),
+            ("prefix_root_multiplier", 1),
+            ("prompt_len_multiplier", 1.0),
+        ):
+            value = getattr(self._synthesis, attr, default)
+            if value != default:
+                raise ValueError(
+                    f"synthesis {attr}={value} is not supported by the "
+                    "baseten_trace loader: it replays recorded prompts "
+                    "verbatim, so hash-reshaping synthesis cannot change the "
+                    "sent prompt and would desync the forwarded hash_ids KV "
+                    "hints."
+                )
         self._open_loop = getattr(dataset, "open_loop_replay", True)
         self._open_loop_strict = getattr(dataset, "open_loop_strict", False)
         self._omit_kv_hints = getattr(dataset, "omit_kv_hints", False)
@@ -694,6 +710,11 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 "prompt",
                 "text_input",
                 "total_hashes",
+                # The wire sends the recorded prompt verbatim, so the KV hints
+                # must stay the recorded ones even under output-len synthesis.
+                # input_length is deliberately NOT excluded: the synthesizer
+                # would reset a missing value to its default block_size.
+                "hash_ids",
             }
         )
 

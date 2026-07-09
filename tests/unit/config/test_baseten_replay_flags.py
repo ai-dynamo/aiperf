@@ -10,8 +10,9 @@ baseten-only knobs (value and boolean) on non-baseten datasets, the
 contradictory ``--open-loop-strict`` + ``--no-open-loop-replay`` rejection
 (a ``FileDataset`` model validator, so YAML configs are covered too),
 the resolver warning for baseten-only knobs on auto-detected non-baseten
-datasets, and the baseten_trace rejections of ``--synthesis-speedup-ratio``
-and loader-colliding ``--extra-inputs`` keys.
+datasets, and the baseten_trace rejections of ``--synthesis-speedup-ratio``,
+the hash-reshaping synthesis multipliers, and loader-colliding
+``--extra-inputs`` keys.
 """
 
 from __future__ import annotations
@@ -446,11 +447,38 @@ class TestSynthesisSpeedupBasetenGuard:
         )
         assert dataset.synthesis.speedup_ratio == 10.0
 
-    def test_non_speedup_synthesis_field_accepted_on_baseten(
+    def test_output_len_synthesis_field_accepted_on_baseten(
         self, trace_parquet: Path
     ) -> None:
         dataset = _dataset_from_argv(
-            _baseten_argv(trace_parquet, "--synthesis-prompt-len-multiplier", "2.0")
+            _baseten_argv(trace_parquet, "--synthesis-output-len-multiplier", "2.0")
+        )
+        assert dataset.synthesis.output_len_multiplier == 2.0
+
+
+class TestSynthesisHashReshapingBasetenGuard:
+    """Prompt-shaping synthesis reshapes hash_ids while the wire still sends
+    the recorded prompt, desyncing the forwarded KV hints from the prompt;
+    rejected on explicit baseten_trace."""
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            param(("--synthesis-prefix-len-multiplier", "2.0"), id="prefix-len"),
+            param(("--synthesis-prefix-root-multiplier", "2"), id="prefix-root"),
+            param(("--synthesis-prompt-len-multiplier", "2.0"), id="prompt-len"),
+        ],
+    )  # fmt: skip
+    def test_rejected_on_baseten_trace(
+        self, trace_parquet: Path, extra: tuple[str, ...]
+    ) -> None:
+        cli = _parse_cli_args(_baseten_argv(trace_parquet, *extra))
+        with pytest.raises(ValueError, match="hash_ids"):
+            build_dataset(cli)
+
+    def test_accepted_on_mooncake_trace(self, mooncake_jsonl: Path) -> None:
+        dataset = _dataset_from_argv(
+            _mooncake_argv(mooncake_jsonl, "--synthesis-prompt-len-multiplier", "2.0")
         )
         assert dataset.synthesis.prompt_len_multiplier == 2.0
 
