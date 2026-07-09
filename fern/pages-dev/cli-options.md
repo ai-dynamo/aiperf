@@ -923,7 +923,7 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 #### `--adaptive-scale`
 
-Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
 <br/>_Flag (no value required)_
 
 #### `--adaptive-sustain-duration` `<float>`
@@ -936,9 +936,27 @@ Duration in seconds to sustain load near the discovered adaptive scale boundary.
 Duration in seconds for each adaptive scale SLA assessment window.
 <br/>_Constraints: ≥ 1.0_
 
+#### `--adaptive-scale-control` `<str>`
+
+Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
+
+#### `--adaptive-control-variable` `<str>`
+
+Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
+
+#### `--adaptive-control-min` `<float>`
+
+Minimum adaptive scale control value.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-control-max` `<float>`
+
+Maximum adaptive scale control value. Inferred from the phase target when omitted.
+<br/>_Constraints: > 0_
+
 #### `--adaptive-scale-sla` `<list>`
 
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Warmup
 
@@ -2330,7 +2348,7 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 #### `--adaptive-scale`
 
-Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
 <br/>_Flag (no value required)_
 
 #### `--adaptive-sustain-duration` `<float>`
@@ -2343,9 +2361,27 @@ Duration in seconds to sustain load near the discovered adaptive scale boundary.
 Duration in seconds for each adaptive scale SLA assessment window.
 <br/>_Constraints: ≥ 1.0_
 
+#### `--adaptive-scale-control` `<str>`
+
+Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
+
+#### `--adaptive-control-variable` `<str>`
+
+Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
+
+#### `--adaptive-control-min` `<float>`
+
+Minimum adaptive scale control value.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-control-max` `<float>`
+
+Maximum adaptive scale control value. Inferred from the phase target when omitted.
+<br/>_Constraints: > 0_
+
 #### `--adaptive-scale-sla` `<list>`
 
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Warmup
 
