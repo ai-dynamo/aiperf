@@ -255,16 +255,71 @@ class ResponsesEndpoint(BaseEndpoint):
         json_obj = response.get_json()
         if not json_obj:
             return None
+        return self._route_parsed_json(json_obj, response.perf_ns)
 
+    def _route_parsed_json(
+        self, json_obj: JsonObject, perf_ns: int
+    ) -> ParsedResponse | None:
+        """Dispatch an already-deserialized response body to the streaming or
+        full-response parser.
+
+        Shared by ``parse_response`` (per-event) and ``extract_response_data``
+        (record-level) so the latter can inspect each body once for the
+        ``response.output_text.done`` de-duplication without re-parsing the
+        JSON a second time.
+        """
         # Streaming: events have a "type" field
         if "type" in json_obj:
-            return self._parse_streaming_event(json_obj, response.perf_ns)
+            return self._parse_streaming_event(json_obj, perf_ns)
 
         # Non-streaming: full response object
         if json_obj.get("object") == "response":
-            return self._parse_full_response(json_obj, response.perf_ns)
+            return self._parse_full_response(json_obj, perf_ns)
 
         return None
+
+    def extract_response_data(self, record: RequestRecord) -> list[ParsedResponse]:
+        """Extract parsed data, de-duplicating the streamed output text.
+
+        A streaming Responses turn carries the assistant text twice: once as
+        the chain of ``response.output_text.delta`` events and again, in full,
+        as the terminal ``response.output_text.done`` event. Tokenising both
+        doubles client-side output tokens (OSL / output-token-throughput ~2x).
+
+        Once any delta has carried text we treat the terminal ``done`` as a
+        structural envelope - mirroring the ``response.function_call_arguments.done``
+        exclusion in ``_streaming_event_data``. When NO delta carried text (a
+        server that emits only the ``done`` event, or the non-streaming
+        convenience field parsed by ``_extract_response_content``) the ``done``
+        event stays the sole text carrier, so output is still counted exactly
+        once.
+
+        The single forward pass is correct because the ``done`` event always
+        trails its deltas in SSE arrival order, which ``record.responses``
+        preserves.
+
+        ``parse_response`` itself is intentionally left emitting the ``done``
+        text: the worker's per-event callers (first-token detection, request
+        latency) treat it as a plain data-bearing event and neither sums
+        tokens, so they see no behavioral change.
+        """
+        parsed: list[ParsedResponse] = []
+        saw_output_text_delta = False
+        for response in record.responses:
+            json_obj = response.get_json()
+            if not json_obj:
+                continue
+            if isinstance(json_obj, dict):
+                event_type = json_obj.get("type")
+                if event_type == "response.output_text.delta" and json_obj.get("delta"):
+                    saw_output_text_delta = True
+                elif (
+                    event_type == "response.output_text.done" and saw_output_text_delta
+                ):
+                    continue
+            if result := self._route_parsed_json(json_obj, response.perf_ns):
+                parsed.append(result)
+        return parsed
 
     def _parse_streaming_event(
         self, json_obj: JsonObject, perf_ns: int
@@ -332,6 +387,11 @@ class ResponsesEndpoint(BaseEndpoint):
             return ReasoningResponseData(reasoning=delta) if delta else None
 
         if event_type == "response.output_text.done":
+            # Sole-carrier fallback for the no-delta case (non-streaming
+            # convenience path, or a server that emits only the terminal
+            # event). When deltas already carried this text,
+            # ``extract_response_data`` drops this event before it reaches here
+            # so the output is tokenised exactly once, not doubled.
             text = json_obj.get("text")
             return TextResponseData(text=text) if text else None
 
