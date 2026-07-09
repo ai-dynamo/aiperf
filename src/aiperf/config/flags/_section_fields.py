@@ -129,6 +129,7 @@ OUTPUT_FIELDS: frozenset[str] = frozenset(
         "auto_plot",
         "export_http_trace",
         "export_level",
+        "export_outputs_json",
         "plot_required",
         "profile_export_prefix",
         "show_trace_timing",

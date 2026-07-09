@@ -52,6 +52,7 @@ def build_artifacts(cli: CLIConfig) -> dict[str, Any]:
         {
             "artifact_directory": "dir",
             "export_http_trace": "trace",
+            "export_outputs_json": "export_outputs_json",
             "show_trace_timing": "show_trace_timing",
         },
     )
