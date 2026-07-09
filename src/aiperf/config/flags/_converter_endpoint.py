@@ -72,6 +72,7 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "download_video_content": "download_video_content",
     "request_content_type": "request_content_type",
     "session_header": "session_header",
+    "session_body_field": "session_body_field",
 }
 
 

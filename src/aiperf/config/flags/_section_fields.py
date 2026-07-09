@@ -23,6 +23,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "model_names",
         "model_selection_strategy",
         "request_content_type",
+        "session_body_field",
         "session_header",
         "streaming",
         "timeout_seconds",

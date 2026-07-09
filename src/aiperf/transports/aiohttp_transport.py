@@ -319,6 +319,13 @@ class AioHttpTransport(BaseTransport):
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
+            session_body_field = request_info.model_endpoint.endpoint.session_body_field
+            if session_body_field:
+                session_header = (
+                    request_info.model_endpoint.endpoint.session_header
+                    or "X-Correlation-ID"
+                )
+                payload[session_body_field] = headers[session_header]
             use_form_data = (
                 request_info.model_endpoint.endpoint.request_content_type
                 == RequestContentType.MULTIPART_FORM_DATA
