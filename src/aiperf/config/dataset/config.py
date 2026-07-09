@@ -382,11 +382,9 @@ class FileDataset(BaseConfig):
             gt=0.0,
             le=1.0,
             default=None,
-            description="Optional fraction of trace sessions to keep for replay. "
-            "Applied at the whole-session level after rows are grouped into "
-            "sessions, preserving multi-turn integrity. Useful for replaying "
-            "a deterministic slice of a large production trace. Only supported "
-            "by the baseten_trace loader.",
+            description="Fraction of trace sessions to keep for replay, sampled "
+            "whole-session to preserve multi-turn integrity; deterministic when "
+            "``random_seed`` is set. Only supported by the baseten_trace loader.",
         ),
     ]
 
@@ -396,11 +394,9 @@ class FileDataset(BaseConfig):
             default=None,
             ge=0.0,
             description="Clamp per-turn replay delays to at most this many "
-            "seconds, keeping long pre-recorded waits from stalling the "
-            "benchmark. ``None`` disables the cap. Honored by the DAG JSONL "
-            "loader (delays read from the trace file) and by the baseten_trace "
-            "loader's closed-loop back-pressure think-times; ``DelayCapTracker`` "
-            "reports the clamp count at end of load.",
+            "seconds; ``None`` disables the cap. Honored by the DAG JSONL loader "
+            "and the baseten_trace loader's closed-loop think-times; the clamp "
+            "count is reported at end of load.",
         ),
     ]
 
@@ -409,13 +405,10 @@ class FileDataset(BaseConfig):
         Field(
             default=None,
             gt=0.0,
-            description="Collapse global idle gaps in a trace replay schedule to "
-            "at most this many seconds (must be > 0). After whole-session "
-            "sampling a sparse trace otherwise replays across the original "
-            "wall-clock span with long dead-air stretches that stall "
-            "fixed-schedule replay; this caps any gap between consecutive "
-            "requests (across all sessions). ``None`` disables the cap. Only "
-            "supported by the baseten_trace loader.",
+            description="Collapse idle gaps between consecutive requests (across "
+            "all sessions) to at most this many seconds, so a sparse or "
+            "session-sampled trace does not replay dead air; ``None`` disables "
+            "the cap. Only supported by the baseten_trace loader.",
         ),
     ]
 
@@ -424,11 +417,10 @@ class FileDataset(BaseConfig):
         Field(
             default=None,
             gt=0.0,
-            description="Wall-clock compression factor for trace replay (e.g. 10 = "
-            "replay 10x faster than recorded). Divides all normalized timestamps and "
-            "inter-turn delays, so a ~2h trace replays in minutes. ``None`` = 1.0 "
-            "(real time). Unlike synthesis speedup_ratio this does NOT touch hash_ids, "
-            "so KV-cache fidelity is preserved. Only supported by the baseten_trace "
+            description="Trace replay wall-clock compression (10 = 10x faster "
+            "than recorded): divides normalized timestamps and inter-turn delays; "
+            "``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay "
+            "untouched (KV-cache fidelity). Only supported by the baseten_trace "
             "loader.",
         ),
     ]
@@ -437,17 +429,14 @@ class FileDataset(BaseConfig):
         bool,
         Field(
             default=True,
-            description="Open-loop absolute-timestamp replay (the default): each "
-            "session starts at its absolute (speedup-scaled) recorded timestamp "
-            "regardless of earlier sessions' completions; continuation turns fire "
-            "at max(recorded timestamp, prior-turn completion), so a slow server "
-            "still delays them (set ``open_loop_strict`` to fire every row at its "
-            "absolute timestamp). Set ``False`` for closed-loop back-pressure: "
-            "each continuation turn fires a think-time delay after the prior turn "
-            "completes (recorded start-to-start gap minus the prior turn's "
-            "recorded e2e duration). Closed-loop keeps sessions causally ordered "
-            "when replayed service times differ from recorded ones, e.g. for A/A "
-            "comparisons. Only honored by the baseten_trace loader.",
+            description="Open-loop replay (the default): each session starts at "
+            "its absolute, speedup-scaled recorded timestamp; continuation turns "
+            "fire at max(recorded timestamp, prior-turn completion). Set "
+            "``False`` for closed-loop back-pressure: continuation turns fire a "
+            "think-time (recorded start-to-start gap minus recorded e2e duration) "
+            "after the prior turn completes, keeping sessions causally ordered "
+            "when replayed service times differ from recorded (e.g. A/A "
+            "comparisons). Only honored by the baseten_trace loader.",
         ),
     ]
 
@@ -455,12 +444,10 @@ class FileDataset(BaseConfig):
         bool,
         Field(
             default=False,
-            description="In open-loop replay, additionally treat every trace row as "
-            "an independent single-turn session so ALL requests (not just each "
-            "session's first turn) fire at their absolute recorded timestamps, even "
-            "if earlier turns of the same recorded session have not completed. "
-            "Trades away multi-turn session grouping and session metrics. Only "
-            "honored by the baseten_trace loader.",
+            description="In open-loop replay, fire every trace row at its "
+            "absolute recorded timestamp as an independent single-turn session, "
+            "trading away multi-turn grouping and session metrics. Only honored "
+            "by the baseten_trace loader.",
         ),
     ]
 
@@ -468,9 +455,10 @@ class FileDataset(BaseConfig):
         bool,
         Field(
             default=False,
-            description="Stop forwarding recorded KV-cache hints (``hash_ids``, "
-            "``block_size``) in replayed request bodies; some strict frontends "
-            "reject unknown parameters. Only honored by the baseten_trace loader.",
+            description="Drop recorded KV-cache hints (``hash_ids``, "
+            "``block_size``) from replayed request bodies, for strict frontends "
+            "that reject unknown parameters. Only honored by the baseten_trace "
+            "loader.",
         ),
     ]
 
@@ -478,10 +466,10 @@ class FileDataset(BaseConfig):
         bool,
         Field(
             default=True,
-            description="Pin ``min_tokens`` to the recorded output length in "
-            "replayed request bodies so replayed generations match recorded "
-            "lengths. Disable to let EOS end generations naturally (some servers "
-            "reject ``min_tokens``). Only honored by the baseten_trace loader.",
+            description="Pin ``min_tokens`` to the recorded output length so "
+            "replayed generations match recorded lengths; disable to let EOS end "
+            "generations naturally (some servers reject ``min_tokens``). Only "
+            "honored by the baseten_trace loader.",
         ),
     ]
 
