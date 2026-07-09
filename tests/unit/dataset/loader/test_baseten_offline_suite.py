@@ -370,3 +370,53 @@ class TestTimeCompression:
             == base["A"][2].request_body["hash_ids"]
             == [10, 11, 12, 13]
         )
+
+    @staticmethod
+    def _two_session_gap_rows() -> list[dict]:
+        """Two single-turn sessions separated by 6000 recorded seconds."""
+        return [
+            dict(
+                timestamp_start_unix_ms=1_000,
+                prompt="S1",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="S1",
+                duration_e2e_ms=500,
+            ),
+            dict(
+                timestamp_start_unix_ms=6_001_000,
+                prompt="S2",
+                input_tokens=10,
+                output_tokens=5,
+                provided_session_id="S2",
+                duration_e2e_ms=500,
+            ),
+        ]
+
+    def test_open_loop_gap_cap_is_replay_time_applied_after_speedup(self, tmp_path):
+        # The idle-gap cap is REPLAY wall-clock seconds, applied AFTER
+        # replay_speedup compression: 6000 recorded seconds of dead air at
+        # speedup=10 is a 600s replay gap, collapsed to the 60s cap
+        # (60_000ms). Dividing the cap by speedup instead (recorded-time
+        # semantics) would leave only a 6_000ms replay gap.
+        path = tmp_path / "speedup_gapcap.parquet"
+        pq.write_table(pa.Table.from_pylist(self._two_session_gap_rows()), path)
+        _, data = _load(path, replay_speedup=10.0, max_idle_gap_cap_seconds=60.0)
+        ts = sorted(t.timestamp for traces in data.values() for t in traces)
+        assert ts == [0, 60_000]
+
+    def test_closed_loop_gap_cap_is_replay_time_applied_after_speedup(self, tmp_path):
+        # Closed-loop twin: the cap reflows the absolute session-start
+        # timestamps with the same replay-time semantics.
+        path = tmp_path / "speedup_gapcap_closed.parquet"
+        pq.write_table(pa.Table.from_pylist(self._two_session_gap_rows()), path)
+        loader, data = _load(
+            path,
+            open_loop_replay=False,
+            replay_speedup=10.0,
+            max_idle_gap_cap_seconds=60.0,
+        )
+        starts = sorted(
+            conv.turns[0].timestamp for conv in loader.convert_to_conversations(data)
+        )
+        assert starts == [0, 60_000]

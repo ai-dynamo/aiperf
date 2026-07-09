@@ -528,7 +528,7 @@ Clamp per-turn replay delays to at most this many seconds; ``None`` disables the
 
 #### `--max-idle-gap-cap-seconds` `<float>`
 
-Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
+Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
 <br/>_Constraints: > 0.0_
 
 #### `--replay-speedup` `<float>`
@@ -1960,7 +1960,7 @@ Clamp per-turn replay delays to at most this many seconds; ``None`` disables the
 
 #### `--max-idle-gap-cap-seconds` `<float>`
 
-Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
+Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
 <br/>_Constraints: > 0.0_
 
 #### `--replay-speedup` `<float>`

@@ -408,7 +408,10 @@ class FileDataset(BaseConfig):
             description="Collapse idle gaps between consecutive requests (across "
             "all sessions) to at most this many seconds, so a sparse or "
             "session-sampled trace does not replay dead air; ``None`` disables "
-            "the cap. Only supported by the baseten_trace loader.",
+            "the cap. The cap is in replay wall-clock seconds, applied after "
+            "replay_speedup compression, so it bounds actual benchmark idle "
+            "time regardless of speedup. Only supported by the baseten_trace "
+            "loader.",
         ),
     ]
 

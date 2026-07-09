@@ -865,8 +865,10 @@ class CLIConfig(BaseConfig):
             description="Collapse idle gaps between consecutive requests (across "
             "all sessions) to at most this many seconds, so a sparse or "
             "session-sampled trace does not replay dead air; ``None`` disables "
-            "the cap. Only supported by the baseten_trace loader. Maps to "
-            "FileDataset ``max_idle_gap_cap_seconds``.",
+            "the cap. The cap is in replay wall-clock seconds, applied after "
+            "--replay-speedup compression, so it bounds actual benchmark idle "
+            "time regardless of speedup. Only supported by the baseten_trace "
+            "loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.",
         ),
         CLIParameter(
             name=("--max-idle-gap-cap-seconds",),

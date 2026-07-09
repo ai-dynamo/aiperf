@@ -49,7 +49,7 @@ By default replay is **open-loop**: every request is scheduled at its absolute r
 
 - `--no-open-loop-replay` selects **closed-loop back-pressure**: each continuation turn fires a think-time delay after the prior turn completes. Think-time = recorded start-to-start gap minus the prior turn's recorded `duration_e2e_ms`, clamped by `--inter-turn-delay-cap-seconds`. Use closed-loop when replayed service times differ from recorded ones (e.g. A/A comparisons) and sessions must stay causally ordered.
 - `--replay-speedup N` divides all timestamps and inter-turn delays by `N` (e.g. `10` replays a ~2h trace in ~12 minutes) without touching `hash_ids`, so KV-cache fidelity is preserved.
-- `--max-idle-gap-cap-seconds S` collapses any global dead-air gap between consecutive requests (across all sessions) to at most `S` seconds.
+- `--max-idle-gap-cap-seconds S` collapses any global dead-air gap between consecutive requests (across all sessions) to at most `S` seconds. `S` is replay wall-clock seconds, applied after `--replay-speedup` compression — the replay never idles longer than `S` real seconds regardless of speedup.
 - `--trace-session-sample-ratio R` keeps a fraction `R` of whole sessions, preserving multi-turn integrity. Sampling is only deterministic across runs with a fixed `--random-seed`.
 - `--omit-kv-hints` stops forwarding `hash_ids`/`block_size` KV-cache hints in request bodies (some strict frontends reject unknown parameters).
 - `--force-min-tokens` (default) pins `min_tokens` to the recorded output length so replayed generations match recorded lengths; `--no-force-min-tokens` lets EOS end generations naturally (some servers reject `min_tokens`).
