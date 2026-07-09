@@ -218,6 +218,16 @@ def test_adaptive_cli_sla_overrides_nested_yaml_sla(tmp_path: Path) -> None:
     assert phase.sla[0].threshold == 1000000
 
 
+def test_adaptive_cli_sla_requires_adaptive_scale_for_yaml_phase(
+    tmp_path: Path,
+) -> None:
+    cfg_file = _write_yaml(tmp_path)
+    user = CLIConfig(adaptive_scale_sla=["request_latency:p95:le:1000000"])
+
+    with pytest.raises(ValueError, match="--adaptive-scale-sla requires"):
+        resolve_config(user, cfg_file)
+
+
 def test_adaptive_cli_compact_control_overrides_yaml(tmp_path: Path) -> None:
     cfg_file = tmp_path / "adaptive.yaml"
     cfg_file.write_text(_YAML_ADVANCED_ADAPTIVE)

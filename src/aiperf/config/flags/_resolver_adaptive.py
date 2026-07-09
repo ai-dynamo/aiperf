@@ -63,6 +63,15 @@ def _current_adaptive_block(target: dict[str, Any]) -> dict[str, Any] | None:
     return existing if isinstance(existing, dict) else None
 
 
+def _adaptive_scale_enabled(target: dict[str, Any], cli: CLIConfig) -> bool:
+    if "adaptive_scale" in cli.model_fields_set:
+        return bool(cli.adaptive_scale)
+    existing = target.get("adaptive_scale")
+    if isinstance(existing, dict):
+        return bool(existing.get("enabled", True))
+    return bool(existing)
+
+
 def _ensure_adaptive_block(target: dict[str, Any]) -> dict[str, Any]:
     adaptive_block = _current_adaptive_block(target)
     if adaptive_block is None:
@@ -147,6 +156,8 @@ def _apply_adaptive_sla(
         except TypeError as exc:
             message = str(exc).replace("--search-sla", "--adaptive-scale-sla")
             raise TypeError(message) from exc
+    if not _adaptive_scale_enabled(target, cli):
+        raise ValueError("--adaptive-scale-sla requires --adaptive-scale")
     target["sla"] = parsed_sla
     adaptive_block = _current_adaptive_block(target)
     if adaptive_block is not None:
