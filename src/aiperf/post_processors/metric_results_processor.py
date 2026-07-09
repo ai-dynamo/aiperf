@@ -43,13 +43,23 @@ class MetricResultsProcessor(BaseMetricsProcessor):
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any):
         super().__init__(run=run, **kwargs)
+
+        # Set up per-processor metric objects. Bound methods below must come from
+        # these (not MetricRegistry.get_instance singletons) so that any metric
+        # instance state (e.g. warn-once latches) is scoped to this run.
+        self._instances_map: dict[MetricTagT, BaseMetric] = {
+            tag: MetricRegistry.get_class(tag)() for tag in MetricRegistry.all_tags()
+        }
+
         # For derived metrics, we don't care about splitting up the error metrics
         # Note: _setup_metrics returns metrics in dependency order, which includes
         # non-derived dependencies. We filter to only include actual derived metrics.
         self.derive_funcs: dict[
             MetricTagT, Callable[[MetricResultsDict], MetricValueTypeT]
         ] = {
-            metric.tag: metric.derive_value  # type: ignore
+            metric.tag: self._instances_map.setdefault(
+                metric.tag, type(metric)()
+            ).derive_value  # type: ignore
             for metric in self._setup_metrics(MetricType.DERIVED)
             if metric.type == MetricType.DERIVED
         }
@@ -69,11 +79,6 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         # Pre-cache the types for the metrics.
         self._tags_to_types: dict[MetricTagT, MetricType] = {
             metric.tag: metric.type for metric in _all_metric_classes
-        }
-
-        # Set up aggregate metric objects
-        self._instances_map: dict[MetricTagT, BaseMetric] = {
-            tag: MetricRegistry.get_class(tag)() for tag in MetricRegistry.all_tags()
         }
 
         # Pre-cache the aggregate functions for the aggregate metrics.
