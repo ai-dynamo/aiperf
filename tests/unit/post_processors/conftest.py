@@ -52,7 +52,6 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -598,25 +597,6 @@ def setup_mock_registry_sequences(
     return valid_tags, error_tags
 
 
-def create_results_processor_with_metrics(
-    run, *metrics: type[BaseMetric]
-) -> MetricResultsProcessor:
-    """Create a MetricResultsProcessor with pre-configured metrics.
-
-    Args:
-        run: BenchmarkRun for the processor
-        metrics: list of metric classes
-
-    Returns:
-        Configured MetricResultsProcessor instance
-    """
-
-    processor = MetricResultsProcessor(run)
-    processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    processor._instances_map = {metric.tag: metric() for metric in metrics}
-    return processor
-
-
 def create_accumulator_with_metrics(run, *metrics: type[BaseMetric]):
     """Construct a :class:`MetricsAccumulator` pre-configured with ``metrics``.
 
@@ -655,9 +635,7 @@ def mock_metric_registry(monkeypatch):
     monkeypatch.setattr(
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
     )
-    monkeypatch.setattr(
-        "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
-    )
+    monkeypatch.setattr("aiperf.metrics.accumulator.MetricRegistry", mock_registry)
     monkeypatch.setattr("aiperf.metrics.display_units.MetricRegistry", mock_registry)
 
     return mock_registry

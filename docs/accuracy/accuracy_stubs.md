@@ -32,7 +32,7 @@ graph TD
     A --> C[AccuracyGrader<br/>4 graders<br/>grade + extract]
     B --> D[AccuracyRecordProcessor<br/>process_record]
     C --> D
-    D --> E[AccuracyResultsProcessor<br/>process_result<br/>summarize]
+    D --> E[AccuracyAccumulator<br/>process_record<br/>summarize]
     E --> F[AccuracyConsoleExporter<br/>AccuracyDataExporter]
 ```
 
@@ -210,22 +210,22 @@ async def process_record(
 
 **Reference implementation:** `MetricRecordProcessor` in `src/aiperf/post_processors/metric_record_processor.py`
 
-### AccuracyResultsProcessor — IMPLEMENTED in PR #815
+### AccuracyAccumulator — IMPLEMENTED in PR #815 (accumulator pipeline)
 
-**File:** `src/aiperf/accuracy/accuracy_results_processor.py`
+**File:** `src/aiperf/accuracy/accuracy_accumulator.py`
 **Parent:** `AIPerfLifecycleMixin`
-**Implements:** `ResultsProcessorProtocol`
-**Plugin key:** `accuracy_results` (under `results_processor`)
+**Implements:** accumulator `process_record` / `summarize` contract (see `AccumulatorProtocol`)
+**Plugin key:** `accuracy_results` (under `accumulator`, `record_types: [metric_records]`)
 **Disables via:** `PostProcessorDisabled` when `not cfg.accuracy.enabled`
 
-This class is fully implemented and serves as the canonical reference for aggregating per-task accuracy metrics.
+This class is fully implemented and serves as the canonical reference for aggregating per-task accuracy metrics from routed `metric_records`.
 
 ```python
-async def process_result(self, record_data: MetricRecordsData) -> None         # IMPLEMENTED in PR #815
-async def summarize(self) -> list[MetricResult]                                # IMPLEMENTED in PR #815
+async def process_record(self, record_data: MetricRecordsData) -> None                # IMPLEMENTED in PR #815
+async def summarize(self, ctx: SummaryContext | None = None) -> list[MetricResult]    # IMPLEMENTED in PR #815
 ```
 
-**Reference implementation:** `MetricResultsProcessor` in `src/aiperf/post_processors/metric_results_processor.py`
+**Reference implementation:** `MetricsAccumulator` in `src/aiperf/metrics/accumulator.py`
 
 ---
 
@@ -287,7 +287,7 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 | Category | Plugin Key | Class |
 |----------|-----------|-------|
 | `record_processor` | `accuracy_record` | `AccuracyRecordProcessor` |
-| `results_processor` | `accuracy_results` | `AccuracyResultsProcessor` |
+| `accumulator` | `accuracy_results` | `AccuracyAccumulator` |
 | `console_exporter` | `accuracy` | `AccuracyConsoleExporter` |
 | `data_exporter` | `accuracy_csv` | `AccuracyDataExporter` |
 
@@ -302,7 +302,7 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 | Graders | 7 (all) | 0 | — | 0 |
 | Benchmarks | 9 (all) | 0 | — | 0 |
 | Record Processor | 1 (`AccuracyRecordProcessor`) | 0 | — | 0 |
-| Results Processor | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
+| Accuracy Accumulator | 1 (`AccuracyAccumulator`) | 0 | — | 0 |
 | Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
 | Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
 | Stub-plugin Validator | 1 (`AccuracyConfig._reject_stub_plugins`, idle until next stub) | 0 | — | 0 |
@@ -323,7 +323,7 @@ The processors, exporters, all seven graders, and all nine benchmarks are wired 
 | **Canonical grader** | `src/aiperf/accuracy/graders/multiple_choice.py` |
 | **Canonical benchmark** | `src/aiperf/accuracy/benchmarks/mmlu.py` |
 | **Canonical record processor** | `src/aiperf/accuracy/accuracy_record_processor.py` |
-| **Canonical results processor** | `src/aiperf/accuracy/accuracy_results_processor.py` |
+| **Canonical accuracy accumulator** | `src/aiperf/accuracy/accuracy_accumulator.py` |
 | **Canonical console exporter** | `src/aiperf/accuracy/accuracy_console_exporter.py` |
 | **Canonical data exporter** | `src/aiperf/accuracy/accuracy_data_exporter.py` |
 | Disabled exception pattern | `src/aiperf/post_processors/raw_record_writer_processor.py:47` |

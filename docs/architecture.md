@@ -255,11 +255,11 @@ AIPerf integrates with external systems:
 
 The Telemetry Plane provides real-time streaming of benchmark metrics to OpenTelemetry collectors and MLflow tracking servers. It operates as a sidecar to the Analytic Plane, consuming processed results without affecting the core benchmarking pipeline.
 
-### OTelMetricsResultsProcessor Registration
+### OTel Metrics Streamer Registration
 
-`OTelMetricsResultsProcessor` is a results processor registered with `RecordsManager`. When `--otel-url` is set (with `--stream` controlling which domains are active), the processor is instantiated and added to the Records Manager's processor chain. It receives every `MetricRecordsData` and `CreditPhaseStats` event that flows through the analytic plane, acting as the entry point into the telemetry pipeline.
+`OTelMetricsStreamer` is registered as the `otel_metrics_streamer` stream exporter with `RecordsManager`. When `--otel-url` is set (with `--stream` controlling which domains are active), the exporter is instantiated and routed every `MetricRecordsData` and `CreditPhaseStats` event whose `record_type` matches its plugin metadata, acting as the entry point into the telemetry pipeline.
 
-The processor does not emit metrics directly. Instead, it delegates to strategy objects that decide whether a given result type is relevant and how to transform it into telemetry events.
+The exporter does not emit metrics directly. Instead, it delegates to strategy objects that decide whether a given record type is relevant and how to transform it into telemetry events.
 
 ### multiprocessing.Queue and Fanout Process
 
@@ -271,7 +271,7 @@ The fanout process drains the queue with a configurable `poll_timeout_sec`, batc
 
 ### Strategy-Protocol Dispatch via --stream
 
-The `--stream` flag activates strategy-based dispatch inside `OTelMetricsResultsProcessor`. Each strategy implements a two-method protocol:
+The `--stream` flag activates strategy-based dispatch inside `OTelMetricsStreamer`. Each strategy implements a two-method protocol:
 
 - `supports(result)` — returns `True` if the strategy handles this result type.
 - `process(result)` — transforms the result into one or more telemetry events pushed to the queue.
@@ -322,7 +322,7 @@ sequenceDiagram
     participant W as Worker (data plane)
     participant RP as RecordProcessor (analytic plane)
     participant RM as RecordsManager
-    participant OP as OTelMetricsResultsProcessor
+    participant OP as OTelMetricsStreamer
     participant Q as multiprocessing.Queue
     participant F as Fanout Process
     participant C as OTel Collector
@@ -330,7 +330,7 @@ sequenceDiagram
 
     W->>RP: raw response
     RP->>RM: MetricRecordsData
-    RM->>OP: process_result(MetricRecordsData)
+    RM->>OP: process_record(MetricRecordsData)
     OP->>OP: MetricResultsStrategy.supports -> True
     OP->>OP: MetricResultsStrategy.process -> histogram record events
     OP->>Q: put_nowait(histogram_record)
@@ -348,7 +348,7 @@ Credit-phase timing events follow a similar path but use counters and up-down co
 sequenceDiagram
     participant T as TimingManager
     participant RM as RecordsManager
-    participant OP as OTelMetricsResultsProcessor
+    participant OP as OTelMetricsStreamer
     participant Q as multiprocessing.Queue
     participant F as Fanout Process
     participant S as mlflow_gauge_snapshots (in F)
@@ -356,7 +356,7 @@ sequenceDiagram
     participant M as MLflow Tracking
 
     T->>RM: CREDIT_PHASE_{START,PROGRESS,SENDING_COMPLETE,COMPLETE}
-    RM->>OP: process_result(CreditPhaseStats)
+    RM->>OP: process_record(CreditPhaseStats)
     OP->>OP: TimingResultsStrategy.supports -> True
     OP->>OP: TimingResultsStrategy.process -> counter_add / up_down_counter_add
     OP->>Q: put_nowait(counter_add | up_down_counter_add)

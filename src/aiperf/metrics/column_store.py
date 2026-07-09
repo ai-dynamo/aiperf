@@ -336,6 +336,64 @@ class ColumnStore:
             return _make_numeric_handler(col, tag, self._sums, self._counts)
         return None
 
+    def ingest_metric_record_metadata(
+        self,
+        idx: int,
+        *,
+        session_num: int,
+        credit_issued_ns: int | None,
+        request_ack_ns: int | None,
+        cancellation_time_ns: int | None,
+        turn_index: int | None,
+        was_cancelled: bool,
+        has_error: bool,
+        worker_id: str | None,
+        record_processor_id: str | None,
+        benchmark_phase: str | None,
+        x_correlation_id: str | None,
+        conversation_id: str | None,
+    ) -> None:
+        """Write the fixed metadata set carried by ``MetricRecordsData``."""
+        if idx >= self._capacity:
+            self._grow(idx)
+
+        self._ensure_metadata_numeric_column("session_num")[idx] = float(session_num)
+        if credit_issued_ns is not None:
+            self._ensure_metadata_numeric_column("credit_issued_ns")[idx] = float(
+                credit_issued_ns
+            )
+        if request_ack_ns is not None:
+            self._ensure_metadata_numeric_column("request_ack_ns")[idx] = float(
+                request_ack_ns
+            )
+        if cancellation_time_ns is not None:
+            self._ensure_metadata_numeric_column("cancellation_time_ns")[idx] = float(
+                cancellation_time_ns
+            )
+        if turn_index is not None:
+            self._ensure_metadata_numeric_column("turn_index")[idx] = float(turn_index)
+
+        self._ensure_metadata_bool_column("was_cancelled")[idx] = (
+            1 if was_cancelled else 0
+        )
+        self._ensure_metadata_bool_column("has_error")[idx] = 1 if has_error else 0
+
+        if worker_id is not None:
+            col = self._ensure_metadata_categorical_column("worker_id")
+            col[idx] = self._intern_category("worker_id", worker_id)
+        if record_processor_id is not None:
+            col = self._ensure_metadata_categorical_column("record_processor_id")
+            col[idx] = self._intern_category("record_processor_id", record_processor_id)
+        if benchmark_phase is not None:
+            col = self._ensure_metadata_categorical_column("benchmark_phase")
+            col[idx] = self._intern_category("benchmark_phase", benchmark_phase)
+        if x_correlation_id is not None:
+            col = self._ensure_metadata_categorical_column("x_correlation_id")
+            col[idx] = self._intern_category("x_correlation_id", x_correlation_id)
+        if conversation_id is not None:
+            col = self._ensure_metadata_categorical_column("conversation_id")
+            col[idx] = self._intern_category("conversation_id", conversation_id)
+
     def ingest_metadata(
         self,
         idx: int,

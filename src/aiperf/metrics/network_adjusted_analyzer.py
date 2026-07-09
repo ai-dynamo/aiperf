@@ -10,9 +10,8 @@ summary scalar. The raw metrics are preserved.
 Subtracting a constant RTT shifts the mean and every percentile by that constant
 and leaves the standard deviation unchanged; the per-record subtraction is
 clamped at 0 so a measured RTT larger than a (rare) sub-RTT latency cannot go
-negative. This mirrors the legacy ``MetricResultsProcessor`` injection, but reads
-the columnar source arrays the accumulator already owns rather than re-aggregating
-a separate ``MetricArray``.
+negative. This reads the columnar source arrays the accumulator already owns,
+without re-aggregating a separate metric container.
 
 Inter-token / inter-chunk latencies are intentionally NOT adjusted: the RTT
 cancels in ``(request_latency - ttft)``, so those metrics are already
@@ -28,6 +27,7 @@ from numpy.typing import NDArray
 
 from aiperf.common.enums import MetricConsoleGroup
 from aiperf.common.models import MetricResult
+from aiperf.metrics.metric_dicts import metric_result_from_array
 from aiperf.metrics.types.network_adjusted_metrics import (
     NETWORK_ADJUSTED_SOURCES,
     NetworkAdjustedRequestLatencyMetric,
@@ -54,31 +54,16 @@ _HEADER_BY_TAG = {m.tag: m.header for m in _ADJUSTED_METRICS}
 def _array_to_metric_result(
     *, tag: str, header: str, values_ms: NDArray[np.float64]
 ) -> MetricResult:
-    """Build a fully-populated :class:`MetricResult` from a 1-D ms ndarray."""
-    p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-        values_ms, [1, 5, 10, 25, 50, 75, 90, 95, 99]
+    """Build a fully-populated :class:`MetricResult` from a fresh 1-D ms ndarray."""
+    result = metric_result_from_array(
+        tag,
+        header,
+        "ms",
+        values_ms,
+        float(values_ms.sum()),
     )
-    return MetricResult(
-        tag=tag,
-        header=header,
-        unit="ms",
-        count=int(values_ms.size),
-        sum=float(values_ms.sum()),
-        avg=float(values_ms.mean()),
-        std=float(values_ms.std()),
-        min=float(values_ms.min()),
-        max=float(values_ms.max()),
-        p1=float(p1),
-        p5=float(p5),
-        p10=float(p10),
-        p25=float(p25),
-        p50=float(p50),
-        p75=float(p75),
-        p90=float(p90),
-        p95=float(p95),
-        p99=float(p99),
-        console_group=MetricConsoleGroup.DEFAULT,
-    )
+    result.console_group = MetricConsoleGroup.DEFAULT
+    return result
 
 
 def inject_network_adjusted_metrics(

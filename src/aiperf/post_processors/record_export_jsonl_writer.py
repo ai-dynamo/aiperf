@@ -92,14 +92,6 @@ class RecordExportJSONLWriter(
         except Exception as e:  # noqa: BLE001 - per-record; skip bad record and continue
             self.error(f"Failed to write record metrics: {e}")
 
-    # Registered as a ``stream_exporter`` (fed via ``process_record`` with
-    # record-type routing). The ``process_result`` alias is kept so the class
-    # also satisfies the results-processor protocol if ever dispatched that way,
-    # but ``record_export`` is registered ONLY as a stream_exporter -- the legacy
-    # ``results_processor:record_export`` (RecordExportResultsProcessor) was
-    # removed so the two no longer both truncate-and-write profile_export.jsonl.
-    process_result = process_record
-
     async def summarize(self) -> list[MetricResult]:
         """No aggregation needed for JSONL export."""
         return []

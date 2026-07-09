@@ -38,7 +38,7 @@ def _attribute_key(attrs: dict[str, object] | None) -> AttributeKey:
     """Convert an attribute dict to a hashable canonical key.
 
     Non-hashable values are coerced to str; matches existing resource-attribute
-    construction in OTelMetricsResultsProcessor.
+    construction in OTelMetricsStreamer.
     """
     return tuple(sorted((str(k), str(v)) for k, v in (attrs or {}).items()))
 

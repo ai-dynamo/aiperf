@@ -86,7 +86,7 @@ class _FanoutAddInstrument:
         )
 
 
-class OTelMetricsResultsProcessor(BaseMetricsProcessor):
+class OTelMetricsStreamer(BaseMetricsProcessor):
     """Producer side of the OTel/MLflow streaming pipeline.
 
     Receives ``MetricRecordsData`` and ``CreditPhaseStats`` from ``RecordsManager``,
@@ -96,7 +96,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
     tracking server happens in a dedicated child process — see
     ``run_otel_streaming_fanout``.
 
-    Registered as the ``otel_metrics_streamer`` results processor in ``plugins.yaml``.
+    Registered as the ``otel_metrics_streamer`` stream exporter in ``plugins.yaml``.
     Raises ``PostProcessorDisabled`` from ``__init__`` when neither ``--otel-url``
     nor ``--mlflow-tracking-uri`` is set, or when the optional ``aiperf[otel]`` extra
     is missing.
@@ -105,9 +105,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
     protocol.
     """
 
-    # Telemetry failures must not crash the benchmark. The records manager
-    # checks this attribute (see ``post_processors.protocols.BestEffortMarker``
-    # and ``IS_BEST_EFFORT_ATTR``) and swallows the exception when True.
+    # Telemetry failures must not crash the benchmark. Stream-exporter dispatch
+    # returns per-handler errors instead of propagating them through the run.
     is_best_effort: ClassVar[bool] = True
 
     def __init__(
@@ -144,7 +143,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 )
                 # Disable only the OTel sink. MLflow live streaming runs in the
                 # same fanout process but does not need opentelemetry — tearing
-                # down the whole processor here would drop live MLflow metrics
+                # down the whole streamer here would drop live MLflow metrics
                 # whenever OTel imports fail. The fanout itself repeats the
                 # import guard per sink (see ``otel_streaming_fanout.py``), so
                 # ``endpoint_url=None`` in the fanout config is sufficient.
@@ -179,7 +178,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         self._fanout_dropped_events = 0
         self._fanout_sent_events = 0
         self._fanout_queue_maxsize = Environment.OTEL.MAX_BUFFERED_RECORDS
-        self.info("Initialized OTelMetricsResultsProcessor")
+        self.info("Initialized OTelMetricsStreamer")
 
     @on_init
     async def _initialize_meter_provider(self) -> None:
@@ -243,7 +242,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             f"MLflow live: {self._mlflow_live_enabled})"
         )
 
-    async def process_result(self, record_data: OTelResultData) -> None:
+    async def process_record(self, record_data: OTelResultData) -> None:
         """Record metric data for export via the OpenTelemetry SDK."""
         if not self._streaming_ready:
             return
@@ -258,6 +257,10 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 f"Skipping unsupported OTel result payload type: {type(record_data)}"
             )
         )
+
+    async def finalize(self) -> None:
+        """Flush pending streaming telemetry events before results publication."""
+        await self.flush(force=True)
 
     async def flush(self, *, force: bool = False) -> None:
         """Force a flush of pending SDK metrics exports."""

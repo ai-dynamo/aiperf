@@ -3,13 +3,13 @@
 
 import pytest
 
-from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
+from aiperf.accuracy.accuracy_accumulator import AccuracyAccumulator
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
 
-def _make_processor() -> AccuracyResultsProcessor:
-    return AccuracyResultsProcessor(
+def _make_accumulator() -> AccuracyAccumulator:
+    return AccuracyAccumulator(
         run=make_benchmark_run(
             model_names=["test-model"],
             endpoint_type=EndpointType.COMPLETIONS,
@@ -20,14 +20,14 @@ def _make_processor() -> AccuracyResultsProcessor:
 
 
 @pytest.mark.asyncio
-class TestAccuracyResultsProcessorSummarize:
+class TestAccuracyAccumulatorSummarize:
     async def test_empty_returns_no_results(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         results = await processor.summarize()
         assert results == []
 
     async def test_overall_metric_values(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._overall_total = 10
         processor._overall_correct = 7
 
@@ -40,7 +40,7 @@ class TestAccuracyResultsProcessorSummarize:
         assert overall.unit == "ratio"
 
     async def test_task_metrics_sorted_alphabetically(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._overall_total = 4
         processor._overall_correct = 3
         processor._task_total["zebra"] = 2
@@ -55,7 +55,7 @@ class TestAccuracyResultsProcessorSummarize:
         assert task_results[1].tag == "accuracy.task.zebra"
 
     async def test_task_metric_accuracy_calculation(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._overall_total = 5
         processor._overall_correct = 3
         processor._task_total["math"] = 5
@@ -70,7 +70,7 @@ class TestAccuracyResultsProcessorSummarize:
         assert task.header == "Accuracy (math)"
 
     async def test_overall_not_emitted_when_no_results_processed(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._task_total["math"] = 3
         processor._task_correct["math"] = 2
 
@@ -82,7 +82,7 @@ class TestAccuracyResultsProcessorSummarize:
         assert "accuracy.task.math" in tags
 
     async def test_multiple_tasks_each_get_own_metric(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._overall_total = 6
         processor._overall_correct = 4
         for task in ("history", "biology", "physics"):
@@ -99,7 +99,7 @@ class TestAccuracyResultsProcessorSummarize:
         }
 
     async def test_unparsed_overall_emitted_when_records_processed(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._overall_total = 10
         processor._overall_correct = 7
         processor._overall_unparsed = 3
@@ -112,7 +112,7 @@ class TestAccuracyResultsProcessorSummarize:
         assert unparsed.current == pytest.approx(0.3)
 
     async def test_unparsed_per_task_emitted(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._overall_total = 5
         processor._overall_correct = 3
         processor._task_total["math"] = 5
@@ -129,7 +129,7 @@ class TestAccuracyResultsProcessorSummarize:
         assert unparsed_task.current == pytest.approx(0.4)
 
     async def test_unparsed_zero_when_all_conforming(self) -> None:
-        processor = _make_processor()
+        processor = _make_accumulator()
         processor._overall_total = 5
         processor._overall_correct = 5
         processor._task_total["math"] = 5

@@ -79,8 +79,8 @@ def sample_server_metrics_record(
 
 
 @pytest.mark.asyncio
-class TestServerMetricsResultsProcessor:
-    """Test cases for ServerMetricsResultsProcessor."""
+class TestServerMetricsAccumulator:
+    """Test cases for ServerMetricsAccumulator."""
 
     async def test_initialization(self, mock_cfg: BenchmarkRun) -> None:
         """Test processor initialization sets up hierarchy."""

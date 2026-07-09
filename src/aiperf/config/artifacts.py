@@ -32,7 +32,7 @@ __all__ = [
 
 # Type aliases for format arrays.
 # Narrow to what the codebase actually emits: MetricsJsonExporter writes the
-# summary JSON, RecordExportResultsProcessor writes the records JSONL. No YAML
+# summary JSON, RecordExportJSONLWriter writes the records JSONL. No YAML
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
 RecordsExportFormat = Literal["jsonl"]

@@ -450,7 +450,7 @@ class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
     Invariant: externally injected by
     `GPUTelemetryAccumulator.compute_efficiency_metrics` from
     energy_consumption counter deltas. `_derive_value` is intentionally
-    non-functional; `MetricResultsProcessor.update_derived_metrics` is
+    non-functional; `MetricsAccumulator._resolve_derived_metrics` is
     expected to catch NoMetricValue and skip the tag during its
     derivation walk.
     """
@@ -472,7 +472,7 @@ def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
         "is externally injected by "
         "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
         "surfaces, the derivation walk is missing its NoMetricValue handler "
-        "(see MetricResultsProcessor.update_derived_metrics)."
+        "(see MetricsAccumulator._resolve_derived_metrics)."
     )
 ```
 
@@ -486,7 +486,7 @@ is enforced. The recommended shape is:
 - *Injection site*: which method is the source of truth
   (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
 - *Catching path*: where the exception is expected to be absorbed
-  (`MetricResultsProcessor.update_derived_metrics`). If this fires in
+  (`MetricsAccumulator._resolve_derived_metrics`). If this fires in
   production, the catching path has a bug.
 
 ### Why not just skip the class entirely?
@@ -503,9 +503,9 @@ external injection.
 `GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
 `MetricResult` objects directly with the relevant tags and appends them
 to the records list before `ProcessRecordsResult` is built. The standard
-`update_derived_metrics` walk sees these tags too, raises `NoMetricValue`
-via `_derive_value`, catches it, and skips — so the externally-injected
-values are not overwritten.
+`MetricsAccumulator._resolve_derived_metrics` walk sees these tags too,
+raises `NoMetricValue` via `_derive_value`, catches it, and skips — so the
+externally-injected values are not overwritten.
 
 ### Test contract
 
@@ -761,7 +761,7 @@ Coverage:
 
 ## Strategy Protocol Pattern
 
-The OTel results processor uses a strategy protocol to dispatch incoming data
+The OTel metrics stream exporter uses a strategy protocol to dispatch incoming data
 to specialised handlers. Each strategy declares what data it supports and
 processes matching records independently:
 
@@ -798,8 +798,8 @@ class OTelResultsStrategyProtocol(Protocol):
 
         Instrument access goes through the context's ``get_or_create_*``
         factories, which enqueue fanout events rather than touching the OTel
-        SDK inline. Raising is permitted; the processor is best-effort, so
-        the records manager logs and swallows the failure.
+        SDK inline. Raising is permitted; the stream exporter is best-effort, so
+        the records manager logs and continues after the handler failure.
         """
         ...
 ```
@@ -858,7 +858,7 @@ for strategy in self._strategies:
 
 ## Drop-Oldest Fanout Queue
 
-`OTelMetricsResultsProcessor` fans out metric events to a dedicated child
+`OTelMetricsStreamer` fans out metric events to a dedicated child
 process via a bounded `multiprocessing.Queue`. The queue uses drop-oldest
 semantics so the hot path (the main benchmark loop) is never blocked by a slow
 downstream consumer.

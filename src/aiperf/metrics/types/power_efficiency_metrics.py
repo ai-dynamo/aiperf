@@ -20,7 +20,7 @@ class TotalGpuPowerMetric(BaseDerivedMetric[float]):
     Invariant: externally injected by
     `GPUTelemetryAccumulator.compute_efficiency_metrics` from gpu_power_usage
     scrapes. `_derive_value` is intentionally non-functional;
-    `MetricResultsProcessor.update_derived_metrics` is expected to catch
+    `MetricsAccumulator._resolve_derived_metrics` is expected to catch
     NoMetricValue and skip the tag during its derivation walk.
     """
 
@@ -36,7 +36,7 @@ class TotalGpuPowerMetric(BaseDerivedMetric[float]):
             "is externally injected by "
             "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
             "surfaces, the derivation walk is missing its NoMetricValue handler "
-            "(see MetricResultsProcessor.update_derived_metrics)."
+            "(see MetricsAccumulator._resolve_derived_metrics)."
         )
 
 
@@ -46,7 +46,7 @@ class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
     Invariant: externally injected by
     `GPUTelemetryAccumulator.compute_efficiency_metrics` from
     energy_consumption counter deltas. `_derive_value` is intentionally
-    non-functional; `MetricResultsProcessor.update_derived_metrics` is
+    non-functional; `MetricsAccumulator._resolve_derived_metrics` is
     expected to catch NoMetricValue and skip the tag during its
     derivation walk.
     """
@@ -63,7 +63,7 @@ class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
             "is externally injected by "
             "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
             "surfaces, the derivation walk is missing its NoMetricValue handler "
-            "(see MetricResultsProcessor.update_derived_metrics)."
+            "(see MetricsAccumulator._resolve_derived_metrics)."
         )
 
 
@@ -74,7 +74,7 @@ class OutputTokensPerJouleMetric(BaseDerivedMetric[float]):
     `GPUTelemetryAccumulator.compute_efficiency_metrics` as
     `total_output_tokens / total_gpu_energy`. `_derive_value` is
     intentionally non-functional;
-    `MetricResultsProcessor.update_derived_metrics` is expected to catch
+    `MetricsAccumulator._resolve_derived_metrics` is expected to catch
     NoMetricValue and skip the tag during its derivation walk.
     """
 
@@ -90,7 +90,7 @@ class OutputTokensPerJouleMetric(BaseDerivedMetric[float]):
             "metric is externally injected by "
             "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
             "surfaces, the derivation walk is missing its NoMetricValue handler "
-            "(see MetricResultsProcessor.update_derived_metrics)."
+            "(see MetricsAccumulator._resolve_derived_metrics)."
         )
 
 
@@ -101,7 +101,7 @@ class EnergyPerUserMetric(BaseDerivedMetric[float]):
     `GPUTelemetryAccumulator.compute_efficiency_metrics` as
     `total_gpu_energy / profiling_phase.concurrency`. `_derive_value` is
     intentionally non-functional;
-    `MetricResultsProcessor.update_derived_metrics` is expected to catch
+    `MetricsAccumulator._resolve_derived_metrics` is expected to catch
     NoMetricValue and skip the tag during its derivation walk. Omitted
     when concurrency is unset (e.g. pure request-rate runs) or zero.
     """
@@ -118,5 +118,5 @@ class EnergyPerUserMetric(BaseDerivedMetric[float]):
             "is externally injected by "
             "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
             "surfaces, the derivation walk is missing its NoMetricValue handler "
-            "(see MetricResultsProcessor.update_derived_metrics)."
+            "(see MetricsAccumulator._resolve_derived_metrics)."
         )

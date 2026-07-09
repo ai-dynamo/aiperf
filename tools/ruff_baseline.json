@@ -201,11 +201,6 @@
     ],
     [
       "ANN201",
-      "src/aiperf/post_processors/timeslice_metric_results_processor.py",
-      "TimesliceMetricResultsProcessor.get_timeslice_index"
-    ],
-    [
-      "ANN201",
       "src/aiperf/ui/dashboard/aiperf_textual_app.py",
       "AIPerfTextualApp.on_worker_update"
     ],

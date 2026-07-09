@@ -16,9 +16,10 @@ from aiperf.config import (
     BenchmarkConfig,
 )
 from aiperf.config.flags import CLIConfig
-from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.otel_metrics_results_processor import (
-    OTelMetricsResultsProcessor,
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import EndpointType, PluginType
+from aiperf.post_processors.otel_metrics_streamer import (
+    OTelMetricsStreamer,
 )
 from tests.unit.conftest import make_run_from_cli
 from tests.unit.post_processors.conftest import create_metric_records_message
@@ -96,7 +97,7 @@ class _FakeQueue:
 
 
 def _setup_fanout_processor(
-    processor: OTelMetricsResultsProcessor,
+    processor: OTelMetricsStreamer,
 ) -> _FakeQueue:
     """Configure processor to use a fake fanout queue for testing."""
     fake_queue = _FakeQueue()
@@ -105,13 +106,20 @@ def _setup_fanout_processor(
     return fake_queue
 
 
-class TestOTelMetricsResultsProcessor:
+class TestOTelMetricsStreamer:
+    def test_registry_resolves_otel_metrics_streamer_class(self) -> None:
+        streamer_class = plugins.get_class(
+            PluginType.STREAM_EXPORTER, "otel_metrics_streamer"
+        )
+
+        assert streamer_class is OTelMetricsStreamer
+
     def test_disabled_without_otel_or_mlflow(self) -> None:
         cfg = make_run_from_cli(
             CLIConfig(model_names=["test-model"], endpoint_type=EndpointType.CHAT)
         )
         with pytest.raises(PostProcessorDisabled):
-            OTelMetricsResultsProcessor(
+            OTelMetricsStreamer(
                 service_id="records-manager",
                 run=cfg,
             )
@@ -120,7 +128,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         cfg_mlflow_only: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_mlflow_only,
         )
@@ -132,7 +140,7 @@ class TestOTelMetricsResultsProcessor:
         cfg_mlflow_only: BenchmarkConfig,
     ) -> None:
         with patch("builtins.__import__", side_effect=_import_side_effect_for_otel):
-            processor = OTelMetricsResultsProcessor(
+            processor = OTelMetricsStreamer(
                 service_id="records-manager",
                 run=cfg_mlflow_only,
             )
@@ -154,7 +162,7 @@ class TestOTelMetricsResultsProcessor:
             patch("builtins.__import__", side_effect=_import_side_effect_for_otel),
             pytest.raises(PostProcessorDisabled) as exc_info,
         ):
-            OTelMetricsResultsProcessor(
+            OTelMetricsStreamer(
                 service_id="records-manager",
                 run=run,
             )
@@ -170,7 +178,7 @@ class TestOTelMetricsResultsProcessor:
         MLflow live metrics even though MLflow was independently usable.
         """
         with patch("builtins.__import__", side_effect=_import_side_effect_for_otel):
-            processor = OTelMetricsResultsProcessor(
+            processor = OTelMetricsStreamer(
                 service_id="records-manager",
                 run=cfg_otel_mlflow,
             )
@@ -178,11 +186,11 @@ class TestOTelMetricsResultsProcessor:
         assert processor._mlflow_live_enabled is True
 
     @pytest.mark.asyncio
-    async def test_process_result_records_histogram_values_by_metric(
+    async def test_process_record_records_histogram_values_by_metric(
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -197,7 +205,7 @@ class TestOTelMetricsResultsProcessor:
                 }
             ]
         ).to_data()
-        await processor.process_result(metric_record)
+        await processor.process_record(metric_record)
 
         histogram_events = [
             e for e in fake_queue.events if e.get("type") == "histogram_record"
@@ -212,7 +220,7 @@ class TestOTelMetricsResultsProcessor:
             assert "attributes" in event["payload"]  # type: ignore[operator]
 
     @pytest.mark.asyncio
-    async def test_process_result_skips_metrics_when_metrics_telemetry_disabled(
+    async def test_process_record_skips_metrics_when_metrics_telemetry_disabled(
         self,
         tmp_artifact_dir,
     ) -> None:
@@ -227,7 +235,7 @@ class TestOTelMetricsResultsProcessor:
         cfg.cfg.mlflow.tracking_uri = "http://mlflow:5000"
         cfg.cfg.mlflow.experiment = "aiperf-tests"
         cfg.cfg.otel.stream_metrics_enabled = False
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg,
         )
@@ -236,7 +244,7 @@ class TestOTelMetricsResultsProcessor:
         metric_record = create_metric_records_message(
             results=[{"request_latency_ns": 123_000_000}]
         ).to_data()
-        await processor.process_result(metric_record)
+        await processor.process_record(metric_record)
 
         histogram_events = [
             e for e in fake_queue.events if e.get("type") == "histogram_record"
@@ -244,7 +252,7 @@ class TestOTelMetricsResultsProcessor:
         assert histogram_events == []
 
     @pytest.mark.asyncio
-    async def test_process_result_skips_timing_when_timing_telemetry_disabled(
+    async def test_process_record_skips_timing_when_timing_telemetry_disabled(
         self,
         tmp_artifact_dir,
     ) -> None:
@@ -259,7 +267,7 @@ class TestOTelMetricsResultsProcessor:
         cfg.cfg.mlflow.tracking_uri = "http://mlflow:5000"
         cfg.cfg.mlflow.experiment = "aiperf-tests"
         cfg.cfg.otel.stream_timing_enabled = False
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg,
         )
@@ -278,7 +286,7 @@ class TestOTelMetricsResultsProcessor:
             cancelled_sessions=0,
             total_session_turns=1,
         )
-        await processor.process_result(timing_stats)
+        await processor.process_record(timing_stats)
 
         counter_events = [
             e for e in fake_queue.events if e.get("type") == "counter_add"
@@ -290,11 +298,11 @@ class TestOTelMetricsResultsProcessor:
         assert up_down_events == []
 
     @pytest.mark.asyncio
-    async def test_process_result_records_timing_counters_and_gauge_like_metrics(
+    async def test_process_record_records_timing_counters_and_gauge_like_metrics(
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -316,7 +324,7 @@ class TestOTelMetricsResultsProcessor:
             grace_period_timeout_triggered=False,
             was_cancelled=False,
         )
-        await processor.process_result(timing_stats)
+        await processor.process_record(timing_stats)
 
         counter_events = [
             e for e in fake_queue.events if e.get("type") == "counter_add"
@@ -353,11 +361,11 @@ class TestOTelMetricsResultsProcessor:
         assert "aiperf.timing.phase.was_cancelled" not in up_down_by_name
 
     @pytest.mark.asyncio
-    async def test_process_result_timing_uses_delta_values_for_cumulative_counters(
+    async def test_process_record_timing_uses_delta_values_for_cumulative_counters(
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -395,8 +403,8 @@ class TestOTelMetricsResultsProcessor:
             grace_period_timeout_triggered=False,
             was_cancelled=False,
         )
-        await processor.process_result(first_stats)
-        await processor.process_result(second_stats)
+        await processor.process_record(first_stats)
+        await processor.process_record(second_stats)
 
         counter_events = [
             e for e in fake_queue.events if e.get("type") == "counter_add"
@@ -435,7 +443,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -451,7 +459,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -466,7 +474,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         cfg_mlflow_only: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_mlflow_only,
         )
@@ -505,14 +513,14 @@ class TestOTelMetricsResultsProcessor:
             ):
                 return self.process
 
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
         fake_context = FakeContext()
 
         with patch(
-            "aiperf.post_processors.otel_metrics_results_processor.mp.get_context",
+            "aiperf.post_processors.otel_metrics_streamer.mp.get_context",
             return_value=fake_context,
         ):
             await processor._start_fanout_process()
@@ -531,13 +539,13 @@ class TestOTelMetricsResultsProcessor:
             def Queue(self, maxsize: int):  # noqa: N802
                 raise RuntimeError("queue creation failed")
 
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_mlflow_only,
         )
 
         with patch(
-            "aiperf.post_processors.otel_metrics_results_processor.mp.get_context",
+            "aiperf.post_processors.otel_metrics_streamer.mp.get_context",
             return_value=FakeContext(),
         ):
             await processor._start_fanout_process()
@@ -547,11 +555,11 @@ class TestOTelMetricsResultsProcessor:
         assert processor._fanout_process is None
 
     @pytest.mark.asyncio
-    async def test_process_result_fanout_emits_metric_and_timing_events(
+    async def test_process_record_fanout_emits_metric_and_timing_events(
         self,
         cfg_otel_mlflow: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel_mlflow,
         )
@@ -560,7 +568,7 @@ class TestOTelMetricsResultsProcessor:
         metric_record = create_metric_records_message(
             results=[{"request_latency_ns": 123_000_000, "request_count": 1}]
         ).to_data()
-        await processor.process_result(metric_record)
+        await processor.process_record(metric_record)
 
         timing_stats = CreditPhaseStats(
             phase=CreditPhase.PROFILING,
@@ -575,7 +583,7 @@ class TestOTelMetricsResultsProcessor:
             cancelled_sessions=0,
             total_session_turns=9,
         )
-        await processor.process_result(timing_stats)
+        await processor.process_record(timing_stats)
 
         event_types = [str(event.get("type")) for event in fake_queue.events]
         assert "histogram_record" in event_types
@@ -616,7 +624,7 @@ class TestOTelMetricsResultsProcessor:
             "type": "histogram_record",
             "payload": {"metric_name": "newer"},
         }
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_mlflow_only,
         )
@@ -655,7 +663,7 @@ class TestOTelMetricsResultsProcessor:
             def terminate(self) -> None:
                 self.terminate_called = True
 
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel_mlflow,
         )
@@ -675,7 +683,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -693,7 +701,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -719,7 +727,7 @@ class TestOTelMetricsResultsProcessor:
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="records-manager",
             run=cfg_otel,
         )
@@ -735,7 +743,7 @@ class TestOTelMetricsResultsProcessor:
 
     def test_build_resource_attributes_populates_model_name(self, cfg_otel) -> None:
         """Happy path: model_names[0] populates aiperf.model.name."""
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="test-service",
             run=cfg_otel,
         )
@@ -750,7 +758,7 @@ class TestOTelMetricsResultsProcessor:
         a programmatic caller can construct an empty list — the OTel resource
         attributes builder must not crash the fanout in that case.
         """
-        processor = OTelMetricsResultsProcessor(
+        processor = OTelMetricsStreamer(
             service_id="test-service",
             run=cfg_otel,
         )

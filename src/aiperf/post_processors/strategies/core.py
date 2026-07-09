@@ -46,7 +46,7 @@ class OTelResultsStrategyProtocol(Protocol):
         Implementations use ``isinstance`` against a single concrete type —
         strategies are mutually exclusive by record type, so a given record
         dispatches to exactly one strategy. The dispatcher in
-        ``OTelMetricsResultsProcessor`` iterates strategies in registration
+        ``OTelMetricsStreamer`` iterates strategies in registration
         order and calls ``process`` on the first match.
         """
         ...
@@ -57,9 +57,8 @@ class OTelResultsStrategyProtocol(Protocol):
         Must be cheap — the caller is on the benchmark's record-processing
         dispatch path. Instrument access goes through the context's
         ``get_or_create_*`` factories (which enqueue fanout events rather than
-        constructing OTel SDK instruments inline). Raising is permitted;
-        ``OTelMetricsResultsProcessor.is_best_effort = True`` means the
-        records manager logs and swallows the failure.
+        constructing OTel SDK instruments inline). Raising is permitted; the
+        stream-exporter dispatcher logs handler failures and continues.
         """
         ...
 

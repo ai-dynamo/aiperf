@@ -17,8 +17,8 @@ from aiperf.config import (
     OTelConfig,
 )
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.otel_metrics_results_processor import (
-    OTelMetricsResultsProcessor,
+from aiperf.post_processors.otel_metrics_streamer import (
+    OTelMetricsStreamer,
 )
 
 
@@ -43,7 +43,7 @@ async def test_fanout_queue_maxsize_reads_env_var(
         otel=OTelConfig(metrics_url="collector:4318"),
     )
 
-    processor = OTelMetricsResultsProcessor(
+    processor = OTelMetricsStreamer(
         service_id="records-manager",
         run=SimpleNamespace(cfg=cfg, benchmark_id="bench-fanout"),
     )
@@ -91,11 +91,9 @@ async def test_fanout_queue_maxsize_reads_env_var(
     # Patch the fanout target and the multiprocessing context so no real
     # subprocess is forked from the unit test.
     with (
+        patch("aiperf.post_processors.otel_metrics_streamer.run_otel_streaming_fanout"),
         patch(
-            "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
-        ),
-        patch(
-            "aiperf.post_processors.otel_metrics_results_processor.mp.get_context",
+            "aiperf.post_processors.otel_metrics_streamer.mp.get_context",
             return_value=_FakeContext(),
         ),
     ):

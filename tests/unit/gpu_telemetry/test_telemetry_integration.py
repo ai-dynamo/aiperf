@@ -269,12 +269,12 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
         # Mock the process_telemetry_record method to raise an exception
         original_process = faulty_processor.process_telemetry_record
 
-        async def failing_process_result(record):
+        async def failing_process_telemetry_record(record):
             if record.gpu_index == 0:  # Fail on first GPU only
                 raise ValueError("Simulated processing error")
             return await original_process(record)
 
-        faulty_processor.process_telemetry_record = failing_process_result
+        faulty_processor.process_telemetry_record = failing_process_telemetry_record
 
         async def failing_record_callback(records, collector_id):
             """Async callback that processes records and may encounter errors."""

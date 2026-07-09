@@ -347,7 +347,7 @@ class _GPUSettings(BaseSettings):
         ge=1,
         le=1000000,
         default=100,
-        description="Batch size for telemetry record export results processor",
+        description="Batch size for telemetry record JSONL stream exporter",
     )
     FINAL_SCRAPE_GRACE_NS: int = Field(
         ge=0,
@@ -650,7 +650,7 @@ class _RecordSettings(BaseSettings):
         ge=1,
         le=1000000,
         default=100,
-        description="Batch size for record export results processor",
+        description="Batch size for record JSONL stream exporter",
     )
     RAW_EXPORT_BATCH_SIZE: int = Field(
         ge=1,
@@ -792,7 +792,7 @@ class _ServerMetricsSettings(BaseSettings):
         ge=1,
         le=1000000,
         default=100,
-        description="Batch size for server metrics jsonl writer export results processor",
+        description="Batch size for server metrics JSONL stream exporter",
     )
     REACHABILITY_TIMEOUT: int = Field(
         ge=1,
@@ -852,7 +852,7 @@ class _NetworkLatencySettings(BaseSettings):
         ge=1,
         le=1000000,
         default=100,
-        description="Batch size for the network latency jsonl writer export results processor",
+        description="Batch size for the network latency JSONL stream exporter",
     )
 
 

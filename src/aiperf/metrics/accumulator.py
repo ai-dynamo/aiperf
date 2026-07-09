@@ -14,9 +14,11 @@ from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     AggregationKind,
+    MetricFlags,
     MetricType,
     MetricValueTypeT,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import MetricResult, TimesliceResult
@@ -49,6 +51,17 @@ _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
     AggregationKind.MAX: lambda a: float(np.max(a)),
     AggregationKind.MIN: lambda a: float(np.min(a)),
 }
+
+
+class _MetricClassLookup:
+    def __init__(self, metric_classes: dict[MetricTagT, Any]) -> None:
+        self._metric_classes = metric_classes
+
+    def get_class(self, tag: MetricTagT) -> Any:
+        metric_class = self._metric_classes.get(tag)
+        if metric_class is None:
+            raise KeyError(tag)
+        return metric_class
 
 
 class MetricsAccumulator(BaseMetricsProcessor):
@@ -145,27 +158,20 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # storage-type rationale. ``x_request_id`` is intentionally dropped:
         # cardinality == n_records (no grouping value) and per-record exporters
         # read it off the live record struct, never the column store.
-        self._column_store.ingest_metadata(
+        self._column_store.ingest_metric_record_metadata(
             idx=idx,
-            metadata_numeric={
-                "session_num": meta.session_num,
-                "credit_issued_ns": meta.credit_issued_ns,
-                "request_ack_ns": meta.request_ack_ns,
-                "cancellation_time_ns": meta.cancellation_time_ns,
-                "turn_index": meta.turn_index,
-            },
-            metadata_string={},
-            metadata_bool={
-                "was_cancelled": meta.was_cancelled,
-                "has_error": record.error is not None,
-            },
-            metadata_categorical={
-                "worker_id": meta.worker_id,
-                "record_processor_id": meta.record_processor_id,
-                "benchmark_phase": str(meta.benchmark_phase),
-                "x_correlation_id": meta.x_correlation_id,
-                "conversation_id": meta.conversation_id,
-            },
+            session_num=meta.session_num,
+            credit_issued_ns=meta.credit_issued_ns,
+            request_ack_ns=meta.request_ack_ns,
+            cancellation_time_ns=meta.cancellation_time_ns,
+            turn_index=meta.turn_index,
+            was_cancelled=meta.was_cancelled,
+            has_error=record.error is not None,
+            worker_id=meta.worker_id,
+            record_processor_id=meta.record_processor_id,
+            benchmark_phase=str(meta.benchmark_phase),
+            x_correlation_id=meta.x_correlation_id,
+            conversation_id=meta.conversation_id,
         )
 
     def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
@@ -294,17 +300,23 @@ class MetricsAccumulator(BaseMetricsProcessor):
         for tag in store.numeric_tags():
             if full_dataset:
                 col = store.numeric(tag)
-                clean = col[~np.isnan(col)]
+                col_sum: float | None = store.numeric_sum(tag)
+                clean = (
+                    col.copy()
+                    if store.numeric_count(tag) == len(col) and not np.isnan(col_sum)
+                    else col[~np.isnan(col)]
+                )
             else:
                 values = store.numeric(tag)[mask]
                 clean = values[~np.isnan(values)]
+                col_sum = None
             if len(clean) == 0:
                 continue
 
             metric_type = self._tags_to_types.get(tag)
             if metric_type == MetricType.RECORD:
                 # O(1) running sum for the full dataset; np.sum for windowed
-                s = store.numeric_sum(tag) if full_dataset else float(np.sum(clean))
+                s = col_sum if col_sum is not None else float(np.sum(clean))
                 scalar_dict[tag] = s
                 record_arrays[tag] = (clean, s)
             elif metric_type == MetricType.AGGREGATE:
@@ -392,14 +404,42 @@ class MetricsAccumulator(BaseMetricsProcessor):
         )
         return self._convert_display_units(raw)
 
-    @staticmethod
     def _convert_display_units(
+        self,
         results: dict[MetricTagT, MetricResult],
     ) -> dict[MetricTagT, MetricResult]:
         """Convert all metric results from native units to display units."""
+        registry = _MetricClassLookup(self._metric_classes)
         return {
-            tag: to_display_unit(result, MetricRegistry)
+            tag: to_display_unit(result, registry) for tag, result in results.items()
+        }
+
+    def _should_include_in_summary(self, tag: MetricTagT) -> bool:
+        """Return False for hidden internal/experimental metrics."""
+        metric_class = self._metric_classes.get(tag)
+        if metric_class is None:
+            return True
+        has_flags = getattr(metric_class, "has_flags", None)
+        if not callable(has_flags):
+            return True
+        if (
+            has_flags(MetricFlags.INTERNAL)
+            and not Environment.DEV.SHOW_INTERNAL_METRICS
+        ):
+            return False
+        return not (
+            has_flags(MetricFlags.EXPERIMENTAL)
+            and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+        )
+
+    def _filter_hidden_metrics(
+        self, results: dict[MetricTagT, MetricResult]
+    ) -> dict[MetricTagT, MetricResult]:
+        """Drop computed metrics that should not appear in summary exports."""
+        return {
+            tag: result
             for tag, result in results.items()
+            if self._should_include_in_summary(tag)
         }
 
     def set_network_rtt_ns(self, rtt_ns: float | None) -> None:
@@ -480,6 +520,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                     mask=mask,
                 )
 
+        overall_results = self._filter_hidden_metrics(overall_results)
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return AccumulatorMetricsSummary(
             results=overall_results,
@@ -602,6 +643,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 continue
             results.update(sweeps.compute_metrics(window_start, window_end))
             results = self._convert_display_units(results)
+            if self._network_rtt_ns:
+                inject_network_adjusted_metrics(
+                    self._column_store,
+                    results,
+                    self._network_rtt_ns,
+                    mask=full_mask,
+                )
+            results = self._filter_hidden_metrics(results)
             timeslices.append(
                 TimesliceResult(
                     start_ns=int(window_start),

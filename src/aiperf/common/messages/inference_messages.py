@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import Field, SerializeAsAny, field_validator
 
@@ -29,6 +29,8 @@ class InferenceResultsMessage(BaseServiceMessage):
 
 class MetricRecordsData(AIPerfBaseModel):
     """Incoming data from the record processor service to combine metric records for the profile run."""
+
+    record_type: ClassVar[str] = "metric_records"
 
     metadata: MetricRecordMetadata = Field(
         ..., description="The metadata of the request record."

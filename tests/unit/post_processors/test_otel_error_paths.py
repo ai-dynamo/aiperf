@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.config import BenchmarkConfig, BenchmarkRun
-from aiperf.post_processors.otel_metrics_results_processor import (
-    OTelMetricsResultsProcessor,
+from aiperf.post_processors.otel_metrics_streamer import (
+    OTelMetricsStreamer,
 )
 
 
@@ -68,7 +68,7 @@ def _make_run(cfg: BenchmarkConfig) -> BenchmarkRun:
 
 
 class TestProcessorErrorPaths:
-    """Test error handling in OTelMetricsResultsProcessor."""
+    """Test error handling in OTelMetricsStreamer."""
 
     @pytest.mark.asyncio
     async def test_flush_handles_exception_gracefully(
@@ -76,9 +76,9 @@ class TestProcessorErrorPaths:
     ) -> None:
         """flush() should not raise when meter_provider.force_flush fails."""
         with patch(
-            "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
+            "aiperf.post_processors.otel_metrics_streamer.run_otel_streaming_fanout"
         ):
-            processor = OTelMetricsResultsProcessor(
+            processor = OTelMetricsStreamer(
                 service_id="test",
                 run=_make_run(mock_cfg),
             )
@@ -98,9 +98,9 @@ class TestProcessorErrorPaths:
     ) -> None:
         """_queue_fanout_event should handle unexpected exceptions from put_nowait."""
         with patch(
-            "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
+            "aiperf.post_processors.otel_metrics_streamer.run_otel_streaming_fanout"
         ):
-            processor = OTelMetricsResultsProcessor(
+            processor = OTelMetricsStreamer(
                 service_id="test",
                 run=_make_run(mock_cfg),
             )
@@ -117,9 +117,9 @@ class TestProcessorErrorPaths:
     ) -> None:
         """When queue is full and drop also fails, should increment drop counter."""
         with patch(
-            "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
+            "aiperf.post_processors.otel_metrics_streamer.run_otel_streaming_fanout"
         ):
-            processor = OTelMetricsResultsProcessor(
+            processor = OTelMetricsStreamer(
                 service_id="test",
                 run=_make_run(mock_cfg),
             )
@@ -138,9 +138,9 @@ class TestProcessorErrorPaths:
     ) -> None:
         """_drop_oldest_fanout_event should return False on unexpected exception."""
         with patch(
-            "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
+            "aiperf.post_processors.otel_metrics_streamer.run_otel_streaming_fanout"
         ):
-            processor = OTelMetricsResultsProcessor(
+            processor = OTelMetricsStreamer(
                 service_id="test",
                 run=_make_run(mock_cfg),
             )
@@ -152,21 +152,21 @@ class TestProcessorErrorPaths:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_process_result_skips_when_not_ready(
+    async def test_process_record_skips_when_not_ready(
         self, mock_cfg: BenchmarkConfig
     ) -> None:
-        """process_result should silently return when streaming is not ready."""
+        """process_record should silently return when streaming is not ready."""
         with patch(
-            "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
+            "aiperf.post_processors.otel_metrics_streamer.run_otel_streaming_fanout"
         ):
-            processor = OTelMetricsResultsProcessor(
+            processor = OTelMetricsStreamer(
                 service_id="test",
                 run=_make_run(mock_cfg),
             )
             processor._streaming_ready = False
 
             record = MagicMock()
-            await processor.process_result(record)
+            await processor.process_record(record)
             # No exception raised
 
 

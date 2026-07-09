@@ -198,8 +198,8 @@ class TestTDigestListMetricAggregator:
 
     def test_protocol_runtime_isinstance(self) -> None:
         """Aggregator should satisfy the ``MetricAggregator`` protocol so
-        ``isinstance`` dispatch in ``MetricResultsProcessor`` and
-        ``DerivedSumMetric`` accepts both this and ``MetricArray``."""
+        ``MetricsAccumulator`` and ``DerivedSumMetric`` accept both this and
+        ``MetricArray``."""
         digest_agg = TDigestListMetricAggregator()
         array_agg = MetricArray()
         assert isinstance(digest_agg, MetricAggregator)

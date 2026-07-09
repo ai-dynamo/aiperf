@@ -134,9 +134,8 @@ AIPerf supports 33 plugin categories organized by function, including `api_route
 | Category | Enum | Description |
 |----------|------|-------------|
 | `record_processor` | `RecordProcessorType` | Per-record metric computation |
-| `results_processor` | `ResultsProcessorType` | Aggregated results computation |
-| `gpu_telemetry_processor` | `GPUTelemetryProcessorType` | Side-channel GPU telemetry aggregation/export within `GPUTelemetryManager` |
-| `server_metrics_processor` | `ServerMetricsProcessorType` | Side-channel Prometheus server metrics aggregation/export within `ServerMetricsManager` |
+| `accumulator` | `AccumulatorType` | Record-type-routed aggregation and summary computation |
+| `stream_exporter` | `StreamExporterType` | Record-type-routed streaming sinks such as JSONL and OpenTelemetry |
 | `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
 | `console_exporter` | `ConsoleExporterType` | Terminal output exporters |
 

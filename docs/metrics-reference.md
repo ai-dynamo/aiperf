@@ -1545,6 +1545,9 @@ network_adjusted_ns = max(0, source_metric_ns - mean_network_rtt_ns)
   `(request_latency - ttft)`), so they are already network-invariant.
 - Values are clamped at 0; if the subtracted RTT exceeds some measured latencies a warning
   is logged (the RTT may be larger than the true network leg).
+- When time-sliced metric export is enabled, each timeslice also emits the
+  same `network_adjusted_*` metrics using only the records in that slice;
+  `network_rtt` remains the run-level mean RTT scalar.
 
 ---
 

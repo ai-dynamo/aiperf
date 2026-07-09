@@ -12,7 +12,7 @@ class AccuracyCorrectSumMetric(BaseAggregateMetric[float]):
     """Running sum of per-record accuracy.correct values (1.0 correct, 0.0 incorrect).
 
     AccuracyRecordProcessor writes this tag to MetricRecordDict for every record.
-    Registered here so MetricResultsProcessor can aggregate it without warnings.
+    Registered here so MetricsAccumulator can ingest it without warnings.
     AccuracyAccumulator and AccuracyConsoleExporter own display; this metric
     uses console_group=NONE | INTERNAL so it does not appear in the standard table.
     """

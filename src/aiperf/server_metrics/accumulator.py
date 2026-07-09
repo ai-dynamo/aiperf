@@ -89,7 +89,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     def __init__(self, run: BenchmarkRun, **kwargs: Any):
         if not run.cfg.server_metrics.enabled:
             raise PostProcessorDisabled(
-                "Server metrics results processor is disabled via --no-server-metrics"
+                "Server metrics accumulator is disabled via --no-server-metrics"
             )
 
         super().__init__(run=run, **kwargs)
