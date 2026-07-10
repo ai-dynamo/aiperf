@@ -6,6 +6,8 @@ version = 4
 name = "aiperf"
 version = "0.0.0"
 dependencies = [
+ "aiperf-core",
+ "aiperf-graph",
  "anyhow",
  "async-trait",
  "axum",
@@ -28,11 +30,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-core"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "futures",
+ "loadgen-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "aiperf-graph"
 version = "0.0.0"
 dependencies = [
- "aiperf",
  "aiperf-clock",
+ "aiperf-core",
  "aiperf-transport",
  "anyhow",
  "async-trait",

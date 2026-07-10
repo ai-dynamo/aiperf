@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A [`GraphSink`] backed by the Rust-native [`aiperf_transport`] HTTP client
 //! (hyper + the `aiperf-clock` `Clock`), instead of the reqwest-based
-//! `aiperf::http_sink::HttpSink`.
+//! `aiperf_core::http_sink::HttpSink`.
 //!
 //! This is the graph dataflow's live dispatch path: it streams real OpenAI
 //! chat-completions over HTTP to the target server (Dynamo frontend / the
@@ -17,8 +17,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use aiperf::sse::ChatChunk;
 use aiperf_clock::Clock;
+use aiperf_core::sse::ChatChunk;
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{HttpVersion, RequestConfig, Response};
 use aiperf_transport::transport::http_transport::HttpTransport;

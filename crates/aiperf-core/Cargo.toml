@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared AIPerf HTTP client + measurement layer (OpenAI SSE wire types, reqwest streaming sink, collector observer). Depended on by the slim aiperf CLI and the graph engine."
+
+[dependencies]
+loadgen-core.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
