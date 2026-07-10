@@ -18,8 +18,8 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
 
 
-class TestOutputsJsonPrefixCollisionRejected:
-    """Prefix values that resolve to 'outputs' must be rejected when export_outputs_json is enabled."""
+class TestOutputsJsonPrefixCollision:
+    """ArtifactsConfig.validate_artifacts rejects colliding prefix + export_outputs_json."""
 
     @pytest.mark.parametrize(
         "prefix",
@@ -32,31 +32,31 @@ class TestOutputsJsonPrefixCollisionRejected:
             param("outputs_timeslices.json", id="with-timeslices-suffix"),
         ],
     )  # fmt: skip
-    def test_rejects_colliding_prefix(self, prefix: str) -> None:
+    def test_validate_artifacts_colliding_prefix_raises_error(self, prefix: str) -> None:
         with pytest.raises(
             ValidationError, match="colliding with --export-outputs-json"
         ):
             ArtifactsConfig(prefix=prefix, export_outputs_json=True)
 
-    def test_allows_colliding_prefix_when_outputs_export_disabled(self) -> None:
+    def test_validate_artifacts_colliding_prefix_without_export_allows(self) -> None:
         cfg = ArtifactsConfig(prefix="outputs", export_outputs_json=False)
         assert cfg.profile_export_json_file.name == "outputs.json"
 
-    def test_allows_non_colliding_prefix_with_outputs_export(self) -> None:
+    def test_validate_artifacts_non_colliding_prefix_with_export_allows(self) -> None:
         cfg = ArtifactsConfig(prefix="foo", export_outputs_json=True)
         assert cfg.profile_export_json_file.name == "foo.json"
         assert cfg.outputs_json_file.name == "outputs.json"
 
-    def test_allows_no_prefix_with_outputs_export(self) -> None:
+    def test_validate_artifacts_no_prefix_with_export_allows(self) -> None:
         cfg = ArtifactsConfig(export_outputs_json=True)
         assert cfg.profile_export_json_file.name == "profile_export_aiperf.json"
         assert cfg.outputs_json_file.name == "outputs.json"
 
 
-class TestCLICollisionRejected:
+class TestOutputsJsonPrefixCollisionCLI:
     """End-to-end: CLI converter propagates the collision to ArtifactsConfig validation."""
 
-    def test_cli_rejects_outputs_prefix_with_export_flag(self) -> None:
+    def test_convert_cli_to_aiperf_colliding_prefix_with_export_raises_error(self) -> None:
         cli = CLIConfig(
             model_names=["m"],
             profile_export_prefix="outputs",
@@ -67,7 +67,7 @@ class TestCLICollisionRejected:
         ):
             convert_cli_to_aiperf(cli)
 
-    def test_cli_allows_outputs_prefix_without_export_flag(self) -> None:
+    def test_convert_cli_to_aiperf_colliding_prefix_without_export_allows(self) -> None:
         cli = CLIConfig(model_names=["m"], profile_export_prefix="outputs")
         cfg = convert_cli_to_aiperf(cli)
         assert cfg.benchmark.artifacts.profile_export_json_file.name == "outputs.json"

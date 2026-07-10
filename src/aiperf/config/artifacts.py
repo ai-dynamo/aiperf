@@ -227,16 +227,13 @@ class ArtifactsConfig(BaseConfig):
 
     def _check_outputs_json_collision(self) -> None:
         """Reject prefix values that collide with the outputs.json path."""
-        outputs_name = OutputDefaults.OUTPUTS_JSON_FILE.name
-        base = self._base()
-        if base is None:
-            return
-        # The profile JSON summary resolves to `<base>.json`; check collision.
-        if f"{base}.json" == outputs_name:
+        if self.profile_export_json_file.resolve() == self.outputs_json_file.resolve():
+            base = self._base()
             raise ValueError(
                 f"--profile-export-prefix resolves to '{base}' which produces "
                 f"'{base}.json', colliding with --export-outputs-json "
-                f"(also '{outputs_name}'). Use a different prefix."
+                f"(also '{OutputDefaults.OUTPUTS_JSON_FILE.name}'). "
+                f"Use a different prefix."
             )
 
     # ==========================================================================
