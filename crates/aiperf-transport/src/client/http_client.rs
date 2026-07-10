@@ -1,0 +1,244 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! The request path: send, then stream SSE or read a text body, recording all
+//! timing into a RequestRecord. Port of `AioHttpClient._request`.
+
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use bytes::Bytes;
+use futures::StreamExt;
+use http_body_util::{BodyExt, Full};
+use url::Url;
+
+use aiperf_clock::Clock;
+
+use crate::client::cancellation::{CancelOutcome, race_cancel};
+use crate::client::connection::establish;
+use crate::config::ClientConfig;
+use crate::models::{ErrorDetails, RequestRecord, Response, SseMessage, TextResponse, TraceData};
+use crate::sse::read_sse;
+
+#[derive(Default)]
+struct ChunkTiming {
+    chunks: u32,
+    bytes: u64,
+    recv_start: Option<i64>,
+    recv_end: Option<i64>,
+}
+
+pub struct HttpClient {
+    clock: Rc<dyn Clock>,
+    cfg: ClientConfig,
+}
+
+impl HttpClient {
+    pub fn new(clock: Rc<dyn Clock>, cfg: ClientConfig) -> Self {
+        Self { clock, cfg }
+    }
+
+    /// Send a POST request and record the response + timing.
+    pub async fn request(
+        &self,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        mut on_first_token: impl FnMut(i64),
+    ) -> RequestRecord {
+        let start_ns = self.clock.now_ns();
+        let mut record = RequestRecord::started(start_ns);
+        let mut trace = TraceData::default();
+
+        let body_len = body.len();
+        let result = self
+            .try_request(
+                url,
+                headers,
+                body,
+                streaming,
+                &mut trace,
+                &mut record,
+                &mut on_first_token,
+                body_len,
+            )
+            .await;
+
+        if let Err(e) = result {
+            trace.error_timestamp_ns = Some(self.clock.now_ns());
+            record.error = Some(e);
+        }
+        record.end_ns = Some(self.clock.now_ns());
+        record.trace = Some(trace);
+        record
+    }
+
+    /// Like [`request`](Self::request) but cancels `cancel_after_ns` after send.
+    pub async fn request_cancellable(
+        &self,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        cancel_after_ns: i64,
+        on_first_token: impl FnMut(i64),
+    ) -> RequestRecord {
+        let start_ns = self.clock.now_ns();
+        let fut = self.request(url, headers, body, streaming, on_first_token);
+        match race_cancel(self.clock.clone(), cancel_after_ns, fut).await {
+            CancelOutcome::Completed(rec) => rec,
+            CancelOutcome::Cancelled => {
+                let now = self.clock.now_ns();
+                let mut rec = RequestRecord::started(start_ns);
+                rec.cancellation_ns = Some(now);
+                rec.end_ns = Some(now);
+                rec.error = Some(ErrorDetails::cancelled(format!(
+                    "Request cancelled {cancel_after_ns}ns after being sent"
+                )));
+                rec
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn try_request(
+        &self,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        trace: &mut TraceData,
+        record: &mut RequestRecord,
+        on_first_token: &mut impl FnMut(i64),
+        body_len: usize,
+    ) -> Result<(), ErrorDetails> {
+        let (mut sender, _sock) = establish(url, &self.cfg, self.clock.clone(), trace).await?;
+
+        // Build the request. Use origin-form URI + explicit Host header so both
+        // HTTP/1.1 (Host required) and HTTP/2 (:authority derived) work.
+        let authority = url.authority();
+        let path_and_query = match url.query() {
+            Some(q) => format!("{}?{}", url.path(), q),
+            None => url.path().to_string(),
+        };
+        let mut builder = hyper::Request::builder()
+            .method("POST")
+            .uri(path_and_query.as_str());
+        builder = builder.header(hyper::header::HOST, authority);
+        for (k, v) in headers {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+        let req = builder
+            .body(Full::new(body))
+            .map_err(|e| ErrorDetails::other(format!("build request: {e}")))?;
+
+        trace.request_send_start_ns = Some(self.clock.now_ns());
+        let resp = sender.send(req).await?;
+        // Response headers received.
+        let now = self.clock.now_ns();
+        trace.request_send_end_ns = Some(now);
+        trace.request_headers_sent_ns = Some(now);
+        trace.request_bytes_total = body_len as u64;
+        trace.request_chunks_count = 1;
+        trace.response_headers_received_ns = Some(now);
+
+        let status = resp.status();
+        record.status = Some(status.as_u16());
+        trace.response_status_code = Some(status.as_u16());
+        trace.response_reason = status.canonical_reason().map(str::to_string);
+
+        if !status.is_success() {
+            let body = resp
+                .into_body()
+                .collect()
+                .await
+                .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
+                .unwrap_or_default();
+            return Err(ErrorDetails::http(status.as_u16(), body));
+        }
+
+        record.recv_start_ns = Some(self.clock.now_ns());
+
+        let content_type = resp
+            .headers()
+            .get(hyper::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let is_sse = streaming
+            && content_type
+                .as_deref()
+                .map(|c| c.starts_with("text/event-stream"))
+                .unwrap_or(false);
+
+        let body_stream = resp.into_body().into_data_stream();
+
+        if is_sse {
+            let timing = Rc::new(RefCell::new(ChunkTiming::default()));
+            let timing_map = timing.clone();
+            let clock_map = self.clock.clone();
+            // Timestamp each transport chunk as it arrives, then hand the bytes
+            // to the incremental SSE parser.
+            let timed = body_stream.map(move |item| match item {
+                Ok(b) => {
+                    let ts = clock_map.now_ns();
+                    let mut t = timing_map.borrow_mut();
+                    t.chunks += 1;
+                    t.bytes += b.len() as u64;
+                    if t.recv_start.is_none() {
+                        t.recv_start = Some(ts);
+                    }
+                    t.recv_end = Some(ts);
+                    Ok(b)
+                }
+                Err(e) => Err(ErrorDetails::other(format!("body: {e}"))),
+            });
+
+            let start_ns = record.start_ns;
+            let mut first_seen = false;
+            let responses = &mut record.responses;
+            let sse_result = read_sse(timed, self.clock.clone(), |m: SseMessage| {
+                if !first_seen {
+                    first_seen = true;
+                    on_first_token(m.perf_ns - start_ns);
+                }
+                responses.push(Response::Sse(m));
+            })
+            .await;
+
+            {
+                let t = timing.borrow();
+                trace.response_receive_start_ns = t.recv_start;
+                trace.response_receive_end_ns = t.recv_end;
+                trace.response_chunks_count = t.chunks;
+                trace.response_bytes_total = t.bytes;
+            }
+            sse_result?;
+        } else {
+            let collected = body_stream
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<Bytes>, _>>()
+                .map_err(|e| ErrorDetails::other(format!("body: {e}")))?;
+            let ts = self.clock.now_ns();
+            let total: usize = collected.iter().map(|b| b.len()).sum();
+            let mut text = String::new();
+            for b in &collected {
+                text.push_str(&String::from_utf8_lossy(b));
+            }
+            trace.response_receive_start_ns = Some(record.recv_start_ns.unwrap_or(ts));
+            trace.response_receive_end_ns = Some(ts);
+            trace.response_chunks_count = collected.len() as u32;
+            trace.response_bytes_total = total as u64;
+            record.responses.push(Response::Text(TextResponse {
+                perf_ns: ts,
+                text,
+                content_type,
+            }));
+        }
+
+        Ok(())
+    }
+}

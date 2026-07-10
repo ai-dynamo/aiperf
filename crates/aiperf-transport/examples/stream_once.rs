@@ -1,0 +1,41 @@
+// crates/aiperf-transport/examples/stream_once.rs
+//! Minimal driver: one streaming chat request against a server, printing the
+//! record. Usage: aiperf-mock-rs --no-tokenizer & then run with BASE_URL set.
+
+use std::rc::Rc;
+
+use aiperf_transport::RealClock;
+use aiperf_transport::config::ClientConfig;
+use aiperf_transport::models::RequestConfig;
+use aiperf_transport::transport::http_transport::HttpTransport;
+
+fn main() {
+    let base = std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, async {
+        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let t = HttpTransport::new(clock, ClientConfig::default());
+        let cfg = RequestConfig::new(format!("{base}/v1/chat/completions"));
+        let payload = serde_json::json!({
+            "model": "gpt2", "stream": true,
+            "stream_options": {"include_usage": true},
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hello"}],
+        });
+        let mut ttft = None;
+        let rec = t
+            .send_request(&cfg, payload, true, |x| ttft = Some(x))
+            .await;
+        println!(
+            "status={:?} responses={} ttft_ns={:?} error={:?}",
+            rec.status,
+            rec.responses.len(),
+            ttft,
+            rec.error
+        );
+    });
+}
