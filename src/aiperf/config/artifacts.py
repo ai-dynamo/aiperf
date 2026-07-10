@@ -221,7 +221,23 @@ class ArtifactsConfig(BaseConfig):
             )
         if self.slice_duration is not None and self.slice_duration <= 0:
             raise ValueError("slice_duration must be > 0")
+        if self.export_outputs_json and self.prefix is not None:
+            self._check_outputs_json_collision()
         return self
+
+    def _check_outputs_json_collision(self) -> None:
+        """Reject prefix values that collide with the outputs.json path."""
+        outputs_name = OutputDefaults.OUTPUTS_JSON_FILE.name
+        base = self._base()
+        if base is None:
+            return
+        # The profile JSON summary resolves to `<base>.json`; check collision.
+        if f"{base}.json" == outputs_name:
+            raise ValueError(
+                f"--profile-export-prefix resolves to '{base}' which produces "
+                f"'{base}.json', colliding with --export-outputs-json "
+                f"(also '{outputs_name}'). Use a different prefix."
+            )
 
     # ==========================================================================
     # COMPUTED FILE PATH PROPERTIES

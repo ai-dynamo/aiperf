@@ -265,6 +265,7 @@ aiperf profile --model your_model --url localhost:8000 --goodput "request_latenc
 #### `-m`, `--model-names`, `--model` `<list>`
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
+<br/>_Default: `[]`_
 
 #### `--model-selection-strategy` `<str>`
 
@@ -426,6 +427,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
+<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 
@@ -1378,6 +1380,7 @@ Deprecated and ignored. The bayesian preset and the optuna expert mode both use 
 #### `--variant`, `--sweep-variant` `<list>`
 
 Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=value, key=value, ...'. Keys are CLI flag names with the leading '--' stripped, in either kebab-case or snake_case (isl, osl, concurrency, request-rate / request_rate, request-count / request_count, benchmark-duration / benchmark_duration, ...). Multi-occurrence emits a ScenarioSweep. Mutually exclusive with magic-list flags, --search-recipe, and YAML-declared sweeps. Single-occurrence is rejected -- use the standalone --isl / --osl / --concurrency flags for a one-off.
+<br/>_Default: `[]`_
 
 #### `--search-sla` `<list>`
 
@@ -1728,6 +1731,7 @@ HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes live
 #### `-m`, `--model-names`, `--model` `<list>`
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
+<br/>_Default: `[]`_
 
 #### `--model-selection-strategy` `<str>`
 
@@ -1889,6 +1893,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
+<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 
@@ -2841,6 +2846,7 @@ Deprecated and ignored. The bayesian preset and the optuna expert mode both use 
 #### `--variant`, `--sweep-variant` `<list>`
 
 Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=value, key=value, ...'. Keys are CLI flag names with the leading '--' stripped, in either kebab-case or snake_case (isl, osl, concurrency, request-rate / request_rate, request-count / request_count, benchmark-duration / benchmark_duration, ...). Multi-occurrence emits a ScenarioSweep. Mutually exclusive with magic-list flags, --search-recipe, and YAML-declared sweeps. Single-occurrence is rejected -- use the standalone --isl / --osl / --concurrency flags for a one-off.
+<br/>_Default: `[]`_
 
 #### `--search-sla` `<list>`
 
