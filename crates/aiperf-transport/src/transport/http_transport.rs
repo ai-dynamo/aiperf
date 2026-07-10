@@ -66,8 +66,12 @@ impl HttpTransport {
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
         let full = build_url(&cfg.url, "", &cfg.params);
-        let headers =
-            build_headers(cfg, streaming, self.session_header.as_deref(), &self.user_agent);
+        let headers = build_headers(
+            cfg,
+            streaming,
+            self.session_header.as_deref(),
+            &self.user_agent,
+        );
         let url = match url::Url::parse(&full) {
             Ok(u) => u,
             Err(e) => {
@@ -89,7 +93,14 @@ impl HttpTransport {
         let dispatch = async {
             let mut sender = self
                 .pool
-                .acquire(&url, &self.client_cfg, self.clock.clone(), reuse, corr, &mut trace)
+                .acquire(
+                    &url,
+                    &self.client_cfg,
+                    self.clock.clone(),
+                    reuse,
+                    corr,
+                    &mut trace,
+                )
                 .await?;
             let res = self
                 .client
@@ -132,7 +143,8 @@ impl HttpTransport {
                     CancelOutcome::Cancelled => {
                         let now = self.clock.now_ns();
                         record.cancellation_ns = Some(now);
-                        if let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) = (reuse, corr)
+                        if let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) =
+                            (reuse, corr)
                         {
                             self.pool.release(c);
                         }

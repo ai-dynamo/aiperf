@@ -43,6 +43,16 @@ impl Sender {
             Sender::H2(s) => s.is_closed(),
         }
     }
+    /// Clone this sender for concurrent multiplexed requests over the same
+    /// connection. HTTP/2 senders are cheaply clonable — each clone opens an
+    /// independent stream — so this is how many in-flight requests share one
+    /// connection. HTTP/1 has no multiplexing, so returns `None`.
+    pub fn clone_multiplex(&self) -> Option<Sender> {
+        match self {
+            Sender::H2(s) => Some(Sender::H2(s.clone())),
+            Sender::H1(_) => None,
+        }
+    }
     pub async fn send(
         &mut self,
         req: hyper::Request<Full<Bytes>>,
