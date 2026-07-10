@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Graph-IR async-dataflow workload driver for AIPerf — online (live HTTP) mode."
+
+[dependencies]
+aiperf.workspace = true
+aiperf-clock.workspace = true
+aiperf-transport = { path = "../aiperf-transport" }
+loadgen-core.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+blake3.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+axum.workspace = true

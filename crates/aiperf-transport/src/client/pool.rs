@@ -86,7 +86,9 @@ impl ConnectionPool {
         }
     }
 
-    /// Return a still-usable sender to the pool for future reuse.
+    /// Return a still-usable sender to the pool for future reuse. Only ready
+    /// connections are pooled: a streaming response left un-drained (stopped at
+    /// `[DONE]`) is not ready and is correctly dropped rather than reused.
     pub fn put(
         &self,
         url: &Url,

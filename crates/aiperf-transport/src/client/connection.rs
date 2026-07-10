@@ -35,6 +35,14 @@ impl Sender {
             Sender::H2(s) => s.is_ready(),
         }
     }
+    /// True once the underlying connection has closed and can no longer carry
+    /// requests.
+    pub fn is_closed(&self) -> bool {
+        match self {
+            Sender::H1(s) => s.is_closed(),
+            Sender::H2(s) => s.is_closed(),
+        }
+    }
     pub async fn send(
         &mut self,
         req: hyper::Request<Full<Bytes>>,

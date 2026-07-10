@@ -16,7 +16,7 @@ use url::Url;
 use aiperf_clock::Clock;
 
 use crate::client::cancellation::{CancelOutcome, race_cancel};
-use crate::client::connection::establish;
+use crate::client::connection::{Sender, establish};
 use crate::config::ClientConfig;
 use crate::models::{ErrorDetails, RequestRecord, Response, SseMessage, TextResponse, TraceData};
 use crate::sse::read_sse;
@@ -53,8 +53,11 @@ impl HttpClient {
         let mut trace = TraceData::default();
 
         let body_len = body.len();
-        let result = self
-            .try_request(
+        let result = async {
+            let (mut sender, _sock) =
+                establish(url, &self.cfg, self.clock.clone(), &mut trace).await?;
+            self.dispatch(
+                &mut sender,
                 url,
                 headers,
                 body,
@@ -64,7 +67,9 @@ impl HttpClient {
                 &mut on_first_token,
                 body_len,
             )
-            .await;
+            .await
+        }
+        .await;
 
         if let Err(e) = result {
             trace.error_timestamp_ns = Some(self.clock.now_ns());
@@ -102,9 +107,14 @@ impl HttpClient {
         }
     }
 
+    /// Dispatch a request over an already-established (or pooled) `sender`,
+    /// recording send/response timing into `trace`/`record`. Does not establish
+    /// or close the connection, so the caller can return `sender` to a pool for
+    /// reuse. Connect/DNS/reuse timings are expected to be pre-filled in `trace`.
     #[allow(clippy::too_many_arguments)]
-    async fn try_request(
+    pub async fn dispatch(
         &self,
+        sender: &mut Sender,
         url: &Url,
         headers: &BTreeMap<String, String>,
         body: Bytes,
@@ -114,8 +124,6 @@ impl HttpClient {
         on_first_token: &mut impl FnMut(i64),
         body_len: usize,
     ) -> Result<(), ErrorDetails> {
-        let (mut sender, _sock) = establish(url, &self.cfg, self.clock.clone(), trace).await?;
-
         // Build the request. Use origin-form URI + explicit Host header so both
         // HTTP/1.1 (Host required) and HTTP/2 (:authority derived) work.
         let authority = url.authority();
