@@ -65,6 +65,90 @@ A window passes only when every SLA filter passes. Latency-family thresholds use
 
 Do not combine adaptive scale with a fixed ramp on the same variable. For example, `control.variable: prefill_concurrency` cannot be used with `prefill_ramp`, and `control.variable: request_rate` cannot be used with `rate_ramp`.
 
+## Working boundary example
+
+This shorter example is useful when you want to verify that adaptive scale can find a real SLA boundary against an OpenAI-compatible chat endpoint. Start a local server or port-forward a remote service to `127.0.0.1:18000`, then tune the `model` and SLA threshold for that service.
+
+```yaml
+schemaVersion: "2.0"
+
+benchmark:
+  model: deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+  endpoint:
+    url: http://127.0.0.1:18000/v1/chat/completions
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: 128
+      osl: 16
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 4
+      duration: 45
+      adaptive_scale:
+        enabled: true
+        control:
+          variable: concurrency
+          min: 4
+          max: 64
+        assessment_period: 5
+        min_completed_requests: 5
+        sustain_duration: 10
+        strategy:
+          type: ramp_until_fail
+          step_policy: fixed_percent_step
+          step_percent: 100
+      sla:
+        request_latency:
+          p95:
+            le: 250
+        error_rate:
+          avg:
+            le: 0.01
+```
+
+Run it with:
+
+```bash
+aiperf profile \
+  --config adaptive-scale-boundary.yaml \
+  --tokenizer builtin \
+  --extra-inputs ignore_eos:true \
+  --ui none \
+  --output-artifact-dir ./adaptive-scale-boundary-artifacts
+```
+
+In one real run, this configuration passed at concurrency `4` and `8`, failed at concurrency `16`, then sustained at the discovered boundary of `8`:
+
+```text
+concurrency 4  -> request_latency:p95 = 153.6 ms, pass
+concurrency 8  -> request_latency:p95 = 230.8 ms, pass
+concurrency 16 -> request_latency:p95 = 1183.4 ms, fail
+sustain at 8   -> request_latency:p95 = 163.7 ms, then 151.7 ms, pass
+```
+
+The final `adaptive_scale_summary.json` reported:
+
+```json
+{
+  "status": "completed",
+  "completed_reason": "sustain_duration_completed",
+  "control_variable": "concurrency",
+  "control_value": 8,
+  "boundary_value": 8,
+  "last_passing_value": 8,
+  "first_failing_value": 16,
+  "sustain_windows": 2,
+  "sustain_passed_windows": 2
+}
+```
+
+These exact numbers are endpoint-dependent. If your service passes at `max`, lower the latency threshold or raise `adaptive_scale.control.max`. If it fails at `min`, loosen the latency threshold or lower `adaptive_scale.control.min`.
+
 ## Control variables
 
 | Control variable | Phase shape | What changes |
