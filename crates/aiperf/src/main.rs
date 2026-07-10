@@ -19,6 +19,12 @@ use aiperf::report::print_report_table;
 use aiperf::run::run;
 use aiperf::workload::SkeletonWorkload;
 
+// A high-churn benchmark allocator: the graph executor + streaming client
+// allocate heavily per request, and glibc malloc/free was the top profiled
+// hotspot. mimalloc cuts that churn substantially.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -89,6 +95,7 @@ fn run_online_mode(argv: &[String]) -> anyhow::Result<()> {
 
 fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
     use aiperf_graph::bench::{BenchConfig, run_bench};
+    use aiperf_graph::transport_bench::run_transport_bench;
 
     let value_flags = [
         "--mode",
@@ -97,6 +104,7 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
         "--workers",
         "--concurrency",
         "--osl",
+        "--conns",
         "--request-concurrency",
         "--prefill-concurrency",
     ];
@@ -117,14 +125,22 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
     let instances: usize = flag_val(argv, "--instances").unwrap_or(400_000);
     let request_concurrency: Option<usize> = flag_val(argv, "--request-concurrency");
     let prefill_concurrency: Option<usize> = flag_val(argv, "--prefill-concurrency");
-    if argv.iter().any(|a| a == "--http2") {
-        // build_client() opts into h2c prior-knowledge when GRAPH_HTTP2 is set.
+    // Backend: aiperf-transport (default) or reqwest (--reqwest). For the
+    // transport, h2c prior-knowledge is the default; --http1 forces HTTP/1.1.
+    let use_reqwest = argv.iter().any(|a| a == "--reqwest");
+    // Transport default is HTTP/1.1 keep-alive: for serial per-lane requests it
+    // outperforms h2c (no per-stream hpack/flow-control overhead). --http2 opts
+    // into h2c prior-knowledge (multiplexed pool).
+    let http2 = argv.iter().any(|a| a == "--http2");
+    let conns: usize = flag_val(argv, "--conns").unwrap_or(8);
+    if use_reqwest && argv.iter().any(|a| a == "--http2") {
+        // reqwest build_client() opts into h2c prior-knowledge via GRAPH_HTTP2.
         // SAFETY: single-threaded startup, before any worker thread spawns.
         unsafe { std::env::set_var("GRAPH_HTTP2", "1") };
     }
 
     let cfg = BenchConfig {
-        base_urls: vec![base_url.clone()],
+        base_urls: base_url.split(',').map(|s| s.trim().to_string()).collect(),
         model,
         turns,
         instances,
@@ -135,30 +151,58 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
         prefill_concurrency,
     };
 
+    let backend = if use_reqwest {
+        "reqwest"
+    } else {
+        "aiperf-transport"
+    };
     eprintln!(
-        "aiperf --mode graph: base={base_url} turns={turns} instances={instances} \
-         workers={workers} concurrency={concurrency} osl={max_tokens} \
-         offered_concurrency={} http2={}",
+        "aiperf --mode graph: backend={backend} base={base_url} turns={turns} \
+         instances={instances} workers={workers} concurrency={concurrency} osl={max_tokens} \
+         conns/worker={conns} offered_concurrency={} http2={http2}",
         workers * concurrency,
-        argv.iter().any(|a| a == "--http2"),
     );
 
-    let (report, secs) = run_bench(cfg);
     let total_requests = instances.saturating_mul(turns);
-    let rps = total_requests as f64 / secs;
+    let (rps, p50, p90, p99, mean, secs, extra) = if use_reqwest {
+        let (report, secs) = run_bench(cfg);
+        let rps = total_requests as f64 / secs;
+        (
+            rps,
+            report.latency.ttft.median_ms,
+            report.latency.ttft.p90_ms,
+            report.latency.ttft.p99_ms,
+            report.latency.ttft.mean_ms,
+            secs,
+            format!("requests={total_requests}"),
+        )
+    } else {
+        let r = run_transport_bench(cfg, http2, conns);
+        (
+            r.rps(),
+            r.ttft_p50_ms,
+            r.ttft_p90_ms,
+            r.ttft_p99_ms,
+            r.ttft_mean_ms,
+            r.wall_secs,
+            format!("completed={} errors={}", r.completed, r.errors),
+        )
+    };
 
-    println!("\n=== aiperf --mode graph (Graph-IR E2E, streaming SSE) ===");
-    println!("requests   : {total_requests} (instances={instances} x turns={turns})");
+    println!("\n=== aiperf --mode graph (Graph-IR E2E, streaming SSE, backend={backend}) ===");
+    println!("{extra}");
     println!("wall        : {secs:.3} s");
     println!("RPS         : {rps:.0} req/s");
-    println!("TTFT p50    : {:.3} ms", report.latency.ttft.median_ms);
-    println!("TTFT p90    : {:.3} ms", report.latency.ttft.p90_ms);
-    println!("TTFT p99    : {:.3} ms", report.latency.ttft.p99_ms);
-    println!("TTFT mean   : {:.3} ms", report.latency.ttft.mean_ms);
-    if rps >= 300_000.0 {
-        println!("\nPROVEN: aiperf --mode graph >= 300k req/s ({rps:.0})");
+    println!("TTFT p50    : {p50:.3} ms");
+    println!("TTFT p90    : {p90:.3} ms");
+    println!("TTFT p99    : {p99:.3} ms");
+    println!("TTFT mean   : {mean:.3} ms");
+    if rps >= 500_000.0 {
+        println!("\nPROVEN: aiperf --mode graph >= 500k req/s ({rps:.0}, backend={backend})");
+    } else if rps >= 300_000.0 {
+        println!("\n>= 300k: {rps:.0} (target 500k)");
     } else {
-        println!("\nbelow target: {rps:.0} < 300000");
+        println!("\nbelow target: {rps:.0} < 500000");
     }
     Ok(())
 }

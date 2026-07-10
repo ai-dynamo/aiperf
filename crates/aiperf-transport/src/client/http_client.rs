@@ -249,4 +249,60 @@ impl HttpClient {
 
         Ok(())
     }
+
+    /// A lean streaming dispatch for high-throughput callers: sends `body` on an
+    /// established `sender`, then streams the SSE response, invoking
+    /// `on_first_token` (with the TTFT delta in clock-ns) at the first message
+    /// and `on_message` per parsed message — WITHOUT allocating a
+    /// [`RequestRecord`]/[`TraceData`] or accumulating a `Vec` of responses.
+    /// Returns the HTTP status code. The whole response body is consumed over
+    /// the wire (each `SseMessage` is dropped right after `on_message`).
+    pub async fn dispatch_streaming(
+        &self,
+        sender: &mut Sender,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        on_first_token: &mut dyn FnMut(i64),
+        on_message: &mut dyn FnMut(&SseMessage),
+    ) -> Result<u16, ErrorDetails> {
+        let start_ns = self.clock.now_ns();
+
+        let authority = url.authority();
+        let path_and_query = match url.query() {
+            Some(q) => format!("{}?{}", url.path(), q),
+            None => url.path().to_string(),
+        };
+        let mut builder = hyper::Request::builder()
+            .method("POST")
+            .uri(path_and_query.as_str());
+        builder = builder.header(hyper::header::HOST, authority);
+        for (k, v) in headers {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+        let req = builder
+            .body(Full::new(body))
+            .map_err(|e| ErrorDetails::other(format!("build request: {e}")))?;
+
+        let resp = sender.send(req).await?;
+        let code = resp.status().as_u16();
+        if !resp.status().is_success() {
+            let _ = resp.into_body().collect().await;
+            return Ok(code);
+        }
+
+        let body_stream = resp.into_body().into_data_stream();
+        let timed =
+            body_stream.map(|item| item.map_err(|e| ErrorDetails::other(format!("body: {e}"))));
+        let mut first = false;
+        read_sse(timed, self.clock.clone(), |m: SseMessage| {
+            if !first {
+                first = true;
+                on_first_token(m.perf_ns - start_ns);
+            }
+            on_message(&m);
+        })
+        .await?;
+        Ok(code)
+    }
 }

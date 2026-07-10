@@ -20,6 +20,7 @@ path = "src/main.rs"
 aiperf-core = { path = "../aiperf-core" }
 aiperf-graph = { path = "../aiperf-graph" }
 loadgen-core.workspace = true
+mimalloc = "0.1"
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true

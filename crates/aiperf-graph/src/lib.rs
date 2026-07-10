@@ -28,6 +28,7 @@ pub mod runtime;
 pub mod scheduler;
 pub mod segment;
 pub mod sink;
+pub mod transport_bench;
 pub mod transport_sink;
 pub mod validate;
 pub mod wire;

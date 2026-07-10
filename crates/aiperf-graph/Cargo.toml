@@ -13,6 +13,8 @@ aiperf-core = { path = "../aiperf-core" }
 aiperf-clock.workspace = true
 aiperf-transport = { path = "../aiperf-transport" }
 loadgen-core.workspace = true
+bytes = "1"
+url = "2"
 anyhow.workspace = true
 async-trait.workspace = true
 blake3.workspace = true
