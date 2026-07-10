@@ -70,7 +70,8 @@ system message).
 
 | Benchmark | Default grader | Default n-shots | Source |
 |---|---|---|---|
-| `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects) |
+| `mmlu` | `multiple_choice` | 5 | `lighteval/mmlu` (57 subjects; non-CoT parity, `--accuracy-enable-cot` for reasoning models) |
+| `mmlu_pro` | `mmlu_pro` | 5 | `TIGER-Lab/MMLU-Pro` (14 categories, up to 10 options A-J, CoT-native) |
 | `aime` | `math` | 8 | `Maxwell-Jia/AIME_2024` (trt-llm reference, 8-shot CoT) |
 | `hellaswag` | `exact_match` | 10 | `Rowan/hellaswag` (trt-llm/DeepEval reference; one few-shot per unique activity_label) |
 | `bigbench` | `exact_match` | 3 | `lukaemon/bbh` (trt-llm/DeepEval reference; 27 subtasks, canonical CoT/non-CoT prompt files) |
@@ -128,6 +129,104 @@ uv pip install 'datasets>=3.0,<4'
 The error message names which condition fired (it includes the installed
 `datasets` version when ≥ 4) so operators get an actionable next step
 without reading the source.
+
+## MMLU chain-of-thought and reasoning models
+
+The `mmlu` benchmark has two prompting modes, selected by
+`--accuracy-enable-cot`:
+
+- **Non-CoT (default) — lighteval parity.** The prompt ends in a bare
+  `Answer:` trailer and the generation budget is `generation_size=5`
+  (mapped to the turn's `max_tokens`), with the `["\n"]` stop sequence.
+  This is byte-identical to lighteval's reference MMLU path: the server is
+  expected to emit a single answer letter immediately. Use this for
+  non-reasoning instruct models where you want reference-comparable scores.
+
+- **CoT — `--accuracy-enable-cot`.** The instruction is extended with
+  `Think step by step and then output the answer in the format of "The
+  answer is (X)" at the end.`, the query gets a `Let's think step by step.`
+  primer, and the generation budget is raised to the full
+  `generation_size=4000` so the model has room for a reasoning trace before
+  the final `The answer is (X)` line. The `multiple_choice` grader parses
+  the trailing letter.
+
+  ```bash
+  aiperf profile my-model --url http://localhost:8000 \
+    --endpoint-type chat \
+    --accuracy-benchmark mmlu \
+    --accuracy-enable-cot \
+    --num-requests 15000 \
+    --concurrency 10 \
+    --extra-inputs '{"temperature": 0}'
+  ```
+
+For reasoning models whose traces are long enough to exhaust the 4000-token
+budget before reaching the answer line, raise the budget with
+`--extra-inputs '{"max_completion_tokens": 16000}'`. The `--extra-inputs`
+value overrides the benchmark's `generation_size` (which is what the
+benchmark maps into the turn `max_tokens`), so the model can finish its
+reasoning:
+
+```bash
+aiperf profile my-model --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark mmlu \
+  --accuracy-enable-cot \
+  --num-requests 15000 \
+  --concurrency 10 \
+  --extra-inputs '{"temperature": 0, "max_completion_tokens": 16000}'
+```
+
+### Troubleshooting: 0% / all-unparsed against a reasoning model
+
+An MMLU run that scores near 0% with (almost) every response flagged
+`unparsed` against a **reasoning** model is expected in **non-CoT** mode.
+The non-CoT prompt asks for a single answer letter under a 5-token budget,
+but a reasoning model emits chain-of-thought that never reaches (or is
+truncated before) a parseable letter, so extraction falls through every
+tier. This is not a grader bug. Fix it by giving the model room to reason:
+
+- add `--accuracy-enable-cot` (MMLU's CoT mode, full 4000-token budget), or
+- switch to the CoT-native `mmlu_pro` benchmark (below).
+
+## MMLU-Pro
+
+The `mmlu_pro` benchmark ports TIGER-AI-Lab's MMLU-Pro
+(`evaluate_from_api.py`) at parity:
+
+- **Dataset:** `TIGER-Lab/MMLU-Pro`. Test split provides the graded
+  questions; the validation split provides the per-category CoT few-shots.
+- **Categories (14):** `biology`, `business`, `chemistry`,
+  `computer science`, `economics`, `engineering`, `health`, `history`,
+  `law`, `math`, `philosophy`, `physics`, `psychology`, `other`. Restrict
+  with `--accuracy-tasks` (e.g. `--accuracy-tasks math,physics`); omit for
+  all 14.
+- **Options:** up to 10 per question, labeled `A`-`J` (`N/A` placeholder
+  options are filtered out before lettering).
+- **Defaults:** `default_n_shots: 5`, `default_enable_cot: true`,
+  `default_grader: mmlu_pro`. MMLU-Pro is **CoT-native** — the per-category
+  instruction always requests the `"The answer is (X)"` format and the
+  generation budget is `generation_size=4000`.
+- **Grader (`mmlu_pro`):** extracts the final `A`-`J` letter via the
+  upstream 3-tier cascade — `answer is (X)` -> `Answer: X` -> the last lone
+  in-range letter. A response parsed by a fallback tier (or not at all) is
+  flagged `unparsed`. No optional dependencies are required.
+
+Because MMLU-Pro defaults to CoT, it works with reasoning models out of the
+box; as with MMLU CoT, raise the budget via
+`--extra-inputs '{"max_completion_tokens": 16000}'` if long reasoning
+traces get truncated before the answer line.
+
+A **non-CoT** variant is available via `--accuracy-no-enable-cot`, which
+switches the few-shots and the query to a bare `Answer:` trailer. This is an
+AIPerf extension for quick low-latency runs and is **not** part of upstream
+MMLU-Pro parity — use the default CoT mode for reference-comparable scores.
+
+```bash
+aiperf profile --model <model> --url <url>/v1 --endpoint-type chat --streaming \
+  --tokenizer <model> --accuracy-benchmark mmlu_pro --num-requests 200 --concurrency 10 \
+  --extra-inputs '{"temperature": 0}'
+```
 
 ## CLI Flags
 
@@ -206,7 +305,8 @@ aiperf profile my-model --url http://localhost:8000 \
 
 | Grader | Selection rule | Coverage |
 |---|---|---|
-| `multiple_choice` | A/B/C/D match against gold letter (lighteval `ExactMatches`). | MMLU |
+| `multiple_choice` | A/B/C/D match against gold letter (lighteval `ExactMatches`). Under `--accuracy-enable-cot` the model emits a reasoning trace ending in `The answer is (X)`. | MMLU |
+| `mmlu_pro` | Extract the final `A`-`J` letter via the upstream 3-tier cascade: `answer is (X)` → `Answer: X` → last lone in-range letter. Fallback-tier or no-match responses are flagged `unparsed`. No optional dependencies. | MMLU-Pro |
 | `math` | Extract last `\boxed{...}`, fall back to "answer is X" / last number. Apply trt-llm `strip_string` normalization, then compare via `math_equal` (lowercase string → numeric `isclose` → symbolic equivalence via sympy + latex2sympy2-extended). | AIME |
 | `exact_match` | Stub. | (unused) |
 | `code_execution` | Stub. | (unused) |

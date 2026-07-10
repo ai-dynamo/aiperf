@@ -265,6 +265,7 @@ aiperf profile --model your_model --url localhost:8000 --goodput "request_latenc
 #### `-m`, `--model-names`, `--model` `<list>`
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
+<br/>_Default: `[]`_
 
 #### `--model-selection-strategy` `<str>`
 
@@ -428,6 +429,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
+<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 
@@ -1322,6 +1324,7 @@ Deprecated and ignored. The bayesian preset and the optuna expert mode both use 
 #### `--variant`, `--sweep-variant` `<list>`
 
 Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=value, key=value, ...'. Keys are CLI flag names with the leading '--' stripped, in either kebab-case or snake_case (isl, osl, concurrency, request-rate / request_rate, request-count / request_count, benchmark-duration / benchmark_duration, ...). Multi-occurrence emits a ScenarioSweep. Mutually exclusive with magic-list flags, --search-recipe, and YAML-declared sweeps. Single-occurrence is rejected -- use the standalone --isl / --osl / --concurrency flags for a one-off.
+<br/>_Default: `[]`_
 
 #### `--search-sla` `<list>`
 
@@ -1436,7 +1439,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `mmlu_pro`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -1447,7 +1450,7 @@ Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
 Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
 <br/>_Constraints: ≥ 0, ≤ 32_
 
-#### `--accuracy-enable-cot`
+#### `--accuracy-enable-cot`, `--accuracy-no-enable-cot`
 
 Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
@@ -1455,7 +1458,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`, `mmlu_pro`]_
 
 #### `--accuracy-system-prompt` `<str>`
 
@@ -1672,6 +1675,7 @@ HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes live
 #### `-m`, `--model-names`, `--model` `<list>`
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
+<br/>_Default: `[]`_
 
 #### `--model-selection-strategy` `<str>`
 
@@ -1835,6 +1839,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
+<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 
@@ -2729,6 +2734,7 @@ Deprecated and ignored. The bayesian preset and the optuna expert mode both use 
 #### `--variant`, `--sweep-variant` `<list>`
 
 Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=value, key=value, ...'. Keys are CLI flag names with the leading '--' stripped, in either kebab-case or snake_case (isl, osl, concurrency, request-rate / request_rate, request-count / request_count, benchmark-duration / benchmark_duration, ...). Multi-occurrence emits a ScenarioSweep. Mutually exclusive with magic-list flags, --search-recipe, and YAML-declared sweeps. Single-occurrence is rejected -- use the standalone --isl / --osl / --concurrency flags for a one-off.
+<br/>_Default: `[]`_
 
 #### `--search-sla` `<list>`
 
@@ -2843,7 +2849,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `mmlu_pro`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -2854,7 +2860,7 @@ Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
 Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
 <br/>_Constraints: ≥ 0, ≤ 32_
 
-#### `--accuracy-enable-cot`
+#### `--accuracy-enable-cot`, `--accuracy-no-enable-cot`
 
 Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
@@ -2862,7 +2868,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`, `mmlu_pro`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

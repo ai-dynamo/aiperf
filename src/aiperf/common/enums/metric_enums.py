@@ -787,6 +787,13 @@ class MetricFlags(Flag):
     Surfaces honest tail latency under non-trivial error rates — see
     https://github.com/ai-dynamo/aiperf/issues/688."""
 
+    DISABLE_ON_ACCURACY = 1 << 18
+    """Metrics that should not be computed when accuracy benchmarking mode is
+    enabled. Accuracy benchmarks set ``max_tokens`` as a generation ceiling that
+    the model is expected to stop well under (chain-of-thought answers finish
+    early), so metrics that assume ``max_tokens`` is a target — notably the
+    OSL-mismatch family — are meaningless there and only produce noise."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

@@ -104,6 +104,12 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         if not self.run.cfg.slos:
             disallowed_flags |= MetricFlags.GOODPUT
 
+        accuracy_cfg = self.run.cfg.accuracy
+        if accuracy_cfg is not None and accuracy_cfg.enabled:
+            # In accuracy mode max_tokens is a generation ceiling, not a target,
+            # so metrics that assume otherwise (OSL-mismatch) are just noise.
+            disallowed_flags |= MetricFlags.DISABLE_ON_ACCURACY
+
         metrics: list[BaseMetric] = []
         applicable_tags = MetricRegistry.tags_applicable_to(
             required_flags,

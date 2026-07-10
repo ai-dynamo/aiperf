@@ -103,7 +103,7 @@ AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGr
 
 AccuracyBenchmarkTypeStr: TypeAlias = str
 AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "AccuracyBenchmarkType", module=__name__)
-"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.GSM8K, AccuracyBenchmarkType.MMLU"""
+"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.GSM8K, AccuracyBenchmarkType.MMLU_PRO"""
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)

@@ -5,7 +5,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from aiperf.accuracy.models import GradingResult
+from aiperf.accuracy.models import (
+    ACCURACY_RECORD_CORRECT_KEY,
+    ACCURACY_RECORD_UNPARSED_KEY,
+    GradingResult,
+)
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
@@ -77,7 +81,9 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
 
         Maps ``metadata.session_num % len(_ground_truths)`` to the ground-truth
         answer, runs the configured grader, and returns a MetricRecordDict
-        containing ``accuracy.correct`` and ``accuracy.unparsed``.
+        containing the per-record transport keys ``accuracy_correct`` and
+        ``accuracy_unparsed`` (underscore-namespaced so they never collide with
+        the ``accuracy.`` summary tags).
 
         Raises:
             RuntimeError: if on_dataset_configured was not called before processing.
@@ -96,8 +102,8 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
 
         result: GradingResult = await self.grader.grade(response_text, ground_truth)
 
-        record_metrics["accuracy.correct"] = 1.0 if result.correct else 0.0
-        record_metrics["accuracy.unparsed"] = 1.0 if result.unparsed else 0.0
+        record_metrics[ACCURACY_RECORD_CORRECT_KEY] = 1.0 if result.correct else 0.0
+        record_metrics[ACCURACY_RECORD_UNPARSED_KEY] = 1.0 if result.unparsed else 0.0
 
         self._log_grading_detail(metadata.session_num, response_text, result)
 

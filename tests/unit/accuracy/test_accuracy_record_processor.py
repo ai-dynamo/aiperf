@@ -72,7 +72,7 @@ def _make_record_data(
 ) -> MetricRecordsData:
     return MetricRecordsData(
         metadata=create_metric_metadata(session_num=session_num),
-        metrics={"accuracy.correct": correct, "accuracy.unparsed": unparsed},
+        metrics={"accuracy_correct": correct, "accuracy_unparsed": unparsed},
     )
 
 
@@ -127,8 +127,8 @@ class TestAccuracyRecordProcessorSessionBounds:
         metadata = create_metric_metadata(session_num=1)
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert result["accuracy.correct"] == 1.0
-        assert result["accuracy.unparsed"] == 0.0
+        assert result["accuracy_correct"] == 1.0
+        assert result["accuracy_unparsed"] == 0.0
         processor.grader.grade.assert_awaited_once_with("Hello world", "A")
 
     async def test_process_record_wraps_to_correct_problem(
@@ -152,8 +152,8 @@ class TestAccuracyRecordProcessorSessionBounds:
         metadata = create_metric_metadata(session_num=4)
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert result["accuracy.correct"] == 0.0
-        assert result["accuracy.unparsed"] == 1.0
+        assert result["accuracy_correct"] == 0.0
+        assert result["accuracy_unparsed"] == 1.0
         processor.grader.grade.assert_awaited_once_with("Hello world", "B")
 
     async def test_process_record_last_valid_session_num_succeeds(
@@ -174,8 +174,8 @@ class TestAccuracyRecordProcessorSessionBounds:
         metadata = create_metric_metadata(session_num=1)
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert result["accuracy.correct"] == 1.0
-        assert result["accuracy.unparsed"] == 0.0
+        assert result["accuracy_correct"] == 1.0
+        assert result["accuracy_unparsed"] == 0.0
 
     async def test_process_record_raises_if_not_configured(
         self, monkeypatch, sample_parsed_record
@@ -351,12 +351,12 @@ class TestAccuracyResultsProcessorSessionBounds:
     async def test_process_result_missing_unparsed_key_treated_as_conforming(
         self,
     ) -> None:
-        """Records without accuracy.unparsed (e.g. from older graders) count as conforming."""
+        """Records without accuracy_unparsed (e.g. from older graders) count as conforming."""
         processor = _make_results_processor()
         processor._tasks = ["algebra"]
         data = MetricRecordsData(
             metadata=create_metric_metadata(session_num=0),
-            metrics={"accuracy.correct": 1.0},  # no accuracy.unparsed key
+            metrics={"accuracy_correct": 1.0},  # no accuracy_unparsed key
         )
 
         await processor.process_result(data)

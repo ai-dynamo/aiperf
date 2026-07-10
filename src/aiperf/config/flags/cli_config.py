@@ -3530,6 +3530,7 @@ class CLIConfig(BaseConfig):
         CLIParameter(
             name=("--accuracy-enable-cot",),
             group=Groups.ACCURACY,
+            negative="--accuracy-no-enable-cot",
         ),
     ] = None
 
