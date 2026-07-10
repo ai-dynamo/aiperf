@@ -32,7 +32,9 @@ class TestOutputsJsonPrefixCollision:
             param("outputs_timeslices.json", id="with-timeslices-suffix"),
         ],
     )  # fmt: skip
-    def test_validate_artifacts_colliding_prefix_raises_error(self, prefix: str) -> None:
+    def test_validate_artifacts_colliding_prefix_raises_error(
+        self, prefix: str
+    ) -> None:
         with pytest.raises(
             ValidationError, match="colliding with --export-outputs-json"
         ):
@@ -56,7 +58,9 @@ class TestOutputsJsonPrefixCollision:
 class TestOutputsJsonPrefixCollisionCLI:
     """End-to-end: CLI converter propagates the collision to ArtifactsConfig validation."""
 
-    def test_convert_cli_to_aiperf_colliding_prefix_with_export_raises_error(self) -> None:
+    def test_convert_cli_to_aiperf_colliding_prefix_with_export_raises_error(
+        self,
+    ) -> None:
         cli = CLIConfig(
             model_names=["m"],
             profile_export_prefix="outputs",
