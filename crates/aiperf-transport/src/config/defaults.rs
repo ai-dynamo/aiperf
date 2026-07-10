@@ -13,6 +13,10 @@ pub struct ClientConfig {
     pub ssl_verify: bool,
     pub http_version: HttpVersion,
     pub keepalive_ns: Option<i64>,
+    /// When set, connect over this Unix-domain socket path instead of TCP
+    /// (co-located high-throughput: bypasses the TCP/IP loopback softirq tax).
+    /// HTTP/1.1 is used over UDS. The request URL still supplies the path + Host.
+    pub uds_path: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -23,6 +27,7 @@ impl Default for ClientConfig {
             ssl_verify: true,
             http_version: HttpVersion::Auto,
             keepalive_ns: None,
+            uds_path: None,
         }
     }
 }

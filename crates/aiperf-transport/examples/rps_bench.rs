@@ -75,10 +75,15 @@ fn main() {
         HttpVersion::Http2PriorKnowledge
     };
     let url = Arc::new(
-        url::Url::parse(&base_url)
-            .unwrap()
-            .join("/v1/chat/completions")
-            .unwrap(),
+        base_url
+            .split(',')
+            .map(|b| {
+                url::Url::parse(b.trim())
+                    .unwrap()
+                    .join("/v1/chat/completions")
+                    .unwrap()
+            })
+            .collect::<Vec<_>>(),
     );
 
     println!(
@@ -92,11 +97,12 @@ fn main() {
     );
 
     let mut handles = Vec::new();
-    for _ in 0..threads {
+    for tidx in 0..threads {
         let completed = completed.clone();
         let errors = errors.clone();
         let running = running.clone();
-        let url = url.clone();
+        let urls = url.clone();
+        let url = urls[tidx % urls.len()].clone();
         handles.push(std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()

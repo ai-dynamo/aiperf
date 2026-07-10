@@ -19,12 +19,22 @@ async fn chat() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
-    let port = std::env::var("PORT").unwrap_or_else(|_| "18830".to_string());
     let app = Router::new()
         .route("/v1/chat/completions", post(chat))
         .route("/health", get(|| async { "ok" }));
-    let addr = format!("127.0.0.1:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    eprintln!("fast_sse listening on http://{addr}");
-    axum::serve(listener, app).await.unwrap();
+
+    // UDS_PATH -> listen on a Unix-domain socket (bypasses the TCP/IP loopback
+    // softirq tax for co-located high-throughput benchmarking). Else TCP.
+    if let Ok(sock) = std::env::var("UDS_PATH") {
+        let _ = std::fs::remove_file(&sock);
+        let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+        eprintln!("fast_sse listening on unix:{sock}");
+        axum::serve(listener, app).await.unwrap();
+    } else {
+        let port = std::env::var("PORT").unwrap_or_else(|_| "18830".to_string());
+        let addr = format!("127.0.0.1:{port}");
+        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+        eprintln!("fast_sse listening on http://{addr}");
+        axum::serve(listener, app).await.unwrap();
+    }
 }

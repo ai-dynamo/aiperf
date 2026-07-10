@@ -93,6 +93,26 @@ pub async fn establish(
     clock: Rc<dyn Clock>,
     trace: &mut TraceData,
 ) -> Result<(Sender, SocketInfo), ErrorDetails> {
+    // Unix-domain socket path: connect over UDS (HTTP/1.1), bypassing the
+    // TCP/IP stack. The request URL still supplies the HTTP path + Host header.
+    #[cfg(unix)]
+    if let Some(path) = &cfg.uds_path {
+        trace.tcp_connect_start_ns = Some(clock.now_ns());
+        let stream = tokio::net::UnixStream::connect(path)
+            .await
+            .map_err(ErrorDetails::from)?;
+        trace.tcp_connect_end_ns = Some(clock.now_ns());
+        let sender = handshake(TokioIo::new(stream), false, clock.clone()).await?;
+        let dummy = SocketAddr::from(([127, 0, 0, 1], 0));
+        return Ok((
+            sender,
+            SocketInfo {
+                local: dummy,
+                remote: dummy,
+            },
+        ));
+    }
+
     let host = url
         .host_str()
         .ok_or_else(|| ErrorDetails::other("missing host"))?;

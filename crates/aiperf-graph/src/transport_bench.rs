@@ -5,13 +5,19 @@
 //! Same Graph-IR E2E path as [`crate::bench`] (thread-per-core workers, each a
 //! `current_thread` runtime + `LocalSet` running `concurrency` trace lanes), but
 //! HTTP dispatch runs on the Rust-native [`aiperf_transport`] client instead of
-//! reqwest. Each worker opens a small pool of `conns` HTTP/2 (h2c
-//! prior-knowledge) connections and every lane clones a sender off that pool, so
-//! the many serial lanes multiplex over few connections (independent h2 streams)
-//! — the shape that sustains high throughput. Streaming SSE is parsed into
-//! assistant text + first-token time and funneled through the shared
-//! `TraceCollector`, giving RPS + TTFT p50/p90/p99, identical to the reqwest
-//! path's reporting.
+//! reqwest. Each serial lane keeps one reused connection:
+//!
+//! * default: **HTTP/1.1 keep-alive** (fastest for serial lanes — no per-stream
+//!   hpack/flow-control overhead);
+//! * `--http2`: h2c prior-knowledge, cloning senders off a small per-worker pool
+//!   so many lanes multiplex over few connections;
+//! * `unix:/path` base URL: **Unix-domain socket** (HTTP/1.1), which bypasses the
+//!   TCP/IP loopback softirq tax and is what pushes co-located throughput past
+//!   1M req/s.
+//!
+//! Streaming SSE is parsed incrementally (assistant text + first-token time) via
+//! the lean [`HttpClient::dispatch_streaming`], and throughput + TTFT p50/p90/p99
+//! are computed from lock-free per-worker accumulators merged once at the end.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -344,21 +350,35 @@ fn transport_worker(
         Rc::new(pool)
     };
     let materializer = Rc::new(SegmentItemsMaterializer::new(store));
-    let url: Url = Url::parse(base_url)
-        .expect("valid base url")
-        .join("/v1/chat/completions")
-        .expect("valid chat url");
-    let http_version = if http2 {
+    // "unix:/path/to.sock" connects over a Unix-domain socket (HTTP/1.1),
+    // bypassing the TCP/IP loopback softirq tax for co-located benchmarking.
+    let (uds_path, url): (Option<String>, Url) = match base_url.strip_prefix("unix:") {
+        Some(p) => (
+            Some(p.to_string()),
+            Url::parse("http://localhost/v1/chat/completions").expect("valid uds chat url"),
+        ),
+        None => (
+            None,
+            Url::parse(base_url)
+                .expect("valid base url")
+                .join("/v1/chat/completions")
+                .expect("valid chat url"),
+        ),
+    };
+    let uds = uds_path.is_some();
+    let http_version = if http2 && !uds {
         HttpVersion::Http2PriorKnowledge
     } else {
         HttpVersion::Http1Only
     };
+    let http2 = http2 && !uds;
     let metrics = Rc::new(RefCell::new(WorkerMetrics::default()));
 
     local.block_on(&rt, async {
         let clock: Rc<dyn Clock> = RealClock::new();
         let cfg = ClientConfig {
             http_version,
+            uds_path,
             ..ClientConfig::default()
         };
         let client = Rc::new(HttpClient::new(clock.clone(), cfg.clone()));

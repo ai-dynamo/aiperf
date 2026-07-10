@@ -197,12 +197,14 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
     println!("TTFT p90    : {p90:.3} ms");
     println!("TTFT p99    : {p99:.3} ms");
     println!("TTFT mean   : {mean:.3} ms");
-    if rps >= 500_000.0 {
+    if rps >= 1_000_000.0 {
+        println!("\nPROVEN: aiperf --mode graph >= 1M req/s ({rps:.0}, backend={backend})");
+    } else if rps >= 500_000.0 {
         println!("\nPROVEN: aiperf --mode graph >= 500k req/s ({rps:.0}, backend={backend})");
     } else if rps >= 300_000.0 {
-        println!("\n>= 300k: {rps:.0} (target 500k)");
+        println!("\n>= 300k: {rps:.0}");
     } else {
-        println!("\nbelow target: {rps:.0} < 500000");
+        println!("\nbelow 300k: {rps:.0}");
     }
     Ok(())
 }
