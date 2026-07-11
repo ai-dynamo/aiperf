@@ -10,6 +10,7 @@
 
 pub mod execute;
 pub mod protocol;
+mod records;
 
 pub use execute::execute_run;
 pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};

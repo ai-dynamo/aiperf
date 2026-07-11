@@ -84,7 +84,15 @@ async fn stdio_child_runs_http_and_commits_native_report() {
                 "exclude_from_results": false,
                 "requests": 4,
                 "concurrency": 2
-            }]
+            }],
+            "metrics": {
+                "slice_duration_seconds": 0.1,
+                "slos": {"request_latency": 1000.0}
+            },
+            "artifacts": {
+                "records_path": "profile_export.jsonl",
+                "trace": true
+            }
         }
     });
     let bytes = serde_json::to_vec(&request).unwrap();
@@ -104,8 +112,9 @@ async fn stdio_child_runs_http_and_commits_native_report() {
 
     assert!(
         output.status.success(),
-        "runner stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "runner stdout: {}\nrunner stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
     let terminal: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["event"], "run_terminal");
@@ -124,4 +133,26 @@ async fn stdio_child_runs_http_and_commits_native_report() {
         report["metrics"]["total_output_tokens"]["series"][0]["stats"]["value"],
         4.0
     );
+    assert_eq!(
+        report["metrics"]["good_request_count"]["series"][0]["stats"]["total"],
+        4.0
+    );
+    assert!(
+        !report["metrics"]["request_latency"]["series"][0]["timeslices"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let records = std::fs::read_to_string(artifacts.path().join("profile_export.jsonl")).unwrap();
+    let rows = records
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 4);
+    assert!(rows.iter().all(|row| {
+        row["metadata"]["benchmark_phase"] == "profiling"
+            && row["metrics"]["request_latency"]["value"].is_number()
+            && row["metrics"]["time_to_first_token"]["value"].is_number()
+            && row["trace_data"]["trace_type"] == "aiperf-transport"
+    }));
 }

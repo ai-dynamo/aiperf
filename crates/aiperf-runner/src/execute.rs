@@ -4,8 +4,8 @@
 //! Native construction and execution of one resolved benchmark run.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -14,7 +14,10 @@ use aiperf::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
 use aiperf::http::TransportSink;
-use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource, TurnToSend};
+use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
+use aiperf::multiturn::{
+    ConversationSource, IssuedCredit, NativeDatasetConversationSource, TurnToSend,
+};
 use aiperf::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
     ScheduledPhaseResources, SlotPoolPhaseResources, run_scheduled_phases,
@@ -22,7 +25,7 @@ use aiperf::phase_runtime::{
 use aiperf::report::write_native_report_json;
 use aiperf::request_rate::RequestRateWorkload;
 use aiperf::scheduled::{
-    ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher, Workload,
+    ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher, TurnRecordProcessor, Workload,
 };
 use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
 use aiperf_clock::{Clock, RealClock};
@@ -34,7 +37,10 @@ use aiperf_dataset::{
 };
 use aiperf_endpoints::EndpointConfig;
 use aiperf_extensions::AiperfRegistry;
-use aiperf_metrics::{NativeReport, ReportRunInfo, ReportSummary, RunOutcome};
+use aiperf_metrics::{
+    CATALOG, ExportContext, MetricsAccumulator, MetricsConfig, NativeReport, Phase as MetricsPhase,
+    ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
+};
 use aiperf_rng::{EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution};
 use aiperf_timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
@@ -44,12 +50,17 @@ use aiperf_timing::{
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
-use loadgen_core::sink::RequestObserver;
+use loadgen_core::collector::ReplayTerminalStatus;
+use loadgen_core::sink::{
+    ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
+};
+use uuid::Uuid;
 
 use crate::protocol::{
-    DatasetSpec, DistributionSpec, EndpointSpec, ModelSelectionStrategy, ModelsSpec, PhaseSpec,
-    RampSpec, RampStrategySpec, RunRequest, RunTerminal, SyntheticDatasetSpec,
+    DatasetSpec, DistributionSpec, EndpointSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec,
+    PhaseSpec, RampSpec, RampStrategySpec, RunRequest, RunTerminal, SyntheticDatasetSpec,
 };
+use crate::records::{CapturedRecord, write_records_jsonl};
 
 /// Execute exactly one request on a fresh current-thread Tokio runtime.
 pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
@@ -112,6 +123,7 @@ fn validate_request(request: &RunRequest) -> Result<()> {
 async fn execute_native(request: RunRequest) -> Result<NativeReport> {
     let registry = AiperfRegistry::builtin()?;
     let rng_root = RngRoot::new(request.run.random_seed);
+    let metrics_config = metrics_config(&request.run.metrics)?;
     let model_names = request
         .run
         .models
@@ -137,6 +149,11 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
 
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
+    let capture = Rc::new(RunCapture::new(
+        clock.clone(),
+        start_ns,
+        metrics_config.clone(),
+    ));
     let transport = TransportSink::new_multi(
         clock.clone(),
         start_ns,
@@ -149,6 +166,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         headers: request.run.endpoint.headers.clone(),
         api_key: request.run.endpoint.api_key.clone(),
         session_header: request.run.endpoint.session_header.clone(),
+        capture: capture.clone(),
     });
 
     let shared_session = request
@@ -315,27 +333,55 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
             phase_prefill,
             RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.ramp"))),
         )?;
+        let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
+            capture: capture.clone(),
+            phase: metrics_phase(phase)?,
+            has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+        });
         plans.push(
             ScheduledPhasePlan::new(phase_config, workload, policies)
                 .with_enforce_stop(enforce_stop)
                 .with_start_ns(start_ns)
                 .with_resources(resources)
+                .with_record_processors(vec![record_processor])
                 .with_controller(controller),
         );
     }
 
     let observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
     let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
-    let profiling = phased
+    phased
         .reports
         .iter()
         .find(|report| report.kind == PhaseKind::Profiling)
         .ok_or_else(|| anyhow!("phase runtime completed without a profiling report"))?;
+    let issued_times = phased
+        .reports
+        .iter()
+        .flat_map(|report| report.report.turns.iter())
+        .map(|turn| (turn.uuid, turn.issued_offset_ns))
+        .collect::<HashMap<_, _>>();
+    let captured = capture.finish(&issued_times)?;
+    let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
+    for record in &captured {
+        accumulator.process_record(&record.ingest);
+    }
+    let profiling_metrics =
+        accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
     let warmup = phased
         .reports
         .iter()
-        .find(|report| report.kind == PhaseKind::Warmup)
-        .map(|report| report.report.native_metrics.clone());
+        .any(|report| report.kind == PhaseKind::Warmup)
+        .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
+    if let Some(records_path) = &request.run.artifacts.records_path {
+        let records_path = artifact_path(&request.run.artifact_dir, records_path, "records_path")?;
+        write_records_jsonl(
+            &records_path,
+            &captured,
+            &metrics_config,
+            request.run.artifacts.trace,
+        )?;
+    }
     let outcome = RunOutcome {
         run: ReportRunInfo {
             mode: Some("online".into()),
@@ -348,10 +394,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         warmup,
         ..RunOutcome::default()
     };
-    Ok(NativeReport::from_outcome(
-        &profiling.report.native_metrics,
-        &outcome,
-    ))
+    Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -516,6 +559,59 @@ fn endpoint_config(spec: &EndpointSpec) -> Result<EndpointConfig> {
     }
     .validate()
     .map_err(Into::into)
+}
+
+fn metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
+    let slice_duration_ns = spec
+        .slice_duration_seconds
+        .map(|seconds| {
+            ensure!(seconds > 0.0, "metrics slice duration must be positive");
+            seconds_to_ns(seconds)
+        })
+        .transpose()?;
+    let mut slos = Vec::with_capacity(spec.slos.len());
+    for (name, value) in &spec.slos {
+        ensure!(value.is_finite(), "SLO {name:?} threshold must be finite");
+        let metric = CATALOG
+            .iter()
+            .find(|metric| metric.tag.as_str() == name)
+            .ok_or_else(|| anyhow!("SLO metric {name:?} is not in the native metric catalog"))?;
+        ensure!(
+            metric.kind == aiperf_metrics::MetricType::Record
+                && !metric
+                    .flags
+                    .contains(aiperf_metrics::MetricFlags::NO_INDIVIDUAL_RECORDS),
+            "SLO metric {name:?} does not produce one value per request"
+        );
+        slos.push(SloThreshold::from_display(metric.tag, *value)?);
+    }
+    Ok(MetricsConfig {
+        slice_duration_ns,
+        slos,
+        ..MetricsConfig::default()
+    })
+}
+
+fn metrics_phase(spec: &PhaseSpec) -> Result<MetricsPhase> {
+    match spec.common().name.as_str() {
+        "warmup" => Ok(MetricsPhase::Warmup),
+        "profiling" => Ok(MetricsPhase::Profiling),
+        name => bail!("unsupported phase name {name:?}"),
+    }
+}
+
+fn artifact_path(root: &Path, relative: &Path, field: &str) -> Result<PathBuf> {
+    ensure!(
+        !relative.as_os_str().is_empty() && !relative.is_absolute(),
+        "artifact {field} must be a non-empty relative path"
+    );
+    ensure!(
+        relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_))),
+        "artifact {field} cannot contain parent, root, or current-directory components"
+    );
+    Ok(root.join(relative))
 }
 
 fn phase_config(spec: &PhaseSpec) -> Result<PhaseConfig> {
@@ -739,11 +835,162 @@ fn seconds_to_u64_ns(value: f64) -> Result<u64> {
     Ok((value * 1_000_000_000.0).round_ties_even() as u64)
 }
 
+struct CaptureIdentity {
+    uuid: Uuid,
+    x_correlation_id: String,
+}
+
+struct RunCapture {
+    clock: Rc<dyn Clock>,
+    origin_ns: i64,
+    observer: Rc<NativeMetricsObserver>,
+    identities: RefCell<Vec<CaptureIdentity>>,
+}
+
+impl RunCapture {
+    fn new(clock: Rc<dyn Clock>, origin_ns: i64, config: MetricsConfig) -> Self {
+        Self {
+            observer: Rc::new(NativeMetricsObserver::new(clock.clone(), origin_ns, config)),
+            clock,
+            origin_ns,
+            identities: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn begin(&self, turn: &TurnToSend) {
+        self.identities.borrow_mut().push(CaptureIdentity {
+            uuid: turn.uuid,
+            x_correlation_id: turn.x_correlation_id.clone(),
+        });
+        self.observer.register_metadata(
+            turn.uuid,
+            RequestMetricMetadata {
+                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
+                conversation_id: Some(turn.conversation_id.clone()),
+                audio_duration_s: turn.audio_duration_seconds,
+                ..RequestMetricMetadata::default()
+            },
+        );
+        let arrival_ms = self.clock.now_ns().saturating_sub(self.origin_ns) as f64 / 1_000_000.0;
+        self.observer.on_arrival(
+            turn.uuid,
+            arrival_ms,
+            turn.input_length,
+            turn.max_output_tokens,
+        );
+    }
+
+    fn label(&self, credit: &IssuedCredit, phase: MetricsPhase, has_credit_timestamp: bool) {
+        self.observer.register_metadata(
+            credit.turn.uuid,
+            RequestMetricMetadata {
+                phase,
+                session_num: Some(credit.id),
+                turn_index: u32::try_from(credit.turn.turn_index).unwrap_or(u32::MAX),
+                conversation_id: Some(credit.turn.conversation_id.clone()),
+                audio_duration_s: credit.turn.audio_duration_seconds,
+                has_credit_timestamp,
+                ..RequestMetricMetadata::default()
+            },
+        );
+    }
+
+    fn finish(&self, issued_times: &HashMap<Uuid, i64>) -> Result<Vec<CapturedRecord>> {
+        let collection = self.observer.finish_with_records();
+        let identities = self.identities.borrow();
+        ensure!(
+            collection.records.len() == identities.len(),
+            "native record capture finalized {} records for {} dispatched identities",
+            collection.records.len(),
+            identities.len()
+        );
+        collection
+            .records
+            .into_iter()
+            .zip(identities.iter())
+            .map(|(mut ingest, identity)| {
+                ensure!(
+                    ingest.correlation_id == identity.uuid.to_string(),
+                    "native record arrival order diverged from dispatch identity order"
+                );
+                if ingest.admit_ns.is_some() {
+                    ingest.admit_ns = Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
+                        anyhow!("captured request {} has no issuer timestamp", identity.uuid)
+                    })?);
+                }
+                Ok(CapturedRecord {
+                    uuid: identity.uuid,
+                    x_correlation_id: identity.x_correlation_id.clone(),
+                    ingest,
+                })
+            })
+            .collect()
+    }
+}
+
+struct CapturePhaseProcessor {
+    capture: Rc<RunCapture>,
+    phase: MetricsPhase,
+    has_credit_timestamp: bool,
+}
+
+#[async_trait(?Send)]
+impl TurnRecordProcessor for CapturePhaseProcessor {
+    async fn process(&self, credit: &IssuedCredit, _outcome: &TurnDispatchOutcome) -> Result<()> {
+        self.capture
+            .label(credit, self.phase, self.has_credit_timestamp);
+        Ok(())
+    }
+}
+
+struct DualObserver<'a> {
+    runtime: &'a dyn RequestObserver,
+    capture: &'a dyn RequestObserver,
+}
+
+impl RequestObserver for DualObserver<'_> {
+    fn on_arrival(&self, uuid: Uuid, at_ms: f64, input: usize, output: usize) {
+        self.runtime.on_arrival(uuid, at_ms, input, output);
+        self.capture.on_arrival(uuid, at_ms, input, output);
+    }
+
+    fn on_admit(&self, uuid: Uuid, at_ms: f64, reused_input_tokens: usize) {
+        self.runtime.on_admit(uuid, at_ms, reused_input_tokens);
+        self.capture.on_admit(uuid, at_ms, reused_input_tokens);
+    }
+
+    fn on_token(&self, uuid: Uuid, at_ms: f64) {
+        self.runtime.on_token(uuid, at_ms);
+        self.capture.on_token(uuid, at_ms);
+    }
+
+    fn on_classified_token(&self, uuid: Uuid, at_ms: f64, kind: ObservedTokenKind) {
+        self.runtime.on_classified_token(uuid, at_ms, kind);
+        self.capture.on_classified_token(uuid, at_ms, kind);
+    }
+
+    fn on_usage(&self, uuid: Uuid, usage: ObservedUsage) {
+        self.runtime.on_usage(uuid, usage);
+        self.capture.on_usage(uuid, usage);
+    }
+
+    fn on_endpoint_metrics(&self, uuid: Uuid, metrics: ObservedEndpointMetrics) {
+        self.runtime.on_endpoint_metrics(uuid, metrics);
+        self.capture.on_endpoint_metrics(uuid, metrics);
+    }
+
+    fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
+        self.runtime.on_terminal(uuid, status);
+        self.capture.on_terminal(uuid, status);
+    }
+}
+
 struct ConfiguredDispatcher {
     transport: TransportSink,
     headers: BTreeMap<String, String>,
     api_key: Option<String>,
     session_header: Option<String>,
+    capture: Rc<RunCapture>,
 }
 
 #[async_trait(?Send)]
@@ -768,8 +1015,42 @@ impl TurnDispatcher for ConfiguredDispatcher {
             turn.request_headers
                 .insert(header.clone(), turn.request_correlation_id.clone());
         }
-        self.transport
-            .dispatch_turn(turn, observer, on_first_token)
-            .await
+        let uuid = turn.uuid;
+        self.capture.begin(&turn);
+        let tee = DualObserver {
+            runtime: observer,
+            capture: self.capture.observer.as_ref(),
+        };
+        let result = self
+            .transport
+            .dispatch_turn(turn, &tee, on_first_token)
+            .await;
+        match &result {
+            Ok(outcome) => self.capture.observer.record_response(
+                uuid,
+                NativeResponseMetadata {
+                    start_ns: Some(outcome.start_ns),
+                    end_ns: Some(outcome.end_ns),
+                    prompt_tokens: outcome.prompt_tokens,
+                    completion_tokens: outcome.completion_tokens,
+                    http: outcome.http,
+                },
+            ),
+            Err(_) => {
+                let now = self.capture.clock.now_ns();
+                self.capture
+                    .observer
+                    .on_terminal(uuid, ReplayTerminalStatus::Failed);
+                self.capture.observer.record_response(
+                    uuid,
+                    NativeResponseMetadata {
+                        start_ns: Some(now),
+                        end_ns: Some(now),
+                        ..NativeResponseMetadata::default()
+                    },
+                );
+            }
+        }
+        result
     }
 }

@@ -88,6 +88,30 @@ def test_projection_is_explicit_and_canonicalizes_nested_distributions(
         },
     ]
     assert "adaptive_scale" not in run["phases"][0]
+    assert run["metrics"] == {"slos": {}}
+    assert run["artifacts"] == {
+        "records_path": "profile_export.jsonl",
+        "trace": False,
+    }
+
+
+def test_projects_slos_timeslices_and_custom_record_path(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.slos = {"request_latency": 500.0, "time_to_first_token": 100.0}
+    run.cfg.artifacts.slice_duration = 2.5
+    run.cfg.artifacts.prefix = "search-samples"
+    run.cfg.artifacts.trace = True
+
+    projected = build_run_request(run)["run"]
+
+    assert projected["metrics"] == {
+        "slice_duration_seconds": 2.5,
+        "slos": {"request_latency": 500.0, "time_to_first_token": 100.0},
+    }
+    assert projected["artifacts"] == {
+        "records_path": "search-samples.jsonl",
+        "trace": True,
+    }
 
 
 def test_projects_user_centric_and_fixed_schedule_variants(tmp_path) -> None:

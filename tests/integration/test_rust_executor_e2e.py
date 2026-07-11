@@ -10,7 +10,11 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import orjson
+
+from aiperf.common.models.record_models import MetricRecordInfo
 from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.orchestrator.jsonl_loader import load_single_metric
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
 _SSE = b"".join(
@@ -68,6 +72,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
                         "concurrency": 2,
                     },
                     "artifacts": {"dir": str(tmp_path)},
+                    "slos": {"request_latency": 1000},
                     "gpu_telemetry": {"enabled": False},
                     "server_metrics": {"enabled": False},
                     "runtime": {"ui": "none"},
@@ -89,7 +94,15 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert result.summary_metrics["request_count"].avg == 4.0
         assert result.summary_metrics["total_output_tokens"].avg == 4.0
         assert result.summary_metrics["request_latency"].count == 4
+        assert result.summary_metrics["good_request_count"].avg == 4.0
         assert (tmp_path / "native-v2.json").is_file()
+        records_path = tmp_path / "profile_export.jsonl"
+        rows = [orjson.loads(line) for line in records_path.read_bytes().splitlines()]
+        assert len(rows) == 4
+        assert all(MetricRecordInfo.model_validate(row) for row in rows)
+        assert all(row["metadata"]["benchmark_phase"] == "profiling" for row in rows)
+        assert all("time_to_first_token" in row["metrics"] for row in rows)
+        assert len(load_single_metric(tmp_path, "request_latency")) == 4
     finally:
         server.shutdown()
         server.server_close()

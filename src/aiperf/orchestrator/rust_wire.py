@@ -11,6 +11,7 @@ process boundary.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiperf.config.dataset import SyntheticDataset
@@ -99,6 +100,27 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
             "turn_delay_ratio": dataset.turn_delay_ratio,
         },
         "phases": [_phase(phase) for phase in cfg.phases],
+        "metrics": {
+            "slos": dict(cfg.slos or {}),
+            **(
+                {"slice_duration_seconds": cfg.artifacts.slice_duration}
+                if cfg.artifacts.slice_duration is not None
+                else {}
+            ),
+        },
+        "artifacts": {
+            **(
+                {
+                    "records_path": _artifact_relative_path(
+                        run.artifact_dir,
+                        cfg.artifacts.profile_export_jsonl_file,
+                    )
+                }
+                if cfg.artifacts.records is not False
+                else {}
+            ),
+            "trace": cfg.artifacts.trace,
+        },
     }
     _set_optional(run_wire, "sweep_id", run.sweep_id)
     _set_optional(run_wire, "random_seed", run.random_seed)
@@ -197,3 +219,14 @@ def _distribution(value: Any) -> dict[str, Any]:
 def _set_optional(target: dict[str, Any], name: str, value: Any) -> None:
     if value is not None:
         target[name] = value
+
+
+def _artifact_relative_path(root: Path, output: Path) -> str:
+    root_path = root.resolve()
+    output_path = output.resolve()
+    try:
+        return str(output_path.relative_to(root_path))
+    except ValueError as error:
+        raise RustWireError(
+            f"native artifact path {output_path} is outside run directory {root_path}"
+        ) from error

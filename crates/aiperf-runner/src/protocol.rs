@@ -91,6 +91,36 @@ pub struct RunSpec {
     pub dataset: DatasetSpec,
     /// Ordered warmup/profiling phase list.
     pub phases: Vec<PhaseSpec>,
+    /// Native metric-engine configuration.
+    #[serde(default)]
+    pub metrics: MetricsSpec,
+    /// Per-run artifact outputs written by Rust.
+    #[serde(default)]
+    pub artifacts: ArtifactSpec,
+}
+
+/// Native metric aggregation settings lowered from Config v2.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsSpec {
+    /// Optional trend timeslice duration in seconds.
+    #[serde(default)]
+    pub slice_duration_seconds: Option<f64>,
+    /// Per-request SLO thresholds in each metric's display unit.
+    #[serde(default)]
+    pub slos: BTreeMap<String, f64>,
+}
+
+/// Artifact paths relative to the exclusive run directory.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactSpec {
+    /// Per-request metrics JSONL path, or absent when records are disabled.
+    #[serde(default)]
+    pub records_path: Option<PathBuf>,
+    /// Include transport timing details on JSONL records.
+    #[serde(default)]
+    pub trace: bool,
 }
 
 /// Outer-loop variation coordinates carried through process results.

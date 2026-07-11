@@ -107,6 +107,19 @@ pub struct NativeMetricsObserver {
     accumulator: RefCell<MetricsAccumulator>,
 }
 
+/// Final aggregate plus the exact request records that produced it.
+///
+/// Application-layer record exporters consume the retained records through the
+/// same [`MetricsAccumulator`] formulas used for the aggregate. Keeping this
+/// boundary in Rust prevents convergence/search consumers from reconstructing
+/// latency or token metrics from lossy report statistics.
+pub struct NativeMetricsCollection {
+    /// Aggregate over every finalized request.
+    pub summary: AccumulatorSummary,
+    /// Finalized request facts in arrival order.
+    pub records: Vec<RecordIngest>,
+}
+
 impl NativeMetricsObserver {
     /// Creates an observer with explicit accumulator configuration.
     pub fn new(clock: Rc<dyn Clock>, origin_ns: i64, config: MetricsConfig) -> Self {
@@ -149,16 +162,31 @@ impl NativeMetricsObserver {
     ///
     /// Request rows are appended in arrival order, independent of hash-map order.
     pub fn finish(&self) -> AccumulatorSummary {
+        self.finish_with_records().summary
+    }
+
+    /// Finalizes every retained request while preserving its ingestion facts.
+    ///
+    /// The records and summary are created by one pass in arrival order. This
+    /// method consumes the observer state just like [`Self::finish`]; calling
+    /// either finalizer again returns an empty collection.
+    pub fn finish_with_records(&self) -> NativeMetricsCollection {
         let finish_ns = self.relative_now_ns();
         let mut state = std::mem::take(&mut *self.state.borrow_mut());
         let mut accumulator = std::mem::take(&mut *self.accumulator.borrow_mut());
+        let mut records = Vec::with_capacity(state.order.len());
         for (ordinal, uuid) in state.order.into_iter().enumerate() {
             let Some(request) = state.requests.remove(&uuid) else {
                 continue;
             };
-            accumulator.process_record(&request.into_record(uuid, ordinal as u64, finish_ns));
+            let record = request.into_record(uuid, ordinal as u64, finish_ns);
+            accumulator.process_record(&record);
+            records.push(record);
         }
-        accumulator.summarize()
+        NativeMetricsCollection {
+            summary: accumulator.summarize(),
+            records,
+        }
     }
 
     fn relative_now_ns(&self) -> i64 {
@@ -438,7 +466,16 @@ mod tests {
             },
         );
 
-        let summary = observer.finish();
+        let collection = observer.finish_with_records();
+        assert_eq!(collection.records.len(), 1);
+        assert_eq!(collection.records[0].correlation_id, uuid.to_string());
+        assert_eq!(collection.records[0].session_num, 9);
+        assert_eq!(collection.records[0].turn_index, 2);
+        assert_eq!(
+            collection.records[0].token_arrival_ns,
+            vec![10_000_000, 20_000_000]
+        );
+        let summary = collection.summary;
         assert_eq!(
             summary.finite_value(MetricTag::ReasoningTokenCount),
             Some(1.0)
