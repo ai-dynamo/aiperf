@@ -923,31 +923,31 @@ pub async fn run_scheduled_workload_with_processors(
     policies: ScheduledAncillaryPolicies,
     record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
 ) -> Result<ScheduledRunReport> {
-    let runtime = ScheduledRuntime::new(clock, start_ns, dispatcher, stop, enforce_stop);
-    for processor in record_processors {
-        runtime.add_record_processor(processor);
-    }
-    runtime.configure_ancillary(
-        policies.cancellation_policy,
-        policies.url_selector,
-        policies.phase,
-    );
-    runtime
-        .credit_latency_enabled
-        .set(workload.has_credit_timestamps());
-    if let Err(error) = workload.execute(runtime.clone()).await {
-        runtime.scheduler.cancel_pending();
-        runtime.scheduler.wait_idle().await;
-        if let Err(processor_error) = runtime.wait_record_processors().await {
-            tracing::warn!(
-                error = %processor_error,
-                "terminal record processing also failed while draining a workload error"
-            );
-        }
-        return Err(error);
-    }
-    runtime.scheduler.wait_idle().await;
-    let report = runtime.finish(workload.name(), workload.user_control_snapshot());
-    runtime.wait_record_processors().await?;
-    Ok(report)
+    let config = aiperf_timing::PhaseConfig::new(
+        "profiling",
+        aiperf_timing::PhaseKind::Profiling,
+        stop,
+    )
+    // The legacy single-phase helper always drained admitted work. Explicit
+    // multi-phase callers choose Disabled/Finite/Infinite grace per phase.
+    .with_grace_period(aiperf_timing::GracePeriod::Infinite);
+    let plan = crate::phase_runtime::ScheduledPhasePlan::new(config, workload, policies)
+        .with_enforce_stop(enforce_stop)
+        .with_start_ns(start_ns)
+        .with_record_processors(record_processors);
+    let observer: Rc<dyn aiperf_timing::PhaseObserver> =
+        Rc::new(aiperf_timing::NoopPhaseObserver);
+    let mut result = crate::phase_runtime::run_scheduled_phases(
+        vec![plan],
+        clock,
+        dispatcher,
+        observer,
+    )
+    .await?;
+    let phase = result
+        .reports
+        .pop()
+        .ok_or_else(|| anyhow!("profiling phase completed without a scheduled report"))?;
+    debug_assert!(result.reports.is_empty());
+    Ok(phase.report)
 }

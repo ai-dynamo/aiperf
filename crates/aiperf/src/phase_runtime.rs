@@ -140,6 +140,8 @@ pub struct ScheduledPhasePlan {
     pub record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
     /// Whether the scheduled runtime enforces this phase's stop bounds.
     pub enforce_stop: bool,
+    /// Optional pre-captured observer/transport timeline origin.
+    pub start_ns: Option<i64>,
     /// Phase-owned actuator/ramp lifecycle.
     pub controller: Rc<dyn ScheduledPhaseController>,
     /// Long-lived admission state and force cleanup.
@@ -159,6 +161,7 @@ impl ScheduledPhasePlan {
             ancillary,
             record_processors: Vec::new(),
             enforce_stop: true,
+            start_ns: None,
             controller: Rc::new(NoopScheduledPhaseController),
             resources: Rc::new(NoopScheduledPhaseResources),
         }
@@ -167,6 +170,12 @@ impl ScheduledPhasePlan {
     /// Preserve natural-exhaustion workloads that own their authored bounds.
     pub fn with_enforce_stop(mut self, enforce_stop: bool) -> Self {
         self.enforce_stop = enforce_stop;
+        self
+    }
+
+    /// Reuse an origin captured while constructing a phase-specific dispatcher.
+    pub fn with_start_ns(mut self, start_ns: i64) -> Self {
+        self.start_ns = Some(start_ns);
         self
     }
 
@@ -313,7 +322,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             PhaseKind::Profiling => aiperf_timing::Phase::Profiling,
         };
         let tracker = Rc::new(PhaseDispatchTracker::new(context));
-        let start_ns = self.clock.now_ns();
+        let start_ns = plan.start_ns.unwrap_or_else(|| self.clock.now_ns());
         let runtime = ScheduledRuntime::new(
             self.clock.clone(),
             start_ns,
@@ -337,10 +346,22 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             workload: plan.workload,
             runtime,
             tracker,
+            wait_for_natural_drain: !plan.enforce_stop,
             controller: plan.controller,
             resources: plan.resources,
             reports: self.reports.clone(),
             finalized: Cell::new(false),
+        })
+    }
+
+    fn cancel_all(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let runtimes = self.runtimes.borrow().clone();
+        Box::pin(async move {
+            for runtime in runtimes {
+                runtime.scheduler().cancel_all();
+            }
+            tokio::task::yield_now().await;
+            Ok(())
         })
     }
 }
@@ -367,6 +388,7 @@ struct ScheduledPhaseExecution {
     workload: Rc<dyn Workload>,
     runtime: Rc<ScheduledRuntime>,
     tracker: Rc<PhaseDispatchTracker>,
+    wait_for_natural_drain: bool,
     controller: Rc<dyn ScheduledPhaseController>,
     resources: Rc<dyn ScheduledPhaseResources>,
     reports: Rc<RefCell<Vec<(String, ScheduledRunReport)>>>,
@@ -389,11 +411,18 @@ impl PhaseExecution for ScheduledPhaseExecution {
     fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
         let workload = self.workload.clone();
         let runtime = self.runtime.clone();
+        let wait_for_natural_drain = self.wait_for_natural_drain;
         Box::pin(async move {
-            workload
-                .execute(runtime)
-                .await
-                .map_err(|error| PhaseExecutionError::new(format!("scheduled workload: {error:#}")))
+            workload.execute(runtime.clone()).await.map_err(|error| {
+                PhaseExecutionError::new(format!("scheduled workload: {error:#}"))
+            })?;
+            if wait_for_natural_drain {
+                // Authored/naturally exhausted workloads do not have a stop
+                // counter that can publish the last-send edge. Their scheduler
+                // is therefore the authoritative completion signal.
+                runtime.scheduler().wait_idle().await;
+            }
+            Ok(())
         })
     }
 
