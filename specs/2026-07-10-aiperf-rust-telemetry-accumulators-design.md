@@ -356,7 +356,7 @@ verbatim; let the Rust histogram store accept per-scrape bucket sets. (This is t
 
 ---
 
-## Addendum — 2026-07-10: phase-boundary snapshots supersede scrape-then-reconstruct windowing
+## Addendum — 2026-07-11: phase-boundary snapshots supersede scrape-then-reconstruct windowing
 
 **Supersedes §1's read-time windowing, §2.1/§2.3's `FINAL_SCRAPE_GRACE_NS` + append-only
 store, and the "two masking conventions" — for COUNTERS.** The body ports the Python
@@ -428,9 +428,9 @@ the shared traits. Keep the dependency direction from runtime/telemetry producer
 toward the metrics/reporting seam, never from the core metrics engine back into
 telemetry-specific collectors.
 
-## Addendum — 2026-07-10 (server metrics): boundary snapshots + sequential scrape supersede §3's async windowing
+## Addendum — 2026-07-11 (server metrics): boundary snapshots + sequential scrape supersede §3's async windowing
 
-The first 2026-07-10 addendum applied phase-boundary snapshots to **GPU** counters. The
+The first 2026-07-11 addendum applied phase-boundary snapshots to **GPU** counters. The
 same rethink applies to **§3 server metrics** — with three server-specific wrinkles that
 change the details (and, importantly, **supersede §1's "two baseline pickers — do NOT
 unify" claim**).
@@ -490,7 +490,7 @@ histogram estimator math are unchanged — those are what the hardware/server em
 of the scrape transport. The async append-only-store + read-time window reconstruction + the two
 baseline pickers are deleted.
 
-## Addendum — 2026-07-10 (server metrics, correction): delete the flush wait
+## Addendum — 2026-07-11 (server metrics, correction): delete the flush wait
 
 **Supersedes the "settle-then-snapshot" paragraph of the server-metrics addendum above.**
 There is **no flush/settle wait**. Force one final scrape at the phase boundary, snapshot,
