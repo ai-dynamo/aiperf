@@ -73,7 +73,7 @@ impl Default for EndpointConfig {
             template: None,
             response_field: None,
             timeout_seconds: 6.0 * 60.0 * 60.0,
-            polling_interval_seconds: 0.5,
+            polling_interval_seconds: 0.1,
             download_video_content: false,
             wait_for_model_timeout: 0.0,
             wait_for_model_interval: 5.0,
@@ -107,9 +107,18 @@ impl EndpointConfig {
                 "endpoint.path must start with a leading slash".to_string(),
             ));
         }
-        if self.endpoint_type == EndpointType::Template && self.template.is_none() {
+        let legacy_template = self
+            .extra
+            .as_ref()
+            .and_then(|extra| extra.get("payload_template"))
+            .and_then(Value::as_str);
+        if self.endpoint_type == EndpointType::Template
+            && self.template.is_none()
+            && legacy_template.is_none()
+        {
             return Err(EndpointError::InvalidConfig(
-                "template is required when endpoint type is 'template'".to_string(),
+                "template or extra.payload_template is required when endpoint type is 'template'"
+                    .to_string(),
             ));
         }
         if !self.timeout_seconds.is_finite() || self.timeout_seconds < 0.0 {
@@ -117,9 +126,12 @@ impl EndpointConfig {
                 "timeout_seconds must be finite and non-negative".to_string(),
             ));
         }
-        if !self.polling_interval_seconds.is_finite() || self.polling_interval_seconds <= 0.0 {
+        if !self.polling_interval_seconds.is_finite()
+            || !(0.001..=10.0).contains(&self.polling_interval_seconds)
+        {
             return Err(EndpointError::InvalidConfig(
-                "polling_interval_seconds must be finite and positive".to_string(),
+                "polling_interval_seconds must be finite and between 0.001 and 10 seconds"
+                    .to_string(),
             ));
         }
         if self.wait_for_model_timeout <= 0.0 {

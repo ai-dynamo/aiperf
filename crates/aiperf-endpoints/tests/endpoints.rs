@@ -46,6 +46,7 @@ fn metadata_and_config_validation_cover_registry_rules() {
     assert!(metadata_for(EndpointType::VideoGeneration).requires_polling);
     assert!(metadata_for(EndpointType::ImageEdit).requires_form_data);
     assert!(!metadata_for(EndpointType::ImageRetrieval).tokenizes_input);
+    assert_eq!(EndpointConfig::default().polling_interval_seconds, 0.1);
 
     let mut embeddings = cfg(EndpointType::Embeddings);
     embeddings.streaming = true;
@@ -67,6 +68,14 @@ fn metadata_and_config_validation_cover_registry_rules() {
             endpoint_type: EndpointType::ImageEdit,
             urls: vec!["http://h".into()],
             request_content_type: Some(RequestContentType::ApplicationJson),
+            ..EndpointConfig::default()
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        EndpointConfig {
+            polling_interval_seconds: 0.000_9,
             ..EndpointConfig::default()
         }
         .validate()
@@ -116,6 +125,19 @@ fn metadata_and_config_validation_cover_registry_rules() {
         .unwrap()
         .endpoint_type,
         EndpointType::Template
+    );
+    assert!(
+        EndpointConfig {
+            endpoint_type: EndpointType::Template,
+            urls: vec!["http://h".into()],
+            extra: Some(Map::from_iter([(
+                "payload_template".into(),
+                json!(r#"{"text":{{ text|tojson }}}"#),
+            )])),
+            ..EndpointConfig::default()
+        }
+        .validate()
+        .is_ok()
     );
 }
 

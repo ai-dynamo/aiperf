@@ -680,7 +680,7 @@ mod tests {
         let request = EndpointRequestMaterializer
             .materialize(
                 &session,
-                endpoint,
+                endpoint.as_ref(),
                 &ModelEndpoint {
                     primary_model_name: "default-model".into(),
                     endpoint: endpoint_config,
@@ -696,6 +696,59 @@ mod tests {
         assert_eq!(request.endpoint_path.as_deref(), Some("/v1/responses"));
         assert_eq!(request.headers["x-custom"], "yes");
         assert_eq!(request.parameters["api-version"], "2026-07");
+    }
+
+    #[tokio::test]
+    async fn streaming_path_survives_a_formatter_without_a_stream_body_field() {
+        let source = DatasetSource::Inline(json!([{
+            "session_id":"tgi",
+            "endpoint":"huggingface_generate",
+            "text":"hello",
+            "streaming":true,
+            "output_length":2
+        }]));
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SingleTurnDatasetLoader),
+                Arc::new(SingleTurnComposer),
+            ))
+            .unwrap();
+        let dataset = Arc::new(
+            registry
+                .build_dataset(
+                    Some("single_turn"),
+                    &LoadConfig::new(source),
+                    &config(),
+                    &TiktokenTokenizer::builtin(),
+                )
+                .await
+                .unwrap(),
+        );
+        let mut session = ConversationSession::new(dataset, SessionId::from("tgi")).unwrap();
+        session.advance_to(0).unwrap();
+        let endpoint = BuiltinEndpointResolver::default()
+            .resolve(session.endpoint_override().unwrap())
+            .unwrap();
+        let request = EndpointRequestMaterializer
+            .materialize(
+                &session,
+                endpoint.as_ref(),
+                &ModelEndpoint {
+                    primary_model_name: "model".into(),
+                    endpoint: EndpointConfig {
+                        streaming: true,
+                        ..EndpointConfig::default()
+                    },
+                },
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert!(body.get("stream").is_none());
+        assert!(request.streaming);
+        assert_eq!(request.endpoint_path.as_deref(), Some("/generate_stream"));
     }
 
     #[test]

@@ -136,18 +136,8 @@ fn format_rankings(flavor: RankingFlavor, request_info: &RequestInfo) -> Endpoin
     let mut passages = Vec::new();
     for text in &turn.texts {
         match text.name.as_str() {
-            "query" | "queries" => queries.extend(
-                text.contents
-                    .iter()
-                    .filter(|content| !content.is_empty())
-                    .cloned(),
-            ),
-            "passages" => passages.extend(
-                text.contents
-                    .iter()
-                    .filter(|content| !content.is_empty())
-                    .cloned(),
-            ),
+            "query" | "queries" => queries.extend(text.contents.iter().cloned()),
+            "passages" => passages.extend(text.contents.iter().cloned()),
             _ => {}
         }
     }
@@ -472,6 +462,9 @@ fn parse_image_response(
     let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
         return Ok(None);
     };
+    if object.is_empty() {
+        return Ok(None);
+    }
     let mut images = Vec::new();
     if allow_streaming_item && object.contains_key("b64_json") {
         images.push(ImageDataItem {
@@ -547,10 +540,18 @@ fn build_image_file_field(content: &str) -> EndpointResult<Value> {
             |(base, _)| base,
         );
     let filename_subtype = if subtype == "jpeg" { "jpg" } else { subtype };
+    let content_type = match subtype {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => mime,
+    };
     Ok(json!({
         "b64_data": b64,
         "filename": format!("image.{filename_subtype}"),
-        "content_type": mime
+        "content_type": content_type
     }))
 }
 
@@ -598,6 +599,9 @@ impl Endpoint for VideoGenerationEndpoint {
         let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
             return Ok(None);
         };
+        if object.is_empty() {
+            return Ok(None);
+        }
         Ok(Some(ParsedResponse {
             perf_ns: response.perf_ns,
             data: Some(ResponseData::Video(VideoResponseData {
@@ -782,7 +786,6 @@ fn first_text(turn: &crate::Turn) -> Option<&str> {
         .first()
         .and_then(|text| text.contents.first())
         .map(String::as_str)
-        .filter(|text| !text.is_empty())
 }
 
 fn merge_endpoint_and_turn_extra(payload: &mut Map<String, Value>, request_info: &RequestInfo) {

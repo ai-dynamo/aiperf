@@ -1146,6 +1146,17 @@ pub(crate) fn parse_embeddings_response(
         }
         return Ok(None);
     };
+    let data_is_falsy = match data {
+        Value::Null => true,
+        Value::Bool(value) => !value,
+        Value::Number(value) => value.as_f64().is_some_and(|value| value == 0.0),
+        Value::String(value) => value.is_empty(),
+        Value::Array(value) => value.is_empty(),
+        Value::Object(value) => value.is_empty(),
+    };
+    if data_is_falsy {
+        return Ok(None);
+    }
     let Some(data_array) = data.as_array() else {
         return if strict_invalid_data {
             Err(EndpointError::InvalidResponse(format!(

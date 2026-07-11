@@ -9,7 +9,7 @@
 //! deliberately failure-soft for raw responses; an explicitly valid template
 //! selector that does not match is a hard parse miss, matching Python.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use minijinja::{AutoEscape, Environment};
 use serde_json::{Map, Value, json};
@@ -77,7 +77,7 @@ impl Endpoint for TemplateEndpoint {
         })?;
         let config = &request_info.model_endpoint.endpoint;
         let (source, legacy_extra_config) = template_source(config)?;
-        let source = resolve_template_source(source)?;
+        let source = resolve_template_source(source);
 
         let (texts, texts_by_name) = named_contents(&turn.texts);
         let (images, images_by_name) = named_contents(&turn.images);
@@ -215,23 +215,48 @@ fn template_source(config: &EndpointConfig) -> EndpointResult<(&str, bool)> {
         })
 }
 
-fn resolve_template_source(source: &str) -> EndpointResult<String> {
+fn resolve_template_source(source: &str) -> String {
     if source == "nv-embedqa" {
-        return Ok(NV_EMBEDQA.to_string());
+        return NV_EMBEDQA.to_string();
     }
-    let path = Path::new(source);
-    let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return Ok(source.to_string());
+    let path = expanded_template_path(source);
+    if has_symlink_component(&path) {
+        return source.to_string();
+    }
+    let Ok(resolved) = std::fs::canonicalize(&path) else {
+        return source.to_string();
     };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Ok(source.to_string());
+    if !resolved.is_file() {
+        return source.to_string();
     }
-    std::fs::read_to_string(path).map_err(|error| {
-        EndpointError::InvalidConfig(format!(
-            "failed to read payload template {}: {error}",
-            path.display()
-        ))
-    })
+    std::fs::read_to_string(resolved).unwrap_or_else(|_| source.to_string())
+}
+
+fn expanded_template_path(source: &str) -> PathBuf {
+    if source == "~"
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home);
+    }
+    if let Some(relative) = source.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(relative);
+    }
+    Path::new(source).to_path_buf()
+}
+
+fn has_symlink_component(path: &Path) -> bool {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return true,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 fn named_contents(items: &[Media]) -> (Vec<String>, Map<String, Value>) {

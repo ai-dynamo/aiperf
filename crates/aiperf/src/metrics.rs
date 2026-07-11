@@ -17,7 +17,9 @@ use aiperf_metrics::{
     TokenCounts, UsageMetrics,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver};
+use loadgen_core::sink::{
+    ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
+};
 use rustc_hash::FxHashMap;
 use uuid::Uuid;
 
@@ -85,6 +87,7 @@ struct PendingRequest {
     output_tokens: u64,
     reasoning_tokens: u64,
     first_output_token_ns: Option<i64>,
+    endpoint_metrics: ObservedEndpointMetrics,
     terminal: Option<ReplayTerminalStatus>,
     metadata: RequestMetricMetadata,
 }
@@ -230,9 +233,9 @@ impl PendingRequest {
             },
             http: self.response.http,
             audio_duration_s: self.metadata.audio_duration_s,
-            num_images: None,
-            video_inference_seconds: None,
-            video_peak_memory_mb: None,
+            num_images: self.endpoint_metrics.num_images.map(|value| value as u64),
+            video_inference_seconds: self.endpoint_metrics.video_inference_seconds,
+            video_peak_memory_mb: self.endpoint_metrics.video_peak_memory_mb,
             metric_overrides: Vec::new(),
         }
     }
@@ -265,6 +268,7 @@ impl RequestObserver for NativeMetricsObserver {
                 output_tokens: 0,
                 reasoning_tokens: 0,
                 first_output_token_ns: None,
+                endpoint_metrics: ObservedEndpointMetrics::default(),
                 terminal: None,
                 metadata,
             },
@@ -301,6 +305,19 @@ impl RequestObserver for NativeMetricsObserver {
         if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
             request.response.prompt_tokens = usage.prompt_tokens.map(|value| value as u64);
             request.response.completion_tokens = usage.completion_tokens.map(|value| value as u64);
+        }
+    }
+
+    fn on_endpoint_metrics(&self, uuid: Uuid, metrics: ObservedEndpointMetrics) {
+        if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
+            request.endpoint_metrics.num_images =
+                metrics.num_images.or(request.endpoint_metrics.num_images);
+            request.endpoint_metrics.video_inference_seconds = metrics
+                .video_inference_seconds
+                .or(request.endpoint_metrics.video_inference_seconds);
+            request.endpoint_metrics.video_peak_memory_mb = metrics
+                .video_peak_memory_mb
+                .or(request.endpoint_metrics.video_peak_memory_mb);
         }
     }
 
@@ -356,6 +373,12 @@ impl RequestObserver for ObserverTee {
         }
     }
 
+    fn on_endpoint_metrics(&self, uuid: Uuid, metrics: ObservedEndpointMetrics) {
+        for delegate in &self.delegates {
+            delegate.on_endpoint_metrics(uuid, metrics);
+        }
+    }
+
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
         for delegate in &self.delegates {
             delegate.on_terminal(uuid, status);
@@ -392,6 +415,14 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(8),
                 completion_tokens: Some(2),
+            },
+        );
+        observer.on_endpoint_metrics(
+            uuid,
+            ObservedEndpointMetrics {
+                num_images: Some(2),
+                video_inference_seconds: Some(0.25),
+                video_peak_memory_mb: Some(512.0),
             },
         );
         clock.advance_to(25_000_000);
@@ -432,6 +463,15 @@ mod tests {
         assert_eq!(
             summary.finite_value(MetricTag::TotalUsageTotalTokens),
             Some(10.0)
+        );
+        assert_eq!(summary.finite_value(MetricTag::NumImages), Some(2.0));
+        assert_eq!(
+            summary.finite_value(MetricTag::VideoInferenceTime),
+            Some(250.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::VideoPeakMemory),
+            Some(512.0)
         );
         assert_eq!(
             summary

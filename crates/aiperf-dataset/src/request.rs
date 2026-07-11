@@ -81,7 +81,7 @@ pub trait RequestMaterializer: Send + Sync {
 /// Lookup seam for authored per-turn endpoint/dialect overrides.
 pub trait EndpointResolver: Send + Sync {
     /// Resolve an optional authored endpoint name, falling back to the registry default.
-    fn resolve(&self, name: Option<&str>) -> Result<&(dyn Endpoint + Send + Sync)>;
+    fn resolve(&self, name: Option<&str>) -> Result<Arc<dyn Endpoint + Send + Sync>>;
 }
 
 /// Extensible name-to-endpoint registry containing the endpoint implementations
@@ -215,21 +215,18 @@ impl Default for BuiltinEndpointResolver {
 }
 
 impl EndpointResolver for BuiltinEndpointResolver {
-    fn resolve(&self, name: Option<&str>) -> Result<&(dyn Endpoint + Send + Sync)> {
+    fn resolve(&self, name: Option<&str>) -> Result<Arc<dyn Endpoint + Send + Sync>> {
         let normalized = name
             .map(normalize_endpoint_name)
             .unwrap_or_else(|| self.default_name.clone());
-        self.endpoints
-            .get(&normalized)
-            .map(Arc::as_ref)
-            .ok_or_else(|| {
-                let mut available = self.endpoints.keys().cloned().collect::<Vec<_>>();
-                available.sort();
-                DatasetError::Validation(format!(
-                    "unknown dataset endpoint {normalized:?}; registered endpoints: {}",
-                    available.join(", ")
-                ))
-            })
+        self.endpoints.get(&normalized).cloned().ok_or_else(|| {
+            let mut available = self.endpoints.keys().cloned().collect::<Vec<_>>();
+            available.sort();
+            DatasetError::Validation(format!(
+                "unknown dataset endpoint {normalized:?}; registered endpoints: {}",
+                available.join(", ")
+            ))
+        })
     }
 }
 
@@ -356,7 +353,7 @@ fn effective_from_structured_body(
                 "effective request stream must be boolean".into(),
             ));
         }
-        None => false,
+        None => effective_streaming(turn, model_endpoint, endpoint, overrides)?,
     };
     let streaming = requested_streaming && endpoint.metadata().supports_streaming;
     if requested_streaming != streaming {
@@ -1325,7 +1322,7 @@ mod tests {
         let request = session
             .materialize(
                 &EndpointRequestMaterializer,
-                endpoint,
+                endpoint.as_ref(),
                 &configured,
                 CreditPhase::Profiling,
                 &Overrides::new(),

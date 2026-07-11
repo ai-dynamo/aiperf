@@ -14,6 +14,7 @@ use aiperf_clock::Clock;
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::client::cancellation::{CancelOutcome, race_cancel};
 use crate::models::{ErrorDetails, ErrorKind, RequestConfig, RequestRecord, Response, TraceData};
 use crate::transport::http_transport::HttpTransport;
 
@@ -113,6 +114,13 @@ pub async fn submit_and_poll(
             downloaded_content: None,
         };
     }
+    let cancellation_deadline_ns = submit_config.cancel_after_ns.and_then(|delay| {
+        aggregate
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.request_send_end_ns)
+            .map(|sent_ns| sent_ns.saturating_add(delay.max(0)))
+    });
     let job_id = match protocol.job_id(&aggregate) {
         Ok(job_id) => job_id,
         Err(error) => {
@@ -140,6 +148,17 @@ pub async fn submit_and_poll(
     poll_config.cancel_after_ns = None;
     let poll_start = clock.now_ns();
     let completed_poll = loop {
+        if cancellation_deadline_ns.is_some_and(|deadline| clock.now_ns() >= deadline) {
+            mark_cancelled(
+                &mut aggregate,
+                clock.now_ns(),
+                submit_config.cancel_after_ns.unwrap_or_default(),
+            );
+            return PollingResult {
+                record: aggregate,
+                downloaded_content: None,
+            };
+        }
         let elapsed = clock.now_ns().saturating_sub(poll_start);
         if elapsed >= options.timeout_ns {
             aggregate.error = Some(ErrorDetails {
@@ -153,7 +172,24 @@ pub async fn submit_and_poll(
                 downloaded_content: None,
             };
         }
-        let poll = transport.get(&poll_config).await;
+        let Some(poll) = get_before_deadline(
+            transport,
+            clock.clone(),
+            &poll_config,
+            cancellation_deadline_ns,
+        )
+        .await
+        else {
+            mark_cancelled(
+                &mut aggregate,
+                clock.now_ns(),
+                submit_config.cancel_after_ns.unwrap_or_default(),
+            );
+            return PollingResult {
+                record: aggregate,
+                downloaded_content: None,
+            };
+        };
         if let Some(error) = poll.error.clone() {
             merge_attempt(&mut aggregate, &poll, false);
             aggregate.error = Some(error);
@@ -183,9 +219,18 @@ pub async fn submit_and_poll(
                 let remaining = options
                     .timeout_ns
                     .saturating_sub(clock.now_ns().saturating_sub(poll_start));
+                let cancellation_remaining = cancellation_deadline_ns
+                    .map(|deadline| deadline.saturating_sub(clock.now_ns()).max(0))
+                    .unwrap_or(i64::MAX);
                 clock
                     .clone()
-                    .sleep(options.interval_ns.min(remaining).max(0))
+                    .sleep(
+                        options
+                            .interval_ns
+                            .min(remaining)
+                            .min(cancellation_remaining)
+                            .max(0),
+                    )
                     .await;
             }
             Err(error) => {
@@ -224,7 +269,24 @@ pub async fn submit_and_poll(
         let mut content_config = submit_config.clone();
         content_config.url = content_url;
         content_config.cancel_after_ns = None;
-        let download = transport.get(&content_config).await;
+        let Some(download) = get_before_deadline(
+            transport,
+            clock.clone(),
+            &content_config,
+            cancellation_deadline_ns,
+        )
+        .await
+        else {
+            mark_cancelled(
+                &mut aggregate,
+                clock.now_ns(),
+                submit_config.cancel_after_ns.unwrap_or_default(),
+            );
+            return PollingResult {
+                record: aggregate,
+                downloaded_content: None,
+            };
+        };
         merge_attempt(&mut aggregate, &download, false);
         if let Some(error) = download.error {
             aggregate.error = Some(ErrorDetails::other(format!(
@@ -261,6 +323,37 @@ pub async fn submit_and_poll(
     PollingResult {
         record: aggregate,
         downloaded_content,
+    }
+}
+
+async fn get_before_deadline(
+    transport: &HttpTransport,
+    clock: Rc<dyn Clock>,
+    config: &RequestConfig,
+    deadline_ns: Option<i64>,
+) -> Option<RequestRecord> {
+    let Some(deadline_ns) = deadline_ns else {
+        return Some(transport.get(config).await);
+    };
+    let remaining_ns = deadline_ns.saturating_sub(clock.now_ns());
+    if remaining_ns <= 0 {
+        return None;
+    }
+    match race_cancel(clock, remaining_ns, transport.get(config)).await {
+        CancelOutcome::Completed(record) => Some(record),
+        CancelOutcome::Cancelled => None,
+    }
+}
+
+fn mark_cancelled(record: &mut RequestRecord, now_ns: i64, delay_ns: i64) {
+    record.end_ns = Some(now_ns);
+    record.status = Some(499);
+    record.cancellation_ns = Some(now_ns);
+    record.error = Some(ErrorDetails::cancelled(format!(
+        "RequestCancellationError: polling lifecycle cancelled {delay_ns}ns after submission was sent"
+    )));
+    if let Some(trace) = &mut record.trace {
+        trace.error_timestamp_ns = Some(now_ns);
     }
 }
 

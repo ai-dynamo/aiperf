@@ -38,6 +38,8 @@ use serde_json::Value;
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{TurnDispatchOutcome, TurnDispatcher};
 
+mod endpoint_dispatch;
+
 /// Return true only for an SSE message that the current OpenAI-chat parser
 /// would record as a token. This mirrors the Python worker callback at
 /// `src/aiperf/workers/worker.py:474-487`: role-only, usage-only, finish-only,
@@ -468,6 +470,9 @@ impl TurnDispatcher for TransportSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let is_final_turn = turn.is_final_turn();
+        let endpoint = turn.endpoint.clone();
+        let mut endpoint_config = turn.endpoint_config.clone();
+        endpoint_config.streaming = turn.streaming;
         let request_body = if turn.request_body.is_none() {
             let messages = turn
                 .messages
@@ -483,7 +488,7 @@ impl TurnDispatcher for TransportSink {
             None
         };
         let result = self
-            .dispatch_collect_with_hooks(
+            .dispatch_endpoint_collect_with_hooks(
                 HttpRequest {
                     uuid: turn.uuid,
                     input_length: turn.input_length,
@@ -500,6 +505,8 @@ impl TurnDispatcher for TransportSink {
                     cancel_after_ns: turn.cancel_after_ns,
                     url_index: turn.url_index,
                 },
+                endpoint.as_ref(),
+                &endpoint_config,
                 observer,
                 on_first_token,
             )

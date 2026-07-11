@@ -27,7 +27,8 @@ use aiperf_dataset::{
     SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
 use aiperf_endpoints::{
-    CreditPhase, EndpointConfig, Media as EndpointMedia, ModelEndpoint, Turn as EndpointTurn,
+    ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, Media as EndpointMedia, ModelEndpoint,
+    Turn as EndpointTurn,
 };
 use aiperf_graph::segment::intern_message;
 use aiperf_graph::wire::OpenAiChatMessage;
@@ -555,6 +556,12 @@ impl LegacySessionBackend {
             request_headers: BTreeMap::new(),
             request_parameters: BTreeMap::new(),
             endpoint_path: None,
+            endpoint: Arc::new(ChatEndpoint),
+            endpoint_config: EndpointConfig {
+                streaming: true,
+                use_server_token_count: true,
+                ..EndpointConfig::default()
+            },
             streaming: true,
             audio_duration_seconds: None,
             timestamp_ms: metadata.timestamp_ms,
@@ -636,6 +643,10 @@ pub struct TurnToSend {
     pub request_parameters: BTreeMap<String, String>,
     /// Endpoint path selected by the endpoint resolver.
     pub endpoint_path: Option<String>,
+    /// Endpoint adapter that formatted the request and parses its response.
+    pub endpoint: Arc<dyn Endpoint + Send + Sync>,
+    /// Effective endpoint configuration for response parsing and wire lifecycle policy.
+    pub endpoint_config: EndpointConfig,
     /// Whether this endpoint returns an SSE stream.
     pub streaming: bool,
     /// Audio duration propagated into ASR metrics.
@@ -895,7 +906,7 @@ impl NativeSessionBackend {
         model_endpoint.endpoint.streaming &= endpoint_metadata.supports_streaming;
         let materialized = self.materializer.materialize(
             &session,
-            endpoint,
+            endpoint.as_ref(),
             &model_endpoint,
             CreditPhase::Profiling,
             &Overrides::new(),
@@ -931,6 +942,8 @@ impl NativeSessionBackend {
             request_headers: materialized.headers,
             request_parameters: materialized.parameters,
             endpoint_path,
+            endpoint,
+            endpoint_config: model_endpoint.endpoint,
             streaming: materialized.streaming,
             audio_duration_seconds: materialized.audio_duration_seconds,
             timestamp_ms: timing.timestamp_ms,

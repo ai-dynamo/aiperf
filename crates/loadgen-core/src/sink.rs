@@ -38,6 +38,18 @@ pub struct ObservedUsage {
     pub completion_tokens: Option<usize>,
 }
 
+/// Endpoint-specific modality facts that feed native metrics without exposing
+/// endpoint wire models to the transport-neutral observer seam.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ObservedEndpointMetrics {
+    /// Number of image inputs in the exact request payload.
+    pub num_images: Option<usize>,
+    /// Server-reported video inference duration in seconds.
+    pub video_inference_seconds: Option<f64>,
+    /// Server-reported peak video-generation memory in MiB.
+    pub video_peak_memory_mb: Option<f64>,
+}
+
 /// Measurement hook fed by any sink. Timestamps are milliseconds relative to
 /// run start. The observer is intentionally local-loop friendly: it has no
 /// `Send`/`Sync` supertraits, so thread-per-core workers can accumulate through
@@ -73,6 +85,11 @@ pub trait RequestObserver {
     /// Individual fields remain absent when the endpoint reports no usage. The
     /// default is a no-op; observers that reconcile counts override it.
     fn on_usage(&self, _uuid: Uuid, _usage: ObservedUsage) {}
+    /// Record endpoint-specific image/video facts.
+    ///
+    /// The default is a no-op so token-only transports and observers do not pay
+    /// for modality handling. Endpoint-aware observer tees forward it unchanged.
+    fn on_endpoint_metrics(&self, _uuid: Uuid, _metrics: ObservedEndpointMetrics) {}
     /// Record terminal status for the request.
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus);
 }

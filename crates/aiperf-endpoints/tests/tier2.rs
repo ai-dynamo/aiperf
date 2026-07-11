@@ -101,6 +101,21 @@ fn ranking_dialects_format_parse_and_account_vendor_shapes() {
         .unwrap()
         .unwrap();
     assert!(matches!(parsed.data, Some(ResponseData::Rankings { .. })));
+
+    let authored_empty = NimRankingsEndpoint
+        .format_payload(&request(
+            EndpointType::NimRankings,
+            vec![Turn {
+                texts: vec![named("query", &[""]), named("passages", &["", "kept"])],
+                ..Turn::default()
+            }],
+        ))
+        .unwrap();
+    assert_eq!(authored_empty["query"]["text"], "");
+    assert_eq!(
+        authored_empty["passages"],
+        json!([{"text":""},{"text":"kept"}])
+    );
 }
 
 #[test]
@@ -143,6 +158,14 @@ fn nim_embeddings_pairs_multimodal_inputs_and_preserves_strict_parser() {
             ))
             .is_err()
     );
+    for empty_data in [Value::Null, json!([]), json!({})] {
+        assert!(
+            NimEmbeddingsEndpoint
+                .parse_response(&ServerResponse::from_json(9, json!({"data":empty_data})))
+                .unwrap()
+                .is_none()
+        );
+    }
 }
 
 #[test]
