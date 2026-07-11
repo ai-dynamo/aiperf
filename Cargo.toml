@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# internal crates
+loadgen-core = { path = "crates/loadgen-core" }
+aiperf = { path = "crates/aiperf" }
+aiperf-clock = { path = "crates/aiperf-clock" }
+
+# external (shared versions)
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+blake3 = "1"
+futures = "0.3"
+libc = "0.2"
+reqwest = { version = "0.12", features = ["stream", "json"] }
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }

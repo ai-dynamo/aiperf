@@ -9,6 +9,11 @@ use anyhow::{Context, Result};
 
 use loadgen_core::collector::{TraceDistributionStats, TraceSimulationReport};
 
+/// Width of the horizontal rule separating the latency table's header/body.
+/// Historical fixed width (does not track the column format above); kept as a
+/// single source of truth so the two rules stay in lock-step.
+const TABLE_RULE_WIDTH: usize = 82;
+
 fn metric_row(name: &str, d: &TraceDistributionStats) -> String {
     format!(
         "{name:<26} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>10.3}",
@@ -17,23 +22,26 @@ fn metric_row(name: &str, d: &TraceDistributionStats) -> String {
 }
 
 /// Print the full metrics table to stdout.
-pub fn print_report_table(report: &TraceSimulationReport, errors: usize) {
+pub fn print_report_table(report: &TraceSimulationReport) {
     let c = &report.request_counts;
     let t = &report.throughput;
     let l = &report.latency;
+
+    // Requests that never completed are surfaced as errors.
+    let errors = c.num_requests.saturating_sub(c.completed_requests);
 
     println!();
     println!(
         "{:<26} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
         "Latency (ms)", "avg", "min", "p50", "p90", "p95", "p99",
     );
-    println!("{}", "-".repeat(82));
+    println!("{}", "-".repeat(TABLE_RULE_WIDTH));
     println!("{}", metric_row("Time to First Token", &l.ttft));
     println!("{}", metric_row("Time to Second Token", &l.ttst));
     println!("{}", metric_row("Inter Token Latency", &l.itl.distribution));
     println!("{}", metric_row("Time per Output Token", &l.tpot));
     println!("{}", metric_row("Request Latency (e2e)", &l.e2e));
-    println!("{}", "-".repeat(82));
+    println!("{}", "-".repeat(TABLE_RULE_WIDTH));
     println!(
         "Requests        : {} total, {} completed, {} errors ({:.1}% error rate)",
         c.num_requests,

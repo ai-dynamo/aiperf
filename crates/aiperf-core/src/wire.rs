@@ -57,9 +57,19 @@ impl WireTraceSink for JsonlWireSink {
         let Ok(line) = serde_json::to_string(&entry) else {
             return;
         };
+        // No per-record flush: it would defeat the `BufWriter` on the hot path.
+        // Durability at shutdown is handled by the `Drop` impl below.
         if let Ok(mut writer) = self.writer.lock() {
             let _ = writer.write_all(line.as_bytes());
             let _ = writer.write_all(b"\n");
+        }
+    }
+}
+
+impl Drop for JsonlWireSink {
+    /// Flush any buffered wire entries so records survive shutdown.
+    fn drop(&mut self) {
+        if let Ok(mut writer) = self.writer.lock() {
             let _ = writer.flush();
         }
     }

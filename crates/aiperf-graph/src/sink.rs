@@ -29,36 +29,21 @@ use aiperf_core::http_sink::{ChatMessage, HttpSink};
 pub struct GraphReply<M> {
     /// The assistant message to splice downstream, or `None` on empty/failed.
     pub message: Option<M>,
-    pub status: ReplyStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplyStatus {
-    Ok,
-    Empty,
-    Failed,
 }
 
 impl<M: WireMessage> GraphReply<M> {
-    /// Build a reply from assistant text (empty text -> `Empty`).
+    /// Build a reply from assistant text (empty text -> no message).
     pub fn from_text(text: String) -> Self {
         if text.is_empty() {
-            GraphReply {
-                message: None,
-                status: ReplyStatus::Empty,
-            }
+            GraphReply { message: None }
         } else {
             GraphReply {
                 message: Some(M::assistant(text)),
-                status: ReplyStatus::Ok,
             }
         }
     }
     pub fn failed() -> Self {
-        GraphReply {
-            message: None,
-            status: ReplyStatus::Failed,
-        }
+        GraphReply { message: None }
     }
 }
 

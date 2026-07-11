@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 
-use crate::executor::TraceExecutor;
+use crate::executor::{ExecutorFlags, TraceExecutor};
 use crate::materialize::SegmentItemsMaterializer;
 use crate::model::{GraphRecord, TraceRecord};
 use crate::runtime::Handle;
@@ -196,28 +196,22 @@ pub(crate) fn build_workload(
     (pool, graph, isl_by_node)
 }
 
-/// Raise this process's open-file soft limit to its hard limit, so a
-/// high-concurrency run can open tens of thousands of sockets without a shell
-/// `ulimit`. No root needed (soft up to hard).
-#[cfg(target_os = "linux")]
-fn raise_fd_limit() {
-    unsafe {
-        let mut lim = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 {
-            lim.rlim_cur = lim.rlim_max;
-            let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &lim);
-        }
+/// Default server base URL when none is configured (co-located mock/frontend).
+pub(crate) const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8000";
+
+/// Resolve the worker server list: the configured base URLs, or a single
+/// [`DEFAULT_BASE_URL`] when none were given.
+pub(crate) fn resolve_servers(base_urls: &[String]) -> Vec<String> {
+    if base_urls.is_empty() {
+        vec![DEFAULT_BASE_URL.to_string()]
+    } else {
+        base_urls.to_vec()
     }
 }
-#[cfg(not(target_os = "linux"))]
-fn raise_fd_limit() {}
 
 /// Run the benchmark and return the aggregated report + elapsed seconds.
 pub fn run_bench(cfg: BenchConfig) -> (TraceSimulationReport, f64) {
-    raise_fd_limit();
+    crate::syslimits::raise_fd_limit();
     let (pool, graph, isl_by_node) = build_workload(cfg.turns);
     let graph = Arc::new(graph);
     let pool = Arc::new(pool);
@@ -237,11 +231,7 @@ pub fn run_bench(cfg: BenchConfig) -> (TraceSimulationReport, f64) {
         .filter(|&n| n > 0)
         .map(|n| Arc::new(Semaphore::new(n)));
 
-    let servers = if cfg.base_urls.is_empty() {
-        vec!["http://127.0.0.1:8000".to_string()]
-    } else {
-        cfg.base_urls.clone()
-    };
+    let servers = resolve_servers(&cfg.base_urls);
     std::thread::scope(|scope| {
         for widx in 0..cfg.workers.max(1) {
             let (graph, pool, isl, obs, next) = (
@@ -359,9 +349,7 @@ async fn run_lane(
             materializer.clone(),
             sink.clone(),
             handle.clone(),
-            false,
-            false,
-            false,
+            ExecutorFlags::default(),
         ) {
             Ok(e) => e,
             Err(_) => continue,

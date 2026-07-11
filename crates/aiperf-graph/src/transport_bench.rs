@@ -30,8 +30,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 
-use crate::bench::{BenchConfig, build_workload};
-use crate::executor::TraceExecutor;
+use crate::bench::{BenchConfig, build_workload, resolve_servers};
+use crate::executor::{ExecutorFlags, TraceExecutor};
 use crate::materialize::SegmentItemsMaterializer;
 use crate::model::{GraphRecord, TraceRecord};
 use crate::runtime::Handle;
@@ -73,6 +73,10 @@ struct WorkerMetrics {
     errors: u64,
     output_tokens: u64,
 }
+
+/// The globally merged sample set built from every worker's [`WorkerMetrics`]:
+/// `(ttft_ms, completed, errors, output_tokens)`.
+type MergedMetrics = (Vec<f32>, u64, u64, u64);
 
 /// The transport-bench result: throughput + TTFT distribution.
 #[derive(Debug, Clone)]
@@ -188,9 +192,11 @@ impl GraphSink<Msg> for TransportMeteredSink {
         let mut first_token_ns: Option<i64> = None;
         let mut tokens: u64 = 0;
         let mut content = String::new();
+        // Take the sender OUT of the RefCell so its borrow is not held across the
+        // `.await` below (clippy `await_holding_refcell_ref`); `ensure()` above
+        // guarantees it is `Some`. It is put back for the lane's next request.
+        let mut sender = self.sender.borrow_mut().take().unwrap();
         let status = {
-            let mut c = self.sender.borrow_mut();
-            let sender = c.as_mut().unwrap();
             // Transport's first-SSE-message signal (content-agnostic); TTFT and
             // the successor gate below fire on the first real content token.
             let mut on_ft = |_ns: i64| {};
@@ -199,22 +205,9 @@ impl GraphSink<Msg> for TransportMeteredSink {
                     && d != "[DONE]"
                     && let Ok(chunk) = serde_json::from_str::<ChatChunk>(d)
                 {
-                    let mut had_token = false;
-                    for ch in &chunk.choices {
-                        if let Some(t) = &ch.delta.content
-                            && !t.is_empty()
-                        {
-                            content.push_str(t);
-                            had_token = true;
-                        }
-                        if let Some(t) = &ch.delta.reasoning_content
-                            && !t.is_empty()
-                        {
-                            content.push_str(t);
-                            had_token = true;
-                        }
-                    }
-                    if had_token {
+                    let delta = chunk.delta_text();
+                    if !delta.is_empty() {
+                        content.push_str(&delta);
                         tokens += 1;
                         if first_token_ns.is_none() {
                             first_token_ns = Some((m.perf_ns - req_start).max(0));
@@ -225,7 +218,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
             };
             self.client
                 .dispatch_streaming(
-                    sender,
+                    &mut sender,
                     &self.url,
                     &self.headers,
                     body,
@@ -234,6 +227,9 @@ impl GraphSink<Msg> for TransportMeteredSink {
                 )
                 .await
         };
+        // Return the sender to the lane's slot for reuse (the error path below
+        // overrides this with `None` to force a re-establish).
+        *self.sender.borrow_mut() = Some(sender);
 
         let ok = matches!(status, Ok(200));
         if ok {
@@ -263,42 +259,22 @@ fn chat_headers() -> BTreeMap<String, String> {
     h
 }
 
-#[cfg(target_os = "linux")]
-fn raise_fd_limit() {
-    unsafe {
-        let mut lim = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 {
-            lim.rlim_cur = lim.rlim_max;
-            let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &lim);
-        }
-    }
-}
-#[cfg(not(target_os = "linux"))]
-fn raise_fd_limit() {}
-
 /// Run the transport-backed benchmark and return the throughput + TTFT report.
 /// `http2` selects h2c prior-knowledge (required for the multiplexed connection
 /// pool); when false, HTTP/1.1 is used (one standalone connection per lane).
 /// `conns` is the number of shared connections opened per worker thread.
 pub fn run_transport_bench(cfg: BenchConfig, http2: bool, conns: usize) -> GraphRpsReport {
-    raise_fd_limit();
+    crate::syslimits::raise_fd_limit();
     let (pool, graph, _isl) = build_workload(cfg.turns);
     let graph = Arc::new(graph);
     let pool = Arc::new(pool);
 
     let start = Instant::now();
     let next = Arc::new(AtomicUsize::new(0));
-    let merged: Arc<std::sync::Mutex<(Vec<f32>, u64, u64, u64)>> =
+    let merged: Arc<std::sync::Mutex<MergedMetrics>> =
         Arc::new(std::sync::Mutex::new((Vec::new(), 0, 0, 0)));
 
-    let servers = if cfg.base_urls.is_empty() {
-        vec!["http://127.0.0.1:8000".to_string()]
-    } else {
-        cfg.base_urls.clone()
-    };
+    let servers = resolve_servers(&cfg.base_urls);
 
     std::thread::scope(|scope| {
         for widx in 0..cfg.workers.max(1) {
@@ -479,9 +455,7 @@ async fn transport_run_lane(
             materializer.clone(),
             sink.clone(),
             handle.clone(),
-            false,
-            false,
-            false,
+            ExecutorFlags::default(),
         ) {
             Ok(e) => e,
             Err(_) => continue,

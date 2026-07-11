@@ -50,7 +50,9 @@ pub async fn run(
         }));
     }
     for h in handles {
-        let _ = h.await;
+        if let Err(e) = h.await {
+            tracing::warn!("request task join failed: {e}");
+        }
     }
 
     Ok(obs.finish(obs.now_ms()))

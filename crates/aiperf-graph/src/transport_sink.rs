@@ -135,15 +135,7 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
             let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
                 continue;
             };
-            let mut delta = String::new();
-            for choice in &chunk.choices {
-                if let Some(text) = &choice.delta.content {
-                    delta.push_str(text);
-                }
-                if let Some(reasoning) = &choice.delta.reasoning_content {
-                    delta.push_str(reasoning);
-                }
-            }
+            let delta = chunk.delta_text();
             if !delta.is_empty() {
                 // Real per-token arrival time from the transport's clock stamp.
                 self.observer.on_token(uuid, self.ms(msg.perf_ns));

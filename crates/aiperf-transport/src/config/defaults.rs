@@ -6,6 +6,11 @@
 use crate::models::HttpVersion;
 
 /// Client-wide configuration. Timeouts are clock-nanoseconds.
+///
+/// NOTE: `connect_timeout_ns`, `request_timeout_ns`, and `keepalive_ns` are
+/// currently accepted but NOT enforced anywhere in this crate — no connect,
+/// request, or keepalive deadline is applied. They are retained for API/config
+/// compatibility; wiring up enforcement is future work.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     pub connect_timeout_ns: Option<i64>,

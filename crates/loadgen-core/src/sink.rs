@@ -1,0 +1,137 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Transport-neutral dispatch seam.
+//!
+//! A scheduling driver produces requests of some concrete type `R` and drives
+//! them through [`RequestSink`]; measurements flow back through
+//! [`RequestObserver`] into a [`TraceCollector`](crate::collector::TraceCollector).
+//!
+//! `R` is the *transport-native* request and is defined by the transport, not
+//! by this crate:
+//!   - online HTTP uses a slim request type owned by the load generator;
+//!   - the simulated engine uses the mocker's `DirectRequest`.
+//!
+//! Each such type implements [`Dispatchable`], so this crate carries **no**
+//! dependency on any engine/router/KV types — those live behind the trait, in
+//! whichever crate defines the concrete request.
+
+use uuid::Uuid;
+
+use crate::collector::ReplayTerminalStatus;
+
+/// Measurement hook fed by any sink. Timestamps are milliseconds relative to
+/// run start.
+///
+/// TTFT is derived by the collector as the first [`on_token`](RequestObserver::on_token)
+/// for a request, so sinks do not emit a separate first-token event.
+pub trait RequestObserver: Send + Sync {
+    /// Record request arrival with its input length and requested output length.
+    fn on_arrival(
+        &self,
+        uuid: Uuid,
+        arrival_ms: f64,
+        input_length: usize,
+        requested_output_length: usize,
+    );
+    /// Record admission (scheduling start), with the count of prefix-cache-reused input tokens.
+    fn on_admit(&self, uuid: Uuid, admit_ms: f64, reused_input_tokens: usize);
+    /// Record one output token observed at `at_ms`.
+    fn on_token(&self, uuid: Uuid, at_ms: f64);
+    /// Record terminal status for the request.
+    fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus);
+}
+
+/// What every dispatchable request exposes to the sink and collector,
+/// independent of transport. Concrete request types (a slim HTTP request, the
+/// mocker's `DirectRequest`, …) implement this; this crate never names them.
+pub trait Dispatchable: Send + Sync {
+    /// Stable per-request identifier used to correlate observer events.
+    fn uuid(&self) -> Uuid;
+    /// Prompt length in tokens, for measurement accounting.
+    fn input_length(&self) -> usize;
+    /// Maximum number of output tokens to request.
+    fn max_output_tokens(&self) -> usize;
+}
+
+/// Dispatch one request of type `R` to a terminal state, resolving on completion.
+///
+/// Implementations emit measurement events through `obs`. `dispatch` returns
+/// `Err` only on a transport/dispatch failure the caller should surface; a
+/// request that completes with an error terminal status returns `Ok(())` after
+/// emitting `obs.on_terminal(..)`.
+///
+/// `R` is the transport-native request; a sink is implemented once per
+/// transport (e.g. `impl RequestSink<HttpRequest> for HttpSink`).
+#[async_trait::async_trait]
+pub trait RequestSink<R: Dispatchable>: Send + Sync {
+    /// Dispatch `req`, awaiting terminal completion.
+    async fn dispatch(&self, req: R, obs: &dyn RequestObserver) -> anyhow::Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// A minimal in-crate request implementing the seam — proves the trait is
+    /// usable with zero engine/transport deps.
+    struct TinyRequest {
+        uuid: Uuid,
+        input_length: usize,
+        max_output_tokens: usize,
+    }
+    impl Dispatchable for TinyRequest {
+        fn uuid(&self) -> Uuid {
+            self.uuid
+        }
+        fn input_length(&self) -> usize {
+            self.input_length
+        }
+        fn max_output_tokens(&self) -> usize {
+            self.max_output_tokens
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        tokens: Mutex<Vec<(Uuid, f64)>>,
+    }
+    impl RequestObserver for RecordingObserver {
+        fn on_arrival(&self, _u: Uuid, _a: f64, _i: usize, _o: usize) {}
+        fn on_admit(&self, _u: Uuid, _a: f64, _r: usize) {}
+        fn on_token(&self, u: Uuid, at: f64) {
+            self.tokens.lock().unwrap().push((u, at));
+        }
+        fn on_terminal(&self, _u: Uuid, _s: ReplayTerminalStatus) {}
+    }
+
+    struct EchoSink;
+    #[async_trait::async_trait]
+    impl RequestSink<TinyRequest> for EchoSink {
+        async fn dispatch(
+            &self,
+            req: TinyRequest,
+            obs: &dyn RequestObserver,
+        ) -> anyhow::Result<()> {
+            obs.on_arrival(req.uuid(), 0.0, req.input_length(), req.max_output_tokens());
+            for i in 0..req.max_output_tokens() {
+                obs.on_token(req.uuid(), i as f64);
+            }
+            obs.on_terminal(req.uuid(), ReplayTerminalStatus::Completed);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn sink_emits_one_token_per_output() {
+        let obs = RecordingObserver::default();
+        let req = TinyRequest {
+            uuid: Uuid::nil(),
+            input_length: 3,
+            max_output_tokens: 5,
+        };
+        EchoSink.dispatch(req, &obs).await.unwrap();
+        assert_eq!(obs.tokens.lock().unwrap().len(), 5);
+    }
+}

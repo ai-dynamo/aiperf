@@ -30,13 +30,19 @@ pub fn dedup_path_overlap(base_path: &str, sub_path: &str) -> String {
 }
 
 /// Build a full URL from a base, an endpoint sub-path, and endpoint query params.
-pub fn build_url(base: &str, sub_path: &str, params: &BTreeMap<String, String>) -> String {
+///
+/// Returns `Err` (rather than panicking) when `base` is not a parseable URL.
+pub fn build_url(
+    base: &str,
+    sub_path: &str,
+    params: &BTreeMap<String, String>,
+) -> Result<String, url::ParseError> {
     let raw = if has_http_scheme(base) {
         base.to_string()
     } else {
         format!("http://{base}")
     };
-    let mut parsed = Url::parse(&raw).expect("valid base url");
+    let mut parsed = Url::parse(&raw)?;
 
     let base_path = parsed.path().trim_end_matches('/').to_string();
     let sub = sub_path.trim_start_matches('/');
@@ -55,7 +61,7 @@ pub fn build_url(base: &str, sub_path: &str, params: &BTreeMap<String, String>) 
         }
         parsed.query_pairs_mut().clear().extend_pairs(merged.iter());
     }
-    parsed.into()
+    Ok(parsed.into())
 }
 
 #[cfg(test)]
@@ -70,7 +76,7 @@ mod tests {
     #[test]
     fn adds_scheme_when_missing() {
         assert_eq!(
-            build_url("localhost:8000", "v1/chat/completions", &no_params()),
+            build_url("localhost:8000", "v1/chat/completions", &no_params()).unwrap(),
             "http://localhost:8000/v1/chat/completions"
         );
     }
@@ -100,7 +106,7 @@ mod tests {
     fn merges_query_params_endpoint_overrides() {
         let mut p = BTreeMap::new();
         p.insert("b".to_string(), "2".to_string());
-        let url = build_url("http://h/base?a=1", "sub", &p);
+        let url = build_url("http://h/base?a=1", "sub", &p).unwrap();
         // existing a=1 preserved, endpoint b=2 added
         assert!(url.starts_with("http://h/base/sub?"));
         assert!(url.contains("a=1"));

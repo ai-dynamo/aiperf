@@ -25,6 +25,13 @@ use aiperf::workload::SkeletonWorkload;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// Default number of conversation instances for `--mode graph`.
+const DEFAULT_INSTANCES: usize = 400_000;
+/// RPS thresholds for the graph-mode summary verdict lines.
+const RPS_1M: f64 = 1_000_000.0;
+const RPS_500K: f64 = 500_000.0;
+const RPS_300K: f64 = 300_000.0;
+
 fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -89,13 +96,34 @@ fn run_online_mode(argv: &[String]) -> anyhow::Result<()> {
     };
     let rt = tokio::runtime::Runtime::new()?;
     let report = rt.block_on(run(base_url, model, workload, concurrency))?;
-    print_report_table(&report, 0);
+    print_report_table(&report);
     Ok(())
 }
 
-fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
-    use aiperf_graph::bench::{BenchConfig, run_bench};
-    use aiperf_graph::transport_bench::run_transport_bench;
+/// Parsed graph-mode invocation: the bench config plus transport-selection
+/// knobs and the raw `base_url` string (retained for the startup banner).
+struct GraphParams {
+    cfg: aiperf_graph::bench::BenchConfig,
+    base_url: String,
+    use_reqwest: bool,
+    http2: bool,
+    conns: usize,
+}
+
+/// Aggregated graph-mode results, formatted by [`print_graph_summary`].
+struct GraphSummary {
+    rps: f64,
+    p50: f64,
+    p90: f64,
+    p99: f64,
+    mean: f64,
+    secs: f64,
+    extra: String,
+}
+
+/// Parse `argv` into a [`GraphParams`] (positionals + flags → bench config).
+fn parse_graph_config(argv: &[String]) -> GraphParams {
+    use aiperf_graph::bench::BenchConfig;
 
     let value_flags = [
         "--mode",
@@ -122,7 +150,7 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
     let workers: usize = flag_val(argv, "--workers").unwrap_or(cores);
     let concurrency: usize = flag_val(argv, "--concurrency").unwrap_or(64);
     let max_tokens: usize = flag_val(argv, "--osl").unwrap_or(1);
-    let instances: usize = flag_val(argv, "--instances").unwrap_or(400_000);
+    let instances: usize = flag_val(argv, "--instances").unwrap_or(DEFAULT_INSTANCES);
     let request_concurrency: Option<usize> = flag_val(argv, "--request-concurrency");
     let prefill_concurrency: Option<usize> = flag_val(argv, "--prefill-concurrency");
     // Backend: aiperf-transport (default) or reqwest (--reqwest). For the
@@ -133,11 +161,6 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
     // into h2c prior-knowledge (multiplexed pool).
     let http2 = argv.iter().any(|a| a == "--http2");
     let conns: usize = flag_val(argv, "--conns").unwrap_or(8);
-    if use_reqwest && argv.iter().any(|a| a == "--http2") {
-        // reqwest build_client() opts into h2c prior-knowledge via GRAPH_HTTP2.
-        // SAFETY: single-threaded startup, before any worker thread spawns.
-        unsafe { std::env::set_var("GRAPH_HTTP2", "1") };
-    }
 
     let cfg = BenchConfig {
         base_urls: base_url.split(',').map(|s| s.trim().to_string()).collect(),
@@ -151,66 +174,104 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
         prefill_concurrency,
     };
 
+    GraphParams {
+        cfg,
+        base_url,
+        use_reqwest,
+        http2,
+        conns,
+    }
+}
+
+/// Render the graph-mode summary to stdout (byte-exact with the legacy output).
+fn print_graph_summary(s: &GraphSummary, backend: &str) {
+    let rps = s.rps;
+    println!("\n=== aiperf --mode graph (Graph-IR E2E, streaming SSE, backend={backend}) ===");
+    println!("{}", s.extra);
+    println!("wall        : {:.3} s", s.secs);
+    println!("RPS         : {rps:.0} req/s");
+    println!("TTFT p50    : {:.3} ms", s.p50);
+    println!("TTFT p90    : {:.3} ms", s.p90);
+    println!("TTFT p99    : {:.3} ms", s.p99);
+    println!("TTFT mean   : {:.3} ms", s.mean);
+    if rps >= RPS_1M {
+        println!("\nPROVEN: aiperf --mode graph >= 1M req/s ({rps:.0}, backend={backend})");
+    } else if rps >= RPS_500K {
+        println!("\nPROVEN: aiperf --mode graph >= 500k req/s ({rps:.0}, backend={backend})");
+    } else if rps >= RPS_300K {
+        println!("\n>= 300k: {rps:.0}");
+    } else {
+        println!("\nbelow 300k: {rps:.0}");
+    }
+}
+
+fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
+    use aiperf_graph::bench::run_bench;
+    use aiperf_graph::transport_bench::run_transport_bench;
+
+    let GraphParams {
+        cfg,
+        base_url,
+        use_reqwest,
+        http2,
+        conns,
+    } = parse_graph_config(argv);
+
     let backend = if use_reqwest {
         "reqwest"
     } else {
         "aiperf-transport"
     };
+    if use_reqwest && http2 {
+        // reqwest build_client() opts into h2c prior-knowledge via GRAPH_HTTP2.
+        // SAFETY: single-threaded startup, before any worker thread spawns.
+        unsafe { std::env::set_var("GRAPH_HTTP2", "1") };
+    }
+
     eprintln!(
-        "aiperf --mode graph: backend={backend} base={base_url} turns={turns} \
-         instances={instances} workers={workers} concurrency={concurrency} osl={max_tokens} \
+        "aiperf --mode graph: backend={backend} base={base_url} turns={} \
+         instances={} workers={} concurrency={} osl={} \
          conns/worker={conns} offered_concurrency={} http2={http2}",
-        workers * concurrency,
+        cfg.turns,
+        cfg.instances,
+        cfg.workers,
+        cfg.concurrency,
+        cfg.max_tokens,
+        cfg.workers * cfg.concurrency,
     );
 
-    let total_requests = instances.saturating_mul(turns);
-    let (rps, p50, p90, p99, mean, secs, extra) = if use_reqwest {
+    let total_requests = cfg.instances.saturating_mul(cfg.turns);
+    let summary = if use_reqwest {
         let (report, secs) = run_bench(cfg);
         let rps = total_requests as f64 / secs;
-        (
+        GraphSummary {
             rps,
-            report.latency.ttft.median_ms,
-            report.latency.ttft.p90_ms,
-            report.latency.ttft.p99_ms,
-            report.latency.ttft.mean_ms,
+            p50: report.latency.ttft.median_ms,
+            p90: report.latency.ttft.p90_ms,
+            p99: report.latency.ttft.p99_ms,
+            mean: report.latency.ttft.mean_ms,
             secs,
-            format!("requests={total_requests}"),
-        )
+            extra: format!("requests={total_requests}"),
+        }
     } else {
         let r = run_transport_bench(cfg, http2, conns);
-        (
-            r.rps(),
-            r.ttft_p50_ms,
-            r.ttft_p90_ms,
-            r.ttft_p99_ms,
-            r.ttft_mean_ms,
-            r.wall_secs,
-            format!(
+        GraphSummary {
+            rps: r.rps(),
+            p50: r.ttft_p50_ms,
+            p90: r.ttft_p90_ms,
+            p99: r.ttft_p99_ms,
+            mean: r.ttft_mean_ms,
+            secs: r.wall_secs,
+            extra: format!(
                 "completed={} errors={} output_tokens={} output_tok/s={:.0}",
                 r.completed,
                 r.errors,
                 r.output_tokens,
                 r.output_tps()
             ),
-        )
+        }
     };
 
-    println!("\n=== aiperf --mode graph (Graph-IR E2E, streaming SSE, backend={backend}) ===");
-    println!("{extra}");
-    println!("wall        : {secs:.3} s");
-    println!("RPS         : {rps:.0} req/s");
-    println!("TTFT p50    : {p50:.3} ms");
-    println!("TTFT p90    : {p90:.3} ms");
-    println!("TTFT p99    : {p99:.3} ms");
-    println!("TTFT mean   : {mean:.3} ms");
-    if rps >= 1_000_000.0 {
-        println!("\nPROVEN: aiperf --mode graph >= 1M req/s ({rps:.0}, backend={backend})");
-    } else if rps >= 500_000.0 {
-        println!("\nPROVEN: aiperf --mode graph >= 500k req/s ({rps:.0}, backend={backend})");
-    } else if rps >= 300_000.0 {
-        println!("\n>= 300k: {rps:.0}");
-    } else {
-        println!("\nbelow 300k: {rps:.0}");
-    }
+    print_graph_summary(&summary, backend);
     Ok(())
 }

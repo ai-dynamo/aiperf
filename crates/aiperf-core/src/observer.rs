@@ -65,7 +65,7 @@ impl CollectorObserver {
 
     /// Milliseconds since the shared start instant.
     pub fn now_ms(&self) -> f64 {
-        self.start.elapsed().as_secs_f64() * 1000.0
+        crate::elapsed_ms(self.start)
     }
 
     /// Produce the report, draining the accumulated collector.

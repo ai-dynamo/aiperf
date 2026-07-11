@@ -12,8 +12,6 @@ pub enum ErrorKind {
     Sse,
     /// Request cancelled after being sent (`cancel_after_ns`). HTTP 499.
     Cancelled,
-    /// The request body was never fully sent before the send-timeout safety net.
-    SendTimeout,
     /// Connection establishment (DNS/TCP/TLS/handshake) failed.
     Connect,
     /// A read/response timeout elapsed.
@@ -55,14 +53,6 @@ impl ErrorDetails {
         Self {
             kind: ErrorKind::Cancelled,
             code: Some(499),
-            message: message.into(),
-        }
-    }
-    /// The request body was never fully sent.
-    pub fn send_timeout(message: impl Into<String>) -> Self {
-        Self {
-            kind: ErrorKind::SendTimeout,
-            code: Some(0),
             message: message.into(),
         }
     }

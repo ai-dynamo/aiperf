@@ -22,6 +22,25 @@ pub struct ChatChunk {
     pub usage: Option<Usage>,
 }
 
+impl ChatChunk {
+    /// Concatenated text of this chunk's content (and reasoning) deltas across
+    /// all choices. Empty for role-only or finish-only chunks, which are not
+    /// counted as output tokens. Reasoning-model output (`reasoning_content`,
+    /// e.g. Qwen3/DeepSeek-R1) counts as output the same as regular content.
+    pub fn delta_text(&self) -> String {
+        let mut out = String::new();
+        for choice in &self.choices {
+            if let Some(text) = &choice.delta.content {
+                out.push_str(text);
+            }
+            if let Some(reasoning) = &choice.delta.reasoning_content {
+                out.push_str(reasoning);
+            }
+        }
+        out
+    }
+}
+
 /// One choice within a chunk.
 #[derive(Debug, Deserialize)]
 pub struct ChatChoice {

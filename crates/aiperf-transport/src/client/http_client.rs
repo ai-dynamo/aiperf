@@ -29,6 +29,11 @@ struct ChunkTiming {
     recv_end: Option<i64>,
 }
 
+/// Map a response-body stream error into a transport [`ErrorDetails`].
+fn body_err(e: impl std::fmt::Display) -> ErrorDetails {
+    ErrorDetails::other(format!("body: {e}"))
+}
+
 pub struct HttpClient {
     clock: Rc<dyn Clock>,
     cfg: ClientConfig,
@@ -107,6 +112,35 @@ impl HttpClient {
         }
     }
 
+    /// Build the POST request shared by [`dispatch`](Self::dispatch) and
+    /// [`dispatch_streaming`](Self::dispatch_streaming). Uses origin-form URI +
+    /// explicit Host header so both HTTP/1.1 (Host required) and HTTP/2
+    /// (`:authority` derived) work. `sent_ns` is the shared cell that
+    /// [`TimedBody`] stamps at end-of-stream (the real "send complete").
+    fn build_request(
+        &self,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        sent_ns: Rc<std::cell::Cell<Option<i64>>>,
+    ) -> Result<hyper::Request<TimedBody>, ErrorDetails> {
+        let authority = url.authority();
+        let path_and_query = match url.query() {
+            Some(q) => format!("{}?{}", url.path(), q),
+            None => url.path().to_string(),
+        };
+        let mut builder = hyper::Request::builder()
+            .method("POST")
+            .uri(path_and_query.as_str());
+        builder = builder.header(hyper::header::HOST, authority);
+        for (k, v) in headers {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+        builder
+            .body(TimedBody::new(body, self.clock.clone(), sent_ns))
+            .map_err(|e| ErrorDetails::other(format!("build request: {e}")))
+    }
+
     /// Dispatch a request over an already-established (or pooled) `sender`,
     /// recording send/response timing into `trace`/`record`. Does not establish
     /// or close the connection, so the caller can return `sender` to a pool for
@@ -124,26 +158,10 @@ impl HttpClient {
         on_first_token: &mut impl FnMut(i64),
         body_len: usize,
     ) -> Result<(), ErrorDetails> {
-        // Build the request. Use origin-form URI + explicit Host header so both
-        // HTTP/1.1 (Host required) and HTTP/2 (:authority derived) work.
-        let authority = url.authority();
-        let path_and_query = match url.query() {
-            Some(q) => format!("{}?{}", url.path(), q),
-            None => url.path().to_string(),
-        };
-        let mut builder = hyper::Request::builder()
-            .method("POST")
-            .uri(path_and_query.as_str());
-        builder = builder.header(hyper::header::HOST, authority);
-        for (k, v) in headers {
-            builder = builder.header(k.as_str(), v.as_str());
-        }
         // Time when the request body is fully written (end-of-stream), captured
         // by TimedBody — the real "send complete", distinct from response-headers.
         let sent_ns = std::rc::Rc::new(std::cell::Cell::new(None));
-        let req = builder
-            .body(TimedBody::new(body, self.clock.clone(), sent_ns.clone()))
-            .map_err(|e| ErrorDetails::other(format!("build request: {e}")))?;
+        let req = self.build_request(url, headers, body, sent_ns.clone())?;
 
         trace.request_send_start_ns = Some(self.clock.now_ns());
         let resp = sender.send(req).await?;
@@ -204,7 +222,7 @@ impl HttpClient {
                     t.recv_end = Some(ts);
                     Ok(b)
                 }
-                Err(e) => Err(ErrorDetails::other(format!("body: {e}"))),
+                Err(e) => Err(body_err(e)),
             });
 
             let start_ns = record.start_ns;
@@ -233,7 +251,7 @@ impl HttpClient {
                 .await
                 .into_iter()
                 .collect::<Result<Vec<Bytes>, _>>()
-                .map_err(|e| ErrorDetails::other(format!("body: {e}")))?;
+                .map_err(body_err)?;
             let ts = self.clock.now_ns();
             let total: usize = collected.iter().map(|b| b.len()).sum();
             let mut text = String::new();
@@ -272,22 +290,10 @@ impl HttpClient {
     ) -> Result<u16, ErrorDetails> {
         let start_ns = self.clock.now_ns();
 
-        let authority = url.authority();
-        let path_and_query = match url.query() {
-            Some(q) => format!("{}?{}", url.path(), q),
-            None => url.path().to_string(),
-        };
-        let mut builder = hyper::Request::builder()
-            .method("POST")
-            .uri(path_and_query.as_str());
-        builder = builder.header(hyper::header::HOST, authority);
-        for (k, v) in headers {
-            builder = builder.header(k.as_str(), v.as_str());
-        }
-        let sent_ns = std::rc::Rc::new(std::cell::Cell::new(None));
-        let req = builder
-            .body(TimedBody::new(body, self.clock.clone(), sent_ns))
-            .map_err(|e| ErrorDetails::other(format!("build request: {e}")))?;
+        // This lean path discards the send-complete timing, so the TimedBody
+        // cell is write-only (never read back) — a throwaway.
+        let req =
+            self.build_request(url, headers, body, std::rc::Rc::new(std::cell::Cell::new(None)))?;
 
         let resp = sender.send(req).await?;
         let code = resp.status().as_u16();
@@ -297,8 +303,7 @@ impl HttpClient {
         }
 
         let body_stream = resp.into_body().into_data_stream();
-        let timed =
-            body_stream.map(|item| item.map_err(|e| ErrorDetails::other(format!("body: {e}"))));
+        let timed = body_stream.map(|item| item.map_err(body_err));
         let mut first = false;
         read_sse(timed, self.clock.clone(), |m: SseMessage| {
             if !first {

@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-clock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Wall-vs-virtual Clock abstraction: a Clock trait with a real (monotonic) RealClock and a virtual discrete-event SimClock, so async code runs identically live or simulated."
+
+[dependencies]
+tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true

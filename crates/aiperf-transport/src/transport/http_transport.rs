@@ -65,7 +65,15 @@ impl HttpTransport {
         mut on_first_token: impl FnMut(i64),
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
-        let full = build_url(&cfg.url, "", &cfg.params);
+        let full = match build_url(&cfg.url, "", &cfg.params) {
+            Ok(f) => f,
+            Err(e) => {
+                let mut r = RequestRecord::started(start_ns);
+                r.error = Some(ErrorDetails::other(format!("bad url {}: {e}", cfg.url)));
+                r.end_ns = Some(self.clock.now_ns());
+                return r;
+            }
+        };
         let headers = build_headers(
             cfg,
             streaming,

@@ -183,7 +183,7 @@ pub async fn establish(
             .await
             .map_err(ErrorDetails::from)?;
         trace.tcp_connect_end_ns = Some(clock.now_ns());
-        let sender = handshake(TokioIo::new(stream), false, clock.clone()).await?;
+        let sender = handshake(TokioIo::new(stream), false).await?;
         let dummy = SocketAddr::from(([127, 0, 0, 1], 0));
         return Ok((
             sender,
@@ -239,10 +239,10 @@ pub async fn establish(
         trace.tls_connect_end_ns = Some(clock.now_ns());
         let alpn_h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
         let use_h2 = force_h2 || (alpn_h2 && !force_h1);
-        handshake(TokioIo::new(tls), use_h2, clock.clone()).await?
+        handshake(TokioIo::new(tls), use_h2).await?
     } else {
         let use_h2 = force_h2; // cleartext: h2 only via prior-knowledge
-        handshake(TokioIo::new(tcp), use_h2, clock.clone()).await?
+        handshake(TokioIo::new(tcp), use_h2).await?
     };
 
     trace.local_ip = Some(local.ip().to_string());
@@ -253,7 +253,7 @@ pub async fn establish(
     Ok((sender, SocketInfo { local, remote }))
 }
 
-async fn handshake<I>(io: I, use_h2: bool, _clock: Rc<dyn Clock>) -> Result<Sender, ErrorDetails>
+async fn handshake<I>(io: I, use_h2: bool) -> Result<Sender, ErrorDetails>
 where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
 {

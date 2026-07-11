@@ -20,7 +20,7 @@ use uuid::Uuid;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{Dispatchable, RequestObserver, RequestSink};
 
-use crate::sse::{ChatChunk, SseEvent, parse_sse_line};
+use crate::sse::{SseEvent, parse_sse_line};
 use crate::wire::{WireEntry, WireTraceSink};
 
 /// A slim, transport-native request for the HTTP path.
@@ -116,23 +116,6 @@ pub struct StreamOutcome {
     pub finish_reason: Option<String>,
 }
 
-/// Concatenated text of a chunk's content (and reasoning) deltas. Empty for
-/// role-only or finish-only chunks, which are not counted as output tokens.
-/// Reasoning-model output (`reasoning_content`, e.g. Qwen3/DeepSeek-R1) counts
-/// as output the same as regular content.
-fn delta_text(chunk: &ChatChunk) -> String {
-    let mut out = String::new();
-    for choice in &chunk.choices {
-        if let Some(text) = &choice.delta.content {
-            out.push_str(text);
-        }
-        if let Some(reasoning) = &choice.delta.reasoning_content {
-            out.push_str(reasoning);
-        }
-    }
-    out
-}
-
 /// Streams `/v1/chat/completions` requests and emits measurement events.
 ///
 /// The `start` instant is shared with the run harness so all observer
@@ -190,7 +173,9 @@ impl HttpSink {
 
     /// Rebuild the HTTP client with transport config (timeout, auth, headers).
     pub fn with_http_config(mut self, cfg: &HttpConfig) -> Result<Self> {
-        let mut builder = reqwest::Client::builder();
+        // Match `build_client()`: `no_proxy()` so loopback benchmarking is never
+        // routed through an ambient HTTP_PROXY.
+        let mut builder = reqwest::Client::builder().no_proxy();
         if http2_enabled() {
             builder = builder.http2_prior_knowledge();
         }
@@ -224,7 +209,7 @@ impl HttpSink {
     }
 
     fn now_ms(&self) -> f64 {
-        self.start.elapsed().as_secs_f64() * 1000.0
+        crate::elapsed_ms(self.start)
     }
 
     /// Stream one chat request built from `messages`, accumulating measurements
@@ -273,12 +258,21 @@ impl HttpSink {
             .send()
             .await?;
         let status = resp.status().as_u16();
-        let resp = resp.error_for_status()?;
+        // On a non-2xx status, `error_for_status()` would drop the body — read it
+        // and attach it so the caller sees the server's error message.
+        if let Err(status_err) = resp.error_for_status_ref() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::Error::new(status_err)
+                .context(format!("HTTP {status} response body: {body}")));
+        }
 
         let capture_wire = self.wire.is_some();
         let mut stream = resp.bytes_stream();
-        let mut buf = String::new();
-        let mut raw = String::new();
+        // Raw network chunks are buffered as bytes and split into SSE lines on the
+        // byte buffer; only COMPLETE lines are UTF-8 decoded, so a multibyte
+        // sequence straddling a TCP chunk boundary is never corrupted.
+        let mut buf: Vec<u8> = Vec::new();
+        let mut raw: Vec<u8> = Vec::new();
         let mut content = String::new();
         let mut token_times: Vec<f64> = Vec::new();
         let mut terminal = false;
@@ -287,16 +281,16 @@ impl HttpSink {
         let mut finish_reason: Option<String> = None;
         while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
-            let text = String::from_utf8_lossy(&bytes);
             if capture_wire {
-                raw.push_str(&text);
+                raw.extend_from_slice(&bytes);
             }
-            buf.push_str(&text);
-            while let Some(nl) = buf.find('\n') {
-                let line: String = buf.drain(..=nl).collect();
+            buf.extend_from_slice(&bytes);
+            while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+                let line_bytes: Vec<u8> = buf.drain(..=nl).collect();
+                let line = String::from_utf8_lossy(&line_bytes);
                 match parse_sse_line(&line) {
                     SseEvent::Data(chunk) => {
-                        let delta = delta_text(&chunk);
+                        let delta = chunk.delta_text();
                         if !delta.is_empty() {
                             if token_times.is_empty() {
                                 on_first_token();
@@ -327,7 +321,7 @@ impl HttpSink {
                 uuid: uuid.to_string(),
                 status,
                 request: body,
-                response: raw,
+                response: String::from_utf8_lossy(&raw).into_owned(),
             });
         }
         Ok(StreamOutcome {
