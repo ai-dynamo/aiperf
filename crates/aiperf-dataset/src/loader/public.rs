@@ -361,7 +361,8 @@ impl Composer for HfInstructionComposer {
             if let Some(column) = &audio_column {
                 groups.extend(media_from_value(object.get(column), MediaKind::Audio));
             }
-            let turn = compose_media_turn(groups, config, tokenizer, segments, &mut finalizer)?;
+            let turn =
+                compose_media_turn(groups, config, tokenizer, segments, &mut finalizer, None)?;
             let mut conversation = Conversation::new(ids.next_id());
             conversation.turns.push(turn);
             conversations.push(conversation);
@@ -384,6 +385,10 @@ impl Composer for HfConversationComposer {
             string_option(config, "message_content_key").unwrap_or_else(|| "content".into());
         let image_column = string_option(config, "image_column");
         let multi_turn = bool_option(config, "multi_turn", false)?;
+        let min_length = usize_option(config, "min_sequence_tokens", 4)?;
+        let max_prompt = usize_option(config, "max_prompt_tokens", 1024)?;
+        let max_total = usize_option(config, "max_total_tokens", 2048)?;
+        let skip_min_output = config.output_length_distribution.is_some();
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::new();
@@ -394,13 +399,33 @@ impl Composer for HfConversationComposer {
             };
             let normalized = normalize_hf_messages(messages);
             let prompts = if multi_turn {
-                hf_message_pairs(&normalized, &content_key)
-                    .into_iter()
-                    .map(|(prompt, _)| prompt)
-                    .collect::<Vec<_>>()
+                let mut prepared = Vec::new();
+                let mut valid = true;
+                for (prompt, completion) in hf_message_pairs(&normalized, &content_key) {
+                    let prompt_tokens = tokenizer.encode(&prompt)?.len();
+                    let completion_tokens = tokenizer.encode(&completion)?.len();
+                    if prompt_tokens < min_length
+                        || prompt_tokens > max_prompt
+                        || (!skip_min_output && completion_tokens < min_length)
+                        || prompt_tokens + completion_tokens > max_total
+                    {
+                        valid = false;
+                        break;
+                    }
+                    prepared.push((
+                        prompt,
+                        Some(u32::try_from(completion_tokens).map_err(|_| {
+                            DatasetError::Validation(
+                                "HF conversation completion length exceeds u32".into(),
+                            )
+                        })?),
+                    ));
+                }
+                if valid { prepared } else { Vec::new() }
             } else {
                 first_user_message(&normalized, &content_key)
                     .into_iter()
+                    .map(|prompt| (prompt, None))
                     .collect()
             };
             if prompts.is_empty() {
@@ -411,7 +436,7 @@ impl Composer for HfConversationComposer {
                 .map(|column| media_from_value(object.get(column), MediaKind::Image))
                 .unwrap_or_default();
             let mut conversation = Conversation::new(ids.next_id());
-            for (index, prompt) in prompts.into_iter().enumerate() {
+            for (index, (prompt, max_tokens)) in prompts.into_iter().enumerate() {
                 let mut groups = vec![AuthoredMedia {
                     kind: MediaKind::Text,
                     name: String::new(),
@@ -426,6 +451,7 @@ impl Composer for HfConversationComposer {
                     tokenizer,
                     segments,
                     &mut finalizer,
+                    max_tokens,
                 )?);
             }
             conversations.push(conversation);
@@ -514,6 +540,7 @@ impl Composer for MmvuComposer {
                 tokenizer,
                 segments,
                 &mut finalizer,
+                None,
             )?);
             conversations.push(conversation);
         }
@@ -1069,8 +1096,12 @@ fn compose_media_turn(
     tokenizer: &dyn TextTokenizer,
     segments: &mut SegmentPool,
     finalizer: &mut crate::compose::TurnFinalizer<'_>,
+    max_tokens: Option<u32>,
 ) -> Result<Turn> {
-    let mut turn = Turn::default();
+    let mut turn = Turn {
+        max_tokens,
+        ..Turn::default()
+    };
     let mut parent = None;
     for group in groups {
         let mut handles = SmallVec::new();
@@ -1561,6 +1592,43 @@ mod tests {
             turn.content
                 .iter()
                 .any(|group| group.kind == MediaKind::Image)
+        );
+    }
+
+    #[tokio::test]
+    async fn hf_conversation_multiturn_validates_pairs_and_keeps_completion_lengths() {
+        let mut options = Map::new();
+        options.insert(
+            "conversation_column".into(),
+            Value::String("messages".into()),
+        );
+        options.insert("multi_turn".into(), Value::Bool(true));
+        options.insert("min_sequence_tokens".into(), Value::from(1));
+        let tokenizer = TiktokenTokenizer::builtin();
+        let first_completion = "first authored answer";
+        let second_completion = "second authored answer with detail";
+        let dataset = build(
+            Arc::new(HfConversationDatasetLoader),
+            Arc::new(HfConversationComposer),
+            json!([{"messages":[
+                {"role":"user","content":"first question"},
+                {"role":"assistant","content":first_completion},
+                {"role":"user","content":"second question"},
+                {"role":"assistant","content":second_completion}
+            ]}]),
+            options,
+        )
+        .await
+        .unwrap();
+        let turns = &dataset.conversations()[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(
+            turns[0].max_tokens,
+            Some(tokenizer.count(first_completion).unwrap() as u32)
+        );
+        assert_eq!(
+            turns[1].max_tokens,
+            Some(tokenizer.count(second_completion).unwrap() as u32)
         );
     }
 
