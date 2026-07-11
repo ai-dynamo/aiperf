@@ -1,13 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The skeleton run loop: closed-loop concurrency over a synthetic workload,
-//! dispatched through [`TransportSink`] (the `aiperf-transport` hyper client) and
-//! measured by the shared `TraceCollector`.
+//! The online run loop: a Clock-driven arrival pacer that dispatches a synthetic
+//! workload through [`TransportSink`] (the `aiperf-transport` hyper client) and
+//! measures it with the shared `TraceCollector`.
+//!
+//! One loop serves both modes via the [`IntervalGenerator`](crate::timing::IntervalGenerator)
+//! seam: **request-rate** (Poisson/Gamma/Constant inter-arrivals) and
+//! **concurrency** (the degenerate `ConcurrencyBurst` = zero interval, bounded by a
+//! session semaphore). Arrival timing uses only `clock.now_ns()` +
+//! `clock.sleep()`, so the identical loop runs on `RealClock` (online) or `SimClock`
+//! (offline) — the pacer is backend-agnostic by construction.
 //!
 //! The transport is `!Send` (`Rc<dyn Clock>`), so the loop runs on a single
-//! `LocalSet` with `spawn_local`; a shared `RealClock` is the one time authority,
-//! so arrival, admit, and token timestamps all sit on the same timeline.
+//! `LocalSet` with `spawn_local`; a shared clock is the one time authority, so
+//! arrival, admit, and token timestamps all sit on the same timeline.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -20,18 +27,56 @@ use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use loadgen_core::sink::{RequestObserver, RequestSink};
 
 use crate::http::TransportSink;
+use crate::timing::{ArrivalPattern, make_interval_generator};
 use crate::workload::SkeletonWorkload;
 
-/// Run a concurrency-`concurrency` load test of `workload` against `base_url`
-/// for `model`, returning the aggregated report.
+/// Run a closed-loop concurrency-`concurrency` load test of `workload` against
+/// `base_url` for `model`, returning the aggregated report. Thin wrapper over
+/// [`run_paced`] with the `ConcurrencyBurst` arrival pattern (zero inter-arrival
+/// delay; throughput bounded by the semaphore).
 ///
-/// Must be driven inside a `LocalSet` (e.g. `LocalSet::block_on`) because the
-/// transport sink is `!Send`.
+/// Must be driven inside a `LocalSet` (the transport sink is `!Send`).
 pub async fn run(
     base_url: String,
     model: String,
     workload: SkeletonWorkload,
     concurrency: usize,
+) -> anyhow::Result<TraceSimulationReport> {
+    run_paced(
+        base_url,
+        model,
+        workload,
+        ArrivalPattern::ConcurrencyBurst,
+        None,
+        None,
+        Some(concurrency),
+        0,
+    )
+    .await
+}
+
+/// Run `workload` against `base_url` with an explicit arrival `pattern`.
+///
+/// - `rate` (req/s) is required for every pattern except `ConcurrencyBurst`.
+/// - `smoothness` tunes `Gamma` burstiness (`None` -> Poisson-equivalent).
+/// - `concurrency` caps requests in flight; `None` = open-loop (rate mode's
+///   natural shape). `ConcurrencyBurst` + `Some(n)` = the closed-loop path.
+/// - `seed` seeds the arrival RNG for bit-reproducible spacing.
+///
+/// Pacing is **absolute-schedule**: cumulative target times, re-anchored to `now`
+/// when the loop falls behind (so dispatch latency never compounds into drift or a
+/// catch-up burst). The next interval is drawn *before* dispatch so issue latency
+/// doesn't skew it. Must be driven inside a `LocalSet`.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_paced(
+    base_url: String,
+    model: String,
+    workload: SkeletonWorkload,
+    pattern: ArrivalPattern,
+    rate: Option<f64>,
+    smoothness: Option<f64>,
+    concurrency: Option<usize>,
+    seed: u64,
 ) -> anyhow::Result<TraceSimulationReport> {
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
@@ -45,11 +90,34 @@ pub async fn run(
         model,
         false,
     ));
-    let sem = Arc::new(Semaphore::new(concurrency.max(1)));
+    let sem = concurrency.map(|c| Arc::new(Semaphore::new(c.max(1))));
+    let mut intervals = make_interval_generator(pattern, rate, smoothness, seed);
+
+    // Absolute schedule: the next arrival's target time on the clock's timeline.
+    let mut next_target_ns = start_ns + intervals.next_interval_ns();
 
     let mut handles = Vec::new();
     for req in workload.generate() {
-        let permit = sem.clone().acquire_owned().await?;
+        // Pace to the next arrival target. Falling behind re-anchors to `now`
+        // (drop the burst, keep throughput) rather than firing a catch-up salvo.
+        let now = clock.now_ns();
+        if next_target_ns < now {
+            next_target_ns = now;
+        }
+        let wait_ns = next_target_ns - now;
+        if wait_ns > 0 {
+            clock.clone().sleep(wait_ns).await;
+        }
+        // Draw the next interval BEFORE dispatch so issue latency doesn't skew it.
+        next_target_ns += intervals.next_interval_ns();
+
+        // Concurrency cap (if configured): acquire a slot before dispatch. Open-loop
+        // rate mode passes `None` and never blocks here.
+        let permit = match &sem {
+            Some(s) => Some(s.clone().acquire_owned().await?),
+            None => None,
+        };
+
         obs.on_arrival(
             req.uuid,
             ms(clock.now_ns()),
@@ -100,6 +168,48 @@ mod tests {
                 assert_eq!(report.request_counts.total_output_tokens, 8);
                 assert!(report.latency.ttft.mean_ms.is_finite());
                 assert!(report.throughput.output_throughput_tok_s.is_finite());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn request_rate_paces_arrivals_by_the_clock() {
+        // Constant 1000 req/s over a fast mock: the pacer must sleep ~1ms between
+        // the N arrivals, so wall time >= (N-1)ms even though the mock replies
+        // near-instantly. Open-loop (no concurrency cap).
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+                let n = 20usize;
+                let rate = 1000.0; // 1ms interval
+                let wl = SkeletonWorkload {
+                    num_requests: n,
+                    input_tokens: 8,
+                    output_tokens: 1,
+                };
+                let report = run_paced(
+                    base,
+                    "m".into(),
+                    wl,
+                    ArrivalPattern::Constant,
+                    Some(rate),
+                    None,
+                    None,
+                    0,
+                )
+                .await
+                .unwrap();
+                assert_eq!(report.request_counts.num_requests, n);
+                // (n-1) inter-arrival gaps of 1ms = 19ms floor; allow scheduler slack.
+                let floor_ms = (n as f64 - 1.0) / rate * 1000.0 * 0.75;
+                assert!(
+                    report.throughput.wall_time_ms >= floor_ms,
+                    "wall {:.2}ms should reflect pacing floor {:.2}ms",
+                    report.throughput.wall_time_ms,
+                    floor_ms
+                );
+                assert!(report.latency.ttft.mean_ms.is_finite());
             })
             .await;
     }

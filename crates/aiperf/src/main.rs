@@ -18,7 +18,8 @@
 use std::path::PathBuf;
 
 use aiperf::report::{print_report_table, write_report_json};
-use aiperf::run::run;
+use aiperf::run::{run, run_paced};
+use aiperf::timing::ArrivalPattern;
 use aiperf::workload::SkeletonWorkload;
 use clap::Parser;
 
@@ -68,6 +69,20 @@ struct Cli {
     /// Input sequence length (online default 128).
     #[arg(long)]
     isl: Option<usize>,
+    /// Request rate (req/s). When set, runs open-loop request-rate mode with the
+    /// `--arrival` pattern instead of closed-loop concurrency. Combine with
+    /// `--concurrency` to cap in-flight requests under the rate.
+    #[arg(long)]
+    request_rate: Option<f64>,
+    /// Arrival pattern for `--request-rate`: `poisson` (default), `gamma`, `constant`.
+    #[arg(long)]
+    arrival: Option<String>,
+    /// Gamma burstiness (shape) for `--arrival gamma`; default 1.0 (Poisson-like).
+    #[arg(long)]
+    smoothness: Option<f64>,
+    /// RNG seed for arrival spacing (default 0) — deterministic runs.
+    #[arg(long)]
+    seed: Option<u64>,
     /// Write the aggregate report as JSON to this path (online mode).
     #[arg(long)]
     json: Option<PathBuf>,
@@ -142,7 +157,32 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let local = tokio::task::LocalSet::new();
-    let report = local.block_on(&rt, run(base_url, model, workload, concurrency))?;
+    let report = if let Some(rate) = cli.request_rate {
+        let pattern = match cli.arrival.as_deref() {
+            Some("constant") => ArrivalPattern::Constant,
+            Some("gamma") => ArrivalPattern::Gamma,
+            Some("poisson") | None => ArrivalPattern::Poisson,
+            Some(other) => {
+                anyhow::bail!("unknown --arrival '{other}' (expected constant|poisson|gamma)")
+            }
+        };
+        // Open-loop by default (no cap); `--concurrency` caps in-flight under the rate.
+        local.block_on(
+            &rt,
+            run_paced(
+                base_url,
+                model,
+                workload,
+                pattern,
+                Some(rate),
+                cli.smoothness,
+                cli.concurrency,
+                cli.seed.unwrap_or(0),
+            ),
+        )?
+    } else {
+        local.block_on(&rt, run(base_url, model, workload, concurrency))?
+    };
     print_report_table(&report);
     if let Some(path) = &cli.json {
         write_report_json(&report, path)?;
