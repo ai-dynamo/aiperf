@@ -8,6 +8,7 @@
 use crate::model::ReducerName;
 use serde::{Serialize, Serializer};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// A channel value: either the never-written sentinel or a concrete JSON value.
 #[derive(Debug, Clone, PartialEq)]
@@ -110,12 +111,12 @@ fn message_id(msg: &Value) -> Option<&Value> {
 
 /// Append writer values; replace prior messages whose `id` matches a new message.
 ///
-/// Maintains an `id -> index` association as a `Vec<(id, index)>` scanned
-/// linearly (via `get_index`/`set_index`): a new message whose `id` matches
-/// an existing one overwrites in place (last-index-wins on duplicate ids),
-/// otherwise appends. Each id lookup/update is O(k) in the number of distinct
-/// ids seen so far, so building the result is O(n·k) — fine for the small
-/// message counts on this replay path; the ordering is what must stay exact.
+/// Maintains an `id -> index` map keyed by each id's canonical JSON form
+/// (see [`id_key`]), so every lookup and update is O(1): a new message whose
+/// `id` matches an existing one overwrites in place (last write to that id
+/// wins, keeping the original position), otherwise it appends in encounter
+/// order. Building the result is therefore O(n) in the total message count.
+/// The ordering and replacement semantics are identical to a linear scan.
 pub fn add_messages_reducer(current: &ChanVal, writes: &[Write]) -> Result<ChanVal, ReducerError> {
     let mut acc: Vec<Value> = match current {
         ChanVal::Val(Value::Array(a)) => a.clone(),
@@ -124,11 +125,11 @@ pub fn add_messages_reducer(current: &ChanVal, writes: &[Write]) -> Result<ChanV
         // occur here, so start from empty for that unreached case.
         ChanVal::Val(_) => Vec::new(),
     };
-    // id -> index over the existing accumulator (last occurrence wins).
-    let mut id_index: Vec<(Value, usize)> = Vec::new();
+    // Canonical id form -> index over the accumulator (last write to an id wins).
+    let mut id_index: HashMap<String, usize> = HashMap::new();
     for (i, msg) in acc.iter().enumerate() {
         if let Some(id) = message_id(msg) {
-            set_index(&mut id_index, id.clone(), i);
+            id_index.insert(id_key(id), i);
         }
     }
     for (writer_id, value) in writes {
@@ -143,11 +144,12 @@ pub fn add_messages_reducer(current: &ChanVal, writes: &[Write]) -> Result<ChanV
         };
         for msg in list {
             if let Some(id) = message_id(msg) {
-                if let Some(idx) = get_index(&id_index, id) {
+                let key = id_key(id);
+                if let Some(&idx) = id_index.get(&key) {
                     acc[idx] = msg.clone();
                     continue;
                 }
-                set_index(&mut id_index, id.clone(), acc.len());
+                id_index.insert(key, acc.len());
             }
             acc.push(msg.clone());
         }
@@ -155,16 +157,15 @@ pub fn add_messages_reducer(current: &ChanVal, writes: &[Write]) -> Result<ChanV
     Ok(ChanVal::Val(Value::Array(acc)))
 }
 
-fn get_index(index: &[(Value, usize)], id: &Value) -> Option<usize> {
-    index.iter().rev().find(|(k, _)| k == id).map(|(_, i)| *i)
-}
-
-fn set_index(index: &mut Vec<(Value, usize)>, id: Value, i: usize) {
-    if let Some(slot) = index.iter_mut().find(|(k, _)| *k == id) {
-        slot.1 = i;
-    } else {
-        index.push((id, i));
-    }
+/// Canonical, hashable form of a message id: its compact JSON encoding.
+///
+/// `Value` is not `Hash` (it can hold floats), so we key the index on the
+/// compact JSON string instead. Structurally-equal ids encode to the same
+/// string and distinct ids encode to distinct strings for the scalar/array/
+/// object ids that occur as message ids, so this reproduces `Value` equality
+/// (the linear-scan `k == id` test) exactly for those inputs.
+fn id_key(id: &Value) -> String {
+    id.to_string()
 }
 
 /// Look up a reducer by name and apply it.
@@ -237,6 +238,48 @@ mod tests {
         assert_eq!(
             out,
             ChanVal::Val(json!([{"id": "m1", "content": "new"}, {"content": "plain"}]))
+        );
+    }
+
+    #[test]
+    fn add_messages_repeated_ids_preserve_order() {
+        // Existing accumulator carries ids "a" and "b" at positions 0 and 1.
+        let current = ChanVal::Val(json!([{"id": "a", "v": 1}, {"id": "b", "v": 1}]));
+        let out = add_messages_reducer(
+            &current,
+            &[
+                (
+                    "n0".into(),
+                    json!([
+                        {"id": "b", "v": 2},   // replace-in-place at index 1
+                        {"id": "c", "v": 1},   // new id, appends at index 2
+                        {"content": "plain"}   // no id, appends at index 3
+                    ]),
+                ),
+                (
+                    "n1".into(),
+                    json!([
+                        {"id": "a", "v": 3},   // replace-in-place at index 0
+                        {"id": "c", "v": 2},   // replace-in-place at index 2
+                        {"id": "d", "v": 1},   // new id, appends at index 4
+                        {"id": "c", "v": 3}    // replace-in-place at index 2 again
+                    ]),
+                ),
+            ],
+        )
+        .unwrap();
+        // Explicitly encoded expected order: id-based replacements keep their
+        // original position; new ids and id-less messages append in encounter
+        // order; last write to a given id wins its slot.
+        assert_eq!(
+            out,
+            ChanVal::Val(json!([
+                {"id": "a", "v": 3},
+                {"id": "b", "v": 2},
+                {"id": "c", "v": 3},
+                {"content": "plain"},
+                {"id": "d", "v": 1}
+            ]))
         );
     }
 

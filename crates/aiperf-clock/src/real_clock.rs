@@ -42,13 +42,36 @@ impl Clock for RealClock {
 
 #[cfg(target_os = "linux")]
 async fn sleep_ns(duration_ns: i64) {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use tokio::io::unix::AsyncFd;
-
     if duration_ns <= 0 {
         tokio::task::yield_now().await;
         return;
     }
+
+    // Fast path: ns-precision `timerfd`. On any syscall failure (e.g. fd
+    // pressure — EMFILE/ENFILE from `timerfd_create`, or reactor registration
+    // failure) degrade gracefully to `tokio::time` instead of aborting the run.
+    let started = Instant::now();
+    if timerfd_sleep_ns(duration_ns).await.is_ok() {
+        return;
+    }
+
+    // Fallback: sleep for whatever time remains of the requested duration.
+    let elapsed_ns = started.elapsed().as_nanos();
+    let remaining_ns = (duration_ns as u128).saturating_sub(elapsed_ns);
+    if remaining_ns > 0 {
+        tokio::time::sleep(std::time::Duration::from_nanos(remaining_ns as u64)).await;
+    } else {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Arm a one-shot monotonic `timerfd` for `duration_ns` and await its
+/// expiration via tokio's IO reactor. Returns `Err` (without panicking) on any
+/// syscall failure so the caller can fall back to a coarser sleep.
+#[cfg(target_os = "linux")]
+async fn timerfd_sleep_ns(duration_ns: i64) -> std::io::Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use tokio::io::unix::AsyncFd;
 
     const NANOS_PER_SEC: i64 = 1_000_000_000;
 
@@ -58,7 +81,11 @@ async fn sleep_ns(duration_ns: i64) {
             libc::CLOCK_MONOTONIC,
             libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
         );
-        assert!(fd >= 0, "timerfd_create failed");
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // Take ownership immediately so the fd is closed on any early return.
+        let owned = OwnedFd::from_raw_fd(fd);
         let spec = libc::itimerspec {
             it_interval: libc::timespec {
                 tv_sec: 0,
@@ -70,28 +97,32 @@ async fn sleep_ns(duration_ns: i64) {
             },
         };
         let rc = libc::timerfd_settime(fd, 0, &spec, std::ptr::null_mut());
-        assert_eq!(rc, 0, "timerfd_settime failed");
-        OwnedFd::from_raw_fd(fd)
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        owned
     };
 
-    let afd = AsyncFd::new(owned).expect("register timerfd with reactor");
+    let afd = AsyncFd::new(owned)?;
     loop {
-        let mut guard = match afd.readable().await {
-            Ok(g) => g,
-            Err(_) => return,
-        };
+        let mut guard = afd.readable().await?;
         let raw = afd.get_ref().as_raw_fd();
         match guard.try_io(|_| {
             let mut buf = [0u8; 8];
             let n = unsafe { libc::read(raw, buf.as_mut_ptr() as *mut libc::c_void, 8) };
             if n < 0 {
+                // Surface the real errno; `try_io` maps EWOULDBLOCK/EAGAIN back
+                // to `WouldBlock` (a spurious wakeup → retry) and any other
+                // error to `Err` below (→ fallback), so a genuine read failure
+                // is never mistaken for timer expiration.
                 Err(std::io::Error::last_os_error())
             } else {
                 Ok(())
             }
         }) {
-            Ok(_) => return, // timer expiration read (or a real error): the sleep is done
-            Err(_would_block) => continue,
+            Ok(Ok(())) => return Ok(()), // timer expired: the sleep is done
+            Ok(Err(e)) => return Err(e), // genuine read error → fall back
+            Err(_would_block) => continue, // not ready yet: re-arm the readiness wait
         }
     }
 }
@@ -102,5 +133,32 @@ async fn sleep_ns(duration_ns: i64) {
         tokio::task::yield_now().await;
     } else {
         tokio::time::sleep(std::time::Duration::from_nanos(duration_ns as u64)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A non-trivial sleep waits at least the requested duration (timing
+    /// semantics preserved by both the timerfd fast path and any fallback).
+    #[tokio::test]
+    async fn sleep_ns_waits_at_least_requested() {
+        let want_ns = 5_000_000; // 5 ms
+        let start = Instant::now();
+        sleep_ns(want_ns).await;
+        assert!(
+            start.elapsed().as_nanos() as i64 >= want_ns,
+            "slept less than requested"
+        );
+    }
+
+    /// Zero / negative durations return promptly without arming a timer.
+    #[tokio::test]
+    async fn sleep_ns_zero_returns_fast() {
+        let start = Instant::now();
+        sleep_ns(0).await;
+        sleep_ns(-1).await;
+        assert!(start.elapsed() < std::time::Duration::from_millis(50));
     }
 }

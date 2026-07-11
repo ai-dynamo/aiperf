@@ -23,6 +23,7 @@ loadgen-core.workspace = true
 mimalloc = "0.1"
 anyhow.workspace = true
 async-trait.workspace = true
+clap.workspace = true
 futures.workspace = true
 reqwest.workspace = true
 serde.workspace = true

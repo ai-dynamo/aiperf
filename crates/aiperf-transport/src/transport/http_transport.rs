@@ -89,7 +89,17 @@ impl HttpTransport {
                 return r;
             }
         };
-        let body = Bytes::from(serde_json::to_vec(&payload).unwrap_or_default());
+        // Serialize the JSON payload. On failure, return an error record rather
+        // than silently sending an empty body (mirrors the bad-url handling).
+        let body = match serde_json::to_vec(&payload) {
+            Ok(b) => Bytes::from(b),
+            Err(e) => {
+                let mut r = RequestRecord::started(start_ns);
+                r.error = Some(ErrorDetails::other(format!("serialize payload: {e}")));
+                r.end_ns = Some(self.clock.now_ns());
+                return r;
+            }
+        };
         let body_len = body.len();
         let reuse = cfg.reuse;
         let corr = cfg.correlation_id.as_deref();

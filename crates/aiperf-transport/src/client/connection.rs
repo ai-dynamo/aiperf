@@ -167,8 +167,58 @@ fn rustls_config(_ssl_verify: bool) -> Arc<rustls::ClientConfig> {
     Arc::new(cfg)
 }
 
-/// Establish a connection to `url`. `trace` is filled with connect timings.
+/// Race `fut` against a [`Clock`] timer of `timeout_ns`. If the future resolves
+/// first its output is returned; if the timer fires first, `on_timeout()` builds
+/// the error. A `None` / non-positive `timeout_ns` disables the timer entirely
+/// (a pure pass-through — the un-raced hot path). The timer is driven through the
+/// crate's [`Clock`] (SimClock in tests), never hardcoded `tokio::time`, so
+/// virtual-time runs stay deterministic.
+pub(crate) async fn with_timeout<T, E>(
+    clock: Rc<dyn Clock>,
+    timeout_ns: Option<i64>,
+    fut: impl Future<Output = Result<T, E>>,
+    on_timeout: impl FnOnce() -> E,
+) -> Result<T, E> {
+    match timeout_ns.filter(|&t| t > 0) {
+        None => fut.await,
+        Some(t) => {
+            let timer = clock.sleep(t);
+            futures::pin_mut!(fut);
+            tokio::select! {
+                biased;
+                res = &mut fut => res,
+                _ = timer => Err(on_timeout()),
+            }
+        }
+    }
+}
+
+/// Establish a connection to `url`, enforcing `cfg.connect_timeout_ns` (when set
+/// to a positive value) around the whole DNS -> TCP -> TLS -> handshake phase by
+/// racing it against a [`Clock`] timer. A `None`/non-positive timeout means "no
+/// deadline". `trace` is filled with connect timings.
 pub async fn establish(
+    url: &Url,
+    cfg: &ClientConfig,
+    clock: Rc<dyn Clock>,
+    trace: &mut TraceData,
+) -> Result<(Sender, SocketInfo), ErrorDetails> {
+    let timeout_ns = cfg.connect_timeout_ns;
+    with_timeout(
+        clock.clone(),
+        timeout_ns,
+        establish_inner(url, cfg, clock, trace),
+        || ErrorDetails {
+            kind: ErrorKind::Timeout,
+            code: None,
+            message: format!("connect timeout after {}ns", timeout_ns.unwrap_or_default()),
+        },
+    )
+    .await
+}
+
+/// The un-timed connection-establishment body raced by [`establish`].
+async fn establish_inner(
     url: &Url,
     cfg: &ClientConfig,
     clock: Rc<dyn Clock>,
@@ -281,5 +331,135 @@ where
             let _ = conn.await;
         });
         Ok(Sender::H1(sender))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_timeout;
+    use crate::models::{ErrorDetails, ErrorKind};
+    use aiperf_clock::{Clock, SimClock};
+    use std::future::Future;
+    use std::pin::pin;
+    use std::rc::Rc;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll, Wake, Waker};
+    use tokio::task::LocalSet;
+
+    struct FlagWaker(Arc<AtomicBool>);
+    impl Wake for FlagWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Drive `body` under a virtual [`SimClock`] idle-pump (a local copy of
+    /// `aiperf_graph::runtime::drive_sim`), returning the body's output.
+    fn drive_sim<T>(clock: Rc<SimClock>, body: impl Future<Output = T>) -> T {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let _guard = rt.enter();
+        let local = LocalSet::new();
+        let fut = local.run_until(body);
+        let mut fut = pin!(fut);
+
+        let flag = Arc::new(AtomicBool::new(true));
+        let waker = Waker::from(Arc::new(FlagWaker(flag.clone())));
+        let mut cx = Context::from_waker(&waker);
+
+        loop {
+            flag.store(false, Ordering::SeqCst);
+            match fut.as_mut().poll(&mut cx) {
+                Poll::Ready(v) => return v,
+                Poll::Pending => {
+                    if flag.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                    match clock.next_event_time() {
+                        Some(t) => clock.advance_to(t),
+                        None => panic!("deadlock: no clock event to advance"),
+                    }
+                }
+            }
+        }
+    }
+
+    fn timeout_err() -> ErrorDetails {
+        ErrorDetails {
+            kind: ErrorKind::Timeout,
+            code: None,
+            message: "connect timeout after 1000000ns".to_string(),
+        }
+    }
+
+    #[test]
+    fn times_out_a_never_completing_future() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {
+            let never = futures::future::pending::<Result<u32, ErrorDetails>>();
+            with_timeout(clk, Some(1_000_000), never, timeout_err).await
+        });
+        let err = out.expect_err("should time out");
+        assert_eq!(err.kind, ErrorKind::Timeout);
+    }
+
+    #[test]
+    fn passes_through_when_future_resolves_before_timer() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {
+            // Resolves immediately, before the 1ms deadline.
+            let ready = async { Ok::<u32, ErrorDetails>(42) };
+            with_timeout(clk, Some(1_000_000), ready, timeout_err).await
+        });
+        assert_eq!(out.unwrap(), 42);
+    }
+
+    #[test]
+    fn none_timeout_is_a_pure_passthrough() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        // No timer is armed; a ready future passes straight through.
+        let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {
+            let ready = async { Ok::<u32, ErrorDetails>(7) };
+            with_timeout(clk, None, ready, timeout_err).await
+        });
+        assert_eq!(out.unwrap(), 7);
+    }
+
+    #[test]
+    fn non_positive_timeout_disables_the_timer() {
+        // A zero/negative timeout means "no deadline" — the inner future's own
+        // result (here an error) must pass through untouched, not become Timeout.
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {
+            let failing = async { Err::<u32, ErrorDetails>(ErrorDetails::other("inner")) };
+            with_timeout(clk, Some(0), failing, timeout_err).await
+        });
+        let err = out.expect_err("inner error");
+        assert_eq!(err.kind, ErrorKind::Other);
+        assert_eq!(err.message, "inner");
+    }
+
+    #[test]
+    fn inner_error_passes_through_before_deadline() {
+        // With a generous deadline the inner error is returned as-is (the timer
+        // never fires), proving errors aren't masked as timeouts.
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {
+            let failing = async { Err::<u32, ErrorDetails>(ErrorDetails::other("boom")) };
+            with_timeout(clk, Some(1_000_000_000), failing, timeout_err).await
+        });
+        let err = out.expect_err("inner error");
+        assert_eq!(err.kind, ErrorKind::Other);
+        assert_eq!(err.message, "boom");
     }
 }

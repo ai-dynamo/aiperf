@@ -15,9 +15,12 @@
 //!   [--request-concurrency N] [--http2]
 //! ```
 
-use aiperf::report::print_report_table;
+use std::path::PathBuf;
+
+use aiperf::report::{print_report_table, write_report_json};
 use aiperf::run::run;
 use aiperf::workload::SkeletonWorkload;
+use clap::Parser;
 
 // A high-churn benchmark allocator: the graph executor + streaming client
 // allocate heavily per request, and glibc malloc/free was the top profiled
@@ -32,62 +35,93 @@ const RPS_1M: f64 = 1_000_000.0;
 const RPS_500K: f64 = 500_000.0;
 const RPS_300K: f64 = 300_000.0;
 
+/// Command-line arguments for `aiperf`.
+///
+/// A single top-level struct models both modes: `--mode` selects online
+/// (default) or graph, and the field set is the union of the two modes' flags.
+/// Numeric flags whose default differs between modes are `Option`s so the
+/// per-mode default can be applied in code (matching the legacy parser exactly).
+#[derive(Parser, Debug)]
+#[command(disable_help_flag = true)]
+struct Cli {
+    /// Benchmark mode: `online` (default, closed-loop concurrency) or `graph`.
+    #[arg(long, default_value = "online")]
+    mode: String,
+
+    /// Positional `[BASE_URL]` (default differs per mode).
+    base_url: Option<String>,
+    /// Positional `[MODEL]` (default `model`).
+    model: Option<String>,
+
+    // --- flags shared between modes (defaults differ, hence Option) ---
+    /// Offered concurrency (online default 16, graph default 64).
+    #[arg(long)]
+    concurrency: Option<usize>,
+    /// Output sequence length / max tokens (online default 128, graph default 1).
+    #[arg(long)]
+    osl: Option<usize>,
+
+    // --- online-only flags ---
+    /// Number of requests (online default 100).
+    #[arg(long)]
+    requests: Option<usize>,
+    /// Input sequence length (online default 128).
+    #[arg(long)]
+    isl: Option<usize>,
+    /// Write the aggregate report as JSON to this path (online mode).
+    #[arg(long)]
+    json: Option<PathBuf>,
+
+    // --- graph-only flags ---
+    /// Conversation turns per instance (graph default 4).
+    #[arg(long)]
+    turns: Option<usize>,
+    /// Conversation instances (graph default 400000).
+    #[arg(long)]
+    instances: Option<usize>,
+    /// Worker threads (graph default: available cores).
+    #[arg(long)]
+    workers: Option<usize>,
+    /// Connections per worker (graph default 8).
+    #[arg(long)]
+    conns: Option<usize>,
+    /// Optional per-request concurrency override (graph).
+    #[arg(long)]
+    request_concurrency: Option<usize>,
+    /// Optional prefill concurrency override (graph).
+    #[arg(long)]
+    prefill_concurrency: Option<usize>,
+    /// Use the reqwest backend instead of aiperf-transport (graph).
+    #[arg(long)]
+    reqwest: bool,
+    /// Force HTTP/1.1 (graph; accepted for compatibility).
+    #[arg(long)]
+    http1: bool,
+    /// Opt into h2c prior-knowledge (graph).
+    #[arg(long)]
+    http2: bool,
+}
+
 fn main() -> anyhow::Result<()> {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let cli = Cli::parse();
 
-    let mut mode = "online".to_string();
-    if let Some(i) = argv.iter().position(|a| a == "--mode")
-        && let Some(v) = argv.get(i + 1)
-    {
-        mode = v.clone();
-    }
-
-    match mode.as_str() {
-        "graph" => run_graph_mode(&argv),
-        _ => run_online_mode(&argv),
+    match cli.mode.as_str() {
+        "graph" => run_graph_mode(&cli),
+        _ => run_online_mode(&cli),
     }
 }
 
-/// Positional args are the non-flag, non-flag-value tokens (base_url, model).
-fn positionals(argv: &[String], value_flags: &[&str]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < argv.len() {
-        let a = &argv[i];
-        if a.starts_with("--") {
-            if value_flags.contains(&a.as_str()) {
-                i += 2;
-            } else {
-                i += 1;
-            }
-            continue;
-        }
-        out.push(a.clone());
-        i += 1;
-    }
-    out
-}
-
-fn flag_val<T: std::str::FromStr>(argv: &[String], name: &str) -> Option<T> {
-    argv.iter()
-        .position(|a| a == name)
-        .and_then(|i| argv.get(i + 1))
-        .and_then(|v| v.parse().ok())
-}
-
-fn run_online_mode(argv: &[String]) -> anyhow::Result<()> {
-    let value_flags = ["--mode", "--concurrency", "--requests", "--isl", "--osl"];
-    let pos = positionals(argv, &value_flags);
-    let base_url = pos
-        .first()
-        .cloned()
+fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
+    let base_url = cli
+        .base_url
+        .clone()
         .unwrap_or_else(|| "http://localhost:8000".to_string());
-    let model = pos.get(1).cloned().unwrap_or_else(|| "model".to_string());
+    let model = cli.model.clone().unwrap_or_else(|| "model".to_string());
 
-    let concurrency = flag_val(argv, "--concurrency").unwrap_or(16usize);
-    let num_requests = flag_val(argv, "--requests").unwrap_or(100usize);
-    let isl = flag_val(argv, "--isl").unwrap_or(128usize);
-    let osl = flag_val(argv, "--osl").unwrap_or(128usize);
+    let concurrency = cli.concurrency.unwrap_or(16usize);
+    let num_requests = cli.requests.unwrap_or(100usize);
+    let isl = cli.isl.unwrap_or(128usize);
+    let osl = cli.osl.unwrap_or(128usize);
 
     let workload = SkeletonWorkload {
         num_requests,
@@ -97,6 +131,9 @@ fn run_online_mode(argv: &[String]) -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     let report = rt.block_on(run(base_url, model, workload, concurrency))?;
     print_report_table(&report);
+    if let Some(path) = &cli.json {
+        write_report_json(&report, path)?;
+    }
     Ok(())
 }
 
@@ -121,46 +158,38 @@ struct GraphSummary {
     extra: String,
 }
 
-/// Parse `argv` into a [`GraphParams`] (positionals + flags → bench config).
-fn parse_graph_config(argv: &[String]) -> GraphParams {
+/// Parse a [`Cli`] into a [`GraphParams`] (positionals + flags → bench config).
+fn parse_graph_config(cli: &Cli) -> GraphParams {
     use aiperf_graph::bench::BenchConfig;
 
-    let value_flags = [
-        "--mode",
-        "--turns",
-        "--instances",
-        "--workers",
-        "--concurrency",
-        "--osl",
-        "--conns",
-        "--request-concurrency",
-        "--prefill-concurrency",
-    ];
-    let pos = positionals(argv, &value_flags);
-    let base_url = pos
-        .first()
-        .cloned()
+    let base_url = cli
+        .base_url
+        .clone()
         .unwrap_or_else(|| "http://127.0.0.1:8000".to_string());
-    let model = pos.get(1).cloned().unwrap_or_else(|| "model".to_string());
+    let model = cli.model.clone().unwrap_or_else(|| "model".to_string());
 
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(8);
-    let turns: usize = flag_val(argv, "--turns").unwrap_or(4);
-    let workers: usize = flag_val(argv, "--workers").unwrap_or(cores);
-    let concurrency: usize = flag_val(argv, "--concurrency").unwrap_or(64);
-    let max_tokens: usize = flag_val(argv, "--osl").unwrap_or(1);
-    let instances: usize = flag_val(argv, "--instances").unwrap_or(DEFAULT_INSTANCES);
-    let request_concurrency: Option<usize> = flag_val(argv, "--request-concurrency");
-    let prefill_concurrency: Option<usize> = flag_val(argv, "--prefill-concurrency");
+    let turns: usize = cli.turns.unwrap_or(4);
+    let workers: usize = cli.workers.unwrap_or(cores);
+    let concurrency: usize = cli.concurrency.unwrap_or(64);
+    let max_tokens: usize = cli.osl.unwrap_or(1);
+    let instances: usize = cli.instances.unwrap_or(DEFAULT_INSTANCES);
+    let request_concurrency: Option<usize> = cli.request_concurrency;
+    let prefill_concurrency: Option<usize> = cli.prefill_concurrency;
     // Backend: aiperf-transport (default) or reqwest (--reqwest). For the
     // transport, h2c prior-knowledge is the default; --http1 forces HTTP/1.1.
-    let use_reqwest = argv.iter().any(|a| a == "--reqwest");
+    let use_reqwest = cli.reqwest;
     // Transport default is HTTP/1.1 keep-alive: for serial per-lane requests it
     // outperforms h2c (no per-stream hpack/flow-control overhead). --http2 opts
     // into h2c prior-knowledge (multiplexed pool).
-    let http2 = argv.iter().any(|a| a == "--http2");
-    let conns: usize = flag_val(argv, "--conns").unwrap_or(8);
+    let http2 = cli.http2;
+    // `--http1` is accepted for compatibility (it was a silent no-op in the
+    // legacy parser too): HTTP/1.1 keep-alive is already the transport default,
+    // so the flag has no additional effect beyond not passing `--http2`.
+    let _http1 = cli.http1;
+    let conns: usize = cli.conns.unwrap_or(8);
 
     let cfg = BenchConfig {
         base_urls: base_url.split(',').map(|s| s.trim().to_string()).collect(),
@@ -205,7 +234,7 @@ fn print_graph_summary(s: &GraphSummary, backend: &str) {
     }
 }
 
-fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
+fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
     use aiperf_graph::bench::run_bench;
     use aiperf_graph::transport_bench::run_transport_bench;
 
@@ -215,7 +244,7 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
         use_reqwest,
         http2,
         conns,
-    } = parse_graph_config(argv);
+    } = parse_graph_config(cli);
 
     let backend = if use_reqwest {
         "reqwest"

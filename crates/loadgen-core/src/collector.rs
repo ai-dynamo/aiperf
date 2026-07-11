@@ -755,134 +755,73 @@ impl TraceCollector {
         let decode_gpus_per_worker = self.decode_gpus_per_worker;
         let requests = self.requests;
         let request_count = requests.len();
-        let mut ttfts = Vec::with_capacity(request_count);
-        let mut ttsts = Vec::with_capacity(request_count);
-        let mut tpots = Vec::with_capacity(request_count);
-        let mut itls = Vec::new();
-        let mut e2e_latencies = Vec::with_capacity(request_count);
-        let mut output_token_throughput_per_user = Vec::new();
-        let mut duration_ms = 0.0_f64;
-        let mut total_input_tokens = 0usize;
-        let mut total_output_tokens = 0usize;
-        let mut completed_requests = 0usize;
-        let mut total_reused_tokens = 0usize;
-        let mut total_first_admission_reused_tokens = 0usize;
-        // Goodput: completed requests (and their output tokens) that satisfy the SLA.
-        let mut goodput_requests = 0usize;
-        let mut goodput_output_tokens = 0usize;
 
-        for stats in requests.values() {
-            if stats.first_admit_ms.is_none() {
-                continue;
-            }
-            let Some(first_token_ms) = stats.first_token_ms() else {
-                continue;
-            };
-            let Some(last_token_ms) = stats.last_token_ms() else {
-                continue;
-            };
+        // Single pass over the retained requests, accumulating every summary
+        // series and running total in the exact iteration/float-sum order the
+        // report depends on. Kept in its own helper so `finish()` composes
+        // rather than computes.
+        let agg = accumulate_requests(&requests, sla);
 
-            completed_requests += 1;
-            total_input_tokens += stats.input_length;
-            let output_length = stats.actual_output_length();
-            total_output_tokens += output_length;
-            total_reused_tokens += stats.reused_input_tokens;
-            total_first_admission_reused_tokens += stats.first_admission_reused_input_tokens;
-            duration_ms = duration_ms.max(last_token_ms);
+        let duration_s = (agg.duration_ms / 1000.0).max(1e-9);
+        // Provisioned worker-seconds, GPU-hours, and SLA goodput, all derived
+        // from the per-request aggregate plus the collector's resource config.
+        let resources = derive_resource_stats(
+            &agg,
+            duration_s,
+            static_worker_count,
+            accumulated_prefill_worker_seconds,
+            accumulated_decode_worker_seconds,
+            prefill_gpus_per_worker,
+            decode_gpus_per_worker,
+            sla,
+        );
 
-            let ttft_ms = (first_token_ms - stats.arrival_time_ms).max(0.0);
-            let e2e_ms = (last_token_ms - stats.arrival_time_ms).max(0.0);
-            ttfts.push(ttft_ms);
-            e2e_latencies.push(e2e_ms);
-
-            // Goodput classification (aiperf avg-ITL; see SlaThresholds::is_good).
-            if sla.is_set() && sla.is_good(ttft_ms, e2e_ms, output_length) {
-                goodput_requests += 1;
-                goodput_output_tokens += output_length;
-            }
-
-            if let Some(ttst_ms) = stats.ttst_ms() {
-                ttsts.push(ttst_ms);
-            }
-
-            if let Some(tpot_ms) = stats.mean_tpot_ms() {
-                tpots.push(tpot_ms);
-                for itl_ms in stats.itls_ms() {
-                    if itl_ms > 0.0 {
-                        output_token_throughput_per_user.push(1000.0 / itl_ms);
-                    }
-                    itls.push(itl_ms);
-                }
-            }
-        }
-
-        let duration_s = (duration_ms / 1000.0).max(1e-9);
-        // Provisioned worker-seconds: static count × duration for the
-        // single-worker path, else the runtime-integrated accumulator.
-        let (prefill_worker_seconds, decode_worker_seconds) = match static_worker_count {
-            Some((prefill, decode)) => (prefill as f64 * duration_s, decode as f64 * duration_s),
-            None => (
-                accumulated_prefill_worker_seconds,
-                accumulated_decode_worker_seconds,
-            ),
-        };
-        // GPU-hours straight from the mocker's own worker parallelism (no
-        // external GPU-count config). 0 when gpus_per_worker was not set.
-        let gpu_hours = (prefill_worker_seconds * prefill_gpus_per_worker as f64
-            + decode_worker_seconds * decode_gpus_per_worker as f64)
-            / 3600.0;
-        let itl_distribution = build_distribution_stats(itls);
-        // Goodput only when an SLA was supplied; otherwise it is undefined.
-        let goodput = sla.is_set().then(|| TraceGoodputStats {
-            completed_requests: goodput_requests,
-            request_throughput_rps: goodput_requests as f64 / duration_s,
-            output_throughput_tok_s: goodput_output_tokens as f64 / duration_s,
-        });
+        let itl_distribution = build_distribution_stats(agg.itls);
         TraceSimulationReport {
             request_counts: TraceRequestCounts {
                 num_requests: request_count,
-                completed_requests,
-                total_input_tokens,
-                total_output_tokens,
+                completed_requests: agg.completed_requests,
+                total_input_tokens: agg.total_input_tokens,
+                total_output_tokens: agg.total_output_tokens,
             },
             throughput: TraceThroughputStats {
-                duration_ms,
+                duration_ms: agg.duration_ms,
                 wall_time_ms: 0.0,
-                request_throughput_rps: completed_requests as f64 / duration_s,
-                input_throughput_tok_s: total_input_tokens as f64 / duration_s,
-                output_throughput_tok_s: total_output_tokens as f64 / duration_s,
-                total_throughput_tok_s: (total_input_tokens + total_output_tokens) as f64
+                request_throughput_rps: agg.completed_requests as f64 / duration_s,
+                input_throughput_tok_s: agg.total_input_tokens as f64 / duration_s,
+                output_throughput_tok_s: agg.total_output_tokens as f64 / duration_s,
+                total_throughput_tok_s: (agg.total_input_tokens + agg.total_output_tokens) as f64
                     / duration_s,
-                prefill_worker_seconds,
-                decode_worker_seconds,
+                prefill_worker_seconds: resources.prefill_worker_seconds,
+                decode_worker_seconds: resources.decode_worker_seconds,
                 prefill_gpus_per_worker,
                 decode_gpus_per_worker,
-                gpu_hours,
+                gpu_hours: resources.gpu_hours,
             },
-            prefix_cache_reused_ratio: if total_input_tokens == 0 {
+            prefix_cache_reused_ratio: if agg.total_input_tokens == 0 {
                 0.0
             } else {
-                total_reused_tokens as f64 / total_input_tokens as f64
+                agg.total_reused_tokens as f64 / agg.total_input_tokens as f64
             },
-            first_admission_prefix_cache_reused_ratio: if total_input_tokens == 0 {
+            first_admission_prefix_cache_reused_ratio: if agg.total_input_tokens == 0 {
                 0.0
             } else {
-                total_first_admission_reused_tokens as f64 / total_input_tokens as f64
+                agg.total_first_admission_reused_tokens as f64 / agg.total_input_tokens as f64
             },
             latency: TraceLatencyStats {
-                ttft: build_distribution_stats(ttfts),
-                ttst: build_distribution_stats(ttsts),
-                tpot: build_distribution_stats(tpots),
+                ttft: build_distribution_stats(agg.ttfts),
+                ttst: build_distribution_stats(agg.ttsts),
+                tpot: build_distribution_stats(agg.tpots),
                 itl: TraceInterTokenLatencyStats {
                     max_ms: itl_distribution.max_ms,
                     distribution: itl_distribution,
                 },
-                e2e: build_distribution_stats(e2e_latencies),
+                e2e: build_distribution_stats(agg.e2e_latencies),
                 output_token_throughput_per_user: build_distribution_stats(
-                    output_token_throughput_per_user,
+                    agg.output_token_throughput_per_user,
                 ),
             },
-            goodput,
+            goodput: resources.goodput,
             per_request,
         }
     }
@@ -956,6 +895,166 @@ impl TraceCollector {
 /// and decode admit hooks, which differ only in which detail fields they target.
 // Reachable only via the KV-event admit hooks above, which are test-only today.
 #[allow(dead_code)]
+/// Per-request accumulation output of [`accumulate_requests`]: the summary
+/// latency/throughput series plus the running totals `finish()` composes the
+/// final report from. Field order and the order in which each series is pushed
+/// are load-bearing — the downstream stats and float sums depend on it.
+struct RequestAggregate {
+    ttfts: Vec<f64>,
+    ttsts: Vec<f64>,
+    tpots: Vec<f64>,
+    itls: Vec<f64>,
+    e2e_latencies: Vec<f64>,
+    output_token_throughput_per_user: Vec<f64>,
+    duration_ms: f64,
+    total_input_tokens: usize,
+    total_output_tokens: usize,
+    completed_requests: usize,
+    total_reused_tokens: usize,
+    total_first_admission_reused_tokens: usize,
+    // Goodput: completed requests (and their output tokens) that satisfy the SLA.
+    goodput_requests: usize,
+    goodput_output_tokens: usize,
+}
+
+/// Single pass over the retained requests. The iteration order (map order),
+/// the float accumulation order, and the per-series push order MUST stay
+/// byte-identical to the original inline loop — reordering any sum perturbs
+/// the reported statistics.
+fn accumulate_requests(
+    requests: &FxHashMap<Uuid, TraceRequestStats>,
+    sla: SlaThresholds,
+) -> RequestAggregate {
+    let request_count = requests.len();
+    let mut ttfts = Vec::with_capacity(request_count);
+    let mut ttsts = Vec::with_capacity(request_count);
+    let mut tpots = Vec::with_capacity(request_count);
+    let mut itls = Vec::new();
+    let mut e2e_latencies = Vec::with_capacity(request_count);
+    let mut output_token_throughput_per_user = Vec::new();
+    let mut duration_ms = 0.0_f64;
+    let mut total_input_tokens = 0usize;
+    let mut total_output_tokens = 0usize;
+    let mut completed_requests = 0usize;
+    let mut total_reused_tokens = 0usize;
+    let mut total_first_admission_reused_tokens = 0usize;
+    // Goodput: completed requests (and their output tokens) that satisfy the SLA.
+    let mut goodput_requests = 0usize;
+    let mut goodput_output_tokens = 0usize;
+
+    for stats in requests.values() {
+        if stats.first_admit_ms.is_none() {
+            continue;
+        }
+        let Some(first_token_ms) = stats.first_token_ms() else {
+            continue;
+        };
+        let Some(last_token_ms) = stats.last_token_ms() else {
+            continue;
+        };
+
+        completed_requests += 1;
+        total_input_tokens += stats.input_length;
+        let output_length = stats.actual_output_length();
+        total_output_tokens += output_length;
+        total_reused_tokens += stats.reused_input_tokens;
+        total_first_admission_reused_tokens += stats.first_admission_reused_input_tokens;
+        duration_ms = duration_ms.max(last_token_ms);
+
+        let ttft_ms = (first_token_ms - stats.arrival_time_ms).max(0.0);
+        let e2e_ms = (last_token_ms - stats.arrival_time_ms).max(0.0);
+        ttfts.push(ttft_ms);
+        e2e_latencies.push(e2e_ms);
+
+        // Goodput classification (aiperf avg-ITL; see SlaThresholds::is_good).
+        if sla.is_set() && sla.is_good(ttft_ms, e2e_ms, output_length) {
+            goodput_requests += 1;
+            goodput_output_tokens += output_length;
+        }
+
+        if let Some(ttst_ms) = stats.ttst_ms() {
+            ttsts.push(ttst_ms);
+        }
+
+        if let Some(tpot_ms) = stats.mean_tpot_ms() {
+            tpots.push(tpot_ms);
+            for itl_ms in stats.itls_ms() {
+                if itl_ms > 0.0 {
+                    output_token_throughput_per_user.push(1000.0 / itl_ms);
+                }
+                itls.push(itl_ms);
+            }
+        }
+    }
+
+    RequestAggregate {
+        ttfts,
+        ttsts,
+        tpots,
+        itls,
+        e2e_latencies,
+        output_token_throughput_per_user,
+        duration_ms,
+        total_input_tokens,
+        total_output_tokens,
+        completed_requests,
+        total_reused_tokens,
+        total_first_admission_reused_tokens,
+        goodput_requests,
+        goodput_output_tokens,
+    }
+}
+
+/// Derived resource accounting: provisioned worker-seconds per role, the
+/// GPU-hours they imply, and SLA goodput. Split out of `finish()` so the
+/// report assembly stays compose-not-compute; arithmetic is byte-identical to
+/// the original inline derivation.
+struct ResourceStats {
+    prefill_worker_seconds: f64,
+    decode_worker_seconds: f64,
+    gpu_hours: f64,
+    goodput: Option<TraceGoodputStats>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_resource_stats(
+    agg: &RequestAggregate,
+    duration_s: f64,
+    static_worker_count: Option<(usize, usize)>,
+    accumulated_prefill_worker_seconds: f64,
+    accumulated_decode_worker_seconds: f64,
+    prefill_gpus_per_worker: usize,
+    decode_gpus_per_worker: usize,
+    sla: SlaThresholds,
+) -> ResourceStats {
+    // Provisioned worker-seconds: static count × duration for the
+    // single-worker path, else the runtime-integrated accumulator.
+    let (prefill_worker_seconds, decode_worker_seconds) = match static_worker_count {
+        Some((prefill, decode)) => (prefill as f64 * duration_s, decode as f64 * duration_s),
+        None => (
+            accumulated_prefill_worker_seconds,
+            accumulated_decode_worker_seconds,
+        ),
+    };
+    // GPU-hours straight from the mocker's own worker parallelism (no
+    // external GPU-count config). 0 when gpus_per_worker was not set.
+    let gpu_hours = (prefill_worker_seconds * prefill_gpus_per_worker as f64
+        + decode_worker_seconds * decode_gpus_per_worker as f64)
+        / 3600.0;
+    // Goodput only when an SLA was supplied; otherwise it is undefined.
+    let goodput = sla.is_set().then(|| TraceGoodputStats {
+        completed_requests: agg.goodput_requests,
+        request_throughput_rps: agg.goodput_requests as f64 / duration_s,
+        output_throughput_tok_s: agg.goodput_output_tokens as f64 / duration_s,
+    });
+    ResourceStats {
+        prefill_worker_seconds,
+        decode_worker_seconds,
+        gpu_hours,
+        goodput,
+    }
+}
+
 fn record_role_admit(
     admit_ms: &mut Option<f64>,
     reused_input_tokens_slot: &mut Option<usize>,

@@ -16,9 +16,11 @@ use url::Url;
 use aiperf_clock::Clock;
 
 use crate::client::cancellation::{CancelOutcome, race_cancel};
-use crate::client::connection::{Sender, TimedBody, establish};
+use crate::client::connection::{Sender, TimedBody, establish, with_timeout};
 use crate::config::ClientConfig;
-use crate::models::{ErrorDetails, RequestRecord, Response, SseMessage, TextResponse, TraceData};
+use crate::models::{
+    ErrorDetails, ErrorKind, RequestRecord, Response, SseMessage, TextResponse, TraceData,
+};
 use crate::sse::read_sse;
 
 #[derive(Default)]
@@ -145,8 +147,52 @@ impl HttpClient {
     /// recording send/response timing into `trace`/`record`. Does not establish
     /// or close the connection, so the caller can return `sender` to a pool for
     /// reuse. Connect/DNS/reuse timings are expected to be pre-filled in `trace`.
+    ///
+    /// Enforces `cfg.request_timeout_ns` (when set to a positive value) around
+    /// the whole send + response phase by racing it against a [`Clock`] timer. A
+    /// `None`/non-positive timeout means "no deadline" — the un-raced hot path.
     #[allow(clippy::too_many_arguments)]
     pub async fn dispatch(
+        &self,
+        sender: &mut Sender,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        trace: &mut TraceData,
+        record: &mut RequestRecord,
+        on_first_token: &mut impl FnMut(i64),
+        body_len: usize,
+    ) -> Result<(), ErrorDetails> {
+        // A zero/None request timeout means "no deadline" — `with_timeout` takes
+        // the un-raced path so the high-throughput dispatch stays overhead-free.
+        let timeout_ns = self.cfg.request_timeout_ns;
+        with_timeout(
+            self.clock.clone(),
+            timeout_ns,
+            self.dispatch_inner(
+                sender,
+                url,
+                headers,
+                body,
+                streaming,
+                trace,
+                record,
+                on_first_token,
+                body_len,
+            ),
+            || ErrorDetails {
+                kind: ErrorKind::Timeout,
+                code: None,
+                message: format!("request timeout after {}ns", timeout_ns.unwrap_or_default()),
+            },
+        )
+        .await
+    }
+
+    /// The un-timed send + response body raced by [`dispatch`](Self::dispatch).
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_inner(
         &self,
         sender: &mut Sender,
         url: &Url,
