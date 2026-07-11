@@ -51,6 +51,9 @@ pub struct EvaluatorIdentity {
     pub packages: BTreeMap<String, Option<String>>,
     /// SHA-256 of the worker source.
     pub worker_source_sha256: String,
+    /// SHA-256 of the fully pinned evaluator dependency lock, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_lock_sha256: Option<String>,
     /// Optional immutable evaluator container digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_digest: Option<String>,
@@ -74,9 +77,6 @@ pub struct EvaluatorLoadConfig {
     /// Optional explicit system prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    /// Optional grader override. Canonical workers reject non-null overrides.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grader: Option<String>,
     /// Optional problem cap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_problems: Option<usize>,
@@ -86,9 +86,6 @@ pub struct EvaluatorLoadConfig {
     /// Reproducibility seed for evaluator-owned sampling.
     #[serde(default)]
     pub seed: u64,
-    /// Whether public ground truth may be echoed in grade results.
-    #[serde(default)]
-    pub include_ground_truth: bool,
 }
 
 /// Dataset/task identity frozen by a successful load operation.
@@ -208,9 +205,6 @@ pub struct EvaluatorGrade {
     /// Optional extracted answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extracted_answer: Option<String>,
-    /// Optional public ground truth. Hidden test payloads must remain absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ground_truth: Option<String>,
 }
 
 /// Batch of canonical grade results.

@@ -7,7 +7,7 @@
 //! requests and reads streaming responses through the normal AIPerf transport;
 //! the child receives completed response text only for grading.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Display};
 use std::path::PathBuf;
@@ -27,6 +27,7 @@ use crate::protocol::{
 };
 
 const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024 * 1024;
+const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch", "shutdown"];
 
 /// Sink for worker stderr lines.
 pub trait EvaluatorLogSink: Send + Sync {
@@ -220,6 +221,7 @@ impl PythonEvaluator {
             python_executable: String::new(),
             packages: BTreeMap::new(),
             worker_source_sha256: String::new(),
+            dependency_lock_sha256: None,
             container_digest: None,
             capabilities: Vec::new(),
         };
@@ -245,6 +247,7 @@ impl PythonEvaluator {
                 identity.protocol, EVALUATOR_PROTOCOL_VERSION
             )));
         }
+        validate_identity(&identity)?;
         worker.identity = identity;
         Ok(worker)
     }
@@ -331,6 +334,51 @@ impl PythonEvaluator {
             Err(error) => EvaluatorWorkerError::Io(error.to_string()),
         }
     }
+}
+
+fn validate_identity(identity: &EvaluatorIdentity) -> Result<(), EvaluatorWorkerError> {
+    for (field, value) in [
+        ("worker_version", identity.worker_version.as_str()),
+        ("python_version", identity.python_version.as_str()),
+        ("python_executable", identity.python_executable.as_str()),
+        (
+            "worker_source_sha256",
+            identity.worker_source_sha256.as_str(),
+        ),
+    ] {
+        if value.trim().is_empty() {
+            return Err(EvaluatorWorkerError::Protocol(format!(
+                "evaluator identity field {field} was empty"
+            )));
+        }
+    }
+    if identity.packages.is_empty() {
+        return Err(EvaluatorWorkerError::Protocol(
+            "evaluator identity reported no package versions".to_string(),
+        ));
+    }
+    let capabilities = identity
+        .capabilities
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if capabilities.len() != identity.capabilities.len() {
+        return Err(EvaluatorWorkerError::Protocol(
+            "evaluator identity contained duplicate capabilities".to_string(),
+        ));
+    }
+    let missing = REQUIRED_CAPABILITIES
+        .iter()
+        .copied()
+        .filter(|required| !capabilities.contains(required))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(EvaluatorWorkerError::Protocol(format!(
+            "evaluator identity omitted required capabilities: {}",
+            missing.join(", ")
+        )));
+    }
+    Ok(())
 }
 
 #[async_trait(?Send)]
@@ -558,5 +606,19 @@ for line in sys.stdin:
             .await
             .unwrap_err();
         assert!(matches!(error, EvaluatorWorkerError::Crashed { .. }));
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_missing_required_capability() {
+        let script = FAKE_WORKER.replace(
+            "'load', 'next_problems', 'grade_batch', 'shutdown'",
+            "'load', 'next_problems', 'shutdown'",
+        );
+        let error = match PythonEvaluator::spawn(fixture_config(&script)).await {
+            Ok(_) => panic!("worker without grade_batch capability was accepted"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, EvaluatorWorkerError::Protocol(_)));
+        assert!(error.to_string().contains("grade_batch"));
     }
 }
