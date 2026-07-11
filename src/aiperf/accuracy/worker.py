@@ -10,9 +10,9 @@ grading. stdin/stdout are a versioned JSONL protocol; logs use stderr only.
 
 The inherited benchmark and grader implementations are intentionally reused in
 this process. Their complete ownership path is documented in
-``accuracy_dataset_loader.py:21-150`` and
-``accuracy_record_processor.py:21-147``. MMLU-Pro delegates dataset, few-shot,
-prompt, and metric construction to the pinned Lighteval task registry.
+``src/aiperf/dataset/loader/accuracy_dataset_loader.py:21-150`` and
+``src/aiperf/accuracy/accuracy_record_processor.py:21-147``. MMLU-Pro delegates
+dataset, prompt, and metric construction to the pinned Lighteval task registry.
 """
 
 from __future__ import annotations

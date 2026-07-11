@@ -14,6 +14,12 @@ longer executes such scripts. The worker therefore maps the pinned script's
 release config to the same immutable raw JSONL files and loads them through
 datasets' built-in JSON reader.
 
+The pinned Lighteval 0.13.0 MMLU-Pro endpoint task is run at its authored
+zero-shot setting. That task sets each `Doc.instruction` equal to its complete
+query, so Lighteval's generic `PromptManager` strips the query from nonzero-shot
+examples. The worker rejects `--accuracy-n-shots` values other than zero instead
+of producing a silently corrupted prompt.
+
 Create an evaluator environment without changing the Rust runtime environment:
 
 ```bash
