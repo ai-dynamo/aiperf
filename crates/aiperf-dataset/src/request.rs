@@ -15,8 +15,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use aiperf_endpoints::{
-    ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, CreditPhase, EmbeddingsEndpoint,
-    Endpoint, Media, ModelEndpoint, RequestInfo, ResponsesEndpoint, Turn as EndpointTurn,
+    ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
+    EmbeddingsEndpoint, Endpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint,
+    ImageEditEndpoint, ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, ModelEndpoint,
+    NimEmbeddingsEndpoint, NimRankingsEndpoint, RawEndpoint, RequestInfo, ResponsesEndpoint,
+    SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn, VideoGenerationEndpoint,
 };
 use bytes::Bytes;
 use serde_json::{Map, Value};
@@ -25,7 +28,7 @@ use crate::dataset::Dataset;
 use crate::error::{DatasetError, Result};
 use crate::materialize::Overrides;
 use crate::model::{
-    AccuracyGroundTruth, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
+    AccuracyAssociation, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
 };
 use crate::segment::{Handle, Payload, SegmentStore};
 
@@ -53,8 +56,8 @@ pub struct MaterializedRequest {
     pub input_tokens: u64,
     /// Audio duration used by ASR metrics.
     pub audio_duration_seconds: Option<f64>,
-    /// Accuracy association propagated without positional matching.
-    pub accuracy: Option<AccuracyGroundTruth>,
+    /// Opaque evaluator association propagated without positional matching.
+    pub accuracy: Option<AccuracyAssociation>,
     /// Zero-based authored turn index.
     pub turn_index: usize,
     /// Whether this is the final authored turn.
@@ -124,6 +127,42 @@ impl BuiltinEndpointResolver {
             .expect("built-in endpoint names are unique");
         resolver
             .register("chat_embeddings", ChatEmbeddingsEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("nim_embeddings", NimEmbeddingsEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("cohere_rankings", CohereRankingsEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("hf_tei_rankings", HfTeiRankingsEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("nim_rankings", NimRankingsEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("huggingface_generate", HuggingFaceGenerateEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("image_generation", ImageGenerationEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("image_edit", ImageEditEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("video_generation", VideoGenerationEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("image_retrieval", ImageRetrievalEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("solido_rag", SolidoRagEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("raw", RawEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("template", TemplateEndpoint)
             .expect("built-in endpoint names are unique");
         resolver
     }
@@ -233,6 +272,9 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 system_message: resolve_prompt(store, conversation.system)?,
                 user_context_message: resolve_prompt(store, conversation.user_context)?,
                 credit_phase: phase,
+                x_request_id: None,
+                x_correlation_id: None,
+                conversation_id: Some(session.conversation_id().as_str().to_string()),
             };
             let mut value = endpoint.format_payload(&request_info)?;
             merge_overrides(&mut value, overrides)?;
@@ -870,6 +912,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn endpoint_registry_contains_every_native_dialect() {
+        let resolver = BuiltinEndpointResolver::default();
+        for name in [
+            "chat",
+            "chat_completions",
+            "completions",
+            "responses",
+            "embeddings",
+            "chat_embeddings",
+            "nim_embeddings",
+            "cohere_rankings",
+            "hf_tei_rankings",
+            "nim_rankings",
+            "huggingface_generate",
+            "image_generation",
+            "image_edit",
+            "video_generation",
+            "image_retrieval",
+            "solido_rag",
+            "raw",
+            "template",
+        ] {
+            assert!(resolver.resolve(Some(name)).is_ok(), "missing {name}");
+        }
+    }
+
     fn message(pool: &mut SegmentPool, parent: Option<Handle>, role: &str, text: &str) -> Handle {
         pool.intern_message(
             parent,
@@ -890,9 +959,8 @@ mod tests {
         let mut conversation = Conversation::new("session");
         conversation.turns = turns;
         conversation.context_mode = Some(mode);
-        conversation.accuracy = Some(AccuracyGroundTruth {
+        conversation.accuracy = Some(AccuracyAssociation {
             correlation_id: CorrelationId::from("corr"),
-            ground_truth: "expected".into(),
             task: "task".into(),
         });
         Arc::new(

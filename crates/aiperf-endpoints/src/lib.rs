@@ -12,6 +12,7 @@ mod endpoints;
 mod extraction;
 mod metadata;
 mod models;
+mod tier2;
 
 pub use config::{EndpointConfig, RequestContentType};
 pub use endpoints::{
@@ -21,6 +22,12 @@ pub use endpoints::{
 pub use extraction::extract_payload;
 pub use metadata::{EndpointMetadata, EndpointType, metadata_for};
 pub use models::{
-    CreditPhase, EndpointError, EndpointResult, ExtractedPayload, Media, ModelEndpoint,
-    ParsedResponse, RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
+    CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
+    Media, ModelEndpoint, ParsedResponse, RequestInfo, RequestRecord, ResponseData, ServerResponse,
+    Turn, VideoResponseData,
+};
+pub use tier2::{
+    CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
+    ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
+    RawEndpoint, SolidoRagEndpoint, TemplateEndpoint, VideoGenerationEndpoint,
 };

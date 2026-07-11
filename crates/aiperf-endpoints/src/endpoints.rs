@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
+use crate::config::EndpointConfig;
 use crate::extraction::{PartTypes, extract_inputs};
 use crate::metadata::{EndpointMetadata, EndpointType, metadata_for};
 use crate::models::{
@@ -19,13 +20,23 @@ pub const WARMUP_SYSTEM_MESSAGE_PREFIX: &str =
     "You are in warmup mode. This request is used to warm up the benchmark target.";
 
 /// Endpoint adapter contract.
-pub trait Endpoint {
+pub trait Endpoint: std::fmt::Debug + Send + Sync {
     /// Return static capability metadata.
     fn metadata(&self) -> &'static EndpointMetadata;
     /// Build a decoded JSON request body.
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value>;
     /// Parse a decoded server response.
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>>;
+    /// Parse with the effective per-request configuration when a dialect needs
+    /// streaming or response-selector context. Stateless dialects inherit the
+    /// ordinary parser.
+    fn parse_response_with_config(
+        &self,
+        response: &ServerResponse,
+        _config: &EndpointConfig,
+    ) -> EndpointResult<Option<ParsedResponse>> {
+        self.parse_response(response)
+    }
     /// Extract tokenizable input and media counts from a built body.
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
         extract_inputs(body, &self.part_types())
@@ -43,6 +54,20 @@ pub trait Endpoint {
         let mut out = Vec::new();
         for response in &record.responses {
             if let Some(parsed) = self.parse_response(response)? {
+                out.push(parsed);
+            }
+        }
+        Ok(out)
+    }
+    /// Parse every response with one effective endpoint configuration.
+    fn extract_response_data_with_config(
+        &self,
+        record: &RequestRecord,
+        config: &EndpointConfig,
+    ) -> EndpointResult<Vec<ParsedResponse>> {
+        let mut out = Vec::new();
+        for response in &record.responses {
+            if let Some(parsed) = self.parse_response_with_config(response, config)? {
                 out.push(parsed);
             }
         }
@@ -124,6 +149,7 @@ impl Endpoint for ChatEndpoint {
                 perf_ns: response.perf_ns,
                 data,
                 usage,
+                sources: None,
             }),
         )
     }
@@ -244,6 +270,7 @@ impl Endpoint for ResponsesEndpoint {
                     perf_ns: response.perf_ns,
                     data,
                     usage,
+                    sources: None,
                 }),
             );
         }
@@ -385,6 +412,7 @@ impl Endpoint for CompletionsEndpoint {
                 perf_ns: response.perf_ns,
                 data,
                 usage,
+                sources: None,
             }),
         )
     }
@@ -440,7 +468,10 @@ impl Endpoint for ChatEmbeddingsEndpoint {
     }
 }
 
-fn require_turns<'a>(request_info: &'a RequestInfo, message: &str) -> EndpointResult<&'a [Turn]> {
+pub(crate) fn require_turns<'a>(
+    request_info: &'a RequestInfo,
+    message: &str,
+) -> EndpointResult<&'a [Turn]> {
     if request_info.turns.is_empty() {
         Err(EndpointError::InvalidRequest(message.into()))
     } else {
@@ -634,7 +665,7 @@ where
     turns.iter().rev().find_map(get)
 }
 
-fn merge_extra(payload: &mut Map<String, Value>, extra: Option<&Map<String, Value>>) {
+pub(crate) fn merge_extra(payload: &mut Map<String, Value>, extra: Option<&Map<String, Value>>) {
     if let Some(extra) = extra {
         for (key, value) in extra {
             payload.insert(key.clone(), value.clone());
@@ -912,6 +943,7 @@ fn parse_responses_streaming_event(
             perf_ns,
             data,
             usage: None,
+            sources: None,
         });
     }
     if event_type == "response.completed" {
@@ -924,6 +956,7 @@ fn parse_responses_streaming_event(
                 perf_ns,
                 data: None,
                 usage,
+                sources: None,
             });
         }
     }
@@ -1086,7 +1119,7 @@ fn merge_response_item(items_by_key: &mut Map<String, Value>, item: Value) {
     items_by_key.entry(key).or_insert(item);
 }
 
-fn turn_texts(turn: &Turn) -> Vec<String> {
+pub(crate) fn turn_texts(turn: &Turn) -> Vec<String> {
     turn.texts
         .iter()
         .flat_map(|text| text.contents.iter())
@@ -1095,7 +1128,7 @@ fn turn_texts(turn: &Turn) -> Vec<String> {
         .collect()
 }
 
-fn parse_embeddings_response(
+pub(crate) fn parse_embeddings_response(
     response: &ServerResponse,
     strict_invalid_data: bool,
 ) -> EndpointResult<Option<ParsedResponse>> {
@@ -1108,6 +1141,7 @@ fn parse_embeddings_response(
                 perf_ns: response.perf_ns,
                 data: Some(ResponseData::Embeddings { embeddings }),
                 usage: None,
+                sources: None,
             }));
         }
         return Ok(None);
@@ -1143,6 +1177,7 @@ fn parse_embeddings_response(
             perf_ns: response.perf_ns,
             data: Some(ResponseData::Embeddings { embeddings }),
             usage: None,
+            sources: None,
         }));
     }
     if strict_invalid_data {
@@ -1154,7 +1189,7 @@ fn parse_embeddings_response(
         Ok(None)
     }
 }
-fn try_extract_embeddings(obj: &Map<String, Value>) -> Option<Vec<Vec<f64>>> {
+pub(crate) fn try_extract_embeddings(obj: &Map<String, Value>) -> Option<Vec<Vec<f64>>> {
     for field in ["embeddings", "embedding"] {
         let Some(value) = obj.get(field) else {
             continue;
@@ -1171,7 +1206,7 @@ fn try_extract_embeddings(obj: &Map<String, Value>) -> Option<Vec<Vec<f64>>> {
     }
     None
 }
-fn number_array(value: &Value) -> Option<Vec<f64>> {
+pub(crate) fn number_array(value: &Value) -> Option<Vec<f64>> {
     let array = value.as_array()?;
     if array.is_empty() {
         return None;

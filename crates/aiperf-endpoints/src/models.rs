@@ -98,6 +98,8 @@ pub struct Turn {
     pub videos: Vec<Media>,
     /// Per-turn extra body fields merged after endpoint extras.
     pub extra_body: Option<Map<String, Value>>,
+    /// Prebuilt raw request body used by the raw endpoint reconstruction path.
+    pub raw_payload: Option<Value>,
 }
 
 /// Full request context consumed by endpoint formatters.
@@ -113,6 +115,15 @@ pub struct RequestInfo {
     pub user_context_message: Option<String>,
     /// Credit phase.
     pub credit_phase: CreditPhase,
+    /// Optional request correlation identifier exposed to templates.
+    #[serde(default)]
+    pub x_request_id: Option<String>,
+    /// Optional session correlation identifier exposed to templates.
+    #[serde(default)]
+    pub x_correlation_id: Option<String>,
+    /// Optional authored conversation identifier exposed to templates.
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 /// Decoded server response with a performance timestamp.
@@ -164,6 +175,12 @@ pub enum ResponseData {
     Embeddings { embeddings: Vec<Vec<f64>> },
     /// Ranking result objects.
     Rankings { rankings: Vec<Value> },
+    /// Image-retrieval result objects.
+    ImageRetrieval { data: Vec<Value> },
+    /// Generated or edited images and their response metadata.
+    Images(ImageResponseData),
+    /// Async video-job state.
+    Video(VideoResponseData),
 }
 
 impl ResponseData {
@@ -186,9 +203,76 @@ impl ResponseData {
                 out.push_str(tool_call_text);
                 out
             }
-            Self::Embeddings { .. } | Self::Rankings { .. } => String::new(),
+            Self::Embeddings { .. }
+            | Self::Rankings { .. }
+            | Self::ImageRetrieval { .. }
+            | Self::Images(_)
+            | Self::Video(_) => String::new(),
         }
     }
+}
+
+/// One generated-image item returned by image generation or edit endpoints.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ImageDataItem {
+    /// Provider-hosted image URL.
+    pub url: Option<String>,
+    /// Base64-encoded image body.
+    pub b64_json: Option<String>,
+    /// Provider-revised prompt.
+    pub revised_prompt: Option<String>,
+    /// Streaming partial-image index.
+    pub partial_image_index: Option<u64>,
+}
+
+/// Generated-image response data shared by image generation and edit.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ImageResponseData {
+    /// Generated image items in provider order.
+    pub images: Vec<ImageDataItem>,
+    /// Provider-reported image dimensions.
+    pub size: Option<String>,
+    /// Provider-reported quality setting.
+    pub quality: Option<String>,
+    /// Provider-reported output format.
+    pub output_format: Option<String>,
+    /// Provider-reported background setting.
+    pub background: Option<String>,
+}
+
+/// Async video-job state returned by submission and polling responses.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct VideoResponseData {
+    /// Unique video job identifier.
+    pub video_id: Option<String>,
+    /// Provider object discriminator.
+    pub object: Option<String>,
+    /// Current job status.
+    pub status: Option<String>,
+    /// Completion percentage or provider progress scalar.
+    pub progress: Option<Value>,
+    /// Completed video content URL.
+    pub url: Option<String>,
+    /// Requested video dimensions.
+    pub size: Option<String>,
+    /// Requested video duration.
+    pub seconds: Option<Value>,
+    /// Provider quality setting.
+    pub quality: Option<String>,
+    /// Model used for generation.
+    pub model: Option<String>,
+    /// Provider creation timestamp.
+    pub created_at: Option<Value>,
+    /// Provider completion timestamp.
+    pub completed_at: Option<Value>,
+    /// Provider expiry timestamp.
+    pub expires_at: Option<Value>,
+    /// Server-reported inference duration in seconds.
+    pub inference_time_s: Option<f64>,
+    /// Server-reported peak memory in MiB.
+    pub peak_memory_mb: Option<f64>,
+    /// Provider error object or scalar.
+    pub error: Option<Value>,
 }
 
 /// Parsed response plus optional provider usage.
@@ -200,6 +284,9 @@ pub struct ParsedResponse {
     pub data: Option<ResponseData>,
     /// Provider usage object.
     pub usage: Option<Value>,
+    /// RAG source objects, when supplied by the endpoint.
+    #[serde(default)]
+    pub sources: Option<Value>,
 }
 
 /// Payload input extraction result for input token and media accounting.

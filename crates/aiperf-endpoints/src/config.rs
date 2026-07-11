@@ -36,6 +36,14 @@ pub struct EndpointConfig {
     pub request_content_type: Option<RequestContentType>,
     /// Template body for template endpoints.
     pub template: Option<String>,
+    /// Optional JMESPath response selector for raw/template endpoints.
+    pub response_field: Option<String>,
+    /// Whole polling-lifecycle timeout in seconds.
+    pub timeout_seconds: f64,
+    /// Delay between async-job status polls in seconds.
+    pub polling_interval_seconds: f64,
+    /// Download completed video bytes after polling when true.
+    pub download_video_content: bool,
     /// Wait-for-model probe timeout in seconds; zero disables probing.
     pub wait_for_model_timeout: f64,
     /// Wait-for-model probe interval.
@@ -63,6 +71,10 @@ impl Default for EndpointConfig {
             streaming: false,
             request_content_type: None,
             template: None,
+            response_field: None,
+            timeout_seconds: 6.0 * 60.0 * 60.0,
+            polling_interval_seconds: 0.5,
+            download_video_content: false,
             wait_for_model_timeout: 0.0,
             wait_for_model_interval: 5.0,
             wait_for_model_mode: "inference".to_string(),
@@ -98,6 +110,16 @@ impl EndpointConfig {
         if self.endpoint_type == EndpointType::Template && self.template.is_none() {
             return Err(EndpointError::InvalidConfig(
                 "template is required when endpoint type is 'template'".to_string(),
+            ));
+        }
+        if !self.timeout_seconds.is_finite() || self.timeout_seconds < 0.0 {
+            return Err(EndpointError::InvalidConfig(
+                "timeout_seconds must be finite and non-negative".to_string(),
+            ));
+        }
+        if !self.polling_interval_seconds.is_finite() || self.polling_interval_seconds <= 0.0 {
+            return Err(EndpointError::InvalidConfig(
+                "polling_interval_seconds must be finite and positive".to_string(),
             ));
         }
         if self.wait_for_model_timeout <= 0.0 {

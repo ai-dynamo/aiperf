@@ -28,6 +28,9 @@ fn request(endpoint_type: EndpointType, turns: Vec<Turn>) -> RequestInfo {
         system_message: None,
         user_context_message: None,
         credit_phase: CreditPhase::Profiling,
+        x_request_id: None,
+        x_correlation_id: None,
+        conversation_id: None,
     }
 }
 

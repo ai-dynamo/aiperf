@@ -1,0 +1,841 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tier-2 endpoint dialects.
+//!
+//! Payload and response behavior is ported from the complete Python modules at
+//! `src/aiperf/endpoints/base_rankings_endpoint.py:14`,
+//! `src/aiperf/endpoints/nim_embeddings.py:13`,
+//! `src/aiperf/endpoints/huggingface_generate.py:12`,
+//! `src/aiperf/endpoints/openai_image_generation.py:14`,
+//! `src/aiperf/endpoints/openai_image_edit.py:47`,
+//! `src/aiperf/endpoints/openai_video_generation.py:14`,
+//! `src/aiperf/endpoints/nim_image_retrieval.py:14`, and
+//! `src/aiperf/endpoints/solido_rag.py:19`. Raw/template behavior lives in the
+//! sibling `flexible` module so its Jinja/JMESPath dependency boundary remains
+//! explicit. HTTP multipart, polling, and inline-media execution is deliberately
+//! implemented against transport traits outside this decoded-JSON layer.
+
+mod flexible;
+
+use serde_json::{Map, Value, json};
+
+use crate::config::EndpointConfig;
+use crate::endpoints::{
+    Endpoint, merge_extra, parse_embeddings_response, require_turns, turn_texts,
+};
+use crate::metadata::{EndpointMetadata, EndpointType, metadata_for};
+use crate::models::{
+    EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
+    ParsedResponse, RequestInfo, ResponseData, ServerResponse, VideoResponseData,
+};
+
+pub use flexible::{RawEndpoint, TemplateEndpoint};
+
+/// NVIDIA NIM multimodal embeddings endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NimEmbeddingsEndpoint;
+
+/// NVIDIA NIM rankings endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NimRankingsEndpoint;
+
+/// Cohere rankings endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CohereRankingsEndpoint;
+
+/// Hugging Face TEI rankings endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HfTeiRankingsEndpoint;
+
+/// Hugging Face TGI generate endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HuggingFaceGenerateEndpoint;
+
+/// OpenAI-compatible image generation endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ImageGenerationEndpoint;
+
+/// OpenAI-compatible multipart image edit endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ImageEditEndpoint;
+
+/// OpenAI/SGLang async video generation endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VideoGenerationEndpoint;
+
+/// NVIDIA NIM image retrieval endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ImageRetrievalEndpoint;
+
+/// SOLIDO retrieval-augmented generation endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SolidoRagEndpoint;
+
+impl Endpoint for NimEmbeddingsEndpoint {
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::NimEmbeddings)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        let turn = single_turn(request_info, "Embeddings endpoint only supports one turn")?;
+        let texts = turn_texts(turn);
+        let images = turn
+            .images
+            .iter()
+            .flat_map(|image| image.contents.iter())
+            .filter(|content| !content.is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
+        let inputs = match (texts.is_empty(), images.is_empty()) {
+            (false, false) => {
+                if texts.len() != images.len() {
+                    return Err(EndpointError::InvalidRequest(format!(
+                        "when both texts and images are provided, they must have the same length; got {} texts and {} images",
+                        texts.len(),
+                        images.len()
+                    )));
+                }
+                texts
+                    .into_iter()
+                    .zip(images)
+                    .map(|(text, image)| format!("{text} {image}"))
+                    .collect()
+            }
+            (true, false) => images,
+            _ => texts,
+        };
+        let mut payload = Map::new();
+        payload.insert(
+            "model".into(),
+            Value::String(effective_model(request_info, turn)),
+        );
+        payload.insert(
+            "input".into(),
+            Value::Array(inputs.into_iter().map(Value::String).collect()),
+        );
+        merge_endpoint_and_turn_extra(&mut payload, request_info);
+        Ok(Value::Object(payload))
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_embeddings_response(response, true)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RankingFlavor {
+    Nim,
+    Cohere,
+    HfTei,
+}
+
+fn format_rankings(flavor: RankingFlavor, request_info: &RequestInfo) -> EndpointResult<Value> {
+    let turn = single_turn(request_info, "Rankings endpoint only supports one turn")?;
+    let mut queries = Vec::new();
+    let mut passages = Vec::new();
+    for text in &turn.texts {
+        match text.name.as_str() {
+            "query" | "queries" => queries.extend(
+                text.contents
+                    .iter()
+                    .filter(|content| !content.is_empty())
+                    .cloned(),
+            ),
+            "passages" => passages.extend(
+                text.contents
+                    .iter()
+                    .filter(|content| !content.is_empty())
+                    .cloned(),
+            ),
+            _ => {}
+        }
+    }
+    let query = queries.first().ok_or_else(|| {
+        EndpointError::InvalidRequest(
+            "rankings request requires a text with name 'query' or 'queries'".into(),
+        )
+    })?;
+    let model = effective_model(request_info, turn);
+    let mut payload = match flavor {
+        RankingFlavor::Nim => json!({
+            "model": model,
+            "query": {"text": query},
+            "passages": passages.iter().map(|text| json!({"text": text})).collect::<Vec<_>>()
+        }),
+        RankingFlavor::Cohere => {
+            json!({"model": model, "query": query, "documents": passages})
+        }
+        RankingFlavor::HfTei => json!({"query": query, "texts": passages}),
+    }
+    .as_object()
+    .expect("ranking payload is an object")
+    .clone();
+    merge_endpoint_and_turn_extra(&mut payload, request_info);
+    Ok(Value::Object(payload))
+}
+
+fn parse_rankings(
+    flavor: RankingFlavor,
+    response: &ServerResponse,
+) -> EndpointResult<Option<ParsedResponse>> {
+    let rankings = match flavor {
+        RankingFlavor::HfTei if response.json.as_ref().is_some_and(Value::is_array) => response
+            .json
+            .as_ref()
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        RankingFlavor::HfTei => response
+            .json
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|object| object.get("results"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        RankingFlavor::Nim => response
+            .json
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|object| object.get("rankings"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        RankingFlavor::Cohere => response
+            .json
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|object| object.get("results"))
+            .and_then(Value::as_array)
+            .map(|results| {
+                results
+                    .iter()
+                    .filter_map(Value::as_object)
+                    .map(|result| {
+                        json!({
+                            "index": result.get("index").cloned().unwrap_or(Value::Null),
+                            "score": result.get("relevance_score").cloned().unwrap_or(Value::Null)
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    };
+    Ok((!rankings.is_empty()).then_some(ParsedResponse {
+        perf_ns: response.perf_ns,
+        data: Some(ResponseData::Rankings { rankings }),
+        usage: None,
+        sources: None,
+    }))
+}
+
+fn ranking_inputs(body: &Value, flavor: RankingFlavor) -> ExtractedPayload {
+    let mut extracted = ExtractedPayload::default();
+    let Some(object) = body.as_object() else {
+        return extracted;
+    };
+    match flavor {
+        RankingFlavor::Nim => {
+            if let Some(query) = object
+                .get("query")
+                .and_then(Value::as_object)
+                .and_then(|query| query.get("text"))
+                .and_then(Value::as_str)
+            {
+                extracted.texts.push(query.to_string());
+            }
+            append_object_texts(object.get("passages"), &mut extracted.texts);
+        }
+        RankingFlavor::Cohere => {
+            append_string(object.get("query"), &mut extracted.texts);
+            append_string_list(object.get("documents"), &mut extracted.texts);
+        }
+        RankingFlavor::HfTei => {
+            append_string(object.get("query"), &mut extracted.texts);
+            append_string_list(object.get("texts"), &mut extracted.texts);
+        }
+    }
+    extracted
+}
+
+macro_rules! ranking_endpoint {
+    ($ty:ty, $endpoint_type:ident, $flavor:ident) => {
+        impl Endpoint for $ty {
+            fn metadata(&self) -> &'static EndpointMetadata {
+                metadata_for(EndpointType::$endpoint_type)
+            }
+
+            fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+                format_rankings(RankingFlavor::$flavor, request_info)
+            }
+
+            fn parse_response(
+                &self,
+                response: &ServerResponse,
+            ) -> EndpointResult<Option<ParsedResponse>> {
+                parse_rankings(RankingFlavor::$flavor, response)
+            }
+
+            fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+                ranking_inputs(body, RankingFlavor::$flavor)
+            }
+        }
+    };
+}
+
+ranking_endpoint!(NimRankingsEndpoint, NimRankings, Nim);
+ranking_endpoint!(CohereRankingsEndpoint, CohereRankings, Cohere);
+ranking_endpoint!(HfTeiRankingsEndpoint, HfTeiRankings, HfTei);
+
+impl Endpoint for HuggingFaceGenerateEndpoint {
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::HuggingfaceGenerate)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        let turn = single_turn(
+            request_info,
+            "TGI endpoint supports a single turn per request",
+        )?;
+        let inputs = turn_texts(turn).join(" ");
+        let mut parameters = Map::new();
+        if let Some(max_tokens) = turn.max_tokens {
+            parameters.insert("max_new_tokens".into(), json!(max_tokens));
+        }
+        merge_extra(
+            &mut parameters,
+            request_info.model_endpoint.endpoint.extra.as_ref(),
+        );
+        let mut payload = Map::new();
+        payload.insert("inputs".into(), Value::String(inputs));
+        payload.insert("parameters".into(), Value::Object(parameters));
+        merge_extra(&mut payload, turn.extra_body.as_ref());
+        Ok(Value::Object(payload))
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_tgi_response(response, None)
+    }
+
+    fn parse_response_with_config(
+        &self,
+        response: &ServerResponse,
+        config: &EndpointConfig,
+    ) -> EndpointResult<Option<ParsedResponse>> {
+        parse_tgi_response(response, Some(config.streaming))
+    }
+}
+
+fn parse_tgi_response(
+    response: &ServerResponse,
+    streaming: Option<bool>,
+) -> EndpointResult<Option<ParsedResponse>> {
+    let value = match response.json.as_ref() {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let inferred_streaming = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("token"));
+    let text = if streaming.unwrap_or(inferred_streaming) {
+        value
+            .as_object()
+            .and_then(|object| object.get("token"))
+            .and_then(Value::as_object)
+            .and_then(|token| token.get("text"))
+            .and_then(Value::as_str)
+    } else if let Some(items) = value.as_array() {
+        items
+            .first()
+            .and_then(Value::as_object)
+            .and_then(|object| object.get("generated_text"))
+            .and_then(Value::as_str)
+    } else {
+        value
+            .as_object()
+            .and_then(|object| object.get("generated_text"))
+            .and_then(Value::as_str)
+    };
+    Ok(text
+        .filter(|text| !text.is_empty())
+        .map(|text| ParsedResponse {
+            perf_ns: response.perf_ns,
+            data: Some(ResponseData::Text {
+                text: text.to_string(),
+            }),
+            usage: None,
+            sources: None,
+        }))
+}
+
+impl Endpoint for ImageGenerationEndpoint {
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::ImageGeneration)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        let turns = require_turns(
+            request_info,
+            "Image generation endpoint requires at least one turn",
+        )?;
+        let turn = turns
+            .last()
+            .expect("require_turns returned a non-empty slice");
+        let prompt = first_text(turn).ok_or_else(|| {
+            EndpointError::InvalidRequest("Image generation endpoint requires a text prompt".into())
+        })?;
+        let mut payload = json!({
+            "prompt": prompt,
+            "model": effective_model(request_info, turn),
+            "response_format": "b64_json",
+            "n": 1
+        })
+        .as_object()
+        .expect("image payload is an object")
+        .clone();
+        if request_info.model_endpoint.endpoint.streaming {
+            payload.insert("stream".into(), Value::Bool(true));
+        }
+        merge_endpoint_and_turn_extra(&mut payload, request_info);
+        Ok(Value::Object(payload))
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_image_response(response, true)
+    }
+}
+
+impl Endpoint for ImageEditEndpoint {
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::ImageEdit)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        let turns = require_turns(
+            request_info,
+            "Image edit endpoint requires at least one turn",
+        )?;
+        let turn = turns
+            .last()
+            .expect("require_turns returned a non-empty slice");
+        let prompt = first_text(turn).ok_or_else(|| {
+            EndpointError::InvalidRequest("Image edit endpoint requires a text prompt".into())
+        })?;
+        let image = turn
+            .images
+            .first()
+            .and_then(|image| image.contents.first())
+            .ok_or_else(|| {
+                EndpointError::InvalidRequest(
+                    "Image edit endpoint requires a reference image in turn.images[0]".into(),
+                )
+            })?;
+        if image.is_empty() {
+            return Err(EndpointError::InvalidRequest(
+                "reference image content is empty".into(),
+            ));
+        }
+        let mut payload = json!({
+            "prompt": prompt,
+            "model": effective_model(request_info, turn),
+            "response_format": "b64_json",
+            "n": 1
+        })
+        .as_object()
+        .expect("image edit payload is an object")
+        .clone();
+        if image.to_ascii_lowercase().starts_with("http://")
+            || image.to_ascii_lowercase().starts_with("https://")
+        {
+            payload.insert("url".into(), Value::String(image.clone()));
+        } else {
+            payload.insert("image".into(), build_image_file_field(image)?);
+        }
+        merge_image_edit_extra(
+            &mut payload,
+            request_info.model_endpoint.endpoint.extra.as_ref(),
+        );
+        merge_image_edit_extra(&mut payload, turn.extra_body.as_ref());
+        Ok(Value::Object(payload))
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_image_response(response, false)
+    }
+}
+
+fn parse_image_response(
+    response: &ServerResponse,
+    allow_streaming_item: bool,
+) -> EndpointResult<Option<ParsedResponse>> {
+    let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    let mut images = Vec::new();
+    if allow_streaming_item && object.contains_key("b64_json") {
+        images.push(ImageDataItem {
+            b64_json: optional_string(object, "b64_json"),
+            partial_image_index: object.get("partial_image_index").and_then(Value::as_u64),
+            ..ImageDataItem::default()
+        });
+    } else if let Some(data) = object.get("data").and_then(Value::as_array) {
+        images.extend(
+            data.iter()
+                .filter_map(Value::as_object)
+                .map(|item| ImageDataItem {
+                    url: optional_string(item, "url"),
+                    b64_json: optional_string(item, "b64_json"),
+                    revised_prompt: optional_string(item, "revised_prompt"),
+                    partial_image_index: None,
+                }),
+        );
+    }
+    Ok(Some(ParsedResponse {
+        perf_ns: response.perf_ns,
+        data: Some(ResponseData::Images(ImageResponseData {
+            images,
+            size: optional_string(object, "size"),
+            quality: optional_string(object, "quality"),
+            output_format: optional_string(object, "output_format"),
+            background: optional_string(object, "background"),
+        })),
+        usage: non_empty(object.get("usage")),
+        sources: None,
+    }))
+}
+
+const RESERVED_IMAGE_EDIT_KEYS: [&str; 4] = ["prompt", "image", "url", "mask"];
+
+fn merge_image_edit_extra(payload: &mut Map<String, Value>, extra: Option<&Map<String, Value>>) {
+    let Some(extra) = extra else {
+        return;
+    };
+    for (key, value) in extra {
+        if !RESERVED_IMAGE_EDIT_KEYS.contains(&key.as_str()) {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn build_image_file_field(content: &str) -> EndpointResult<Value> {
+    let (explicit_mime, b64) = if let Some(rest) = content.strip_prefix("data:") {
+        let (header, b64) = rest.split_once(',').ok_or_else(|| {
+            EndpointError::InvalidRequest(
+                "malformed data URL for image content (missing comma)".into(),
+            )
+        })?;
+        let mime = header
+            .split_once(';')
+            .map(|(mime, _)| mime)
+            .filter(|mime| mime.starts_with("image/") && !mime.is_empty());
+        (mime, b64)
+    } else {
+        (None, content)
+    };
+    let mime = explicit_mime.or_else(|| sniff_image_mime(b64)).ok_or_else(|| {
+        EndpointError::InvalidRequest(
+            "image content is not a recognized image format; expected a data URL or raw base64 image (PNG/JPEG/WebP/GIF/BMP)".into(),
+        )
+    })?;
+    let subtype = mime
+        .split_once('/')
+        .map_or("png", |(_, subtype)| subtype)
+        .split_once('+')
+        .map_or_else(
+            || mime.split_once('/').map_or("png", |(_, value)| value),
+            |(base, _)| base,
+        );
+    let filename_subtype = if subtype == "jpeg" { "jpg" } else { subtype };
+    Ok(json!({
+        "b64_data": b64,
+        "filename": format!("image.{filename_subtype}"),
+        "content_type": mime
+    }))
+}
+
+fn sniff_image_mime(b64: &str) -> Option<&'static str> {
+    [
+        ("iVBORw0KGgo", "image/png"),
+        ("/9j/", "image/jpeg"),
+        ("R0lGODlh", "image/gif"),
+        ("R0lGODdh", "image/gif"),
+        ("UklGR", "image/webp"),
+        ("Qk", "image/bmp"),
+    ]
+    .into_iter()
+    .find_map(|(prefix, mime)| b64.starts_with(prefix).then_some(mime))
+}
+
+impl Endpoint for VideoGenerationEndpoint {
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::VideoGeneration)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        let turns = require_turns(
+            request_info,
+            "Video generation endpoint requires at least one turn",
+        )?;
+        let turn = turns
+            .last()
+            .expect("require_turns returned a non-empty slice");
+        let prompt = first_text(turn).ok_or_else(|| {
+            EndpointError::InvalidRequest("Video generation endpoint requires a text prompt".into())
+        })?;
+        let mut payload = json!({
+            "prompt": prompt,
+            "model": effective_model(request_info, turn)
+        })
+        .as_object()
+        .expect("video payload is an object")
+        .clone();
+        merge_endpoint_and_turn_extra(&mut payload, request_info);
+        Ok(Value::Object(payload))
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        Ok(Some(ParsedResponse {
+            perf_ns: response.perf_ns,
+            data: Some(ResponseData::Video(VideoResponseData {
+                video_id: optional_string(object, "id"),
+                object: optional_string(object, "object"),
+                status: optional_string(object, "status"),
+                progress: object
+                    .get("progress")
+                    .cloned()
+                    .filter(|value| !value.is_null()),
+                url: optional_string(object, "url"),
+                size: optional_string(object, "size"),
+                seconds: object
+                    .get("seconds")
+                    .cloned()
+                    .filter(|value| !value.is_null()),
+                quality: optional_string(object, "quality"),
+                model: optional_string(object, "model"),
+                created_at: object
+                    .get("created_at")
+                    .cloned()
+                    .filter(|value| !value.is_null()),
+                completed_at: object
+                    .get("completed_at")
+                    .cloned()
+                    .filter(|value| !value.is_null()),
+                expires_at: object
+                    .get("expires_at")
+                    .cloned()
+                    .filter(|value| !value.is_null()),
+                inference_time_s: object.get("inference_time_s").and_then(Value::as_f64),
+                peak_memory_mb: object.get("peak_memory_mb").and_then(Value::as_f64),
+                error: object
+                    .get("error")
+                    .cloned()
+                    .filter(|value| !value.is_null()),
+            })),
+            usage: non_empty(object.get("usage")),
+            sources: None,
+        }))
+    }
+}
+
+impl Endpoint for ImageRetrievalEndpoint {
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::ImageRetrieval)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        let turn = single_turn(
+            request_info,
+            "Image Retrieval endpoint only supports one turn",
+        )?;
+        if turn.images.is_empty() {
+            return Err(EndpointError::InvalidRequest(
+                "Image Retrieval request requires at least one image".into(),
+            ));
+        }
+        let input = turn
+            .images
+            .iter()
+            .flat_map(|image| image.contents.iter())
+            .filter(|content| !content.is_empty())
+            .map(|content| json!({"type":"image_url", "url":content}))
+            .collect::<Vec<_>>();
+        if input.is_empty() {
+            return Err(EndpointError::InvalidRequest(
+                "no valid image content found; all images have empty contents".into(),
+            ));
+        }
+        let mut payload = Map::new();
+        payload.insert("input".into(), Value::Array(input));
+        merge_endpoint_and_turn_extra(&mut payload, request_info);
+        Ok(Value::Object(payload))
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        let data = object
+            .get("data")
+            .and_then(Value::as_array)
+            .filter(|data| !data.is_empty())
+            .cloned();
+        Ok(data.map(|data| ParsedResponse {
+            perf_ns: response.perf_ns,
+            data: Some(ResponseData::ImageRetrieval { data }),
+            usage: None,
+            sources: None,
+        }))
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        let mut extracted = ExtractedPayload::default();
+        extracted.image_count = body
+            .get("input")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item.get("type").and_then(Value::as_str) == Some("image_url"))
+                    .count() as u32
+            })
+            .unwrap_or(0);
+        extracted
+    }
+}
+
+impl Endpoint for SolidoRagEndpoint {
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::SolidoRag)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        let turns = require_turns(request_info, "SOLIDO endpoint requires at least one turn")?;
+        let turn = turns
+            .last()
+            .expect("require_turns returned a non-empty slice");
+        let mut payload = json!({
+            "query": turn_texts(turn),
+            "filters": {"family":"Solido", "tool":"SDE"},
+            "inference_model": effective_model(request_info, turn)
+        })
+        .as_object()
+        .expect("SOLIDO payload is an object")
+        .clone();
+        merge_endpoint_and_turn_extra(&mut payload, request_info);
+        Ok(Value::Object(payload))
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        let Some(content) = object
+            .get("content")
+            .and_then(Value::as_str)
+            .filter(|content| !content.is_empty())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ParsedResponse {
+            perf_ns: response.perf_ns,
+            data: Some(ResponseData::Text {
+                text: content.to_string(),
+            }),
+            usage: None,
+            sources: object
+                .get("sources")
+                .cloned()
+                .filter(|sources| !sources.is_null()),
+        }))
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        let mut extracted = ExtractedPayload::default();
+        append_string_list(body.get("query"), &mut extracted.texts);
+        extracted
+    }
+}
+
+fn single_turn<'a>(
+    request_info: &'a RequestInfo,
+    message: &str,
+) -> EndpointResult<&'a crate::Turn> {
+    if request_info.turns.len() == 1 {
+        Ok(&request_info.turns[0])
+    } else {
+        Err(EndpointError::InvalidRequest(message.into()))
+    }
+}
+
+fn effective_model(request_info: &RequestInfo, turn: &crate::Turn) -> String {
+    turn.model
+        .clone()
+        .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone())
+}
+
+fn first_text(turn: &crate::Turn) -> Option<&str> {
+    turn.texts
+        .first()
+        .and_then(|text| text.contents.first())
+        .map(String::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+fn merge_endpoint_and_turn_extra(payload: &mut Map<String, Value>, request_info: &RequestInfo) {
+    merge_extra(payload, request_info.model_endpoint.endpoint.extra.as_ref());
+    merge_extra(
+        payload,
+        request_info
+            .turns
+            .last()
+            .and_then(|turn| turn.extra_body.as_ref()),
+    );
+}
+
+fn optional_string(object: &Map<String, Value>, field: &str) -> Option<String> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn non_empty(value: Option<&Value>) -> Option<Value> {
+    match value {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(object)) if object.is_empty() => None,
+        Some(value) => Some(value.clone()),
+    }
+}
+
+fn append_string(value: Option<&Value>, output: &mut Vec<String>) {
+    if let Some(value) = value.and_then(Value::as_str) {
+        output.push(value.to_string());
+    }
+}
+
+fn append_string_list(value: Option<&Value>, output: &mut Vec<String>) {
+    if let Some(values) = value.and_then(Value::as_array) {
+        output.extend(
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string),
+        );
+    }
+}
+
+fn append_object_texts(value: Option<&Value>, output: &mut Vec<String>) {
+    if let Some(values) = value.and_then(Value::as_array) {
+        output.extend(values.iter().filter_map(|value| {
+            value
+                .as_object()
+                .and_then(|object| object.get("text"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        }));
+    }
+}
