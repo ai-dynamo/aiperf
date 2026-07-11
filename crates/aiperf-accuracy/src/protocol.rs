@@ -38,6 +38,7 @@ impl ProblemId {
 
 /// Exact evaluator environment reported by the initialization handshake.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorIdentity {
     /// Negotiated protocol version.
     pub protocol: u32,
@@ -90,6 +91,7 @@ pub struct EvaluatorLoadConfig {
 
 /// Dataset/task identity frozen by a successful load operation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorDatasetIdentity {
     /// Dataset preparation implementation.
     pub provider: String,
@@ -115,6 +117,7 @@ pub struct EvaluatorDatasetIdentity {
 
 /// Result of loading one benchmark into the worker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorLoadResult {
     /// Canonical benchmark name.
     pub benchmark: String,
@@ -140,6 +143,7 @@ pub struct EvaluatorMessage {
 
 /// Generation controls authored by the canonical task.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorGenerationConfig {
     /// Maximum output tokens.
     pub max_tokens: usize,
@@ -154,6 +158,7 @@ pub struct EvaluatorGenerationConfig {
 
 /// One evaluator-prepared problem safe to send through the Rust inference path.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorProblem {
     /// Opaque worker-owned problem identifier.
     pub problem_id: ProblemId,
@@ -169,6 +174,7 @@ pub struct EvaluatorProblem {
 
 /// One page of evaluator-prepared problems.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorProblemPage {
     /// Problems in canonical worker order.
     pub items: Vec<EvaluatorProblem>,
@@ -189,6 +195,7 @@ pub struct EvaluatorGradeItem {
 
 /// Canonical evaluator result for one response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorGrade {
     /// Opaque problem identifier.
     pub problem_id: ProblemId,
@@ -209,6 +216,7 @@ pub struct EvaluatorGrade {
 
 /// Batch of canonical grade results.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorGradeBatch {
     /// Results in submitted-item order.
     pub items: Vec<EvaluatorGrade>,
@@ -253,6 +261,7 @@ impl WorkerRequest<'_> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkerResponse {
     pub(crate) id: Option<u64>,
     pub(crate) ok: bool,
@@ -263,6 +272,7 @@ pub(crate) struct WorkerResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkerRemoteError {
     pub(crate) kind: String,
     pub(crate) message: String,
@@ -271,6 +281,7 @@ pub(crate) struct WorkerRemoteError {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ShutdownResult {
     pub(crate) shutdown: bool,
 }

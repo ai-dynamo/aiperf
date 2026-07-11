@@ -663,4 +663,24 @@ for line in sys.stdin:
         assert!(matches!(error, EvaluatorWorkerError::Protocol(_)));
         assert!(error.to_string().contains("dependency lock or container"));
     }
+
+    #[tokio::test]
+    async fn grade_rejects_ground_truth_outside_protocol() {
+        let script = FAKE_WORKER.replace(
+            "'extracted_answer': item['response']",
+            "'extracted_answer': item['response'], 'ground_truth': 'private'",
+        );
+        let mut evaluator = PythonEvaluator::spawn(fixture_config(&script))
+            .await
+            .unwrap();
+        let error = evaluator
+            .grade_batch(&[EvaluatorGradeItem {
+                problem_id: ProblemId::new("opaque-1").unwrap(),
+                response: "A".to_string(),
+            }])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, EvaluatorWorkerError::Json(_)));
+        assert!(error.to_string().contains("unknown field `ground_truth`"));
+    }
 }
