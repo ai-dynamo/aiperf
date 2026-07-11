@@ -14,7 +14,6 @@ use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
-use aiperf_accuracy::{AccuracyError, AccuracyRegistry};
 use aiperf_dataset::{
     BuiltinEndpointResolver, DatasetError, EndpointResolver, LoaderRegistry, SamplerRegistry,
 };
@@ -24,8 +23,6 @@ use aiperf_dataset::{
 pub enum ExtensionError {
     /// A dataset-format, sampler, or endpoint registry rejected an entry.
     Dataset(DatasetError),
-    /// The accuracy benchmark or grader registry rejected an entry.
-    Accuracy(AccuracyError),
     /// An extension supplied an empty stable name.
     EmptyExtensionName,
     /// An extension name was already applied to this aggregate.
@@ -52,7 +49,6 @@ impl Display for ExtensionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dataset(error) => Display::fmt(error, f),
-            Self::Accuracy(error) => Display::fmt(error, f),
             Self::EmptyExtensionName => f.write_str("extension name cannot be empty"),
             Self::DuplicateExtension(name) => {
                 write!(f, "duplicate AIPerf extension {name:?}")
@@ -69,7 +65,6 @@ impl Error for ExtensionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Dataset(error) => Some(error),
-            Self::Accuracy(error) => Some(error),
             Self::ExtensionRegistration { source, .. } => Some(source.as_ref()),
             Self::EmptyExtensionName | Self::DuplicateExtension(_) | Self::Rejected(_) => None,
         }
@@ -79,12 +74,6 @@ impl Error for ExtensionError {
 impl From<DatasetError> for ExtensionError {
     fn from(error: DatasetError) -> Self {
         Self::Dataset(error)
-    }
-}
-
-impl From<AccuracyError> for ExtensionError {
-    fn from(error: AccuracyError) -> Self {
-        Self::Accuracy(error)
     }
 }
 
@@ -111,7 +100,6 @@ pub struct AiperfRegistry {
     dataset_formats: LoaderRegistry,
     samplers: SamplerRegistry,
     endpoints: BuiltinEndpointResolver,
-    accuracy: AccuracyRegistry,
     extension_names: BTreeSet<String>,
 }
 
@@ -122,7 +110,6 @@ impl AiperfRegistry {
             dataset_formats: LoaderRegistry::with_builtin_formats()?,
             samplers: SamplerRegistry::with_builtin_strategies()?,
             endpoints: BuiltinEndpointResolver::default(),
-            accuracy: AccuracyRegistry::builtin(),
             extension_names: BTreeSet::new(),
         })
     }
@@ -196,16 +183,6 @@ impl AiperfRegistry {
     /// Clone the immutable endpoint catalog behind its runtime lookup trait.
     pub fn endpoint_resolver(&self) -> Arc<dyn EndpointResolver> {
         Arc::new(self.endpoints.clone())
-    }
-
-    /// Registered accuracy benchmarks and graders.
-    pub fn accuracy(&self) -> &AccuracyRegistry {
-        &self.accuracy
-    }
-
-    /// Mutable accuracy registry for extension setup.
-    pub fn accuracy_mut(&mut self) -> &mut AccuracyRegistry {
-        &mut self.accuracy
     }
 
     /// Names of successfully applied extensions in deterministic order.

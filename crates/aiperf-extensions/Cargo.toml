@@ -9,7 +9,6 @@ license.workspace = true
 description = "Statically linked extension composition registry for native Rust AIPerf."
 
 [dependencies]
-aiperf-accuracy = { path = "../aiperf-accuracy" }
 aiperf-dataset.workspace = true
 
 [dev-dependencies]
