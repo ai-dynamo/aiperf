@@ -181,19 +181,9 @@ pub struct ParsedGraph {
     pub graphs: BTreeMap<String, GraphRecord>,
     #[serde(default)]
     pub traces: Vec<TraceRecord>,
-    /// Present (non-null) iff a segment pool backs this workload. Only its
-    /// presence matters to the runtime (`_handle_node_exception` sentinel
-    /// branch); the harness emits a truthy placeholder.
-    #[serde(default)]
-    pub segment_pool: Option<serde_json::Value>,
 }
 
 impl ParsedGraph {
-    /// True when a segment pool backs this workload (`segment_pool is not None`).
-    pub fn has_segment_pool(&self) -> bool {
-        self.segment_pool.is_some()
-    }
-
     /// The top-level graph a trace runs against (`resolve_trace_graph`).
     pub fn resolve_trace_graph(&self, trace: &TraceRecord) -> &GraphRecord {
         match &trace.graph_ref {
@@ -228,7 +218,6 @@ mod tests {
         assert!(node.streaming);
         assert_eq!(node.write_channels(), vec!["out"]);
         assert_eq!(parsed.graph.edges.len(), 2);
-        assert!(!parsed.has_segment_pool());
     }
 
     #[test]
