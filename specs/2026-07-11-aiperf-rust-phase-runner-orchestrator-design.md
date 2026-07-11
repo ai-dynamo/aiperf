@@ -483,3 +483,85 @@ ZMQ layer (`PhasePublisher`, the `TimingManager` service, `wait_for_workers`, th
 router callbacks) collapsing into direct `PhaseObserver` / `RequestObserver` trait calls on
 one `!Send` loop, all time via `Clock` so grace/timeout/drain run in virtual time offline
 for a deterministic, reproducible phase escalation.
+
+---
+
+## Implementation addendum (2026-07-11)
+
+**Status: built.** This addendum supersedes the original designed-status tables. The
+process-independent phase policy is implemented in `aiperf-timing`; the normal scheduled
+application pipeline is connected in `aiperf`. No ZMQ, service lifecycle, worker-registration
+handshake, or credit-router wire type was reintroduced.
+
+### Built symbols and ownership
+
+- `aiperf-timing/src/phase/config.rs` owns validated `PhaseConfig`, `PhaseKind`, and an
+  explicit `GracePeriod::{Disabled, Finite, Infinite}`. The enum removes the ambiguous
+  `None`/zero/infinity encoding while preserving warmup's infinite-drain default.
+- `lifecycle.rs` implements the validated CREATED → STARTED → SENDING_COMPLETE → COMPLETE
+  state machine over one injected `Clock`. `PhaseCompletionReason` splits Python's overloaded
+  grace bit into completed, grace-timeout, cancelled, force-completed, and failed outcomes;
+  compatibility booleans remain in `PhaseStats`.
+- `progress.rs` implements local-loop counters, sent/completed freeze snapshots, the two
+  one-shot notifications, first-token prefill accounting, late-return protection, and the
+  pending-branch conjunct. No hot-path lock or cross-thread atomic is used.
+- `runner.rs` provides the object-safe `PhaseRunner`, `PhaseExecution`, and
+  `PhaseExecutionFactory` seams plus `ClockPhaseRunner`. Its production ordering is configure
+  → setup → STARTED/progress → ramps → execute → duration timeout/freeze/cancel-pending →
+  return grace → cancel-all → bounded drain → stuck-slot release → COMPLETE/finalize. Setup
+  and execution failures flush the local lifecycle and terminal observer event.
+- `orchestrator.rs` provides `PhaseOrchestrator`, `PhaseRunnerFactory`, and
+  `ClockPhaseOrchestrator`. It validates unique ids, warmup-before-profiling order, and the
+  presence of a profiling phase; retains overlapping seamless runners until their background
+  return waits finish; and shares one execution factory so slot debt survives handoff. An
+  orchestration-level cancellation latch prevents a cancelled warmup from advancing into
+  profiling.
+- `observer.rs` replaces `PhasePublisher` with direct `PhaseObserver` calls and supplies
+  no-op, recording/report, and console implementations. `on_phases_complete` replaces the
+  former credits-complete publication for in-process consumers.
+- `aiperf/src/phase_runtime.rs` adapts ordinary `Workload` + `ScheduledRuntime` +
+  `TurnDispatcher` instances into phase executions. `TurnLifecycleObserver` records accepted
+  sends synchronously before dispatch-task polling, then TTFT and terminal callbacks on the
+  same `LocalSet`. Each phase owns independent metrics/report state while the factory retains
+  shared admission resources and the backend dispatcher.
+- `ScheduledPhaseResources` configures shared session/prefill `SlotPool`s before issuance;
+  `SlotPoolPhaseResources` preserves debt across seamless phases. Workload-specific resource
+  implementations can additionally release guards held outside scheduler tasks on the force
+  path.
+- `RampScheduledPhaseController` owns prepared `RampDriver`s, applies their initial values
+  synchronously before issuance, and stops/joins their tasks at sending handoff. Report
+  finalization waits for returns; detached terminal record processors are joined only after
+  the phase window and report have closed, so grading/consumer latency cannot stretch phase
+  timing.
+- The pre-existing scheduled application entry points now lower even a one-phase run through
+  `run_scheduled_phases`; this is the direct in-process top-level driver replacing
+  `TimingManager`. Their historical drain behavior is retained with infinite grace. Explicit
+  multi-phase callers choose disabled, finite, or infinite grace per plan and receive ordered
+  `PhaseStats` plus phase-tagged scheduled reports.
+
+### Executable proof
+
+- `aiperf-timing` unit tests pin lifecycle transition errors, one-clock deadline arithmetic,
+  source-compatible defaults, freeze/late-return behavior, session/root counting, and branch
+  completion gating.
+- `tests/phase_runner.rs` uses `SimClock` to prove the happy path, exact duration+grace
+  deadline, cancellation drain, exact force-completion instant and stuck-slot release,
+  external-cancel short circuit, progress ticks, and failure lifecycle flush.
+- `tests/phase_orchestrator.rs` proves both non-seamless drain-before-start and seamless
+  overlap. Its shared `SlotPool` case lowers warmup capacity 4 → profiling capacity 3 while
+  four warmup guards remain live: debt is one, profiling blocks until a warmup return repays
+  it, and the pool finishes with limit three/debt zero. It also proves cancellation cannot
+  start the next phase.
+- `aiperf/tests/phase_runtime_sim.rs` repeats seamless overlap and debt drain through the real
+  `ScheduledRuntime` adapter, proves processors are joined outside the phase window, and pins
+  ramp-before-issuance/stop-at-handoff behavior.
+- `aiperf/tests/phase_runtime_online.rs` dispatches a seamless warmup and profiling phase
+  through the real Clock-injected hyper `TransportSink` against an in-process SSE server and
+  proves profiling starts before warmup's delayed HTTP return. Thus virtual and wall-clock
+  modes use the same phase driver and stats schema.
+
+The generic Graph-IR phase consumer and a native CLI syntax for authoring an arbitrary phase
+list remain separate composition work; neither changes the built runner/orchestrator policy.
+Graph mode still consumes only its existing duration gate. The scheduled CLI paths already use
+the direct phase driver as one profiling phase, while warmup/multi-phase composition is exposed
+through the typed `ScheduledPhasePlan` API.
