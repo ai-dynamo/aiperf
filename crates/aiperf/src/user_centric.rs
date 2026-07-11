@@ -430,7 +430,8 @@ impl UserCentricWorkload {
         }
     }
 
-    pub(crate) fn session_slots(&self) -> Option<Rc<SlotPool>> {
+    /// Session admission pool consumed by phase ramps and adaptive actuators.
+    pub fn session_slots(&self) -> Option<Rc<SlotPool>> {
         self.pool.session_slots.clone()
     }
 }

@@ -29,8 +29,7 @@ class RunExecutor(ABC):
         """Execute one benchmark run.
 
         Implementations:
-            - LocalSubprocessExecutor: fork subprocess of aiperf.orchestrator.subprocess_runner
-            - K8sChildJobExecutor (planned): create AIPerfJob CR via kubernetes_asyncio, watch to terminal
+            - RustSubprocessExecutor: one native timing/HTTP process per run
 
         Args:
             run: Fully-built BenchmarkRun (config + variation + trial + label).

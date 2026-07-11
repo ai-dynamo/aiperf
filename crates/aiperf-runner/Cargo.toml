@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Versioned single-benchmark subprocess runner for the Python AIPerf orchestrator."
+
+[dependencies]
+aiperf.workspace = true
+aiperf-clock.workspace = true
+aiperf-dataset.workspace = true
+aiperf-endpoints.workspace = true
+aiperf-extensions.workspace = true
+aiperf-metrics.workspace = true
+aiperf-rng.workspace = true
+aiperf-timing = { path = "../aiperf-timing" }
+anyhow.workspace = true
+async-trait.workspace = true
+loadgen-core.workspace = true
+mimalloc = "0.1"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tempfile = "3"
