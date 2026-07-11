@@ -15,14 +15,21 @@ from pydantic import (
     Field,
     PlainSerializer,
     RootModel,
+    SerializationInfo,
     SerializeAsAny,
     field_validator,
+    model_serializer,
 )
 from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
+from aiperf.common.enums import (
+    CreditPhase,
+    MetricConsoleGroup,
+    MetricValueTypeT,
+    SSEFieldType,
+)
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
@@ -59,6 +66,28 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The sum of all the metric values across all records",
     )
+    console_group: MetricConsoleGroup | None = Field(
+        default=None,
+        description="Optional console-grouping override for analyzer-injected results "
+        "whose tags are not in MetricRegistry. The registered metric class's "
+        "`console_group` ClassVar is the source of truth for everything else; this "
+        "field is only consulted by the console exporter when a tag isn't registered. "
+        "Dropped from every public dump (CSV / JSON exports / REST API); only IPC "
+        "passes `context={'include_internal': True}` to keep it across process boundaries.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_internal_fields(self, handler, info: SerializationInfo) -> dict[str, Any]:
+        """Strip internal-only fields (`console_group`) from every dump unless
+        the caller opts in with ``context={'include_internal': True}`` -- i.e.
+        cross-process IPC. User-facing CSV/JSON/REST exports never set the
+        flag, so they always see the public shape."""
+        data = handler(self)
+        if isinstance(data, dict) and not (
+            info.context and info.context.get("include_internal")
+        ):
+            data.pop("console_group", None)
+        return data
 
     def to_display_unit(self) -> MetricResult:
         """Convert the metric result to its display unit."""
@@ -176,15 +205,75 @@ class MetricRecordMetadata(AIPerfBaseModel):
     )
 
 
+class TimesliceResult(AIPerfBaseModel):
+    """Per-timeslice results: window bounds + metric results.
+
+    Combines ``start_ns`` / ``end_ns`` / ``is_complete`` with the metric
+    results computed for that slice. Stored in chronological order in
+    :attr:`ProfileResults.timeslices`; position in the parent list is the
+    slice's chronological index, matching the ``BaseTimeslice`` wire shape.
+
+    ``is_complete`` is ``None`` for fully-closed windows (space-efficient
+    default matching ``BaseTimeslice``) and ``False`` for the trailing
+    partial window when the benchmark stopped before the next slice
+    boundary. Partial slices should be excluded from aggregate statistics
+    to avoid skewing rate calculations.
+
+    Metric results are keyed by metric tag for direct lookup. The
+    JSON/CSV exporters flatten them to per-tag fields in the wire format.
+    """
+
+    start_ns: int = Field(
+        ge=0,
+        description="Timeslice start timestamp in nanoseconds",
+    )
+    end_ns: int = Field(
+        ge=0,
+        description="Timeslice end timestamp in nanoseconds",
+    )
+    is_complete: bool | None = Field(
+        default=None,
+        description="False for partial timeslices (typically the final slice). "
+        "None for complete timeslices covering the full configured duration.",
+    )
+    metric_results: dict[MetricTagT, MetricResult] = Field(
+        default_factory=dict,
+        description="Metric results computed for this timeslice's window, "
+        "keyed by metric tag.",
+    )
+
+    @field_validator("metric_results", mode="before")
+    @classmethod
+    def _coerce_metric_results(cls, value: Any) -> Any:
+        """Accept ``list[MetricResult]`` for ergonomic construction and rekey
+        by ``tag``. Existing dict input passes through unchanged."""
+        if isinstance(value, list):
+            return {r.tag: r for r in value}
+        return value
+
+
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )
+    warmup_records: list[MetricResult] | None = Field(
+        default=None,
+        description="Metric results computed only from warmup-phase records. "
+        "Top-level records remain profiling-only.",
+    )
+    timeslices: list[TimesliceResult] | None = Field(
+        default=None,
+        description="Per-timeslice results in chronological order. Each entry "
+        "bundles the slice's window bounds (start_ns, end_ns, is_complete) "
+        "with its metric results. Position in the list is the slice's "
+        "chronological index. Produced by the MetricsAccumulator engine.",
+    )
     timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
         default=None,
-        description="The timeslice metric results of the profile (if using timeslice mode)",
+        description="The timeslice metric results of the profile (if using the "
+        "legacy timeslice results-processor path)",
     )
     total_expected: int | None = Field(
         default=None,
@@ -1073,6 +1162,27 @@ class TokenCounts:
     """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
 
 
+@dataclass(slots=True)
+class MediaCounts:
+    """Multimodal content-part counts for a record.
+
+    Computed once by ``InferenceResultParser`` at parse time via the endpoint's
+    ``extract_payload_inputs`` hook (which walks the wire payload's message-array
+    shape) and stashed on ``ParsedResponseRecord`` so record-metric classes
+    (``NumImagesMetric`` et al.) never re-parse ``payload_bytes`` per metric per
+    record. Zero-valued when the payload carries no recognised media parts.
+    """
+
+    images: int = 0
+    """Count of image content parts in the wire payload."""
+
+    audios: int = 0
+    """Count of audio content parts in the wire payload."""
+
+    videos: int = 0
+    """Count of video content parts in the wire payload."""
+
+
 @dataclass
 class ParsedResponseRecord:
     """Record of a request and its associated responses, already parsed and ready for metrics.
@@ -1088,6 +1198,9 @@ class ParsedResponseRecord:
 
     token_counts: TokenCounts | None = None
     """The token counts for the response. None if the token counts could not be calculated."""
+
+    media_counts: MediaCounts = field(default_factory=MediaCounts)
+    """Multimodal content-part counts derived once from the wire payload (images/audios/videos)."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
@@ -1217,9 +1330,20 @@ class RawRecordInfo(AIPerfBaseModel):
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
     )
-    payload: dict[str, Any] = Field(
-        ...,
-        description="The raw request payload sent to the server.",
+    payload: dict[str, Any] | None = Field(
+        default=None,
+        description="The raw request payload sent to the server. Exactly one "
+        "of ``payload`` or ``payload_bytes`` is populated per record — "
+        "``payload_bytes`` is preferred by the JSONL writer (bytes are "
+        "spliced as a JSON fragment without a loads+dumps round-trip).",
+    )
+    payload_bytes: bytes | None = Field(
+        default=None,
+        exclude=True,
+        description="Canonical pre-encoded JSON bytes of the request body, "
+        "inherited from ``RequestInfo.payload_bytes``. Spliced directly into "
+        "the JSONL line via ``orjson.Fragment`` to avoid the pointless "
+        "decode-then-encode round-trip ``payload: dict`` would require.",
     )
     request_headers: dict[str, str] | None = Field(
         default=None,

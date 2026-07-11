@@ -5,6 +5,9 @@ import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+from numpy.typing import NDArray
+
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     EnergyMetricUnit,
@@ -14,6 +17,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
+from aiperf.common.growable_array import GrowableArray
 from aiperf.common.hooks import background_task
 from aiperf.common.messages import RealtimeTelemetryMetricsMessage
 from aiperf.common.models import (
@@ -83,6 +87,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         self._realtime_enable_event = asyncio.Event()
         self._last_metric_values: dict[str, float | None] | None = None
         self._total_metrics_generated = 0
+        # Lightweight timestamp storage for query_time_range() (analyzer support)
+        self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
         """Process individual GPU telemetry record into hierarchical storage.
@@ -90,7 +96,19 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         Args:
             record: GPU TelemetryRecord containing GPU metrics and hierarchical metadata
         """
+        self._timestamps_ns.append(record.timestamp_ns)
         self._hierarchy.add_record(record)
+
+    async def process_record(self, record: TelemetryRecord) -> None:
+        """``AccumulatorProtocol``-compatible alias for ``process_telemetry_record``."""
+        await self.process_telemetry_record(record)
+
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        if len(self._timestamps_ns) == 0:
+            return np.array([], dtype=bool)
+        ts = self._timestamps_ns.data
+        return (ts >= start_ns) & (ts < end_ns)
 
     def start_realtime_telemetry(self) -> None:
         """Start the realtime telemetry background task.
@@ -115,7 +133,16 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         kill the task when started under a non-dashboard UI. The user can later
         wake the task via ``START_REALTIME_TELEMETRY`` (sent by the dashboard
         when the telemetry pane is toggled on).
+
+        ``--stats-interval 0`` disables realtime reporting by short-circuiting
+        here before the loop, mirroring the records-manager task; otherwise the
+        ``asyncio.sleep(0)`` tail would busy-spin re-summarizing every tick.
         """
+        interval = self.run.cfg.runtime.realtime_metrics_interval(
+            self.run.cfg.runtime.ui
+        )
+        if interval == 0:
+            return
         while not self.stop_requested:
             if (
                 self.run.cfg.ui_type != UIType.DASHBOARD
@@ -129,7 +156,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 continue
 
             await self._report_realtime_metrics()
-            await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
+            await asyncio.sleep(interval)
 
     async def _report_realtime_metrics(self) -> None:
         """Report real-time GPU telemetry metrics."""
@@ -163,7 +190,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         2. Real-time dashboard updates when --gpu-telemetry dashboard is enabled
 
         Async and runs periodically under the dashboard cadence
-        (`REALTIME_METRICS_INTERVAL`). Emits one MetricResult per GPU per
+        (`RuntimeConfig.realtime_metrics_interval`). Emits one MetricResult per GPU per
         signal. Contrast with `compute_efficiency_metrics` below, which is
         sync, runs once per profiling phase, and aggregates across GPUs
         into cross-GPU totals.

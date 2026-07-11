@@ -133,6 +133,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Getting Started
 - [Basic Tutorial](docs/tutorial.md) - Profile Qwen3-0.6B with vLLM
 - [Comprehensive Benchmarking Guide](docs/comprehensive-llm-benchmarking.md) - 5 real-world use cases
+- [Interactive Chat Sanity Checks](docs/tutorials/interactive-chat.md) - Talk to an endpoint with `aiperf chat` and see per-turn TTFT/TPS/ITL
 - [YAML Configuration Files](docs/tutorials/yaml-config.md) - Drive AIPerf from a config file instead of CLI flags
 - [Sampling Distributions in YAML Configs](docs/tutorials/yaml-distributions.md) - Fixed, Normal, Log-normal, Multimodal, and Empirical shapes for ISL/OSL/turns/etc.
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless

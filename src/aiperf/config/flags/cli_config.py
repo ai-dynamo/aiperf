@@ -441,6 +441,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = False
 
+    apply_chat_template: Annotated[
+        bool,
+        Field(
+            description="Apply the HuggingFace tokenizer's chat template when counting input tokens. "
+            "When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, "
+            "EOT, generation-prompt suffix) and the record processor reports ISL using "
+            "`apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. "
+            "When disabled (default), both paths use bare-text encoding, so reported ISL matches the "
+            "prompt content the user asked for and ignores template overhead. Requires an HF tokenizer "
+            "with a chat template configured; no-ops on tiktoken / un-templated models.",
+        ),
+        CLIParameter(
+            name=("--apply-chat-template",),
+            group=Groups.TOKENIZER,
+        ),
+    ] = False
+
     ##############################################################################
     # Input
     ##############################################################################
@@ -1811,7 +1828,13 @@ class CLIConfig(BaseConfig):
     adaptive_scale: Annotated[
         bool,
         Field(
-            description="Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.",
+            description=(
+                "Enable stable single-run adaptive scale control. Use "
+                "--adaptive-scale-control variable:min,max:type to choose the "
+                "controlled variable and bounds, and --adaptive-scale-sla "
+                "metric:stat:op:threshold to define pass/fail criteria. Also "
+                "requires --benchmark-duration and --adaptive-sustain-duration."
+            ),
         ),
         CLIParameter(name=("--adaptive-scale",), group=Groups.LOAD_GENERATOR),
     ] = False
@@ -1839,15 +1862,71 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    adaptive_scale_control: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Compact adaptive scale control spec in variable:min,max:type "
+                "form. The variable is one of concurrency, prefill_concurrency, "
+                "request_rate, or users; min and max are required explicit "
+                "bounds; type is int for discrete controls and float for rate "
+                "controls. Examples: concurrency:1,1000:int, "
+                "prefill_concurrency:1,8:int, request_rate:1,200:float, "
+                "users:10,500:int. Do not combine this with expanded "
+                "--adaptive-control-* flags."
+            ),
+        ),
+        CLIParameter(name=("--adaptive-scale-control",), group=Groups.LOAD_GENERATOR),
+    ] = None
+
+    adaptive_control_variable: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.",
+        ),
+        CLIParameter(
+            name=("--adaptive-control-variable",), group=Groups.LOAD_GENERATOR
+        ),
+    ] = None
+
+    adaptive_control_min: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            default=None,
+            description="Minimum adaptive scale control value.",
+        ),
+        CLIParameter(name=("--adaptive-control-min",), group=Groups.LOAD_GENERATOR),
+    ] = None
+
+    adaptive_control_max: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            default=None,
+            description="Maximum adaptive scale control value. Inferred from the phase target when omitted.",
+        ),
+        CLIParameter(name=("--adaptive-control-max",), group=Groups.LOAD_GENERATOR),
+    ] = None
+
     adaptive_scale_sla: Annotated[
         list[str] | None,
         Field(
             default=None,
             description=(
                 "SLA filter for adaptive scale. Format: "
-                "'metric_tag:stat:op:threshold'. For request_latency, stat is one of "
-                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
-                "request throughput and goodput_ratio support {avg, min, max}. "
+                "'metric_tag:stat:op:threshold'. Latency-family metrics "
+                "(request_latency, time_to_first_token/ttft, "
+                "inter_token_latency/itl/tpot) support percentile stats; "
+                "window scalar/rate metrics (request_throughput, "
+                "output_token_throughput, goodput, "
+                "goodput_ratio, success_rate, "
+                "error_rate, cancellation_rate) support {avg, min, max}. "
+                "Full metric/stat table: "
+                "[Adaptive SLA metric support]"
+                "(tutorials/yaml-config.md#adaptive-sla-metric-support). "
                 "op in {lt, le, gt, ge}; threshold is a float. Repeatable. "
                 "Example: --adaptive-scale-sla 'request_latency:p95:le:30000'."
             ),
@@ -3628,6 +3707,24 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name="--api-host",
+            group=Groups.SERVICE,
+        ),
+    ] = None
+
+    stats_interval: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1000.0,
+            description=(
+                "Interval in seconds between realtime stats publishes (dashboards "
+                "and the per-tick log block). 0 disables the log block while "
+                "dashboards continue to poll. Defaults to 5s under --ui dashboard, "
+                "30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL."
+            ),
+        ),
+        CLIParameter(
+            name=("--stats-interval",),
             group=Groups.SERVICE,
         ),
     ] = None

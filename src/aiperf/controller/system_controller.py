@@ -32,6 +32,7 @@ from aiperf.common.messages import (
     CommandResponse,
     CommandSuccessResponse,
     HeartbeatMessage,
+    ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
@@ -585,6 +586,21 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self.service_manager.stop_service(ServiceType.WORKER)
         if self.scale_record_processors_with_workers:
             await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
+
+    @on_message(MessageType.PROCESS_ALL_RESULTS)
+    async def _on_process_all_results_message(
+        self, message: ProcessAllResultsMessage
+    ) -> None:
+        """Receive the unified results message from RecordsManager.
+
+        Supplements the per-stream PROCESS_RECORDS_RESULT / PROCESS_TELEMETRY_RESULT
+        / PROCESS_SERVER_METRICS_RESULT handlers — those still own the shutdown
+        trigger.
+        """
+        self.trace_or_debug(
+            lambda: f"Received unified results message: {message}",
+            lambda: "Received unified results message",
+        )
 
     @on_message(MessageType.PROCESS_RECORDS_RESULT)
     async def _on_process_records_result_message(

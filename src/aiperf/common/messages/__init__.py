@@ -47,6 +47,7 @@ from aiperf.common.messages.network_latency_messages import (
 )
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
+    ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
@@ -102,6 +103,7 @@ __all__ = [
     "NetworkLatencyRecordMessage",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
+    "ProcessAllResultsMessage",
     "ProcessRecordsResultMessage",
     "ProcessServerMetricsResultMessage",
     "ProcessTelemetryResultMessage",
