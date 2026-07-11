@@ -10,11 +10,17 @@
 //! synthesis code.
 
 pub mod derive;
+pub mod dist;
 pub mod error;
 pub mod generator;
 pub mod hash_id;
 
 pub use derive::{RngRoot, derive_seed_parts, derive_seed_u64};
+pub use dist::{
+    EmpiricalDistribution, EmpiricalPoint, FixedDistribution, LogNormalDistribution,
+    MultimodalDistribution, NormalDistribution, PeakEntry, SamplingDistribution,
+    SequenceLengthDistribution, SequenceLengthPair,
+};
 pub use error::{Result, RngError};
 pub use generator::RandomGenerator;
 pub use hash_id::HashIdRandomGenerator;
