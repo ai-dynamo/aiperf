@@ -11,6 +11,8 @@
 
 pub mod derive;
 pub mod error;
+pub mod generator;
 
 pub use derive::{RngRoot, derive_seed_parts, derive_seed_u64};
 pub use error::{Result, RngError};
+pub use generator::RandomGenerator;
