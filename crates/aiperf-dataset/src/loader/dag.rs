@@ -56,11 +56,19 @@ struct DagTurnRaw<'a> {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    streaming: Option<bool>,
+    #[serde(default)]
     max_tokens: Option<u32>,
     #[serde(default, borrow)]
     tools: Option<&'a RawValue>,
     #[serde(default, borrow)]
     extra: Option<&'a RawValue>,
+    #[serde(default, borrow)]
+    extra_headers: Option<&'a RawValue>,
+    #[serde(default, borrow)]
+    request_parameters: Option<&'a RawValue>,
     #[serde(default)]
     forks: Vec<ForkEntry>,
     #[serde(default)]
@@ -131,9 +139,23 @@ impl DagConversationRaw<'_> {
                     "{origin}: turn {index} delay must be finite and non-negative"
                 )));
             }
+            for (field, value) in [("model", &turn.model), ("endpoint", &turn.endpoint)] {
+                if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
+                    return Err(DatasetError::Validation(format!(
+                        "{origin}: turn {index} {field} must be non-empty when configured"
+                    )));
+                }
+            }
             validate_messages(turn.messages, origin, index)?;
             validate_optional_array(turn.tools, "tools", origin, index)?;
             validate_optional_object(turn.extra, "extra", origin, index)?;
+            validate_optional_string_object(turn.extra_headers, "extra_headers", origin, index)?;
+            validate_optional_string_object(
+                turn.request_parameters,
+                "request_parameters",
+                origin,
+                index,
+            )?;
             let fork_children = turn
                 .forks
                 .iter()
@@ -330,7 +352,21 @@ fn lower_conversation(
         }
         let extra_handle = authored
             .extra
-            .map(|extra| segments.intern_raw(None, Bytes::copy_from_slice(extra.get().as_bytes())))
+            .map(|extra| {
+                segments.intern_raw(parent, Bytes::copy_from_slice(extra.get().as_bytes()))
+            })
+            .transpose()?;
+        let extra_headers = authored
+            .extra_headers
+            .map(|headers| {
+                segments.intern_raw(parent, Bytes::copy_from_slice(headers.get().as_bytes()))
+            })
+            .transpose()?;
+        let request_parameters = authored
+            .request_parameters
+            .map(|parameters| {
+                segments.intern_raw(parent, Bytes::copy_from_slice(parameters.get().as_bytes()))
+            })
             .transpose()?;
         let payload = message_payload(authored.messages, authored.tools)?;
         let extracted = extract_payload(&payload);
@@ -341,6 +377,8 @@ fn lower_conversation(
             .try_fold(0_u64, |count, text| add_token_count(count, text, tokenizer))?;
         let mut turn = Turn {
             model: authored.model.as_deref().map(crate::model::ModelId::from),
+            endpoint: authored.endpoint.clone(),
+            streaming: authored.streaming,
             max_tokens: authored.max_tokens,
             input_tokens,
             tool_tokens,
@@ -348,6 +386,8 @@ fn lower_conversation(
             raw_messages: Some(messages_handle),
             tools: tools_handle,
             extra_body: extra_handle,
+            extra_headers,
+            request_parameters,
             prerequisites: std::mem::take(&mut pending_prerequisites[index]),
             ..Turn::default()
         };
@@ -767,6 +807,27 @@ fn validate_optional_object(
     Ok(())
 }
 
+fn validate_optional_string_object(
+    raw: Option<&RawValue>,
+    field: &str,
+    origin: &impl std::fmt::Display,
+    turn: usize,
+) -> Result<()> {
+    let Some(raw) = raw else { return Ok(()) };
+    let value: Value = serde_json::from_str(raw.get())?;
+    let Some(object) = value.as_object() else {
+        return Err(DatasetError::Validation(format!(
+            "{origin}: turn {turn} {field} must be an object"
+        )));
+    };
+    if object.values().any(|value| !value.is_string()) {
+        return Err(DatasetError::Validation(format!(
+            "{origin}: turn {turn} {field} values must be strings"
+        )));
+    }
+    Ok(())
+}
+
 fn message_payload(messages: &RawValue, tools: Option<&RawValue>) -> Result<Value> {
     let mut object = Map::new();
     object.insert("messages".into(), serde_json::from_str(messages.get())?);
@@ -880,6 +941,29 @@ mod tests {
                 .is_root
         );
         assert_eq!(dataset.sampleable_metadata().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn dag_turns_preserve_endpoint_headers_parameters_and_streaming() {
+        let dataset = build(json!([{
+            "session_id":"root",
+            "turns":[{
+                "messages":[{"role":"user","content":"q"}],
+                "model":"turn-model",
+                "endpoint":"responses",
+                "streaming":false,
+                "extra_headers":{"x-agent":"yes"},
+                "request_parameters":{"api-version":"2026-07"}
+            }]
+        }]))
+        .await
+        .unwrap();
+        let turn = &dataset.get(&SessionId::from("root")).unwrap().turns[0];
+        assert_eq!(turn.model.as_ref().unwrap().as_str(), "turn-model");
+        assert_eq!(turn.endpoint.as_deref(), Some("responses"));
+        assert_eq!(turn.streaming, Some(false));
+        assert!(turn.extra_headers.is_some());
+        assert!(turn.request_parameters.is_some());
     }
 
     #[tokio::test]
