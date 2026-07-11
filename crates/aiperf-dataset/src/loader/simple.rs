@@ -20,7 +20,7 @@ use crate::compose::{ComposeConfig, ComposeState, Composer, SessionIdGenerator};
 use crate::error::{DatasetError, Result};
 use crate::loader::{DatasetLoader, DatasetProbe, LoadConfig, RawRow, jsonl_rows};
 use crate::model::{
-    ContentGroup, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
+    ContentGroup, Conversation, ConversationContextMode, MediaKind, ModelId, SessionId, Turn,
 };
 use crate::segment::{Handle, Role, SegmentPool};
 use crate::tokenizer::TextTokenizer;
@@ -58,6 +58,12 @@ enum AuthoredBatch {
 #[derive(Debug, Clone, Deserialize)]
 struct SingleTurnRow {
     #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    streaming: Option<bool>,
+    #[serde(default)]
     text: Option<String>,
     #[serde(default)]
     texts: Option<AuthoredBatch>,
@@ -85,6 +91,10 @@ struct SingleTurnRow {
     output_length: Option<u32>,
     #[serde(default)]
     extra: Option<Map<String, Value>>,
+    #[serde(default)]
+    extra_headers: Option<Map<String, Value>>,
+    #[serde(default)]
+    request_parameters: Option<Map<String, Value>>,
 }
 
 impl SingleTurnRow {
@@ -130,6 +140,23 @@ impl SingleTurnRow {
             return Err(DatasetError::Validation(format!(
                 "{origin}: output_length must be greater than zero"
             )));
+        }
+        for (field, value) in [("model", &self.model), ("endpoint", &self.endpoint)] {
+            if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
+                return Err(DatasetError::Validation(format!(
+                    "{origin}: {field} must be non-empty when configured"
+                )));
+            }
+        }
+        for (field, values) in [
+            ("extra_headers", self.extra_headers.as_ref()),
+            ("request_parameters", self.request_parameters.as_ref()),
+        ] {
+            if values.is_some_and(|values| values.values().any(|value| !value.is_string())) {
+                return Err(DatasetError::Validation(format!(
+                    "{origin}: {field} values must be strings"
+                )));
+            }
         }
         if self
             .delay
@@ -391,6 +418,9 @@ fn compose_simple_turn(
     let role = row.role.clone().unwrap_or_else(|| "user".to_string());
     let mut turn = Turn {
         role: row.role.map(Role::new),
+        model: row.model.map(ModelId::from),
+        endpoint: row.endpoint,
+        streaming: row.streaming,
         max_tokens: row.output_length,
         timestamp_ms: row.timestamp,
         delay_ms: row.delay,
@@ -432,9 +462,26 @@ fn compose_simple_turn(
         parent,
         state,
     )?;
+    let request_parent = *parent;
     if let Some(extra) = row.extra {
         let wire = serde_json::to_vec(&Value::Object(extra))?;
-        turn.extra_body = Some(state.segments.intern_raw(None, Bytes::from(wire))?);
+        turn.extra_body = Some(
+            state
+                .segments
+                .intern_raw(request_parent, Bytes::from(wire))?,
+        );
+    }
+    if let Some(headers) = row.extra_headers {
+        turn.extra_headers = Some(state.segments.intern_raw(
+            request_parent,
+            Bytes::from(serde_json::to_vec(&Value::Object(headers))?),
+        )?);
+    }
+    if let Some(parameters) = row.request_parameters {
+        turn.request_parameters = Some(state.segments.intern_raw(
+            request_parent,
+            Bytes::from(serde_json::to_vec(&Value::Object(parameters))?),
+        )?);
     }
     state.finalize_turn(&mut turn)?;
     Ok(turn)
@@ -501,13 +548,18 @@ fn append_modality(
 mod tests {
     use std::sync::Arc;
 
+    use aiperf_endpoints::{CreditPhase, EndpointConfig, ModelEndpoint};
     use aiperf_rng::RngRoot;
     use serde_json::json;
 
     use super::*;
     use crate::loader::{DatasetFormatRegistration, DatasetSource, LoaderRegistry};
+    use crate::request::{
+        BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,
+    };
     use crate::segment::Payload;
     use crate::tokenizer::TiktokenTokenizer;
+    use crate::{Overrides, RequestMaterializer};
 
     fn config() -> ComposeConfig {
         ComposeConfig::new("model", RngRoot::new(Some(1)))
@@ -581,6 +633,69 @@ mod tests {
         assert_eq!(conversation.turns[1].delay_ms, Some(5.0));
         assert!(conversation.system.is_some());
         assert!(conversation.user_context.is_some());
+    }
+
+    #[tokio::test]
+    async fn custom_turn_dispatch_fields_reach_the_resolved_endpoint_request() {
+        let source = DatasetSource::Inline(json!([{
+            "session_id":"dispatch",
+            "text":"hello",
+            "model":"turn-model",
+            "endpoint":"responses",
+            "streaming":false,
+            "output_length":7,
+            "extra_headers":{"x-custom":"yes"},
+            "request_parameters":{"api-version":"2026-07"}
+        }]));
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SingleTurnDatasetLoader),
+                Arc::new(SingleTurnComposer),
+            ))
+            .unwrap();
+        let dataset = Arc::new(
+            registry
+                .build_dataset(
+                    Some("single_turn"),
+                    &LoadConfig::new(source),
+                    &config(),
+                    &TiktokenTokenizer::builtin(),
+                )
+                .await
+                .unwrap(),
+        );
+        let mut session = ConversationSession::new(dataset, SessionId::from("dispatch")).unwrap();
+        session.advance_to(0).unwrap();
+        let resolver = BuiltinEndpointResolver::default();
+        let endpoint = resolver
+            .resolve(session.endpoint_override().unwrap())
+            .unwrap();
+        let mut endpoint_config = EndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            ..EndpointConfig::default()
+        };
+        endpoint_config.endpoint_type = endpoint.metadata().endpoint_type;
+        let request = EndpointRequestMaterializer
+            .materialize(
+                &session,
+                endpoint,
+                &ModelEndpoint {
+                    primary_model_name: "default-model".into(),
+                    endpoint: endpoint_config,
+                },
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(body["model"], "turn-model");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["max_output_tokens"], 7);
+        assert_eq!(request.endpoint_path.as_deref(), Some("/v1/responses"));
+        assert_eq!(request.headers["x-custom"], "yes");
+        assert_eq!(request.parameters["api-version"], "2026-07");
     }
 
     #[test]
