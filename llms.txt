@@ -233,13 +233,12 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   addendum**: native-v2 typed reporter + JSON writer are default in every mode;
   accuracy-summary CSV is built; general metric CSV, genai-perf-v1 compatibility,
   warnings, console replay, and uploaders remain.
-- `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **faithful port** of the endpoint
-  layer (`aiperf-endpoints`): the `Endpoint` trait (build body + parse response into records)
-  + input-side ISL accounting. Scars: chat precedence
-  `reasoning>content+tool_calls>tool_calls>content` (~18% OSL fix), tool-call streaming
-  reassembly, the responses SSE event map (`function_call_arguments.delta`→ToolCall) +
-  replay-unsafe filter + dedup-by-id union, embeddings-raises-vs-degrades. The ISL walk's
-  tool-schema `orjson.dumps(parameters)` byte-parity is the #1 risk. Tier-2 endpoints deferred.
+- `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **built + implementation
+  addendum**: every tier-1 and tier-2 dialect is implemented behind the faithful
+  `Endpoint` trait, including raw/template JMESPath + Jinja and input-side ISL accounting.
+  Multipart, Clock-paced polling/download, inline-media retrieval/deduplication, endpoint
+  streaming paths, and lifecycle-wide post-send cancellation live in `aiperf-transport`;
+  real-loopback tests cover the dialect families, wire lifecycles, and native modality metrics.
 - `specs/2026-07-10-aiperf-rust-rng-derive-system-design.md` — the hash-derived
   RNG substrate: `blake3(f"{root}:{id}")[:8]`→u64 order-independent seed derivation
   + canonical namespace constants + `HashIdRandomGenerator` (per-`(trace_id,

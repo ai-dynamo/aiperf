@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design
+**Status:** built — tier-1 and tier-2 dialects plus their online wire lifecycles
 **Grounding:** line-by-line read of `endpoints/{base_endpoint,openai_chat,openai_responses,
 _openai_responses_replay,openai_completions,openai_embeddings,chat_embeddings,response_mixin,
 protocols,payload_extraction}.py`, `common/models/{model_endpoint_info,extracted_payload}.py`,
@@ -37,11 +37,22 @@ The parse logic is a minefield of vendor quirks paid for in wrong-metric bugs (t
 agentic-OSL-undercount fix; the ~64%-of-streaming-turns function-call fix). **Port the behavior
 exactly, guard with fixtures.** This is redo-*port*, not redo-*clean* — unlike the exporters.
 
-**Rust home:** a crate `aiperf-endpoints` — the `Endpoint` trait + the tier-1 impls + the shared
-body-build skeleton + the input-ISL extractor + the static capability table. It depends on
-`aiperf-transport` (the wire) and the shared request/response models; the dispatch/`Backend`
-consumes it. URL construction, header composition, and SSE framing live in `aiperf-transport`
-(already specced) — endpoints only build the body and parse the decoded JSON.
+**Rust home:** `aiperf-endpoints` owns the `Endpoint` trait, every native dialect, the shared
+body-build skeleton, the input-ISL extractor, and the static capability table. It remains
+transport-neutral. `aiperf-transport` owns URL construction, header composition, body encoding,
+inline-media fetch, SSE framing, polling, download, and cancellation; `aiperf` composes those
+seams in the scheduled online dispatcher.
+
+**Implementation addendum (2026-07-11):** the complete tier-2 set is built in
+`crates/aiperf-endpoints/src/tier2.rs` and `tier2/flexible.rs`: NIM/Cohere/Hugging Face rankings,
+image generation/edit, video generation, Hugging Face generate, NIM embeddings, image retrieval,
+Solido RAG, raw, and template. Multipart JSON/binary encoding, request-local inline-media fetch
+deduplication, Clock-paced video polling/download, and post-send cancellation across the entire
+poll lifecycle live under `crates/aiperf-transport/src/transport/`. Per-turn endpoint selection
+and response/usage/modality observation are wired in `crates/aiperf/src/http/endpoint_dispatch.rs`.
+`crates/aiperf/tests/tier2_endpoints_online.rs` proves all dialect families and all four special
+lifecycles against real loopback HTTP, including cancellation anchored to the original submit-body
+send completion and native image/video report metrics.
 
 ---
 
@@ -75,7 +86,7 @@ Shared base machinery (default impls, overridable per endpoint):
   read via `_latest_turn_attr` (walk from the end → inherited by DAG children that don't redeclare);
   `max_tokens` / `extra_body` / `model` come from **`turns[-1]`** (per-request, children don't
   inherit the parent's limits). Port both.
-- **`JMESPathResponseMixin`** (for raw/template endpoints, deferred §6): JMESPath-first extraction
+- **`JMESPathResponseMixin`** (used by raw/template endpoints): JMESPath-first extraction
   with an embeddings→rankings→text auto-detect fallback; malformed field degrades, never crashes
   construction.
 
@@ -189,16 +200,15 @@ The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_
 
 ## 5. Rust shape + scope
 
-- **In (`aiperf-endpoints`):** the `Endpoint` trait + the **tier-1 impls** (chat, responses,
-  completions, embeddings, chat_embeddings) with every §2 scar; the shared body-build skeleton +
-  content-part hooks; the `extract_inputs` ISL walk (§3, incl. the tool-schema byte-parity); the
-  static `EndpointMetadata` table + the config validators. Merge `_openai_responses_replay` back in.
-- **Deferred (tier-2, named not built):** the rankings family (nim/cohere/hf_tei — per-vendor
-  payload+extraction), image gen/edit, video (async-poll lifecycle), `huggingface_generate`,
-  `nim_embeddings`, `image_retrieval` (inline-media), `solido_rag`, and `raw`/`template` (the
-  JMESPath + Jinja2 dep cost — scope when asked). Their capability rows exist in the table; the impls
-  come later. The four non-JSON lifecycles (multipart / async-poll / inline-media / streaming-path)
-  are transport concerns wired when those endpoints land.
+- **In (`aiperf-endpoints`):** the `Endpoint` trait; tier-1 chat, responses, completions,
+  embeddings, and chat-embeddings dialects; every tier-2 dialect named above; the shared body-build
+  skeleton and content-part hooks; the `extract_inputs` ISL walk (§3, including tool-schema
+  byte-parity); the static `EndpointMetadata` table; and config validators. Raw/template use the
+  Rust `jmespath` and `minijinja` implementations, with safe template-file resolution.
+- **Built wire lifecycles (`aiperf-transport`):** multipart encoding, async polling and content
+  download, inline-media retrieval/deduplication, and endpoint-specific streaming paths. All sleeps
+  and cancellation deadlines use the injected `Clock`; polling retains one cancellation deadline
+  rooted at the original submission's captured send completion.
 - **Not here (in `aiperf-transport`):** URL construction (`build_url`/`_dedup_path_overlap` — the
   `/v1`+`v1/…` collapse), header composition (correlation header under `session_header`), SSE framing,
   cancellation. Endpoints build the body + parse decoded JSON only.
@@ -208,13 +218,15 @@ The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_
   the dedup-by-id union + replay-unsafe filter, embeddings-raises-vs-degrades, and the `extract_inputs`
   walk **including byte-identical tool-schema `parameters` serialization** (the #1 ISL parity gate).
 
-## 6. Open questions
+## 6. Resolutions and remaining parity note
 
 1. **Tool-schema JSON byte-parity** — confirm the Rust JSON serializer (serde_json compact) matches
    `orjson.dumps` on key order (insertion order) + separators for the `parameters` schema. If serde
    can't guarantee insertion order, carry the schema as the original bytes from the dataset rather
    than re-serializing. This is the single most fragile ISL parity point.
-2. **`Endpoint` object-safety vs monomorphized** — one active endpoint per run, chosen at the bin;
-   a `Box<dyn Endpoint>` is fine (not hot-path). Confirm.
-3. **The `raw`/`template` endpoints** (JMESPath + Jinja2) — real dependency cost (`jmespath`, a
-   Jinja2-equivalent). Defer until a consumer needs them; the `JMESPathResponseMixin` seam is noted.
+2. **`Endpoint` object-safety vs monomorphized — resolved.** The object-safe, thread-safe trait is
+   held as `Arc<dyn Endpoint>` by the per-turn resolver, allowing one dataset to select different
+   dialects without branching on endpoint enums in the dispatcher.
+3. **The `raw`/`template` dependency cost — resolved.** The implementation uses `jmespath` and
+   `minijinja`; a configured template path must resolve to a canonical regular file without symlink
+   path components, while a non-path value remains a literal inline template.
