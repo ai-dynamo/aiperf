@@ -260,6 +260,15 @@ pub trait PhaseExecution {
         Box::pin(async { Ok(()) })
     }
 
+    /// Finalize phase-owned reports after every return has drained.
+    ///
+    /// This is intentionally separate from [`stop_ramps`](Self::stop_ramps): a
+    /// seamless phase stops actuators at sending handoff but finalizes metrics
+    /// only when its background return wait reaches COMPLETE.
+    fn finalize(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     /// Optional dataflow counters included with the terminal observation.
     fn branch_stats(&self) -> Option<PhaseBranchStats> {
         None
@@ -458,7 +467,9 @@ impl ClockPhaseRunner {
                 .stop_ramps()
                 .await
                 .map_err(PhaseRunError::Execution)?;
-            let stats = self.complete_phase(PhaseCompletionReason::Cancelled)?;
+            let stats = self
+                .complete_phase(PhaseCompletionReason::Cancelled)
+                .await?;
             return Ok(RunDisposition::Complete(stats));
         }
 
@@ -578,14 +589,17 @@ impl ClockPhaseRunner {
             }
         };
 
-        let stats = self.complete_phase(reason)?;
+        let stats = self.complete_phase(reason).await?;
         if let Some(error) = cancellation_error {
             return Err(PhaseRunError::Execution(error));
         }
         Ok(stats)
     }
 
-    fn complete_phase(&self, reason: PhaseCompletionReason) -> Result<PhaseStats, PhaseRunError> {
+    async fn complete_phase(
+        &self,
+        reason: PhaseCompletionReason,
+    ) -> Result<PhaseStats, PhaseRunError> {
         if !self.inner.lifecycle.borrow().is_complete() {
             self.inner.lifecycle.borrow_mut().mark_complete(reason)?;
             self.inner.progress.freeze_completed_counts();
@@ -593,12 +607,14 @@ impl ClockPhaseRunner {
         if reason == PhaseCompletionReason::Cancelled {
             self.inner.progress.force_all_returned();
         }
+        let finalize_result = self.inner.execution.finalize().await;
         let stats = self.stats();
         self.inner.observer.on_progress(stats.clone());
         self.inner
             .observer
             .on_phase_complete(stats.clone(), self.inner.execution.branch_stats());
         self.stop_progress_loop();
+        finalize_result.map_err(PhaseRunError::Execution)?;
         Ok(stats)
     }
 
@@ -619,7 +635,7 @@ impl ClockPhaseRunner {
         }
         if !self.inner.lifecycle.borrow().is_complete() {
             self.inner.progress.force_all_returned();
-            let _ = self.complete_phase(PhaseCompletionReason::Failed);
+            let _ = self.complete_phase(PhaseCompletionReason::Failed).await;
         }
         self.stop_progress_loop();
     }

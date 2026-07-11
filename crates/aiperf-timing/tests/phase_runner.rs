@@ -153,6 +153,14 @@ impl PhaseExecution for TestExecution {
             Ok(())
         })
     }
+
+    fn finalize(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let state = self.state.clone();
+        Box::pin(async move {
+            state.log.borrow_mut().push("finalize");
+            Ok(())
+        })
+    }
 }
 
 fn runner(
@@ -214,6 +222,10 @@ fn happy_path_orders_setup_ramps_sending_and_returns() {
     assert_eq!(&log[..4], &["configure", "setup", "start_ramps", "execute"]);
     assert!(
         log.iter().position(|entry| *entry == "cancel_pending")
+            < log.iter().position(|entry| *entry == "stop_ramps")
+    );
+    assert!(
+        log.iter().position(|entry| *entry == "finalize")
             < log.iter().position(|entry| *entry == "stop_ramps")
     );
     let events = observer.events();
