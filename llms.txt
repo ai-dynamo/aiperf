@@ -121,6 +121,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   native report** (one file; the type-specific-series model from the server-metrics export —
   metrics-keyed, `distribution`/`scalar`/`counter`/`histogram` stats, labeled `series[]`, no
   avg-for-scalars lie); genai-perf v1 kept as an opt-in compat sink.
+- `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **faithful port** of the endpoint
+  layer (`aiperf-endpoints`): the `Endpoint` trait (build body + parse response into records)
+  + input-side ISL accounting. Scars: chat precedence
+  `reasoning>content+tool_calls>tool_calls>content` (~18% OSL fix), tool-call streaming
+  reassembly, the responses SSE event map (`function_call_arguments.delta`→ToolCall) +
+  replay-unsafe filter + dedup-by-id union, embeddings-raises-vs-degrades. The ISL walk's
+  tool-schema `orjson.dumps(parameters)` byte-parity is the #1 risk. Tier-2 endpoints deferred.
 - `specs/2026-07-10-aiperf-rust-rng-derive-system-design.md` — the hash-derived
   RNG substrate: `blake3(f"{root}:{id}")[:8]`→u64 order-independent seed derivation
   + `HashIdRandomGenerator` (per-`(trace_id, hash_id)` reseed) + `RandomGenerator`

@@ -1,0 +1,220 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# AIPerf-Rust: Endpoints (request-build + response-parse — faithful port)
+
+**Date:** 2026-07-11
+**Author:** Anthony Casagrande (Tech Lead) + Claude
+**Status:** design
+**Grounding:** line-by-line read of `endpoints/{base_endpoint,openai_chat,openai_responses,
+_openai_responses_replay,openai_completions,openai_embeddings,chat_embeddings,response_mixin,
+protocols,payload_extraction}.py`, `common/models/{model_endpoint_info,extracted_payload}.py`,
+`config/endpoint.py`, `plugin/schema/schemas.py` (`EndpointMetadata`), and the endpoint registry
+in `plugin/plugins.yaml`.
+**Companion:** `2026-07-10-aiperf-transport-rust-port-design.md` (the wire: URL/headers/SSE/
+cancellation — endpoints sit *above* it), `2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md`
+(the records endpoints produce feed the accumulator), `2026-07-11-aiperf-rust-exporters-overhaul-design.md`
+(response → record → report). **This is a faithful PORT** (the parse quirks are earned-in-blood),
+in deliberate contrast to the exporters overhaul.
+
+---
+
+## 0. Thesis — the seam between workload and transport
+
+An **endpoint** is the OpenAI-dialect adapter between the workload (a `Turn`/`RequestInfo`) and the
+wire (`aiperf-transport`). It has exactly two responsibilities plus an input-accounting side job:
+
+1. **`format_payload`** — build the wire request body from turns (chat messages / responses input /
+   completions prompt / embeddings input).
+2. **`parse_response`** — parse one server response (streaming chunk or full) into a
+   `ParsedResponse { perf_ns, data, usage }`; the collector derives TTFT/tokens from these.
+3. **`extract_payload_inputs`** — a single pass over the built body that yields the tokenizable text
+   + media counts for **input-side ISL** accounting.
+
+The parse logic is a minefield of vendor quirks paid for in wrong-metric bugs (the ~18%
+agentic-OSL-undercount fix; the ~64%-of-streaming-turns function-call fix). **Port the behavior
+exactly, guard with fixtures.** This is redo-*port*, not redo-*clean* — unlike the exporters.
+
+**Rust home:** a crate `aiperf-endpoints` — the `Endpoint` trait + the tier-1 impls + the shared
+body-build skeleton + the input-ISL extractor + the static capability table. It depends on
+`aiperf-transport` (the wire) and the shared request/response models; the dispatch/`Backend`
+consumes it. URL construction, header composition, and SSE framing live in `aiperf-transport`
+(already specced) — endpoints only build the body and parse the decoded JSON.
+
+---
+
+## 1. The `Endpoint` trait + the base contract
+
+```rust
+pub trait Endpoint {
+    fn metadata(&self) -> &EndpointMetadata;                    // capability flags (§4)
+    fn format_payload(&self, req: &RequestInfo) -> Result<Bytes>;   // build the wire body
+    fn parse_response(&self, resp: &ServerResponse) -> Option<ParsedResponse>;  // one response
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload;         // input-ISL (§3)
+    fn build_assistant_turn(&self, record: &RequestRecord) -> Option<Turn>;     // context replay
+}
+```
+
+Shared base machinery (default impls, overridable per endpoint):
+
+- **`extract_response_data`** = map `parse_response` over `record.responses`, keep the truthy —
+  the batch driver over a whole record's response list.
+- **Turn → messages skeleton** (`build_messages`): a turn with `raw_messages` is spliced verbatim
+  (even `raw_messages=[]` renders synthetically — intentional, don't silently drop a turn); else
+  render a `{role, content}` message. **Single-text fast path**: one text, one content string, no
+  media → raw string content (an OpenAI/Dynamo compat hotfix — some servers reject a list-of-parts
+  when only one text present); otherwise a parts list.
+- **Content-part render hooks** — per-endpoint `type` names (the one place chat vs responses
+  differ): chat `{"type":"text"|"image_url"|"input_audio"|"video_url", …}` with nested `image_url:
+  {url}`; responses `{"type":"input_text"|"input_image"|"input_audio", …}` with **`input_image` a
+  plain string url** and **video rejected** (§2). Audio part **must contain a comma** (data-URI
+  split into `{data, format}`, default `wav`).
+- **Conversation-level vs per-request field sourcing (the FORK-inheritance rule):** `raw_tools` is
+  read via `_latest_turn_attr` (walk from the end → inherited by DAG children that don't redeclare);
+  `max_tokens` / `extra_body` / `model` come from **`turns[-1]`** (per-request, children don't
+  inherit the parent's limits). Port both.
+- **`JMESPathResponseMixin`** (for raw/template endpoints, deferred §6): JMESPath-first extraction
+  with an embeddings→rankings→text auto-detect fallback; malformed field degrades, never crashes
+  construction.
+
+---
+
+## 2. The parse scars (port behavior-exact; fixture each)
+
+| Scar | Rule | Source |
+|---|---|---|
+| **max_tokens switch** | `use_legacy_max_tokens` → wire `max_tokens`; else `max_completion_tokens`; emitted only when set. (Responses uses `max_output_tokens`; completions uses `max_tokens`.) | `openai_chat.py:60-66` |
+| **Merge precedence** | base payload < `endpoint.extra` < `turn.extra_body` (extra_body wins — can override model/stream/max_tokens/tools). | `openai_chat.py:68-72` |
+| **`_ensure_include_usage`** | force `stream_options.include_usage=true` only when `streaming ∧ use_server_token_count`; preserve an author-set `include_usage` (even `false`). | `openai_chat.py:74-79,129-141` |
+| **Chat response precedence** | `reasoning > content+tool_calls > tool_calls > content`. `reasoning = reasoning_content or reasoning` wins outright (carries content). The tool-call branch is the **mixed emit** — includes `content` only when a non-empty str (the ~18% agentic-OSL-undercount fix; keeps client-OSL == server `usage.completion_tokens`). | `openai_chat.py:211-245` |
+| **Tool-call reassembly** | streaming deltas keyed by `index`; **missing index → `len(dict)`, NOT 0** (else parallel tool calls collapse into one slot). Modern: `name` **overwritten**, `arguments` **concatenated** (None→`""`). Legacy `function_call`: both concatenated, streaming-legacy always slot 0. | `openai_chat.py:297-403` |
+| **object → data-key** | `chat.completion`→`message` (non-stream); `chat.completion.chunk`→`delta` (stream); **unrecognized `object` → `None`, never raise** (error JSON / proxy page / truncated stream degrade to a failure-record). | `openai_chat.py:189-199` |
+| **usage-only frame** | a final SSE frame with `data=None` but `usage` present still yields a `ParsedResponse` — that is how server token counts arrive. | `openai_chat.py:159-162` |
+| **Responses input shape** | top-level `input` array (+ leading `user_context_message` item), `instructions` = system prompt at **top level** (not in `input`), `max_output_tokens`. | `openai_responses.py:174-224` |
+| **Responses video reject** | `_render_video_part` raises at **format time** (`PART_TYPES[VIDEO]` is empty; inheriting the chat default would emit a bad part AND silently under-count ISL). Surface misconfig immediately. | `openai_responses.py:100-112` |
+| **Responses SSE event map** | `output_text.delta`→`Text(delta)`; `reasoning_text.delta`→`Reasoning(delta)`; `output_text.done`→`Text(**text** field, not delta)`; **`function_call_arguments.delta`→`ToolCall(delta)`** (~64% of agentic streaming turns have no other data-bearing event — omit it and TTFT never fires + OSL undercounts every tool turn); `response.completed`→usage. All else → `None`. | `openai_responses.py:315-342` |
+| **Responses full precedence** | non-stream `output[]` walk, `reasoning > message > function_call`; function_call counts `name`+`arguments` (server counts them, client must too). | `openai_responses.py:364-479` |
+| **Responses replay-unsafe filter** | when capturing the parent's `output[]` for FORK replay, drop the 6 item types `{web_search_call, file_search_call, image_generation_call, code_interpreter_call, computer_call, reasoning}` (only valid with the matching tool config / `previous_response_id`; splicing them into a child's `input` 400s). Safe: `message`, `function_call`. | `openai_responses.py:139-148` |
+| **Responses dedup-by-id union** | replay capture = union of `response.completed.response.output[]` (canonical order) + `output_item.done.item` events, deduped by **`id > call_id > item_id`** (synthesize `type::hash` if none), **first-writer-wins** (completed merged before done). Bail to base if a failure event `{response.failed/incomplete/error/error}`. | `_openai_responses_replay.py` |
+| **Completions** | `prompt` is a **list** (flattened non-empty content strings); `max_tokens` literal; response `choices[0]["text"]` (both `completion`/`text_completion` objects); WARMUP prefix inlined into every prompt; **degrade-to-None** on unrecognized object. | `openai_completions.py` |
+| **Embeddings RAISES** | **the one outlier**: a `data` list whose items are not all `object=="embedding"` dicts **raises `ValueError`** (chat/completions degrade-to-None). No stream/max_tokens/`stream_options`; wire field `input` (list); `max_tokens` set → logged error, silently dropped. Soft-None only for missing JSON / empty data / empty embeddings. | `openai_embeddings.py:93-133` |
+| **Three malformed-response policies** | completions/chat **degrade-to-None**; **embeddings raises** on present-but-wrong `data`; responses **never raises** in parse. Preserve the asymmetry. | (cross-file) |
+
+`_openai_responses_replay.py` is a **Python line-count artifact** — merge it back into the responses
+module in Rust (no per-file cap).
+
+---
+
+## 3. Input-side ISL accounting (`extract_inputs` — the tokenization contract)
+
+A **single pass** over the `orjson.loads`'d body yields the tokenizable text + media counts for
+every payload shape. Feeds ISL metrics — a comparability contract the transport spec omits entirely.
+
+- **Two-phase, early-return anti-double-count:** try the items-array walk (`messages`/`input`); a
+  top-level `tools` walk **always** runs; **if an items-array matched, return early** (skip the flat
+  fallbacks) so embeddings `input:[str]` isn't also swept by the flat `input` handler.
+- **`role|type` disambiguation:** an items-array is only accepted if some item is a dict with a
+  `role` or `type` key — distinguishes a chat/responses message array from an embeddings
+  `input:[str,…]`.
+- **The #1 parity risk — tool-schema serialization:** the top-level `tools[]` schema is text the
+  server tokenizes into the prefix of *every* request. It collects `name` + `description` + **the
+  `parameters` JSON-schema serialized via `orjson.dumps(parameters)`** — the exact JSON string the
+  server sees. **The Rust serializer MUST produce byte-identical compact JSON** (insertion-order
+  keys, `,`/`:` separators) or ISL drifts on every tool-using workload. Walk BOTH `tool.function`
+  (chat shape) and `tool` (responses shape).
+- **Replayed `tool_calls` count toward ISL** — an assistant-history turn's `tool_calls[].function.
+  {name,arguments}` are re-tokenized by the server on replay; omitting them under-counts agent-history
+  ISL by the whole tool-call content. (Responses: `function_call.{name,arguments}` +
+  `function_call_output.output`.)
+- **Two text ledgers:** `texts` (bare concat-and-encode ISL path, walk order) AND `tool_texts` (the
+  chat-template path uses `apply_chat_template(messages)` which drops tools, so it adds `tool_texts`
+  on top). Emit both.
+- **Pre-tokenized int-list bypass:** `list[int]` / `list[list[int]]` (OpenAI embeddings token-id
+  input) → `pretokenised_token_count += Σ len` — a **separate ISL contribution, never re-tokenized**
+  (re-tokenizing token IDs is wrong; missing this silently zero-counts).
+- **`messages` template view:** the role/content array for `apply_chat_template`; `None` for non-chat
+  shapes (they bare-encode `texts`). Media parts are dropped from the template content (counts
+  already captured them; templates need string content).
+
+```rust
+pub struct ExtractedPayload {
+    pub texts: Vec<String>,              // bare-encode ISL
+    pub tool_texts: Vec<String>,         // added on top of the chat-template count
+    pub image_count: u32, pub audio_count: u32, pub video_count: u32,
+    pub pretokenised_token_count: u64,   // int-list bypass, added directly to ISL
+    pub messages: Option<Vec<Message>>,  // chat-template view; None for non-chat
+}
+```
+
+---
+
+## 4. Capability metadata + the endpoint registry
+
+Each endpoint type carries an **`EndpointMetadata`** capability record (a **static table** in Rust,
+not a YAML plugin registry). The flags drive **four request lifecycles + two metric switches** —
+this is the endpoint layer's real control flow:
+
+| Flag | Gates |
+|---|---|
+| `tokenizes_input` | whether client-side ISL tokenization runs + input-token metrics exist |
+| `produces_tokens` | whether output-token metrics exist |
+| `requires_form_data` | body encoded as multipart `FormData` (not JSON); config auto-derives `request_content_type=MULTIPART` at load, rejects a JSON override |
+| `requires_polling` | the whole request routes to async submit → poll status → optional download (video) |
+| `requires_inline_media` | media URLs downloaded + base64-inlined pre-dispatch (image_retrieval) |
+| `streaming_path` | streaming swaps the URL path (`huggingface_generate` `/generate`→`/generate_stream`) |
+| `supports_streaming` | config force-disables `streaming` with a warning if false |
+| `endpoint_path`, `metrics_title`, `service_kind`, `supports_/produces_{audio,images,videos}` | path append, display, modality acceptance |
+
+**The 16 registered types** (type → path → key flags): `chat` (`/v1/chat/completions`), `completions`,
+`responses` (`/v1/responses`), `embeddings`, `chat_embeddings`, `nim_embeddings`, `cohere_rankings`
+(`/v2/rerank`), `hf_tei_rankings`, `nim_rankings`, `huggingface_generate` (streaming_path),
+`image_generation`, `image_edit` (form-data), `video_generation` (polling+form-data), `image_retrieval`
+(inline-media, `tokenizes_input=false`), `solido_rag`, `raw`/`template` (`null` path, JMESPath/Jinja2).
+
+**Config validators to port** (`EndpointConfig`): streaming auto-disable when unsupported;
+`request_content_type` auto-derived from `requires_form_data` (+ reject a conflicting explicit
+override); `type=TEMPLATE` auto-set when a template is given; URL boundary validation (reject
+whitespace, require scheme+netloc+**hostname** — catches `http://:8000`, http/https only);
+`wait_for_model` coherence (interval/mode need a timeout). Defaults: `TIMEOUT = 6h` (vLLM bench
+default), `WAIT_FOR_MODEL_TIMEOUT = 0` (probe off), streaming off, `POOLED` reuse.
+
+The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_params`, `streaming`,
+`use_legacy_max_tokens`, `use_server_token_count`, `extra`, `session_header`, `connection_reuse`,
+`download_video_content`) — most consumed by `aiperf-transport`; the body-relevant ones
+(`use_legacy_max_tokens`, `use_server_token_count`, `extra`, `primary_model_name`) by the endpoint.
+
+---
+
+## 5. Rust shape + scope
+
+- **In (`aiperf-endpoints`):** the `Endpoint` trait + the **tier-1 impls** (chat, responses,
+  completions, embeddings, chat_embeddings) with every §2 scar; the shared body-build skeleton +
+  content-part hooks; the `extract_inputs` ISL walk (§3, incl. the tool-schema byte-parity); the
+  static `EndpointMetadata` table + the config validators. Merge `_openai_responses_replay` back in.
+- **Deferred (tier-2, named not built):** the rankings family (nim/cohere/hf_tei — per-vendor
+  payload+extraction), image gen/edit, video (async-poll lifecycle), `huggingface_generate`,
+  `nim_embeddings`, `image_retrieval` (inline-media), `solido_rag`, and `raw`/`template` (the
+  JMESPath + Jinja2 dep cost — scope when asked). Their capability rows exist in the table; the impls
+  come later. The four non-JSON lifecycles (multipart / async-poll / inline-media / streaming-path)
+  are transport concerns wired when those endpoints land.
+- **Not here (in `aiperf-transport`):** URL construction (`build_url`/`_dedup_path_overlap` — the
+  `/v1`+`v1/…` collapse), header composition (correlation header under `session_header`), SSE framing,
+  cancellation. Endpoints build the body + parse decoded JSON only.
+- **Testing (parity fixtures):** a Python twin emits, per quirk, `{turns → wire body}` and
+  `{response → ParsedResponse}` goldens — the chat precedence + mixed-emit, tool-call reassembly
+  (missing-index, modern vs legacy concat), the responses SSE event map + `function_call_arguments`,
+  the dedup-by-id union + replay-unsafe filter, embeddings-raises-vs-degrades, and the `extract_inputs`
+  walk **including byte-identical tool-schema `parameters` serialization** (the #1 ISL parity gate).
+
+## 6. Open questions
+
+1. **Tool-schema JSON byte-parity** — confirm the Rust JSON serializer (serde_json compact) matches
+   `orjson.dumps` on key order (insertion order) + separators for the `parameters` schema. If serde
+   can't guarantee insertion order, carry the schema as the original bytes from the dataset rather
+   than re-serializing. This is the single most fragile ISL parity point.
+2. **`Endpoint` object-safety vs monomorphized** — one active endpoint per run, chosen at the bin;
+   a `Box<dyn Endpoint>` is fine (not hot-path). Confirm.
+3. **The `raw`/`template` endpoints** (JMESPath + Jinja2) — real dependency cost (`jmespath`, a
+   Jinja2-equivalent). Defer until a consumer needs them; the `JMESPathResponseMixin` seam is noted.
