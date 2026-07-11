@@ -11,8 +11,37 @@ use std::rc::Rc;
 
 use aiperf_transport::RealClock;
 use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{RequestConfig, TraceData};
+use aiperf_transport::models::{RequestConfig, Response, TraceData};
 use aiperf_transport::transport::http_transport::HttpTransport;
+
+/// First real-token time (ns from request start): the first SSE chunk carrying a
+/// non-empty content (or reasoning_content) delta — not the first SSE message,
+/// which may be a role-only chunk with no token payload.
+fn first_token_ns(rec: &aiperf_transport::models::RequestRecord) -> Option<i64> {
+    for r in &rec.responses {
+        let Response::Sse(m) = r else { continue };
+        let Some(d) = m.data() else { continue };
+        if d == "[DONE]" {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(d) else { continue };
+        let choices = v.get("choices").and_then(|c| c.as_array());
+        let has_token = choices
+            .and_then(|c| c.first())
+            .map(|c| {
+                let delta = &c["delta"];
+                let content = delta.get("content").and_then(|x| x.as_str()).unwrap_or("");
+                let reasoning =
+                    delta.get("reasoning_content").and_then(|x| x.as_str()).unwrap_or("");
+                !content.is_empty() || !reasoning.is_empty()
+            })
+            .unwrap_or(false);
+        if has_token {
+            return Some(m.perf_ns - rec.start_ns);
+        }
+    }
+    None
+}
 
 fn ms(ns: Option<i64>) -> String {
     match ns {
@@ -53,7 +82,7 @@ fn print_trace(i: usize, status: Option<u16>, t: &TraceData) {
         ms(t.time_to_first_header())
     );
     println!(
-        "  http_req_waiting    (ttfb)           : {}",
+        "  http_req_waiting    (ttfb, 1st body) : {}",
         ms(t.waiting())
     );
     println!(
@@ -113,15 +142,14 @@ fn main() {
                 "max_tokens": osl,
                 "messages": [{"role": "user", "content": "In one sentence, what is NVIDIA Dynamo?"}],
             });
-            let mut ttft_ns: Option<i64> = None;
-            let rec = t.send_request(&cfg, payload, true, |d| ttft_ns = Some(d)).await;
+            let rec = t.send_request(&cfg, payload, true, |_| {}).await;
             match &rec.trace {
                 Some(tr) => print_trace(i, rec.status, tr),
                 None => println!("request {i}: no trace (error={:?})", rec.error),
             }
             println!(
-                "  ttft (first-token delta)             : {}   sse_messages={}   error={:?}",
-                ms(ttft_ns),
+                "  ttft (1st REAL token)                : {}   sse_messages={}   error={:?}",
+                ms(first_token_ns(&rec)),
                 rec.responses.len(),
                 rec.error
             );

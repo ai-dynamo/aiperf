@@ -171,30 +171,41 @@ impl GraphSink<Msg> for TransportMeteredSink {
 
         // Lean streaming dispatch: parse the assistant text in the per-message
         // callback (so the successor turn splices a real reply) with no
-        // RequestRecord / Vec<Response> accumulation in the hot loop.
-        let mut first_ns: Option<i64> = None;
+        // RequestRecord / Vec<Response> accumulation in the hot loop. TTFT is
+        // the first REAL token payload (first non-empty content delta), not the
+        // first SSE message (which may be a role-only chunk).
+        let req_start = self.clock.now_ns();
+        let mut first_token_ns: Option<i64> = None;
         let mut content = String::new();
         let status = {
             let mut c = self.sender.borrow_mut();
             let sender = c.as_mut().unwrap();
-            let mut on_ft = |ns: i64| {
-                if first_ns.is_none() {
-                    first_ns = Some(ns);
-                    on_first_token();
-                }
-            };
+            // Transport's first-SSE-message signal (content-agnostic); TTFT and
+            // the successor gate below fire on the first real content token.
+            let mut on_ft = |_ns: i64| {};
             let mut on_msg = |m: &SseMessage| {
                 if let Some(d) = m.data()
                     && d != "[DONE]"
                     && let Ok(chunk) = serde_json::from_str::<ChatChunk>(d)
                 {
+                    let mut had_token = false;
                     for ch in &chunk.choices {
-                        if let Some(t) = &ch.delta.content {
+                        if let Some(t) = &ch.delta.content
+                            && !t.is_empty()
+                        {
                             content.push_str(t);
+                            had_token = true;
                         }
-                        if let Some(t) = &ch.delta.reasoning_content {
+                        if let Some(t) = &ch.delta.reasoning_content
+                            && !t.is_empty()
+                        {
                             content.push_str(t);
+                            had_token = true;
                         }
+                    }
+                    if had_token && first_token_ns.is_none() {
+                        first_token_ns = Some((m.perf_ns - req_start).max(0));
+                        on_first_token();
                     }
                 }
             };
@@ -214,8 +225,8 @@ impl GraphSink<Msg> for TransportMeteredSink {
         if ok {
             let mut m = self.metrics.borrow_mut();
             m.completed += 1;
-            if let Some(ns) = first_ns {
-                m.ttft_ms.push((ns.max(0) as f64 / 1_000_000.0) as f32);
+            if let Some(ns) = first_token_ns {
+                m.ttft_ms.push((ns as f64 / 1_000_000.0) as f32);
             }
         } else {
             *self.sender.borrow_mut() = None;
