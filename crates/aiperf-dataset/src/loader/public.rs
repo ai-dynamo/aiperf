@@ -13,7 +13,11 @@
 
 use aiperf_endpoints::extract_payload;
 use async_trait::async_trait;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
+use image::ColorType;
+use image::codecs::jpeg::JpegEncoder;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use serde_json::{Map, Value};
 use smallvec::{SmallVec, smallvec};
@@ -335,6 +339,18 @@ impl Composer for HfInstructionComposer {
         let image_column = string_option(config, "image_column");
         let video_column = string_option(config, "video_column");
         let audio_column = string_option(config, "audio_column");
+        if prompt_template.is_none()
+            && let Some(first) = rows.first()
+        {
+            let object = require_object(&first.value, &first.origin)?;
+            if !object.contains_key(&prompt_column) {
+                return Err(DatasetError::Validation(format!(
+                    "{}: prompt column {prompt_column:?} is missing; available columns: {}",
+                    first.origin,
+                    object.keys().cloned().collect::<Vec<_>>().join(", ")
+                )));
+            }
+        }
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::new();
@@ -358,13 +374,13 @@ impl Composer for HfInstructionComposer {
                 contents: vec![prompt],
             }];
             if let Some(column) = &image_column {
-                groups.extend(media_from_value(object.get(column), MediaKind::Image));
+                groups.extend(media_from_value(object.get(column), MediaKind::Image)?);
             }
             if let Some(column) = &video_column {
-                groups.extend(media_from_value(object.get(column), MediaKind::Video));
+                groups.extend(media_from_value(object.get(column), MediaKind::Video)?);
             }
             if let Some(column) = &audio_column {
-                groups.extend(media_from_value(object.get(column), MediaKind::Audio));
+                groups.extend(media_from_value(object.get(column), MediaKind::Audio)?);
             }
             let turn =
                 compose_media_turn(groups, config, tokenizer, segments, &mut finalizer, None)?;
@@ -436,10 +452,10 @@ impl Composer for HfConversationComposer {
             if prompts.is_empty() {
                 continue;
             }
-            let first_images = image_column
-                .as_ref()
-                .map(|column| media_from_value(object.get(column), MediaKind::Image))
-                .unwrap_or_default();
+            let first_images = match &image_column {
+                Some(column) => media_from_value(object.get(column), MediaKind::Image)?,
+                None => Vec::new(),
+            };
             let mut conversation = Conversation::new(ids.next_id());
             for (index, (prompt, max_tokens)) in prompts.into_iter().enumerate() {
                 let mut groups = vec![AuthoredMedia {
@@ -473,6 +489,16 @@ impl Composer for MtBenchComposer {
         tokenizer: &dyn TextTokenizer,
         segments: &mut SegmentPool,
     ) -> Result<Vec<Conversation>> {
+        if let Some(first) = rows.first() {
+            let object = require_object(&first.value, &first.origin)?;
+            if !object.contains_key("prompt") {
+                return Err(DatasetError::Validation(format!(
+                    "{}: MT-Bench prompt column is missing; available columns: {}",
+                    first.origin,
+                    object.keys().cloned().collect::<Vec<_>>().join(", ")
+                )));
+            }
+        }
         compose_prompt_lists(rows, "prompt", true, config, tokenizer, segments)
     }
 }
@@ -528,7 +554,7 @@ impl Composer for MmvuComposer {
                 (true, false) => choices,
                 (true, true) => continue,
             };
-            let videos = media_from_value(object.get(&video_column), MediaKind::Video);
+            let videos = media_from_value(object.get(&video_column), MediaKind::Video)?;
             if videos.is_empty() {
                 continue;
             }
@@ -1145,34 +1171,212 @@ fn compose_media_turn(
     Ok(turn)
 }
 
-fn media_from_value(value: Option<&Value>, kind: MediaKind) -> Vec<AuthoredMedia> {
+fn media_from_value(value: Option<&Value>, kind: MediaKind) -> Result<Vec<AuthoredMedia>> {
     let Some(value) = value else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let items = value
         .as_array()
         .map_or_else(|| vec![value], |values| values.iter().collect());
     let contents = items
         .into_iter()
-        .filter_map(|value| match value {
-            Value::String(value) if !value.is_empty() => Some(value.clone()),
-            Value::Object(object) => object
-                .get("src")
-                .or_else(|| object.get("url"))
-                .or_else(|| object.get("path"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            _ => None,
-        })
+        .map(|value| media_content(value, kind))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect::<Vec<_>>();
-    (!contents.is_empty())
+    Ok((!contents.is_empty())
         .then_some(AuthoredMedia {
             kind,
             name: String::new(),
             contents,
         })
         .into_iter()
-        .collect()
+        .collect())
+}
+
+fn media_content(value: &Value, kind: MediaKind) -> Result<Option<String>> {
+    match value {
+        Value::String(value) if !value.is_empty() => Ok(Some(value.clone())),
+        Value::Object(object) => {
+            if kind == MediaKind::Audio
+                && object.get("array").is_some()
+                && object.get("sampling_rate").is_some()
+            {
+                return encode_hf_audio_array(object).map(Some);
+            }
+            if let Some(bytes) = object.get("bytes")
+                && !bytes.is_null()
+            {
+                let raw = decode_hf_bytes(bytes)?;
+                return encode_hf_media_bytes(
+                    kind,
+                    &raw,
+                    object.get("path").and_then(Value::as_str),
+                )
+                .map(Some);
+            }
+            Ok(object
+                .get("src")
+                .or_else(|| object.get("url"))
+                .or_else(|| object.get("path"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn decode_hf_bytes(value: &Value) -> Result<Vec<u8>> {
+    match value {
+        Value::String(encoded) => {
+            let encoded = encoded
+                .split_once(',')
+                .filter(|(prefix, _)| prefix.contains("base64"))
+                .map_or(encoded.as_str(), |(_, encoded)| encoded);
+            STANDARD.decode(encoded).map_err(|error| {
+                DatasetError::Validation(format!("invalid Hugging Face media bytes: {error}"))
+            })
+        }
+        Value::Array(bytes) => bytes
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .and_then(|value| u8::try_from(value).ok())
+                    .ok_or_else(|| {
+                        DatasetError::Validation(
+                            "Hugging Face media byte arrays must contain u8 values".into(),
+                        )
+                    })
+            })
+            .collect(),
+        _ => Err(DatasetError::Validation(
+            "Hugging Face media bytes must be base64 text or a u8 array".into(),
+        )),
+    }
+}
+
+fn encode_hf_media_bytes(kind: MediaKind, raw: &[u8], path: Option<&str>) -> Result<String> {
+    match kind {
+        MediaKind::Text => std::str::from_utf8(raw)
+            .map(str::to_string)
+            .map_err(|error| {
+                DatasetError::Validation(format!("invalid UTF-8 text bytes: {error}"))
+            }),
+        MediaKind::Image => {
+            let image = image::load_from_memory(raw).map_err(|error| {
+                DatasetError::Validation(format!("invalid Hugging Face image bytes: {error}"))
+            })?;
+            let rgb = image.to_rgb8();
+            let mut jpeg = Vec::new();
+            JpegEncoder::new_with_quality(&mut jpeg, 85)
+                .encode(
+                    rgb.as_raw(),
+                    rgb.width(),
+                    rgb.height(),
+                    ColorType::Rgb8.into(),
+                )
+                .map_err(|error| {
+                    DatasetError::Validation(format!(
+                        "failed to encode Hugging Face image as JPEG: {error}"
+                    ))
+                })?;
+            Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(jpeg)))
+        }
+        MediaKind::Audio => {
+            let (wav, _) = crate::generator::transcode_audio_to_wav(raw)?;
+            Ok(format!("wav,{}", STANDARD.encode(wav)))
+        }
+        MediaKind::Video => {
+            let mime = path
+                .and_then(|path| path.rsplit_once('.').map(|(_, extension)| extension))
+                .filter(|extension| extension.eq_ignore_ascii_case("webm"))
+                .map_or("video/mp4", |_| "video/webm");
+            Ok(format!("data:{mime};base64,{}", STANDARD.encode(raw)))
+        }
+    }
+}
+
+fn encode_hf_audio_array(object: &Map<String, Value>) -> Result<String> {
+    let sample_rate = object
+        .get("sampling_rate")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            DatasetError::Validation(
+                "Hugging Face audio sampling_rate must be a positive u32".into(),
+            )
+        })?;
+    let values = object
+        .get("array")
+        .and_then(Value::as_array)
+        .ok_or_else(|| DatasetError::Validation("Hugging Face audio array is invalid".into()))?;
+    let (channels, samples) = if values.iter().all(Value::is_number) {
+        (1_u16, values.iter().collect::<Vec<_>>())
+    } else {
+        let frames = values
+            .iter()
+            .map(|frame| frame.as_array())
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                DatasetError::Validation(
+                    "Hugging Face audio array must contain numbers or numeric frames".into(),
+                )
+            })?;
+        let channels = frames.first().map_or(0, |frame| frame.len());
+        if channels == 0 || frames.iter().any(|frame| frame.len() != channels) {
+            return Err(DatasetError::Validation(
+                "Hugging Face audio frames must have a consistent non-zero channel count".into(),
+            ));
+        }
+        (
+            u16::try_from(channels).map_err(|_| {
+                DatasetError::Validation("Hugging Face audio channel count exceeds u16".into())
+            })?,
+            frames.into_iter().flatten().collect(),
+        )
+    };
+    let data_len = samples
+        .len()
+        .checked_mul(2)
+        .and_then(|length| u32::try_from(length).ok())
+        .ok_or_else(|| DatasetError::Validation("Hugging Face WAV exceeds 4 GiB".into()))?;
+    let block_align = channels
+        .checked_mul(2)
+        .ok_or_else(|| DatasetError::Validation("Hugging Face WAV alignment overflow".into()))?;
+    let byte_rate = sample_rate
+        .checked_mul(u32::from(block_align))
+        .ok_or_else(|| DatasetError::Validation("Hugging Face WAV byte-rate overflow".into()))?;
+    let riff_len = 36_u32
+        .checked_add(data_len)
+        .ok_or_else(|| DatasetError::Validation("Hugging Face WAV size overflow".into()))?;
+    let mut wav = Vec::with_capacity(44 + data_len as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&riff_len.to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16_u32.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&16_u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for sample in samples {
+        let sample = sample
+            .as_f64()
+            .filter(|sample| sample.is_finite())
+            .ok_or_else(|| {
+                DatasetError::Validation("Hugging Face audio samples must be finite numbers".into())
+            })?;
+        let pcm = (sample.clamp(-1.0, 1.0) * f64::from(i16::MAX)).round() as i16;
+        wav.extend_from_slice(&pcm.to_le_bytes());
+    }
+    Ok(format!("wav,{}", STANDARD.encode(wav)))
 }
 
 fn sharegpt_pairs(messages: &[Value]) -> Vec<(String, String)> {
@@ -1452,6 +1656,7 @@ fn usize_option(config: &ComposeConfig, key: &str, default: usize) -> Result<usi
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::sync::Arc;
     use std::sync::Mutex;
 
@@ -1615,6 +1820,77 @@ mod tests {
                 .iter()
                 .any(|group| group.kind == MediaKind::Image)
         );
+    }
+
+    #[tokio::test]
+    async fn hf_and_mt_bench_report_missing_required_columns() {
+        let mut hf_options = Map::new();
+        hf_options.insert("prompt_column".into(), Value::String("prompt".into()));
+        let hf_error = build(
+            Arc::new(HfInstructionDatasetLoader),
+            Arc::new(HfInstructionComposer),
+            json!([{"wrong":"value"}]),
+            hf_options,
+        )
+        .await
+        .unwrap_err();
+        assert!(hf_error.to_string().contains("prompt column"));
+
+        let mt_error = build(
+            Arc::new(MtBenchDatasetLoader),
+            Arc::new(MtBenchComposer),
+            json!([{"wrong":[]}]),
+            Map::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(mt_error.to_string().contains("MT-Bench prompt column"));
+    }
+
+    #[tokio::test]
+    async fn hf_decoded_image_audio_and_video_values_are_inlined_at_compose_time() {
+        let image = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
+            2,
+            1,
+            image::Rgb([10, 20, 30]),
+        ));
+        let mut png = Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let mut options = Map::new();
+        options.insert("prompt_column".into(), Value::String("prompt".into()));
+        options.insert("image_column".into(), Value::String("image".into()));
+        options.insert("audio_column".into(), Value::String("audio".into()));
+        options.insert("video_column".into(), Value::String("video".into()));
+        let dataset = build(
+            Arc::new(HfInstructionDatasetLoader),
+            Arc::new(HfInstructionComposer),
+            json!([{
+                "prompt":"describe the media",
+                "image":{"bytes":STANDARD.encode(png.into_inner()),"path":"pixel.png"},
+                "audio":{"array":[0.0,0.5,-0.5],"sampling_rate":8000},
+                "video":{"bytes":STANDARD.encode([1_u8,2,3,4]),"path":"clip.webm"}
+            }]),
+            options,
+        )
+        .await
+        .unwrap();
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.content.len(), 4);
+        let image = content_bytes(&dataset, turn, MediaKind::Image);
+        assert!(image.starts_with(b"data:image/jpeg;base64,"));
+        let audio = content_bytes(&dataset, turn, MediaKind::Audio);
+        let wav = STANDARD
+            .decode(
+                std::str::from_utf8(audio)
+                    .unwrap()
+                    .split_once(',')
+                    .unwrap()
+                    .1,
+            )
+            .unwrap();
+        assert!(wav.starts_with(b"RIFF"));
+        let video = content_bytes(&dataset, turn, MediaKind::Video);
+        assert!(video.starts_with(b"data:video/webm;base64,"));
     }
 
     #[tokio::test]
@@ -1884,5 +2160,18 @@ mod tests {
         writer.close().unwrap();
         let values = decode_parquet(Bytes::from(bytes), "fixture.parquet", Some(1)).unwrap();
         assert_eq!(values, vec![json!({"prompt":"hello","tokens":3})]);
+    }
+
+    fn content_bytes<'a>(dataset: &'a crate::Dataset, turn: &Turn, kind: MediaKind) -> &'a [u8] {
+        let handle = turn
+            .content
+            .iter()
+            .find(|group| group.kind == kind)
+            .unwrap()
+            .handles[0];
+        match dataset.segments().get(handle).unwrap() {
+            crate::Payload::Media { bytes, .. } => bytes,
+            payload => panic!("expected media, got {}", payload.kind_name()),
+        }
     }
 }
