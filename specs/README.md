@@ -22,6 +22,18 @@ files for the code-vs-spec gaps).
 Reading order for a newcomer: the **ledger** first (it frames scope), then the
 **north star** (the target shape), then whichever subsystem you are touching.
 
+## Conventions
+
+- **Specs are append-only history.** Never rewrite a spec's body to reflect a later
+  decision. When a decision or implementation supersedes, revises, or contradicts a
+  shipped spec, append a dated `## Addendum — YYYY-MM-DD` section at the END of that
+  spec stating what changed, why, and which section/claim it supersedes. The original
+  text stays as the record; the addendum is authoritative where they conflict.
+- **Status column** reflects the whole spec's current standing: `decided` (the
+  design holds), `design` / `sketch` (proposed, not built), `partly built` (code
+  exists, verify per-claim), `superseded` (a newer spec or an addendum overrides it —
+  the row says which). Bump the status here whenever an addendum lands.
+
 ## Index
 
 ### North star & rationale

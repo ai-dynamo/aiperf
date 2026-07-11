@@ -134,11 +134,13 @@ These four agent files, `specs/README.md`, and root `llms.txt` are the architect
 | Change a seam (`Clock` / `RequestSink` / `RequestObserver` / `Dispatchable`) or a trait method | "The two seams" section + "Adding things" + `llms.txt` seam summary | `cargo build`, sync check |
 | Add / change a CLI mode, flag, or build/run command | "Build, test, run" (all four) + `llms.txt` | run the command |
 | Deprecate / un-deprecate a sibling tree | the CANONICAL banner (all four + `README.md`) | sync check |
+| Contradict / supersede a decision in an existing spec | append a dated `## Addendum` at the END of that spec (NEVER edit its body) + note the supersession in `specs/README.md` | — |
 
 **Rules:**
 - Edit ALL FOUR agent files together (identical body) and ALWAYS finish with `python tools/check_agent_files_sync.py` (or `make check-agent-files-sync`) — non-zero exit = bodies diverged; fix before committing.
 - `specs/README.md` and `llms.txt` are NOT sync-checked but MUST move in lockstep — a spec/crate/seam change that leaves them stale is an INCOMPLETE change.
 - Ground every claim in `crate/src/file.rs`. State designed-but-not-built explicitly; never describe intent as reality.
+- **Never rewrite a shipped spec to contradict it.** Specs are an append-only historical record. If a decision or implementation supersedes, revises, or contradicts an already-written spec, do NOT edit that spec's body — append a dated `## Addendum — YYYY-MM-DD` at the END of the spec stating what changed, why, and which section/claim it supersedes. The original text stays; the addendum is authoritative where they conflict. Record the supersession in the `specs/README.md` status column.
 - Put the doc updates in the SAME commit as the code/spec change they describe.
 
 ### Agent-instruction file sync (mechanics)
