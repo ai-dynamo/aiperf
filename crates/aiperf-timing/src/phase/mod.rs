@@ -14,6 +14,7 @@
 mod config;
 mod lifecycle;
 mod observer;
+mod orchestrator;
 mod progress;
 mod runner;
 mod stats;
@@ -25,6 +26,10 @@ pub use lifecycle::{
 pub use observer::{
     ConsolePhaseObserver, NoopPhaseObserver, PhaseBranchStats, PhaseEvent, PhaseEventKind,
     PhaseObserver, RecordingPhaseObserver,
+};
+pub use orchestrator::{
+    ClockPhaseOrchestrator, ClockPhaseRunnerFactory, PhaseOrchestrator, PhaseOrchestratorError,
+    PhaseRunnerFactory,
 };
 pub use progress::{
     PhaseProgress, PhaseProgressCounters, PhaseProgressError, PhaseReturn, PhaseReturnOutcome,

@@ -270,6 +270,14 @@ pub trait PhaseExecution {
 pub trait PhaseExecutionFactory {
     /// Create one phase execution adapter over the runner-owned context.
     fn create(&self, config: &PhaseConfig, context: PhaseContext) -> Rc<dyn PhaseExecution>;
+
+    /// Cancel in-flight work shared across every active phase.
+    ///
+    /// The orchestrator invokes this before signalling individual runners,
+    /// matching Python's router-wide cancellation ordering.
+    fn cancel_all(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Concrete execution adapter that immediately exhausts an empty plan.
