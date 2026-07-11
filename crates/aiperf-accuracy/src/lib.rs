@@ -15,8 +15,10 @@ mod error;
 mod grader;
 mod mmlu_pro;
 mod model;
+pub mod protocol;
 mod registry;
 mod source;
+pub mod worker;
 
 pub use benchmark::{AccuracyBenchmark, BenchmarkConfig};
 pub use benchmarks::{
@@ -35,7 +37,17 @@ pub use mmlu_pro::{
     MMLU_PRO_INITIAL_PROMPT, MmluProBenchmark, MmluProQuestion,
 };
 pub use model::{BenchmarkProblem, ChatMessage, DatasetSplit, GenerationConfig};
+pub use protocol::{
+    EVALUATOR_PROTOCOL_VERSION, EvaluatorDatasetIdentity, EvaluatorGenerationConfig,
+    EvaluatorGrade, EvaluatorGradeBatch, EvaluatorGradeItem, EvaluatorIdentity,
+    EvaluatorLoadConfig, EvaluatorLoadResult, EvaluatorMessage, EvaluatorProblem,
+    EvaluatorProblemPage, ProblemId,
+};
 pub use registry::{
     AccuracyRegistry, BenchmarkFactory, BenchmarkMetadata, GraderFactory, RegisteredBenchmark,
 };
 pub use source::{DatasetSource, InMemoryDatasetSource, JsonDatasetSource};
+pub use worker::{
+    AccuracyEvaluator, EvaluatorLogSink, EvaluatorWorkerError, PythonEvaluator,
+    StderrEvaluatorLogSink, WorkerProcessConfig,
+};
