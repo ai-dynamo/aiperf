@@ -17,8 +17,9 @@
 
 use std::path::PathBuf;
 
-use aiperf::accuracy::{AccuracyDataset, finalize_accuracy_report};
-use aiperf::accuracy_dataset::{AccuracyDatasetRegistry, default_accuracy_cache_root};
+use aiperf::accuracy::{
+    AccuracyDataset, grade_and_finalize_accuracy_report, load_evaluator_problems,
+};
 use aiperf::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, parse_sla_filter,
     positive_seconds_to_ns,
@@ -38,9 +39,10 @@ use aiperf::run::{
 use aiperf::scheduled::{ScheduledRunReport, TurnRecordProcessor};
 use aiperf::user_centric::UserCentricConfig;
 use aiperf::workload::SkeletonWorkload;
-use aiperf_accuracy::{BenchmarkConfig, JsonDatasetSource};
+use aiperf_accuracy::{
+    AccuracyEvaluator, EvaluatorLoadConfig, PythonEvaluator, WorkerProcessConfig,
+};
 use aiperf_adaptive::CorrelationContext;
-use aiperf_clock::{Clock, RealClock};
 use aiperf_dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig,
     SyntheticDatasetConfig, SyntheticPromptConfig, TextTokenizer, TiktokenEncoding,
@@ -51,6 +53,7 @@ use aiperf_extensions::AiperfRegistry;
 use aiperf_metrics::{NativeReport, ReportRunInfo, ReportSummary, RunOutcome};
 use aiperf_rng::{RngRoot, SamplingDistribution};
 use aiperf_timing::{ArrivalPattern, StopConfig};
+use anyhow::Context;
 use clap::Parser;
 
 // A high-churn benchmark allocator: the graph executor + streaming client
@@ -223,13 +226,9 @@ struct Cli {
     adaptive_artifact_dir: Option<PathBuf>,
 
     // --- accuracy flags (online HTTP path) ---
-    /// Run a registered native accuracy benchmark instead of a synthetic workload.
+    /// Run a canonical Python/Lighteval accuracy benchmark through normal Rust inference.
     #[arg(long)]
     accuracy_benchmark: Option<String>,
-    /// Directory containing the benchmark's split JSON files. When omitted,
-    /// official Parquet artifacts are fetched into the AIPerf cache.
-    #[arg(long)]
-    accuracy_dataset: Option<PathBuf>,
     /// Benchmark tasks/categories; comma-separated or repeated.
     #[arg(long, value_delimiter = ',')]
     accuracy_tasks: Vec<String>,
@@ -242,9 +241,6 @@ struct Cli {
     /// Enable chain-of-thought even when the benchmark default is off.
     #[arg(long)]
     accuracy_enable_cot: bool,
-    /// Override the benchmark's registered grader.
-    #[arg(long)]
-    accuracy_grader: Option<String>,
     /// Override the benchmark's default system prompt.
     #[arg(long)]
     accuracy_system_prompt: Option<String>,
@@ -264,9 +260,6 @@ struct Cli {
     /// Write the per-task and overall accuracy summary as CSV.
     #[arg(long)]
     accuracy_csv: Option<PathBuf>,
-    /// Replace cached official dataset splits before the run.
-    #[arg(long)]
-    accuracy_refresh_dataset: bool,
 
     // --- graph-only flags ---
     /// Conversation turns per instance (graph default 4; online synthetic default 1).
@@ -317,19 +310,16 @@ fn ensure_accuracy_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
     );
     if cli.accuracy_benchmark.is_none() {
         anyhow::ensure!(
-            cli.accuracy_dataset.is_none()
-                && cli.accuracy_tasks.is_empty()
+            cli.accuracy_tasks.is_empty()
                 && cli.accuracy_n_shots.is_none()
                 && !cli.accuracy_no_cot
                 && !cli.accuracy_enable_cot
-                && cli.accuracy_grader.is_none()
                 && cli.accuracy_system_prompt.is_none()
                 && !cli.accuracy_verbose
                 && cli.accuracy_max_problems.is_none()
                 && cli.accuracy_max_tokens.is_none()
                 && cli.accuracy_tokenizer.is_none()
-                && cli.accuracy_csv.is_none()
-                && !cli.accuracy_refresh_dataset,
+                && cli.accuracy_csv.is_none(),
             "accuracy options require --accuracy-benchmark"
         );
     }
@@ -376,25 +366,16 @@ fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<(
         .accuracy_benchmark
         .as_deref()
         .expect("caller checked accuracy benchmark");
-    let accuracy_registry = registries.accuracy();
-    let registered = accuracy_registry.benchmark(requested_benchmark)?;
-    let benchmark_name = registered.metadata.name;
-    let n_shots = cli
-        .accuracy_n_shots
-        .unwrap_or(registered.metadata.default_n_shots);
     let enable_cot = if cli.accuracy_no_cot {
-        false
+        Some(false)
     } else if cli.accuracy_enable_cot {
-        true
+        Some(true)
     } else {
-        registered.metadata.default_enable_cot
+        None
     };
-    let grader_name = cli
-        .accuracy_grader
-        .as_deref()
-        .unwrap_or(registered.metadata.default_grader);
-    let grader = accuracy_registry.grader(grader_name)?;
-    anyhow::ensure!(n_shots <= 32, "--accuracy-n-shots must be at most 32");
+    if let Some(n_shots) = cli.accuracy_n_shots {
+        anyhow::ensure!(n_shots <= 32, "--accuracy-n-shots must be at most 32");
+    }
     if let Some(limit) = cli.accuracy_max_problems {
         anyhow::ensure!(
             limit > 0,
@@ -407,28 +388,28 @@ fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<(
             "--accuracy-max-tokens must be greater than zero"
         );
     }
-    let benchmark_config = BenchmarkConfig {
-        tasks: cli.accuracy_tasks.clone(),
-        n_shots,
+    let evaluator_config = EvaluatorLoadConfig {
+        tasks: (!cli.accuracy_tasks.is_empty()).then(|| cli.accuracy_tasks.clone()),
+        n_shots: cli.accuracy_n_shots,
         enable_cot,
+        system_prompt: cli.accuracy_system_prompt.clone(),
         max_problems: cli.accuracy_max_problems,
         max_tokens: cli.accuracy_max_tokens,
+        seed: cli.seed.unwrap_or(0),
     };
-    registered.validate_config(&benchmark_config)?;
     let concurrency = cli.concurrency.unwrap_or(16);
     anyhow::ensure!(concurrency > 0, "--concurrency must be greater than zero");
 
     tracing::info!(
-        benchmark = benchmark_name,
-        grader = grader.name(),
+        benchmark = requested_benchmark,
         base = %base_url,
         model = %model,
         concurrency,
         tasks = ?cli.accuracy_tasks,
-        n_shots,
-        enable_cot,
+        n_shots = ?cli.accuracy_n_shots,
+        enable_cot = ?enable_cot,
         max_problems = ?cli.accuracy_max_problems,
-        "starting native accuracy benchmark"
+        "starting canonical accuracy benchmark"
     );
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -436,59 +417,89 @@ fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<(
         .build()?;
     let local = tokio::task::LocalSet::new();
     let report = local.block_on(&rt, async {
-        let source = match &cli.accuracy_dataset {
-            Some(directory) => JsonDatasetSource::from_directory(directory),
-            None => {
-                let clock: std::rc::Rc<dyn Clock> = RealClock::new();
-                AccuracyDatasetRegistry::builtin()
-                    .prepare(
-                        benchmark_name,
-                        clock,
-                        &default_accuracy_cache_root(),
-                        cli.accuracy_refresh_dataset,
-                    )
-                    .await?
-            }
-        };
-        let problems = registered.load_problems(
-            &source,
-            &benchmark_config,
-            cli.accuracy_system_prompt.as_deref(),
-        )?;
-        let tokenizer = load_tokenizer(cli.accuracy_tokenizer.as_deref())?;
-        let dataset = AccuracyDataset::from_problems(&model, problems, tokenizer.as_ref())?;
+        let mut evaluator = PythonEvaluator::spawn(WorkerProcessConfig::python_module())
+            .await
+            .context("starting canonical Python accuracy evaluator")?;
         tracing::info!(
-            problems = dataset.len(),
-            tokenizer = tokenizer.name(),
-            segments = dataset.dataset().segments().len(),
-            "accuracy dataset materialized"
+            protocol = evaluator.identity().protocol,
+            worker_version = evaluator.identity().worker_version,
+            python_version = evaluator.identity().python_version,
+            python_executable = evaluator.identity().python_executable,
+            packages = ?evaluator.identity().packages,
+            dependency_lock_sha256 = ?evaluator.identity().dependency_lock_sha256,
+            container_digest = ?evaluator.identity().container_digest,
+            "canonical accuracy evaluator initialized"
         );
-        let processor = std::rc::Rc::new(dataset.record_processor(grader));
-        let source: Box<dyn ConversationSource> = Box::new(
-            NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
-                dataset.dataset().as_ref().clone(),
+        let result = async {
+            let (loaded, problems) =
+                load_evaluator_problems(&mut evaluator, requested_benchmark, &evaluator_config)
+                    .await?;
+            let tokenizer = load_tokenizer(cli.accuracy_tokenizer.as_deref())?;
+            let dataset =
+                AccuracyDataset::from_evaluator_problems(&model, problems, tokenizer.as_ref())?;
+            tracing::info!(
+                benchmark = loaded.benchmark,
+                grader = loaded.grader,
+                dataset = ?loaded.dataset,
+                problems = dataset.len(),
+                tokenizer = tokenizer.name(),
+                segments = dataset.dataset().segments().len(),
+                "canonical accuracy problems materialized for normal inference"
+            );
+            let processor = std::rc::Rc::new(dataset.record_processor());
+            let source: Box<dyn ConversationSource> = Box::new(
+                NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
+                    dataset.dataset().as_ref().clone(),
+                    model.clone(),
+                    cli.accuracy_max_tokens.unwrap_or(2_048),
+                    EndpointConfig {
+                        streaming: true,
+                        use_legacy_max_tokens: true,
+                        use_server_token_count: true,
+                        ..EndpointConfig::default()
+                    },
+                    registries.endpoint_resolver(),
+                )?,
+            );
+            let processors: Vec<std::rc::Rc<dyn TurnRecordProcessor>> = vec![processor.clone()];
+            let scheduled = run_single_turn_dataset_online(
+                base_url.clone(),
                 model.clone(),
-                cli.accuracy_max_tokens.unwrap_or(2_048),
-                EndpointConfig {
-                    streaming: true,
-                    use_legacy_max_tokens: true,
-                    use_server_token_count: true,
-                    ..EndpointConfig::default()
-                },
-                registries.endpoint_resolver(),
-            )?,
-        );
-        let processors: Vec<std::rc::Rc<dyn TurnRecordProcessor>> = vec![processor.clone()];
-        let scheduled = run_single_turn_dataset_online(
-            base_url.clone(),
-            model.clone(),
-            source,
-            concurrency,
-            cli.http2,
-            processors,
-        )
-        .await?;
-        finalize_accuracy_report(benchmark_name, &model, scheduled, processor.as_ref())
+                source,
+                concurrency,
+                cli.http2,
+                processors,
+            )
+            .await?;
+            grade_and_finalize_accuracy_report(
+                &model,
+                scheduled,
+                &dataset,
+                processor.as_ref(),
+                &mut evaluator,
+                &loaded,
+            )
+            .await
+        }
+        .await;
+        match result {
+            Ok(report) => {
+                evaluator
+                    .shutdown()
+                    .await
+                    .context("shutting down canonical accuracy evaluator")?;
+                Ok(report)
+            }
+            Err(error) => {
+                if let Err(shutdown_error) = evaluator.shutdown().await {
+                    tracing::warn!(
+                        error = %shutdown_error,
+                        "accuracy evaluator also failed during error-path shutdown"
+                    );
+                }
+                Err(error)
+            }
+        }
     })?;
     print_report_table(&report.performance);
     print_accuracy_table(&report.accuracy);
@@ -500,7 +511,6 @@ fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<(
                 correct = record.result.correct,
                 unparsed = record.result.unparsed,
                 extracted = ?record.result.extracted,
-                ground_truth = record.result.ground_truth,
                 reasoning = ?record.result.reasoning,
                 "accuracy grading result"
             );
