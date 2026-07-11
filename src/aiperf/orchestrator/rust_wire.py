@@ -116,7 +116,7 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
                         cfg.artifacts.profile_export_jsonl_file,
                     )
                 }
-                if cfg.artifacts.records is not False
+                if cfg.artifacts.records is not False or cfg.artifacts.raw
                 else {}
             ),
             "trace": cfg.artifacts.trace,
