@@ -701,4 +701,19 @@ for line in sys.stdin:
         assert!(matches!(error, EvaluatorWorkerError::Json(_)));
         assert!(error.to_string().contains("unknown field `private_tests`"));
     }
+
+    #[tokio::test]
+    async fn problem_rejects_empty_wire_id() {
+        let script = FAKE_WORKER.replace("'problem_id': 'opaque-1'", "'problem_id': ' '");
+        let mut evaluator = PythonEvaluator::spawn(fixture_config(&script))
+            .await
+            .unwrap();
+        evaluator
+            .load("fixture", &EvaluatorLoadConfig::default())
+            .await
+            .unwrap();
+        let error = evaluator.next_problems(0, 1).await.unwrap_err();
+        assert!(matches!(error, EvaluatorWorkerError::Json(_)));
+        assert!(error.to_string().contains("problem_id must not be empty"));
+    }
 }

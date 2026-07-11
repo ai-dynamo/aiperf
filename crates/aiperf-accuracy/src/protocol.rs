@@ -8,14 +8,14 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 
 /// Current evaluator protocol version.
 pub const EVALUATOR_PROTOCOL_VERSION: u32 = 1;
 
 /// Opaque identifier assigned by the evaluator to one benchmark problem.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct ProblemId(String);
 
@@ -33,6 +33,15 @@ impl ProblemId {
     /// Borrow the wire value without interpreting it.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ProblemId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(de::Error::custom)
     }
 }
 
