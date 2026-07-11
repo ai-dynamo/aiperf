@@ -35,5 +35,7 @@ pub use mmlu_pro::{
     MMLU_PRO_INITIAL_PROMPT, MmluProBenchmark, MmluProQuestion,
 };
 pub use model::{BenchmarkProblem, ChatMessage, DatasetSplit, GenerationConfig};
-pub use registry::{AccuracyRegistry, BenchmarkMetadata, RegisteredBenchmark};
+pub use registry::{
+    AccuracyRegistry, BenchmarkFactory, BenchmarkMetadata, GraderFactory, RegisteredBenchmark,
+};
 pub use source::{DatasetSource, InMemoryDatasetSource, JsonDatasetSource};

@@ -51,6 +51,20 @@ pub enum AccuracyError {
         /// Canonical registered names.
         available: Vec<String>,
     },
+    /// A registry entry has an empty, repeated, or otherwise invalid name.
+    InvalidRegistration {
+        /// Registry category being populated.
+        category: &'static str,
+        /// Actionable validation message.
+        message: String,
+    },
+    /// A canonical name or alias conflicts with an existing registry entry.
+    DuplicateRegistration {
+        /// Registry category being populated.
+        category: &'static str,
+        /// Normalized conflicting name.
+        name: String,
+    },
     /// No problems remained after applying the benchmark configuration.
     EmptySelection(String),
     /// A grader received invalid ground truth.
@@ -99,6 +113,12 @@ impl Display for AccuracyError {
                 "unknown accuracy grader {name:?}; available graders: {}",
                 available.join(", ")
             ),
+            Self::InvalidRegistration { category, message } => {
+                write!(f, "invalid {category} registration: {message}")
+            }
+            Self::DuplicateRegistration { category, name } => {
+                write!(f, "duplicate {category} registration {name:?}")
+            }
             Self::EmptySelection(message) => {
                 write!(f, "accuracy benchmark selected no problems: {message}")
             }

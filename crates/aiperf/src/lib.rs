@@ -9,7 +9,9 @@
 //! lives in shared [`aiperf_timing`]. This crate owns the CLI/runtime composition:
 //! the online HTTP sink over `aiperf-transport` ([`http`]), ancillary policy
 //! wiring ([`ancillary`]), workload shaping ([`workload`]), the online run loop
-//! ([`run`]), reporting ([`report`]), and logging setup ([`logging`]).
+//! ([`run`]), reporting ([`report`]), and logging setup ([`logging`]). Named
+//! compile-time extension composition lives in `aiperf_extensions` so extension
+//! crates never need a dependency cycle through this application crate.
 
 pub mod accuracy;
 pub mod accuracy_dataset;

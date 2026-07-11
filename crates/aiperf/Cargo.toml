@@ -22,6 +22,7 @@ aiperf-adaptive = { path = "../aiperf-adaptive" }
 aiperf-core = { path = "../aiperf-core" }
 aiperf-dataset.workspace = true
 aiperf-endpoints.workspace = true
+aiperf-extensions.workspace = true
 aiperf-graph = { path = "../aiperf-graph" }
 aiperf-metrics.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }

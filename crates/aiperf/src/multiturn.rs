@@ -976,6 +976,31 @@ impl NativeDatasetConversationSource {
         )
     }
 
+    /// Honor loader sampling policy with caller-supplied compile-time registries.
+    pub fn preferred_with_registries(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        samplers: &SamplerRegistry,
+        endpoint_resolver: Arc<dyn EndpointResolver>,
+    ) -> Result<Self> {
+        let endpoint = EndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            ..EndpointConfig::default()
+        };
+        Self::preferred_with_endpoint_config_and_registries(
+            dataset,
+            model,
+            default_output_tokens,
+            rng_root,
+            endpoint,
+            samplers,
+            endpoint_resolver,
+        )
+    }
+
     /// Honor loader sampling policy with caller-selected endpoint configuration.
     pub fn preferred_with_endpoint_config(
         dataset: NativeDataset,
@@ -984,8 +1009,31 @@ impl NativeDatasetConversationSource {
         rng_root: RngRoot,
         endpoint: EndpointConfig,
     ) -> Result<Self> {
+        let samplers = SamplerRegistry::with_builtin_strategies()?;
+        Self::preferred_with_endpoint_config_and_registries(
+            dataset,
+            model,
+            default_output_tokens,
+            rng_root,
+            endpoint,
+            &samplers,
+            Arc::new(BuiltinEndpointResolver::default()),
+        )
+    }
+
+    /// Honor loader sampling and endpoint policy from caller-supplied registries.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preferred_with_endpoint_config_and_registries(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        endpoint: EndpointConfig,
+        samplers: &SamplerRegistry,
+        endpoint_resolver: Arc<dyn EndpointResolver>,
+    ) -> Result<Self> {
         let dataset = Arc::new(dataset);
-        let sampler = SamplerRegistry::with_builtin_strategies()?.create(
+        let sampler = samplers.create(
             &dataset.metadata().sampling_strategy,
             &dataset.metadata().conversations,
             rng_root,
@@ -998,7 +1046,7 @@ impl NativeDatasetConversationSource {
                 primary_model_name: model.into(),
                 endpoint,
             },
-            Arc::new(BuiltinEndpointResolver::default()),
+            endpoint_resolver,
             Arc::new(EndpointRequestMaterializer),
             Arc::new(TiktokenTokenizer::builtin()),
             default_output_tokens,
@@ -1030,6 +1078,23 @@ impl NativeDatasetConversationSource {
         default_output_tokens: usize,
         endpoint: EndpointConfig,
     ) -> Result<Self> {
+        Self::sequential_with_endpoint_config_and_resolver(
+            dataset,
+            model,
+            default_output_tokens,
+            endpoint,
+            Arc::new(BuiltinEndpointResolver::default()),
+        )
+    }
+
+    /// Construct a sequential source with injected endpoint registration.
+    pub fn sequential_with_endpoint_config_and_resolver(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        endpoint: EndpointConfig,
+        endpoint_resolver: Arc<dyn EndpointResolver>,
+    ) -> Result<Self> {
         let dataset = Arc::new(dataset);
         let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
         let endpoint = endpoint.validate()?;
@@ -1040,7 +1105,7 @@ impl NativeDatasetConversationSource {
                 primary_model_name: model.into(),
                 endpoint,
             },
-            Arc::new(BuiltinEndpointResolver::default()),
+            endpoint_resolver,
             Arc::new(EndpointRequestMaterializer),
             Arc::new(TiktokenTokenizer::builtin()),
             default_output_tokens,

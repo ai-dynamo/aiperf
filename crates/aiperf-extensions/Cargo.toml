@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-extensions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Statically linked extension composition registry for native Rust AIPerf."
+
+[dependencies]
+aiperf-accuracy = { path = "../aiperf-accuracy" }
+aiperf-dataset.workspace = true
+
+[dev-dependencies]
+aiperf-endpoints.workspace = true
+aiperf-rng.workspace = true

@@ -8,6 +8,7 @@
 //! BLAKE3-derived [`aiperf_rng`] streams.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use aiperf_rng::{RandomGenerator, RngRoot};
 
@@ -76,9 +77,9 @@ impl SamplerFactory for ShuffleSamplerFactory {
 }
 
 /// Extensible name-to-factory registry used to honor loader sampling policy.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SamplerRegistry {
-    factories: HashMap<String, Box<dyn SamplerFactory>>,
+    factories: HashMap<String, Arc<dyn SamplerFactory>>,
 }
 
 impl SamplerRegistry {
@@ -99,12 +100,17 @@ impl SamplerRegistry {
     /// Register one factory, rejecting duplicate normalized names.
     pub fn register(&mut self, factory: impl SamplerFactory + 'static) -> Result<()> {
         let name = normalize_name(factory.name());
+        if name.is_empty() {
+            return Err(DatasetError::Validation(
+                "sampler strategy registration name cannot be empty".into(),
+            ));
+        }
         if self.factories.contains_key(&name) {
             return Err(DatasetError::Validation(format!(
                 "duplicate sampler strategy {name:?}"
             )));
         }
-        self.factories.insert(name, Box::new(factory));
+        self.factories.insert(name, Arc::new(factory));
         Ok(())
     }
 

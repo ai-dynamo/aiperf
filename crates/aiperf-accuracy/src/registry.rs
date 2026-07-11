@@ -3,7 +3,7 @@
 
 //! Trait-factory registry for native accuracy benchmarks and graders.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::{
@@ -66,8 +66,10 @@ impl RegisteredBenchmark {
     }
 }
 
-type BenchmarkFactory = fn() -> Box<dyn AccuracyBenchmark>;
-type GraderFactory = fn() -> Rc<dyn Grader>;
+/// Constructor for fresh benchmark implementation state.
+pub type BenchmarkFactory = fn() -> Box<dyn AccuracyBenchmark>;
+/// Constructor for fresh grader implementation state.
+pub type GraderFactory = fn() -> Rc<dyn Grader>;
 
 #[derive(Clone, Copy)]
 struct BenchmarkRegistration {
@@ -84,48 +86,109 @@ struct GraderRegistration {
 
 /// Extensible benchmark registry. Names resolve to factories, so each run gets
 /// independent concrete state and runtime code never switches on benchmark kinds.
+#[derive(Clone)]
 pub struct AccuracyRegistry {
-    benchmarks: BTreeMap<&'static str, BenchmarkRegistration>,
+    benchmarks: BTreeMap<String, BenchmarkRegistration>,
     canonical_names: Vec<&'static str>,
-    graders: BTreeMap<&'static str, GraderRegistration>,
+    graders: BTreeMap<String, GraderRegistration>,
     canonical_grader_names: Vec<&'static str>,
 }
 
 impl AccuracyRegistry {
-    /// Builds the complete native in-tree benchmark registry.
-    pub fn builtin() -> Self {
-        let mut registry = Self {
+    /// Creates an empty benchmark and grader registry.
+    pub fn new() -> Self {
+        Self {
             benchmarks: BTreeMap::new(),
             canonical_names: Vec::new(),
             graders: BTreeMap::new(),
             canonical_grader_names: Vec::new(),
-        };
+        }
+    }
+
+    /// Builds the complete native in-tree benchmark registry.
+    pub fn builtin() -> Self {
+        let mut registry = Self::new();
         for registration in BUILTIN_BENCHMARKS {
-            registry.register(*registration);
+            registry
+                .register_benchmark_factory(registration.metadata, registration.factory)
+                .expect("built-in benchmark registrations are valid and unique");
         }
-        registry.canonical_names.sort_unstable();
         for registration in BUILTIN_GRADERS {
-            registry.register_grader(*registration);
+            registry
+                .register_grader_factory(
+                    registration.name,
+                    registration.aliases,
+                    registration.factory,
+                )
+                .expect("built-in grader registrations are valid and unique");
         }
-        registry.canonical_grader_names.sort_unstable();
         registry
     }
 
-    fn register_grader(&mut self, registration: GraderRegistration) {
-        self.canonical_grader_names.push(registration.name);
-        self.graders.insert(registration.name, registration);
-        for alias in registration.aliases {
-            self.graders.insert(alias, registration);
-        }
+    /// Register a `Default` benchmark implementation and its static metadata.
+    pub fn register_benchmark<B>(
+        &mut self,
+        metadata: &'static BenchmarkMetadata,
+    ) -> Result<(), AccuracyError>
+    where
+        B: AccuracyBenchmark + Default + 'static,
+    {
+        self.register_benchmark_factory(metadata, default_benchmark_factory::<B>)
     }
 
-    fn register(&mut self, registration: BenchmarkRegistration) {
-        self.canonical_names.push(registration.metadata.name);
-        self.benchmarks
-            .insert(registration.metadata.name, registration);
-        for alias in registration.metadata.aliases {
-            self.benchmarks.insert(alias, registration);
+    /// Register a benchmark factory and its static metadata.
+    pub fn register_benchmark_factory(
+        &mut self,
+        metadata: &'static BenchmarkMetadata,
+        factory: BenchmarkFactory,
+    ) -> Result<(), AccuracyError> {
+        let names = registration_names("benchmark", metadata.name, metadata.aliases)?;
+        ensure_available("benchmark", &self.benchmarks, &names)?;
+        let implementation_name = factory().name();
+        ensure_implementation_name("benchmark", metadata.name, implementation_name)?;
+        let registration = BenchmarkRegistration { metadata, factory };
+        for name in names {
+            self.benchmarks.insert(name, registration);
         }
+        self.canonical_names.push(metadata.name);
+        self.canonical_names.sort_unstable();
+        Ok(())
+    }
+
+    /// Register a `Default` grader implementation under a canonical name and aliases.
+    pub fn register_grader<G>(
+        &mut self,
+        name: &'static str,
+        aliases: &'static [&'static str],
+    ) -> Result<(), AccuracyError>
+    where
+        G: Grader + Default + 'static,
+    {
+        self.register_grader_factory(name, aliases, default_grader_factory::<G>)
+    }
+
+    /// Register a grader factory under a canonical name and aliases.
+    pub fn register_grader_factory(
+        &mut self,
+        name: &'static str,
+        aliases: &'static [&'static str],
+        factory: GraderFactory,
+    ) -> Result<(), AccuracyError> {
+        let names = registration_names("grader", name, aliases)?;
+        ensure_available("grader", &self.graders, &names)?;
+        let implementation_name = factory().name();
+        ensure_implementation_name("grader", name, implementation_name)?;
+        let registration = GraderRegistration {
+            name,
+            aliases,
+            factory,
+        };
+        for name in names {
+            self.graders.insert(name, registration);
+        }
+        self.canonical_grader_names.push(name);
+        self.canonical_grader_names.sort_unstable();
+        Ok(())
     }
 
     /// Resolves a canonical name or alias.
@@ -180,6 +243,83 @@ impl AccuracyRegistry {
 impl Default for AccuracyRegistry {
     fn default() -> Self {
         Self::builtin()
+    }
+}
+
+fn default_benchmark_factory<B>() -> Box<dyn AccuracyBenchmark>
+where
+    B: AccuracyBenchmark + Default + 'static,
+{
+    Box::new(B::default())
+}
+
+fn default_grader_factory<G>() -> Rc<dyn Grader>
+where
+    G: Grader + Default + 'static,
+{
+    Rc::new(G::default())
+}
+
+fn registration_names(
+    category: &'static str,
+    canonical: &'static str,
+    aliases: &'static [&'static str],
+) -> Result<Vec<String>, AccuracyError> {
+    let mut names = Vec::with_capacity(aliases.len() + 1);
+    let mut unique = BTreeSet::new();
+    for authored in std::iter::once(canonical).chain(aliases.iter().copied()) {
+        let normalized = authored.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            return Err(AccuracyError::InvalidRegistration {
+                category,
+                message: "names and aliases cannot be empty".into(),
+            });
+        }
+        if !unique.insert(normalized.clone()) {
+            return Err(AccuracyError::InvalidRegistration {
+                category,
+                message: format!("name or alias {authored:?} is repeated"),
+            });
+        }
+        names.push(normalized);
+    }
+    Ok(names)
+}
+
+fn ensure_available<T>(
+    category: &'static str,
+    registrations: &BTreeMap<String, T>,
+    names: &[String],
+) -> Result<(), AccuracyError> {
+    if let Some(name) = names
+        .iter()
+        .find(|name| registrations.contains_key(name.as_str()))
+    {
+        return Err(AccuracyError::DuplicateRegistration {
+            category,
+            name: name.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_implementation_name(
+    category: &'static str,
+    registered: &'static str,
+    implementation: &'static str,
+) -> Result<(), AccuracyError> {
+    if registered
+        .trim()
+        .eq_ignore_ascii_case(implementation.trim())
+    {
+        Ok(())
+    } else {
+        Err(AccuracyError::InvalidRegistration {
+            category,
+            message: format!(
+                "registered name {registered:?} does not match implementation name {implementation:?}"
+            ),
+        })
     }
 }
 
@@ -319,7 +459,69 @@ static BUILTIN_GRADERS: &[GraderRegistration] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::AccuracyRegistry;
+    use crate::{
+        AccuracyBenchmark, AccuracyError, BenchmarkConfig, BenchmarkProblem, DatasetSource, Grader,
+    };
+    use aiperf_metrics::GradingResult;
+
+    use super::{AccuracyRegistry, BenchmarkMetadata};
+
+    #[derive(Default)]
+    struct FixtureBenchmark;
+
+    impl AccuracyBenchmark for FixtureBenchmark {
+        fn name(&self) -> &'static str {
+            "fixture"
+        }
+
+        fn load_problems(
+            &self,
+            _source: &dyn DatasetSource,
+            _config: &BenchmarkConfig,
+        ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Default)]
+    struct FixtureGrader;
+
+    #[async_trait::async_trait(?Send)]
+    impl Grader for FixtureGrader {
+        fn name(&self) -> &'static str {
+            "fixture-grader"
+        }
+
+        async fn grade(
+            &self,
+            response_text: &str,
+            ground_truth: &str,
+        ) -> Result<GradingResult, AccuracyError> {
+            Ok(GradingResult::from_score(
+                f64::from(response_text == ground_truth),
+                false,
+                ground_truth,
+            ))
+        }
+    }
+
+    static FIXTURE: BenchmarkMetadata = BenchmarkMetadata {
+        name: "fixture",
+        aliases: &["fixture_alias"],
+        default_grader: "fixture-grader",
+        default_n_shots: 0,
+        default_enable_cot: false,
+        default_system_prompt: None,
+    };
+
+    static CONFLICT: BenchmarkMetadata = BenchmarkMetadata {
+        name: "other-fixture",
+        aliases: &["mmlu"],
+        default_grader: "exact-match",
+        default_n_shots: 0,
+        default_enable_cot: false,
+        default_system_prompt: None,
+    };
 
     #[test]
     fn resolves_aliases_without_runtime_kind_switches() {
@@ -333,5 +535,41 @@ mod tests {
             "multiple-choice"
         );
         assert_eq!(registry.grader_names().len(), 9);
+    }
+
+    #[test]
+    fn external_factories_register_and_conflicts_are_rejected() {
+        let mut registry = AccuracyRegistry::builtin();
+        registry
+            .register_benchmark::<FixtureBenchmark>(&FIXTURE)
+            .unwrap();
+        registry
+            .register_grader::<FixtureGrader>("fixture-grader", &["fixture_grader"])
+            .unwrap();
+
+        assert_eq!(
+            registry
+                .benchmark("fixture_alias")
+                .unwrap()
+                .benchmark
+                .name(),
+            "fixture"
+        );
+        assert_eq!(
+            registry.grader("fixture_grader").unwrap().name(),
+            "fixture-grader"
+        );
+        assert_eq!(registry.benchmark_names().len(), 12);
+        assert_eq!(registry.grader_names().len(), 10);
+
+        let error = registry
+            .register_benchmark::<FixtureBenchmark>(&CONFLICT)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate benchmark registration \"mmlu\"")
+        );
+        assert!(registry.benchmark("other-fixture").is_err());
     }
 }

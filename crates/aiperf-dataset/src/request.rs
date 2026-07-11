@@ -82,10 +82,11 @@ pub trait EndpointResolver: Send + Sync {
 }
 
 /// Extensible name-to-endpoint registry containing the endpoint implementations
-/// currently built by `aiperf-endpoints`.
+/// currently built by `aiperf-endpoints` plus statically linked extensions.
+#[derive(Clone)]
 pub struct BuiltinEndpointResolver {
     default_name: String,
-    endpoints: HashMap<String, Box<dyn Endpoint + Send + Sync>>,
+    endpoints: HashMap<String, Arc<dyn Endpoint + Send + Sync>>,
 }
 
 impl std::fmt::Debug for BuiltinEndpointResolver {
@@ -106,17 +107,35 @@ impl BuiltinEndpointResolver {
             default_name: "chat".into(),
             endpoints: HashMap::new(),
         };
-        resolver.register("chat", ChatEndpoint);
-        resolver.register("chat_completions", ChatEndpoint);
-        resolver.register("completions", CompletionsEndpoint);
-        resolver.register("responses", ResponsesEndpoint);
-        resolver.register("embeddings", EmbeddingsEndpoint);
-        resolver.register("chat_embeddings", ChatEmbeddingsEndpoint);
+        resolver
+            .register("chat", ChatEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("chat_completions", ChatEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("completions", CompletionsEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("responses", ResponsesEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("embeddings", EmbeddingsEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("chat_embeddings", ChatEmbeddingsEndpoint)
+            .expect("built-in endpoint names are unique");
         resolver
     }
 
     /// Select the fallback endpoint name after verifying it is registered.
     pub fn with_default(mut self, name: &str) -> Result<Self> {
+        self.set_default(name)?;
+        Ok(self)
+    }
+
+    /// Change the fallback endpoint after verifying it is registered.
+    pub fn set_default(&mut self, name: &str) -> Result<()> {
         let normalized = normalize_endpoint_name(name);
         if !self.endpoints.contains_key(&normalized) {
             return Err(DatasetError::Validation(format!(
@@ -124,17 +143,29 @@ impl BuiltinEndpointResolver {
             )));
         }
         self.default_name = normalized;
-        Ok(self)
+        Ok(())
     }
 
-    /// Register or replace one endpoint implementation.
+    /// Register one endpoint implementation, rejecting duplicate normalized names.
     pub fn register(
         &mut self,
         name: impl Into<String>,
         endpoint: impl Endpoint + Send + Sync + 'static,
-    ) {
-        self.endpoints
-            .insert(normalize_endpoint_name(&name.into()), Box::new(endpoint));
+    ) -> Result<()> {
+        let authored = name.into();
+        let normalized = normalize_endpoint_name(&authored);
+        if normalized.is_empty() {
+            return Err(DatasetError::Validation(
+                "endpoint registration name cannot be empty".into(),
+            ));
+        }
+        if self.endpoints.contains_key(&normalized) {
+            return Err(DatasetError::Validation(format!(
+                "duplicate endpoint registration {authored:?}"
+            )));
+        }
+        self.endpoints.insert(normalized, Arc::new(endpoint));
+        Ok(())
     }
 }
 
@@ -151,7 +182,7 @@ impl EndpointResolver for BuiltinEndpointResolver {
             .unwrap_or_else(|| self.default_name.clone());
         self.endpoints
             .get(&normalized)
-            .map(Box::as_ref)
+            .map(Arc::as_ref)
             .ok_or_else(|| {
                 let mut available = self.endpoints.keys().cloned().collect::<Vec<_>>();
                 available.sort();
@@ -826,6 +857,17 @@ mod tests {
                 ..EndpointConfig::default()
             },
         }
+    }
+
+    #[test]
+    fn endpoint_registry_rejects_normalized_duplicates() {
+        let mut resolver = BuiltinEndpointResolver::default();
+        let error = resolver.register("CHAT", ChatEndpoint).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate endpoint registration")
+        );
     }
 
     fn message(pool: &mut SegmentPool, parent: Option<Handle>, role: &str, text: &str) -> Handle {

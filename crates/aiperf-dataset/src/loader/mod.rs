@@ -292,7 +292,7 @@ impl DatasetFormatRegistration {
 }
 
 /// Ordered registry used for explicit format lookup and structural auto-detection.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct LoaderRegistry {
     formats: Vec<DatasetFormatRegistration>,
     by_name: HashMap<String, usize>,
@@ -403,6 +403,11 @@ impl LoaderRegistry {
     /// Register a format; duplicate normalized names are rejected.
     pub fn register(&mut self, registration: DatasetFormatRegistration) -> Result<()> {
         let normalized = normalize_name(&registration.name);
+        if normalized.is_empty() {
+            return Err(DatasetError::Validation(
+                "dataset format registration name cannot be empty".into(),
+            ));
+        }
         if self.by_name.contains_key(&normalized) {
             return Err(DatasetError::Validation(format!(
                 "duplicate dataset loader registration {:?}",

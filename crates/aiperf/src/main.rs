@@ -38,15 +38,16 @@ use aiperf::run::{
 use aiperf::scheduled::{ScheduledRunReport, TurnRecordProcessor};
 use aiperf::user_centric::UserCentricConfig;
 use aiperf::workload::SkeletonWorkload;
-use aiperf_accuracy::{AccuracyRegistry, BenchmarkConfig, JsonDatasetSource};
+use aiperf_accuracy::{BenchmarkConfig, JsonDatasetSource};
 use aiperf_adaptive::CorrelationContext;
 use aiperf_clock::{Clock, RealClock};
 use aiperf_dataset::{
-    ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, LoaderRegistry,
+    ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig,
     SyntheticDatasetConfig, SyntheticPromptConfig, TextTokenizer, TiktokenEncoding,
     TiktokenTokenizer,
 };
 use aiperf_endpoints::EndpointConfig;
+use aiperf_extensions::AiperfRegistry;
 use aiperf_metrics::{NativeReport, ReportRunInfo, ReportSummary, RunOutcome};
 use aiperf_rng::{RngRoot, SamplingDistribution};
 use aiperf_timing::{ArrivalPattern, StopConfig};
@@ -297,13 +298,14 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     aiperf::logging::init();
     let cli = Cli::parse();
+    let registry = AiperfRegistry::builtin()?;
     ensure_adaptive_flag_envelope(&cli)?;
     ensure_accuracy_flag_envelope(&cli)?;
 
     match cli.mode.as_str() {
         "graph" => run_graph_mode(&cli),
-        "online" if cli.accuracy_benchmark.is_some() => run_accuracy_mode(&cli),
-        "online" => run_online_mode(&cli),
+        "online" if cli.accuracy_benchmark.is_some() => run_accuracy_mode(&cli, &registry),
+        "online" => run_online_mode(&cli, &registry),
         other => anyhow::bail!("unknown --mode '{other}' (expected online|graph)"),
     }
 }
@@ -356,7 +358,7 @@ fn ensure_adaptive_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
+fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()> {
     anyhow::ensure!(
         !cli.adaptive_scale,
         "--adaptive-scale is not supported with --accuracy-benchmark"
@@ -374,8 +376,8 @@ fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
         .accuracy_benchmark
         .as_deref()
         .expect("caller checked accuracy benchmark");
-    let registry = AccuracyRegistry::builtin();
-    let registered = registry.benchmark(requested_benchmark)?;
+    let accuracy_registry = registries.accuracy();
+    let registered = accuracy_registry.benchmark(requested_benchmark)?;
     let benchmark_name = registered.metadata.name;
     let n_shots = cli
         .accuracy_n_shots
@@ -391,7 +393,7 @@ fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
         .accuracy_grader
         .as_deref()
         .unwrap_or(registered.metadata.default_grader);
-    let grader = registry.grader(grader_name)?;
+    let grader = accuracy_registry.grader(grader_name)?;
     anyhow::ensure!(n_shots <= 32, "--accuracy-n-shots must be at most 32");
     if let Some(limit) = cli.accuracy_max_problems {
         anyhow::ensure!(
@@ -463,7 +465,7 @@ fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
         );
         let processor = std::rc::Rc::new(dataset.record_processor(grader));
         let source: Box<dyn ConversationSource> = Box::new(
-            NativeDatasetConversationSource::sequential_with_endpoint_config(
+            NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
                 dataset.dataset().as_ref().clone(),
                 model.clone(),
                 cli.accuracy_max_tokens.unwrap_or(2_048),
@@ -473,6 +475,7 @@ fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
                     use_server_token_count: true,
                     ..EndpointConfig::default()
                 },
+                registries.endpoint_resolver(),
             )?,
         );
         let processors: Vec<std::rc::Rc<dyn TurnRecordProcessor>> = vec![processor.clone()];
@@ -539,11 +542,16 @@ fn parse_dataset_options(cli: &Cli) -> anyhow::Result<serde_json::Map<String, se
     Ok(options)
 }
 
+struct DatasetBuildContext<'a> {
+    registries: &'a AiperfRegistry,
+    runtime: &'a tokio::runtime::Runtime,
+    local: &'a tokio::task::LocalSet,
+    model: &'a str,
+}
+
 fn load_native_file_dataset(
     cli: &Cli,
-    runtime: &tokio::runtime::Runtime,
-    local: &tokio::task::LocalSet,
-    model: &str,
+    context: &DatasetBuildContext<'_>,
     osl: usize,
 ) -> anyhow::Result<Dataset> {
     let path = cli
@@ -558,7 +566,7 @@ fn load_native_file_dataset(
         load.options
             .insert("fixed_schedule".into(), serde_json::Value::Bool(true));
     }
-    let mut compose = ComposeConfig::new(model, RngRoot::new(cli.seed));
+    let mut compose = ComposeConfig::new(context.model, RngRoot::new(cli.seed));
     compose.output_length_distribution = Some(SamplingDistribution::fixed(osl as f64)?);
     compose.format_options = options;
     compose
@@ -567,11 +575,11 @@ fn load_native_file_dataset(
         .or_insert_with(|| {
             serde_json::Value::from(cli.sessions.or(cli.requests).unwrap_or(100).max(1) as u64)
         });
-    let registry = LoaderRegistry::with_builtin_formats()?;
-    local
+    context
+        .local
         .block_on(
-            runtime,
-            registry.build_dataset(
+            context.runtime,
+            context.registries.dataset_formats().build_dataset(
                 cli.input_format.as_deref(),
                 &load,
                 &compose,
@@ -583,15 +591,13 @@ fn load_native_file_dataset(
 
 fn build_native_synthetic_dataset(
     cli: &Cli,
-    runtime: &tokio::runtime::Runtime,
-    local: &tokio::task::LocalSet,
-    model: &str,
+    context: &DatasetBuildContext<'_>,
     isl: usize,
     osl: usize,
     turns: usize,
 ) -> anyhow::Result<Dataset> {
     let tokenizer = load_tokenizer(cli.tokenizer.as_deref())?;
-    let mut compose = ComposeConfig::new(model, RngRoot::new(cli.seed));
+    let mut compose = ComposeConfig::new(context.model, RngRoot::new(cli.seed));
     compose.output_length_distribution = Some(SamplingDistribution::fixed(osl as f64)?);
     compose.synthetic_config = Some(SyntheticDatasetConfig {
         entries: cli.sessions.or(cli.requests).unwrap_or(100).max(1),
@@ -606,16 +612,21 @@ fn build_native_synthetic_dataset(
     let load = LoadConfig::new(DatasetSource::Inline(
         serde_json::json!({"__aiperf_synthetic": true}),
     ));
-    let registry = LoaderRegistry::with_builtin_formats()?;
-    local
+    context
+        .local
         .block_on(
-            runtime,
-            registry.build_dataset(Some("synthetic"), &load, &compose, tokenizer.as_ref()),
+            context.runtime,
+            context.registries.dataset_formats().build_dataset(
+                Some("synthetic"),
+                &load,
+                &compose,
+                tokenizer.as_ref(),
+            ),
         )
         .map_err(Into::into)
 }
 
-fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
+fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()> {
     let base_url = cli
         .base_url
         .clone()
@@ -714,6 +725,12 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let local = tokio::task::LocalSet::new();
+    let dataset_build = DatasetBuildContext {
+        registries,
+        runtime: &rt,
+        local: &local,
+        model: &model,
+    };
 
     if cli.fixed_schedule {
         let input_file = cli
@@ -725,17 +742,19 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
             "--fixed-schedule-auto-offset=true conflicts with --fixed-schedule-start-offset-ms"
         );
         let _ = input_file;
-        let dataset = load_native_file_dataset(cli, &rt, &local, &model, osl)?
+        let dataset = load_native_file_dataset(cli, &dataset_build, osl)?
             .filter_first_turn_window(
                 cli.fixed_schedule_start_offset_ms,
                 cli.fixed_schedule_end_offset_ms,
             )?;
         let source: Box<dyn ConversationSource> =
-            Box::new(NativeDatasetConversationSource::preferred(
+            Box::new(NativeDatasetConversationSource::preferred_with_registries(
                 dataset,
                 model.clone(),
                 osl,
                 RngRoot::new(cli.seed),
+                registries.samplers(),
+                registries.endpoint_resolver(),
             )?);
         let report = local.block_on(
             &rt,
@@ -816,21 +835,24 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
             "user-centric synthetic mode requires --turns >= 2"
         );
         let source: Box<dyn ConversationSource> = if cli.input_file.is_some() {
-            let dataset = load_native_file_dataset(cli, &rt, &local, &model, osl)?;
-            Box::new(NativeDatasetConversationSource::preferred(
+            let dataset = load_native_file_dataset(cli, &dataset_build, osl)?;
+            Box::new(NativeDatasetConversationSource::preferred_with_registries(
                 dataset,
                 model.clone(),
                 osl,
                 RngRoot::new(cli.seed),
+                registries.samplers(),
+                registries.endpoint_resolver(),
             )?)
         } else {
-            let dataset =
-                build_native_synthetic_dataset(cli, &rt, &local, &model, isl, osl, turns)?;
-            Box::new(NativeDatasetConversationSource::preferred(
+            let dataset = build_native_synthetic_dataset(cli, &dataset_build, isl, osl, turns)?;
+            Box::new(NativeDatasetConversationSource::preferred_with_registries(
                 dataset,
                 model.clone(),
                 osl,
                 RngRoot::new(cli.seed),
+                registries.samplers(),
+                registries.endpoint_resolver(),
             )?)
         };
         let user_config = UserCentricConfig {

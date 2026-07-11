@@ -42,6 +42,7 @@ dependencies = [
  "aiperf-core",
  "aiperf-dataset",
  "aiperf-endpoints",
+ "aiperf-extensions",
  "aiperf-graph",
  "aiperf-metrics",
  "aiperf-rng",
@@ -150,6 +151,16 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "aiperf-extensions"
+version = "0.0.0"
+dependencies = [
+ "aiperf-accuracy",
+ "aiperf-dataset",
+ "aiperf-endpoints",
+ "aiperf-rng",
 ]
 
 [[package]]
