@@ -42,6 +42,13 @@ pub trait LocalTaskScheduler {
     /// are allowed to drain so HTTP dispatch is never abandoned mid-response.
     fn cancel_pending(&self);
 
+    /// Cancel every delayed or running task tracked by this scheduler.
+    ///
+    /// Phase grace escalation uses this after asking the backend to cancel its
+    /// in-flight requests. Dropping a running dispatch future is the local-loop
+    /// backstop when a backend does not produce a terminal callback.
+    fn cancel_all(&self);
+
     /// Number of delayed or running tasks currently tracked by the scheduler.
     fn task_count(&self) -> usize;
 
@@ -55,6 +62,8 @@ struct SchedulerState {
     idle: Notify,
     cancel_epoch: Cell<u64>,
     pending_cancelled: Notify,
+    abort_epoch: Cell<u64>,
+    all_cancelled: Notify,
 }
 
 impl SchedulerState {
@@ -96,6 +105,8 @@ impl ClockTaskScheduler {
                 idle: Notify::new(),
                 cancel_epoch: Cell::new(0),
                 pending_cancelled: Notify::new(),
+                abort_epoch: Cell::new(0),
+                all_cancelled: Notify::new(),
             }),
         }
     }
@@ -103,8 +114,18 @@ impl ClockTaskScheduler {
     fn spawn_tracked(&self, task: LocalTask) {
         self.state.start_task();
         let state = self.state.clone();
+        let abort_epoch = state.abort_epoch.get();
         tokio::task::spawn_local(async move {
-            task.await;
+            let cancelled = state.all_cancelled.notified();
+            tokio::pin!(cancelled);
+            cancelled.as_mut().enable();
+            if state.abort_epoch.get() == abort_epoch {
+                tokio::pin!(task);
+                tokio::select! {
+                    _ = &mut task => {}
+                    _ = &mut cancelled => {}
+                }
+            }
             state.finish_task();
         });
     }
@@ -164,6 +185,14 @@ impl LocalTaskScheduler for ClockTaskScheduler {
             .cancel_epoch
             .set(self.state.cancel_epoch.get().wrapping_add(1));
         self.state.pending_cancelled.notify_waiters();
+    }
+
+    fn cancel_all(&self) {
+        self.cancel_pending();
+        self.state
+            .abort_epoch
+            .set(self.state.abort_epoch.get().wrapping_add(1));
+        self.state.all_cancelled.notify_waiters();
     }
 
     fn task_count(&self) -> usize {
@@ -266,5 +295,30 @@ mod tests {
             0,
             "cancelled timer must not advance SimClock"
         );
+    }
+
+    #[test]
+    fn cancelling_all_drops_running_work_without_advancing_virtual_time() {
+        let clock = Rc::new(SimClock::new());
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let observed = log.clone();
+        let clock_for_body = clock.clone();
+
+        drive_sim(clock.clone(), move |_handle| async move {
+            let scheduler = ClockTaskScheduler::new(clock_for_body.clone());
+            let running_log = observed.clone();
+            let task_clock = clock_for_body.clone();
+            scheduler.execute_async(Box::pin(async move {
+                running_log.borrow_mut().push("started");
+                task_clock.sleep(100).await;
+                running_log.borrow_mut().push("finished");
+            }));
+            tokio::task::yield_now().await;
+            scheduler.cancel_all();
+            scheduler.wait_idle().await;
+        });
+
+        assert_eq!(*log.borrow(), vec!["started"]);
+        assert_eq!(clock.now_ns(), 0);
     }
 }
