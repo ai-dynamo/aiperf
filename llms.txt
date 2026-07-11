@@ -42,6 +42,7 @@ Thread-per-core, `Rc`/`RefCell`, `!Send`, `spawn_local` on the hot path.
 | `loadgen-core` | the dispatch/measure seam + report: `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `TraceCollector`, `TraceSimulationReport` | `src/sink.rs`, `src/collector.rs` |
 | `aiperf-timing` | the clock-native scheduling-policy leaf (time injected as ns): `IntervalGenerator` (arrival distributions), `SlotPool` (debt-drain concurrency admission), `StopCondition`/`StopChecker` (run bounds), `plan_user_centric`; shared by the online CLI and the graph path so policy can't drift | `src/intervals.rs`, `src/slots.rs`, `src/stop.rs`, `src/user_centric.rs` |
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot` BLAKE3 seed derivation, `RandomGenerator` (`Pcg64` + `rand_distr`), `HashIdRandomGenerator`, sampling distributions, sequence-length distributions | `src/derive.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
+| `aiperf-metrics` | IO-free metrics/accuracy leaf: metric catalog primitives plus built accuracy accumulator/analyzer with phase/time windows, real correlation ids, dependency-ordered analyzers, and typed report DTOs | `src/accuracy.rs`, `src/accumulator.rs`, `src/catalog.rs`, `src/window.rs`, `src/report.rs` |
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-graph` | the Graph-IR dataflow engine: content-addressed segments, splice materialization, firing-gate executor, DES `drive_sim`/`drive_real`, throughput benches | `src/runtime.rs`, `src/executor.rs`, `src/segment.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
@@ -108,11 +109,34 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   prefill `SlotPool`s, `StopChecker` bounds, segment-pool turn materialization,
   `Clock::sleep` think-time; two-plane throughput framing (control-loop never the
   bottleneck, HTTP fans across cores).
+- `specs/2026-07-11-aiperf-rust-user-centric-fixed-schedule-design.md` — the other
+  load strategies: user-centric (per-user cadence `stagger=1/rate`,
+  `turn_gap=num_users/rate`; virtual-history seeding; open-loop churn) + fixed-schedule
+  (absolute-timestamp trace replay). User-centric setup math partly built
+  (`aiperf-timing::plan_user_centric`); pacer/churn + fixed-schedule unbuilt.
+- `specs/2026-07-11-aiperf-rust-phase-runner-orchestrator-design.md` — the phase driver
+  above the credit issuer: `PhaseLifecycle` state machine + grace/timeout/drain/
+  force-complete escalation + warmup→profiling seamless overlap; deletes the ZMQ IPC
+  scaffolding (`PhasePublisher`, `TimingManager` service, `wait_for_workers`) for direct
+  `PhaseObserver`/`RequestObserver` trait calls.
+- `specs/2026-07-11-aiperf-rust-adaptive-scale-design.md` — SLA-driven autoscaling: the
+  monotone `ramp_until_fail` step-ramp of a knob (`AdaptiveControlBackend` →
+  `SlotPool::set_limit`/`IntervalGenerator::set_rate`) watching a tumbling `WindowSampler`
+  SLA; closed-loop live-metrics-during-the-run is the sharpest offline-parity constraint.
+- `specs/2026-07-11-aiperf-rust-ancillary-timing-policy-design.md` — ramping
+  (`RampStrategy`/`RampDriver` Linear/Exp/Poisson → `set_rate`/`set_limit`), request
+  cancellation (Bernoulli fixed-delay disconnect armed at send-complete, off in warmup),
+  URL sampling (round-robin, turn-0 advance + sticky-per-session). Actuators built;
+  curve/policy/selector traits new.
+- `specs/2026-07-11-aiperf-rust-dag-branch-orchestrator-design.md` — **superseded by the
+  `aiperf-graph` async-dataflow engine**: FORK/SPAWN fan-out = out-edges, join =
+  `ChannelRequirement.count`, sticky-routing/drain-observer = deleted credit-protocol
+  artifacts; residual = graph-build lowering + session-cap wiring. Lineage doc.
 - `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of
   unspec'd bodies; addendum notes metrics, telemetry, and RNG gaps are now covered
   by dedicated specs/addenda.
 - `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — accuracy as an
-  accumulator + analyzer pair (designed); addendum updates stale Python-stub wording.
+  accumulator + analyzer pair (built in `aiperf-metrics`; grader/runtime wiring still future); addenda update stale Python-stub wording and record the native Rust implementation.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — the
   **new-code** metrics engine: `aiperf-metrics` leaf crate (columnar accumulator +
   sweep-line curves + percentile/derived kernels + phase windowing + genai-perf

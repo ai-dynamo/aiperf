@@ -177,3 +177,7 @@ addresses still stands for the native Rust rewrite: accuracy should become a
 first-class accumulator/analyzer integrated with phase windows, joins, and the main
 reporting pipeline rather than remaining a side pipeline with fragile positional
 association.
+
+## Addendum — 2026-07-11 (native Rust implementation)
+
+The native Rust workspace now implements the core first-class accuracy accumulator/analyzer in `crates/aiperf-metrics/src/accuracy.rs`. The built surface includes typed `AccuracyRecord` / `GradingResult`, real `CorrelationId` and `TaskId` association, phase/time-window summaries via `ExportContext`, Wilson confidence intervals, per-task rollups, `Analyzer` / `SummaryContext` dependency enforcement, `AccuracyResultsAnalyzer`, and optional joins to metric goodput/request-throughput and energy telemetry summaries. The grader plugin zoo and runtime record-routing/exporter wiring remain future consumers of this built leaf crate.
