@@ -185,7 +185,13 @@ fn run_graph_mode(argv: &[String]) -> anyhow::Result<()> {
             r.ttft_p99_ms,
             r.ttft_mean_ms,
             r.wall_secs,
-            format!("completed={} errors={}", r.completed, r.errors),
+            format!(
+                "completed={} errors={} output_tokens={} output_tok/s={:.0}",
+                r.completed,
+                r.errors,
+                r.output_tokens,
+                r.output_tps()
+            ),
         )
     };
 

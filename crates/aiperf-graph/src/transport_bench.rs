@@ -71,6 +71,7 @@ struct WorkerMetrics {
     ttft_ms: Vec<f32>,
     completed: u64,
     errors: u64,
+    output_tokens: u64,
 }
 
 /// The transport-bench result: throughput + TTFT distribution.
@@ -78,6 +79,7 @@ struct WorkerMetrics {
 pub struct GraphRpsReport {
     pub completed: u64,
     pub errors: u64,
+    pub output_tokens: u64,
     pub wall_secs: f64,
     pub ttft_p50_ms: f64,
     pub ttft_p90_ms: f64,
@@ -89,6 +91,14 @@ impl GraphRpsReport {
     pub fn rps(&self) -> f64 {
         if self.wall_secs > 0.0 {
             self.completed as f64 / self.wall_secs
+        } else {
+            0.0
+        }
+    }
+    /// Output tokens per second (SSE content chunks / wall).
+    pub fn output_tps(&self) -> f64 {
+        if self.wall_secs > 0.0 {
+            self.output_tokens as f64 / self.wall_secs
         } else {
             0.0
         }
@@ -176,6 +186,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
         // first SSE message (which may be a role-only chunk).
         let req_start = self.clock.now_ns();
         let mut first_token_ns: Option<i64> = None;
+        let mut tokens: u64 = 0;
         let mut content = String::new();
         let status = {
             let mut c = self.sender.borrow_mut();
@@ -203,9 +214,12 @@ impl GraphSink<Msg> for TransportMeteredSink {
                             had_token = true;
                         }
                     }
-                    if had_token && first_token_ns.is_none() {
-                        first_token_ns = Some((m.perf_ns - req_start).max(0));
-                        on_first_token();
+                    if had_token {
+                        tokens += 1;
+                        if first_token_ns.is_none() {
+                            first_token_ns = Some((m.perf_ns - req_start).max(0));
+                            on_first_token();
+                        }
                     }
                 }
             };
@@ -225,6 +239,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
         if ok {
             let mut m = self.metrics.borrow_mut();
             m.completed += 1;
+            m.output_tokens += tokens;
             if let Some(ns) = first_token_ns {
                 m.ttft_ms.push((ns as f64 / 1_000_000.0) as f32);
             }
@@ -276,8 +291,8 @@ pub fn run_transport_bench(cfg: BenchConfig, http2: bool, conns: usize) -> Graph
 
     let start = Instant::now();
     let next = Arc::new(AtomicUsize::new(0));
-    let merged: Arc<std::sync::Mutex<(Vec<f32>, u64, u64)>> =
-        Arc::new(std::sync::Mutex::new((Vec::new(), 0, 0)));
+    let merged: Arc<std::sync::Mutex<(Vec<f32>, u64, u64, u64)>> =
+        Arc::new(std::sync::Mutex::new((Vec::new(), 0, 0, 0)));
 
     let servers = if cfg.base_urls.is_empty() {
         vec!["http://127.0.0.1:8000".to_string()]
@@ -311,12 +326,13 @@ pub fn run_transport_bench(cfg: BenchConfig, http2: bool, conns: usize) -> Graph
                 g.0.extend_from_slice(&wm.ttft_ms);
                 g.1 += wm.completed;
                 g.2 += wm.errors;
+                g.3 += wm.output_tokens;
             });
         }
     });
 
     let wall_secs = start.elapsed().as_secs_f64();
-    let (mut ttft, completed, errors) = Arc::try_unwrap(merged)
+    let (mut ttft, completed, errors, output_tokens) = Arc::try_unwrap(merged)
         .map(|m| m.into_inner().unwrap())
         .unwrap_or_else(|m| m.lock().unwrap().clone());
     ttft.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -329,6 +345,7 @@ pub fn run_transport_bench(cfg: BenchConfig, http2: bool, conns: usize) -> Graph
     GraphRpsReport {
         completed,
         errors,
+        output_tokens,
         wall_secs,
         ttft_p50_ms: percentile(&ttft, 50.0),
         ttft_p90_ms: percentile(&ttft, 90.0),
