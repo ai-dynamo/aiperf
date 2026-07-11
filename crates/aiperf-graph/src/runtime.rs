@@ -174,12 +174,9 @@ where
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
-use std::cell::RefCell;
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
     #[test]
     fn tasks_run_in_spawn_order_same_instant() {

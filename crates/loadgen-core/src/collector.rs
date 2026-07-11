@@ -890,11 +890,6 @@ impl TraceCollector {
     }
 }
 
-/// Record a role's admit time (set-once, first wins) and running max reused
-/// input tokens into the shared per-request detail slots. Shared by the prefill
-/// and decode admit hooks, which differ only in which detail fields they target.
-// Reachable only via the KV-event admit hooks above, which are test-only today.
-#[allow(dead_code)]
 /// Per-request accumulation output of [`accumulate_requests`]: the summary
 /// latency/throughput series plus the running totals `finish()` composes the
 /// final report from. Field order and the order in which each series is pushed
@@ -1055,6 +1050,9 @@ fn derive_resource_stats(
     }
 }
 
+/// Record a role's admit time (set-once, first wins) and running max reused
+/// input tokens into the shared per-request detail slots. Shared by the prefill
+/// and decode admit hooks, which differ only in which detail fields they target.
 fn record_role_admit(
     admit_ms: &mut Option<f64>,
     reused_input_tokens_slot: &mut Option<usize>,

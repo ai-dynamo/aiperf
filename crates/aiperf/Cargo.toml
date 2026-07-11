@@ -6,7 +6,7 @@ name = "aiperf"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Rust-native AIPerf load generator — real-HTTP online path on loadgen-core"
+description = "Rust-native AIPerf load-generation CLI — real-HTTP online + Graph-IR benchmarking over the aiperf-transport client."
 
 [lib]
 name = "aiperf"
@@ -27,7 +27,6 @@ anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
 chrono.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
