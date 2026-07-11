@@ -28,10 +28,12 @@ _SSE = b"".join(
 
 class _ChatHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    bodies: list[dict[str, object]] = []
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
-        self.rfile.read(length)
+        body = self.rfile.read(length)
+        self.bodies.append(orjson.loads(body))
         if self.path != "/v1/chat/completions":
             self.send_error(404)
             return
@@ -46,6 +48,7 @@ class _ChatHandler(BaseHTTPRequestHandler):
 
 
 def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
+    _ChatHandler.bodies.clear()
     server = ThreadingHTTPServer(("127.0.0.1", 0), _ChatHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -152,6 +155,76 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert file_result.summary_metrics["request_count"].avg == 2.0
         assert file_result.summary_metrics["input_sequence_length"].count == 2
         assert len((file_artifacts / "profile_export.jsonl").read_text().splitlines()) == 2
+
+        multimodal_artifacts = tmp_path / "multimodal-run"
+        multimodal_envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 1,
+                        "random_seed": 19,
+                        "sampling": "shuffle",
+                        "prompts": {
+                            "sequence_distribution": [
+                                {"isl": 6, "osl": 3, "probability": 100}
+                            ]
+                        },
+                        "prefix_prompts": {
+                            "shared_system_length": 2,
+                            "user_context_length": 2,
+                        },
+                        "images": {
+                            "batch_size": 1,
+                            "width": 4,
+                            "height": 3,
+                            "format": "png",
+                            "source": "noise",
+                        },
+                        "audio": {
+                            "batch_size": 1,
+                            "length": 0.02,
+                            "format": "wav",
+                            "sample_rates": [8.0],
+                            "depths": [8],
+                            "channels": 1,
+                        },
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 1,
+                        "concurrency": 1,
+                    },
+                    "artifacts": {"dir": str(multimodal_artifacts)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        multimodal_run = BenchmarkRun(
+            benchmark_id="python-rust-multimodal-e2e",
+            cfg=multimodal_envelope.benchmark,
+            artifact_dir=multimodal_artifacts,
+            label="native-multimodal",
+            random_seed=13,
+        )
+        multimodal_result = RustSubprocessExecutor(
+            multimodal_artifacts, binary=binary
+        ).execute_sync(multimodal_run)
+
+        assert multimodal_result.success, multimodal_result.error
+        assert multimodal_result.summary_metrics["request_count"].avg == 1.0
+        encoded_body = orjson.dumps(_ChatHandler.bodies[-1])
+        assert b'"max_completion_tokens":3' in encoded_body
+        assert b'"image_url"' in encoded_body
+        assert b'"input_audio"' in encoded_body
     finally:
         server.shutdown()
         server.server_close()

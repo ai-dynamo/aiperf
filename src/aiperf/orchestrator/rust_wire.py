@@ -117,27 +117,92 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
 
 def _dataset(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
     if isinstance(dataset, SyntheticDataset):
-        if dataset.prompts is None or dataset.prompts.isl is None:
-            raise RustWireError("synthetic native runs require datasets[].prompts.isl")
-        if dataset.prompts.osl is None:
-            raise RustWireError("synthetic native runs require datasets[].prompts.osl")
-        return {
-            "type": "synthetic",
-            "entries": dataset.entries,
-            "prompts": {
-                "isl": _distribution(dataset.prompts.isl),
-                "osl": _distribution(dataset.prompts.osl),
-                "batch_size": dataset.prompts.batch_size,
-            },
-            "turns": _distribution(dataset.turns or 1),
-            "turn_delay_ms": _distribution(dataset.turn_delay or 0),
-            "turn_delay_ratio": dataset.turn_delay_ratio,
-        }
+        return _synthetic_dataset(dataset)
     if isinstance(dataset, FileDataset):
         return _file_dataset(run, dataset)
     raise RustWireError(
         f"native runner protocol v1 does not accept dataset type {dataset.type!s}"
     )
+
+
+def _synthetic_dataset(dataset: SyntheticDataset) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "type": "synthetic",
+        "entries": dataset.entries,
+        "sampling": str(dataset.sampling),
+        "turns": _distribution(dataset.turns or 1),
+        "turn_delay_ms": _distribution(dataset.turn_delay or 0),
+        "turn_delay_ratio": dataset.turn_delay_ratio,
+    }
+    _set_optional(result, "random_seed", dataset.random_seed)
+    if dataset.prompts is not None:
+        prompts: dict[str, Any] = {"batch_size": dataset.prompts.batch_size}
+        if dataset.prompts.isl is not None:
+            prompts["isl"] = _distribution(dataset.prompts.isl)
+        if dataset.prompts.osl is not None:
+            prompts["osl"] = _distribution(dataset.prompts.osl)
+        _set_optional(prompts, "block_size", dataset.prompts.block_size)
+        if dataset.prompts.sequence_distribution is not None:
+            prompts["sequence_distribution"] = [
+                {
+                    "isl": _distribution(entry.isl),
+                    "osl": _distribution(entry.osl),
+                    "probability": entry.probability,
+                }
+                for entry in dataset.prompts.sequence_distribution
+            ]
+        result["prompts"] = prompts
+    if dataset.prefix_prompts is not None:
+        result["prefix_prompts"] = dataset.prefix_prompts.model_dump(
+            mode="json", exclude_none=True
+        )
+    if dataset.images is not None:
+        source = dataset.images.source
+        source_value = (
+            str(source.expanduser().resolve()) if isinstance(source, Path) else str(source)
+        )
+        result["images"] = {
+            "batch_size": dataset.images.batch_size,
+            "width": _distribution(dataset.images.width),
+            "height": _distribution(dataset.images.height),
+            "format": str(dataset.images.format),
+            "source": source_value,
+            "source_sampling": str(dataset.images.source_sampling),
+        }
+    if dataset.audio is not None:
+        result["audio"] = {
+            "batch_size": dataset.audio.batch_size,
+            "length": _distribution(dataset.audio.length),
+            "format": str(dataset.audio.format),
+            "sample_rates": list(dataset.audio.sample_rates),
+            "depths": list(dataset.audio.depths),
+            "channels": dataset.audio.channels,
+        }
+    if dataset.video is not None:
+        video: dict[str, Any] = {
+            "batch_size": dataset.video.batch_size,
+            "duration": dataset.video.duration,
+            "fps": dataset.video.fps,
+            "format": str(dataset.video.format),
+            "codec": dataset.video.codec,
+            "synth_type": str(dataset.video.synth_type),
+            "audio": {
+                "sample_rate": dataset.video.audio.sample_rate,
+                "channels": dataset.video.audio.channels,
+                "depth": dataset.video.audio.depth,
+            },
+        }
+        _set_optional(video, "width", dataset.video.width)
+        _set_optional(video, "height", dataset.video.height)
+        _set_optional(video["audio"], "codec", dataset.video.audio.codec)
+        result["video"] = video
+    if dataset.rankings is not None:
+        result["rankings"] = {
+            "passages": _distribution(dataset.rankings.passages),
+            "passage_tokens": _distribution(dataset.rankings.passage_tokens),
+            "query_tokens": _distribution(dataset.rankings.query_tokens),
+        }
+    return result
 
 
 def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:

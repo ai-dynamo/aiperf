@@ -32,16 +32,22 @@ use aiperf_clock::{Clock, RealClock};
 use aiperf_dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
     ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
-    RoundRobinModelSelectorFactory, SyntheticDatasetConfig, SyntheticPromptConfig, TextTokenizer,
-    TiktokenEncoding, TiktokenTokenizer,
+    RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
+    SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
+    SyntheticImageSource, SyntheticPrefixConfig, SyntheticPromptConfig, SyntheticRankingsConfig,
+    SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern,
+    TextTokenizer, TiktokenEncoding, TiktokenTokenizer,
 };
-use aiperf_endpoints::EndpointConfig;
+use aiperf_endpoints::{EndpointConfig, EndpointType};
 use aiperf_extensions::AiperfRegistry;
 use aiperf_metrics::{
     CATALOG, ExportContext, MetricsAccumulator, MetricsConfig, NativeReport, Phase as MetricsPhase,
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
-use aiperf_rng::{EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution};
+use aiperf_rng::{
+    EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
+    SequenceLengthDistribution, SequenceLengthPair,
+};
 use aiperf_timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
     NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, PoissonRamp, RampDriver,
@@ -59,9 +65,21 @@ use uuid::Uuid;
 use crate::protocol::{
     DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
     ModelSelectionStrategy, ModelsSpec, PhaseSpec, RampSpec, RampStrategySpec, RunRequest,
-    RunTerminal, SyntheticDatasetSpec,
+    RunTerminal, SequenceDistributionEntrySpec, SourceImageSamplingSpec, SyntheticAudioFormatSpec,
+    SyntheticAudioSpec, SyntheticDatasetSpec, SyntheticImageFormatSpec, SyntheticImageSpec,
+    SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec, SyntheticVideoPatternSpec,
+    SyntheticVideoSpec,
 };
 use crate::records::{CapturedRecord, write_records_jsonl};
+
+type PhaseRuntimeParts = (
+    Rc<dyn Workload>,
+    Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    Option<Rc<SlotPool>>,
+    Option<Rc<SlotPool>>,
+    bool,
+    Rc<dyn ScheduledPhaseResources>,
+);
 
 /// Execute exactly one request on a fresh current-thread Tokio runtime.
 pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
@@ -124,6 +142,7 @@ fn validate_request(request: &RunRequest) -> Result<()> {
 async fn execute_native(request: RunRequest) -> Result<NativeReport> {
     let registry = AiperfRegistry::builtin()?;
     let rng_root = RngRoot::new(request.run.random_seed);
+    let dataset_rng_root = dataset_rng_root(&request.run.dataset, rng_root);
     let metrics_config = metrics_config(&request.run.metrics)?;
     let model_names = request
         .run
@@ -141,8 +160,9 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         &registry,
         &request.run.dataset,
         &request.run.models,
-        rng_root,
+        dataset_rng_root,
         tokenizer.as_ref(),
+        request.run.endpoint.endpoint_type,
     )
     .await?;
     let endpoint = endpoint_config(&request.run.endpoint)?;
@@ -191,8 +211,9 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
 
     let mut plans = Vec::with_capacity(request.run.phases.len());
     for (phase_index, phase) in request.run.phases.iter().enumerate() {
-        let phase_rng =
-            RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
+        let phase_rng = RngRoot::new(
+            dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")),
+        );
         let phase_dataset = match phase {
             PhaseSpec::FixedSchedule {
                 start_offset,
@@ -213,14 +234,8 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         let arrival_seed = rng_root
             .derive_seed(&format!("runner.phase.{phase_index}.arrival"))
             .unwrap_or(phase_index as u64);
-        let (workload, intervals, phase_session, phase_prefill, enforce_stop, resources): (
-            Rc<dyn Workload>,
-            Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
-            Option<Rc<SlotPool>>,
-            Option<Rc<SlotPool>>,
-            bool,
-            Rc<dyn ScheduledPhaseResources>,
-        ) = match phase {
+        let (workload, intervals, phase_session, phase_prefill, enforce_stop, resources):
+            PhaseRuntimeParts = match phase {
             PhaseSpec::Concurrency { .. }
             | PhaseSpec::Poisson { .. }
             | PhaseSpec::Gamma { .. }
@@ -436,18 +451,44 @@ async fn build_dataset(
     models: &ModelsSpec,
     rng_root: RngRoot,
     tokenizer: &dyn TextTokenizer,
+    endpoint_type: EndpointType,
 ) -> Result<Dataset> {
     match dataset {
         DatasetSpec::Synthetic(spec) => {
             let mut compose = compose_config(models, rng_root)?;
-            compose.output_length_distribution = Some(distribution(&spec.prompts.osl)?);
+            if let Some(prompts) = &spec.prompts {
+                compose.output_length_distribution = prompts
+                    .osl
+                    .as_ref()
+                    .map(distribution)
+                    .transpose()?
+                    .filter(|value| value.expected_value() > 0.0);
+                compose.sequence_length_distribution = prompts
+                    .sequence_distribution
+                    .as_deref()
+                    .map(sequence_length_distribution)
+                    .transpose()?;
+            }
             compose.synthetic_config = Some(synthetic_config(spec)?);
-            let load = LoadConfig::new(DatasetSource::Inline(
-                serde_json::json!({"__aiperf_synthetic": true}),
-            ));
+            let rankings = is_rankings_endpoint(endpoint_type);
+            let mut load = LoadConfig::new(DatasetSource::Inline(if rankings {
+                serde_json::json!({"__aiperf_synthetic_rankings": true})
+            } else {
+                serde_json::json!({"__aiperf_synthetic": true})
+            }));
+            load.sampling_strategy = Some(spec.sampling.clone());
             registry
                 .dataset_formats()
-                .build_dataset(Some("synthetic"), &load, &compose, tokenizer)
+                .build_dataset(
+                    Some(if rankings {
+                        "synthetic_rankings"
+                    } else {
+                        "synthetic"
+                    }),
+                    &load,
+                    &compose,
+                    tokenizer,
+                )
                 .await
                 .map_err(Into::into)
         }
@@ -455,6 +496,21 @@ async fn build_dataset(
             build_file_dataset(registry, spec, models, rng_root, tokenizer).await
         }
     }
+}
+
+fn dataset_rng_root(dataset: &DatasetSpec, run_rng_root: RngRoot) -> RngRoot {
+    let override_seed = match dataset {
+        DatasetSpec::Synthetic(spec) => spec.random_seed,
+        DatasetSpec::File(spec) => spec.random_seed,
+    };
+    override_seed.map_or(run_rng_root, |seed| RngRoot::new(Some(seed)))
+}
+
+const fn is_rankings_endpoint(endpoint_type: EndpointType) -> bool {
+    matches!(
+        endpoint_type,
+        EndpointType::CohereRankings | EndpointType::HfTeiRankings | EndpointType::NimRankings
+    )
 }
 
 fn compose_config(models: &ModelsSpec, rng_root: RngRoot) -> Result<ComposeConfig> {
@@ -506,30 +562,223 @@ fn synthetic_config(spec: &SyntheticDatasetSpec) -> Result<SyntheticDatasetConfi
         spec.entries > 0,
         "synthetic dataset entries must be positive"
     );
-    ensure!(
-        spec.prompts.batch_size > 0,
-        "synthetic prompt batch_size must be positive"
-    );
+    if let Some(prompts) = &spec.prompts {
+        ensure!(
+            prompts.batch_size > 0,
+            "synthetic prompt batch_size must be positive"
+        );
+        ensure!(
+            prompts.block_size.is_none_or(|value| value > 0),
+            "synthetic prompt block_size must be positive when configured"
+        );
+    }
     ensure!(
         spec.turn_delay_ratio.is_finite() && spec.turn_delay_ratio >= 0.0,
         "synthetic turn_delay_ratio must be finite and non-negative"
     );
+    let prompts = spec
+        .prompts
+        .as_ref()
+        .and_then(|prompts| {
+            prompts
+                .isl
+                .as_ref()
+                .or_else(|| {
+                    prompts
+                        .sequence_distribution
+                        .as_ref()
+                        .and_then(|entries| entries.first())
+                        .map(|entry| &entry.isl)
+                })
+                .map(|isl| (prompts, isl))
+        })
+        .map(|(prompts, isl)| -> Result<Option<SyntheticPromptConfig>> {
+            let input_tokens = distribution(isl)?;
+            Ok(
+                (input_tokens.expected_value() > 0.0).then_some(SyntheticPromptConfig {
+                    input_tokens,
+                    batch_size: prompts.batch_size,
+                }),
+            )
+        })
+        .transpose()?
+        .flatten();
     Ok(SyntheticDatasetConfig {
         entries: spec.entries,
         turns: distribution(&spec.turns)?,
         turn_delay_ms: distribution(&spec.turn_delay_ms)?,
         turn_delay_ratio: spec.turn_delay_ratio,
-        prompts: Some(SyntheticPromptConfig {
-            input_tokens: distribution(&spec.prompts.isl)?,
-            batch_size: spec.prompts.batch_size,
-        }),
-        ..SyntheticDatasetConfig::default()
+        prompts,
+        prefixes: synthetic_prefixes(spec.prefix_prompts.as_ref()),
+        images: spec.images.as_ref().map(synthetic_image).transpose()?,
+        audio: spec.audio.as_ref().map(synthetic_audio).transpose()?,
+        video: spec.video.as_ref().map(synthetic_video).transpose()?,
+        rankings: spec
+            .rankings
+            .as_ref()
+            .map(|rankings| -> Result<SyntheticRankingsConfig> {
+                Ok(SyntheticRankingsConfig {
+                    passages: distribution(&rankings.passages)?,
+                    passage_tokens: distribution(&rankings.passage_tokens)?,
+                    query_tokens: distribution(&rankings.query_tokens)?,
+                })
+            })
+            .transpose()?,
     })
+}
+
+fn synthetic_prefixes(spec: Option<&SyntheticPrefixPromptsSpec>) -> SyntheticPrefixConfig {
+    spec.map_or_else(SyntheticPrefixConfig::default, |prefixes| {
+        SyntheticPrefixConfig {
+            pool_size: prefixes.pool_size,
+            prefix_tokens: prefixes.length,
+            shared_system_tokens: prefixes.shared_system_length,
+            user_context_tokens: prefixes.user_context_length,
+        }
+    })
+}
+
+fn synthetic_image(spec: &SyntheticImageSpec) -> Result<SyntheticImageConfig> {
+    let width = distribution(&spec.width)?;
+    let height = distribution(&spec.height)?;
+    let dimensions_enabled = width.expected_value() > 0.0 && height.expected_value() > 0.0;
+    let source = match spec.source.as_str() {
+        "noise" => SyntheticImageSource::Noise,
+        "assets" => SyntheticImageSource::BundledAssets,
+        value => SyntheticImageSource::Directory(PathBuf::from(value)),
+    };
+    let format = match spec.format {
+        SyntheticImageFormatSpec::Png => SyntheticImageFormat::Png,
+        SyntheticImageFormatSpec::Jpeg => SyntheticImageFormat::Jpeg,
+        SyntheticImageFormatSpec::Random => SyntheticImageFormat::Random,
+    };
+    let source_sampling = match spec.source_sampling {
+        SourceImageSamplingSpec::RandomWithReplacement => {
+            SourceImageSampling::RandomWithReplacement
+        }
+        SourceImageSamplingSpec::ShuffleCycle => SourceImageSampling::ShuffleCycle,
+        SourceImageSamplingSpec::SequentialCycle => SourceImageSampling::SequentialCycle,
+    };
+    Ok(SyntheticImageConfig {
+        batch_size: if dimensions_enabled {
+            spec.batch_size
+        } else {
+            0
+        },
+        width,
+        height,
+        format,
+        source,
+        source_sampling,
+    })
+}
+
+fn synthetic_audio(spec: &SyntheticAudioSpec) -> Result<SyntheticAudioConfig> {
+    let duration_seconds = distribution(&spec.length)?;
+    let enabled = duration_seconds.expected_value() > 0.0;
+    let sample_rates_hz = spec
+        .sample_rates
+        .iter()
+        .map(|value| khz_to_hz(*value, "audio sample rate"))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(SyntheticAudioConfig {
+        batch_size: if enabled { spec.batch_size } else { 0 },
+        duration_seconds,
+        format: match spec.format {
+            SyntheticAudioFormatSpec::Wav => SyntheticAudioFormat::Wav,
+            SyntheticAudioFormatSpec::Mp3 => SyntheticAudioFormat::Mp3,
+        },
+        sample_rates_hz,
+        bit_depths: spec.depths.clone(),
+        channels: spec.channels,
+    })
+}
+
+fn synthetic_video(spec: &SyntheticVideoSpec) -> Result<SyntheticVideoConfig> {
+    ensure!(
+        spec.duration.is_finite() && spec.duration > 0.0,
+        "synthetic video duration must be finite and positive"
+    );
+    Ok(SyntheticVideoConfig {
+        batch_size: spec.batch_size,
+        width: spec.width.unwrap_or(640),
+        height: spec.height.unwrap_or(480),
+        duration_seconds: spec.duration,
+        frames_per_second: spec.fps,
+        format: match spec.format {
+            SyntheticVideoFormatSpec::Mp4 => SyntheticVideoFormat::Mp4,
+            SyntheticVideoFormatSpec::Webm => SyntheticVideoFormat::WebM,
+        },
+        codec: spec.codec.clone(),
+        pattern: match spec.synth_type {
+            SyntheticVideoPatternSpec::MovingShapes => SyntheticVideoPattern::MovingShapes,
+            SyntheticVideoPatternSpec::GridClock => SyntheticVideoPattern::GridClock,
+            SyntheticVideoPatternSpec::Noise => SyntheticVideoPattern::Noise,
+        },
+        audio: SyntheticVideoAudioConfig {
+            channels: spec.audio.channels,
+            sample_rate_hz: khz_to_hz(spec.audio.sample_rate, "video audio sample rate")?,
+            bit_depth: spec.audio.depth,
+            codec: spec.audio.codec.clone(),
+        },
+    })
+}
+
+fn khz_to_hz(value: f64, field: &str) -> Result<u32> {
+    let hz = value * 1_000.0;
+    ensure!(
+        value.is_finite() && value > 0.0 && hz <= f64::from(u32::MAX),
+        "{field} must be finite, positive, and representable in hertz"
+    );
+    Ok(hz.round_ties_even() as u32)
+}
+
+fn sequence_length_distribution(
+    entries: &[SequenceDistributionEntrySpec],
+) -> Result<SequenceLengthDistribution> {
+    let pairs = entries
+        .iter()
+        .map(|entry| {
+            SequenceLengthPair::new_with_stddev(
+                distribution_expected_i64(&entry.isl, "sequence-distribution ISL")?,
+                distribution_normal_stddev(&entry.isl),
+                distribution_expected_i64(&entry.osl, "sequence-distribution OSL")?,
+                distribution_normal_stddev(&entry.osl),
+                entry.probability,
+            )
+            .map_err(Into::into)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    SequenceLengthDistribution::new(pairs).map_err(Into::into)
+}
+
+fn distribution_expected_i64(spec: &DistributionSpec, field: &str) -> Result<i64> {
+    let expected = distribution(spec)?.expected_value();
+    ensure!(
+        expected.is_finite() && expected > 0.0 && expected <= i64::MAX as f64,
+        "{field} expected value must be positive and representable as i64"
+    );
+    Ok(expected as i64)
+}
+
+const fn distribution_normal_stddev(spec: &DistributionSpec) -> f64 {
+    match spec {
+        DistributionSpec::Normal(value) => value.stddev,
+        _ => 0.0,
+    }
 }
 
 fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
     let expected = match dataset {
-        DatasetSpec::Synthetic(spec) => distribution(&spec.prompts.osl)?.expected_value().ceil(),
+        DatasetSpec::Synthetic(spec) => spec
+            .prompts
+            .as_ref()
+            .and_then(|prompts| prompts.osl.as_ref())
+            .map(distribution)
+            .transpose()?
+            .map(|distribution| distribution.expected_value().ceil())
+            .filter(|value| *value > 0.0)
+            .unwrap_or(1.0),
         DatasetSpec::File(spec) => spec
             .osl
             .as_ref()
@@ -543,7 +792,7 @@ fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
     };
     ensure!(
         expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
-        "synthetic OSL expected value is outside the native usize range"
+        "default OSL expected value is outside the native usize range"
     );
     Ok(expected as usize)
 }
@@ -1105,5 +1354,186 @@ impl TurnDispatcher for ConfiguredDispatcher {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn synthetic(value: serde_json::Value) -> SyntheticDatasetSpec {
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn models() -> ModelsSpec {
+        serde_json::from_value(json!({
+            "strategy": "round_robin",
+            "items": [{"name": "mock-model"}]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn complete_synthetic_shape_maps_to_native_generation_config() {
+        let spec = synthetic(json!({
+            "entries": 3,
+            "random_seed": 41,
+            "sampling": "shuffle",
+            "prompts": {
+                "isl": {"value": 12.0},
+                "osl": {"value": 5.0},
+                "block_size": 16,
+                "batch_size": 2,
+                "sequence_distribution": [
+                    {
+                        "isl": {"value": 12.0},
+                        "osl": {"value": 5.0},
+                        "probability": 40.0
+                    },
+                    {
+                        "isl": {"mean": 24.0, "stddev": 2.0},
+                        "osl": {"mean": 7.0, "stddev": 1.0},
+                        "probability": 60.0
+                    }
+                ]
+            },
+            "prefix_prompts": {
+                "shared_system_length": 4,
+                "user_context_length": 3
+            },
+            "turns": {"value": 2.0},
+            "turn_delay_ms": {"value": 7.0},
+            "turn_delay_ratio": 0.5,
+            "images": {
+                "batch_size": 1,
+                "width": {"value": 8.0},
+                "height": {"value": 6.0},
+                "format": "png",
+                "source": "noise",
+                "source_sampling": "random-with-replacement"
+            },
+            "audio": {
+                "batch_size": 1,
+                "length": {"value": 0.02},
+                "format": "wav",
+                "sample_rates": [16.0],
+                "depths": [16],
+                "channels": 1
+            },
+            "video": {
+                "batch_size": 1,
+                "duration": 0.25,
+                "fps": 4,
+                "width": 8,
+                "height": 6,
+                "format": "webm",
+                "codec": "libvpx-vp9",
+                "synth_type": "grid_clock",
+                "audio": {
+                    "sample_rate": 44.1,
+                    "channels": 1,
+                    "codec": "libvorbis",
+                    "depth": 16
+                }
+            },
+            "rankings": {
+                "passages": {"value": 3.0},
+                "passage_tokens": {"value": 9.0},
+                "query_tokens": {"value": 4.0}
+            }
+        }));
+
+        let native = synthetic_config(&spec).unwrap();
+
+        assert_eq!(native.entries, 3);
+        assert_eq!(native.prompts.unwrap().batch_size, 2);
+        assert_eq!(native.prefixes.shared_system_tokens, Some(4));
+        assert_eq!(native.prefixes.user_context_tokens, Some(3));
+        assert_eq!(native.images.unwrap().format, SyntheticImageFormat::Png);
+        assert_eq!(native.audio.unwrap().sample_rates_hz, vec![16_000]);
+        let video = native.video.unwrap();
+        assert_eq!((video.width, video.height), (8, 6));
+        assert_eq!(video.pattern, SyntheticVideoPattern::GridClock);
+        assert_eq!(video.audio.sample_rate_hz, 44_100);
+        assert_eq!(native.rankings.unwrap().query_tokens.expected_value(), 4.0);
+        let paired = sequence_length_distribution(
+            spec.prompts
+                .as_ref()
+                .unwrap()
+                .sequence_distribution
+                .as_deref()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(paired.pairs()[1].input_seq_len, 24);
+        assert_eq!(paired.pairs()[1].input_seq_len_stddev, 2.0);
+        assert_eq!(paired.pairs()[1].output_seq_len_stddev, 1.0);
+    }
+
+    #[tokio::test]
+    async fn paired_lengths_and_sampling_policy_reach_the_native_dataset() {
+        let spec = synthetic(json!({
+            "entries": 2,
+            "random_seed": 73,
+            "sampling": "shuffle",
+            "prompts": {
+                "batch_size": 1,
+                "sequence_distribution": [{
+                    "isl": {"value": 6.0},
+                    "osl": {"value": 3.0},
+                    "probability": 100.0
+                }]
+            }
+        }));
+        let registry = AiperfRegistry::builtin().unwrap();
+        let dataset = build_dataset(
+            &registry,
+            &DatasetSpec::Synthetic(Box::new(spec)),
+            &models(),
+            RngRoot::new(Some(73)),
+            &TiktokenTokenizer::builtin(),
+            EndpointType::Chat,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(dataset.metadata().sampling_strategy, "shuffle");
+        assert_eq!(dataset.conversations().len(), 2);
+        for conversation in dataset.conversations() {
+            assert_eq!(conversation.turns[0].max_tokens, Some(3));
+            assert_eq!(conversation.turns[0].input_tokens, 6);
+        }
+    }
+
+    #[tokio::test]
+    async fn ranking_endpoint_selects_the_native_rankings_composer() {
+        let spec = synthetic(json!({
+            "entries": 1,
+            "prompts": null,
+            "rankings": {
+                "passages": {"value": 2.0},
+                "passage_tokens": {"value": 5.0},
+                "query_tokens": {"value": 4.0}
+            }
+        }));
+        let registry = AiperfRegistry::builtin().unwrap();
+        let dataset = build_dataset(
+            &registry,
+            &DatasetSpec::Synthetic(Box::new(spec)),
+            &models(),
+            RngRoot::new(Some(3)),
+            &TiktokenTokenizer::builtin(),
+            EndpointType::NimRankings,
+        )
+        .await
+        .unwrap();
+
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.content[0].name, "query");
+        assert_eq!(turn.content[1].name, "passages");
+        assert_eq!(turn.content[1].handles.len(), 2);
+        assert_eq!(turn.input_tokens, 14);
     }
 }

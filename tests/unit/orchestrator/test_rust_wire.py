@@ -182,3 +182,96 @@ def test_projects_inline_file_dataset_through_native_registry(tmp_path) -> None:
         "records": [{"text": "hello", "output_length": 4}],
     }
     assert request["tokenizer"] == {"name": "builtin"}
+
+
+def test_projects_complete_synthetic_dataset_shape(tmp_path) -> None:
+    run = _run(
+        tmp_path,
+        dataset={
+            "type": "synthetic",
+            "entries": 3,
+            "random_seed": 41,
+            "sampling": "shuffle",
+            "prompts": {
+                "isl": 12,
+                "osl": 5,
+                "block_size": 16,
+                "batch_size": 2,
+                "sequence_distribution": [
+                    {"isl": 12, "osl": 5, "probability": 40},
+                    {
+                        "isl": {"mean": 24, "stddev": 2},
+                        "osl": {"mean": 7, "stddev": 1},
+                        "probability": 60,
+                    },
+                ],
+            },
+            "prefix_prompts": {
+                "shared_system_length": 4,
+                "user_context_length": 3,
+            },
+            "turns": 2,
+            "turn_delay": 7,
+            "turn_delay_ratio": 0.5,
+            "images": {
+                "batch_size": 1,
+                "width": 8,
+                "height": 6,
+                "format": "png",
+                "source": "noise",
+                "source_sampling": "random-with-replacement",
+            },
+            "audio": {
+                "batch_size": 1,
+                "length": 0.02,
+                "format": "wav",
+                "sample_rates": [16.0],
+                "depths": [16],
+                "channels": 1,
+            },
+            "video": {
+                "batch_size": 1,
+                "duration": 0.25,
+                "fps": 4,
+                "width": 8,
+                "height": 6,
+                "format": "webm",
+                "codec": "libvpx-vp9",
+                "synth_type": "grid_clock",
+                "audio": {
+                    "sample_rate": 44.1,
+                    "channels": 1,
+                    "codec": "libvorbis",
+                    "depth": 16,
+                },
+            },
+            "rankings": {
+                "passages": 3,
+                "passage_tokens": 9,
+                "query_tokens": 4,
+            },
+        },
+    )
+
+    dataset = build_run_request(run)["run"]["dataset"]
+
+    assert dataset["random_seed"] == 41
+    assert dataset["sampling"] == "shuffle"
+    assert dataset["prompts"]["sequence_distribution"][1] == {
+        "isl": {"mean": 24.0, "stddev": 2.0},
+        "osl": {"mean": 7.0, "stddev": 1.0},
+        "probability": 60.0,
+    }
+    assert dataset["prefix_prompts"] == {
+        "shared_system_length": 4,
+        "user_context_length": 3,
+    }
+    assert dataset["images"]["source_sampling"] == "random-with-replacement"
+    assert dataset["audio"]["sample_rates"] == [16.0]
+    assert dataset["video"]["audio"] == {
+        "sample_rate": 44.1,
+        "channels": 1,
+        "depth": 16,
+        "codec": "libvorbis",
+    }
+    assert dataset["rankings"]["passages"] == {"value": 3.0}

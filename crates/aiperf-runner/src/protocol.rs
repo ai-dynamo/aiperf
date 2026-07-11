@@ -250,9 +250,9 @@ const fn default_timeout_seconds() -> f64 {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DatasetSpec {
     /// Generated text conversation dataset.
-    Synthetic(SyntheticDatasetSpec),
+    Synthetic(Box<SyntheticDatasetSpec>),
     /// Local path or inline records parsed by the native loader registry.
-    File(FileDatasetSpec),
+    File(Box<FileDatasetSpec>),
 }
 
 /// Resolved file/inline dataset configuration.
@@ -289,13 +289,28 @@ fn default_sampling_strategy() -> String {
 }
 
 /// Native synthetic dataset configuration.
+///
+/// This is the process-boundary projection of
+/// `src/aiperf/config/dataset/config.py:62-245`; content sub-shapes follow
+/// `src/aiperf/config/dataset/content.py:50-459` and
+/// `src/aiperf/config/dataset/video.py:41-205`.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SyntheticDatasetSpec {
     /// Number of reusable conversations.
     pub entries: usize,
-    /// Input/output token distributions.
-    pub prompts: SyntheticPromptsSpec,
+    /// Dataset-local seed overriding the run seed for generation and sampling.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
+    /// Conversation sampling policy.
+    #[serde(default = "default_sampling_strategy")]
+    pub sampling: String,
+    /// Optional text generation configuration.
+    #[serde(default)]
+    pub prompts: Option<SyntheticPromptsSpec>,
+    /// Optional shared-prefix or per-session context configuration.
+    #[serde(default)]
+    pub prefix_prompts: Option<SyntheticPrefixPromptsSpec>,
     /// Turns per conversation.
     #[serde(default = "one_distribution")]
     pub turns: DistributionSpec,
@@ -305,19 +320,214 @@ pub struct SyntheticDatasetSpec {
     /// Multiplicative delay scale.
     #[serde(default = "one_f64")]
     pub turn_delay_ratio: f64,
+    /// Optional synthetic images.
+    #[serde(default)]
+    pub images: Option<SyntheticImageSpec>,
+    /// Optional synthetic audio.
+    #[serde(default)]
+    pub audio: Option<SyntheticAudioSpec>,
+    /// Optional synthetic video.
+    #[serde(default)]
+    pub video: Option<SyntheticVideoSpec>,
+    /// Optional query/passage shape for ranking endpoints.
+    #[serde(default)]
+    pub rankings: Option<SyntheticRankingsSpec>,
 }
 
 /// Synthetic prompt distributions.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SyntheticPromptsSpec {
-    /// Input sequence length distribution.
-    pub isl: DistributionSpec,
-    /// Output sequence length distribution.
-    pub osl: DistributionSpec,
+    /// Input sequence length distribution; absent disables text generation.
+    #[serde(default)]
+    pub isl: Option<DistributionSpec>,
+    /// Output sequence length distribution; absent leaves the server limit unset.
+    #[serde(default)]
+    pub osl: Option<DistributionSpec>,
+    /// Hash block size retained for Config-v2 completeness. Synthetic rows have no hash IDs.
+    #[serde(default)]
+    pub block_size: Option<usize>,
     /// Independently generated prompt values per turn.
     #[serde(default = "one_usize")]
     pub batch_size: usize,
+    /// Paired ISL/OSL mixture, which takes precedence over independent lengths.
+    #[serde(default)]
+    pub sequence_distribution: Option<Vec<SequenceDistributionEntrySpec>>,
+}
+
+/// One paired input/output sequence-length bucket.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SequenceDistributionEntrySpec {
+    /// Input distribution; Config v2 reduces non-normal variants to their expected value.
+    pub isl: DistributionSpec,
+    /// Output distribution; Config v2 reduces non-normal variants to their expected value.
+    pub osl: DistributionSpec,
+    /// Percentage probability.
+    pub probability: f64,
+}
+
+/// Synthetic shared-prefix and conversation-context shape.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticPrefixPromptsSpec {
+    /// Number of reusable first-turn prefixes.
+    #[serde(default)]
+    pub pool_size: Option<usize>,
+    /// Tokens in each reusable prefix.
+    #[serde(default)]
+    pub length: Option<usize>,
+    /// Tokens in the one shared system prompt.
+    #[serde(default)]
+    pub shared_system_length: Option<usize>,
+    /// Tokens in each per-session user context.
+    #[serde(default)]
+    pub user_context_length: Option<usize>,
+}
+
+/// Synthetic image configuration.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticImageSpec {
+    /// Images generated per turn.
+    pub batch_size: usize,
+    /// Width distribution in pixels.
+    pub width: DistributionSpec,
+    /// Height distribution in pixels.
+    pub height: DistributionSpec,
+    /// PNG, JPEG, or per-image random selection.
+    pub format: SyntheticImageFormatSpec,
+    /// `noise`, `assets`, or an absolute local source directory.
+    pub source: String,
+    /// Selection policy for finite source pools.
+    pub source_sampling: SourceImageSamplingSpec,
+}
+
+/// Image encoding accepted on the run wire.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticImageFormatSpec {
+    /// PNG.
+    Png,
+    /// JPEG.
+    Jpeg,
+    /// Randomly select PNG or JPEG per generated image.
+    Random,
+}
+
+/// Source-image selection policy.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceImageSamplingSpec {
+    /// Independent draws with replacement.
+    RandomWithReplacement,
+    /// Shuffled cycles without replacement.
+    ShuffleCycle,
+    /// Sorted cycles.
+    SequentialCycle,
+}
+
+/// Synthetic audio configuration.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticAudioSpec {
+    /// Audio clips generated per turn.
+    pub batch_size: usize,
+    /// Duration distribution in seconds.
+    pub length: DistributionSpec,
+    /// WAV or MP3 output.
+    pub format: SyntheticAudioFormatSpec,
+    /// Candidate sample rates in kHz.
+    pub sample_rates: Vec<f64>,
+    /// Candidate PCM bit depths.
+    pub depths: Vec<u16>,
+    /// Mono or stereo.
+    pub channels: u16,
+}
+
+/// Synthetic audio encoding.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticAudioFormatSpec {
+    /// PCM WAV.
+    Wav,
+    /// MP3.
+    Mp3,
+}
+
+/// Synthetic video configuration.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticVideoSpec {
+    /// Videos generated per turn.
+    pub batch_size: usize,
+    /// Duration in seconds.
+    pub duration: f64,
+    /// Frames per second.
+    pub fps: u32,
+    /// Optional frame width; native defaults apply when absent.
+    #[serde(default)]
+    pub width: Option<u32>,
+    /// Optional frame height; native defaults apply when absent.
+    #[serde(default)]
+    pub height: Option<u32>,
+    /// MP4 or WebM container.
+    pub format: SyntheticVideoFormatSpec,
+    /// FFmpeg video codec.
+    pub codec: String,
+    /// Deterministic frame-generation algorithm.
+    pub synth_type: SyntheticVideoPatternSpec,
+    /// Optional embedded generated audio track.
+    pub audio: SyntheticVideoAudioSpec,
+}
+
+/// Synthetic video container.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticVideoFormatSpec {
+    /// MP4.
+    Mp4,
+    /// WebM.
+    Webm,
+}
+
+/// Synthetic video frame pattern.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticVideoPatternSpec {
+    /// Animated geometric shapes.
+    MovingShapes,
+    /// Grid and frame clock.
+    GridClock,
+    /// Random noise frames.
+    Noise,
+}
+
+/// Embedded video-audio configuration.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticVideoAudioSpec {
+    /// Sample rate in kHz.
+    pub sample_rate: f64,
+    /// Zero disables audio; one and two select mono/stereo.
+    pub channels: u16,
+    /// Optional FFmpeg audio codec.
+    #[serde(default)]
+    pub codec: Option<String>,
+    /// PCM source bit depth.
+    pub depth: u16,
+}
+
+/// Synthetic query/passage shape used by ranking endpoints.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticRankingsSpec {
+    /// Passage count distribution.
+    pub passages: DistributionSpec,
+    /// Tokens per passage.
+    pub passage_tokens: DistributionSpec,
+    /// Query token distribution.
+    pub query_tokens: DistributionSpec,
 }
 
 /// Config-v2 sampling distribution after Pydantic normalization.
