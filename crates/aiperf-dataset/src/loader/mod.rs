@@ -112,6 +112,10 @@ pub struct LoadConfig {
     pub max_input_tokens: Option<u32>,
     /// Maximum output length, applied as a cap.
     pub max_output_tokens: Option<u32>,
+    /// Maximum number of parsed rows retained before composition.
+    pub max_rows: Option<usize>,
+    /// User-selected conversation sampler, overriding the format preference.
+    pub sampling_strategy: Option<String>,
     /// Format-specific validated options.
     pub options: Map<String, Value>,
     /// Injected remote fetch/cache implementation.
@@ -130,6 +134,8 @@ impl LoadConfig {
             end_offset_ms: None,
             max_input_tokens: None,
             max_output_tokens: None,
+            max_rows: None,
+            sampling_strategy: None,
             options: Map::new(),
             fetcher: Arc::new(HttpDatasetFetcher::default()),
             bearer_token: std::env::var("HF_TOKEN")
@@ -163,6 +169,20 @@ impl LoadConfig {
                 "max_input_tokens and max_output_tokens must be positive when configured".into(),
             ));
         }
+        if self.max_rows == Some(0) {
+            return Err(DatasetError::Validation(
+                "max_rows must be positive when configured".into(),
+            ));
+        }
+        if self
+            .sampling_strategy
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(DatasetError::Validation(
+                "sampling_strategy cannot be empty".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -175,6 +195,8 @@ impl std::fmt::Debug for LoadConfig {
             .field("end_offset_ms", &self.end_offset_ms)
             .field("max_input_tokens", &self.max_input_tokens)
             .field("max_output_tokens", &self.max_output_tokens)
+            .field("max_rows", &self.max_rows)
+            .field("sampling_strategy", &self.sampling_strategy)
             .field("options", &self.options)
             .field("fetcher", &"dyn DatasetFetcher")
             .field(
@@ -486,7 +508,10 @@ impl LoaderRegistry {
                 self.detect(&probe, &load_config.source.label())?
             }
         };
-        let rows = registration.loader.load(load_config).await?;
+        let mut rows = registration.loader.load(load_config).await?;
+        if let Some(max_rows) = load_config.max_rows {
+            rows.truncate(max_rows);
+        }
         let mut pool = SegmentPool::new();
         let mut conversations =
             registration
@@ -500,7 +525,10 @@ impl LoaderRegistry {
         Dataset::new(
             conversations,
             Arc::new(pool.freeze()),
-            registration.loader.preferred_sampling_strategy(),
+            load_config
+                .sampling_strategy
+                .as_deref()
+                .unwrap_or_else(|| registration.loader.preferred_sampling_strategy()),
             context_mode,
         )
     }
@@ -677,6 +705,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(dataset.conversations().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn generic_row_cap_and_sampling_override_apply_before_freeze() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let mut load = LoadConfig::new(DatasetSource::Inline(serde_json::json!([
+            {"text":"first"},
+            {"text":"second"}
+        ])));
+        load.max_rows = Some(1);
+        load.sampling_strategy = Some("random".into());
+
+        let dataset = registry
+            .build_dataset(
+                Some("single_turn"),
+                &load,
+                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(dataset.conversations().len(), 1);
+        assert_eq!(dataset.metadata().sampling_strategy, "random");
     }
 
     #[test]

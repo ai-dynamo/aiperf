@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.dataset import SyntheticDataset
+from aiperf.config.dataset import FileDataset, SyntheticDataset
 from aiperf.config.phases import (
     ConcurrencyPhase,
     ConstantPhase,
@@ -44,14 +44,6 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     """
     cfg = run.cfg
     dataset = cfg.get_default_dataset()
-    if not isinstance(dataset, SyntheticDataset):
-        raise RustWireError(
-            f"native runner protocol v1 does not accept dataset type {dataset.type!s}"
-        )
-    if dataset.prompts is None or dataset.prompts.isl is None:
-        raise RustWireError("synthetic native runs require datasets[].prompts.isl")
-    if dataset.prompts.osl is None:
-        raise RustWireError("synthetic native runs require datasets[].prompts.osl")
 
     models = [
         {
@@ -87,18 +79,8 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
         "artifact_dir": str(run.artifact_dir),
         "models": {"strategy": str(cfg.models.strategy), "items": models},
         "endpoint": endpoint_wire,
-        "dataset": {
-            "type": "synthetic",
-            "entries": dataset.entries,
-            "prompts": {
-                "isl": _distribution(dataset.prompts.isl),
-                "osl": _distribution(dataset.prompts.osl),
-                "batch_size": dataset.prompts.batch_size,
-            },
-            "turns": _distribution(dataset.turns or 1),
-            "turn_delay_ms": _distribution(dataset.turn_delay or 0),
-            "turn_delay_ratio": dataset.turn_delay_ratio,
-        },
+        "dataset": _dataset(run, dataset),
+        "tokenizer": {"name": _tokenizer_source(run)},
         "phases": [_phase(phase) for phase in cfg.phases],
         "metrics": {
             "slos": dict(cfg.slos or {}),
@@ -131,6 +113,136 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
             "values": dict(variation.values),
         }
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
+
+
+def _dataset(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
+    if isinstance(dataset, SyntheticDataset):
+        if dataset.prompts is None or dataset.prompts.isl is None:
+            raise RustWireError("synthetic native runs require datasets[].prompts.isl")
+        if dataset.prompts.osl is None:
+            raise RustWireError("synthetic native runs require datasets[].prompts.osl")
+        return {
+            "type": "synthetic",
+            "entries": dataset.entries,
+            "prompts": {
+                "isl": _distribution(dataset.prompts.isl),
+                "osl": _distribution(dataset.prompts.osl),
+                "batch_size": dataset.prompts.batch_size,
+            },
+            "turns": _distribution(dataset.turns or 1),
+            "turn_delay_ms": _distribution(dataset.turn_delay or 0),
+            "turn_delay_ratio": dataset.turn_delay_ratio,
+        }
+    if isinstance(dataset, FileDataset):
+        return _file_dataset(run, dataset)
+    raise RustWireError(
+        f"native runner protocol v1 does not accept dataset type {dataset.type!s}"
+    )
+
+
+def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:
+    resolved_types = run.resolved.dataset_types or {}
+    resolved_sampling = run.resolved.dataset_sampling_strategies or {}
+    format_name = str(resolved_types.get(dataset.name, dataset.format))
+    native_format, format_options = _native_file_format(format_name)
+    if dataset.inter_turn_delay_cap_seconds is not None:
+        format_options["inter_turn_delay_cap_seconds"] = (
+            dataset.inter_turn_delay_cap_seconds
+        )
+    if dataset.synthesis is not None:
+        format_options.update(
+            dataset.synthesis.model_dump(mode="json", exclude_none=True)
+        )
+    result: dict[str, Any] = {
+        "type": "file",
+        "format": native_format,
+        "sampling": str(resolved_sampling.get(dataset.name, dataset.sampling)),
+        "options": format_options,
+    }
+    _set_optional(result, "entries", dataset.entries)
+    _set_optional(result, "random_seed", dataset.random_seed)
+    if dataset.osl is not None:
+        result["osl"] = _distribution(dataset.osl)
+    if dataset.path is not None:
+        resolved_paths = run.resolved.dataset_file_paths or {}
+        path = Path(resolved_paths.get(dataset.name, dataset.path)).resolve()
+        result["path"] = str(path)
+    else:
+        result["records"] = dataset.records
+    return result
+
+
+def _native_file_format(format_name: str) -> tuple[str, dict[str, Any]]:
+    if not format_name.startswith("speed_bench_"):
+        return format_name, {}
+    suffix = format_name.removeprefix("speed_bench_")
+    category = None
+    for candidate in (
+        "low_entropy",
+        "mixed",
+        "high_entropy",
+        "coding",
+        "humanities",
+        "math",
+        "multilingual",
+        "qa",
+        "rag",
+        "reasoning",
+        "roleplay",
+        "stem",
+        "summarization",
+        "writing",
+    ):
+        if suffix == candidate or suffix.endswith(f"_{candidate}"):
+            category = candidate
+            break
+    return "speed_bench", ({"category": category} if category else {})
+
+
+def _tokenizer_source(run: BenchmarkRun) -> str:
+    cfg = run.cfg.tokenizer
+    if cfg is not None and cfg.apply_chat_template:
+        raise RustWireError(
+            "native tokenizer projection does not yet support apply_chat_template=true"
+        )
+    primary_model = run.cfg.models.items[0].name
+    resolved = run.resolved.tokenizer_names or {}
+    name = resolved.get(primary_model) or (cfg.name if cfg is not None else None)
+    if name is None:
+        from aiperf.common.tokenizer_fake_names import is_fake_model_name
+
+        name = "builtin" if is_fake_model_name(primary_model) else primary_model
+    normalized = name.lower().replace("-", "_")
+    if normalized in {
+        "builtin",
+        "o200k_base",
+        "o200k_harmony",
+        "cl100k_base",
+        "p50k_base",
+        "p50k_edit",
+        "r50k_base",
+    }:
+        return normalized
+    path = Path(name).expanduser()
+    if path.exists():
+        return str(path.resolve())
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        tokenizer_file = try_to_load_from_cache(
+            name,
+            "tokenizer.json",
+            revision=cfg.revision if cfg is not None else "main",
+        )
+    except (ImportError, OSError, ValueError) as error:
+        raise RustWireError(
+            f"cannot resolve native tokenizer.json for {name!r}: {error}"
+        ) from error
+    if not isinstance(tokenizer_file, str):
+        raise RustWireError(
+            f"Python resolved tokenizer {name!r}, but its tokenizer.json is not cached"
+        )
+    return str(Path(tokenizer_file).resolve().parent)
 
 
 def _phase(phase: Any) -> dict[str, Any]:

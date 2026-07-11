@@ -103,6 +103,55 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert all(row["metadata"]["benchmark_phase"] == "profiling" for row in rows)
         assert all("time_to_first_token" in row["metrics"] for row in rows)
         assert len(load_single_metric(tmp_path, "request_latency")) == 4
+
+        dataset_path = tmp_path / "file-dataset.jsonl"
+        dataset_path.write_bytes(
+            b'{"text":"first","output_length":1}\n'
+            b'{"text":"second","output_length":1}\n'
+        )
+        file_artifacts = tmp_path / "file-run"
+        file_envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "file",
+                        "path": str(dataset_path),
+                        "format": "single_turn",
+                        "sampling": "sequential",
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 2,
+                        "concurrency": 1,
+                    },
+                    "artifacts": {"dir": str(file_artifacts)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        file_run = BenchmarkRun(
+            benchmark_id="python-rust-file-e2e",
+            cfg=file_envelope.benchmark,
+            artifact_dir=file_artifacts,
+            label="native-file",
+            random_seed=12,
+        )
+        file_result = RustSubprocessExecutor(
+            file_artifacts, binary=binary
+        ).execute_sync(file_run)
+
+        assert file_result.success, file_result.error
+        assert file_result.summary_metrics["request_count"].avg == 2.0
+        assert file_result.summary_metrics["input_sequence_length"].count == 2
+        assert len((file_artifacts / "profile_export.jsonl").read_text().splitlines()) == 2
     finally:
         server.shutdown()
         server.server_close()

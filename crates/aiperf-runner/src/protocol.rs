@@ -36,7 +36,7 @@ impl RunnerCapabilities {
             event: "runner_capabilities",
             protocol_versions: &[RUNNER_PROTOCOL_VERSION],
             report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
-            dataset_types: &["synthetic"],
+            dataset_types: &["synthetic", "file"],
             phase_types: &[
                 "concurrency",
                 "poisson",
@@ -89,6 +89,9 @@ pub struct RunSpec {
     pub endpoint: EndpointSpec,
     /// Dataset authored for this run.
     pub dataset: DatasetSpec,
+    /// Tokenizer resolved and cache-localized by Python Config v2.
+    #[serde(default)]
+    pub tokenizer: TokenizerSpec,
     /// Ordered warmup/profiling phase list.
     pub phases: Vec<PhaseSpec>,
     /// Native metric-engine configuration.
@@ -97,6 +100,27 @@ pub struct RunSpec {
     /// Per-run artifact outputs written by Rust.
     #[serde(default)]
     pub artifacts: ArtifactSpec,
+}
+
+/// Tokenizer source understood by the native dataset composer.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenizerSpec {
+    /// Built-in encoding name, local tokenizer.json, or local model directory.
+    #[serde(default = "default_tokenizer_name")]
+    pub name: String,
+}
+
+impl Default for TokenizerSpec {
+    fn default() -> Self {
+        Self {
+            name: default_tokenizer_name(),
+        }
+    }
+}
+
+fn default_tokenizer_name() -> String {
+    "builtin".into()
 }
 
 /// Native metric aggregation settings lowered from Config v2.
@@ -227,6 +251,41 @@ const fn default_timeout_seconds() -> f64 {
 pub enum DatasetSpec {
     /// Generated text conversation dataset.
     Synthetic(SyntheticDatasetSpec),
+    /// Local path or inline records parsed by the native loader registry.
+    File(FileDatasetSpec),
+}
+
+/// Resolved file/inline dataset configuration.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileDatasetSpec {
+    /// Absolute resolved path, mutually exclusive with records.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    /// Inline records in the exact Config-v2 shape.
+    #[serde(default)]
+    pub records: Option<Value>,
+    /// Native loader registration name.
+    pub format: String,
+    /// Conversation sampling strategy.
+    #[serde(default = "default_sampling_strategy")]
+    pub sampling: String,
+    /// Optional row cap applied before composition.
+    #[serde(default)]
+    pub entries: Option<usize>,
+    /// Dataset-local seed overriding the run seed.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
+    /// Output-length fallback for rows without an authored limit.
+    #[serde(default)]
+    pub osl: Option<DistributionSpec>,
+    /// Loader/composer-specific options after Config-v2 validation.
+    #[serde(default)]
+    pub options: Map<String, Value>,
+}
+
+fn default_sampling_strategy() -> String {
+    "sequential".into()
 }
 
 /// Native synthetic dataset configuration.

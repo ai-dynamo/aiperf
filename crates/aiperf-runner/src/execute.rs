@@ -57,8 +57,9 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::protocol::{
-    DatasetSpec, DistributionSpec, EndpointSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec,
-    PhaseSpec, RampSpec, RampStrategySpec, RunRequest, RunTerminal, SyntheticDatasetSpec,
+    DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
+    ModelSelectionStrategy, ModelsSpec, PhaseSpec, RampSpec, RampStrategySpec, RunRequest,
+    RunTerminal, SyntheticDatasetSpec,
 };
 use crate::records::{CapturedRecord, write_records_jsonl};
 
@@ -135,7 +136,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         .first()
         .cloned()
         .ok_or_else(|| anyhow!("at least one model is required"))?;
-    let tokenizer = load_tokenizer(None)?;
+    let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
     let dataset = build_dataset(
         &registry,
         &request.run.dataset,
@@ -438,13 +439,7 @@ async fn build_dataset(
 ) -> Result<Dataset> {
     match dataset {
         DatasetSpec::Synthetic(spec) => {
-            let mut compose = ComposeConfig::new(models.items[0].name.clone(), rng_root);
-            compose.models = models
-                .items
-                .iter()
-                .map(|item| ModelId::from(item.name.as_str()))
-                .collect();
-            compose.model_selector = model_selector(models, rng_root)?;
+            let mut compose = compose_config(models, rng_root)?;
             compose.output_length_distribution = Some(distribution(&spec.prompts.osl)?);
             compose.synthetic_config = Some(synthetic_config(spec)?);
             let load = LoadConfig::new(DatasetSource::Inline(
@@ -456,7 +451,54 @@ async fn build_dataset(
                 .await
                 .map_err(Into::into)
         }
+        DatasetSpec::File(spec) => {
+            build_file_dataset(registry, spec, models, rng_root, tokenizer).await
+        }
     }
+}
+
+fn compose_config(models: &ModelsSpec, rng_root: RngRoot) -> Result<ComposeConfig> {
+    let mut compose = ComposeConfig::new(models.items[0].name.clone(), rng_root);
+    compose.models = models
+        .items
+        .iter()
+        .map(|item| ModelId::from(item.name.as_str()))
+        .collect();
+    compose.model_selector = model_selector(models, rng_root)?;
+    Ok(compose)
+}
+
+async fn build_file_dataset(
+    registry: &AiperfRegistry,
+    spec: &FileDatasetSpec,
+    models: &ModelsSpec,
+    run_rng_root: RngRoot,
+    tokenizer: &dyn TextTokenizer,
+) -> Result<Dataset> {
+    ensure!(
+        spec.path.is_some() ^ spec.records.is_some(),
+        "file dataset requires exactly one of path or records"
+    );
+    let rng_root = spec
+        .random_seed
+        .map(|seed| RngRoot::new(Some(seed)))
+        .unwrap_or(run_rng_root);
+    let mut compose = compose_config(models, rng_root)?;
+    compose.output_length_distribution = spec.osl.as_ref().map(distribution).transpose()?;
+    compose.format_options = spec.options.clone();
+    let source = match (&spec.path, &spec.records) {
+        (Some(path), None) => DatasetSource::Path(path.clone()),
+        (None, Some(records)) => DatasetSource::Inline(records.clone()),
+        _ => unreachable!("source exclusivity validated above"),
+    };
+    let mut load = LoadConfig::new(source);
+    load.max_rows = spec.entries;
+    load.sampling_strategy = Some(spec.sampling.clone());
+    registry
+        .dataset_formats()
+        .build_dataset(Some(&spec.format), &load, &compose, tokenizer)
+        .await
+        .map_err(Into::into)
 }
 
 fn synthetic_config(spec: &SyntheticDatasetSpec) -> Result<SyntheticDatasetConfig> {
@@ -486,8 +528,19 @@ fn synthetic_config(spec: &SyntheticDatasetSpec) -> Result<SyntheticDatasetConfi
 }
 
 fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
-    let DatasetSpec::Synthetic(spec) = dataset;
-    let expected = distribution(&spec.prompts.osl)?.expected_value().ceil();
+    let expected = match dataset {
+        DatasetSpec::Synthetic(spec) => distribution(&spec.prompts.osl)?.expected_value().ceil(),
+        DatasetSpec::File(spec) => spec
+            .osl
+            .as_ref()
+            .map(distribution)
+            .transpose()?
+            .map(|distribution| distribution.expected_value().ceil())
+            // The materialized request body preserves an absent max-token
+            // field. This fallback exists only for the observer's requested
+            // OSL dimension when a file row omits it.
+            .unwrap_or(1.0),
+    };
     ensure!(
         expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
         "synthetic OSL expected value is outside the native usize range"

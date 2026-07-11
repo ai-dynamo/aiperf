@@ -5,10 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from aiperf.config import AIPerfConfig, BenchmarkRun
-from aiperf.orchestrator.rust_wire import RustWireError, build_run_request
+from aiperf.orchestrator.rust_wire import build_run_request
 
 
 def _run(tmp_path: Path, *, dataset: dict | None = None, phases: list | None = None):
@@ -159,14 +157,28 @@ def test_projects_user_centric_and_fixed_schedule_variants(tmp_path) -> None:
     }
 
 
-def test_rejects_dataset_shapes_not_yet_in_protocol(tmp_path) -> None:
+def test_projects_inline_file_dataset_through_native_registry(tmp_path) -> None:
     run = _run(
         tmp_path,
         dataset={
             "type": "file",
-            "records": [{"text": "hello"}],
+            "records": [{"text": "hello", "output_length": 4}],
             "format": "single_turn",
+            "entries": 1,
+            "sampling": "random",
+            "osl": 7,
         },
     )
-    with pytest.raises(RustWireError, match="dataset type file"):
-        build_run_request(run)
+
+    request = build_run_request(run)["run"]
+
+    assert request["dataset"] == {
+        "type": "file",
+        "format": "single_turn",
+        "sampling": "random",
+        "options": {},
+        "entries": 1,
+        "osl": {"value": 7.0},
+        "records": [{"text": "hello", "output_length": 4}],
+    }
+    assert request["tokenizer"] == {"name": "builtin"}
