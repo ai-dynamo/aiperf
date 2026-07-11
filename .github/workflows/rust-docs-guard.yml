@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Enforces the native-Rust "Keeping these docs current" mandate: a PR that
+# touches specs/ or adds/removes a crate must also update the architecture map
+# (specs/README.md, llms.txt, and — for crate changes — the four agent files).
+# The guard logic lives in tools/check_docs_current.py; this workflow just runs
+# it against the PR's merge-base with main. Self-contained (no uv/env build) so
+# it stays fast and independent of the Python package's CI.
+
+name: Rust Docs Guard
+
+on:
+  push:
+    branches:
+      - 'pull-request/*'
+    paths:
+      - 'crates/**'
+      - 'specs/**'
+      - 'llms.txt'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.github/copilot-instructions.md'
+      - '.cursor/rules/python.mdc'
+      - 'tools/check_docs_current.py'
+
+jobs:
+  docs-guard:
+    name: Docs in lockstep with specs/crates
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch main
+        run: git fetch --no-tags --depth=200 origin main
+      - name: Check architecture map is current
+        run: python3 tools/check_docs_current.py --base origin/main

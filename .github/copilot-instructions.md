@@ -137,6 +137,7 @@ These four agent files, `specs/README.md`, and root `llms.txt` are the architect
 - Ground every claim in `crate/src/file.rs`. State designed-but-not-built explicitly; never describe intent as reality.
 - **Never rewrite a shipped spec to contradict it.** Specs are an append-only historical record. If a decision or implementation supersedes, revises, or contradicts an already-written spec, do NOT edit that spec's body — append a dated `## Addendum — YYYY-MM-DD` at the END of the spec stating what changed, why, and which section/claim it supersedes. The original text stays; the addendum is authoritative where they conflict. Record the supersession in the `specs/README.md` status column.
 - Put the doc updates in the SAME commit as the code/spec change they describe.
+- **Enforced by tooling:** `tools/check_docs_current.py` fails a change that touches `specs/` or adds/removes a crate without also moving `specs/README.md` / `llms.txt` (and, for crates, the four agent files). It runs as the `check-docs-current` pre-commit hook and the "Rust Docs Guard" CI workflow; run `python tools/check_docs_current.py` locally before committing. Bypass only with `DOCS_GUARD_SKIP=1`, and justify it in the commit message.
 
 ### Agent-instruction file sync (mechanics)
 

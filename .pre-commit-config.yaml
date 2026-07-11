@@ -99,6 +99,13 @@ repos:
         files: ^(AGENTS\.md|CLAUDE\.md|\.github/copilot-instructions\.md|\.cursor/rules/python\.mdc|tools/check_agent_files_sync\.py)$
         pass_filenames: false
         args: []
+      - id: check-docs-current
+        name: check-docs-current
+        entry: python tools/check_docs_current.py
+        language: system
+        always_run: true
+        pass_filenames: false
+        args: []
       - id: check-ergonomics
         name: check-ergonomics
         entry: make check-ergonomics
