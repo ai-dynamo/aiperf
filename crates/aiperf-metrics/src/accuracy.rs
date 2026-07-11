@@ -93,8 +93,9 @@ pub struct GradingResult {
     /// Extracted answer text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extracted: Option<String>,
-    /// Ground-truth answer.
-    pub ground_truth: String,
+    /// Public ground-truth answer when the canonical evaluator elects to disclose it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ground_truth: Option<String>,
     /// Optional grader reasoning retained for per-record output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
@@ -111,7 +112,7 @@ impl GradingResult {
             unparsed,
             confidence: score.is_finite().then_some(score),
             extracted: None,
-            ground_truth: ground_truth.into(),
+            ground_truth: Some(ground_truth.into()),
             reasoning: None,
         }
     }
@@ -200,7 +201,7 @@ impl AccuracySummary {
 /// Rejected accuracy-record reasons.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccuracyRecordError {
-    /// Correlation ids are required for typed request/ground-truth association.
+    /// Correlation ids are required for typed request/evaluator association.
     EmptyCorrelationId,
     /// Task ids are required for per-task rollups.
     EmptyTaskId,
@@ -249,7 +250,7 @@ struct AccuracyColumns {
     unparsed: Vec<bool>,
     confidence: Vec<Option<f64>>,
     extracted: Vec<Option<String>>,
-    ground_truth: Vec<String>,
+    ground_truth: Vec<Option<String>>,
     reasoning: Vec<Option<String>>,
 }
 
@@ -856,7 +857,7 @@ mod tests {
                 unparsed,
                 confidence: Some(if correct { 0.9 } else { 0.25 }),
                 extracted: Some("answer".to_string()),
-                ground_truth: "answer".to_string(),
+                ground_truth: Some("answer".to_string()),
                 reasoning: Some("checked".to_string()),
             },
         }
