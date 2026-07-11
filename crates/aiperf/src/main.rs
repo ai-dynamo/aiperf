@@ -154,6 +154,8 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         num_requests,
         input_tokens: isl,
         output_tokens: osl,
+        turns: 1,
+        think_time_ms: None,
     };
     // The online sink is `!Send` (hyper transport over `Rc<dyn Clock>`), so drive
     // the run on a current-thread runtime + LocalSet.

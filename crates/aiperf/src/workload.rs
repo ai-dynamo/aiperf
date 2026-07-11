@@ -16,6 +16,10 @@ pub struct SkeletonWorkload {
     pub input_tokens: usize,
     /// Requested output length in tokens.
     pub output_tokens: usize,
+    /// Number of turns per synthetic conversation.
+    pub turns: usize,
+    /// Optional delay before continuation turns, in milliseconds.
+    pub think_time_ms: Option<u64>,
 }
 
 impl SkeletonWorkload {
@@ -50,6 +54,8 @@ mod tests {
             num_requests: 3,
             input_tokens: 10,
             output_tokens: 5,
+            turns: 1,
+            think_time_ms: None,
         };
         let reqs = wl.generate();
         assert_eq!(reqs.len(), 3);

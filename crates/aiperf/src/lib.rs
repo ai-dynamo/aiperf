@@ -12,6 +12,7 @@
 
 pub mod http;
 pub mod logging;
+pub mod multiturn;
 pub mod report;
 pub mod run;
 pub mod workload;

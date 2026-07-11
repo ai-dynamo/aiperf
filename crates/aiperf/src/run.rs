@@ -187,6 +187,8 @@ mod tests {
                     num_requests: 4,
                     input_tokens: 8,
                     output_tokens: 2,
+                    turns: 1,
+                    think_time_ms: None,
                 };
                 let report = run(base, "m".into(), wl, 2).await.unwrap();
                 assert_eq!(report.request_counts.num_requests, 4);
@@ -213,6 +215,8 @@ mod tests {
                     num_requests: n,
                     input_tokens: 8,
                     output_tokens: 1,
+                    turns: 1,
+                    think_time_ms: None,
                 };
                 let stop = StopConfig {
                     total_expected_requests: Some(n as u64),
@@ -257,6 +261,8 @@ mod tests {
                     num_requests: 0, // unused: count bound is None below
                     input_tokens: 4,
                     output_tokens: 1,
+                    turns: 1,
+                    think_time_ms: None,
                 };
                 let stop = StopConfig {
                     total_expected_requests: None,
