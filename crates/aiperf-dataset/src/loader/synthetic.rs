@@ -704,9 +704,7 @@ mod tests {
     #[tokio::test]
     async fn reusable_prefix_is_a_shared_parent_of_the_first_turn_only() {
         let registry = LoaderRegistry::with_builtin_formats().unwrap();
-        let load = LoadConfig::new(DatasetSource::Inline(
-            json!({"__aiperf_synthetic": true}),
-        ));
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
         let mut compose = ComposeConfig::new("model", RngRoot::new(Some(17)));
         compose.synthetic_config = Some(SyntheticDatasetConfig {
             entries: 1,
@@ -735,7 +733,10 @@ mod tests {
         let first = conversation.turns[0].content[0].handles[0];
         let second = conversation.turns[1].content[0].handles[0];
         let prefix = dataset.segments().segment(first).unwrap().parent.unwrap();
-        assert_eq!(dataset.segments().segment(second).unwrap().parent, Some(first));
+        assert_eq!(
+            dataset.segments().segment(second).unwrap().parent,
+            Some(first)
+        );
         let Payload::Text {
             bytes: prefix_bytes,
             ..
@@ -744,8 +745,7 @@ mod tests {
             panic!("synthetic prefix parent must be text");
         };
         let Payload::Text {
-            bytes: first_bytes,
-            ..
+            bytes: first_bytes, ..
         } = dataset.segments().get(first).unwrap()
         else {
             panic!("first synthetic prompt must be text");
