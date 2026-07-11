@@ -427,3 +427,65 @@ live in telemetry-specific crates or modules that feed accumulator summaries thr
 the shared traits. Keep the dependency direction from runtime/telemetry producers
 toward the metrics/reporting seam, never from the core metrics engine back into
 telemetry-specific collectors.
+
+## Addendum — 2026-07-10 (server metrics): boundary snapshots + sequential scrape supersede §3's async windowing
+
+The first 2026-07-10 addendum applied phase-boundary snapshots to **GPU** counters. The
+same rethink applies to **§3 server metrics** — with three server-specific wrinkles that
+change the details (and, importantly, **supersede §1's "two baseline pickers — do NOT
+unify" claim**).
+
+### Server counters → boundary snapshots (the two baseline pickers UNIFY)
+Server counters (`prompt_tokens`, `generation_tokens`, `prefix_cache_hits`/`_queries`,
+`num_preemptions`, request-latency histogram buckets) are monotonic counters like GPU
+energy. Per-phase delta = `max(end_snapshot − start_snapshot, 0.0)` (reset-clamp stays).
+This **collapses §1's asymmetric pair** — the delta picker (last-before-start) and the
+rate picker (first-at/after-start) were different *only* because the Python path
+reconstructs windows from an async sample series. With a phase-start snapshot both use the
+**same** exact baseline, and the rate denominator is the **exact phase duration**
+`phase_end − phase_start` (authoritative, not a reconstructed `max_elapsed_ns`). So:
+`rate = (end − start) / (phase_end − phase_start)`. The "do NOT unify" note in §1 was a
+multiprocess scar; unify them.
+
+### The one server-specific constraint that is NOT a scar: settle-then-snapshot
+Unlike DCGM (external, current-valued), the inference server updates its **own** `/metrics`
+on its **own** internal cadence — so a scrape taken at the *exact* phase-end instant can
+miss the last few requests' contributions (the server hasn't folded them in yet). This is a
+property of the *server*, not of the transport. So the phase-end barrier is
+**settle-then-snapshot**: wait a bounded settle window (the `COLLECTION_FLUSH_PERIOD`, ~2s —
+but now a *settle* before an exact snapshot, **not** a window-widening + baseline
+reconstruction), let the server flush, then take the boundary snapshot. This keeps the one
+piece of `COLLECTION_FLUSH_PERIOD` that is real and drops the reconstruction it wrapped.
+
+### Sequential scrape loop deletes the auto-disable concurrency gymnastics
+Python fires scrape coroutines every interval **without awaiting** (fire-and-forget), so
+multiple scrapes can be in-flight and all reach the terminal-disable block — which is why
+the code must **check-and-set `endpoint_disabled` before any `await`** and dedup on
+`_last_response_hash`. In single-process Rust, drive the scrape as a clock-paced task that
+**awaits each scrape before scheduling the next**: at most one scrape in flight, so the
+concurrency race disappears and the check-and-set-before-await gymnastics with it. **What
+stays** (server-compatibility logic, process-independent): the JSON-at-`/metrics` reject,
+the OpenMetrics-vs-classic routing + `_created` double-skip, the `/prometheus/metrics`
+probe-once + URL swap, and the terminal auto-disable *decision* (`IncompatibleMetricsEndpointError`
+→ stop scraping). The `_last_response_hash` dedup drops from a race-safety requirement to a
+mere parse-skip optimization.
+
+### Gauges and histograms: the split (same as GPU, plus a histogram nuance)
+- **Gauges** (`num_running`, `num_waiting`, `kv_cache_usage_pct`) need a distribution over the
+  phase → continuous sampling over the authoritative `[phase_start, phase_end]` window, `ddof=1`
+  stats. Same as GPU §2.
+- **Histograms are a hybrid** (the one case that still wants the intra-phase series): the
+  polynomial estimator's Phase-1 bucket-mean learning derives exact per-bucket means from
+  intervals *between consecutive scrapes* where a single bucket is active — so it **needs the
+  continuous intra-phase scrape series**, not just the two boundary snapshots. Keep continuous
+  intra-phase scrapes feeding the learner; take the phase's **total** bucket counts/sum from the
+  boundary delta (`end_buckets − start_buckets`). Boundary snapshots give the totals; the series
+  gives the shape.
+
+### Net for §1/§3
+`aiperf-metrics::counter`'s windowing layer is **phase-boundary snapshots** for both GPU and
+server counters (GPU: snapshot at the boundary; server: settle-then-snapshot). The reset-clamp,
+the server routing/fallback/auto-disable *logic*, the vLLM/SGLang atlas, unit inference, and the
+histogram estimator math are unchanged — those are what the hardware/server emit, not artifacts
+of the scrape transport. The async append-only-store + read-time window reconstruction + the two
+baseline pickers are deleted.
