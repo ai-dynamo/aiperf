@@ -268,6 +268,7 @@ pub async fn load_evaluator_problems(
         .load(benchmark, config)
         .await
         .with_context(|| format!("canonical evaluator failed to load {benchmark:?}"))?;
+    validate_evaluator_load_identity(&loaded)?;
     anyhow::ensure!(
         loaded.problem_count > 0,
         "canonical evaluator loaded zero problems for {:?}",
@@ -323,6 +324,54 @@ pub async fn load_evaluator_problems(
         problems.len()
     );
     Ok((loaded, problems))
+}
+
+fn validate_evaluator_load_identity(loaded: &EvaluatorLoadResult) -> anyhow::Result<()> {
+    for (field, value) in [
+        ("benchmark", loaded.benchmark.as_str()),
+        ("grader", loaded.grader.as_str()),
+        ("dataset.provider", loaded.dataset.provider.as_str()),
+    ] {
+        anyhow::ensure!(
+            !value.trim().is_empty(),
+            "canonical evaluator load identity field {field} was empty"
+        );
+    }
+    let revision = loaded.dataset.revision.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("canonical evaluator did not report an immutable dataset revision")
+    })?;
+    anyhow::ensure!(
+        !revision.trim().is_empty(),
+        "canonical evaluator reported an empty dataset revision"
+    );
+    anyhow::ensure!(
+        !loaded.dataset.evaluation_splits.is_empty(),
+        "canonical evaluator reported no evaluation splits"
+    );
+    let mut splits = BTreeSet::new();
+    for split in &loaded.dataset.evaluation_splits {
+        anyhow::ensure!(
+            !split.trim().is_empty(),
+            "canonical evaluator reported an empty evaluation split"
+        );
+        anyhow::ensure!(
+            splits.insert(split),
+            "canonical evaluator reported duplicate evaluation split {split:?}"
+        );
+    }
+    for (field, value) in [
+        ("dataset.benchmark", loaded.dataset.benchmark.as_deref()),
+        ("dataset.repository", loaded.dataset.repository.as_deref()),
+        ("dataset.subset", loaded.dataset.subset.as_deref()),
+    ] {
+        if let Some(value) = value {
+            anyhow::ensure!(
+                !value.trim().is_empty(),
+                "canonical evaluator load identity field {field} was empty"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Terminal response collector attached to the ordinary record-processing seam.
@@ -916,5 +965,17 @@ mod tests {
                 assert!(error.to_string().contains("grade_batch failed"));
             })
             .await;
+    }
+
+    #[tokio::test]
+    async fn load_requires_immutable_dataset_identity_before_dispatch() {
+        let mut evaluator = evaluator(false);
+        evaluator.loaded.dataset.revision = None;
+        let error =
+            load_evaluator_problems(&mut evaluator, "mmlu-pro", &EvaluatorLoadConfig::default())
+                .await
+                .unwrap_err();
+        assert!(error.to_string().contains("immutable dataset revision"));
+        assert!(evaluator.responses.is_empty());
     }
 }
