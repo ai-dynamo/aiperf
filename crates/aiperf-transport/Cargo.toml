@@ -10,6 +10,9 @@ description = "Rust-native AIPerf HTTP client + timing recording, driven off the
 
 [dependencies]
 aiperf-clock = { path = "../aiperf-clock" }
+async-trait.workspace = true
+base64.workspace = true
+image.workspace = true
 tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync"] }
 hyper = { version = "1.10", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
