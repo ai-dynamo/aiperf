@@ -249,6 +249,38 @@ fn validation_rejects_a_warmup_only_benchmark() {
     assert_eq!(error, PhaseOrchestratorError::ProfilingPhaseRequired);
 }
 
+#[test]
+fn external_cancel_never_advances_into_the_next_phase() {
+    let clock = Rc::new(SimClock::new());
+    let (orchestrator, events, _slots) = orchestrator(clock.clone(), false);
+    let cancellation = orchestrator.clone();
+    let cancellation_clock = clock.clone();
+
+    let stats = drive_sim(clock.clone(), async move {
+        tokio::task::spawn_local(async move {
+            cancellation_clock.sleep(5).await;
+            cancellation.cancel().await.unwrap();
+        });
+        orchestrator.run_all().await
+    })
+    .unwrap();
+
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].phase_id, "warmup");
+    assert!(stats[0].was_cancelled);
+    assert_eq!(
+        stats[0].completion_reason,
+        Some(PhaseCompletionReason::Cancelled)
+    );
+    assert_eq!(clock.now_ns(), 40);
+    assert!(
+        !events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, TimelineEvent::Start(id, _) if id == "profiling"))
+    );
+}
+
 fn orchestrator(
     clock: Rc<SimClock>,
     seamless: bool,

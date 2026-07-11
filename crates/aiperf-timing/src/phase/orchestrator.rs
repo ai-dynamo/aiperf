@@ -89,6 +89,7 @@ struct OrchestratorInner {
     observer: Rc<dyn PhaseObserver>,
     active: RefCell<Vec<Rc<dyn PhaseRunner>>>,
     run_started: Cell<bool>,
+    cancelled: Cell<bool>,
 }
 
 /// Default ordered phase orchestrator.
@@ -112,6 +113,7 @@ impl ClockPhaseOrchestrator {
                 observer,
                 active: RefCell::new(Vec::new()),
                 run_started: Cell::new(false),
+                cancelled: Cell::new(false),
             }),
         })
     }
@@ -123,6 +125,9 @@ impl ClockPhaseOrchestrator {
 
         let mut ordered_runners = Vec::with_capacity(self.inner.configs.len());
         for (index, config) in self.inner.configs.iter().cloned().enumerate() {
+            if self.inner.cancelled.get() {
+                break;
+            }
             self.prune_completed();
             let phase_id = config.id.clone();
             let is_final = index + 1 == self.inner.configs.len();
@@ -150,6 +155,9 @@ impl ClockPhaseOrchestrator {
                     return Err(PhaseOrchestratorError::Runner { phase_id, source });
                 }
                 self.remove_active(&runner);
+            }
+            if self.inner.cancelled.get() {
+                break;
             }
         }
 
@@ -198,6 +206,7 @@ impl ClockPhaseOrchestrator {
     }
 
     async fn cancel_active(&self) -> Result<(), PhaseOrchestratorError> {
+        self.inner.cancelled.set(true);
         let shared_result = self.inner.runner_factory.cancel_all().await;
         let active = self.inner.active.borrow().clone();
         for runner in &active {
