@@ -12,7 +12,9 @@
 pub mod derive;
 pub mod error;
 pub mod generator;
+pub mod hash_id;
 
 pub use derive::{RngRoot, derive_seed_parts, derive_seed_u64};
 pub use error::{Result, RngError};
 pub use generator::RandomGenerator;
+pub use hash_id::HashIdRandomGenerator;
