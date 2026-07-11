@@ -185,6 +185,63 @@ pub struct ReportError {
     pub count: usize,
 }
 
+/// Immutable dataset identity reported by the canonical accuracy evaluator.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct EvaluatorDatasetReportInfo {
+    /// Dataset preparation implementation.
+    pub provider: String,
+    /// Canonical benchmark name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub benchmark: Option<String>,
+    /// Dataset repository, when applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Dataset subset/configuration, when applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subset: Option<String>,
+    /// Immutable dataset revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// Evaluation splits selected by the canonical task.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub evaluation_splits: Vec<String>,
+    /// Canonical task version, when exposed by the evaluator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_version: Option<u64>,
+}
+
+/// Exact evaluator runtime and benchmark identity retained in an accuracy report.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct EvaluatorReportInfo {
+    /// Negotiated stdio protocol version.
+    pub protocol: u32,
+    /// Version of the AIPerf Python worker adapter.
+    pub worker_version: String,
+    /// Python runtime version.
+    pub python_version: String,
+    /// Python executable used for this run.
+    pub python_executable: String,
+    /// Evaluator package versions; absent optional packages remain null.
+    pub packages: BTreeMap<String, Option<String>>,
+    /// SHA-256 of the worker source.
+    pub worker_source_sha256: String,
+    /// SHA-256 of the fully pinned evaluator dependency lock, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependency_lock_sha256: Option<String>,
+    /// Immutable worker container digest, when supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_digest: Option<String>,
+    /// Worker capabilities negotiated during initialization.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    /// Canonical benchmark name resolved by the worker.
+    pub benchmark: String,
+    /// Canonical grader or Lighteval metric implementation.
+    pub grader: String,
+    /// Dataset/task identity frozen by the load operation.
+    pub dataset: EvaluatorDatasetReportInfo,
+}
+
 /// Runtime facts supplied to a [`Reporter`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunOutcome {
@@ -198,6 +255,8 @@ pub struct RunOutcome {
     pub accuracy: Option<AccuracyAnalysis>,
     /// Full per-request grading records in deterministic workload order.
     pub accuracy_records: Vec<AccuracyRecord>,
+    /// Exact external evaluator identity for accuracy runs.
+    pub evaluator: Option<EvaluatorReportInfo>,
     /// Grouped run errors.
     pub errors: Vec<ReportError>,
 }
@@ -242,6 +301,7 @@ impl Reporter for NativeReporter {
             warmup_metrics: outcome.warmup.as_ref().map(build_metric_map),
             accuracy: outcome.accuracy.clone(),
             accuracy_records: outcome.accuracy_records.clone(),
+            evaluator: outcome.evaluator.clone(),
             errors: outcome.errors.clone(),
         }
     }
@@ -269,6 +329,9 @@ pub struct NativeReport {
     /// Full per-request grading records. Empty outside accuracy mode.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub accuracy_records: Vec<AccuracyRecord>,
+    /// Exact canonical evaluator identity. Absent outside accuracy mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluator: Option<EvaluatorReportInfo>,
     /// Grouped run errors.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ReportError>,
