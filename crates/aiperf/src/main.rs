@@ -100,6 +100,7 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    aiperf::logging::init();
     let cli = Cli::parse();
 
     match cli.mode.as_str() {
@@ -119,6 +120,16 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
     let num_requests = cli.requests.unwrap_or(100usize);
     let isl = cli.isl.unwrap_or(128usize);
     let osl = cli.osl.unwrap_or(128usize);
+
+    tracing::info!(
+        base = %base_url,
+        model = %model,
+        concurrency,
+        requests = num_requests,
+        isl,
+        osl,
+        "starting aiperf online benchmark"
+    );
 
     let workload = SkeletonWorkload {
         num_requests,
@@ -243,16 +254,18 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
 
     let backend = "aiperf-transport";
 
-    eprintln!(
-        "aiperf --mode graph: backend={backend} base={base_url} turns={} \
-         instances={} workers={} concurrency={} osl={} \
-         conns/worker={conns} offered_concurrency={} http2={http2}",
-        cfg.turns,
-        cfg.instances,
-        cfg.workers,
-        cfg.concurrency,
-        cfg.max_tokens,
-        cfg.workers * cfg.concurrency,
+    tracing::info!(
+        backend,
+        base = %base_url,
+        turns = cfg.turns,
+        instances = cfg.instances,
+        workers = cfg.workers,
+        concurrency = cfg.concurrency,
+        osl = cfg.max_tokens,
+        conns_per_worker = conns,
+        offered_concurrency = cfg.workers * cfg.concurrency,
+        http2,
+        "starting aiperf graph benchmark"
     );
 
     let r = run_transport_bench(cfg, http2, conns);
