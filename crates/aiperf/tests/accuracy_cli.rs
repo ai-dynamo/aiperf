@@ -39,9 +39,9 @@ for line in sys.stdin:
             "python_version": sys.version.split()[0],
             "python_executable": sys.executable,
             "packages": {"aiperf": "fixture", "lighteval": "fixture"},
-            "worker_source_sha256": "fixture-source-digest",
-            "dependency_lock_sha256": "fixture-lock-digest",
-            "container_digest": "sha256:fixture-image",
+            "worker_source_sha256": "a" * 64,
+            "dependency_lock_sha256": "b" * 64,
+            "container_digest": None,
             "capabilities": ["load", "next_problems", "grade_batch", "shutdown"],
         }
     elif operation == "load":
@@ -170,7 +170,7 @@ async fn cli_keeps_inference_in_rust_and_grading_in_stdio_worker() {
     assert_eq!(report["evaluator"]["packages"]["lighteval"], "fixture");
     assert_eq!(
         report["evaluator"]["dependency_lock_sha256"],
-        "fixture-lock-digest"
+        "b".repeat(64)
     );
     assert_eq!(
         report["evaluator"]["dataset"]["revision"],

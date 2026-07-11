@@ -357,6 +357,30 @@ fn validate_identity(identity: &EvaluatorIdentity) -> Result<(), EvaluatorWorker
             "evaluator identity reported no package versions".to_string(),
         ));
     }
+    if !is_sha256(&identity.worker_source_sha256) {
+        return Err(EvaluatorWorkerError::Protocol(
+            "evaluator worker_source_sha256 was not a 64-digit lowercase hex digest".to_string(),
+        ));
+    }
+    if let Some(lock) = &identity.dependency_lock_sha256
+        && !is_sha256(lock)
+    {
+        return Err(EvaluatorWorkerError::Protocol(
+            "evaluator dependency_lock_sha256 was not a 64-digit lowercase hex digest".to_string(),
+        ));
+    }
+    if let Some(container) = &identity.container_digest
+        && !container.strip_prefix("sha256:").is_some_and(is_sha256)
+    {
+        return Err(EvaluatorWorkerError::Protocol(
+            "evaluator container_digest was not a sha256 OCI digest".to_string(),
+        ));
+    }
+    if identity.dependency_lock_sha256.is_none() && identity.container_digest.is_none() {
+        return Err(EvaluatorWorkerError::Protocol(
+            "evaluator identity must report a dependency lock or container digest".to_string(),
+        ));
+    }
     let capabilities = identity
         .capabilities
         .iter()
@@ -379,6 +403,13 @@ fn validate_identity(identity: &EvaluatorIdentity) -> Result<(), EvaluatorWorker
         )));
     }
     Ok(())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[async_trait(?Send)]
@@ -539,7 +570,7 @@ for line in sys.stdin:
     request = json.loads(line)
     op = request['op']
     if op == 'hello':
-        result = {'protocol': 1, 'worker_version': 'fixture', 'python_version': '3', 'python_executable': sys.executable, 'packages': {'lighteval': 'fixture'}, 'worker_source_sha256': 'abc', 'container_digest': 'sha256:fixture', 'capabilities': ['load', 'next_problems', 'grade_batch', 'shutdown']}
+        result = {'protocol': 1, 'worker_version': 'fixture', 'python_version': '3', 'python_executable': sys.executable, 'packages': {'lighteval': 'fixture'}, 'worker_source_sha256': 'a' * 64, 'dependency_lock_sha256': 'b' * 64, 'container_digest': None, 'capabilities': ['load', 'next_problems', 'grade_batch', 'shutdown']}
     elif op == 'load':
         result = {'benchmark': request['benchmark'], 'problem_count': 1, 'dataset': {'provider': 'fixture', 'revision': 'rev', 'evaluation_splits': ['test']}, 'grader': 'fixture'}
     elif op == 'next_problems':
@@ -620,5 +651,16 @@ for line in sys.stdin:
         };
         assert!(matches!(error, EvaluatorWorkerError::Protocol(_)));
         assert!(error.to_string().contains("grade_batch"));
+    }
+
+    #[tokio::test]
+    async fn handshake_requires_locked_dependencies_or_container() {
+        let script = FAKE_WORKER.replace("'dependency_lock_sha256': 'b' * 64, ", "");
+        let error = match PythonEvaluator::spawn(fixture_config(&script)).await {
+            Ok(_) => panic!("worker without dependency identity was accepted"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, EvaluatorWorkerError::Protocol(_)));
+        assert!(error.to_string().contains("dependency lock or container"));
     }
 }
