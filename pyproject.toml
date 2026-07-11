@@ -135,6 +135,10 @@ accuracy = [
     "latex2sympy2-extended>=1.0.6",
     "lighteval>=0.13.0",
     "sympy>=1.14.0",
+    # Qwen2.5-Math's canonical strip_string pipeline converts written
+    # numbers before symbolic comparison. This package is small and inactive,
+    # so keep it exact-pinned instead of accepting an unreviewed future build.
+    "word2number==1.1",
     # deepeval is the upstream reference for the HellaSwag and
     # BigBench-Hard benchmark prompt templates. Aiperf calls
     # ``HellaSwagTemplate.generate_output`` (and

@@ -35,7 +35,7 @@ from types import SimpleNamespace
 from typing import Any, TextIO
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.2.1"
+WORKER_VERSION = "1.2.2"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -43,6 +43,7 @@ _LOCKED_PACKAGE_VERSIONS = {
     "latex2sympy2-extended": "1.0.6",
     "lighteval": "0.13.0",
     "sympy": "1.14.0",
+    "word2number": "1.1",
 }
 _LCB_MAX_RELEASE = 6
 
@@ -197,6 +198,7 @@ class AccuracyWorker:
                 "deepeval",
                 "sympy",
                 "latex2sympy2-extended",
+                "word2number",
             )
         }
         return {

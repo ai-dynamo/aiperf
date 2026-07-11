@@ -28,8 +28,8 @@ This document catalogs every stubbed method in the accuracy benchmarking scaffol
 
 ```mermaid
 graph TD
-    A[AccuracyConfig<br/>7 CLI flags --accuracy-*<br/>enabled property] --> B[AccuracyBenchmark<br/>9 benchmarks<br/>load_problems]
-    A --> C[AccuracyGrader<br/>4 graders<br/>grade + extract]
+    A[AccuracyConfig<br/>7 CLI flags --accuracy-*<br/>enabled property] --> B[AccuracyBenchmark<br/>10 benchmarks<br/>load_problems]
+    A --> C[AccuracyGrader<br/>8 graders<br/>grade + extract]
     B --> D[AccuracyRecordProcessor<br/>process_record]
     C --> D
     D --> E[AccuracyResultsProcessor<br/>process_result<br/>summarize]
@@ -140,13 +140,14 @@ class BaseGrader(AIPerfLoggerMixin):
 | # | Class | File | Plugin Key | Description |
 |---|-------|------|------------|-------------|
 | 1 | `MultipleChoiceGrader` | `graders/multiple_choice.py` | `multiple_choice` | **IMPLEMENTED in PR #815** — canonical reference for new graders. Matches choice labels (A/B/C/D) by regex extraction then exact comparison. |
-| 2 | `MathGrader` | `graders/math.py` | `math` | **IMPLEMENTED with the AIME loader.** Extracts the last `\boxed{...}` (balanced braces), falls back to "the answer is X" / last-number heuristics. Comparison uses a sympy + latex2sympy2-extended symbolic parsing path when the `[accuracy]` extras are installed (ported from the trt-llm benchmark recipe's `math_equal`/`strip_string`); when those packages are missing, the grader transparently falls back to a stdlib `Fraction` parsing + normalized string equality comparison and emits a one-time warning. |
+| 2 | `MathGrader` | `graders/math.py` | `math` | **IMPLEMENTED with the AIME loader.** Extracts the last `\boxed{...}` (balanced braces), falls back to "the answer is X" / last-number heuristics, and uses Qwen2.5-Math's pinned `word2number` conversion before comparison. Comparison uses a sympy + latex2sympy2-extended symbolic parsing path when the `[accuracy]` extras are installed (ported from the trt-llm benchmark recipe's `math_equal`/`strip_string`); when those packages are missing, the grader transparently falls back to a stdlib `Fraction` parsing + normalized string equality comparison and emits a one-time warning. |
 | 3 | `CodeExecutionGrader` | `graders/code_execution.py` | `code_execution` | **IMPLEMENTED with the AIME loader.** Wraps lighteval's `codegen_metrics` to grade LCB-style code-generation responses by sandboxed execution: extracts the response's code block via lighteval's `extract_code`, runs it against the bundled public + private test cases in a `ProcessPoolExecutor` with `num_process_evaluate=8`, and reports pass@1. Requires the `[accuracy]` extras (lighteval); raises `RuntimeError` at construction if missing. Used by AIP-881 (LCB CodeGen). |
 | 4 | `LightevalExprGrader` | `graders/lighteval_grader.py` | `lighteval_expr` | **IMPLEMENTED with the AIME loader.** Wraps lighteval's `MultilingualExtractiveMatchMetric` configured with `ExprExtractionConfig` for gold and `(ExprExtractionConfig, LatexExtractionConfig(boxed_match_priority=0))` for predictions — matches the trt-llm recipe's `expr_gold_metric`. Used by AIP-875/876 (AIME24/25). Requires the `[accuracy]` extras. |
 | 5 | `LightevalLatexGrader` | `graders/lighteval_grader.py` | `lighteval_latex` | **IMPLEMENTED with the AIME loader.** Same shape as `LightevalExprGrader` but the gold extractor uses `LatexExtractionConfig` — matches the trt-llm recipe's `latex_gold_metric`. Used by AIP-879 (MATH-500). Requires the `[accuracy]` extras. |
 | 6 | `LightevalGPQAGrader` | `graders/lighteval_grader.py` | `lighteval_gpqa` | **IMPLEMENTED with the AIME loader.** Wraps `MultilingualExtractiveMatchMetric` with `IndicesExtractionConfig(prefix_for_extraction="NativeLetters")` to extract A/B/C/D in both gold and prediction — matches the trt-llm recipe's `gpqa_metric`. Used by AIP-880 (GPQA-Diamond). Requires the `[accuracy]` extras. |
 
 | 7 | `ExactMatchGrader` | `graders/exact_match.py` | `exact_match` | **IMPLEMENTED with the HellaSwag loader.** Strict `pred.strip() == gold.strip()` grader matching DeepEval's `Scorer.exact_match_score` (case-sensitive, no normalization). Used by HellaSwag and BigBench-Hard for trt-llm reference parity. |
+| 8 | `LightevalGSM8KGrader` | `graders/gsm8k_grader.py` | `lighteval_gsm8k` | **IMPLEMENTED with the GSM8K loader.** Preserves Lighteval's `#### <number>` gold normalization and accepts the final numeric answer from generated chat responses. |
 
 ### Still Stubbed
 
@@ -178,6 +179,7 @@ All benchmarks use `AIPerfLoggerMixin` and must implement 1 method.
 | 7 | `Math500Benchmark` | `benchmarks/math_500.py` | `math_500` | `lighteval_latex` | 0 | **IMPLEMENTED.** Loads `HuggingFaceH4/MATH-500` (test split). Same lighteval-aligned shape as AIME24/25, but `ground_truth` is the full `solution` text (containing `\boxed{answer}`); `LightevalLatexGrader` extracts the boxed expression at grade time. Per-row `task` = `subject` so the accuracy CSV breaks down by MATH subject. |
 | 8 | `GPQADiamondBenchmark` | `benchmarks/gpqa_diamond.py` | `gpqa_diamond` | `lighteval_gpqa` | 0 | **IMPLEMENTED.** Loads `Idavidrein/gpqa` (subset `gpqa_diamond`, train split). Renders the simple-evals prompt template with **SHA-256-seeded deterministic A/B/C/D shuffling** of the correct + 3 distractor answers — one intentional deviation from the recipe's stochastic `random.randint(0, 3)` so gold positions reproduce across runs. Per-row `task` = `High-level domain` so the accuracy CSV breaks down by physics/chemistry/biology. |
 | 9 | `LCBCodeGenerationBenchmark` | `benchmarks/lcb_codegeneration.py` | `lcb_codegeneration` | `code_execution` | 0 | **IMPLEMENTED.** Loads `livecodebench/code_generation_lite` (test split). Serializes the LCB-style test-case payload (starter_code, public + private test cases, upstream metadata) into `BenchmarkProblem.ground_truth` as an orjson blob so `CodeExecutionGrader` can wrap lighteval's `codegen_metrics` and run the generated code against the bundled test cases. |
+| 10 | `GSM8KBenchmark` | `benchmarks/gsm8k.py` | `gsm8k` | `lighteval_gsm8k` | 0 | **IMPLEMENTED.** Loads `openai/gsm8k` (`main`, test split), emits Lighteval's `Question: ...\nAnswer:` prompt, and retains the raw `#### <number>` answer for evaluator-owned normalization. |
 
 ### Still Stubbed
 
@@ -299,14 +301,14 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 
 | Component | Implemented | Still Stubbed | Methods per Stub | Remaining Methods |
 |-----------|-------------|---------------|------------------|-------------------|
-| Graders | 7 (all) | 0 | — | 0 |
-| Benchmarks | 9 (all) | 0 | — | 0 |
+| Graders | 8 (all) | 0 | — | 0 |
+| Benchmarks | 10 (all) | 0 | — | 0 |
 | Record Processor | 1 (`AccuracyRecordProcessor`) | 0 | — | 0 |
 | Results Processor | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
 | Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
 | Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
 | Stub-plugin Validator | 1 (`AccuracyConfig._reject_stub_plugins`, idle until next stub) | 0 | — | 0 |
-| **Total** | **21** | **0** | | **0** |
+| **Total** | **23** | **0** | | **0** |
 
 ### Self-Disabling Pattern
 
@@ -314,7 +316,7 @@ Processors and exporters raise their `Disabled` exception **in `__init__`** when
 
 ### Suggested Implementation Order
 
-The processors, exporters, all seven graders, and all nine benchmarks are wired end-to-end. There is no remaining stub work. The `AccuracyConfig._reject_stub_plugins()` validator stays in the codebase as a guard for any future stub introduced via `is_implemented: false` in `plugins.yaml`.
+The processors, exporters, all eight graders, and all ten benchmarks are wired end-to-end. There is no remaining stub work. The `AccuracyConfig._reject_stub_plugins()` validator stays in the codebase as a guard for any future stub introduced via `is_implemented: false` in `plugins.yaml`.
 
 ### Key Files for Reference
 
