@@ -15,7 +15,8 @@ use aiperf::multiturn::{
     ConversationSource, IssuedCredit, SyntheticConversationSource, TurnToSend,
 };
 use aiperf::phase_runtime::{
-    ScheduledPhasePlan, ScheduledPhaseResources, SlotPoolPhaseResources, run_scheduled_phases,
+    RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
+    ScheduledPhaseResources, SlotPoolPhaseResources, run_scheduled_phases,
 };
 use aiperf::scheduled::{
     ScheduledAncillaryPolicies, ScheduledRuntime, SingleTurnDatasetWorkload, TurnDispatchOutcome,
@@ -25,8 +26,8 @@ use aiperf::workload::SkeletonWorkload;
 use aiperf_clock::{Clock, sim_clock::SimClock};
 use aiperf_metrics::HttpTrace;
 use aiperf_timing::{
-    GracePeriod, PhaseBranchStats, PhaseConfig, PhaseKind, PhaseObserver, PhaseStats, SlotPool,
-    StopConfig,
+    GracePeriod, LinearRamp, PhaseBranchStats, PhaseConfig, PhaseKind, PhaseObserver, PhaseStats,
+    RampDriver, RamperConfig, SlotPool, StopConfig,
 };
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -248,6 +249,47 @@ fn phased_api_joins_terminal_processors_after_the_phase_window_closes() {
             .borrow()
             .contains(&PhaseEvent::Complete("profiling".into(), 5))
     );
+}
+
+#[test]
+fn prepared_ramps_apply_before_issuance_and_stop_at_sending_handoff() {
+    let clock = Rc::new(SimClock::new());
+    let pool = Rc::new(SlotPool::new(0));
+    let pool_for_driver = pool.clone();
+    let clock_dyn: Rc<dyn Clock> = clock.clone();
+    let driver = RampDriver::new(
+        clock_dyn.clone(),
+        Box::new(LinearRamp::new(RamperConfig::new(1.0, 4.0, 100).unwrap())),
+        move |value| pool_for_driver.set_limit(value as usize),
+    );
+    let controller: Rc<dyn ScheduledPhaseController> =
+        Rc::new(RampScheduledPhaseController::new(vec![driver]));
+    let resources: Rc<dyn ScheduledPhaseResources> =
+        Rc::new(SlotPoolPhaseResources::new(Some(pool.clone()), None));
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(DelayedDispatcher {
+        clock: clock.clone(),
+        dispatched: Cell::new(0),
+    });
+    let observer: Rc<dyn PhaseObserver> = Rc::new(TimelineObserver {
+        clock: clock.clone(),
+        events: RefCell::new(Vec::new()),
+    });
+    let plan = ScheduledPhasePlan::new(
+        phase_config("profiling", PhaseKind::Profiling, false).with_concurrency(Some(4), None),
+        shared_slot_workload(1, pool.clone()),
+        ScheduledAncillaryPolicies::default(),
+    )
+    .with_resources(resources)
+    .with_controller(controller);
+
+    let report = drive_sim(clock.clone(), async move {
+        run_scheduled_phases(vec![plan], clock_dyn, dispatcher, observer).await
+    })
+    .unwrap();
+
+    assert_eq!(report.phases[0].final_requests_completed, Some(1));
+    assert_eq!(clock.now_ns(), 20);
+    assert_eq!(pool.current_limit(), 1);
 }
 
 fn one_request_workload() -> Rc<dyn Workload> {

@@ -19,7 +19,8 @@ use std::rc::Rc;
 use aiperf_timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseConfig, PhaseContext,
     PhaseExecution, PhaseExecutionError, PhaseExecutionFactory, PhaseKind, PhaseObserver,
-    PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, ReleasedStuckSlots, SlotPool,
+    PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, RampDriver, RampHandle,
+    ReleasedStuckSlots, SlotPool,
 };
 use anyhow::{Result, anyhow};
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -53,6 +54,60 @@ impl ScheduledPhaseController for NoopScheduledPhaseController {
 
     fn stop(&self) -> LocalPhaseFuture<Result<()>> {
         Box::pin(async { Ok(()) })
+    }
+}
+
+/// Phase-owned controller for prepared Clock-native ramp drivers.
+///
+/// Drivers apply their initial value synchronously when the runner invokes
+/// [`ScheduledPhaseController::start`], before workload execution can issue a
+/// request. The controller then stops and joins every task at the phase's
+/// sending handoff.
+pub struct RampScheduledPhaseController {
+    drivers: RefCell<Option<Vec<RampDriver>>>,
+    handles: RefCell<Option<Vec<RampHandle>>>,
+}
+
+impl RampScheduledPhaseController {
+    /// Take ownership of drivers prepared for one phase.
+    pub fn new(drivers: Vec<RampDriver>) -> Self {
+        Self {
+            drivers: RefCell::new(Some(drivers)),
+            handles: RefCell::new(None),
+        }
+    }
+}
+
+impl ScheduledPhaseController for RampScheduledPhaseController {
+    fn start(&self) -> Result<()> {
+        let drivers = self
+            .drivers
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| anyhow!("phase ramp controller was already started or stopped"))?;
+        *self.handles.borrow_mut() =
+            Some(drivers.into_iter().map(RampDriver::spawn_local).collect());
+        Ok(())
+    }
+
+    fn stop(&self) -> LocalPhaseFuture<Result<()>> {
+        // Failure before start still owns prepared drivers; dropping them is
+        // the complete cleanup because no task or actuator mutation occurred.
+        self.drivers.borrow_mut().take();
+        let handles = self.handles.borrow_mut().take().unwrap_or_default();
+        Box::pin(async move {
+            for handle in handles {
+                if handle.is_running() {
+                    handle.stop();
+                }
+                if let Err(error) = handle.wait().await
+                    && !error.is_cancelled()
+                {
+                    return Err(anyhow!("phase ramp task failed: {error}"));
+                }
+            }
+            Ok(())
+        })
     }
 }
 
