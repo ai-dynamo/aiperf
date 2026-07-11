@@ -13,5 +13,11 @@
 //! generators land on top of this seam.
 
 pub mod intervals;
+pub mod slots;
+pub mod stop;
+pub mod user_centric;
 
 pub use intervals::{ArrivalPattern, IntervalGenerator, make_interval_generator};
+pub use slots::{ConcurrencyManager, ConcurrencyStats, SlotGuard, SlotPool};
+pub use stop::{RunState, StopChecker, StopCondition, StopConfig};
+pub use user_centric::{InitialUser, UserCentricPlan, plan_user_centric};
