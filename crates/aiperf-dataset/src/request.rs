@@ -182,15 +182,22 @@ impl RequestMaterializer for EndpointRequestMaterializer {
     ) -> Result<MaterializedRequest> {
         let (conversation, current, turn_index) = session.current()?;
         let store = session.dataset.segments().as_ref();
-        let streaming = effective_streaming(current, model_endpoint, endpoint, overrides)?;
-        let mut effective_model_endpoint = model_endpoint.clone();
-        effective_model_endpoint.endpoint.streaming = streaming;
-        let body = if let Some(raw) = current.raw_payload {
-            store.build_body(&[raw], overrides)?
+        let (body, effective) = if let Some(raw) = current.raw_payload {
+            (
+                store.build_body(&[raw], overrides)?,
+                EffectiveRequest {
+                    model: effective_model(current, model_endpoint, overrides)?,
+                    max_tokens: effective_max_tokens(current, overrides)?,
+                    streaming: effective_streaming(current, model_endpoint, endpoint, overrides)?,
+                },
+            )
         } else {
+            let streaming = effective_streaming(current, model_endpoint, endpoint, overrides)?;
+            let mut effective_model_endpoint = model_endpoint.clone();
+            effective_model_endpoint.endpoint.streaming = streaming;
             let turns = session.endpoint_turns(store)?;
             let request_info = RequestInfo {
-                model_endpoint: effective_model_endpoint.clone(),
+                model_endpoint: effective_model_endpoint,
                 turns,
                 system_message: resolve_prompt(store, conversation.system)?,
                 user_context_message: resolve_prompt(store, conversation.user_context)?,
@@ -198,11 +205,18 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             };
             let mut value = endpoint.format_payload(&request_info)?;
             merge_overrides(&mut value, overrides)?;
-            Bytes::from(serde_json::to_vec(&value)?)
+            let effective = effective_from_structured_body(
+                &mut value,
+                current,
+                model_endpoint,
+                endpoint,
+                overrides,
+            )?;
+            (Bytes::from(serde_json::to_vec(&value)?), effective)
         };
 
-        let endpoint_path = effective_model_endpoint.endpoint.path.clone().or_else(|| {
-            if streaming {
+        let endpoint_path = model_endpoint.endpoint.path.clone().or_else(|| {
+            if effective.streaming {
                 endpoint.metadata().streaming_path
             } else {
                 None
@@ -216,9 +230,9 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
             endpoint_path,
-            model: effective_model(current, model_endpoint, overrides)?,
-            max_tokens: effective_max_tokens(current, overrides)?,
-            streaming,
+            model: effective.model,
+            max_tokens: effective.max_tokens,
+            streaming: effective.streaming,
             input_tokens: session.input_tokens(store)?,
             audio_duration_seconds: current.audio_duration_seconds,
             accuracy: conversation.accuracy.clone(),
@@ -226,6 +240,60 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             is_final_turn: turn_index + 1 == conversation.turns.len(),
         })
     }
+}
+
+struct EffectiveRequest {
+    model: String,
+    max_tokens: Option<u32>,
+    streaming: bool,
+}
+
+fn effective_from_structured_body(
+    value: &mut Value,
+    turn: &Turn,
+    model_endpoint: &ModelEndpoint,
+    endpoint: &dyn Endpoint,
+    overrides: &Overrides,
+) -> Result<EffectiveRequest> {
+    let object = value.as_object_mut().ok_or_else(|| {
+        DatasetError::Validation("endpoint formatter returned a non-object body".into())
+    })?;
+    let model = match object.get("model") {
+        Some(Value::String(model)) => model.clone(),
+        Some(_) => {
+            return Err(DatasetError::Validation(
+                "effective request model must be a string".into(),
+            ));
+        }
+        None => effective_model(turn, model_endpoint, overrides)?,
+    };
+    let mut max_tokens = effective_max_tokens(turn, overrides)?;
+    for (field, value) in object.iter().filter(|(field, _)| {
+        matches!(
+            field.as_str(),
+            "max_tokens" | "max_completion_tokens" | "max_output_tokens"
+        )
+    }) {
+        max_tokens = Some(positive_u32(value, field)?);
+    }
+    let requested_streaming = match object.get("stream") {
+        Some(Value::Bool(streaming)) => *streaming,
+        Some(_) => {
+            return Err(DatasetError::Validation(
+                "effective request stream must be boolean".into(),
+            ));
+        }
+        None => false,
+    };
+    let streaming = requested_streaming && endpoint.metadata().supports_streaming;
+    if requested_streaming != streaming {
+        object.insert("stream".into(), Value::Bool(streaming));
+    }
+    Ok(EffectiveRequest {
+        model,
+        max_tokens,
+        streaming,
+    })
 }
 
 fn effective_model(
@@ -252,19 +320,19 @@ fn effective_max_tokens(turn: &Turn, overrides: &Overrides) -> Result<Option<u32
         let Some(value) = overrides.fields().get(field) else {
             continue;
         };
-        effective = Some(
-            value
-                .as_u64()
-                .and_then(|value| u32::try_from(value).ok())
-                .filter(|value| *value > 0)
-                .ok_or_else(|| {
-                    DatasetError::Validation(format!(
-                        "request override {field} must be a positive u32"
-                    ))
-                })?,
-        );
+        effective = Some(positive_u32(value, field)?);
     }
     Ok(effective)
+}
+
+fn positive_u32(value: &Value, field: &str) -> Result<u32> {
+    value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            DatasetError::Validation(format!("effective request {field} must be a positive u32"))
+        })
 }
 
 fn effective_streaming(
@@ -1050,6 +1118,62 @@ mod tests {
         assert_eq!(body["stream"], false);
         assert_eq!(request.model, "dispatch-model");
         assert_eq!(request.max_tokens, Some(13));
+        assert!(!request.streaming);
+    }
+
+    #[test]
+    fn authored_extra_body_updates_effective_request_metadata() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let extra = pool
+            .intern_raw(
+                Some(text),
+                Bytes::from_static(
+                    br#"{"model":"body-model","stream":false,"max_completion_tokens":15}"#,
+                ),
+            )
+            .unwrap();
+        let data = dataset(
+            ConversationContextMode::DeltasWithResponses,
+            vec![Turn {
+                role: Some(Role::from("user")),
+                model: Some(ModelId::from("turn-model")),
+                max_tokens: Some(4),
+                content: smallvec![ContentGroup {
+                    kind: MediaKind::Text,
+                    name: String::new(),
+                    handles: smallvec![text],
+                }],
+                extra_body: Some(extra),
+                input_tokens: 2,
+                ..Turn::default()
+            }],
+            pool,
+        );
+        let mut session = ConversationSession::new(data, SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+        let request = session
+            .materialize(
+                &EndpointRequestMaterializer,
+                &ChatEndpoint,
+                &model_endpoint(),
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(body["model"], "body-model");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["max_completion_tokens"], 15);
+        assert_eq!(request.model, "body-model");
+        assert_eq!(request.max_tokens, Some(15));
         assert!(!request.streaming);
     }
 
