@@ -131,7 +131,7 @@ impl AccuracyDataset {
         })
     }
 
-    /// Borrow the immutable unified dataset backing this workload.
+    /// Borrow the immutable unified dataset backing these benchmark problems.
     pub fn dataset(&self) -> &Arc<Dataset> {
         &self.dataset
     }
@@ -226,7 +226,7 @@ pub struct AccuracyRecordProcessor {
     associations: BTreeMap<String, AccuracyAssociation>,
     grader: Rc<dyn Grader>,
     records: RefCell<Vec<Option<AccuracyRecord>>>,
-    failures: RefCell<Vec<AccuracyFailure>>,
+    failures: RefCell<Vec<Option<AccuracyFailure>>>,
 }
 
 impl AccuracyRecordProcessor {
@@ -240,7 +240,7 @@ impl AccuracyRecordProcessor {
                 .collect(),
             grader,
             records: RefCell::new(vec![None; record_count]),
-            failures: RefCell::new(Vec::new()),
+            failures: RefCell::new(vec![None; record_count]),
         }
     }
 
@@ -257,7 +257,7 @@ impl AccuracyRecordProcessor {
         );
         Ok((
             records.iter().flatten().cloned().collect(),
-            self.failures.borrow().clone(),
+            self.failures.borrow().iter().flatten().cloned().collect(),
         ))
     }
 }
@@ -319,13 +319,17 @@ impl TurnRecordProcessor for AccuracyRecordProcessor {
             "accuracy association {correlation_id:?} was processed more than once"
         );
         if let Some(failure) = failure {
-            self.failures.borrow_mut().push(failure);
+            let previous = self.failures.borrow_mut()[association.index].replace(failure);
+            anyhow::ensure!(
+                previous.is_none(),
+                "accuracy failure {correlation_id:?} was recorded more than once"
+            );
         }
         Ok(())
     }
 }
 
-/// A failed/abnormal dispatch retained beside scored records.
+/// A failed request or grading evaluation retained beside scored records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AccuracyFailure {
     /// Stable benchmark item id.
@@ -392,7 +396,7 @@ pub fn finalize_accuracy_report(
                 .iter()
                 .map(|failure| ReportError {
                     code: None,
-                    error_type: "AccuracyDispatch".to_string(),
+                    error_type: "AccuracyEvaluation".to_string(),
                     message: failure.message.clone(),
                     count: 1,
                 })
