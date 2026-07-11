@@ -15,6 +15,7 @@ license = "Apache-2.0"
 loadgen-core = { path = "crates/loadgen-core" }
 aiperf = { path = "crates/aiperf" }
 aiperf-clock = { path = "crates/aiperf-clock" }
+aiperf-rng = { path = "crates/aiperf-rng" }
 
 # external (shared versions)
 anyhow = "1"
@@ -24,7 +25,11 @@ blake3 = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
+itoa = "1"
 libc = "0.2"
+rand = "0.9"
+rand_distr = "0.5"
+rand_pcg = "0.9"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
