@@ -262,3 +262,73 @@ branch ids, root/parent conversation ids, agent depth, fork/branch projections s
 stored as content-addressed handles where appropriate, but dropping them from the
 schema would silently break dispatch parity, ASR/accuracy metrics, or replay/context
 reconstruction.
+
+## Addendum — 2026-07-11: implemented end to end
+
+This addendum is authoritative for implementation status. The design is realized as
+the `aiperf-dataset` crate and is shared by the native CLI and `aiperf-graph`; there is
+no mmap/backing-store/client-store or graph-private segment-store fallback.
+
+The five stages in §4 are concrete:
+
+- **Load:** object-safe `DatasetLoader` implementations are paired with `Composer`s in
+  `LoaderRegistry`, including `synthetic`, `synthetic_rankings`, `single_turn`,
+  `multi_turn`, `random_pool`, `mooncake_trace`, `bailian_trace`, `burst_gpt`,
+  `sagemaker_data_capture`, `dag_jsonl`, `raw_payload`, `inputs_json`, `sharegpt`,
+  `exgentic`, `exgentic_v2`, `hf_asr`, `hf_instruction_response`, `hf_conversation`,
+  `mt_bench`, `mmvu`, `spec_bench`, `speed_bench`, and `accuracy`. Local JSON/JSONL,
+  CSV, Parquet, generic URL, Hugging Face Dataset Viewer, and immutable-revision Hub
+  artifacts are covered. Remote fetch/cache is the injectable `DatasetFetcher` over
+  the Clock-injected native transport. Decoded HF image/audio/video values are
+  normalized at compose time rather than dropped.
+- **Compose/store:** `Composer`, `TextTokenizer`, `MediaResolver`, `PromptGenerator`,
+  `SyntheticMediaGenerator`, and `ModelSelector` are injectable traits. Composition
+  interns tokenized message/text, byte-exact raw JSON, and media into a `SegmentPool`;
+  `Dataset` freezes `Arc<[Conversation]>`, an insertion-order lookup index, and one
+  `Arc<dyn SegmentStore>`. `Conversation`/`Turn` retain only dense `Handle`s for large
+  or wire-sensitive values, including messages, tools, extra body/headers/query
+  parameters, raw payloads, and media. Accuracy uses a real `CorrelationId`; DAG
+  branches, prerequisites, root/parent lineage, depth, and `has_forks` projections are
+  validated before freeze.
+- **Sample:** `Sampler` plus the injectable `SamplerFactory`/`SamplerRegistry` provide
+  deterministic random, sequential, and shuffle strategies. Native online dataset
+  sources now honor each loader's recorded strategy instead of hard-coding sequential
+  order.
+- **Materialize:** `RequestMaterializer` and `EndpointResolver` reconstruct every
+  context mode, retain live assistant replies, walk backward to the latest tool set,
+  resolve endpoint/model/stream/header/query overrides, and propagate per-turn audio
+  duration and accuracy identity. Raw bodies are byte-identical without overrides;
+  explicit overrides append only a serialized object tail. Structured requests use the
+  endpoint trait and derive accounting metadata from the final body so transport mode,
+  wire fields, and reported model/OSL cannot drift.
+- **Graph:** `aiperf-graph::SegmentItemsMaterializer` accepts the same
+  `Arc<dyn SegmentStore>` and interleaves static handles with retained dynamic reply
+  wires. The previous graph-local store and unused JSON `segment_pool` sentinel are
+  deleted.
+
+The four open decisions in §6 are resolved:
+
+1. Handles are dense `u32`; the contract is whole-dataset-in-memory with no eviction.
+2. V1 interns whole messages/text items. Alternate granularity remains implementable
+   behind `SegmentStore`/the write-side interner without changing conversations.
+3. Tokenization happens during composition through local tiktoken or Hugging Face
+   tokenizer implementations; token IDs are authoritative for message/text identity.
+4. Raw-object overrides use closing-brace tail splicing and never parse or rewrite the
+   authored object. Message assembly clones/concatenates pre-serialized `Bytes` slices;
+   dynamic graph replies retain their encoded wire representation.
+
+Proof is executable and self-contained: `cargo test -p aiperf-dataset --all-targets`
+passes 78 tests; `cargo clippy -p aiperf-dataset --all-targets -- -D warnings` is clean;
+the graph suite passes 22 unit tests plus both real h1/h2c transport integrations; and
+`cargo test -p aiperf --all-targets` passes the native runtime/CLI suite. In particular,
+`crates/aiperf/tests/dataset_online.rs` starts a real loopback HTTP server, runs the
+compiled CLI over a two-turn native dataset, and proves that the live first reply is
+present in the second request. The dataset suite also executes FFmpeg-backed audio/video
+generation and ASR normalization, exact raw replay, all four context modes, loader
+auto-detection, fixed/prefix hashing, sampler reproducibility, Hugging Face pagination
+and revision pinning, and endpoint-specific request construction.
+
+This addendum completes the dataset/segment seam itself. The in-process offline engine
+sink and execution of authored DAG branch policy are owned by their separate companion
+specifications; dataset storage, validation, sampling, and materialization already
+remain clock/backend-neutral for those consumers.

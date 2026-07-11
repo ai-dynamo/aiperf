@@ -51,7 +51,7 @@ Reading order for a newcomer: the **ledger** first (it frames scope), then the
 |---|---|---|
 | `2026-07-10-steppable-clock-injected-engine-design.md` | decided + addendum | The `{clock}` seam and OFFLINE-mock steppable-engine boundary. **Addendum (2026-07-11):** its `lib/aiperf` + dynamo `lib/mocker` framing is historical; translate concepts to the standalone `crates/` workspace and the current `Clock` + `RequestSink` seam. |
 | `2026-07-10-aiperf-transport-rust-port-design.md` | decided / partly built + addendum | The Clock-injected hyper HTTP transport. Realized as `aiperf-transport`; **addendum (2026-07-11):** cancellation-after-send, full h2 reuse semantics, and the full aiohttp-style trace field set are design targets where current code is narrower. |
-| `2026-07-10-aiperf-rust-dataset-segment-seam-design.md` | design + addendum | Unify the graph segment store and multi-modal dataset cache into one content-addressed segment/blob store; `Conversation`/`Turn` carry handles, not bytes. **Addendum (2026-07-11):** preserve raw payload/tool/header fields, audio duration, context mode, and DAG metadata needed for dispatch, metrics, and context reconstruction. |
+| `2026-07-10-aiperf-rust-dataset-segment-seam-design.md` | built end to end + addenda | Realized as `aiperf-dataset`: the complete loader→compose→dense-handle store→sampler→materializer pipeline is shared by native CLI/accuracy and Graph-IR. Addenda preserve all dispatch/metric/DAG fields, resolve the four open decisions, and record unit, clippy, graph-transport, and real-CLI proof. Separate companion specs still own the offline engine sink and DAG execution policy. |
 
 ### Subsystem designs
 
