@@ -10,182 +10,117 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-Python 3.11+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
+> ✅ **CANONICAL — this is THE native Rust AIPerf.** This `crates/` workspace (branch `ajc/rust`) is a from-scratch, single-process, multi-threaded tokio rewrite of the Python AIPerf LLM-inference benchmarking tool. There is **no ZMQ, no service mesh, no multiprocess credit protocol, no mmap dataset cache, no `plugins.yaml`** — those were GIL/multiprocess workarounds, not benchmarking features, and are deliberately deleted. The `aiperf-rs` and `~/projects/aiperf-rust` trees are **DEPRECATED** (mechanical 1:1 ports that reproduce the Python complexity this design removes). Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
+>
+> ⛔️ The rest of this repo (`src/`, `docs/`, `Makefile`, `pyproject.toml`, `tests/`) is inherited Python-AIPerf scaffolding and is **not** the Rust tool. The Rust truth is in `crates/` + `specs/`.
 
-**Reference documentation:**
-- [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
-- [`docs/dev/patterns.md`](docs/dev/patterns.md) - Code examples for CLI commands, services, models, messages, plugins, error handling, logging, testing
-- [`docs/cli-options.md`](docs/cli-options.md) - Complete CLI command and option reference
-- [`docs/environment-variables.md`](docs/environment-variables.md) - All `AIPERF_*` environment variables by subsystem
-- [`docs/metrics-reference.md`](docs/metrics-reference.md) - Metric definitions, formulas, and requirements
-- [`docs/plugins/plugin-system.md`](docs/plugins/plugin-system.md) - Plugin architecture, categories, creation guide
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) - Development setup, available commands, pre-commit hooks, DCO
+## What this is
 
-## Coding Standards
+A load generator + measurement front-end for LLM inference servers: it dispatches OpenAI-compatible chat/completions requests, streams SSE, records fine-grained timing (TTFT / ITL / TPOT / e2e / throughput / goodput), and prints or serializes an aggregate report. One front-end is designed to drive **three interchangeable execution modes** over a single `{transport, clock}` seam:
 
-- async/await for ALL I/O - no `time.sleep`, no blocking calls.
-- `Field(description="...")` on EVERY Pydantic field. Docstrings on dataclass fields.
-- Type hints on ALL functions (params and return).
-- KISS + DRY: minimal code, optimize for reader.
-- `AIPerfBaseModel` for data, `BaseConfig` for configuration. `@dataclass(slots=True)` for hot-path inner models created at high volume (e.g. SSE chunks, parsed responses) where Pydantic overhead matters. Use `__pydantic_config__ = ConfigDict(extra="forbid")` on dataclasses that participate in Pydantic union discrimination.
-- `BaseComponentService` for services, `BaseService` for SystemController only.
-- Message bus for inter-service communication - no shared mutable state.
-- CLI commands: one file per command in `cli_commands/`, lazily loaded via import strings in `cli.py`. See `docs/dev/patterns.md`.
-- YAML plugin registry for extensible features (`src/aiperf/plugin/plugins.yaml`).
-- Lambda for expensive logs: `self.debug(lambda: f"{self._x()}")`. Direct string for cheap ones.
-- Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
-- Reading filesystem paths: use `aiperf.common.path_safety.safe_read_template_path` instead of inline `Path().read_text()` / `open().read()`. Returns `None` on safety-check failure; caller picks the fallback semantic. See `docs/dev/patterns.md` § "Safe Filesystem Reads Pattern".
-- No `Optional[X]` or `Union[X, Y]` - use `X | Y`.
-- Comments only for "why?" not "what".
-- Enums are string-based - use `MessageType.X` directly, never `.value`.
-- Dependencies: always use `uv` (never pip) - `uv add package`, `uv run pytest`.
-- Use mermaid diagrams instead of ASCII art in markdown files.
-- Do not create markdown files to document code changes or decisions.
-- Do not over-comment code. Removing code is fine without adding comments to explain why.
-- No emojis in code or comments.
-- Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
-- Platform-conditional code MUST branch on `IS_WINDOWS` / `IS_MACOS` / `IS_LINUX` from `aiperf.common.constants`, never on `platform.system()` directly. The constants are evaluated once at import time, are uniformly greppable, and produce smaller diffs. See `src/aiperf/common/bootstrap.py` and `src/aiperf/config/comm/ipc.py` for canonical examples.
+1. **ONLINE-real** — real HTTP to a real server, wall clock. *(built)*
+2. **ONLINE-mock** — real HTTP to a mock server (`aiperf-mock-rs`), wall clock. *(built — same code as (1), different target)*
+3. **OFFLINE-mock** — in-process virtual-clock co-simulation of the mocker engine, no sockets, deterministic. *(designed — `specs/2026-07-10-steppable-clock-injected-engine-design.md`. The DES `SimClock` + `drive_sim` pump exist and are unit-tested, but the steppable-engine sink is not yet wired; `crates/aiperf-graph/src/lib.rs` says so.)*
 
-## NaN/Inf Discipline
+Because it is ONE front-end, every feature (arrival patterns, datasets, multi-turn, metrics, exporters) is designed to work across all three modes for free — build once, zero drift.
 
-Numeric metric values crossing a serialization boundary or feeding a numerical algorithm must be finite or explicitly `None`. Use `aiperf.common.finite` (`FiniteFloat`, `scrub_non_finite`, `nan_safe_mean`/`std`, `is_finite_value`). Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py` reject new violations and ratchet existing debt to zero via baseline files. See [`docs/dev/patterns.md`](docs/dev/patterns.md) § "NaN/Inf Discipline Pattern" and [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) for the full contract.
+## Canonical vs aspirational — the code is a walking skeleton
 
-## Build and Test Commands
+Ground every claim in `crate/src/file.rs`, not the specs: specs are design intent, **code is truth**. The current gaps between the north-star design and today's code:
+
+- The north-star's `Backend` / `Engine` / `Harness` / `harness-contract` vocabulary is **aspirational**. Today's seam is `Clock` (`aiperf-clock`) + `RequestSink<R>` / `RequestObserver` / `Dispatchable` (`loadgen-core`).
+- **Two HTTP stacks coexist.** The **online CLI** path (`aiperf-core::http_sink::HttpSink`) is **reqwest + `std::time::Instant`**, `Send`/`Arc`/`Mutex` on a multi-thread tokio runtime — it does **not** yet go through `Clock`. The **Clock-injected, `!Send`, thread-per-core** stack (`aiperf-transport`, a hyper client) is used only by the graph benchmark. Moving the online path onto `Clock` is the "PR2.5" gap in the steppable spec.
+- **Scheduling policy** (arrival patterns, session-vs-request slots, prefill-release-on-TTFT, phase-scoped metrics, `--request-count` recycle) is **designed** (`specs/…scheduling-policy-sketch.md`) but **not built** — `run.rs` is still a naive `Semaphore` loop (`admit == dispatch`).
+- **Dataset/segment unified store, accuracy accumulator, tokenizer-exact prompts, request-rate mode**: designed, not implemented. `SkeletonWorkload` emits fixed synthetic requests; there is no tokenizer and no request-rate mode.
+
+When something is designed-but-not-built, this file says so. Do not assume a spec feature exists in the code.
+
+## Crate workspace (`crates/`)
+
+| Crate | Purpose | Key files |
+|---|---|---|
+| `aiperf-clock` | The `{clock}` seam. `Clock` trait (`now_ns` / `sleep` / `next_event_time` / `advance_to` / `is_virtual`); `SimClock` = integer-ns discrete-event `BinaryHeap` keyed `(at_ns, seq_no)` (deterministic same-instant tie-break); `RealClock` = monotonic `Instant` + Linux `timerfd`/`AsyncFd` ns sleeps (tokio fallback off-Linux). | `clock.rs`, `sim_clock.rs`, `real_clock.rs` |
+| `loadgen-core` | Transport-neutral dispatch/measure seam + the collector. `Dispatchable`, `RequestSink<R>`, `RequestObserver` (f64-ms timestamps), `TraceCollector` → `TraceSimulationReport`. Zero engine/KV/HTTP deps. | `sink.rs`, `collector.rs` |
+| `aiperf-core` | Shared online HTTP client + measurement. `HttpSink` (reqwest streaming chat, SSE parse, authoritative `usage` counts, first-token cb, wire trace); `CollectorObserver` (batched `submit`, `reconcile_output_times`); `sse`, `wire`. **Uses `Instant` directly, not `Clock`.** | `http_sink.rs`, `observer.rs`, `sse.rs`, `wire.rs` |
+| `aiperf-transport` | Rust-native, **Clock-injected** HTTP transport on hyper 1.x's low-level conn API (not reqwest). h1 + h2c prior-knowledge + UDS; rustls; fine-grained DNS/TCP/TLS/send/recv trace timing; cancellation; connection-reuse strategies. Every timestamp via `Clock`. | `client/`, `transport/`, `sse/`, `models/`, `config/` |
+| `aiperf-graph` | Graph-IR async-dataflow engine: multi-turn DAG conversations with fan-in/out + firing-gate timing. Content-addressed `SegmentStore` (blake3, prefix-dependent); `materialize` (static segment + predecessor-reply splice); `executor` / `scheduler` / `channel_store` / `reducers`; `runtime` (`drive_sim` / `drive_real` on `current_thread` + `LocalSet`); `bench` (reqwest) + `transport_bench` (aiperf-transport; UDS → >1M req/s). Offline co-sim sink intentionally not wired yet. | `runtime.rs`, `executor.rs`, `segment.rs`, `transport_bench.rs` |
+| `aiperf` | The CLI binary. `--mode online` (default: closed-loop concurrency via `aiperf-core`) and `--mode graph` (Graph-IR throughput). mimalloc global allocator. | `main.rs`, `run.rs`, `workload.rs`, `report.rs` |
+
+Dependency direction: `aiperf` → {`aiperf-core`, `aiperf-graph`}; `aiperf-graph` → {`aiperf-core`, `aiperf-transport`, `aiperf-clock`, `loadgen-core`}; `aiperf-core` → `loadgen-core`; `aiperf-transport` → `aiperf-clock`. `loadgen-core` and `aiperf-clock` are leaves. Workspace: `edition = "2024"`, `resolver = "3"`.
+
+## The two seams (the whole architecture)
+
+- **`{clock}`** (`aiperf-clock`): `RealClock` vs `SimClock` behind one `Clock` trait. `is_virtual()` selects the `drive_real` (tokio reactor drives) vs `drive_sim` (idle-pump: poll the `LocalSet` to quiescence draining all same-instant work → `advance_to(next_event_time)` waking heap-ordered sleepers → repeat) driver over the *same* executor. Virtual time is integer ns with an `(at_ns, seq_no)` deterministic tie-break — **never `tokio::time`** (its 1 ms timer wheel destroys µs/ns firing gates).
+- **`{transport}`** (`loadgen-core::sink`): `RequestSink<R>::dispatch` drives a `Dispatchable` request to terminal and emits `on_arrival` / `on_admit` / `on_token` / `on_terminal` through a `RequestObserver` into the `TraceCollector`. Real HTTP, mock HTTP, and (designed) in-process engine co-sim are all just `RequestSink` impls behind one observer. TTFT is derived by the collector as the first `on_token` — sinks emit no separate first-token event.
+
+## Coding standards (Rust)
+
+- **SPDX header** (`// SPDX-FileCopyrightText …` + `// SPDX-License-Identifier: Apache-2.0`) atop every source file. `//!` module docs; `///` doc comment on every public item.
+- **Thread-per-core**, not work-stealing, on the hot path: N OS threads, each a `current_thread` tokio runtime + `LocalSet`; per-trace state is `Rc`/`RefCell`, futures are `!Send`, tasks are `spawn_local`; parallelism = many traces across threads. See `aiperf-graph/src/runtime.rs`, `bench.rs`. (The online `run.rs` path is the exception — still `Arc`/`Semaphore` on a multi-thread runtime.)
+- **All time through `Clock`** in clock-aware crates (`aiperf-transport`, `aiperf-graph`): never `Instant::now()`, `SystemTime::now()`, or raw `tokio::time` for measurement or firing gates. (`aiperf-core`'s online path currently violates this — a known, tracked gap.)
+- **No `Arc`/`Mutex` on hot paths.** Accumulate lock-free per-thread / per-worker and merge once at the end; batch a request's token times and take the collector lock once per request (`observer.rs::submit`), never per token.
+- **Content-addressed segments**: blake3, prefix-dependent (fold the parent id into the hash so shared prefixes dedup and identical text under different prefixes stays distinct); materialize = clone/concat pre-serialized bytes, never re-serialize.
+- **mimalloc** global allocator (per-request alloc churn in the graph executor + streaming client was the top profiled hotspot).
+- **reqwest/hyper**: always disable the ambient proxy for loopback benchmarking (`.no_proxy()`) — an ambient `HTTP_PROXY` 405s localhost and tanks throughput.
+- **SSE**: buffer raw bytes, split lines on the byte buffer, UTF-8-decode only complete lines (a multibyte char may straddle a TCP chunk boundary).
+- **Authoritative token counts** from `usage.completion_tokens` (`stream_options.include_usage`); reconcile per-chunk arrival times to that count (`observer.rs::reconcile_output_times`) — keeps TTFT/e2e exact while making output-token throughput correct. Port the Python behavior faithfully.
+- **Errors**: `anyhow` in the binary/app layer; `thiserror` for library error enums (`aiperf-transport`).
+- **`clap` derive** for CLI; `serde` / `serde_json` for wire. Prefer a direct-serialized request body on the hot path (skip an intermediate `serde_json::Value`).
+- **NaN/Inf discipline**: numeric metric values crossing a serialization boundary must be finite or explicitly absent.
+- **Comments explain *why*, never *what*.** No emojis in code. Read the actual code, never trust the docstrings or comments.
+
+## Build, test, run
+
+The (inherited-Python) `Makefile` has **no** cargo targets — use cargo directly:
 
 ```bash
-make first-time-setup                                      # Initial environment setup
-make install                                               # Install project + mock server
-uv run pytest tests/unit/ -n auto                          # Unit tests (fast, isolated)
-uv run pytest -m integration -n auto                       # Integration tests (real services, multiprocess)
-uv run pytest -m component_integration -n auto             # Component integration tests (single process)
-ruff format . && ruff check --fix .                        # Format and lint
-make validate-plugin-schemas                               # Validate plugin registry
-pre-commit run                                             # Pre-commit on staged files
-pre-commit run --all-files                                 # Pre-commit on all files
-make generate-all-docs                                     # Regenerate CLI + env var docs
-make generate-all-plugin-files                             # Regenerate plugin enums, overloads, schemas
+cargo build                  # debug build of the whole workspace
+cargo build --release        # optimized — use for any throughput number
+cargo test                   # all unit tests (self-contained: in-process axum mock, no external server)
+cargo test -p aiperf-graph   # one crate
+cargo clippy --all-targets   # lints
+cargo fmt                    # format (rustfmt)
 ```
 
-## Pre-Commit Hooks
-
-Run pre-commit after every code change, even before creating commits:
+Run the tool:
 
 ```bash
-pre-commit run              # Staged files only
-pre-commit run --all-files  # All files (recommended after significant changes)
+# online (default): closed-loop concurrency
+cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
+  --concurrency 16 --requests 100 --isl 128 --osl 128 [--json out.json]
+
+# graph: Graph-IR E2E streaming throughput (multi-turn DAG conversations)
+cargo run --release -p aiperf -- --mode graph [BASE_URL] [MODEL] \
+  --turns 4 --instances 400000 --workers <cores> --concurrency 64 --osl 1 [--http2] [--reqwest]
 ```
 
-Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large-files`, `check-case-conflict`, `check-executables-have-shebangs`, `check-merge-conflict`, `check-json`, `check-toml`, `check-yaml`, `check-shebang-scripts-are-executable`, `end-of-file-fixer`, `mixed-line-ending`, `no-commit-to-branch`, `requirements-txt-fixer`, `trailing-whitespace`, `codespell`, `add-license`, `generate-cli-docs`, `generate-env-vars-docs`, `generate-plugin-artifacts`, `validate-plugin-schemas`, `test-imports`, `check-agent-files-sync`, `check-ergonomics`, `check-ruff-baselined`, `ruff`, `ruff-format`.
+Unit tests spin up an in-process axum OpenAI-SSE mock (`test_util::spawn_mock`); the graph `transport_bench` throughput path validates against the external `aiperf-mock-rs` binary (a `unix:/path` base URL uses a Unix-domain socket, which is what pushes co-located throughput past 1M req/s).
 
-## Adding a New Service
+## Design specs (`specs/`)
 
-1. Create class extending `BaseComponentService` with `@on_message` handlers
-2. Register in `src/aiperf/plugin/plugins.yaml` under `service` category with `class`, `description`, `metadata`
-3. Add message type to `common/enums/enums.py` if new messages needed
-4. Create message class in `messages/` with `message_type` field
-5. Validate with `aiperf plugins --validate`
+Read for intent; verify against `crates/` for reality. Full index + one-liners: [`specs/README.md`](specs/README.md).
 
-## Adding a New Message
+- **North star & rationale**
+  - `2026-07-10-shared-rust-architecture-northstar.md` — the target abstraction: one front-end, three orthogonal axes (time / backend / workload), a ~120-line neutral contract. *Aspirational vocabulary; not the current symbol set.*
+  - `2026-07-10-aiperf-rust-port-exact-vs-redo-ledger.md` — **read first for scope.** Per-concept port-exact vs redo-cleaner vs throw-away rulings; the credit-*policy* trap (delete the protocol, keep the policy).
+- **Architecture seams**
+  - `2026-07-10-steppable-clock-injected-engine-design.md` — the `{clock}` seam + the OFFLINE-mock steppable-engine boundary (the missing third mode).
+  - `2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected hyper transport (realized in `aiperf-transport`).
+  - `2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — one content-addressed segment store for datasets + graph (designed).
+- **Subsystem designs**
+  - `2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — the `Scheduler` that re-surfaces credit *policy* (designed, not built).
+  - `2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — accuracy as a first-class accumulator + analyzer pair (designed).
+  - `2026-07-09-graph-ir-rust-port-design.md` — byte-exact Graph-IR dataflow port (partly realized in `aiperf-graph`).
+- **Historical precursors** — describe a *different* working tree built *on* dynamo's `lib/mocker`; the current workspace is standalone (`loadgen-core` extracted, no dynamo dependency). Kept for lineage.
+  - `2026-07-09-dynamo-aiperf-shared-core-design.md`, `2026-07-09-dynamo-aiperf-request-rate-tokenizer-design.md`.
 
-1. Add enum value to `MessageType` in `common/enums/enums.py`
-2. Create message class in `messages/` inheriting from `Message` with `message_type` field set
-3. Add `@on_message(MessageType.X)` handler in the receiving service
-4. Auto-subscription happens during `@on_init` phase
+## Adding things
 
-## Adding a New Plugin
+- **A new transport** → implement `RequestSink<YourReq>` (+ `Dispatchable` for `YourReq`) in its own crate; nothing in `loadgen-core` changes.
+- **A new clock / execution mode** → implement `Clock`; `drive_sim` / `drive_real` already dispatch on `is_virtual()`.
+- **A new graph feature** → the `executor` / `segment` / `channel_store` modules in `aiperf-graph`; keep firing-gate arithmetic byte-exact (see the graph-IR spec's parity contract).
+- **A new metric** → `loadgen-core::collector` (`TraceCollector` + the `Trace*Stats` structs); the report is a plain struct with a custom `Serialize`.
 
-1. Create plugin class implementing the appropriate base
-2. Add entry to `src/aiperf/plugin/plugins.yaml` with `class`, `description`, `metadata`
-3. Validate with `make validate-plugin-schemas`
-4. Use via `plugins.get_class(PluginType.X, 'name')`
+## Agent-instruction file sync
 
-## Adding a New CLI Flag
-
-See `docs/dev/patterns.md` § "Adding a New CLI Flag". CLIConfig is flat; never add a nested config class.
-
-## Testing Conventions
-
-- `@pytest.mark.asyncio` for async tests, `@pytest.mark.parametrize` for data-driven
-- `from tests.harness import mock_plugin` for plugin mocking
-- Name: `test_<function>_<scenario>_<expected>` e.g. `test_parse_config_missing_field_raises_error`
-- Imports at file top, fixtures for setup, one focus per test
-- Use `from pytest import param` and put `# fmt: skip` on the `)` line:
-  ```python
-  @pytest.mark.parametrize(
-      "arg",
-      [
-          param(..., id="case1"),
-          param(..., id="case2"),
-      ],
-  )  # fmt: skip
-  ```
-- Auto-fixtures (always active): asyncio.sleep runs instantly, RNG=42, singletons reset between tests
-
-## Git Workflow
-
-Feature branches use `<username>/feature-name` format, forked from `main`. One PR = one concern.
-
-## Tips
-
-- SystemController uses `BaseService` (not `BaseComponentService`) - it's the orchestrator.
-- Worker/TimingManager disable GC for latency - see `service_metadata.disable_gc`.
-- macOS child processes close terminal FDs to prevent Textual UI corruption.
-- Plugin priority resolves conflicts: higher wins, external beats built-in at equal priority.
-- Decorators: `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`.
-- Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
-- `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
-- `dag_jsonl` input type: conversation DAG benchmarks (fork + spawn modes). See `docs/benchmark-modes/dag.md` for abstractions and authoring.
-- Validator gate convention: unsupported constructs raise `NotImplementedError` with a leading `"<loc>: <reason>"` prefix where `<loc>` identifies the conversation/turn (e.g. `"conversation 'foo' turn 3: ..."`). New validators must follow this shape.
-- Per-turn payload contract: `extra_body` / `max_tokens` / `model` are dispatch-turn only; `raw_tools` is the lone field that walks history (system-prompt-like). Dataset rows author `extra`, not `extra_body`. See `docs/dev/patterns.md` "Per-turn dataset `extra`".
-
-## Plot Envelope Section
-
-`AIPerfConfig.plot: PlotEnvelopeConfig | None` lets a single AIPerf YAML own its
-visualization. Two forms: bare-string path (`plot: ./plots/baseline.yaml`,
-resolved relative to the AIPerf YAML's dir) or inline dict mirroring
-`src/aiperf/plot/default_plot_config.yaml`. When set, `~/.aiperf/plot_config.yaml`
-is ignored and `artifacts.auto_plot` flips to True (unless explicitly False).
-The auto-plot callback materializes the resolved envelope to
-`<artifact_dir>/.aiperf-plot-config.yaml` so `aiperf plot <dir>` reproduces.
-See `src/aiperf/config/plot.py` for the Pydantic models.
-
-## Pre-Commit Checklist
-
-1. Review diff: all lines required?
-2. `ruff format . && ruff check --fix .`
-3. `uv run pytest tests/unit/ -n auto`
-4. `uv run pytest tests/unit/property/ -n auto` (mechanical NaN/inf and field-validator invariants)
-5. Type hints on all functions
-6. `Field(description=...)` on all Pydantic fields
-7. `git commit -s`
-
-## Four-File Sync Rule
-
-`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` must contain identical content (only headers/frontmatter differ). When updating one, update all four. Run `make check-agent-files-sync` after editing to confirm sync — pre-commit enforces this on every commit that touches one of these files.
-
-## Documentation Updates
-
-> **DOCUMENTATION IS REQUIRED, NOT OPTIONAL.** Any PR that adds or changes a feature, CLI option, env var, plugin, message type, or service without updating the relevant docs is incomplete and will not be merged.
-
-When making changes, update the appropriate documentation files using the table below. When adding a new tutorial, also add it to `README.md`'s tutorial index. **Any new file under `docs/` must also be added to `docs/index.yml`** (the Fern site index) — `tools/check_docs_index.py` enforces this in CI. If the change is internal-only and not user-facing (e.g. developer reference, internal mechanics, debugging notes), put the doc under `docs/reference/` rather than skipping documentation.
-
-| Change type | Files to update |
-|---|---|
-| Architecture, components, data flow, communication | `docs/architecture.md` |
-| Coding standards, build commands, new patterns | `AGENTS.md` + `CLAUDE.md` + `.github/copilot-instructions.md` + `.cursor/rules/python.mdc` |
-| Code patterns, examples, base classes | `docs/dev/patterns.md` |
-| CLI arguments or commands | `docs/cli-options.md` (auto-generated via `make generate-cli-docs`) |
-| Environment variables | `docs/environment-variables.md` (auto-generated via `make generate-env-vars-docs`) |
-| Metrics definitions or formulas | `docs/metrics-reference.md` |
-| Plugin system, categories, creation | `docs/plugins/plugin-system.md` |
-| Accuracy benchmarks, graders | `docs/accuracy/` |
-| Server metrics, schemas | `docs/server-metrics/` |
-| Benchmark modes, timing, traces | `docs/benchmark-modes/` |
-| Tokenizer, reference docs | `docs/reference/` |
-| Dataset synthesis API | `docs/api/synthesis.md` |
-| Dev setup, make targets, pre-commit | `CONTRIBUTING.md` |
-| Contribution process, DCO | `CONTRIBUTING.md` |
-| New services, message types, plugin types | `docs/architecture.md` + `docs/dev/patterns.md` |
-| Tutorials and feature guides | `docs/tutorials/` + `README.md` tutorial index |
-
-**A feature is incomplete until documentation is updated.**
+`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` (name is Python-legacy; kept so the checker's target list matches) share a **byte-identical body** below their per-tool headers. Only the header differs: the cursor file keeps its YAML frontmatter (`alwaysApply: true`) then the SPDX comment; the other three start with the SPDX comment. The body begins at the first `# AIPerf` H1. Edit all four together and verify with `python tools/check_agent_files_sync.py` (or `make check-agent-files-sync`).

@@ -1,0 +1,102 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# AIPerf (native Rust) — agent session-bootstrap index
+
+Single-page topology of the important source + design files, with a one-line
+purpose for each, so an agent knows which file to open for a given question.
+
+## ✅ Canonical / ⛔️ deprecated
+
+- **CANONICAL:** the `crates/` workspace on branch `ajc/rust` — a from-scratch,
+  single-process, multi-threaded tokio rewrite of Python AIPerf. No ZMQ, no
+  services, no multiprocess credit protocol, no mmap cache, no `plugins.yaml`.
+- **DEPRECATED:** the `aiperf-rs` and `~/projects/aiperf-rust` trees (mechanical
+  1:1 ports that reproduce the Python multiprocess/ZMQ complexity this design
+  deletes). Do not build on them.
+- **NOT the Rust tool:** this repo's `src/`, `docs/`, `Makefile`,
+  `pyproject.toml`, and `tests/` are inherited Python-AIPerf scaffolding. Rust
+  truth is `crates/` + `specs/`.
+- **Agent instructions:** `CLAUDE.md` = `AGENTS.md` = `.github/copilot-instructions.md`
+  = `.cursor/rules/python.mdc` (byte-identical body; keep in sync via
+  `python tools/check_agent_files_sync.py`).
+
+## The architecture in one breath
+
+ONE front-end drives **three execution modes** over a single `{transport, clock}`
+seam: **ONLINE-real** (real HTTP, wall clock — built), **ONLINE-mock** (HTTP to
+`aiperf-mock-rs`, wall clock — built), **OFFLINE-mock** (in-process virtual-clock
+engine co-sim — designed, not wired). Time lives behind `Clock` (`RealClock` vs
+integer-ns DES `SimClock`); dispatch lives behind `RequestSink<R>` +
+`RequestObserver` into a `TraceCollector`. `is_virtual()` picks the `drive_real`
+(reactor) vs `drive_sim` (idle-pump) driver over the *same* executor.
+Thread-per-core, `Rc`/`RefCell`, `!Send`, `spawn_local` on the hot path.
+
+## Crate topology (`crates/`)
+
+| Crate | Read for | Entry files |
+|---|---|---|
+| `aiperf-clock` | the time seam: `Clock` trait, `SimClock` (int-ns DES heap, `(at_ns, seq_no)` tie-break), `RealClock` (`timerfd`/`AsyncFd`) | `src/clock.rs`, `src/sim_clock.rs`, `src/real_clock.rs` |
+| `loadgen-core` | the dispatch/measure seam + report: `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `TraceCollector`, `TraceSimulationReport` | `src/sink.rs`, `src/collector.rs` |
+| `aiperf-core` | the online HTTP stack (reqwest + `Instant`, **not** `Clock`): streaming chat, SSE parse, authoritative usage counts, `reconcile_output_times`, wire trace | `src/http_sink.rs`, `src/observer.rs`, `src/sse.rs`, `src/wire.rs` |
+| `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
+| `aiperf-graph` | the Graph-IR dataflow engine: content-addressed segments, splice materialization, firing-gate executor, DES `drive_sim`/`drive_real`, throughput benches | `src/runtime.rs`, `src/executor.rs`, `src/segment.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
+| `aiperf` | the CLI binary: `--mode online` (default) and `--mode graph`, mimalloc, reporting | `src/main.rs`, `src/run.rs`, `src/workload.rs`, `src/report.rs` |
+
+Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`}; `aiperf-graph` → {`aiperf-core`,
+`aiperf-transport`, `aiperf-clock`, `loadgen-core`}; `aiperf-core` →
+`loadgen-core`; `aiperf-transport` → `aiperf-clock`.
+
+## "Which file answers…" quick map
+
+- **How is virtual time deterministic?** `crates/aiperf-clock/src/sim_clock.rs`
+  (min-heap, `(at_ns, seq_no)`, `advance_to`) + `aiperf-graph/src/runtime.rs`
+  (`drive_sim` idle-pump).
+- **How is a request dispatched + measured?** `loadgen-core/src/sink.rs` (traits)
+  → `aiperf-core/src/http_sink.rs` (`HttpSink::dispatch`) →
+  `aiperf-core/src/observer.rs` (`CollectorObserver`).
+- **Where do TTFT/ITL/e2e/throughput/goodput come from?**
+  `loadgen-core/src/collector.rs` (`TraceCollector`, `Trace*Stats`).
+- **Why are my token counts "wrong"?** `aiperf-core/src/observer.rs`
+  (`reconcile_output_times`; authoritative `usage.completion_tokens`).
+- **How does the online loop work?** `aiperf/src/run.rs` (naive `Semaphore`
+  closed-loop — scheduling *policy* is designed but unbuilt).
+- **How does graph mode hit >1M req/s?** `aiperf-graph/src/transport_bench.rs`
+  (thread-per-core lanes, aiperf-transport, UDS).
+- **How are prompts built without re-serializing?** `aiperf-graph/src/segment.rs`
+  (blake3 prefix-dependent) + `materialize.rs` (static seg + reply splice).
+- **CLI flags / modes?** `aiperf/src/main.rs`.
+
+## Design specs (`specs/` — intent, not code)
+
+Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/README.md).
+
+- `specs/2026-07-10-aiperf-rust-port-exact-vs-redo-ledger.md` — **read first**:
+  scope rulings + the credit-policy trap + the three-modes framing.
+- `specs/2026-07-10-shared-rust-architecture-northstar.md` — the target
+  abstraction (aspirational vocabulary).
+- `specs/2026-07-10-steppable-clock-injected-engine-design.md` — the `{clock}`
+  seam + OFFLINE-mock steppable engine (the missing third mode).
+- `specs/2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected
+  hyper transport (→ `aiperf-transport`).
+- `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — one
+  content-addressed store for datasets + graph (designed).
+- `specs/2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — the `Scheduler`
+  that restores credit *policy* (designed, not built).
+- `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — accuracy as an
+  accumulator + analyzer pair (designed).
+- `specs/2026-07-09-graph-ir-rust-port-design.md` — byte-exact Graph-IR port
+  (partly built in `aiperf-graph`).
+- `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
+  — historical precursors (built on dynamo's `lib/mocker`; superseded by the
+  standalone workspace).
+
+## Build / test / run
+
+No cargo targets in the (Python-legacy) `Makefile` — use cargo directly:
+`cargo build --release`, `cargo test` (self-contained axum mock), `cargo clippy
+--all-targets`, `cargo fmt`. Run: `cargo run --release -p aiperf -- [BASE_URL]
+[MODEL] --concurrency N --requests N --isl N --osl N` (online) or add `--mode
+graph …` (Graph-IR throughput).
