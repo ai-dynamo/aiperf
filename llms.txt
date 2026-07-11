@@ -100,6 +100,12 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — early `Scheduler`
   sketch for credit *policy*. **Superseded by the unified-graph-runtime design's**
   `Workload` / `SlotPool` / `RatePool` / `Gate` seams.
+- `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — source-grounded
+  realization of request-rate multi-turn: a single-loop credit issuer emitting one
+  turn per interval (continuation-priority, NOT conversation arrivals), session +
+  prefill `SlotPool`s, `StopChecker` bounds, segment-pool turn materialization,
+  `Clock::sleep` think-time; two-plane throughput framing (control-loop never the
+  bottleneck, HTTP fans across cores).
 - `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of
   unspec'd bodies; addendum notes metrics, telemetry, and RNG gaps are now covered
   by dedicated specs/addenda.
