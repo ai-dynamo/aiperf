@@ -644,7 +644,7 @@ pub struct TurnToSend {
     /// Endpoint path selected by the endpoint resolver.
     pub endpoint_path: Option<String>,
     /// Endpoint adapter that formatted the request and parses its response.
-    pub endpoint: Arc<dyn Endpoint + Send + Sync>,
+    pub endpoint: Arc<dyn Endpoint>,
     /// Effective endpoint configuration for response parsing and wire lifecycle policy.
     pub endpoint_config: EndpointConfig,
     /// Whether this endpoint returns an SSE stream.

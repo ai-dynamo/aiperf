@@ -81,7 +81,7 @@ pub trait RequestMaterializer: Send + Sync {
 /// Lookup seam for authored per-turn endpoint/dialect overrides.
 pub trait EndpointResolver: Send + Sync {
     /// Resolve an optional authored endpoint name, falling back to the registry default.
-    fn resolve(&self, name: Option<&str>) -> Result<Arc<dyn Endpoint + Send + Sync>>;
+    fn resolve(&self, name: Option<&str>) -> Result<Arc<dyn Endpoint>>;
 }
 
 /// Extensible name-to-endpoint registry containing the endpoint implementations
@@ -89,7 +89,7 @@ pub trait EndpointResolver: Send + Sync {
 #[derive(Clone)]
 pub struct BuiltinEndpointResolver {
     default_name: String,
-    endpoints: HashMap<String, Arc<dyn Endpoint + Send + Sync>>,
+    endpoints: HashMap<String, Arc<dyn Endpoint>>,
 }
 
 impl std::fmt::Debug for BuiltinEndpointResolver {
@@ -189,7 +189,7 @@ impl BuiltinEndpointResolver {
     pub fn register(
         &mut self,
         name: impl Into<String>,
-        endpoint: impl Endpoint + Send + Sync + 'static,
+        endpoint: impl Endpoint + 'static,
     ) -> Result<()> {
         let authored = name.into();
         let normalized = normalize_endpoint_name(&authored);
@@ -215,7 +215,7 @@ impl Default for BuiltinEndpointResolver {
 }
 
 impl EndpointResolver for BuiltinEndpointResolver {
-    fn resolve(&self, name: Option<&str>) -> Result<Arc<dyn Endpoint + Send + Sync>> {
+    fn resolve(&self, name: Option<&str>) -> Result<Arc<dyn Endpoint>> {
         let normalized = name
             .map(normalize_endpoint_name)
             .unwrap_or_else(|| self.default_name.clone());
