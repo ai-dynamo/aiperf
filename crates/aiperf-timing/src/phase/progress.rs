@@ -129,6 +129,10 @@ pub struct PhaseProgressCounters {
     pub final_cancelled_sessions: Option<u64>,
     /// Branch/fan-out work that must drain before completion.
     pub pending_branch_work: u64,
+    /// Session slots explicitly released by force-completion cleanup.
+    pub stuck_session_slots_released: u64,
+    /// Prefill slots explicitly released by force-completion cleanup.
+    pub stuck_prefill_slots_released: u64,
 }
 
 impl PhaseProgressCounters {
@@ -234,17 +238,31 @@ impl PhaseProgress {
         })
     }
 
-    /// Freeze sent counters, then publish the all-sent one-shot event.
-    pub fn mark_sending_complete(&self) {
+    /// Freeze sent counters without publishing the all-sent event.
+    ///
+    /// The runner uses this split operation so it can preserve the required
+    /// lifecycle → freeze → cancel-pending → signal ordering on timeout.
+    pub fn freeze_sent_counts(&self) {
         if !self.inner.sent_frozen.replace(true) {
             let mut counters = self.inner.counters.borrow_mut();
             counters.final_requests_sent = Some(counters.requests_sent);
             counters.final_sent_sessions = Some(counters.sent_sessions);
         }
+    }
+
+    /// Publish the all-sent event after sent counts have been frozen.
+    pub fn signal_all_sent(&self) {
+        debug_assert!(self.inner.sent_frozen.get());
         if !self.inner.all_sent.replace(true) {
             self.inner.sent_notify.notify_waiters();
         }
         self.maybe_signal_all_returned();
+    }
+
+    /// Freeze sent counters, then publish the all-sent one-shot event.
+    pub fn mark_sending_complete(&self) {
+        self.freeze_sent_counts();
+        self.signal_all_sent();
     }
 
     /// Atomically record one terminal callback.
@@ -329,6 +347,17 @@ impl PhaseProgress {
         if !self.inner.all_returned.replace(true) {
             self.inner.returned_notify.notify_waiters();
         }
+    }
+
+    /// Record slots recovered because cancelled work never returned.
+    pub fn record_stuck_slots_released(&self, session: u64, prefill: u64) {
+        let mut counters = self.inner.counters.borrow_mut();
+        counters.stuck_session_slots_released = counters
+            .stuck_session_slots_released
+            .saturating_add(session);
+        counters.stuck_prefill_slots_released = counters
+            .stuck_prefill_slots_released
+            .saturating_add(prefill);
     }
 
     /// Freeze terminal counters so late callbacks cannot alter final stats.

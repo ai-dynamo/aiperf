@@ -15,6 +15,7 @@ mod config;
 mod lifecycle;
 mod observer;
 mod progress;
+mod runner;
 mod stats;
 
 pub use config::{GracePeriod, PhaseConfig, PhaseConfigError, PhaseKind};
@@ -28,5 +29,10 @@ pub use observer::{
 pub use progress::{
     PhaseProgress, PhaseProgressCounters, PhaseProgressError, PhaseReturn, PhaseReturnOutcome,
     PhaseSend, PhaseSendOutcome,
+};
+pub use runner::{
+    ClockPhaseRunner, LocalPhaseFuture, NoopPhaseExecution, NoopPhaseExecutionFactory,
+    PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory, PhaseRunError,
+    PhaseRunner, ReleasedStuckSlots,
 };
 pub use stats::PhaseStats;

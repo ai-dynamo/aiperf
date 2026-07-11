@@ -31,11 +31,13 @@ pub mod user_centric;
 pub use cancellation::{BernoulliFixedDelay, CancellationPolicy, CancellationPolicyError, Phase};
 pub use intervals::{ArrivalPattern, IntervalGenerator, make_interval_generator};
 pub use phase::{
-    ConsolePhaseObserver, GracePeriod, NoopPhaseObserver, PhaseBranchStats, PhaseCompletionReason,
-    PhaseConfig, PhaseConfigError, PhaseEvent, PhaseEventKind, PhaseKind, PhaseLifecycle,
-    PhaseLifecycleError, PhaseLifecycleSnapshot, PhaseObserver, PhaseProgress,
-    PhaseProgressCounters, PhaseProgressError, PhaseReturn, PhaseReturnOutcome, PhaseSend,
-    PhaseSendOutcome, PhaseState, PhaseStats, RecordingPhaseObserver,
+    ClockPhaseRunner, ConsolePhaseObserver, GracePeriod, LocalPhaseFuture, NoopPhaseExecution,
+    NoopPhaseExecutionFactory, NoopPhaseObserver, PhaseBranchStats, PhaseCompletionReason,
+    PhaseConfig, PhaseConfigError, PhaseContext, PhaseEvent, PhaseEventKind, PhaseExecution,
+    PhaseExecutionError, PhaseExecutionFactory, PhaseKind, PhaseLifecycle, PhaseLifecycleError,
+    PhaseLifecycleSnapshot, PhaseObserver, PhaseProgress, PhaseProgressCounters,
+    PhaseProgressError, PhaseReturn, PhaseReturnOutcome, PhaseRunError, PhaseRunner, PhaseSend,
+    PhaseSendOutcome, PhaseState, PhaseStats, RecordingPhaseObserver, ReleasedStuckSlots,
 };
 pub use ramping::{
     ExponentialRamp, LinearRamp, PoissonRamp, RampConfigError, RampDriver, RampHandle,

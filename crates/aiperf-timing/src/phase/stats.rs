@@ -55,6 +55,10 @@ pub struct PhaseStats {
     pub in_flight_prefills: u64,
     /// Pending branch work that gates completion.
     pub pending_branch_work: u64,
+    /// Session slots recovered during force completion.
+    pub stuck_session_slots_released: u64,
+    /// Prefill slots recovered during force completion.
+    pub stuck_prefill_slots_released: u64,
     /// Frozen requests issued at sending completion.
     pub final_requests_sent: Option<u64>,
     /// Frozen requests completed at phase completion.
@@ -114,6 +118,8 @@ impl PhaseStats {
             in_flight_sessions: counters.in_flight_sessions(),
             in_flight_prefills: counters.in_flight_prefills(),
             pending_branch_work: counters.pending_branch_work,
+            stuck_session_slots_released: counters.stuck_session_slots_released,
+            stuck_prefill_slots_released: counters.stuck_prefill_slots_released,
             final_requests_sent: counters.final_requests_sent,
             final_requests_completed: counters.final_requests_completed,
             final_requests_cancelled: counters.final_requests_cancelled,
