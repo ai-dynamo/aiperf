@@ -32,10 +32,10 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, TextIO
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.2.0"
+WORKER_VERSION = "1.2.1"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -671,6 +671,7 @@ async def _dispatch(
 
 def serve() -> int:
     """Serve JSONL requests until an explicit shutdown or stdin EOF."""
+    protocol_stdout = _reserve_protocol_stdout()
     logging.basicConfig(
         level=os.getenv("AIPERF_ACCURACY_WORKER_LOG_LEVEL", "INFO"),
         stream=sys.stderr,
@@ -707,13 +708,29 @@ def serve() -> int:
                     },
                 }
                 shutdown = False
-            sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
-            sys.stdout.flush()
+            protocol_stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
+            protocol_stdout.flush()
             if shutdown:
                 return 0
         return 0
     finally:
         loop.close()
+        protocol_stdout.close()
+
+
+def _reserve_protocol_stdout() -> TextIO:
+    """Keep one private protocol stream and redirect all ambient stdout to logs."""
+    protocol_fd = os.dup(sys.stdout.fileno())
+    protocol_stdout = open(  # noqa: SIM115 - serve() owns this process-lifetime stream
+        protocol_fd,
+        mode="w",
+        buffering=1,
+        encoding=sys.stdout.encoding or "utf-8",
+        errors="backslashreplace",
+        closefd=True,
+    )
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    return protocol_stdout
 
 
 def _canonical_benchmark(authored: str) -> str:

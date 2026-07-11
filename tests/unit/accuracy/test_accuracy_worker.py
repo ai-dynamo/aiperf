@@ -40,6 +40,41 @@ def test_stdio_reserves_stdout_for_correlated_protocol_messages() -> None:
     assert completed.stderr == ""
 
 
+def test_stdio_redirects_python_and_file_descriptor_noise_to_stderr() -> None:
+    script = """
+import os
+from aiperf.accuracy import worker
+
+original_hello = worker.AccuracyWorker.hello
+
+def noisy_hello(self, protocol):
+    print("python-noise", flush=True)
+    os.write(1, b"descriptor-noise\\n")
+    return original_hello(self, protocol)
+
+worker.AccuracyWorker.hello = noisy_hello
+raise SystemExit(worker.serve())
+"""
+    requests = "\n".join(
+        [
+            json.dumps({"id": 1, "op": "hello", "protocol": 1}),
+            json.dumps({"id": 2, "op": "shutdown"}),
+            "",
+        ]
+    )
+    completed = subprocess.run(
+        [sys.executable, "-u", "-c", script],
+        input=requests,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    responses = [json.loads(line) for line in completed.stdout.splitlines()]
+    assert [response["id"] for response in responses] == [1, 2]
+    assert "python-noise" in completed.stderr
+    assert "descriptor-noise" in completed.stderr
+
+
 def test_handshake_reports_source_lock_packages_and_runtime() -> None:
     identity = AccuracyWorker().hello(1)
     lock = Path(worker_module.__file__).resolve().parents[3] / (
