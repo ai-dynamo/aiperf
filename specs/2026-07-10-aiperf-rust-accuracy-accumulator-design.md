@@ -191,3 +191,39 @@ feeds both the performance and accuracy accumulators, runs the dependency-enforc
 analyzer join, and emits the joined result in the unified native-v2 report. Additional
 benchmark/grader implementations remain future extensions behind the built traits;
 energy joins remain absent until telemetry producers exist.
+
+## Addendum — 2026-07-11 (native catalog and normal-pipeline ownership)
+
+The preceding runtime addendum is superseded where it says
+`aiperf::accuracy` dispatches records. A complete read of the inherited Python
+implementation establishes a stricter ownership boundary:
+
+- `dataset/loader/accuracy_dataset_loader.py:1-150` only converts benchmark
+  problems into ordinary `Conversation` / `Turn` values with grading metadata;
+- the unchanged timing, worker, endpoint, and transport pipeline dispatches them;
+- `accuracy/accuracy_record_processor.py:1-147` grades the parsed terminal
+  response downstream; and
+- `accuracy/accuracy_results_processor.py:1-168` plus the normal exporters own
+  aggregation and presentation.
+
+Native Rust now follows that shape. The accuracy-specific
+`AccuracyDispatcher`, `HttpAccuracyDispatcher`, `AccuracyDispatchResult`, and
+manual accuracy run loop have been deleted. `aiperf::accuracy::AccuracyDataset`
+only lowers benchmark problems into the unified content-addressed dataset and
+retains typed correlation/task/ground-truth associations.
+`SingleTurnDatasetWorkload` issues those ordinary conversations through
+`ScheduledRuntime` and the normal `TurnDispatcher` (`TransportSink` online;
+future offline sinks use the same path). The generic `TurnRecordProcessor` hook
+runs after transport measurement and credit return; `AccuracyRecordProcessor`
+implements it to grade responses without holding an inference concurrency slot.
+Performance wall time is bounded by the last transport terminal timestamp, so
+slow grading—especially sandboxed code execution—cannot contaminate throughput
+or latency.
+
+The built catalog is no longer MMLU-Pro-only: `aiperf-accuracy` registers 11
+native benchmarks and 9 native graders, including native symbolic math and
+bubblewrap-isolated LiveCodeBench execution. Official cached dataset providers,
+row-independent benchmark preflight, unified tokenizer/segment lowering,
+typed per-problem native-v2 records, performance joins, console output, and the
+inherited accuracy-summary CSV are wired end to end. Telemetry-backed energy
+joins remain dormant until telemetry producers exist.

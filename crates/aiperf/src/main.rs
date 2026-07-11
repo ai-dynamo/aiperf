@@ -17,7 +17,7 @@
 
 use std::path::PathBuf;
 
-use aiperf::accuracy::{AccuracyWorkload, run_accuracy_online};
+use aiperf::accuracy::{AccuracyDataset, finalize_accuracy_report};
 use aiperf::accuracy_dataset::{AccuracyDatasetRegistry, default_accuracy_cache_root};
 use aiperf::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, parse_sla_filter,
@@ -32,9 +32,10 @@ use aiperf::report::{
 };
 use aiperf::run::{
     run_fixed_schedule_online_with_ancillary, run_paced_adaptive_with_metrics_and_ancillary,
-    run_user_centric_adaptive_online_with_ancillary, run_user_centric_online_with_ancillary,
+    run_single_turn_dataset_online, run_user_centric_adaptive_online_with_ancillary,
+    run_user_centric_online_with_ancillary,
 };
-use aiperf::scheduled::ScheduledRunReport;
+use aiperf::scheduled::{ScheduledRunReport, TurnRecordProcessor};
 use aiperf::user_centric::UserCentricConfig;
 use aiperf::workload::SkeletonWorkload;
 use aiperf_accuracy::{AccuracyRegistry, BenchmarkConfig, JsonDatasetSource};
@@ -45,6 +46,7 @@ use aiperf_dataset::{
     SyntheticDatasetConfig, SyntheticPromptConfig, TextTokenizer, TiktokenEncoding,
     TiktokenTokenizer,
 };
+use aiperf_endpoints::EndpointConfig;
 use aiperf_metrics::{NativeReport, ReportRunInfo, ReportSummary, RunOutcome};
 use aiperf_rng::{RngRoot, SamplingDistribution};
 use aiperf_timing::{ArrivalPattern, StopConfig};
@@ -403,6 +405,14 @@ fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
             "--accuracy-max-tokens must be greater than zero"
         );
     }
+    let benchmark_config = BenchmarkConfig {
+        tasks: cli.accuracy_tasks.clone(),
+        n_shots,
+        enable_cot,
+        max_problems: cli.accuracy_max_problems,
+        max_tokens: cli.accuracy_max_tokens,
+    };
+    registered.validate_config(&benchmark_config)?;
     let concurrency = cli.concurrency.unwrap_or(16);
     anyhow::ensure!(concurrency > 0, "--concurrency must be greater than zero");
 
@@ -440,33 +450,42 @@ fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
         };
         let problems = registered.load_problems(
             &source,
-            &BenchmarkConfig {
-                tasks: cli.accuracy_tasks.clone(),
-                n_shots,
-                enable_cot,
-                max_problems: cli.accuracy_max_problems,
-                max_tokens: cli.accuracy_max_tokens,
-            },
+            &benchmark_config,
             cli.accuracy_system_prompt.as_deref(),
         )?;
         let tokenizer = load_tokenizer(cli.accuracy_tokenizer.as_deref())?;
-        let workload = AccuracyWorkload::from_problems(&model, problems, tokenizer.as_ref())?;
+        let dataset = AccuracyDataset::from_problems(&model, problems, tokenizer.as_ref())?;
         tracing::info!(
-            problems = workload.len(),
+            problems = dataset.len(),
             tokenizer = tokenizer.name(),
-            segments = workload.dataset().segments().len(),
+            segments = dataset.dataset().segments().len(),
             "accuracy dataset materialized"
         );
-        run_accuracy_online(
-            &base_url,
-            &model,
-            benchmark_name,
-            workload,
-            grader,
+        let processor = std::rc::Rc::new(dataset.record_processor(grader));
+        let source: Box<dyn ConversationSource> = Box::new(
+            NativeDatasetConversationSource::sequential_with_endpoint_config(
+                dataset.dataset().as_ref().clone(),
+                model.clone(),
+                cli.accuracy_max_tokens.unwrap_or(2_048),
+                EndpointConfig {
+                    streaming: true,
+                    use_legacy_max_tokens: true,
+                    use_server_token_count: true,
+                    ..EndpointConfig::default()
+                },
+            )?,
+        );
+        let processors: Vec<std::rc::Rc<dyn TurnRecordProcessor>> = vec![processor.clone()];
+        let scheduled = run_single_turn_dataset_online(
+            base_url.clone(),
+            model.clone(),
+            source,
             concurrency,
             cli.http2,
+            processors,
         )
-        .await
+        .await?;
+        finalize_accuracy_report(benchmark_name, &model, scheduled, processor.as_ref())
     })?;
     print_report_table(&report.performance);
     print_accuracy_table(&report.accuracy);

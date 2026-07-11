@@ -27,6 +27,15 @@ pub struct BenchmarkConfig {
 pub trait AccuracyBenchmark {
     /// Stable benchmark name.
     fn name(&self) -> &'static str;
+    /// Validate benchmark-specific selectors before dataset acquisition.
+    ///
+    /// Implementations should reject invalid task names and unsupported knobs
+    /// here when that decision does not depend on dataset rows. The default
+    /// keeps data-defined benchmark plugins possible without adding no-op
+    /// methods to every implementation.
+    fn validate_config(&self, _config: &BenchmarkConfig) -> Result<(), AccuracyError> {
+        Ok(())
+    }
     /// Materialize scored problems from `source` under `config`.
     fn load_problems(
         &self,

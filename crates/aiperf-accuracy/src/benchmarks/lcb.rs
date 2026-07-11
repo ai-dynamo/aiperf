@@ -30,11 +30,7 @@ impl AccuracyBenchmark for LcbCodeGenerationBenchmark {
         "lcb-codegeneration"
     }
 
-    fn load_problems(
-        &self,
-        source: &dyn DatasetSource,
-        config: &BenchmarkConfig,
-    ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+    fn validate_config(&self, config: &BenchmarkConfig) -> Result<(), AccuracyError> {
         if !config.tasks.is_empty() {
             return Err(AccuracyError::UnsupportedConfiguration(
                 "lcb-codegeneration does not support task filtering".to_string(),
@@ -50,6 +46,15 @@ impl AccuracyBenchmark for LcbCodeGenerationBenchmark {
                 "lcb-codegeneration has no separate CoT prompt toggle".to_string(),
             ));
         }
+        Ok(())
+    }
+
+    fn load_problems(
+        &self,
+        source: &dyn DatasetSource,
+        config: &BenchmarkConfig,
+    ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+        self.validate_config(config)?;
         let rows = source.load_rows(DatasetSplit::Test)?;
         let mut problems = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {

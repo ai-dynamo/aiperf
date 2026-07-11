@@ -48,8 +48,9 @@ use crate::metrics::{
 };
 use crate::multiturn::ConversationSource;
 use crate::scheduled::{
-    IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime, TurnDispatcher,
-    Workload, run_scheduled_workload_with_ancillary,
+    IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime,
+    SingleTurnDatasetWorkload, TurnDispatcher, TurnRecordProcessor, Workload,
+    run_scheduled_workload_with_ancillary, run_scheduled_workload_with_processors,
 };
 use crate::scheduler::LocalTaskScheduler;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
@@ -648,6 +649,45 @@ pub async fn run_fixed_schedule_online(
         http2,
         AncillaryTimingConfig::default(),
         0,
+    )
+    .await
+}
+
+/// Run one authored turn per dataset conversation through the ordinary AIPerf
+/// scheduler, transport, observer, metrics, and terminal-processing pipeline.
+///
+/// Accuracy is one consumer of this generic path; the runner has no benchmark,
+/// ground-truth, or grader knowledge.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_single_turn_dataset_online(
+    base_url: String,
+    model: String,
+    conversations: Box<dyn ConversationSource>,
+    concurrency: usize,
+    http2: bool,
+    record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
+) -> anyhow::Result<ScheduledRunReport> {
+    let base_urls = parse_base_urls(&base_url)?;
+    let workload: Rc<dyn Workload> =
+        Rc::new(SingleTurnDatasetWorkload::new(conversations, concurrency)?);
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let start_ns = clock.now_ns();
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
+        clock.clone(),
+        start_ns,
+        &base_urls,
+        model,
+        http2,
+    )?);
+    run_scheduled_workload_with_processors(
+        workload,
+        clock,
+        start_ns,
+        dispatcher,
+        StopConfig::default(),
+        false,
+        ScheduledAncillaryPolicies::default(),
+        record_processors,
     )
     .await
 }

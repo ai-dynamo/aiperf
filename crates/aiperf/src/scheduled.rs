@@ -23,8 +23,8 @@ use std::rc::Rc;
 use aiperf_clock::Clock;
 use aiperf_core::observer::CollectorObserver;
 use aiperf_metrics::{AccumulatorSummary, HttpTrace, MetricsConfig};
-use aiperf_timing::{CancellationPolicy, Phase, StopChecker, StopConfig, UrlSelector};
-use anyhow::Result;
+use aiperf_timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use loadgen_core::sink::RequestObserver;
@@ -36,7 +36,7 @@ use uuid::Uuid;
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };
-use crate::multiturn::{CreditCounter, IssuedCredit, TurnToSend};
+use crate::multiturn::{ConversationSource, CreditCounter, IssuedCredit, TurnToSend};
 use crate::scheduler::{ClockTaskScheduler, LocalTaskScheduler};
 
 /// Boxed `!Send` completion future returned by a workload callback.
@@ -89,6 +89,18 @@ pub trait TurnDispatcher {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome>;
+}
+
+/// Post-dispatch record-processing seam shared by ordinary workloads.
+///
+/// Python AIPerf routes parsed inference records through record processors after
+/// workers return them (`records/record_processor_service.py:218-384`). Native
+/// consumers such as accuracy grading attach here; they never own transport or
+/// issuance policy.
+#[async_trait(?Send)]
+pub trait TurnRecordProcessor {
+    /// Process one terminal turn after normal measurement facts are recorded.
+    async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()>;
 }
 
 /// One turn's expected and observed timing, all offsets relative to run start.
@@ -285,6 +297,9 @@ pub struct ScheduledRuntime {
     policy_phase: Cell<Phase>,
     url_selector: RefCell<Option<Box<dyn UrlSelector>>>,
     session_url_indices: RefCell<FxHashMap<String, u32>>,
+    record_processors: RefCell<Vec<Rc<dyn TurnRecordProcessor>>>,
+    record_processor_tasks: RefCell<Vec<tokio::task::JoinHandle<()>>>,
+    record_processor_errors: RefCell<Vec<String>>,
 }
 
 impl ScheduledRuntime {
@@ -355,6 +370,68 @@ impl ScheduledRuntime {
             policy_phase: Cell::new(Phase::Profiling),
             url_selector: RefCell::new(None),
             session_url_indices: RefCell::new(FxHashMap::default()),
+            record_processors: RefCell::new(Vec::new()),
+            record_processor_tasks: RefCell::new(Vec::new()),
+            record_processor_errors: RefCell::new(Vec::new()),
+        })
+    }
+
+    /// Attach a terminal record processor before workload execution begins.
+    pub fn add_record_processor(&self, processor: Rc<dyn TurnRecordProcessor>) {
+        self.record_processors.borrow_mut().push(processor);
+    }
+
+    fn spawn_record_processing(
+        self: &Rc<Self>,
+        credit: IssuedCredit,
+        outcome: TurnDispatchOutcome,
+        request_id: Uuid,
+        correlation_id: String,
+    ) {
+        let processors = self.record_processors.borrow().clone();
+        if processors.is_empty() {
+            return;
+        }
+        let runtime = self.clone();
+        let task = tokio::task::spawn_local(async move {
+            for processor in processors {
+                if let Err(error) = processor.process(&credit, &outcome).await {
+                    runtime.record_processor_errors.borrow_mut().push(format!(
+                        "request {request_id} correlation {correlation_id:?}: {error:#}"
+                    ));
+                }
+            }
+        });
+        self.record_processor_tasks.borrow_mut().push(task);
+    }
+
+    async fn wait_record_processors(&self) -> Result<()> {
+        let tasks = self
+            .record_processor_tasks
+            .borrow_mut()
+            .drain(..)
+            .collect::<Vec<_>>();
+        for task in tasks {
+            if let Err(error) = task.await {
+                self.record_processor_errors
+                    .borrow_mut()
+                    .push(format!("terminal record processor task failed: {error}"));
+            }
+        }
+        if let Some(error) = self.record_processor_error() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn record_processor_error(&self) -> Option<anyhow::Error> {
+        let errors = self.record_processor_errors.borrow();
+        (!errors.is_empty()).then(|| {
+            anyhow!(
+                "{} terminal record processor error(s): {}",
+                errors.len(),
+                errors.join("; ")
+            )
         })
     }
 
@@ -553,6 +630,8 @@ impl ScheduledRuntime {
                     http: outcome.http,
                 },
             );
+            let processor_credit = credit.clone();
+            let processor_outcome = outcome.clone();
             if credit.is_final_turn() {
                 runtime
                     .session_url_indices
@@ -560,6 +639,15 @@ impl ScheduledRuntime {
                     .remove(&credit.turn.x_correlation_id);
             }
             on_complete(credit, outcome).await;
+            // Return the credit/release admission before downstream processing.
+            // The detached local task also keeps grading latency out of the
+            // scheduler's dispatch-drain boundary and performance wall time.
+            runtime.spawn_record_processing(
+                processor_credit,
+                processor_outcome,
+                turn.uuid,
+                turn.request_correlation_id.clone(),
+            );
         }));
 
         if final_credit {
@@ -646,6 +734,78 @@ pub trait Workload {
     }
 }
 
+/// One-pass, single-turn dataset workload over the ordinary scheduled runtime.
+///
+/// This is not accuracy-specific: it is the dataset equivalent of the synthetic
+/// closed-loop path. The supplied [`ConversationSource`] owns sampling and
+/// endpoint materialization; this workload owns only bounded issuance.
+pub struct SingleTurnDatasetWorkload {
+    conversations: Rc<RefCell<Box<dyn ConversationSource>>>,
+    request_count: usize,
+    slots: Rc<SlotPool>,
+}
+
+impl SingleTurnDatasetWorkload {
+    /// Validate a non-empty single-turn source and concurrency limit.
+    pub fn new(conversations: Box<dyn ConversationSource>, concurrency: usize) -> Result<Self> {
+        if concurrency == 0 {
+            return Err(anyhow!("dataset concurrency must be greater than zero"));
+        }
+        let request_count = conversations.conversations().len();
+        if request_count == 0 {
+            return Err(anyhow!("single-turn dataset has no conversations"));
+        }
+        for conversation in conversations.conversations() {
+            if conversation.turns.len() != 1 {
+                return Err(anyhow!(
+                    "single-turn dataset conversation {:?} has {} turns",
+                    conversation.conversation_id,
+                    conversation.turns.len()
+                ));
+            }
+        }
+        Ok(Self {
+            conversations: Rc::new(RefCell::new(conversations)),
+            request_count,
+            slots: Rc::new(SlotPool::new(concurrency)),
+        })
+    }
+
+    /// Session admission pool used by optional normal-pipeline actuators.
+    pub fn session_slots(&self) -> Rc<SlotPool> {
+        self.slots.clone()
+    }
+}
+
+#[async_trait(?Send)]
+impl Workload for SingleTurnDatasetWorkload {
+    fn name(&self) -> &'static str {
+        "single_turn_dataset"
+    }
+
+    async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
+        for _ in 0..self.request_count {
+            let guard = self.slots.acquire().await;
+            let session = self.conversations.borrow_mut().next(None)?;
+            let turn = session.build_first_turn(Some(1))?;
+            let issued = runtime.issue_turn(
+                turn,
+                runtime.now_ns(),
+                None,
+                Box::new(move |_credit, _outcome| {
+                    Box::pin(async move {
+                        drop(guard);
+                    })
+                }),
+            );
+            if !issued {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Ancillary policies injected into the scheduled issuer.
 pub struct ScheduledAncillaryPolicies {
     /// Per-turn post-send cancellation decisions.
@@ -698,7 +858,35 @@ pub async fn run_scheduled_workload_with_ancillary(
     enforce_stop: bool,
     policies: ScheduledAncillaryPolicies,
 ) -> Result<ScheduledRunReport> {
+    run_scheduled_workload_with_processors(
+        workload,
+        clock,
+        start_ns,
+        dispatcher,
+        stop,
+        enforce_stop,
+        policies,
+        Vec::new(),
+    )
+    .await
+}
+
+/// Drive a prepared workload through the normal pipeline with terminal processors.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_scheduled_workload_with_processors(
+    workload: Rc<dyn Workload>,
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    stop: StopConfig,
+    enforce_stop: bool,
+    policies: ScheduledAncillaryPolicies,
+    record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
+) -> Result<ScheduledRunReport> {
     let runtime = ScheduledRuntime::new(clock, start_ns, dispatcher, stop, enforce_stop);
+    for processor in record_processors {
+        runtime.add_record_processor(processor);
+    }
     runtime.configure_ancillary(
         policies.cancellation_policy,
         policies.url_selector,
@@ -710,8 +898,16 @@ pub async fn run_scheduled_workload_with_ancillary(
     if let Err(error) = workload.execute(runtime.clone()).await {
         runtime.scheduler.cancel_pending();
         runtime.scheduler.wait_idle().await;
+        if let Err(processor_error) = runtime.wait_record_processors().await {
+            tracing::warn!(
+                error = %processor_error,
+                "terminal record processing also failed while draining a workload error"
+            );
+        }
         return Err(error);
     }
     runtime.scheduler.wait_idle().await;
-    Ok(runtime.finish(workload.name(), workload.user_control_snapshot()))
+    let report = runtime.finish(workload.name(), workload.user_control_snapshot());
+    runtime.wait_record_processors().await?;
+    Ok(report)
 }

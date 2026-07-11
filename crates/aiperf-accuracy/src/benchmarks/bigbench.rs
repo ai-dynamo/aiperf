@@ -169,17 +169,22 @@ impl AccuracyBenchmark for BigBenchBenchmark {
         "bigbench"
     }
 
-    fn load_problems(
-        &self,
-        source: &dyn DatasetSource,
-        config: &BenchmarkConfig,
-    ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+    fn validate_config(&self, config: &BenchmarkConfig) -> Result<(), AccuracyError> {
         if config.n_shots > 3 {
             return Err(AccuracyError::UnsupportedConfiguration(format!(
                 "bigbench accepts at most 3 shots, got {}",
                 config.n_shots
             )));
         }
+        resolve_tasks(&config.tasks).map(|_| ())
+    }
+
+    fn load_problems(
+        &self,
+        source: &dyn DatasetSource,
+        config: &BenchmarkConfig,
+    ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+        self.validate_config(config)?;
         let selected = resolve_tasks(&config.tasks)?;
         let infer_single_task = selected.len() == 1;
         let rows = source.load_rows(DatasetSplit::Test)?;

@@ -960,14 +960,28 @@ impl NativeDatasetConversationSource {
         model: impl Into<String>,
         default_output_tokens: usize,
     ) -> Result<Self> {
-        let dataset = Arc::new(dataset);
-        let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
         let endpoint = EndpointConfig {
             streaming: true,
             use_server_token_count: true,
             ..EndpointConfig::default()
-        }
-        .validate()?;
+        };
+        Self::sequential_with_endpoint_config(dataset, model, default_output_tokens, endpoint)
+    }
+
+    /// Construct a sequential source with caller-selected endpoint policy.
+    ///
+    /// Endpoint configuration is part of the ordinary dataset pipeline; callers
+    /// use this for compatibility flags such as legacy chat `max_tokens` without
+    /// rebuilding or intercepting HTTP requests.
+    pub fn sequential_with_endpoint_config(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        endpoint: EndpointConfig,
+    ) -> Result<Self> {
+        let dataset = Arc::new(dataset);
+        let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
+        let endpoint = endpoint.validate()?;
         Self::new(
             dataset,
             Box::new(sampler),

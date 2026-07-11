@@ -41,6 +41,11 @@ pub struct RegisteredBenchmark {
 }
 
 impl RegisteredBenchmark {
+    /// Validates row-independent benchmark settings before remote acquisition.
+    pub fn validate_config(&self, config: &BenchmarkConfig) -> Result<(), AccuracyError> {
+        self.benchmark.validate_config(config)
+    }
+
     /// Materializes problems and injects the user/default system prompt uniformly.
     pub fn load_problems(
         &self,

@@ -43,17 +43,22 @@ impl AccuracyBenchmark for AimeBenchmark {
         "aime"
     }
 
-    fn load_problems(
-        &self,
-        source: &dyn DatasetSource,
-        config: &BenchmarkConfig,
-    ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+    fn validate_config(&self, config: &BenchmarkConfig) -> Result<(), AccuracyError> {
         if config.n_shots > AIME_MAX_N_SHOTS {
             return Err(AccuracyError::UnsupportedConfiguration(format!(
                 "aime accepts at most {AIME_MAX_N_SHOTS} shots, got {}",
                 config.n_shots
             )));
         }
+        Ok(())
+    }
+
+    fn load_problems(
+        &self,
+        source: &dyn DatasetSource,
+        config: &BenchmarkConfig,
+    ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+        self.validate_config(config)?;
         let rows = source.load_rows(DatasetSplit::Train)?;
         let shots = rows
             .iter()

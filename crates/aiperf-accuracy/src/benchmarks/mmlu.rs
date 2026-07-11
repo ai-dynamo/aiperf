@@ -101,11 +101,16 @@ impl AccuracyBenchmark for MmluBenchmark {
         "mmlu"
     }
 
+    fn validate_config(&self, config: &BenchmarkConfig) -> Result<(), AccuracyError> {
+        resolve_subjects(&config.tasks).map(|_| ())
+    }
+
     fn load_problems(
         &self,
         source: &dyn DatasetSource,
         config: &BenchmarkConfig,
     ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+        self.validate_config(config)?;
         let selected = resolve_subjects(&config.tasks)?;
         let dev_rows = source
             .load_rows(DatasetSplit::Dev)

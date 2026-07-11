@@ -79,11 +79,16 @@ impl AccuracyBenchmark for MmluProBenchmark {
         "mmlu-pro"
     }
 
+    fn validate_config(&self, config: &BenchmarkConfig) -> Result<(), AccuracyError> {
+        resolve_tasks(&config.tasks).map(|_| ())
+    }
+
     fn load_problems(
         &self,
         source: &dyn DatasetSource,
         config: &BenchmarkConfig,
     ) -> Result<Vec<BenchmarkProblem>, AccuracyError> {
+        self.validate_config(config)?;
         let validation = parse_questions(source.load_rows(DatasetSplit::Validation)?)?;
         let test = parse_questions(source.load_rows(DatasetSplit::Test)?)?;
         let selected = resolve_tasks(&config.tasks)?;
