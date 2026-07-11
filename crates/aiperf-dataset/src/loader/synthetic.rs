@@ -249,13 +249,13 @@ impl Composer for SyntheticComposer {
                     let mut handles = SmallVec::new();
                     for _ in 0..prompt.batch_size {
                         let generated = generator.generate(input_tokens, &[], 1)?;
-                        let text = if !prefix_pool.is_empty()
-                            && let Ok(prefix) = prefix_rng.choice(&prefix_pool)
-                        {
-                            format!("{prefix} {}", generated.text)
-                        } else {
-                            generated.text
-                        };
+                        let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
+                            .then(|| prefix_rng.choice(&prefix_pool).ok().cloned())
+                            .flatten();
+                        let text = selected_prefix.as_ref().map_or_else(
+                            || generated.text.clone(),
+                            |prefix| format!("{prefix} {}", generated.text),
+                        );
                         let tokens = tokenizer.encode(&text)?;
                         turn.input_tokens = turn
                             .input_tokens
@@ -263,8 +263,21 @@ impl Composer for SyntheticComposer {
                             .ok_or_else(|| {
                                 DatasetError::Validation("input token count overflow".into())
                             })?;
+                        // The full authored text remains one endpoint value, while
+                        // the hidden prefix parent makes reuse visible in the
+                        // content-addressed chain without changing wire shape.
+                        let content_parent = if let Some(prefix) = selected_prefix {
+                            Some(segments.intern_text(
+                                parent,
+                                "user",
+                                Bytes::from(prefix.clone()),
+                                tokenizer.encode(&prefix)?.into_boxed_slice(),
+                            )?)
+                        } else {
+                            parent
+                        };
                         let handle = segments.intern_text(
-                            parent,
+                            content_parent,
                             "user",
                             Bytes::from(text),
                             tokens.into_boxed_slice(),
@@ -686,5 +699,57 @@ mod tests {
         assert_eq!(turn.content[0].handles.len(), 1);
         assert_eq!(turn.content[1].handles.len(), 3);
         assert_eq!(turn.input_tokens, 19);
+    }
+
+    #[tokio::test]
+    async fn reusable_prefix_is_a_shared_parent_of_the_first_turn_only() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(
+            json!({"__aiperf_synthetic": true}),
+        ));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(17)));
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            turns: SamplingDistribution::fixed(2.0).unwrap(),
+            prompts: Some(crate::generator::SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(6.0).unwrap(),
+                batch_size: 1,
+            }),
+            prefixes: SyntheticPrefixConfig {
+                pool_size: Some(1),
+                prefix_tokens: Some(4),
+                ..SyntheticPrefixConfig::default()
+            },
+            ..SyntheticDatasetConfig::default()
+        });
+        let dataset = registry
+            .build_dataset(
+                Some("synthetic"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let conversation = &dataset.conversations()[0];
+        let first = conversation.turns[0].content[0].handles[0];
+        let second = conversation.turns[1].content[0].handles[0];
+        let prefix = dataset.segments().segment(first).unwrap().parent.unwrap();
+        assert_eq!(dataset.segments().segment(second).unwrap().parent, Some(first));
+        let Payload::Text {
+            bytes: prefix_bytes,
+            ..
+        } = dataset.segments().get(prefix).unwrap()
+        else {
+            panic!("synthetic prefix parent must be text");
+        };
+        let Payload::Text {
+            bytes: first_bytes,
+            ..
+        } = dataset.segments().get(first).unwrap()
+        else {
+            panic!("first synthetic prompt must be text");
+        };
+        assert!(first_bytes.starts_with(prefix_bytes));
     }
 }
