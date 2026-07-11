@@ -35,7 +35,7 @@ from types import SimpleNamespace
 from typing import Any
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.1.0"
+WORKER_VERSION = "1.1.1"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -512,6 +512,21 @@ class AccuracyWorker:
         }
 
     async def _load_mmlu_pro(self, config: dict[str, Any]) -> None:
+        # Lighteval 0.13's tasks/tasks/mmlu_pro.py sets `instruction=query`.
+        # prompt_manager.py then removes that instruction from every few-shot
+        # query, yielding empty user turns. Upstream's authored endpoint command
+        # uses `mmlu_pro|0`; fail closed until the pinned evaluator fixes the task.
+        n_shots = config.get("n_shots")
+        if n_shots is None:
+            n_shots = 0
+        if not isinstance(n_shots, int) or isinstance(n_shots, bool):
+            raise ValueError("n_shots must be an integer")
+        if n_shots != 0:
+            raise ValueError(
+                "the pinned Lighteval 0.13.0 MMLU-Pro endpoint task is canonical "
+                "only at n_shots=0; its authored Doc sets instruction equal to the "
+                "full query, so PromptManager strips nonzero-shot example queries"
+            )
         try:
             from lighteval.tasks.lighteval_task import LightevalTask
             from lighteval.tasks.prompt_manager import PromptManager
@@ -520,11 +535,6 @@ class AccuracyWorker:
             raise RuntimeError(
                 "MMLU-Pro requires the pinned Lighteval worker environment"
             ) from error
-        n_shots = config.get("n_shots")
-        if n_shots is None:
-            n_shots = 5
-        if not isinstance(n_shots, int) or not 0 <= n_shots <= 32:
-            raise ValueError("n_shots must be an integer in 0..=32")
         if config.get("enable_cot") is False:
             raise ValueError(
                 "MMLU-Pro's canonical Lighteval task requires its authored "
@@ -559,6 +569,12 @@ class AccuracyWorker:
         for index, doc in enumerate(docs):
             messages = prompt_manager.prepare_prompt_api(doc)
             prompt = prompt_manager.prepare_prompt(doc)
+            if not prompt.strip() or any(
+                not str(message.get("content", "")).strip() for message in messages
+            ):
+                raise RuntimeError(
+                    "pinned Lighteval produced an empty MMLU-Pro prompt message"
+                )
             problem_id = _problem_id("mmlu-pro", index, prompt)
             task_name = category_by_doc_id.get(str(doc.id), "mmlu_pro")
             problems.append(

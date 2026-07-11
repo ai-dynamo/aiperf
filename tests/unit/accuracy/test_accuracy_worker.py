@@ -224,17 +224,17 @@ async def test_mmlu_pro_delegates_prompt_dataset_and_metric_to_lighteval(
 
     class Registry:
         def __init__(self, *, tasks: str) -> None:
-            assert tasks == "mmlu_pro|5"
+            assert tasks == "mmlu_pro|0"
 
         def load_tasks(self) -> dict[str, Any]:
-            return {"mmlu_pro|5": task}
+            return {"mmlu_pro|0": task}
 
     class LightevalTask:
         @staticmethod
         def load_datasets(
             tasks: dict[str, Any], dataset_loading_processes: int
         ) -> None:
-            assert tasks == {"mmlu_pro|5": task}
+            assert tasks == {"mmlu_pro|0": task}
             assert dataset_loading_processes == 1
 
     class PromptManager:
@@ -276,6 +276,13 @@ async def test_mmlu_pro_delegates_prompt_dataset_and_metric_to_lighteval(
     grade = await worker._grade_one(problem, "The answer is (B)")
     assert grade["correct"] is True
     assert grade["confidence"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_mmlu_pro_rejects_lighteval_broken_nonzero_shot_prompts() -> None:
+    worker = AccuracyWorker()
+    with pytest.raises(ValueError, match="canonical only at n_shots=0"):
+        await worker._load_mmlu_pro({"n_shots": 5})
 
 
 @pytest.mark.asyncio
