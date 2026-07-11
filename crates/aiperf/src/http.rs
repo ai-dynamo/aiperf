@@ -9,6 +9,7 @@
 //! admit/token times are stamped from the same clock origin the run loop uses for
 //! arrival, so all events share one timeline.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -37,6 +38,10 @@ pub struct HttpRequest {
     pub max_output_tokens: usize,
     /// Prompt text placed on the wire.
     pub prompt_text: Option<String>,
+    /// Optional session correlation id forwarded to the transport.
+    pub x_correlation_id: Option<String>,
+    /// Whether this request is the final turn for its correlated session.
+    pub is_final_turn: bool,
 }
 
 impl Dispatchable for HttpRequest {
@@ -95,26 +100,42 @@ impl TransportSink {
     fn ms(&self, ns: i64) -> f64 {
         (ns - self.start_ns) as f64 / 1_000_000.0
     }
-}
 
-#[async_trait(?Send)]
-impl RequestSink<HttpRequest> for TransportSink {
-    async fn dispatch(&self, req: HttpRequest, obs: &dyn RequestObserver) -> Result<()> {
-        let uuid = req.uuid;
+    /// Dispatch `req`, invoking `on_first_token` once when the transport observes
+    /// TTFT. Request-rate scheduling uses this to release prefill capacity before
+    /// the full stream reaches terminal.
+    pub async fn dispatch_with_hooks(
+        &self,
+        req: HttpRequest,
+        obs: &dyn RequestObserver,
+        mut on_first_token: impl FnMut(i64),
+    ) -> Result<()> {
+        let HttpRequest {
+            uuid,
+            max_output_tokens,
+            prompt_text,
+            x_correlation_id,
+            is_final_turn,
+            ..
+        } = req;
         // No scheduler admission on the HTTP path; admit == dispatch time.
         let admit_ms = self.ms(self.clock.now_ns());
 
-        let prompt = req.prompt_text.unwrap_or_default();
-        let payload = chat_request_body(
-            &self.model,
-            &[("user", prompt.as_str())],
-            req.max_output_tokens,
-        );
+        let prompt = prompt_text.unwrap_or_default();
+        let payload =
+            chat_request_body(&self.model, &[("user", prompt.as_str())], max_output_tokens);
 
-        let cfg = RequestConfig::new(&self.url);
+        let mut cfg = RequestConfig::new(&self.url);
+        cfg.correlation_id = x_correlation_id;
+        cfg.is_final_turn = is_final_turn;
+        let first_token_released = Cell::new(false);
         let rec = self
             .transport
-            .send_request(&cfg, payload, true, |_ttft_ns| {})
+            .send_request(&cfg, payload, true, |ttft_ns| {
+                if !first_token_released.replace(true) {
+                    on_first_token(ttft_ns);
+                }
+            })
             .await;
 
         // A transport-level failure is surfaced to the caller (which records the
@@ -150,5 +171,69 @@ impl RequestSink<HttpRequest> for TransportSink {
         };
         obs.on_terminal(uuid, terminal);
         Ok(())
+    }
+}
+
+#[async_trait(?Send)]
+impl RequestSink<HttpRequest> for TransportSink {
+    async fn dispatch(&self, req: HttpRequest, obs: &dyn RequestObserver) -> Result<()> {
+        self.dispatch_with_hooks(req, obs, |_ttft_ns| {}).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+    use aiperf_clock::RealClock;
+
+    struct NullObserver;
+
+    impl RequestObserver for NullObserver {
+        fn on_arrival(
+            &self,
+            _uuid: Uuid,
+            _arrival_ms: f64,
+            _input_length: usize,
+            _requested_output_length: usize,
+        ) {
+        }
+
+        fn on_admit(&self, _uuid: Uuid, _admit_ms: f64, _reused_input_tokens: usize) {}
+
+        fn on_token(&self, _uuid: Uuid, _at_ms: f64) {}
+
+        fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {}
+    }
+
+    #[tokio::test]
+    async fn dispatch_invokes_first_token_hook_once() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+                let clock = RealClock::new();
+                let sink = TransportSink::new(clock.clone(), clock.now_ns(), &base, "m", false);
+                let hook_calls = Rc::new(Cell::new(0));
+                let hook_calls_for_hook = hook_calls.clone();
+                let req = HttpRequest {
+                    uuid: Uuid::new_v4(),
+                    input_length: 4,
+                    max_output_tokens: 2,
+                    prompt_text: Some("hello world".to_string()),
+                    x_correlation_id: None,
+                    is_final_turn: true,
+                };
+
+                sink.dispatch_with_hooks(req, &NullObserver, |_ttft_ns| {
+                    hook_calls_for_hook.set(hook_calls_for_hook.get() + 1);
+                })
+                .await
+                .unwrap();
+
+                assert_eq!(hook_calls.get(), 1);
+            })
+            .await;
     }
 }

@@ -35,12 +35,16 @@ impl SkeletonWorkload {
             input_length: self.input_tokens,
             max_output_tokens: self.output_tokens,
             prompt_text: Some(vec!["lorem"; self.input_tokens].join(" ")),
+            x_correlation_id: None,
+            is_final_turn: true,
         }
     }
 
     /// Materialize `num_requests` requests at once (used by tests).
     pub fn generate(&self) -> Vec<HttpRequest> {
-        (0..self.num_requests).map(|_| self.make_request()).collect()
+        (0..self.num_requests)
+            .map(|_| self.make_request())
+            .collect()
     }
 }
 
