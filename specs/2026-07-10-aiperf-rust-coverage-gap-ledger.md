@@ -428,3 +428,16 @@ sixth body — they are superseded by the graph-IR dataflow port.) Keep the
 presentation plane thin (console + progress + tracker math in core;
 API and plot renderer deferred/side-carred). The two decisions that most shape scope
 are **BO-native-vs-shell-out** and **the run-isolation primitive** for sweeps.
+
+## Addendum — 2026-07-11
+
+Several gaps called out in this ledger have since been covered by dedicated specs.
+The metrics accumulator and metric-catalog specs cover the sweep-line/columnar metric
+engine. The telemetry accumulators spec covers GPU final-scrape handling, server
+metrics fallback/auto-disable behavior, histogram percentiles, and network-RTT
+calibration; where its 2026-07-10 addendum replaces scrape-then-reconstruct with
+phase-boundary snapshots, that addendum is authoritative.
+
+The RNG open question is also resolved by the RNG derive-system spec: there is no
+cross-language byte-parity requirement, and native Rust seed derivation is locked to
+BLAKE3-derived order-independent seeds rather than Python SHA-256 parity.

@@ -342,3 +342,19 @@ supplies the simulated hardware/model when offline.
    wiring `on_first_token` (graph gating depends on a real first-token signal).
 4. `max_sim_time_ms` soft-cap: preserve as a driver-side guard or an engine
    `is_idle`-adjacent state? Recommend driver-side so the engine stays pure.
+
+## Addendum — 2026-07-11
+
+The `lib/aiperf` + dynamo `lib/mocker` framing above describes the historical
+engine-boundary design lineage, not the current standalone native-Rust workspace.
+Current AIPerf lives under `crates/` and has no direct dynamo dependency. The realized
+seams are `aiperf-clock::Clock` and `loadgen-core::{RequestSink<R>, RequestObserver,
+Dispatchable}`; the OFFLINE-mock steppable engine remains a design target, but it must
+be wired through those current seams rather than through the `lib/aiperf` /
+`lib/mocker` module names used here.
+
+The PR2.5-era gap about the online path using a separate reqwest/`Instant` stack is
+closed in the current workspace: both the CLI online path and graph benchmark use the
+Clock-injected `aiperf-transport` hyper client. Any future implementation work from
+this spec should translate the concepts to the standalone crate topology before
+changing code.

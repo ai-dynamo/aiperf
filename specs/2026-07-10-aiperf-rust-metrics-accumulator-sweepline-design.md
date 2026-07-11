@@ -541,3 +541,16 @@ text — keep them.
 4. **Catalog encoding** — a `const` array of `MetricSpec` vs a build-time macro. Lean
    `const` array + a `#[test]` that asserts the toposort is acyclic and tier-valid
    (the port's equivalent of Python's import-time fail-fast).
+
+## Addendum — 2026-07-11
+
+The crate dependency sentence that included `blake3` for categorical interning is
+superseded. Metric categorical interning is dense first-appearance assignment via a
+hash map such as `rustc-hash::FxHashMap` plus a reverse vector; it is not content
+addressing and does not need BLAKE3. BLAKE3 remains relevant to segment content hashes
+and the RNG seed-derivation design, not to metric category codes.
+
+`aiperf-metrics` should remain the core metrics engine/seam. Telemetry domains reuse
+that accumulator/reporting seam and may contribute side-channel accumulators or
+summaries, but the core metrics crate must not depend on telemetry-specific crates or
+create a dependency cycle.

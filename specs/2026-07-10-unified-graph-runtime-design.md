@@ -436,3 +436,17 @@ ONLINE-MOCK are already one code path (a URL apart). OFFLINE-MOCK needs the
 exist in dynamo's runtimes. The shipped graph-offline `SteppableReplay` was the right
 subset for one feature; Level B is the superset that makes *every* command work
 offline with aiperf's report.
+
+## Addendum — 2026-07-11
+
+The trait inventory's `IdFactory / Rng` row is superseded where it says
+`SHA-256-seeded`. The accepted native Rust RNG design uses BLAKE3-derived
+order-independent seeds and explicitly rejects cross-language byte parity with
+Python's RNG substrate.
+
+The `Backend` / `ResponseSink` vocabulary in this design remains useful for the
+north-star explanation, but the current built workspace exposes the dispatch seam as
+`loadgen-core::{RequestSink<R>, RequestObserver, Dispatchable}` with time supplied by
+`aiperf-clock::Clock`. When implementing against today's crates, translate the
+concepts to those concrete trait names and keep virtual-time controls on `SimClock`
+instead of adding them to the `Clock` trait.

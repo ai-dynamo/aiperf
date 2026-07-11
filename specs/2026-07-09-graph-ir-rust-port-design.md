@@ -294,3 +294,17 @@ aiperf-graph-rs/                 # standalone Cargo workspace
   drop-in for the live Python runtime).
 - Windows/macOS specifics, ZMQ, HTTP, tokenizers, metrics, exporters.
 - Porting the parse/build plane, the timing strategy, or worker materialization.
+
+## Addendum — 2026-07-11
+
+The original standalone/offline-only deliverable shape is superseded by the native
+Rust workspace. Graph-IR is now partly realized in `crates/aiperf-graph`, which runs
+on tokio `current_thread` runtimes with `LocalSet` and uses the shared `drive_sim` /
+`drive_real` runtime split. The graph benchmark also has a live HTTP dispatch path
+through `aiperf-transport`; it is no longer solely a deterministic in-process mock
+harness.
+
+The byte-exact dataflow and deterministic virtual-clock goals still matter for graph
+logic, but new work should preserve the current `SimClock` + `LocalSet` architecture
+and the transport-backed benchmark path instead of reintroducing a separate custom
+FIFO executor or a detached Cargo workspace.

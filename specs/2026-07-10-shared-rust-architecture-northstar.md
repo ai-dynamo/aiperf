@@ -317,3 +317,19 @@ A design is "contract-clean" iff:
    `RealClock`/`VirtualClock` swapped, unchanged. (Orthogonality holds.)
 4. `dynamo-engine` has zero `aiperf-*` dependencies and `aiperf-workload` has
    zero `dynamo-*` dependencies. (Only the bin bridges.)
+
+## Addendum — 2026-07-11
+
+The `Backend`, `ResponseSink`, `Harness`, and contract-crate vocabulary in the body
+above is north-star architecture language, not the current Rust workspace API. The
+built seam today is `aiperf-clock::Clock` plus `loadgen-core::{RequestSink<R>,
+RequestObserver, Dispatchable}`. Implementations such as the CLI online path and the
+graph benchmark dispatch through request sinks; they do not implement the `Backend` /
+`ResponseSink` traits sketched here.
+
+Likewise, virtual-time controls are not methods on the `Clock` trait in the current
+code. `Clock` exposes `now_ns`, `sleep`, and `is_virtual`; DES controls such as
+`next_event_time` and `advance_to` are inherent `SimClock` methods so real clocks do
+not carry no-op virtual APIs. Treat this spec as the historical north-star rationale;
+use `CLAUDE.md`, `llms.txt`, `crates/aiperf-clock`, and `crates/loadgen-core` for the
+current symbol names.

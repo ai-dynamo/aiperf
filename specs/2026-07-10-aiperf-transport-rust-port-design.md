@@ -328,3 +328,20 @@ OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 - **h2 request-sent signal for cancellation:** the "body fully sent" point
   differs on h2; the cancellation timer keys off the body-wrapper completion in
   both h1 and h2, so it stays well-defined.
+
+## Addendum — 2026-07-11
+
+Several sections above are design targets rather than guarantees of the current
+`aiperf-transport` implementation. In particular, cancellation is currently modeled
+by racing the dispatch future with the configured timer; the Python-exact "start the
+cancel timer only after the outbound body is fully sent" behavior remains a target.
+HTTP/2 support exists, including h2c prior knowledge, but the spec's multiplexing and
+connection-reuse semantics overstate what the current `HttpTransport` facade exposes.
+The aiohttp-style trace field list is likewise aspirational until the trace model and
+writers contain every advertised field.
+
+The current built path is still the single Clock-injected hyper stack used by both the
+CLI online path and graph benchmark. Avoid reading any remaining reqwest-era or
+`Instant` wording in this document as current implementation truth; use
+`crates/aiperf-transport`, `crates/aiperf/src/http.rs`, and `loadgen-core` as the
+authoritative code surfaces.

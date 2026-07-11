@@ -167,3 +167,13 @@ toposort and removes a whole class of "works by luck of insertion order" bugs.
 Net: accuracy stops being a bolted-on side pipeline and becomes one more accumulator
 the analyzers compose — the same shape as energy, and the precondition for every
 quality×perf×energy join.
+
+## Addendum — 2026-07-11
+
+The statement that the Python `accuracy_results` analyzer is a pure
+`NotImplementedError` stub is stale. The inherited Python tree now has concrete
+accuracy result processing and metric types. The architectural problem this spec
+addresses still stands for the native Rust rewrite: accuracy should become a
+first-class accumulator/analyzer integrated with phase windows, joins, and the main
+reporting pipeline rather than remaining a side pipeline with fragile positional
+association.

@@ -40,12 +40,13 @@ Thread-per-core, `Rc`/`RefCell`, `!Send`, `spawn_local` on the hot path.
 |---|---|---|
 | `aiperf-clock` | the time seam: `Clock` trait, `SimClock` (int-ns DES heap, `(at_ns, seq_no)` tie-break), `RealClock` (`timerfd`/`AsyncFd`) | `src/clock.rs`, `src/sim_clock.rs`, `src/real_clock.rs` |
 | `loadgen-core` | the dispatch/measure seam + report: `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `TraceCollector`, `TraceSimulationReport` | `src/sink.rs`, `src/collector.rs` |
-| `aiperf-core` | the online HTTP stack (reqwest + `Instant`, **not** `Clock`): streaming chat, SSE parse, authoritative usage counts, `reconcile_output_times`, wire trace | `src/http_sink.rs`, `src/observer.rs`, `src/sse.rs`, `src/wire.rs` |
+| `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-graph` | the Graph-IR dataflow engine: content-addressed segments, splice materialization, firing-gate executor, DES `drive_sim`/`drive_real`, throughput benches | `src/runtime.rs`, `src/executor.rs`, `src/segment.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
 | `aiperf` | the CLI binary: `--mode online` (default) and `--mode graph`, mimalloc, reporting | `src/main.rs`, `src/run.rs`, `src/workload.rs`, `src/report.rs` |
 
-Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`}; `aiperf-graph` → {`aiperf-core`,
+Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`, `aiperf-transport`,
+`aiperf-clock`, `loadgen-core`}; `aiperf-graph` → {`aiperf-core`,
 `aiperf-transport`, `aiperf-clock`, `loadgen-core`}; `aiperf-core` →
 `loadgen-core`; `aiperf-transport` → `aiperf-clock`.
 
@@ -55,12 +56,13 @@ Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`}; `aiperf-graph` → {`aiperf-
   (min-heap, `(at_ns, seq_no)`, `advance_to`) + `aiperf-graph/src/runtime.rs`
   (`drive_sim` idle-pump).
 - **How is a request dispatched + measured?** `loadgen-core/src/sink.rs` (traits)
-  → `aiperf-core/src/http_sink.rs` (`HttpSink::dispatch`) →
+  → `aiperf/src/http.rs` (`TransportSink`) →
   `aiperf-core/src/observer.rs` (`CollectorObserver`).
 - **Where do TTFT/ITL/e2e/throughput/goodput come from?**
   `loadgen-core/src/collector.rs` (`TraceCollector`, `Trace*Stats`).
-- **Why are my token counts "wrong"?** `aiperf-core/src/observer.rs`
-  (`reconcile_output_times`; authoritative `usage.completion_tokens`).
+- **Where are streamed chunks and usage parsed?** `aiperf-core/src/sse.rs`
+  (`ChatChunk`, `Usage`) + `aiperf-core/src/observer.rs` (delta-token recorder).
+  Usage reconciliation to authoritative token counts is not yet reimplemented.
 - **How does the online loop work?** `aiperf/src/run.rs` (naive `Semaphore`
   closed-loop — scheduling *policy* is designed but unbuilt).
 - **How does graph mode hit >1M req/s?** `aiperf-graph/src/transport_bench.rs`
@@ -74,44 +76,45 @@ Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`}; `aiperf-graph` → {`aiperf-
 Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/README.md).
 
 - `specs/2026-07-10-aiperf-rust-port-exact-vs-redo-ledger.md` — **read first**:
-  scope rulings + the credit-policy trap + the three-modes framing.
+  scope rulings + the credit-policy trap + the three-modes framing. Addendum:
+  online/offline parity is shared code path + report schema, not byte-identical values.
 - `specs/2026-07-10-shared-rust-architecture-northstar.md` — the target
   abstraction (aspirational vocabulary).
 - `specs/2026-07-10-steppable-clock-injected-engine-design.md` — the `{clock}`
-  seam + OFFLINE-mock steppable engine (the missing third mode).
+  seam + OFFLINE-mock steppable engine (the missing third mode); its `lib/aiperf`
+  / `lib/mocker` framing is historical lineage.
 - `specs/2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected
   hyper transport (→ `aiperf-transport`).
 - `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — one
-  content-addressed store for datasets + graph (designed).
+  content-addressed store for datasets + graph (designed); addendum preserves raw
+  payload/tool/header fields, audio duration, context mode, and DAG metadata.
 - `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:
-  every load mode (rate/concurrency/user-centric/fixed-schedule/adaptive/DAG)
-  reduces to one dispatch verb on the clock-scheduled graph executor; strategies
-  become `Workload` schedule generators. 28 seams as traits; deletes
-  `BranchOrchestrator` + most of `CreditCounter`; specs the OFFLINE dynosim path.
-  Grounded in a line-by-line read of all 37 `timing/` files.
-- `specs/2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — the `Scheduler`
-  that restores credit *policy*. **Superseded by the unified-graph-runtime design.**
-- `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of the
-  five large unspec'd bodies (sweep-line metrics + columnar accumulator, endpoint/
-  exporter zoo, config-v2 algorithms, timing depth, telemetry) + scope decisions.
+  every load mode reduces to one dispatch verb on the clock-scheduled graph
+  executor; strategies become `Workload` schedule generators. Supersedes the
+  scheduling sketch; addendum maps old RNG wording to BLAKE3 and translates
+  north-star seam names to current `RequestSink` / `RequestObserver` symbols.
+- `specs/2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — early `Scheduler`
+  sketch for credit *policy*. **Superseded by the unified-graph-runtime design's**
+  `Workload` / `SlotPool` / `RatePool` / `Gate` seams.
+- `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of
+  unspec'd bodies; addendum notes metrics, telemetry, and RNG gaps are now covered
+  by dedicated specs/addenda.
 - `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — accuracy as an
-  accumulator + analyzer pair (designed).
+  accumulator + analyzer pair (designed); addendum updates stale Python-stub wording.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — the
   **new-code** metrics engine: `aiperf-metrics` leaf crate (columnar accumulator +
-  sweep-line time-weighted curves + percentile/derived kernels + phase windowing +
-  genai-perf `Reporter`). Carries the scars (sweep tie-break/FP-snap, decode `−1`,
-  ICL `nextafter`, ddof split, `adj_*` `+inf`/nearest, phase-tag mask), deletes the
-  ZMQ/plugin/dual-path complexity; realizes the unified-runtime `Collector`/`Reporter`
-  seams. Designed, not built.
+  sweep-line curves + percentile/derived kernels + phase windowing + genai-perf
+  `Reporter`). Addendum: categorical interning is dense `FxHashMap`/reverse-vector,
+  not BLAKE3; telemetry reuses the metrics seam without inverting dependencies.
 - `specs/2026-07-10-aiperf-rust-metric-catalog-appendix.md` — the ~120-metric
   `MetricSpec` catalog over the engine above (tag/unit/type/flags/formula per metric +
   the per-metric scars: ITL `osl<2`, TTFO first-non-reasoning, osl-mismatch `min()` cap,
   absent-vs-0, zero-error trap, injected-metric pattern). Appendix to the metrics spec.
 - `specs/2026-07-10-aiperf-rust-telemetry-accumulators-design.md` — GPU / server-metrics
-  / network-RTT as side-channel `Accumulator`s: shared counter-delta engine (baseline +
-  reset-clamp), `FINAL_SCRAPE_GRACE_NS`, DCGM table + efficiency rollups, server routing/
-  fallback/auto-disable SM + vLLM/SGLang atlas, the polynomial histogram estimator
-  (arXiv 2504.00001), TCP-connect RTT calibration. Does NOT port the ZMQ NaN-taint.
+  / network-RTT as side-channel accumulators reusing the metrics seam: DCGM fields,
+  server fallback/auto-disable, histogram estimator, TCP-connect RTT. Addenda: exact
+  phase-boundary snapshots supersede scrape reconstruction; telemetry must not make
+  the core metrics engine depend on telemetry collectors.
 - `specs/2026-07-10-aiperf-rust-rng-derive-system-design.md` — the hash-derived
   RNG substrate: `blake3(f"{root}:{id}")[:8]`→u64 order-independent seed derivation
   + `HashIdRandomGenerator` (per-`(trace_id, hash_id)` reseed) + `RandomGenerator`
@@ -120,7 +123,8 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   reproducibility + order-independence (lock-free per-thread, alloc-free reseed).
   New leaf crate `aiperf-rng` (designed, not built).
 - `specs/2026-07-09-graph-ir-rust-port-design.md` — byte-exact Graph-IR port
-  (partly built in `aiperf-graph`).
+  (partly built in `aiperf-graph`); addendum supersedes standalone/offline-only
+  framing with the current `LocalSet` + `drive_sim`/`drive_real` + HTTP-dispatch path.
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).

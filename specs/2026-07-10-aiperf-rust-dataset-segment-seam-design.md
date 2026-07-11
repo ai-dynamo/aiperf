@@ -245,3 +245,20 @@ not positionally.
    splice into a pre-serialized body without a full parse — port the Python
    `build_request_body_handles(overrides_inner)` approach
    (`graph_segment_unified_store.py:497`).
+
+## Addendum — 2026-07-11
+
+The `Turn` / `Conversation` sketch intentionally shows the storage seam, but it omits
+several Python dataset fields that affect dispatch, metrics, or context
+reconstruction and therefore must be accounted for before implementation. The Rust
+loader/model design must carry or deliberately lower: raw request payload/message
+forms (`raw_payload`, `raw_messages`), raw tool definitions and tool-walk metadata,
+per-turn extra headers/body/request parameters, audio duration, context-mode fields,
+and endpoint/model overrides that influence wire formatting.
+
+For graph/agentic inputs, keep the DAG metadata needed by scheduling and reporting:
+branch ids, root/parent conversation ids, agent depth, fork/branch projections such as
+`has_forks`, and any fields used to rebuild predecessor context. These can still be
+stored as content-addressed handles where appropriate, but dropping them from the
+schema would silently break dispatch parity, ASR/accuracy metrics, or replay/context
+reconstruction.

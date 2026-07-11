@@ -418,3 +418,12 @@ metrics-engine spec's **phase-tag-authoritative mask for request records stays c
 (records ARE phase-tagged at dispatch; masking by the tag is exact and simplest). Only
 *telemetry's* time-based attribution moves to boundary snapshots — because telemetry samples,
 unlike request records, are not phase-tagged at their source.
+
+## Addendum — 2026-07-11
+
+Telemetry reuses the metrics seam; it does not make the core `aiperf-metrics` engine
+depend on telemetry domains. GPU, server-metrics, and network-RTT implementations may
+live in telemetry-specific crates or modules that feed accumulator summaries through
+the shared traits. Keep the dependency direction from runtime/telemetry producers
+toward the metrics/reporting seam, never from the core metrics engine back into
+telemetry-specific collectors.

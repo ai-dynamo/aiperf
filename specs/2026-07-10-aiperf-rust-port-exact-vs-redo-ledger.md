@@ -211,3 +211,23 @@ hacks); and consciously **re-design three things Python retrofitted badly** —
 phase-scoped metrics, config ergonomics, and scheduling policy. The `ajc/rust`
 spike is ~80% aligned; its main gaps are the OFFLINE co-sim sink, phase-first-class
 metrics, and re-surfacing credit *policy* as explicit logic (§5).
+
+## Addendum — 2026-07-11
+
+The verification paragraph claiming OFFLINE-MOCK should reproduce ONLINE byte-for-byte
+on metric values is superseded by the unified-runtime design. The current contract is
+code-path and report-schema parity: online-real, online-mock, and offline-mock should
+exercise the same workload/gate/slot/collector/exporter code where possible and emit
+the same report schema, but simulated and real transports are not expected to produce
+byte-identical metric values.
+
+The `SchedulingPolicy` module wording is also superseded by the later unified graph
+runtime design. The preserved credit-policy semantics should surface through the
+`Workload`, `SlotPool`, `RatePool`, and `Gate` seams on the graph/runtime executor, not
+as a separate bespoke scheduler module unless a future design explicitly reintroduces
+one.
+
+The stale spike-era CLI/config notes (`--url`, hand-rolled argv scans, and
+`GRAPH_HTTP2`) should be read as historical cautions. The current binary uses `clap`
+derive and structured arguments; future config work should preserve Python's validated
+configuration semantics while using Rust `clap`/`serde` mechanisms.
