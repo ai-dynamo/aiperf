@@ -24,15 +24,19 @@ fn first_token_ns(rec: &aiperf_transport::models::RequestRecord) -> Option<i64> 
         if d == "[DONE]" {
             continue;
         }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(d) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(d) else {
+            continue;
+        };
         let choices = v.get("choices").and_then(|c| c.as_array());
         let has_token = choices
             .and_then(|c| c.first())
             .map(|c| {
                 let delta = &c["delta"];
                 let content = delta.get("content").and_then(|x| x.as_str()).unwrap_or("");
-                let reasoning =
-                    delta.get("reasoning_content").and_then(|x| x.as_str()).unwrap_or("");
+                let reasoning = delta
+                    .get("reasoning_content")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("");
                 !content.is_empty() || !reasoning.is_empty()
             })
             .unwrap_or(false);

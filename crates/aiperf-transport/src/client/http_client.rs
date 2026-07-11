@@ -338,8 +338,12 @@ impl HttpClient {
 
         // This lean path discards the send-complete timing, so the TimedBody
         // cell is write-only (never read back) — a throwaway.
-        let req =
-            self.build_request(url, headers, body, std::rc::Rc::new(std::cell::Cell::new(None)))?;
+        let req = self.build_request(
+            url,
+            headers,
+            body,
+            std::rc::Rc::new(std::cell::Cell::new(None)),
+        )?;
 
         let resp = sender.send(req).await?;
         let code = resp.status().as_u16();

@@ -249,13 +249,7 @@ impl<M: WireMessage> TraceExecutor<M> {
         Ok(())
     }
 
-    fn finalize_node(
-        &self,
-        node_id: &str,
-        node: &LlmNode,
-        ctx: &Rc<TraceContext>,
-        success: bool,
-    ) {
+    fn finalize_node(&self, node_id: &str, node: &LlmNode, ctx: &Rc<TraceContext>, success: bool) {
         ctx.node_finish_wall_us
             .borrow_mut()
             .insert(node_id.to_string(), self.loop_wall_us());

@@ -38,7 +38,13 @@ pub async fn run(
     let ms = |ns: i64| (ns - start_ns) as f64 / 1_000_000.0;
 
     let obs = Arc::new(CollectorObserver::new(false));
-    let sink = Rc::new(TransportSink::new(clock.clone(), start_ns, &base_url, model, false));
+    let sink = Rc::new(TransportSink::new(
+        clock.clone(),
+        start_ns,
+        &base_url,
+        model,
+        false,
+    ));
     let sem = Arc::new(Semaphore::new(concurrency.max(1)));
 
     let mut handles = Vec::new();

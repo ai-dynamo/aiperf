@@ -51,9 +51,14 @@ fn env_filter() -> EnvFilter {
         // Fall back to RUST_LOG, then default to `info`.
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     };
-    ["h2=error", "hyper=error", "hyper_util=error", "rustls=error"]
-        .into_iter()
-        .fold(base, |f, d| f.add_directive(d.parse().unwrap()))
+    [
+        "h2=error",
+        "hyper=error",
+        "hyper_util=error",
+        "rustls=error",
+    ]
+    .into_iter()
+    .fold(base, |f, d| f.add_directive(d.parse().unwrap()))
 }
 
 /// Initialize the global logger. Idempotent; safe to call more than once.

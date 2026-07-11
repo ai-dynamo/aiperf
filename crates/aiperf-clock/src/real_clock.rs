@@ -120,8 +120,8 @@ async fn timerfd_sleep_ns(duration_ns: i64) -> std::io::Result<()> {
                 Ok(())
             }
         }) {
-            Ok(Ok(())) => return Ok(()), // timer expired: the sleep is done
-            Ok(Err(e)) => return Err(e), // genuine read error → fall back
+            Ok(Ok(())) => return Ok(()),   // timer expired: the sleep is done
+            Ok(Err(e)) => return Err(e),   // genuine read error → fall back
             Err(_would_block) => continue, // not ready yet: re-arm the readiness wait
         }
     }
