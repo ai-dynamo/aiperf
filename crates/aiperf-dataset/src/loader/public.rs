@@ -282,7 +282,12 @@ impl Composer for ShareGptComposer {
                     valid = false;
                     break;
                 }
-                prepared.push((prompt, prompt_tokens, completion_tokens.len() as u32));
+                let completion_tokens = u32::try_from(completion_tokens.len()).map_err(|_| {
+                    DatasetError::Validation(
+                        "ShareGPT completion length exceeds the u32 request limit".into(),
+                    )
+                })?;
+                prepared.push((prompt, prompt_tokens, completion_tokens));
             }
             if !valid || prepared.is_empty() {
                 continue;
@@ -789,6 +794,9 @@ async fn load_hugging_face_rows(
             values.push(value);
         }
         offset += rows.len();
+    }
+    if let Some(cap) = max_rows {
+        values.truncate(cap);
     }
     Ok(values
         .into_iter()
@@ -1463,6 +1471,20 @@ mod tests {
         urls: Mutex<Vec<String>>,
     }
 
+    struct StaticFetcher(Bytes);
+
+    #[async_trait]
+    impl crate::fetch::DatasetFetcher for StaticFetcher {
+        async fn fetch(
+            &self,
+            _url: &str,
+            _cache_key: &str,
+            _bearer_token: Option<&str>,
+        ) -> Result<Bytes> {
+            Ok(self.0.clone())
+        }
+    }
+
     #[async_trait]
     impl crate::fetch::DatasetFetcher for MockRevisionFetcher {
         async fn fetch(
@@ -1789,6 +1811,43 @@ mod tests {
         assert!(urls[0].contains("/revision/reviewed"));
         assert!(urls[1].contains(&format!("/resolve/{commit}/data/train-00000.jsonl")));
         assert!(urls.iter().all(|url| !url.contains("datasets-server")));
+    }
+
+    #[tokio::test]
+    async fn hugging_face_rows_never_exceed_the_authored_cap() {
+        let fetcher = Arc::new(StaticFetcher(Bytes::from(
+            serde_json::to_vec(&json!({
+                "num_rows_total":2,
+                "rows":[
+                    {"row":{"prompt":"first"}},
+                    {"row":{"prompt":"second"}}
+                ]
+            }))
+            .unwrap(),
+        )));
+        let mut load = LoadConfig::new(DatasetSource::HuggingFace {
+            dataset: "owner/repository".into(),
+            config: "default".into(),
+            split: "train".into(),
+            max_rows: Some(1),
+            revision: None,
+        });
+        load.fetcher = fetcher;
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(2)));
+        compose
+            .format_options
+            .insert("prompt_column".into(), Value::String("prompt".into()));
+        let dataset = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("hf_instruction_response"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations().len(), 1);
     }
 
     #[test]
