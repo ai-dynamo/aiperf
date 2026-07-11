@@ -462,9 +462,10 @@ mod tests {
         let mut rng = RandomGenerator::from_seed(Some(3));
         assert!(rng.weighted_choice(&[1, 2], Some(&[1.0])).is_err());
         assert!(rng.weighted_choice(&[1, 2], Some(&[0.0, 0.0])).is_err());
-        assert!(rng
-            .weighted_choice(&[1, 2], Some(&[1.0, f64::NAN]))
-            .is_err());
+        assert!(
+            rng.weighted_choice(&[1, 2], Some(&[1.0, f64::NAN]))
+                .is_err()
+        );
         for _ in 0..100 {
             assert_eq!(rng.weighted_choice(&[1, 2], Some(&[0.0, 5.0])).unwrap(), 2);
         }

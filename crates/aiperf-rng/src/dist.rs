@@ -697,14 +697,18 @@ mod tests {
 
     #[test]
     fn distribution_bounds_reject_non_finite_or_inverted_values() {
-        assert!(SamplingDistribution::fixed(1.0)
-            .unwrap()
-            .with_bounds(Some(2.0), Some(1.0))
-            .is_err());
-        assert!(SamplingDistribution::fixed(1.0)
-            .unwrap()
-            .with_bounds(Some(f64::NAN), None)
-            .is_err());
+        assert!(
+            SamplingDistribution::fixed(1.0)
+                .unwrap()
+                .with_bounds(Some(2.0), Some(1.0))
+                .is_err()
+        );
+        assert!(
+            SamplingDistribution::fixed(1.0)
+                .unwrap()
+                .with_bounds(Some(f64::NAN), None)
+                .is_err()
+        );
     }
 
     #[test]
@@ -771,10 +775,9 @@ mod tests {
     #[test]
     fn sequence_distribution_samples_stddev_pairs() {
         let mut rng = RandomGenerator::from_seed(Some(6));
-        let dist = SequenceLengthDistribution::new(vec![SequenceLengthPair::new_with_stddev(
-            100, 10.0, 50, 5.0, 100.0,
-        )
-        .unwrap()])
+        let dist = SequenceLengthDistribution::new(vec![
+            SequenceLengthPair::new_with_stddev(100, 10.0, 50, 5.0, 100.0).unwrap(),
+        ])
         .unwrap();
         assert!(dist.sample_batch(&mut rng, 0).is_err());
         let samples = dist.sample_batch(&mut rng, 100).unwrap();
