@@ -1,6 +1,6 @@
 // crates/aiperf-transport/tests/request.rs
 mod common;
-use common::MockServer;
+use common::{MockServer, chat_body, run_local};
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -11,27 +11,9 @@ use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::Response;
 use bytes::Bytes;
 
-fn chat_body(model: &str) -> Bytes {
-    Bytes::from(
-        serde_json::to_vec(&serde_json::json!({
-            "model": model,
-            "stream": true,
-            "stream_options": {"include_usage": true},
-            "max_tokens": 8,
-            "messages": [{"role": "user", "content": "hello"}],
-        }))
-        .unwrap(),
-    )
-}
-
 #[test]
 fn streaming_chat_records_tokens_ttft_and_usage() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
@@ -61,12 +43,7 @@ fn streaming_chat_records_tokens_ttft_and_usage() {
 
 #[test]
 fn non_streaming_models_endpoint_returns_text_json() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };

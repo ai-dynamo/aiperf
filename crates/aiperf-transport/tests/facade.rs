@@ -1,6 +1,6 @@
 // crates/aiperf-transport/tests/facade.rs
 mod common;
-use common::MockServer;
+use common::{MockServer, run_local};
 use std::rc::Rc;
 
 use aiperf_transport::RealClock;
@@ -24,12 +24,7 @@ fn non_streaming_payload() -> serde_json::Value {
 
 #[test]
 fn facade_streams_a_chat_completion() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
@@ -49,12 +44,7 @@ fn facade_streams_a_chat_completion() {
 
 #[test]
 fn facade_sticky_reuse_reuses_connection_across_turns() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };

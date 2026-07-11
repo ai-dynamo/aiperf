@@ -1,6 +1,6 @@
 // crates/aiperf-transport/tests/connect.rs
 mod common;
-use common::MockServer;
+use common::{MockServer, run_local};
 
 use std::rc::Rc;
 
@@ -11,12 +11,7 @@ use aiperf_transport::models::TraceData;
 
 #[test]
 fn establishes_h1_connection_to_mock_and_records_socket_info() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };

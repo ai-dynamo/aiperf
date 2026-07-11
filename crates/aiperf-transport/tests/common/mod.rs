@@ -66,3 +66,30 @@ impl Drop for MockServer {
         let _ = self.child.start_kill();
     }
 }
+
+/// Run `fut` to completion on a fresh current-thread runtime + `LocalSet`.
+/// Mirrors the per-test harness (`new_current_thread().enable_all()` +
+/// `LocalSet::block_on`) so behavior is identical to the inline version.
+pub fn run_local<F: std::future::Future>(fut: F) -> F::Output {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, fut)
+}
+
+/// Build the streaming chat-completions request body used by the tests.
+/// Byte-identical to the per-file `chat_body(model)` builders.
+pub fn chat_body(model: &str) -> bytes::Bytes {
+    bytes::Bytes::from(
+        serde_json::to_vec(&serde_json::json!({
+            "model": model,
+            "stream": true,
+            "stream_options": {"include_usage": true},
+            "max_tokens": 8,
+            "messages": [{"role": "user", "content": "hello"}],
+        }))
+        .unwrap(),
+    )
+}

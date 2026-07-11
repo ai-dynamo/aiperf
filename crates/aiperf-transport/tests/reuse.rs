@@ -1,6 +1,6 @@
 // crates/aiperf-transport/tests/reuse.rs
 mod common;
-use common::MockServer;
+use common::{MockServer, run_local};
 
 use std::rc::Rc;
 
@@ -40,12 +40,7 @@ async fn send_chat(sender: &mut Sender, base: &str) -> u16 {
 
 #[test]
 fn never_uses_new_port_each_time() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
@@ -89,12 +84,7 @@ fn never_uses_new_port_each_time() {
 
 #[test]
 fn pooled_reuses_connection_and_records_reuse() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };

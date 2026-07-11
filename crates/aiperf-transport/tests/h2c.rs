@@ -1,6 +1,6 @@
 // crates/aiperf-transport/tests/h2c.rs
 mod common;
-use common::MockServer;
+use common::{MockServer, run_local};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -22,12 +22,7 @@ fn body() -> Bytes {
 
 #[test]
 fn h2c_prior_knowledge_completes_streaming() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };

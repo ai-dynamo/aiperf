@@ -1,6 +1,6 @@
 // crates/aiperf-transport/tests/cancel.rs
 mod common;
-use common::MockServer;
+use common::{MockServer, run_local};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -11,12 +11,7 @@ use bytes::Bytes;
 
 #[test]
 fn cancel_after_send_marks_record_cancelled() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    run_local(async {
         // High ITL so the stream stays open long enough to cancel mid-flight.
         let Some(mock) = MockServer::spawn(&["--ttft", "10", "--itl", "200"]).await else {
             return;
