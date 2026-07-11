@@ -13,7 +13,8 @@
 use crate::error::{Result, RngError};
 use crate::generator::RandomGenerator;
 
-const PROBABILITY_SUM_TOLERANCE: f64 = 1.0e-6;
+const PROBABILITY_SUM_REL_TOLERANCE: f64 = 1.0e-6;
+const PROBABILITY_SUM_ABS_TOLERANCE: f64 = 1.0e-6;
 
 /// A weighted component in a [`MultimodalDistribution`].
 #[derive(Clone, Debug, PartialEq)]
@@ -446,7 +447,8 @@ pub struct SequenceLengthDistribution {
 }
 
 impl SequenceLengthDistribution {
-    /// Construct a distribution. Probabilities must sum to 100 within `1e-6`.
+    /// Construct a distribution. Probabilities must match Python's `np.isclose`
+    /// check against 100.0 with `rtol=1e-6, atol=1e-6`.
     pub fn new(pairs: Vec<SequenceLengthPair>) -> Result<Self> {
         if pairs.is_empty() {
             return Err(RngError::EmptySequence {
@@ -454,7 +456,7 @@ impl SequenceLengthDistribution {
             });
         }
         let total: f64 = pairs.iter().map(|p| p.probability).sum();
-        if (total - 100.0).abs() > PROBABILITY_SUM_TOLERANCE {
+        if !probability_sum_is_close(total) {
             return Err(RngError::InvalidProbabilitySum { total });
         }
         let mut cumulative = Vec::with_capacity(pairs.len());
@@ -476,7 +478,33 @@ impl SequenceLengthDistribution {
 
     /// Draw one `(ISL, OSL)` pair.
     pub fn sample(&self, rng: &mut RandomGenerator) -> Result<(i64, i64)> {
-        let idx = self.index_for_random(rng.random());
+        self.sample_pair_at(self.index_for_random(rng.random()), rng)
+    }
+
+    /// Draw `batch_size` samples.
+    pub fn sample_batch(
+        &self,
+        rng: &mut RandomGenerator,
+        batch_size: usize,
+    ) -> Result<Vec<(i64, i64)>> {
+        if batch_size == 0 {
+            return Err(RngError::InvalidParameter {
+                what: "batch_size",
+                value: 0.0,
+            });
+        }
+        let indices: Vec<_> = rng
+            .random_batch(batch_size)
+            .into_iter()
+            .map(|r| self.index_for_random(r))
+            .collect();
+        indices
+            .into_iter()
+            .map(|idx| self.sample_pair_at(idx, rng))
+            .collect()
+    }
+
+    fn sample_pair_at(&self, idx: usize, rng: &mut RandomGenerator) -> Result<(i64, i64)> {
         let pair = &self.pairs[idx];
         let isl = if pair.input_seq_len_stddev > 0.0 {
             rng.sample_positive_normal_integer(
@@ -497,25 +525,14 @@ impl SequenceLengthDistribution {
         Ok((isl, osl))
     }
 
-    /// Draw `batch_size` samples.
-    pub fn sample_batch(
-        &self,
-        rng: &mut RandomGenerator,
-        batch_size: usize,
-    ) -> Result<Vec<(i64, i64)>> {
-        if batch_size == 0 {
-            return Err(RngError::InvalidParameter {
-                what: "batch_size",
-                value: 0.0,
-            });
-        }
-        (0..batch_size).map(|_| self.sample(rng)).collect()
-    }
-
     fn index_for_random(&self, r: f64) -> usize {
         let idx = self.cumulative_probs.partition_point(|p| *p <= r);
         usize::min(idx, self.pairs.len() - 1)
     }
+}
+
+fn probability_sum_is_close(total: f64) -> bool {
+    (total - 100.0).abs() <= PROBABILITY_SUM_ABS_TOLERANCE + PROBABILITY_SUM_REL_TOLERANCE * 100.0
 }
 
 fn weighted_index(rng: &mut RandomGenerator, weights: &[f64]) -> Result<usize> {
@@ -696,6 +713,46 @@ mod tests {
         let bad =
             SequenceLengthDistribution::new(vec![SequenceLengthPair::new(10, 20, 90.0).unwrap()]);
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn sequence_distribution_probability_sum_matches_python_isclose_tolerance() {
+        let accepted = SequenceLengthDistribution::new(vec![
+            SequenceLengthPair::new(10, 20, 50.0).unwrap(),
+            SequenceLengthPair::new(30, 40, 50.000_05).unwrap(),
+        ]);
+        assert!(accepted.is_ok());
+
+        let rejected = SequenceLengthDistribution::new(vec![
+            SequenceLengthPair::new(10, 20, 50.0).unwrap(),
+            SequenceLengthPair::new(30, 40, 50.001).unwrap(),
+        ]);
+        assert!(rejected.is_err());
+    }
+
+    #[test]
+    fn sequence_batch_draws_all_routing_uniforms_before_stddev_samples() {
+        let dist = SequenceLengthDistribution::new(vec![
+            SequenceLengthPair::new_with_stddev(100, 10.0, 50, 5.0, 40.0).unwrap(),
+            SequenceLengthPair::new_with_stddev(200, 10.0, 80, 5.0, 60.0).unwrap(),
+        ])
+        .unwrap();
+
+        let mut batch_rng = RandomGenerator::from_seed(Some(7));
+        let batch = dist.sample_batch(&mut batch_rng, 16).unwrap();
+
+        let mut expected_rng = RandomGenerator::from_seed(Some(7));
+        let indices: Vec<_> = expected_rng
+            .random_batch(16)
+            .into_iter()
+            .map(|r| dist.index_for_random(r))
+            .collect();
+        let expected: Vec<_> = indices
+            .into_iter()
+            .map(|idx| dist.sample_pair_at(idx, &mut expected_rng).unwrap())
+            .collect();
+
+        assert_eq!(batch, expected);
     }
 
     #[test]
