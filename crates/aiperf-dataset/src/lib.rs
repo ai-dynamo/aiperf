@@ -62,7 +62,10 @@ pub use request::{
     BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,
     MaterializedRequest, RequestMaterializer,
 };
-pub use sampler::{RandomSampler, Sampler, SequentialSampler, ShuffleSampler};
+pub use sampler::{
+    RandomSampler, RandomSamplerFactory, Sampler, SamplerFactory, SamplerRegistry,
+    SequentialSampler, SequentialSamplerFactory, ShuffleSampler, ShuffleSamplerFactory,
+};
 pub use segment::{
     Handle, InMemorySegmentStore, Payload, Role, Segment, SegmentId, SegmentPool, SegmentStore,
 };
