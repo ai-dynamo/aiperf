@@ -604,7 +604,7 @@ impl Endpoint for VideoGenerationEndpoint {
         }
         Ok(Some(ParsedResponse {
             perf_ns: response.perf_ns,
-            data: Some(ResponseData::Video(VideoResponseData {
+            data: Some(ResponseData::Video(Box::new(VideoResponseData {
                 video_id: optional_string(object, "id"),
                 object: optional_string(object, "object"),
                 status: optional_string(object, "status"),
@@ -638,7 +638,7 @@ impl Endpoint for VideoGenerationEndpoint {
                     .get("error")
                     .cloned()
                     .filter(|value| !value.is_null()),
-            })),
+            }))),
             usage: non_empty(object.get("usage")),
             sources: None,
         }))
@@ -696,18 +696,21 @@ impl Endpoint for ImageRetrievalEndpoint {
     }
 
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
-        let mut extracted = ExtractedPayload::default();
-        extracted.image_count = body
-            .get("input")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter(|item| item.get("type").and_then(Value::as_str) == Some("image_url"))
-                    .count() as u32
-            })
-            .unwrap_or(0);
-        extracted
+        ExtractedPayload {
+            image_count: body
+                .get("input")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter(|item| {
+                            item.get("type").and_then(Value::as_str) == Some("image_url")
+                        })
+                        .count() as u32
+                })
+                .unwrap_or(0),
+            ..ExtractedPayload::default()
+        }
     }
 }
 

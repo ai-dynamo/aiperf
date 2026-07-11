@@ -180,7 +180,7 @@ pub enum ResponseData {
     /// Generated or edited images and their response metadata.
     Images(ImageResponseData),
     /// Async video-job state.
-    Video(VideoResponseData),
+    Video(Box<VideoResponseData>),
 }
 
 impl ResponseData {
