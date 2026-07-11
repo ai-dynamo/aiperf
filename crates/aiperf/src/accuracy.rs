@@ -476,7 +476,8 @@ pub struct AccuracyRunReport {
 /// Batch captured responses through the canonical evaluator and build reports.
 ///
 /// Evaluator/protocol failures return an infrastructure error and produce no
-/// score. Only inference terminal failures are represented as incorrect records.
+/// score. Inference terminal failures remain explicit report errors, while the
+/// worker still owns the score for whatever partial or empty text was captured.
 pub async fn grade_and_finalize_accuracy_report(
     model: &str,
     scheduled: ScheduledRunReport,
@@ -494,10 +495,9 @@ pub async fn grade_and_finalize_accuracy_report(
     );
 
     let mut grades: Vec<Option<EvaluatorGrade>> = vec![None; captures.len()];
-    let completed = captures
+    let submitted = captures
         .iter()
         .zip(dataset.associations.iter())
-        .filter(|(capture, _)| capture.terminal == ReplayTerminalStatus::Completed)
         .map(|(capture, association)| {
             (
                 association.index,
@@ -509,7 +509,7 @@ pub async fn grade_and_finalize_accuracy_report(
         })
         .collect::<Vec<_>>();
 
-    for chunk in completed.chunks(GRADE_BATCH_SIZE) {
+    for chunk in submitted.chunks(GRADE_BATCH_SIZE) {
         let items = chunk
             .iter()
             .map(|(_, item)| item.clone())
@@ -555,30 +555,27 @@ pub async fn grade_and_finalize_accuracy_report(
     let mut records = Vec::with_capacity(captures.len());
     let mut failures = Vec::new();
     for (association, capture) in dataset.associations.iter().zip(captures) {
-        let result = if capture.terminal == ReplayTerminalStatus::Completed {
-            let grade = grades[association.index].take().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "canonical evaluator omitted grade for problem {:?}",
-                    association.problem_id.as_str()
-                )
-            })?;
-            grading_result(grade)
-        } else {
+        if capture.terminal != ReplayTerminalStatus::Completed {
             let message = format!("inference request ended {:?}", capture.terminal);
             failures.push(AccuracyFailure {
                 problem_id: association.problem_id.as_str().to_string(),
                 correlation_id: association.correlation_id.as_str().to_string(),
-                message: message.clone(),
+                message,
             });
-            failed_inference_result(&message)
-        };
+        }
+        let grade = grades[association.index].take().ok_or_else(|| {
+            anyhow::anyhow!(
+                "canonical evaluator omitted grade for problem {:?}",
+                association.problem_id.as_str()
+            )
+        })?;
         records.push(AccuracyRecord {
             correlation_id: association.correlation_id.clone(),
             task: association.task.clone(),
             phase: Phase::Profiling,
             start_ns: capture.start_ns,
             end_ns: capture.end_ns,
-            result,
+            result: grading_result(grade),
         });
     }
 
@@ -647,17 +644,6 @@ fn grading_result(grade: EvaluatorGrade) -> GradingResult {
     }
 }
 
-fn failed_inference_result(reason: &str) -> GradingResult {
-    GradingResult {
-        correct: false,
-        unparsed: true,
-        confidence: None,
-        extracted: None,
-        ground_truth: None,
-        reasoning: Some(reason.to_string()),
-    }
-}
-
 fn evaluator_report_info(
     identity: &EvaluatorIdentity,
     loaded: &EvaluatorLoadResult,
@@ -696,7 +682,12 @@ mod tests {
         EvaluatorProblemPage, EvaluatorWorkerError,
     };
     use aiperf_dataset::{TextTokenizer, TiktokenTokenizer};
-    use axum::{Json, Router, http::header, response::IntoResponse, routing::post};
+    use axum::{
+        Json, Router,
+        http::{StatusCode, header},
+        response::{IntoResponse, Response},
+        routing::post,
+    };
     use serde_json::Value;
 
     use super::*;
@@ -720,6 +711,23 @@ mod tests {
 
     async fn spawn_accuracy_mock() -> String {
         let app = Router::new().route("/v1/chat/completions", post(accuracy_chat));
+        spawn_mock_app(app).await
+    }
+
+    async fn accuracy_chat_with_failure(Json(body): Json<Value>) -> Response {
+        let prompt = body["messages"][0]["content"].as_str().unwrap_or_default();
+        if prompt.contains("second fixture") {
+            return (StatusCode::BAD_GATEWAY, "fixture upstream failure").into_response();
+        }
+        accuracy_chat(Json(body)).await.into_response()
+    }
+
+    async fn spawn_accuracy_failure_mock() -> String {
+        let app = Router::new().route("/v1/chat/completions", post(accuracy_chat_with_failure));
+        spawn_mock_app(app).await
+    }
+
+    async fn spawn_mock_app(app: Router) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -871,6 +879,17 @@ mod tests {
         ScheduledRunReport,
     ) {
         let base_url = spawn_accuracy_mock().await;
+        dispatch_fixture_at(evaluator, base_url).await
+    }
+
+    async fn dispatch_fixture_at(
+        evaluator: &mut FixtureEvaluator,
+        base_url: String,
+    ) -> (
+        AccuracyDataset,
+        Rc<AccuracyRecordProcessor>,
+        ScheduledRunReport,
+    ) {
         let (load, problems) =
             load_evaluator_problems(evaluator, "mmlu-pro", &EvaluatorLoadConfig::default())
                 .await
@@ -963,6 +982,37 @@ mod tests {
                 .await
                 .unwrap_err();
                 assert!(error.to_string().contains("grade_batch failed"));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn evaluator_scores_failed_transport_text_instead_of_rust() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let mut evaluator = evaluator(false);
+                let base_url = spawn_accuracy_failure_mock().await;
+                let (dataset, processor, scheduled) =
+                    dispatch_fixture_at(&mut evaluator, base_url).await;
+                let report = grade_and_finalize_accuracy_report(
+                    "fixture-model",
+                    scheduled,
+                    &dataset,
+                    processor.as_ref(),
+                    &mut evaluator,
+                    &loaded(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(evaluator.responses.len(), 2);
+                assert_eq!(report.failures.len(), 1);
+                assert_eq!(report.records.len(), 2);
+                assert_eq!(
+                    report.records[1].result.reasoning.as_deref(),
+                    Some("fixture canonical grade")
+                );
+                assert!(!report.records[1].result.correct);
             })
             .await;
     }
