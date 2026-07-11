@@ -43,7 +43,7 @@ flowchart TB
     measure["4 · Measure — ResponseSink -> Collector -> Report"]
     backend["3 · Backend — trait: HttpBackend | SimBackend<dyn Engine>"]
     engine["2 · Engine — trait: pure state machine (admit/step/next_wake); DYNAMO owns impls"]
-    clock["1 · Clock — trait: now/sleep_until ; RealClock | VirtualClock"]
+    clock["1 · Clock — trait: now/sleep_until ; RealClock | SimClock"]
     contract["0 · Contract — neutral types + traits both sides agree on (THE shared nucleus)"]
 
     app --> workload --> harness --> backend
@@ -136,7 +136,7 @@ Runtime — and *only* the Runtime — can drive it:
 
 ```rust
 pub struct RealClock;      // now() = monotonic OS; sleep_until = reactor timer
-pub struct VirtualClock;   // now() = current virtual ns; sleep_until parks on a DES heap
+pub struct SimClock;   // now() = current virtual ns; sleep_until parks on a DES heap
 
 /// Runtime-facing. Consumers never see this — they only get `Clock`.
 pub trait Advance: Clock {
@@ -205,8 +205,8 @@ impl Harness {
 // real: the tokio reactor is the driver; sleeps and socket IO wake naturally.
 pub fn run_real(clock, generators) { LocalSet::block_on(join(generators)) }
 
-// sim: one loop unifies generator sleepers and engine steps on ONE VirtualClock.
-pub fn run_sim(clock: VirtualClock, host: EngineHost, generators) {
+// sim: one loop unifies generator sleepers and engine steps on ONE SimClock.
+pub fn run_sim(clock: SimClock, host: EngineHost, generators) {
     let fut = join(generators);                 // generators submit to host, park
     loop {
         match poll(fut) {
@@ -252,7 +252,7 @@ the one that runs against the sim. That is the payoff.
 The only place concrete types meet:
 
 ```rust
-let clock   = if offline { VirtualClock::new() } else { RealClock::new() };
+let clock   = if offline { SimClock::new() } else { RealClock::new() };
 let backend = if offline { SimBackend::new(EngineHost::new(dynamo_engine::vllm(profile))) }
               else        { HttpBackend::new(url, clock.clone()) };
 let harness = Harness::new(backend, clock.clone());
@@ -314,7 +314,7 @@ A design is "contract-clean" iff:
 2. `Engine` has no `async`, no `&self` IO, and no clock parameter beyond
    `Instant`. (Pure state machine.)
 3. A workload file compiles with `HttpBackend` and `SimBackend` swapped and
-   `RealClock`/`VirtualClock` swapped, unchanged. (Orthogonality holds.)
+   `RealClock`/`SimClock` swapped, unchanged. (Orthogonality holds.)
 4. `dynamo-engine` has zero `aiperf-*` dependencies and `aiperf-workload` has
    zero `dynamo-*` dependencies. (Only the bin bridges.)
 

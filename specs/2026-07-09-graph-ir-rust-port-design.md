@@ -34,11 +34,11 @@ The dataflow executor never emits wire bytes — worker-side materialization doe
 
 **Parity contract (locked):** Given identical `ParsedGraph` + `TraceRecord` inputs,
 a deterministic **mock credit issuer** (fixed, replayable return schedule), and an
-injected **`VirtualClock`**, the Rust runtime emits a dispatch event stream **and**
+injected **`SimClock`**, the Rust runtime emits a dispatch event stream **and**
 final channel snapshots **byte-identical** to the Python `TraceExecutor`.
 
 Verification: a Python "twin harness" runs the real `TraceExecutor` over a corpus of
-graphs with the same mock issuer + `VirtualClock`, serializing the event stream +
+graphs with the same mock issuer + `SimClock`, serializing the event stream +
 snapshots to canonical JSON. The Rust parity test asserts equality.
 
 ## 3. Determinism strategy (the central design element)
@@ -180,7 +180,7 @@ the installed `aiperf` package) that:
    graphs and small real weka/dynamo-derived graphs exercising every dataflow feature
    (see §6 coverage matrix).
 2. For each trace, runs the **real** `TraceExecutor` with:
-   - an injected `VirtualClock` + driver pump,
+   - an injected `SimClock` + driver pump,
    - a `RecordingMockIssuer` that scripts returns/first-tokens at fixed virtual-ns
      offsets and records every `dispatch(...)` call and the exact `TurnToSend`,
    - the deterministic id provider (§3.3).
@@ -193,7 +193,7 @@ the installed `aiperf` package) that:
 ### 5.2 Rust harness binary + parity test
 
 - A `graph-eval` binary that loads a fixture (`ParsedGraph` + trace + issuer script),
-  constructs the Rust `TraceExecutor` + `VirtualClock` + `MockCreditIssuer` replaying
+  constructs the Rust `TraceExecutor` + `SimClock` + `MockCreditIssuer` replaying
   the script, runs it, and emits the dispatch event stream + snapshot as canonical
   JSON — usable standalone to *evaluate* any graph, not only for parity.
 - A parity test (`cargo test`) that, for every fixture in the golden corpus, runs the
@@ -223,7 +223,7 @@ the installed `aiperf` package) that:
 
 ## 7. Testing strategy
 
-1. **Runtime unit tests** — the deterministic executor + `VirtualClock` against
+1. **Runtime unit tests** — the deterministic executor + `SimClock` against
    asyncio-order golden cases (task FIFO, heap wake order, driver-pump idle advance).
 2. **Module unit tests** — reducers, channel store (each `await_inputs`/orphan path),
    scheduler (rejection + collapse), adapter minting — ported 1:1 from the Python unit

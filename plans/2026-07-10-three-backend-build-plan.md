@@ -75,7 +75,7 @@ HTTP server (`ONLINE-MOCK` = URL swap), producing aiperf's report. No sim yet.
   throughput benchmark timers.
 
 **Gate:** sim-safety audit (spec §11) green; suite passes on `RealClock` with the
-grep-gate enforced. Unblocks `VirtualClock`.
+grep-gate enforced. Unblocks `SimClock`.
 
 ---
 

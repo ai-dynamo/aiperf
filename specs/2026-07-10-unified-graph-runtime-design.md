@@ -37,7 +37,7 @@ The three modes collapse to **two code paths** behind one `Backend` × `Clock` s
 |---|---|---|---|
 | ONLINE-REAL | `HttpBackend` | `RealClock` | real server |
 | ONLINE-MOCK | `HttpBackend` | `RealClock` | **same code**, mocker's URL |
-| OFFLINE-MOCK | `SimBackend` | `VirtualClock` | in-process engine |
+| OFFLINE-MOCK | `SimBackend` | `SimClock` | in-process engine |
 
 So ONLINE-REAL and ONLINE-MOCK are literally the same aiperf code — a URL differs.
 The entire engineering problem is: **make the `Backend`/`Clock` seam universal, and
@@ -354,7 +354,7 @@ always advance: every parked task is on a clock deadline or a completion slot, s
 
 ```rust
 let (offline, url) = parse(cli);                        // --offline | <url>
-let clock: Rc<dyn Clock> = if offline { VirtualClock::rc() } else { RealClock::rc() };
+let clock: Rc<dyn Clock> = if offline { SimClock::rc() } else { RealClock::rc() };
 let collector = Collector::new(clock.clone());          // aiperf's own — ALL modes
 let backend: Box<dyn Backend> = if offline {
         let engine = MockerEngine::new(MockEngineArgs::from(cli));   // single|agg|disagg from flags
