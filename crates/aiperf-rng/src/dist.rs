@@ -340,7 +340,9 @@ impl SamplingDistribution {
                 if sigma <= 0.0 {
                     Ok(d.mean)
                 } else {
-                    Ok(rng.sample_normal(d.median.ln(), sigma, f64::NEG_INFINITY, f64::INFINITY)?.exp())
+                    Ok(rng
+                        .sample_normal(d.median.ln(), sigma, f64::NEG_INFINITY, f64::INFINITY)?
+                        .exp())
                 }
             }
             Self::Multimodal(d) => {
@@ -477,12 +479,18 @@ impl SequenceLengthDistribution {
         let idx = self.index_for_random(rng.random());
         let pair = &self.pairs[idx];
         let isl = if pair.input_seq_len_stddev > 0.0 {
-            rng.sample_positive_normal_integer(pair.input_seq_len as f64, pair.input_seq_len_stddev)?
+            rng.sample_positive_normal_integer(
+                pair.input_seq_len as f64,
+                pair.input_seq_len_stddev,
+            )?
         } else {
             pair.input_seq_len
         };
         let osl = if pair.output_seq_len_stddev > 0.0 {
-            rng.sample_positive_normal_integer(pair.output_seq_len as f64, pair.output_seq_len_stddev)?
+            rng.sample_positive_normal_integer(
+                pair.output_seq_len as f64,
+                pair.output_seq_len_stddev,
+            )?
         } else {
             pair.output_seq_len
         };
@@ -495,6 +503,12 @@ impl SequenceLengthDistribution {
         rng: &mut RandomGenerator,
         batch_size: usize,
     ) -> Result<Vec<(i64, i64)>> {
+        if batch_size == 0 {
+            return Err(RngError::InvalidParameter {
+                what: "batch_size",
+                value: 0.0,
+            });
+        }
         (0..batch_size).map(|_| self.sample(rng)).collect()
     }
 
@@ -520,7 +534,10 @@ fn weighted_index(rng: &mut RandomGenerator, weights: &[f64]) -> Result<usize> {
 
 fn validate_weight(weight: f64, what: &'static str) -> Result<()> {
     if !weight.is_finite() || weight < 0.0 {
-        return Err(RngError::InvalidParameter { what, value: weight });
+        return Err(RngError::InvalidParameter {
+            what,
+            value: weight,
+        });
     }
     Ok(())
 }
@@ -606,7 +623,9 @@ mod tests {
     fn normal_distribution_uses_positive_normal_semantics() {
         let mut rng = RandomGenerator::from_seed(Some(2));
         let dist = SamplingDistribution::normal(100.0, 10.0).unwrap();
-        let samples: Vec<_> = (0..20_000).map(|_| dist.sample(&mut rng).unwrap()).collect();
+        let samples: Vec<_> = (0..20_000)
+            .map(|_| dist.sample(&mut rng).unwrap())
+            .collect();
         let sample_mean = mean(&samples);
         assert!((sample_mean - 100.0).abs() / 100.0 < 0.02, "{sample_mean}");
         assert!(samples.iter().all(|v| *v >= 0.0));
@@ -619,7 +638,9 @@ mod tests {
         assert_eq!(deterministic.sample(&mut rng).unwrap(), 5.0);
 
         let skewed = SamplingDistribution::lognormal(10.0, 5.0).unwrap();
-        let samples: Vec<_> = (0..80_000).map(|_| skewed.sample(&mut rng).unwrap()).collect();
+        let samples: Vec<_> = (0..80_000)
+            .map(|_| skewed.sample(&mut rng).unwrap())
+            .collect();
         let sample_mean = mean(&samples);
         assert!((sample_mean - 10.0).abs() / 10.0 < 0.05, "{sample_mean}");
     }
@@ -650,7 +671,9 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(dist.expected_value(), 2.5);
-        let samples: Vec<_> = (0..20_000).map(|_| dist.sample(&mut rng).unwrap()).collect();
+        let samples: Vec<_> = (0..20_000)
+            .map(|_| dist.sample(&mut rng).unwrap())
+            .collect();
         let sample_mean = mean(&samples);
         assert!((sample_mean - 2.5).abs() / 2.5 < 0.03, "{sample_mean}");
     }
@@ -670,7 +693,8 @@ mod tests {
     #[test]
     fn sequence_distribution_validates_probability_sum() {
         assert!(SequenceLengthDistribution::new(vec![]).is_err());
-        let bad = SequenceLengthDistribution::new(vec![SequenceLengthPair::new(10, 20, 90.0).unwrap()]);
+        let bad =
+            SequenceLengthDistribution::new(vec![SequenceLengthPair::new(10, 20, 90.0).unwrap()]);
         assert!(bad.is_err());
     }
 
@@ -690,10 +714,12 @@ mod tests {
     #[test]
     fn sequence_distribution_samples_stddev_pairs() {
         let mut rng = RandomGenerator::from_seed(Some(6));
-        let dist = SequenceLengthDistribution::new(vec![
-            SequenceLengthPair::new_with_stddev(100, 10.0, 50, 5.0, 100.0).unwrap(),
-        ])
+        let dist = SequenceLengthDistribution::new(vec![SequenceLengthPair::new_with_stddev(
+            100, 10.0, 50, 5.0, 100.0,
+        )
+        .unwrap()])
         .unwrap();
+        assert!(dist.sample_batch(&mut rng, 0).is_err());
         let samples = dist.sample_batch(&mut rng, 100).unwrap();
         assert_eq!(samples.len(), 100);
         assert!(samples.iter().all(|(isl, osl)| *isl >= 1 && *osl >= 1));
