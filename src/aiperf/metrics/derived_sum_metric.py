@@ -56,12 +56,10 @@ class DerivedSumMetric(
         value = metric_results.get(cls.record_metric_type.tag)
         if value is None:
             raise ValueError(f"{cls.record_metric_type.tag} is missing in the metrics.")
-        # Two engines feed this: the MetricsAccumulator pipeline already stores
-        # the running-sum scalar in ``scalar_dict[tag]`` (see
-        # ``MetricsAccumulator._collect_scalars_and_arrays``), so the value
-        # already IS the sum. The legacy ``MetricResultsProcessor`` (kept alive
-        # for the otel / timeslice side-channel) instead stores a
-        # ``MetricAggregator`` (e.g. ``MetricArray``) whose ``.sum`` must be read.
+        # MetricsAccumulator stores the running-sum scalar in ``scalar_dict[tag]``
+        # (see ``MetricsAccumulator._collect_scalars_and_arrays``), so the value
+        # already IS the sum. The ``MetricAggregator`` branch supports direct unit
+        # tests and older callers that still pass a live aggregate container.
         if isinstance(value, MetricAggregator):
             return value.sum
         return value

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from typing import ClassVar
 
 from pydantic import ConfigDict, Field
 
@@ -122,6 +123,8 @@ class BasePhaseStats(AIPerfBaseModel):
 
 class CreditPhaseStats(BasePhaseStats):
     """Immutable model for phase credit stats. This is used to track the progress of the credit phases."""
+
+    record_type: ClassVar[str] = "credit_phase_stats"
 
     model_config = ConfigDict(frozen=True)
 

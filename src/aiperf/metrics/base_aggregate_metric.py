@@ -20,13 +20,10 @@ class BaseAggregateMetric(
     For each distributed RecordProcessor, an instance of this class is created. This instance is passed the record and the existing record metrics,
     and is responsible for returning the individual value for that record. It should not use or update the aggregate value here.
 
-    The ResultsProcessor creates a singleton instance of this class, which will be used to aggregate the results from the distributed
-    RecordProcessors. It calls the `_aggregate_value` method, which each metric class must implement to define how values from different
-    processes are aggregated, such as summing the values, or taking the min/max/average, etc.
-
-    Subclasses declare ``aggregation_kind`` (SUM/MAX/MIN) so that vectorized
-    accumulators (``MetricsAccumulator``) can fold per-record values into a
-    single scalar without replaying ``_aggregate_value``. The default is SUM.
+    The MetricsAccumulator folds the emitted per-record aggregate values into a
+    single scalar. Subclasses declare ``aggregation_kind`` (SUM/MAX/MIN) so the
+    vectorized path can combine values without replaying ``_aggregate_value``.
+    The default is SUM.
 
     Examples:
     ```python

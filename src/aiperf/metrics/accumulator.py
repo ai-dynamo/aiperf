@@ -14,9 +14,11 @@ from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     AggregationKind,
+    MetricFlags,
     MetricType,
     MetricValueTypeT,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import MetricResult, TimesliceResult
@@ -32,7 +34,10 @@ from aiperf.metrics.derived_latency import (
 from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
-from aiperf.metrics.network_adjusted_analyzer import inject_network_adjusted_metrics
+from aiperf.metrics.network_adjusted_analyzer import (
+    compute_network_adjusted_arrays,
+    inject_network_adjusted_from_arrays,
+)
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
@@ -49,6 +54,17 @@ _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
     AggregationKind.MAX: lambda a: float(np.max(a)),
     AggregationKind.MIN: lambda a: float(np.min(a)),
 }
+
+
+class _MetricClassLookup:
+    def __init__(self, metric_classes: dict[MetricTagT, Any]) -> None:
+        self._metric_classes = metric_classes
+
+    def get_class(self, tag: MetricTagT) -> Any:
+        metric_class = self._metric_classes.get(tag)
+        if metric_class is None:
+            raise KeyError(tag)
+        return metric_class
 
 
 class MetricsAccumulator(BaseMetricsProcessor):
@@ -392,14 +408,42 @@ class MetricsAccumulator(BaseMetricsProcessor):
         )
         return self._convert_display_units(raw)
 
-    @staticmethod
     def _convert_display_units(
+        self,
         results: dict[MetricTagT, MetricResult],
     ) -> dict[MetricTagT, MetricResult]:
         """Convert all metric results from native units to display units."""
+        registry = _MetricClassLookup(self._metric_classes)
         return {
-            tag: to_display_unit(result, MetricRegistry)
+            tag: to_display_unit(result, registry) for tag, result in results.items()
+        }
+
+    def _should_include_in_summary(self, tag: MetricTagT) -> bool:
+        """Return False for hidden internal/experimental metrics."""
+        metric_class = self._metric_classes.get(tag)
+        if metric_class is None:
+            return True
+        has_flags = getattr(metric_class, "has_flags", None)
+        if not callable(has_flags):
+            return True
+        if (
+            has_flags(MetricFlags.INTERNAL)
+            and not Environment.DEV.SHOW_INTERNAL_METRICS
+        ):
+            return False
+        return not (
+            has_flags(MetricFlags.EXPERIMENTAL)
+            and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+        )
+
+    def _filter_hidden_metrics(
+        self, results: dict[MetricTagT, MetricResult]
+    ) -> dict[MetricTagT, MetricResult]:
+        """Drop computed metrics that should not appear in summary exports."""
+        return {
+            tag: result
             for tag, result in results.items()
+            if self._should_include_in_summary(tag)
         }
 
     def set_network_rtt_ns(self, rtt_ns: float | None) -> None:
@@ -445,6 +489,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         )
 
         timeslices: list[TimesliceResult] | None = None
+        adjusted_arrays: dict[str, FloatArray] | None = None
 
         has_records = self._column_store.count > 0 and (
             mask is None or bool(mask.any())
@@ -458,8 +503,18 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 window_start_ns=window_start_ns,
                 window_end_ns=window_end_ns,
             )
+            # Network-RTT-adjusted latency: the per-record subtraction is
+            # window-independent, so compute the clamped arrays ONCE here and let
+            # the overall summary and every timeslice aggregate masked views. No-op
+            # unless the RecordsManager delivered a (truthy) RTT via set_network_rtt_ns.
+            if self._network_rtt_ns:
+                adjusted_arrays = compute_network_adjusted_arrays(
+                    self._column_store, self._network_rtt_ns
+                )
             if self._slice_duration_ns is not None:
-                timeslices = self._compute_timeslices(sweeps, mask=mask)
+                timeslices = self._compute_timeslices(
+                    sweeps, mask=mask, adjusted_arrays=adjusted_arrays
+                )
 
         overall_results = self._convert_display_units(overall_results)
 
@@ -469,17 +524,15 @@ class MetricsAccumulator(BaseMetricsProcessor):
             inject_derived_latency_metrics(
                 self._column_store, overall_results, mask=mask
             )
-            # Network-RTT-adjusted latency metrics — subtract the run-level mean
-            # RTT from the request-start-anchored latency arrays. No-op unless the
-            # RecordsManager delivered a (truthy) RTT via set_network_rtt_ns.
-            if self._network_rtt_ns:
-                inject_network_adjusted_metrics(
-                    self._column_store,
+            if adjusted_arrays is not None:
+                inject_network_adjusted_from_arrays(
+                    adjusted_arrays,
                     overall_results,
                     self._network_rtt_ns,
                     mask=mask,
                 )
 
+        overall_results = self._filter_hidden_metrics(overall_results)
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return AccumulatorMetricsSummary(
             results=overall_results,
@@ -521,6 +574,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self,
         sweeps: Any,
         mask: BoolArray | None = None,
+        adjusted_arrays: dict[str, FloatArray] | None = None,
     ) -> list[TimesliceResult]:
         """Compute per-timeslice results by partitioning the time range.
 
@@ -602,6 +656,17 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 continue
             results.update(sweeps.compute_metrics(window_start, window_end))
             results = self._convert_display_units(results)
+            # Network-RTT-adjusted latency metrics per window, aggregated from the
+            # arrays precomputed once in summarize() — this window just slices its
+            # records out via full_mask. None unless a run-level RTT was delivered.
+            if adjusted_arrays is not None:
+                inject_network_adjusted_from_arrays(
+                    adjusted_arrays,
+                    results,
+                    self._network_rtt_ns,
+                    mask=full_mask,
+                )
+            results = self._filter_hidden_metrics(results)
             timeslices.append(
                 TimesliceResult(
                     start_ns=int(window_start),

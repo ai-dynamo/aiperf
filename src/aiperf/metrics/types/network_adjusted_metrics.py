@@ -8,10 +8,10 @@ subtracted from the request-start-anchored latency metrics to produce these
 comparable. The raw metrics are always preserved.
 
 These metrics are NOT computed per-record. The RTT is a run-level scalar that is only
-known at the end of the run, so :class:`aiperf.post_processors.metric_results_processor`
-injects the shifted distributions after aggregation (subtracting a constant shifts every
-percentile and the mean by that constant and leaves the standard deviation unchanged).
-``_derive_value`` therefore always defers.
+known at the end of the run, so MetricsAccumulator injects the shifted distributions
+after aggregation (subtracting a constant shifts every percentile and the mean by that
+constant and leaves the standard deviation unchanged). ``_derive_value`` therefore
+always defers.
 
 Inter-token / inter-chunk latencies are intentionally NOT adjusted: the same RTT cancels
 in ``(request_latency - ttft)``, so those metrics are already network-invariant.

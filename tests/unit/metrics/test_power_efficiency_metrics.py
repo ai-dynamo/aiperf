@@ -18,8 +18,8 @@ class TestPowerEfficiencyDeriveValueContract:
 
     The three power-efficiency classes inherit `BaseDerivedMetric` for registry
     integration but their values are produced by
-    `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the derivation
-    walk in `MetricResultsProcessor.update_derived_metrics`. Calling
+    `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the metrics
+    accumulator's derived-metric pass. Calling
     `_derive_value` directly must raise `NoMetricValue` with a message that
     names the tag, the operation, and the injection site — so a future
     contributor copy-pasting this as the "derived metric pattern" sees the

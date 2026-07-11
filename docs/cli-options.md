@@ -265,6 +265,7 @@ aiperf profile --model your_model --url localhost:8000 --goodput "request_latenc
 #### `-m`, `--model-names`, `--model` `<list>`
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
+<br/>_Default: `[]`_
 
 #### `--model-selection-strategy` `<str>`
 
@@ -428,6 +429,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
+<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 
@@ -1340,6 +1342,7 @@ Deprecated and ignored. The bayesian preset and the optuna expert mode both use 
 #### `--variant`, `--sweep-variant` `<list>`
 
 Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=value, key=value, ...'. Keys are CLI flag names with the leading '--' stripped, in either kebab-case or snake_case (isl, osl, concurrency, request-rate / request_rate, request-count / request_count, benchmark-duration / benchmark_duration, ...). Multi-occurrence emits a ScenarioSweep. Mutually exclusive with magic-list flags, --search-recipe, and YAML-declared sweeps. Single-occurrence is rejected -- use the standalone --isl / --osl / --concurrency flags for a one-off.
+<br/>_Default: `[]`_
 
 #### `--search-sla` `<list>`
 
@@ -1642,7 +1645,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1690,6 +1693,7 @@ HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes live
 #### `-m`, `--model-names`, `--model` `<list>`
 
 Model name(s) to be benchmarked. Can be a comma-separated list or a single model name.
+<br/>_Default: `[]`_
 
 #### `--model-selection-strategy` `<str>`
 
@@ -1853,6 +1857,7 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
+<br/>_Default: `[]`_
 
 #### `--custom-dataset-type` `<str>`
 
@@ -2765,6 +2770,7 @@ Deprecated and ignored. The bayesian preset and the optuna expert mode both use 
 #### `--variant`, `--sweep-variant` `<list>`
 
 Repeatable: each occurrence describes one sweep variation. Format: '[name:] key=value, key=value, ...'. Keys are CLI flag names with the leading '--' stripped, in either kebab-case or snake_case (isl, osl, concurrency, request-rate / request_rate, request-count / request_count, benchmark-duration / benchmark_duration, ...). Multi-occurrence emits a ScenarioSweep. Mutually exclusive with magic-list flags, --search-recipe, and YAML-declared sweeps. Single-occurrence is rejected -- use the standalone --isl / --osl / --concurrency flags for a one-off.
+<br/>_Default: `[]`_
 
 #### `--search-sla` `<list>`
 

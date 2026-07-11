@@ -152,10 +152,10 @@ class TestProcessorErrorPaths:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_process_result_skips_when_not_ready(
+    async def test_process_record_skips_when_not_ready(
         self, mock_cfg: BenchmarkConfig
     ) -> None:
-        """process_result should silently return when streaming is not ready."""
+        """process_record should silently return when streaming is not ready."""
         with patch(
             "aiperf.post_processors.otel_metrics_results_processor.run_otel_streaming_fanout"
         ):
@@ -166,7 +166,7 @@ class TestProcessorErrorPaths:
             processor._streaming_ready = False
 
             record = MagicMock()
-            await processor.process_result(record)
+            await processor.process_record(record)
             # No exception raised
 
 

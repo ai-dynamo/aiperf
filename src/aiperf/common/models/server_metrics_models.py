@@ -215,6 +215,8 @@ class ServerMetricsRecord(AIPerfBaseModel):
     the client received the full response.
     """
 
+    record_type: ClassVar[str] = "server_metrics"
+
     endpoint_url: str = Field(
         description="Source Prometheus metrics endpoint URL (e.g., 'http://localhost:8081/metrics')"
     )

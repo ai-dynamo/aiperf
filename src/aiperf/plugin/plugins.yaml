@@ -77,9 +77,8 @@ service:
   records_manager:
     class: aiperf.records.records_manager:RecordsManager
     description: |
-      Record aggregation and results management service. Aggregates metrics from all
-      record processors, manages results processors, and coordinates final results
-      export.
+      Record aggregation and results management service. Routes records to
+      accumulators and stream exporters, and coordinates final results export.
     metadata:
       required: true
       auto_start: true
@@ -977,66 +976,11 @@ record_processor:
       Enabled when --export-outputs-json is set. Writes per-processor fragment files.
 
 # =============================================================================
-# Results Processors
-# =============================================================================
-# Results processors aggregate results from record processors and compute derived metrics.
-# One-to-many mapping: multiple processors can be loaded simultaneously.
-# =============================================================================
-results_processor:
-  gpu_telemetry_accumulator:
-    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
-    description: |
-      GPU telemetry accumulator that aggregates GPU telemetry records and computes
-      metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-  metric_results:
-    class: aiperf.post_processors.metric_results_processor:MetricResultsProcessor
-    description: |
-      Results processor that computes metrics from MetricType.DERIVED and
-      aggregates results from all record processors. Final stage of metrics
-      pipeline. Always loaded.
-
-  network_latency_jsonl_writer:
-    class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter
-    description: |
-      Network latency JSONL writer that exports per-sample TCP-handshake RTT
-      probes to a JSONL file. Enabled when network latency calibration is
-      actively probing (no mean_ms).
-
-  otel_metrics_streamer:
-    class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
-    description: |
-      Streams per-record metrics to a user-provided OpenTelemetry collector
-      with periodic export.
-      Enabled when --otel-url is configured.
-
-  server_metrics_accumulator:
-    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
-    description: |
-      Server metrics accumulator that aggregates Prometheus server metrics records
-      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
-
-  timeslice:
-    class: aiperf.post_processors.timeslice_metric_results_processor:TimesliceMetricResultsProcessor
-    description: |
-      Timeslice results processor that computes metrics for user-configurable
-      time slices, enabling time-series analysis of benchmark performance.
-      Enabled when timeslice config is set.
-
-  accuracy_results:
-    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
-    description: |
-      Accuracy results processor that aggregates grading results and computes
-      summary accuracy metrics. Self-disables when accuracy mode is off.
-
-# =============================================================================
 # Accumulators
 # =============================================================================
 # Accumulators ingest records, support time-range queries, and produce summaries.
-# Primary data stores in the records pipeline (RecordsManager). The
-# MetricsAccumulator is the summary engine for the records pipeline; the legacy
-# results_processor:metric_results (MetricResultsProcessor) is gated OFF when
-# the accumulator path is active to avoid double-compute.
+# Primary data stores in the records pipeline (RecordsManager). Each accumulator
+# declares the record types it consumes in metadata.record_types.
 # One-to-many mapping: multiple accumulators loaded simultaneously.
 # =============================================================================
 accumulator:
@@ -1065,6 +1009,14 @@ accumulator:
     metadata:
       record_types: [server_metrics]
 
+  accuracy_results:
+    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
+    description: |
+      Accuracy accumulator that ingests graded metric records and computes summary
+      accuracy metrics. Self-disables when accuracy mode is off.
+    metadata:
+      record_types: [metric_records]
+
 # =============================================================================
 # Stream Exporters
 # =============================================================================
@@ -1082,6 +1034,24 @@ stream_exporter:
     metadata:
       record_types: [gpu_telemetry]
 
+  network_latency_jsonl_writer:
+    class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter
+    description: |
+      Network latency JSONL writer that exports per-sample TCP-handshake RTT
+      probes to a JSONL file. Enabled when network latency calibration is
+      actively probing (no mean_ms).
+    metadata:
+      record_types: [network_latency]
+
+  otel_metrics_streamer:
+    class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
+    description: |
+      Streams per-record metrics and timing snapshots to a user-provided
+      OpenTelemetry collector with periodic export. Enabled when --otel-url or
+      MLflow live streaming is configured.
+    metadata:
+      record_types: [metric_records, credit_phase_stats]
+
   record_export:
     class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
     description: |
@@ -1097,32 +1067,6 @@ stream_exporter:
       JSONL files in slim format.
     metadata:
       record_types: [server_metrics]
-
-# =============================================================================
-# GPU Telemetry Processors
-# =============================================================================
-# GPU telemetry processors aggregate and export GPU telemetry records locally
-# within GPUTelemetryManager. One-to-many mapping.
-# =============================================================================
-gpu_telemetry_processor:
-  gpu_telemetry_accumulator:
-    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
-    description: |
-      GPU telemetry accumulator that aggregates GPU telemetry records and computes
-      metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-# =============================================================================
-# Server Metrics Processors
-# =============================================================================
-# Server metrics processors aggregate and export Prometheus server metrics
-# records locally within ServerMetricsManager. One-to-many mapping.
-# =============================================================================
-server_metrics_processor:
-  server_metrics_accumulator:
-    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
-    description: |
-      Server metrics accumulator that aggregates Prometheus server metrics records
-      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
 
 # =============================================================================
 # Artifact Publishers

@@ -10,10 +10,9 @@ server metrics accumulators return list-shaped results.
 
 The pipeline:
 
-1. ``_summarize_all_accumulators`` runs ``summarize()`` on every loaded
-   accumulator, buckets the output by shape, and accumulates errors.
-2. ``_finalize_stream_exporters`` flushes JSONL writers concurrently.
-3. ``build_process_records_result`` assembles a :class:`ProcessRecordsResult`.
+1. ``_deliver_network_rtt_to_accumulators`` wires optional RTT calibration.
+2. ``_summarize_metric_record_accumulators`` exports metric-record accumulators.
+3. ``_finalize_stream_exporters`` flushes JSONL writers concurrently.
 4. ``ProcessRecordsResultMessage`` is published.
 5. ``ProcessAllResultsMessage`` is published for the SystemController fan-in.
 """
@@ -83,7 +82,7 @@ def _make_list_accumulator(
     results: list[MetricResult] | None = None,
     summarize_exc: BaseException | None = None,
 ) -> MagicMock:
-    """Stub for a legacy-shaped accumulator returning ``list[MetricResult]``."""
+    """Stub for an accumulator returning ``list[MetricResult]``."""
     acc = MagicMock()
     acc.__class__.__name__ = "StubListAccumulator"
     if summarize_exc is not None:
@@ -127,10 +126,6 @@ def _make_manager_mock(
     mgr._server_metrics_accumulator = None
     # Branch-stats snapshot (read by _process_results).
     mgr._latest_branch_stats = None
-
-    # Legacy best-effort processors are flushed (force=True) but do not feed
-    # the summary numbers — stub it out.
-    mgr._flush_metric_results_processors = AsyncMock()
 
     # Records tracker — drives the time window via PROFILING phase stats.
     phase_stats = PhaseRecordsStats(

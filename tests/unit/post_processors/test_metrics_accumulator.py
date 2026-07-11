@@ -670,7 +670,7 @@ class TestTimesliceSummarize:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"max_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"max_ts": AggregationKind.MAX}
-        processor._metric_classes = {"max_ts": RequestLatencyMetric}
+        processor._metric_classes = {"max_ts": RequestCountMetric}
 
         msg1 = create_metric_records_message(
             x_request_id="test-1",
@@ -702,7 +702,7 @@ class TestTimesliceSummarize:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"min_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"min_ts": AggregationKind.MIN}
-        processor._metric_classes = {"min_ts": RequestLatencyMetric}
+        processor._metric_classes = {"min_ts": RequestCountMetric}
 
         msg1 = create_metric_records_message(
             x_request_id="test-1",

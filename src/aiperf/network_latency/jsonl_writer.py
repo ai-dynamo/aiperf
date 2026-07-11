@@ -50,11 +50,13 @@ class NetworkLatencyJSONLWriter(
 
         self.info(f"Network latency JSONL export enabled: {self.output_file}")
 
-    async def process_network_latency_sample(
-        self, sample: NetworkLatencySample
-    ) -> None:
+    async def process_record(self, record: NetworkLatencySample) -> None:
         """Write a single probe sample to the JSONL artifact."""
-        await self.buffered_write(sample)
+        await self.buffered_write(record)
+
+    async def finalize(self) -> None:
+        """Flush buffered probe samples before final artifact publication."""
+        await self.flush_buffer()
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize result. Not used for this processor."""

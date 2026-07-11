@@ -39,7 +39,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
+from aiperf.common.types import JsonObject, MetricTagT
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -269,11 +269,6 @@ class ProfileResults(AIPerfBaseModel):
         "bundles the slice's window bounds (start_ns, end_ns, is_complete) "
         "with its metric results. Position in the list is the slice's "
         "chronological index. Produced by the MetricsAccumulator engine.",
-    )
-    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
-        default=None,
-        description="The timeslice metric results of the profile (if using the "
-        "legacy timeslice results-processor path)",
     )
     total_expected: int | None = Field(
         default=None,

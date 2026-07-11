@@ -32,8 +32,8 @@ flowchart TD
     C3 --> E3["MetricRecordDict<br/><em>(Per-record&nbsp;results)</em>"]
     D3 --> E3
 
-    %% Stage 2: Centralized Results Processing
-    E1 --> G["RecordsManager → MetricResultsProcessor<br/><em>(Single&nbsp;centralized&nbsp;instance)</em>"]
+    %% Stage 2: Centralized Metrics Accumulation
+    E1 --> G["RecordsManager → MetricsAccumulator<br/><em>(Single&nbsp;centralized&nbsp;instance)</em>"]
     E2 --> G
     E3 --> G
 

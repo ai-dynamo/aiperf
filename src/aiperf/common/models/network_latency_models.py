@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from pydantic import Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -22,6 +24,8 @@ class NetworkLatencySample(AIPerfBaseModel):
     written verbatim to the per-sample JSONL artifact. A failed probe carries
     ``success=False``, ``rtt_ns=None`` and the captured ``error``.
     """
+
+    record_type: ClassVar[str] = "network_latency"
 
     timestamp_ns: int = Field(
         ge=0,
