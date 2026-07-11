@@ -35,7 +35,7 @@ from types import SimpleNamespace
 from typing import Any
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.1.1"
+WORKER_VERSION = "1.2.0"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -182,7 +182,6 @@ class AccuracyWorker:
         self._grader: Any | None = None
         self._lighteval_task: Any | None = None
         self._dataset_identity: dict[str, Any] = {}
-        self._include_ground_truth = False
 
     def hello(self, protocol: int) -> dict[str, Any]:
         if protocol != PROTOCOL_VERSION:
@@ -223,7 +222,6 @@ class AccuracyWorker:
         config = request.get("config") or {}
         if not isinstance(config, dict):
             raise TypeError("load.config must be an object")
-        self._include_ground_truth = bool(config.get("include_ground_truth", False))
         _verify_locked_environment()
         if config.get("grader"):
             raise ValueError(
@@ -307,8 +305,6 @@ class AccuracyWorker:
                 "reasoning": str(grade.get("reasoning", "")),
                 "extracted_answer": grade.get("extracted_answer"),
             }
-            if self._include_ground_truth:
-                result["ground_truth"] = grade.get("ground_truth")
             results.append(result)
         return {"items": results}
 

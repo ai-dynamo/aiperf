@@ -339,3 +339,4 @@ async def test_livecodebench_reuses_one_lighteval_pool_per_batch(
     assert len(calls) == 1
     assert calls[0][1] == [["code-0"], ["code-1"]]
     assert [item["correct"] for item in result["items"]] == [True, False]
+    assert all("ground_truth" not in item for item in result["items"])
