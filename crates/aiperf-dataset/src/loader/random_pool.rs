@@ -147,8 +147,8 @@ impl DatasetLoader for RandomPoolDatasetLoader {
     }
 
     fn can_load(&self, probe: &DatasetProbe) -> bool {
-        if probe.path.as_deref().is_some_and(Path::is_dir) {
-            return true;
+        if let Some(path) = probe.path.as_deref().filter(|path| path.is_dir()) {
+            return directory_has_random_pool(path);
         }
         probe.value.as_ref().is_some_and(|value| {
             value.get("type").and_then(Value::as_str) == Some("random_pool")
@@ -222,6 +222,25 @@ impl DatasetLoader for RandomPoolDatasetLoader {
         }
         Ok(rows)
     }
+}
+
+fn directory_has_random_pool(directory: &Path) -> bool {
+    std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .any(|path| {
+            std::fs::read(path).ok().is_some_and(|bytes| {
+                bytes
+                    .split(|byte| *byte == b'\n')
+                    .map(crate::loader::trim_ascii)
+                    .find(|line| !line.is_empty())
+                    .and_then(|line| serde_json::from_slice::<Value>(line).ok())
+                    .is_some_and(|value| PoolEntry::parse(value, &"probe").is_ok())
+            })
+        })
 }
 
 impl Composer for RandomPoolComposer {

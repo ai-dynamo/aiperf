@@ -455,7 +455,7 @@ impl LoaderRegistry {
                 path: None,
             }),
             DatasetSource::Bytes(bytes) => Ok(DatasetProbe {
-                value: first_json_value(bytes)?,
+                value: first_json_value(bytes)?.map(|value| probe_value(&value)),
                 path: None,
             }),
             DatasetSource::Url(_) | DatasetSource::HuggingFace { .. } => Ok(DatasetProbe {
@@ -513,14 +513,13 @@ fn probe_file(path: &Path) -> Result<DatasetProbe> {
         });
     }
     let bytes = std::fs::read(path)?;
-    let value =
-        if path.extension().and_then(|suffix| suffix.to_str()) == Some("json") {
-            Some(serde_json::from_slice(&bytes).map_err(|error| {
-                DatasetError::Validation(format!("{}: {error}", path.display()))
-            })?)
-        } else {
-            first_json_value(&bytes)?
-        };
+    let value = if path.extension().and_then(|suffix| suffix.to_str()) == Some("json") {
+        Some(probe_value(&serde_json::from_slice(&bytes).map_err(
+            |error| DatasetError::Validation(format!("{}: {error}", path.display())),
+        )?))
+    } else {
+        first_json_value(&bytes)?
+    };
     Ok(DatasetProbe {
         value,
         path: Some(path.to_path_buf()),
@@ -618,7 +617,11 @@ pub(crate) fn rows_from_bytes(bytes: &[u8], path: Option<&Path>) -> Result<Vec<R
 
 #[cfg(test)]
 mod tests {
+    use aiperf_rng::RngRoot;
+    use serde_json::json;
+
     use super::*;
+    use crate::tokenizer::TiktokenTokenizer;
 
     #[test]
     fn jsonl_reader_preserves_exact_trimmed_wire_and_line_numbers() {
@@ -638,5 +641,72 @@ mod tests {
             registry.get("missing"),
             Err(DatasetError::LoaderNotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn whole_json_arrays_probe_their_first_row_and_auto_detect() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mt-bench.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!([{"prompt":["hello"]}])).unwrap(),
+        )
+        .unwrap();
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let probe = registry.probe(&DatasetSource::Path(path.clone())).unwrap();
+        assert_eq!(probe.value.as_ref().unwrap()["prompt"][0], "hello");
+        let bytes_probe = registry
+            .probe(&DatasetSource::Bytes(Bytes::from_static(
+                br#"[{"prompt":["hello"]}]"#,
+            )))
+            .unwrap();
+        assert_eq!(bytes_probe.value.as_ref().unwrap()["prompt"][0], "hello");
+
+        let dataset = registry
+            .build_dataset(
+                None,
+                &LoadConfig::new(DatasetSource::Path(path)),
+                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations().len(), 1);
+    }
+
+    #[test]
+    fn directory_detection_distinguishes_raw_payloads_from_random_pools() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+
+        let raw_directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            raw_directory.path().join("requests.jsonl"),
+            br#"{"messages":[{"role":"user","content":"hello"}]}"#,
+        )
+        .unwrap();
+        let raw_probe = registry
+            .probe(&DatasetSource::Path(raw_directory.path().to_path_buf()))
+            .unwrap();
+        assert_eq!(
+            registry.detect(&raw_probe, "raw directory").unwrap().name,
+            "raw_payload"
+        );
+
+        let pool_directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            pool_directory.path().join("prompts.jsonl"),
+            br#"{"text":"hello"}"#,
+        )
+        .unwrap();
+        let pool_probe = registry
+            .probe(&DatasetSource::Path(pool_directory.path().to_path_buf()))
+            .unwrap();
+        assert_eq!(
+            registry
+                .detect(&pool_probe, "random-pool directory")
+                .unwrap()
+                .name,
+            "random_pool"
+        );
     }
 }
