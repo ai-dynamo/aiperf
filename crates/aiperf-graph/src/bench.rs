@@ -37,6 +37,13 @@ pub struct BenchConfig {
     /// Global cap on concurrent requests in the prefill phase (dispatched but
     /// not yet first-token). `None` = unbounded.
     pub prefill_concurrency: Option<usize>,
+    /// Optional wall-time bound in nanoseconds. When set, each worker stops
+    /// pulling new trace instances once its clock passes `started + this`, so the
+    /// run ends on `min(instances exhausted, duration elapsed)`. `None` = the run
+    /// is bounded only by `instances`. Realized via the shared
+    /// [`aiperf_timing::StopChecker`] duration condition (one per worker), so the
+    /// online CLI and the graph path share one stop policy.
+    pub max_duration_ns: Option<i64>,
 }
 
 /// A rough token estimate for a static segment's content (no tokenizer needed on

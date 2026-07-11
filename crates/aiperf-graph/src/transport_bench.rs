@@ -42,6 +42,7 @@ use crate::wire::OpenAiChatMessage as Msg;
 use aiperf_clock::Clock;
 use aiperf_clock::real_clock::RealClock;
 use aiperf_core::sse::ChatChunk;
+use aiperf_timing::{RunState, StopChecker, StopConfig};
 use aiperf_transport::client::connection::{Sender, establish};
 use aiperf_transport::client::http_client::HttpClient;
 use aiperf_transport::config::ClientConfig;
@@ -284,8 +285,8 @@ pub fn run_transport_bench(cfg: BenchConfig, http2: bool, conns: usize) -> Graph
                 (graph.clone(), pool.clone(), next.clone(), merged.clone());
             let base_url = servers[widx % servers.len()].clone();
             let model = cfg.model.clone();
-            let (instances, concurrency, max_tokens) =
-                (cfg.instances, cfg.concurrency, cfg.max_tokens);
+            let (instances, concurrency, max_tokens, max_duration_ns) =
+                (cfg.instances, cfg.concurrency, cfg.max_tokens, cfg.max_duration_ns);
             scope.spawn(move || {
                 let wm = transport_worker(
                     &graph,
@@ -296,6 +297,7 @@ pub fn run_transport_bench(cfg: BenchConfig, http2: bool, conns: usize) -> Graph
                     instances,
                     concurrency,
                     max_tokens,
+                    max_duration_ns,
                     http2,
                     conns.max(1),
                 );
@@ -332,6 +334,23 @@ pub fn run_transport_bench(cfg: BenchConfig, http2: bool, conns: usize) -> Graph
     }
 }
 
+/// Per-worker duration stop gate. Consults the shared [`aiperf_timing::StopChecker`]
+/// so a lane stops pulling new trace instances once this worker's clock passes the
+/// deadline. Built only when a `--duration` bound is set; when absent the lane loop
+/// adds no per-iteration work and stops purely on instance-count exhaustion.
+struct DurationGate {
+    checker: StopChecker,
+    state: RunState,
+    clock: Rc<dyn Clock>,
+}
+
+impl DurationGate {
+    #[inline]
+    fn expired(&self) -> bool {
+        !self.checker.can_send_any(&self.state, self.clock.now_ns())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn transport_worker(
     graph: &Arc<GraphRecord>,
@@ -342,6 +361,7 @@ fn transport_worker(
     instances: usize,
     concurrency: usize,
     max_tokens: usize,
+    max_duration_ns: Option<i64>,
     http2: bool,
     conns: usize,
 ) -> WorkerMetrics {
@@ -382,6 +402,22 @@ fn transport_worker(
 
     local.block_on(&rt, async {
         let clock: Rc<dyn Clock> = RealClock::new();
+        // One duration gate per worker, sharing this worker's clock. `started_at_ns`
+        // is stamped now so the [`aiperf_timing::Duration`] condition measures
+        // elapsed time from the worker's start. Shared across the worker's lanes.
+        let gate: Option<Rc<DurationGate>> = max_duration_ns.map(|d| {
+            Rc::new(DurationGate {
+                checker: StopChecker::new(&StopConfig {
+                    expected_duration_ns: Some(d),
+                    ..Default::default()
+                }),
+                state: RunState {
+                    started_at_ns: clock.now_ns(),
+                    ..Default::default()
+                },
+                clock: clock.clone(),
+            })
+        });
         let cfg = ClientConfig {
             http_version,
             uds_path,
@@ -428,6 +464,7 @@ fn transport_worker(
                 sink,
                 next.clone(),
                 instances,
+                gate.clone(),
             ));
         }
         futures::future::join_all(lanes).await;
@@ -444,9 +481,17 @@ async fn transport_run_lane(
     sink: Rc<dyn GraphSink<Msg>>,
     next: Arc<AtomicUsize>,
     instances: usize,
+    gate: Option<Rc<DurationGate>>,
 ) {
     let graph_rc: Rc<GraphRecord> = Rc::new((*graph).clone());
     loop {
+        // Duration bound (when set) is checked before claiming an instance index so
+        // an expired lane neither wastes an index nor starts another trace.
+        if let Some(g) = &gate
+            && g.expired()
+        {
+            break;
+        }
         let i = next.fetch_add(1, Ordering::Relaxed);
         if i >= instances {
             break;
@@ -471,5 +516,34 @@ async fn transport_run_lane(
             exec.schedule_entries(&ctx);
             handle.wait_idle().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use aiperf_clock::sim_clock::SimClock;
+
+    /// The gate wires the shared `aiperf-timing` duration condition to the worker
+    /// clock: not expired before the bound, expired once elapsed reaches it.
+    #[test]
+    fn duration_gate_expires_at_the_bound() {
+        let clock = Rc::new(SimClock::new());
+        let gate = DurationGate {
+            checker: StopChecker::new(&StopConfig {
+                expected_duration_ns: Some(1_000),
+                ..Default::default()
+            }),
+            state: RunState {
+                started_at_ns: clock.now_ns(),
+                ..Default::default()
+            },
+            clock: clock.clone(),
+        };
+        assert!(!gate.expired(), "fresh gate must admit work at t=0");
+        clock.advance_to(999);
+        assert!(!gate.expired(), "still admits just under the bound");
+        clock.advance_to(1_000);
+        assert!(gate.expired(), "stops once elapsed reaches the duration bound");
     }
 }

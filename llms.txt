@@ -48,9 +48,11 @@ Thread-per-core, `Rc`/`RefCell`, `!Send`, `spawn_local` on the hot path.
 
 Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`, `aiperf-timing`,
 `aiperf-transport`, `aiperf-clock`, `loadgen-core`}; `aiperf-graph` →
-{`aiperf-core`, `aiperf-transport`, `aiperf-clock`, `loadgen-core`};
-`aiperf-core` → `loadgen-core`; `aiperf-transport` → `aiperf-clock`.
-`aiperf-timing` is a leaf (the graph path is its designed second consumer).
+{`aiperf-core`, `aiperf-timing`, `aiperf-transport`, `aiperf-clock`,
+`loadgen-core`}; `aiperf-core` → `loadgen-core`; `aiperf-transport` →
+`aiperf-clock`. `aiperf-timing` is a leaf shared by both the online CLI
+(arrival/slots/stop) and the graph bench (`StopChecker` duration bound), so
+scheduling policy lives in one place.
 
 ## "Which file answers…" quick map
 

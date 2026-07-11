@@ -11,6 +11,7 @@ description = "Graph-IR async-dataflow workload driver for AIPerf — online (li
 [dependencies]
 aiperf-core = { path = "../aiperf-core" }
 aiperf-clock.workspace = true
+aiperf-timing = { path = "../aiperf-timing" }
 aiperf-transport = { path = "../aiperf-transport" }
 loadgen-core.workspace = true
 bytes = "1"

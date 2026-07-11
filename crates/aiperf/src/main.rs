@@ -258,7 +258,15 @@ fn parse_graph_config(cli: &Cli) -> GraphParams {
     let workers: usize = cli.workers.unwrap_or(cores);
     let concurrency: usize = cli.concurrency.unwrap_or(64);
     let max_tokens: usize = cli.osl.unwrap_or(1);
-    let instances: usize = cli.instances.unwrap_or(DEFAULT_INSTANCES);
+    // A `--duration` bound governs the run; when the user did not also pin
+    // `--instances`, let the duration decide by leaving the instance pool
+    // effectively unbounded. Otherwise fall back to the fixed default count.
+    let max_duration_ns: Option<i64> = cli.duration.map(|s| (s * 1_000_000_000.0) as i64);
+    let instances: usize = cli.instances.unwrap_or(if max_duration_ns.is_some() {
+        usize::MAX
+    } else {
+        DEFAULT_INSTANCES
+    });
     let request_concurrency: Option<usize> = cli.request_concurrency;
     let prefill_concurrency: Option<usize> = cli.prefill_concurrency;
     // Transport default is HTTP/1.1 keep-alive: for serial per-lane requests it
@@ -281,6 +289,7 @@ fn parse_graph_config(cli: &Cli) -> GraphParams {
         max_tokens,
         request_concurrency,
         prefill_concurrency,
+        max_duration_ns,
     };
 
     GraphParams {

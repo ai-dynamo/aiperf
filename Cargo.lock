@@ -60,6 +60,7 @@ version = "0.0.0"
 dependencies = [
  "aiperf-clock",
  "aiperf-core",
+ "aiperf-timing",
  "aiperf-transport",
  "anyhow",
  "async-trait",
