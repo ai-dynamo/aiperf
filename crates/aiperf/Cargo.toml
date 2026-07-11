@@ -31,7 +31,6 @@ aiperf-clock.workspace = true
 aiperf-rng.workspace = true
 loadgen-core.workspace = true
 mimalloc = "0.1"
-parquet.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

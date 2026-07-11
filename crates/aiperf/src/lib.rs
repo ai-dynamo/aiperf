@@ -14,7 +14,6 @@
 //! crates never need a dependency cycle through this application crate.
 
 pub mod accuracy;
-pub mod accuracy_dataset;
 pub mod adaptive;
 pub mod ancillary;
 pub mod fixed_schedule;
