@@ -9,6 +9,7 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 import orjson
 
@@ -25,10 +26,31 @@ _SSE = b"".join(
     ]
 )
 
+_SHAREGPT = orjson.dumps(
+    [
+        {
+            "conversations": [
+                {"from": "human", "value": "one two three four five"},
+                {"from": "gpt", "value": "alpha beta gamma delta epsilon"},
+            ]
+        }
+    ]
+)
+
 
 class _ChatHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     bodies: list[dict[str, object]] = []
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path != "/dataset/sharegpt.json":
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(_SHAREGPT)))
+        self.end_headers()
+        self.wfile.write(_SHAREGPT)
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
@@ -225,6 +247,52 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert b'"max_completion_tokens":3' in encoded_body
         assert b'"image_url"' in encoded_body
         assert b'"input_audio"' in encoded_body
+
+        from aiperf.dataset.loader.sharegpt import ShareGPTLoader
+
+        public_artifacts = tmp_path / "public-run"
+        public_envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "public",
+                        "dataset": "sharegpt",
+                        "entries": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 1,
+                        "concurrency": 1,
+                    },
+                    "artifacts": {"dir": str(public_artifacts)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        public_run = BenchmarkRun(
+            benchmark_id="python-rust-public-e2e",
+            cfg=public_envelope.benchmark,
+            artifact_dir=public_artifacts,
+            label="native-public",
+            random_seed=29,
+        )
+        local_dataset_url = f"http://127.0.0.1:{port}/dataset/sharegpt.json"
+        with mock.patch.object(ShareGPTLoader, "url", local_dataset_url):
+            public_result = RustSubprocessExecutor(
+                public_artifacts, binary=binary
+            ).execute_sync(public_run)
+
+        assert public_result.success, public_result.error
+        assert public_result.summary_metrics["request_count"].avg == 1.0
+        assert b"one two three four five" in orjson.dumps(_ChatHandler.bodies[-1])
     finally:
         server.shutdown()
         server.server_close()

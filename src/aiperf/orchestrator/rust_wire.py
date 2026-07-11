@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.dataset import FileDataset, SyntheticDataset
+from aiperf.config.dataset import FileDataset, PublicDataset, SyntheticDataset
 from aiperf.config.phases import (
     ConcurrencyPhase,
     ConstantPhase,
@@ -120,6 +120,8 @@ def _dataset(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
         return _synthetic_dataset(dataset)
     if isinstance(dataset, FileDataset):
         return _file_dataset(run, dataset)
+    if isinstance(dataset, PublicDataset):
+        return _public_dataset(run, dataset)
     raise RustWireError(
         f"native runner protocol v1 does not accept dataset type {dataset.type!s}"
     )
@@ -235,6 +237,125 @@ def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:
     else:
         result["records"] = dataset.records
     return result
+
+
+_PUBLIC_NATIVE_FORMATS = {
+    "aiperf.dataset.loader.exgentic:ExgenticDatasetLoader": "exgentic",
+    "aiperf.dataset.loader.exgentic_v2:ExgenticV2DatasetLoader": "exgentic_v2",
+    "aiperf.dataset.loader.sharegpt:ShareGPTLoader": "sharegpt",
+    "aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader": (
+        "hf_instruction_response"
+    ),
+    "aiperf.dataset.loader.hf_conversation:HFConversationDatasetLoader": (
+        "hf_conversation"
+    ),
+    "aiperf.dataset.loader.mt_bench:MTBenchDatasetLoader": "mt_bench",
+    "aiperf.dataset.loader.mmvu:MMVUDatasetLoader": "mmvu",
+    "aiperf.dataset.loader.spec_bench:SpecBenchLoader": "spec_bench",
+    "aiperf.dataset.loader.hf_asr:HFASRDatasetLoader": "hf_asr",
+}
+
+
+def _public_dataset(run: BenchmarkRun, dataset: PublicDataset) -> dict[str, Any]:
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    loader_class = plugins.get_class(PluginType.PUBLIC_DATASET_LOADER, dataset.dataset)
+    class_key = f"{loader_class.__module__}:{loader_class.__name__}"
+    try:
+        native_format = _PUBLIC_NATIVE_FORMATS[class_key]
+    except KeyError as error:
+        raise RustWireError(
+            f"public dataset {dataset.dataset!s} uses loader {class_key!r}, "
+            "which has no native loader registration"
+        ) from error
+    metadata = plugins.get_public_dataset_loader_metadata(dataset.dataset)
+    options: dict[str, Any] = {}
+    for name in (
+        "prompt_column",
+        "image_column",
+        "video_column",
+        "audio_column",
+        "prompt_template",
+        "conversation_column",
+    ):
+        _set_optional(options, name, getattr(metadata, name))
+    if metadata.conversation_column is not None:
+        options["message_content_key"] = metadata.message_content_key
+    if metadata.multi_turn:
+        options["multi_turn"] = True
+    if dataset.filters:
+        if native_format not in {"exgentic", "exgentic_v2"}:
+            raise RustWireError(
+                f"public dataset {dataset.dataset!s} does not accept dataset filters"
+            )
+        options.update(dataset.filters)
+    if native_format in {"exgentic", "exgentic_v2"}:
+        options["fixed_schedule"] = any(
+            isinstance(phase, FixedSchedulePhase) for phase in run.cfg.phases
+        )
+
+    max_conversations = _public_max_conversations(
+        run,
+        dataset,
+        streaming=metadata.streaming,
+        entries_first=native_format in {"exgentic", "exgentic_v2"},
+    )
+    if native_format in {"exgentic", "exgentic_v2"} and max_conversations is None:
+        raise RustWireError(
+            "Exgentic requires a finite entries or profiling request count"
+        )
+    if max_conversations is not None:
+        options["max_conversations"] = max_conversations
+
+    if metadata.hf_dataset_name is not None:
+        source: dict[str, Any] = {
+            "type": "hugging_face",
+            "dataset": metadata.hf_dataset_name,
+            "subset": dataset.hf_subset or metadata.hf_subset or "default",
+            "split": metadata.hf_split,
+        }
+        _set_optional(source, "revision", getattr(loader_class, "hf_revision", None))
+    else:
+        url = getattr(loader_class, "url", None)
+        if not isinstance(url, str) or not url:
+            raise RustWireError(
+                f"public dataset {dataset.dataset!s} has neither Hugging Face "
+                "coordinates nor a loader URL"
+            )
+        source = {"type": "url", "url": url}
+
+    result: dict[str, Any] = {
+        "type": "public",
+        "name": str(dataset.dataset),
+        "format": native_format,
+        "source": source,
+        "sampling": str(dataset.sampling),
+        "options": options,
+    }
+    _set_optional(result, "entries", dataset.entries)
+    _set_optional(result, "random_seed", dataset.random_seed)
+    return result
+
+
+def _public_max_conversations(
+    run: BenchmarkRun,
+    dataset: PublicDataset,
+    *,
+    streaming: bool,
+    entries_first: bool,
+) -> int | None:
+    request_counts = [
+        phase.requests
+        for phase in run.cfg.get_profiling_phases()
+        if phase.requests is not None
+    ]
+    request_cap = max(request_counts) if request_counts else None
+    if entries_first and dataset.entries is not None:
+        return dataset.entries
+    if streaming and request_cap is not None:
+        return request_cap
+    return dataset.entries
 
 
 def _native_file_format(format_name: str) -> tuple[str, dict[str, Any]]:

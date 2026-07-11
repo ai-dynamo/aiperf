@@ -275,3 +275,90 @@ def test_projects_complete_synthetic_dataset_shape(tmp_path) -> None:
         "codec": "libvorbis",
     }
     assert dataset["rankings"]["passages"] == {"value": 3.0}
+
+
+def test_resolves_public_dataset_plugins_to_native_sources(tmp_path) -> None:
+    sharegpt = build_run_request(
+        _run(
+            tmp_path,
+            dataset={
+                "type": "public",
+                "dataset": "sharegpt",
+                "entries": 2,
+                "random_seed": 17,
+                "sampling": "shuffle",
+            },
+        )
+    )["run"]["dataset"]
+    assert sharegpt["type"] == "public"
+    assert sharegpt["name"] == "sharegpt"
+    assert sharegpt["format"] == "sharegpt"
+    assert sharegpt["source"]["type"] == "url"
+    assert sharegpt["source"]["url"].endswith(
+        "ShareGPT_V3_unfiltered_cleaned_split.json"
+    )
+    assert sharegpt["entries"] == 2
+    assert sharegpt["random_seed"] == 17
+    assert sharegpt["sampling"] == "shuffle"
+
+    gsm8k = build_run_request(
+        _run(
+            tmp_path,
+            dataset={
+                "type": "public",
+                "dataset": "spec_al_gsm8k",
+                "entries": 3,
+                "hf_subset": "main",
+            },
+        )
+    )["run"]["dataset"]
+    assert gsm8k["format"] == "hf_instruction_response"
+    assert gsm8k["source"] == {
+        "type": "hugging_face",
+        "dataset": "openai/gsm8k",
+        "subset": "main",
+        "split": "test",
+    }
+    assert gsm8k["options"] == {
+        "prompt_column": "question",
+        "max_conversations": 3,
+    }
+
+
+def test_projects_exgentic_filters_fixed_schedule_and_pinned_revision(tmp_path) -> None:
+    request = build_run_request(
+        _run(
+            tmp_path,
+            dataset={
+                "type": "public",
+                "dataset": "exgentic_v2",
+                "entries": 4,
+                "filters": {
+                    "harness": "claude_code",
+                    "benchmark": "swebench",
+                },
+            },
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "fixed_schedule",
+                    "requests": 4,
+                }
+            ],
+        )
+    )["run"]["dataset"]
+
+    assert request["format"] == "exgentic_v2"
+    assert request["source"] == {
+        "type": "hugging_face",
+        "dataset": "Exgentic/agent-llm-traces-v2",
+        "subset": "default",
+        "split": "train",
+        "revision": "4b8ad4ab198438e5a170f9171c19c6a2cf7c1814",
+    }
+    assert request["options"] == {
+        "harness": "claude_code",
+        "benchmark": "swebench",
+        "fixed_schedule": True,
+        "max_conversations": 4,
+    }

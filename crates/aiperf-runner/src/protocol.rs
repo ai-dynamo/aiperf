@@ -36,7 +36,7 @@ impl RunnerCapabilities {
             event: "runner_capabilities",
             protocol_versions: &[RUNNER_PROTOCOL_VERSION],
             report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
-            dataset_types: &["synthetic", "file"],
+            dataset_types: &["synthetic", "file", "public"],
             phase_types: &[
                 "concurrency",
                 "poisson",
@@ -253,6 +253,59 @@ pub enum DatasetSpec {
     Synthetic(Box<SyntheticDatasetSpec>),
     /// Local path or inline records parsed by the native loader registry.
     File(Box<FileDatasetSpec>),
+    /// Resolved built-in public dataset source and native loader selection.
+    Public(Box<PublicDatasetSpec>),
+}
+
+/// Public dataset configuration resolved from the Python plugin registry.
+///
+/// Python keeps ownership of the named plugin catalog in
+/// `src/aiperf/plugin/plugins.yaml:1733-1957`; Rust receives only the explicit
+/// source coordinates and loader options needed for one run.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicDatasetSpec {
+    /// Config-v2 public dataset name, retained for diagnostics.
+    pub name: String,
+    /// Native loader registration name.
+    pub format: String,
+    /// Fully resolved remote source.
+    pub source: PublicDatasetSourceSpec,
+    /// Conversation sampling strategy.
+    #[serde(default = "default_sampling_strategy")]
+    pub sampling: String,
+    /// Optional row/conversation cap.
+    #[serde(default)]
+    pub entries: Option<usize>,
+    /// Dataset-local seed overriding the run seed.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
+    /// Validated loader/composer options from plugin metadata and Config v2.
+    #[serde(default)]
+    pub options: Map<String, Value>,
+}
+
+/// Network source for a resolved public dataset.
+#[derive(Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PublicDatasetSourceSpec {
+    /// Generic pinned or authored URL.
+    Url {
+        /// JSON/JSONL/CSV/Parquet URL.
+        url: String,
+    },
+    /// Hugging Face Dataset Viewer or revision-pinned repository source.
+    HuggingFace {
+        /// Namespace/repository identifier.
+        dataset: String,
+        /// Dataset configuration/subset.
+        subset: String,
+        /// Dataset split.
+        split: String,
+        /// Optional immutable or symbolic revision.
+        #[serde(default)]
+        revision: Option<String>,
+    },
 }
 
 /// Resolved file/inline dataset configuration.

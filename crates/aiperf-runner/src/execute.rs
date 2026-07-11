@@ -64,11 +64,11 @@ use uuid::Uuid;
 
 use crate::protocol::{
     DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
-    ModelSelectionStrategy, ModelsSpec, PhaseSpec, RampSpec, RampStrategySpec, RunRequest,
-    RunTerminal, SequenceDistributionEntrySpec, SourceImageSamplingSpec, SyntheticAudioFormatSpec,
-    SyntheticAudioSpec, SyntheticDatasetSpec, SyntheticImageFormatSpec, SyntheticImageSpec,
-    SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec, SyntheticVideoPatternSpec,
-    SyntheticVideoSpec,
+    ModelSelectionStrategy, ModelsSpec, PhaseSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
+    RampSpec, RampStrategySpec, RunRequest, RunTerminal, SequenceDistributionEntrySpec,
+    SourceImageSamplingSpec, SyntheticAudioFormatSpec, SyntheticAudioSpec, SyntheticDatasetSpec,
+    SyntheticImageFormatSpec, SyntheticImageSpec, SyntheticPrefixPromptsSpec,
+    SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
 };
 use crate::records::{CapturedRecord, write_records_jsonl};
 
@@ -495,6 +495,9 @@ async fn build_dataset(
         DatasetSpec::File(spec) => {
             build_file_dataset(registry, spec, models, rng_root, tokenizer).await
         }
+        DatasetSpec::Public(spec) => {
+            build_public_dataset(registry, spec, models, rng_root, tokenizer).await
+        }
     }
 }
 
@@ -502,6 +505,7 @@ fn dataset_rng_root(dataset: &DatasetSpec, run_rng_root: RngRoot) -> RngRoot {
     let override_seed = match dataset {
         DatasetSpec::Synthetic(spec) => spec.random_seed,
         DatasetSpec::File(spec) => spec.random_seed,
+        DatasetSpec::Public(spec) => spec.random_seed,
     };
     override_seed.map_or(run_rng_root, |seed| RngRoot::new(Some(seed)))
 }
@@ -550,6 +554,58 @@ async fn build_file_dataset(
     let mut load = LoadConfig::new(source);
     load.max_rows = spec.entries;
     load.sampling_strategy = Some(spec.sampling.clone());
+    registry
+        .dataset_formats()
+        .build_dataset(Some(&spec.format), &load, &compose, tokenizer)
+        .await
+        .map_err(Into::into)
+}
+
+async fn build_public_dataset(
+    registry: &AiperfRegistry,
+    spec: &PublicDatasetSpec,
+    models: &ModelsSpec,
+    rng_root: RngRoot,
+    tokenizer: &dyn TextTokenizer,
+) -> Result<Dataset> {
+    ensure!(
+        !spec.name.trim().is_empty(),
+        "public dataset name cannot be empty"
+    );
+    ensure!(
+        !spec.format.trim().is_empty(),
+        "public dataset format cannot be empty"
+    );
+    let option_cap = spec
+        .options
+        .get("max_conversations")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok());
+    let max_rows = spec.entries.or(option_cap);
+    let source = match &spec.source {
+        PublicDatasetSourceSpec::Url { url } => {
+            ensure!(!url.trim().is_empty(), "public dataset URL cannot be empty");
+            DatasetSource::Url(url.clone())
+        }
+        PublicDatasetSourceSpec::HuggingFace {
+            dataset,
+            subset,
+            split,
+            revision,
+        } => DatasetSource::HuggingFace {
+            dataset: dataset.clone(),
+            config: subset.clone(),
+            split: split.clone(),
+            max_rows,
+            revision: revision.clone(),
+        },
+    };
+    let mut compose = compose_config(models, rng_root)?;
+    compose.format_options = spec.options.clone();
+    let mut load = LoadConfig::new(source);
+    load.max_rows = max_rows;
+    load.sampling_strategy = Some(spec.sampling.clone());
+    load.options = spec.options.clone();
     registry
         .dataset_formats()
         .build_dataset(Some(&spec.format), &load, &compose, tokenizer)
@@ -789,6 +845,7 @@ fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
             // field. This fallback exists only for the observer's requested
             // OSL dimension when a file row omits it.
             .unwrap_or(1.0),
+        DatasetSpec::Public(_) => 1.0,
     };
     ensure!(
         expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,

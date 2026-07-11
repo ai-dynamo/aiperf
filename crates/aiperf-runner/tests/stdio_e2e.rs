@@ -29,7 +29,7 @@ fn capabilities_are_a_single_versioned_json_line() {
     assert_eq!(capabilities["report_schema_version"], "2.0");
     assert_eq!(
         capabilities["dataset_types"],
-        serde_json::json!(["synthetic", "file"])
+        serde_json::json!(["synthetic", "file", "public"])
     );
     assert!(capabilities["phase_types"].as_array().unwrap().len() >= 6);
 }
