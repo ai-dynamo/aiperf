@@ -5,7 +5,10 @@
 //!
 //! The catalog is data over the columnar engine: each row declares identity,
 //! units, flags, kind, aggregation, and true metric dependencies. Computation is
-//! implemented in [`crate::accumulator`].
+//! implemented in [`crate::accumulator`]. Registry validation and dependency
+//! ordering port `src/aiperf/metrics/metric_registry.py:38-324`; row-level
+//! source locations are recorded in
+//! `specs/2026-07-10-aiperf-rust-metric-catalog-appendix.md`.
 
 use crate::{MetricValueType, Unit};
 use bitflags::bitflags;
@@ -73,6 +76,12 @@ pub enum MetricTag {
     TotalUsagePromptCacheReadTokens,
     TotalUsagePromptCacheWriteTokens,
     TotalUsagePromptCacheMissTokens,
+    TotalUsagePromptAudioTokens,
+    TotalUsageCompletionAudioTokens,
+    TotalUsageAcceptedPredictionTokens,
+    TotalUsageRejectedPredictionTokens,
+    TotalUsageToolUsePromptTokens,
+    TotalUsagePromptAudioSeconds,
     OverallUsagePromptCacheReadPct,
     UsagePromptTokensDiffPct,
     UsageCompletionTokensDiffPct,
@@ -117,6 +126,20 @@ pub enum MetricTag {
     HttpReqTotal,
     EffectiveLatency,
     CreditToStartLatency,
+    EffectiveConcurrency,
+    EffectiveDecodeThroughput,
+    EffectivePrefillThroughput,
+    EffectiveDecodeConcurrency,
+    EffectivePrefillConcurrency,
+    EffectiveTotalThroughput,
+    EffectiveDecodeThroughputPerUser,
+    EffectivePrefillThroughputPerUser,
+    TokensInFlight,
+    ActiveDecodeThroughput,
+    ActivePrefillThroughput,
+    ActiveDecodeThroughputPerUser,
+    ActivePrefillThroughputPerUser,
+    ActiveTotalThroughput,
 }
 
 impl MetricTag {
@@ -145,8 +168,8 @@ impl MetricTag {
             Self::ErrorInputSequenceLength => "error_isl",
             Self::OutputTokenCount => "output_token_count",
             Self::ReasoningTokenCount => "reasoning_token_count",
-            Self::TotalOutputSequenceLength => "total_output_sequence_length",
-            Self::TotalInputSequenceLength => "total_input_sequence_length",
+            Self::TotalOutputSequenceLength => "total_osl",
+            Self::TotalInputSequenceLength => "total_isl",
             Self::TotalErrorInputSequenceLength => "total_error_isl",
             Self::TotalOutputTokens => "total_output_tokens",
             Self::TotalReasoningTokens => "total_reasoning_tokens",
@@ -178,6 +201,12 @@ impl MetricTag {
             Self::TotalUsagePromptCacheReadTokens => "total_usage_prompt_cache_read_tokens",
             Self::TotalUsagePromptCacheWriteTokens => "total_usage_prompt_cache_write_tokens",
             Self::TotalUsagePromptCacheMissTokens => "total_usage_prompt_cache_miss_tokens",
+            Self::TotalUsagePromptAudioTokens => "total_usage_prompt_audio_tokens",
+            Self::TotalUsageCompletionAudioTokens => "total_usage_completion_audio_tokens",
+            Self::TotalUsageAcceptedPredictionTokens => "total_usage_accepted_prediction_tokens",
+            Self::TotalUsageRejectedPredictionTokens => "total_usage_rejected_prediction_tokens",
+            Self::TotalUsageToolUsePromptTokens => "total_usage_tool_use_prompt_tokens",
+            Self::TotalUsagePromptAudioSeconds => "total_usage_prompt_audio_seconds",
             Self::OverallUsagePromptCacheReadPct => "overall_usage_prompt_cache_read_pct",
             Self::UsagePromptTokensDiffPct => "usage_prompt_tokens_diff_pct",
             Self::UsageCompletionTokensDiffPct => "usage_completion_tokens_diff_pct",
@@ -224,6 +253,20 @@ impl MetricTag {
             Self::HttpReqTotal => "http_req_total",
             Self::EffectiveLatency => "effective_latency",
             Self::CreditToStartLatency => "credit_to_start_latency",
+            Self::EffectiveConcurrency => "effective_concurrency",
+            Self::EffectiveDecodeThroughput => "effective_decode_throughput",
+            Self::EffectivePrefillThroughput => "effective_prefill_throughput",
+            Self::EffectiveDecodeConcurrency => "effective_decode_concurrency",
+            Self::EffectivePrefillConcurrency => "effective_prefill_concurrency",
+            Self::EffectiveTotalThroughput => "effective_total_throughput",
+            Self::EffectiveDecodeThroughputPerUser => "effective_decode_throughput_per_user",
+            Self::EffectivePrefillThroughputPerUser => "effective_prefill_throughput_per_user",
+            Self::TokensInFlight => "tokens_in_flight",
+            Self::ActiveDecodeThroughput => "active_decode_throughput",
+            Self::ActivePrefillThroughput => "active_prefill_throughput",
+            Self::ActiveDecodeThroughputPerUser => "active_decode_throughput_per_user",
+            Self::ActivePrefillThroughputPerUser => "active_prefill_throughput_per_user",
+            Self::ActiveTotalThroughput => "active_total_throughput",
         }
     }
 }
@@ -284,36 +327,42 @@ bitflags! {
     pub struct MetricFlags: u64 {
         /// No flags.
         const NONE = 0;
-        /// Requires streaming token arrivals.
-        const STREAMING_TOKENS_ONLY = 1 << 0;
+        /// Requires a streaming response.
+        const STREAMING_ONLY = 1 << 0;
+        /// Metric applies only to failed records.
+        const ERROR_ONLY = 1 << 1;
         /// Requires produced output tokens.
-        const PRODUCES_TOKENS_ONLY = 1 << 1;
-        /// Requires tokenized input.
-        const TOKENIZES_INPUT_ONLY = 1 << 2;
+        const PRODUCES_TOKENS_ONLY = 1 << 2;
         /// Bit 3 is reserved to match the Python enum layout.
         const LARGER_IS_BETTER = 1 << 4;
-        /// Metric applies only to failed records.
-        const ERROR_ONLY = 1 << 5;
         /// Internal helper metric.
-        const INTERNAL = 1 << 6;
-        /// Hide per-record output.
-        const NO_INDIVIDUAL_RECORDS = 1 << 7;
-        /// Metric participates in goodput.
-        const GOODPUT = 1 << 8;
-        /// Metric is usage-reporting only.
-        const USAGE_ONLY = 1 << 9;
-        /// Metric is usage-difference only.
-        const USAGE_DIFF_ONLY = 1 << 10;
-        /// Metric requires HTTP trace data.
-        const HTTP_TRACE_ONLY = 1 << 11;
-        /// Percentiles include failed requests through adj_*.
-        const PERCENTILE_INCLUDES_FAILED_REQUESTS = 1 << 12;
-        /// Supports reasoning-token endpoints.
-        const SUPPORTS_REASONING = 1 << 13;
+        const INTERNAL = 1 << 5;
         /// Supports audio endpoints.
-        const SUPPORTS_AUDIO_ONLY = 1 << 14;
+        const SUPPORTS_AUDIO_ONLY = 1 << 6;
+        /// Supports image endpoints.
+        const SUPPORTS_IMAGE_ONLY = 1 << 7;
+        /// Supports reasoning-token endpoints.
+        const SUPPORTS_REASONING = 1 << 8;
         /// Experimental output.
-        const EXPERIMENTAL = 1 << 15;
+        const EXPERIMENTAL = 1 << 9;
+        /// Metric participates in goodput.
+        const GOODPUT = 1 << 10;
+        /// Hide per-record output.
+        const NO_INDIVIDUAL_RECORDS = 1 << 11;
+        /// Requires tokenized input.
+        const TOKENIZES_INPUT_ONLY = 1 << 12;
+        /// Supports video-input endpoints.
+        const SUPPORTS_VIDEO_ONLY = 1 << 13;
+        /// Metric is usage-difference only.
+        const USAGE_DIFF_ONLY = 1 << 14;
+        /// Metric requires HTTP trace data.
+        const HTTP_TRACE_ONLY = 1 << 15;
+        /// Requires video-producing endpoints.
+        const PRODUCES_VIDEO_ONLY = 1 << 16;
+        /// Percentiles include failed requests through adj_*.
+        const PERCENTILE_INCLUDES_FAILED_REQUESTS = 1 << 17;
+        /// Requires streaming token arrivals and produced output tokens.
+        const STREAMING_TOKENS_ONLY = Self::STREAMING_ONLY.bits() | Self::PRODUCES_TOKENS_ONLY.bits();
     }
 }
 
@@ -330,7 +379,7 @@ impl MetricFlags {
 
     /// Returns true when none of the requested flags are missing.
     pub fn missing(self, flags: Self) -> bool {
-        flags.is_empty() || self.contains(flags)
+        flags.is_empty() || !self.intersects(flags)
     }
 }
 
@@ -377,10 +426,10 @@ macro_rules! spec {
 /// Static metric catalog. Rows marked as injected have specs here and receive values
 /// from future telemetry/accuracy accumulators or explicit record overrides.
 pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
-    vec![
+    let mut catalog = vec![
         spec!(
             RequestCount,
-            "Requests",
+            "Request Count",
             Request,
             Aggregate,
             Some(AggregationKind::Sum),
@@ -389,7 +438,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             ErrorRequestCount,
-            "Error Count",
+            "Error Request Count",
             Request,
             Aggregate,
             Some(AggregationKind::Sum),
@@ -398,7 +447,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             CompletedRequestCount,
-            "Completed",
+            "Completed Requests (Success + Error)",
             Request,
             Derived,
             None,
@@ -407,7 +456,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             RequestErrorRate,
-            "Err %",
+            "Request Error Rate",
             Percent,
             Derived,
             None,
@@ -416,7 +465,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             GoodRequestCount,
-            "Good Requests",
+            "Good Request Count",
             Request,
             Aggregate,
             Some(AggregationKind::Sum),
@@ -434,7 +483,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             GoodRequestFraction,
-            "GoodReqFrac",
+            "GoodRequestFraction",
             Ratio,
             Derived,
             None,
@@ -443,7 +492,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             MinRequestTimestamp,
-            "Min Req",
+            "Minimum Request Timestamp",
             Nanosecond,
             Aggregate,
             Some(AggregationKind::Min),
@@ -452,7 +501,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             MaxResponseTimestamp,
-            "Max Resp",
+            "Maximum Response Timestamp",
             Nanosecond,
             Aggregate,
             Some(AggregationKind::Max),
@@ -461,16 +510,16 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             BenchmarkDuration,
-            "Duration",
+            "Benchmark Duration",
             Nanosecond,
             Derived,
             None,
-            MetricFlags::NO_INDIVIDUAL_RECORDS,
+            MetricFlags::NONE,
             [MinRequestTimestamp, MaxResponseTimestamp]
         ),
         spec!(
             RequestLatency,
-            "Req Latency",
+            "Request Latency",
             Nanosecond,
             Record,
             None,
@@ -479,7 +528,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             TimeToFirstToken,
-            "TTFT",
+            "Time to First Token",
             Nanosecond,
             Record,
             None,
@@ -488,7 +537,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             TimeToSecondToken,
-            "TTST",
+            "Time to Second Token",
             Nanosecond,
             Record,
             None,
@@ -497,7 +546,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             TimeToFirstOutputToken,
-            "TTFO",
+            "Time to First Output Token",
             Nanosecond,
             Record,
             None,
@@ -506,7 +555,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             InterTokenLatency,
-            "ITL",
+            "Inter Token Latency",
             Nanosecond,
             Record,
             None,
@@ -515,7 +564,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             InterChunkLatency,
-            "ICL",
+            "Inter Chunk Latency",
             Nanosecond,
             Record,
             None,
@@ -524,7 +573,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             CreditDropLatency,
-            "Credit Latency",
+            "Credit Drop Latency",
             Nanosecond,
             Record,
             None,
@@ -533,7 +582,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             OutputSequenceLength,
-            "OSL",
+            "Output Sequence Length",
             Token,
             Record,
             None,
@@ -542,7 +591,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             InputSequenceLength,
-            "ISL",
+            "Input Sequence Length",
             Token,
             Record,
             None,
@@ -551,16 +600,18 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             ErrorInputSequenceLength,
-            "Error ISL",
+            "Error Input Sequence Length",
             Token,
             Record,
             None,
-            MetricFlags::TOKENIZES_INPUT_ONLY | MetricFlags::ERROR_ONLY,
+            MetricFlags::TOKENIZES_INPUT_ONLY
+                | MetricFlags::ERROR_ONLY
+                | MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
             OutputTokenCount,
-            "Output Tokens",
+            "Output Token Count",
             Token,
             Record,
             None,
@@ -569,16 +620,18 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             ReasoningTokenCount,
-            "Reasoning Tokens",
+            "Reasoning Token Count",
             Token,
             Record,
             None,
-            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::SUPPORTS_REASONING,
+            MetricFlags::PRODUCES_TOKENS_ONLY
+                | MetricFlags::LARGER_IS_BETTER
+                | MetricFlags::SUPPORTS_REASONING,
             []
         ),
         spec!(
             TotalOutputSequenceLength,
-            "Total OSL",
+            "Total Output Sequence Length",
             Token,
             Derived,
             None,
@@ -587,7 +640,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             TotalInputSequenceLength,
-            "Total ISL",
+            "Total Input Sequence Length",
             Token,
             Derived,
             None,
@@ -596,11 +649,13 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             TotalErrorInputSequenceLength,
-            "Total Error ISL",
+            "Total Error Input Sequence Length",
             Token,
             Derived,
             None,
-            MetricFlags::TOKENIZES_INPUT_ONLY | MetricFlags::ERROR_ONLY,
+            MetricFlags::TOKENIZES_INPUT_ONLY
+                | MetricFlags::ERROR_ONLY
+                | MetricFlags::LARGER_IS_BETTER,
             [ErrorInputSequenceLength]
         ),
         spec!(
@@ -618,12 +673,12 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::SUPPORTS_REASONING,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             [ReasoningTokenCount]
         ),
         spec!(
             RequestThroughput,
-            "Req/sec",
+            "Request Throughput",
             RequestsPerSecond,
             Derived,
             None,
@@ -632,7 +687,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             InputTokenThroughput,
-            "Input TPS",
+            "Input Token Throughput",
             TokensPerSecond,
             Derived,
             None,
@@ -641,7 +696,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             OutputTokenThroughput,
-            "Output TPS",
+            "Output Token Throughput",
             TokensPerSecond,
             Derived,
             None,
@@ -650,11 +705,11 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             TotalTokenThroughput,
-            "Total TPS",
+            "Total Token Throughput",
             TokensPerSecond,
             Derived,
             None,
-            MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             [
                 TotalInputSequenceLength,
                 TotalOutputSequenceLength,
@@ -663,7 +718,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             OutputTokenThroughputPerUser,
-            "Output TPS/User",
+            "Output Token Throughput Per User",
             TokensPerSecondPerUser,
             Record,
             None,
@@ -672,7 +727,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             E2eOutputTokenThroughput,
-            "E2E Output TPS/User",
+            "E2E Output Token Throughput",
             TokensPerSecondPerUser,
             Record,
             None,
@@ -681,7 +736,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             PrefillThroughputPerUser,
-            "Prefill TPS/User",
+            "Prefill Throughput Per User",
             TokensPerSecondPerUser,
             Record,
             None,
@@ -692,7 +747,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             Rtfx,
-            "RTFx",
+            "Inverse Real-Time Factor (RTFx)",
             Ratio,
             Record,
             None,
@@ -705,7 +760,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::TOKENIZES_INPUT_ONLY | MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
@@ -714,7 +769,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
@@ -723,7 +778,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
@@ -732,7 +787,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::SUPPORTS_REASONING,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
@@ -741,7 +796,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::LARGER_IS_BETTER | MetricFlags::SUPPORTS_AUDIO_ONLY,
             []
         ),
         spec!(
@@ -750,7 +805,9 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::PRODUCES_TOKENS_ONLY
+                | MetricFlags::LARGER_IS_BETTER
+                | MetricFlags::SUPPORTS_AUDIO_ONLY,
             []
         ),
         spec!(
@@ -759,7 +816,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
@@ -768,7 +825,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::PRODUCES_TOKENS_ONLY,
             []
         ),
         spec!(
@@ -777,7 +834,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::LARGER_IS_BETTER,
             []
         ),
         spec!(
@@ -786,7 +843,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::NONE,
             []
         ),
         spec!(
@@ -795,7 +852,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::NONE,
             []
         ),
         spec!(
@@ -804,7 +861,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::NONE,
             []
         ),
         spec!(
@@ -813,7 +870,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Second,
             Record,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::LARGER_IS_BETTER | MetricFlags::SUPPORTS_AUDIO_ONLY,
             []
         ),
         spec!(
@@ -822,7 +879,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::TOKENIZES_INPUT_ONLY | MetricFlags::LARGER_IS_BETTER,
             [UsagePromptTokens]
         ),
         spec!(
@@ -831,7 +888,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             [UsageCompletionTokens]
         ),
         spec!(
@@ -840,7 +897,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             [UsageTotalTokens]
         ),
         spec!(
@@ -849,7 +906,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::SUPPORTS_REASONING,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
             [UsageReasoningTokens]
         ),
         spec!(
@@ -858,7 +915,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::LARGER_IS_BETTER,
             [UsagePromptCacheReadTokens]
         ),
         spec!(
@@ -867,7 +924,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::NONE,
             [UsagePromptCacheWriteTokens]
         ),
         spec!(
@@ -876,8 +933,64 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY,
+            MetricFlags::NONE,
             [UsagePromptCacheMissTokens]
+        ),
+        spec!(
+            TotalUsagePromptAudioTokens,
+            "Total Usage Prompt Audio Tokens",
+            Token,
+            Derived,
+            None,
+            MetricFlags::LARGER_IS_BETTER | MetricFlags::SUPPORTS_AUDIO_ONLY,
+            [UsagePromptAudioTokens]
+        ),
+        spec!(
+            TotalUsageCompletionAudioTokens,
+            "Total Usage Completion Audio Tokens",
+            Token,
+            Derived,
+            None,
+            MetricFlags::PRODUCES_TOKENS_ONLY
+                | MetricFlags::LARGER_IS_BETTER
+                | MetricFlags::SUPPORTS_AUDIO_ONLY,
+            [UsageCompletionAudioTokens]
+        ),
+        spec!(
+            TotalUsageAcceptedPredictionTokens,
+            "Total Usage Accepted Prediction Tokens",
+            Token,
+            Derived,
+            None,
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
+            [UsageAcceptedPredictionTokens]
+        ),
+        spec!(
+            TotalUsageRejectedPredictionTokens,
+            "Total Usage Rejected Prediction Tokens",
+            Token,
+            Derived,
+            None,
+            MetricFlags::PRODUCES_TOKENS_ONLY,
+            [UsageRejectedPredictionTokens]
+        ),
+        spec!(
+            TotalUsageToolUsePromptTokens,
+            "Total Usage Tool Use Prompt Tokens",
+            Token,
+            Derived,
+            None,
+            MetricFlags::NONE,
+            [UsageToolUsePromptTokens]
+        ),
+        spec!(
+            TotalUsagePromptAudioSeconds,
+            "Total Usage Prompt Audio Seconds",
+            Second,
+            Derived,
+            None,
+            MetricFlags::LARGER_IS_BETTER | MetricFlags::SUPPORTS_AUDIO_ONLY,
+            [UsagePromptAudioSeconds]
         ),
         spec!(
             OverallUsagePromptCacheReadPct,
@@ -885,44 +998,46 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Percent,
             Derived,
             None,
-            MetricFlags::USAGE_ONLY | MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::LARGER_IS_BETTER,
             [TotalUsagePromptCacheReadTokens, TotalUsagePromptTokens]
         ),
         spec!(
             UsagePromptTokensDiffPct,
-            "Usage Prompt Tokens Diff %",
+            "Usage Prompt Diff %",
             Percent,
             Record,
             None,
-            MetricFlags::USAGE_DIFF_ONLY,
+            MetricFlags::USAGE_DIFF_ONLY | MetricFlags::TOKENIZES_INPUT_ONLY,
             [InputSequenceLength, UsagePromptTokens]
         ),
         spec!(
             UsageCompletionTokensDiffPct,
-            "Usage Completion Tokens Diff %",
+            "Usage Completion Diff %",
             Percent,
             Record,
             None,
-            MetricFlags::USAGE_DIFF_ONLY,
+            MetricFlags::USAGE_DIFF_ONLY | MetricFlags::PRODUCES_TOKENS_ONLY,
             [OutputSequenceLength, UsageCompletionTokens]
         ),
         spec!(
             UsageReasoningTokensDiffPct,
-            "Usage Reasoning Tokens Diff %",
+            "Usage Reasoning Diff %",
             Percent,
             Record,
             None,
-            MetricFlags::USAGE_DIFF_ONLY,
+            MetricFlags::USAGE_DIFF_ONLY
+                | MetricFlags::PRODUCES_TOKENS_ONLY
+                | MetricFlags::SUPPORTS_REASONING,
             [ReasoningTokenCount, UsageReasoningTokens]
         ),
         spec!(
             UsageDiscrepancyCount,
             "Usage Discrepancy Count",
-            Count,
+            Request,
             Aggregate,
             Some(AggregationKind::Sum),
-            MetricFlags::USAGE_DIFF_ONLY,
-            []
+            MetricFlags::USAGE_DIFF_ONLY | MetricFlags::NO_INDIVIDUAL_RECORDS,
+            [UsagePromptTokensDiffPct, UsageCompletionTokensDiffPct]
         ),
         spec!(
             RequestedOutputSequenceLength,
@@ -930,7 +1045,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Token,
             Record,
             None,
-            MetricFlags::INTERNAL,
+            MetricFlags::INTERNAL | MetricFlags::PRODUCES_TOKENS_ONLY,
             []
         ),
         spec!(
@@ -939,17 +1054,21 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Percent,
             Record,
             None,
-            MetricFlags::INTERNAL,
+            MetricFlags::PRODUCES_TOKENS_ONLY,
             [RequestedOutputSequenceLength, OutputSequenceLength]
         ),
         spec!(
             OslMismatchCount,
             "OSL Mismatch Count",
-            Count,
+            Request,
             Aggregate,
             Some(AggregationKind::Sum),
-            MetricFlags::INTERNAL,
-            []
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::NO_INDIVIDUAL_RECORDS,
+            [
+                RequestedOutputSequenceLength,
+                OutputSequenceLength,
+                OslMismatchDiffPct
+            ]
         ),
         spec!(
             ThinkingEfficiency,
@@ -957,7 +1076,9 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Ratio,
             Record,
             None,
-            MetricFlags::EXPERIMENTAL | MetricFlags::SUPPORTS_REASONING,
+            MetricFlags::EXPERIMENTAL
+                | MetricFlags::PRODUCES_TOKENS_ONLY
+                | MetricFlags::SUPPORTS_REASONING,
             [ReasoningTokenCount, OutputTokenCount]
         ),
         spec!(
@@ -966,7 +1087,9 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Ratio,
             Derived,
             None,
-            MetricFlags::EXPERIMENTAL | MetricFlags::SUPPORTS_REASONING,
+            MetricFlags::EXPERIMENTAL
+                | MetricFlags::PRODUCES_TOKENS_ONLY
+                | MetricFlags::SUPPORTS_REASONING,
             [TotalReasoningTokens, TotalOutputTokens]
         ),
         spec!(
@@ -975,7 +1098,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Watt,
             Derived,
             None,
-            MetricFlags::INTERNAL,
+            MetricFlags::NONE,
             []
         ),
         spec!(
@@ -984,53 +1107,53 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Joule,
             Derived,
             None,
-            MetricFlags::INTERNAL,
+            MetricFlags::NONE,
             []
         ),
         spec!(
             OutputTokensPerJoule,
-            "Output Tokens/Joule",
-            Ratio,
+            "Output Tokens per Joule",
+            TokensPerJoule,
             Derived,
             None,
-            MetricFlags::LARGER_IS_BETTER,
-            [TotalOutputTokens, TotalGpuEnergy]
+            MetricFlags::PRODUCES_TOKENS_ONLY | MetricFlags::LARGER_IS_BETTER,
+            []
         ),
         spec!(
             EnergyPerUser,
-            "Energy/User",
-            Joule,
+            "Energy per User",
+            JoulesPerUser,
             Derived,
             None,
-            MetricFlags::INTERNAL,
-            [TotalGpuEnergy]
+            MetricFlags::NONE,
+            []
         ),
         spec!(
             NetworkAdjustedRequestLatency,
-            "Network Adjusted Req Latency",
+            "Network-Adjusted Request Latency",
             Nanosecond,
             Derived,
             None,
-            MetricFlags::INTERNAL,
-            [RequestLatency]
+            MetricFlags::NONE,
+            []
         ),
         spec!(
             NetworkAdjustedTimeToFirstToken,
-            "Network Adjusted TTFT",
+            "Network-Adjusted Time to First Token",
             Nanosecond,
             Derived,
             None,
-            MetricFlags::INTERNAL,
-            [TimeToFirstToken]
+            MetricFlags::STREAMING_TOKENS_ONLY,
+            []
         ),
         spec!(
             NetworkAdjustedTimeToFirstOutputToken,
-            "Network Adjusted TTFO",
+            "Network-Adjusted Time to First Output Token",
             Nanosecond,
             Derived,
             None,
-            MetricFlags::INTERNAL,
-            [TimeToFirstOutputToken]
+            MetricFlags::STREAMING_TOKENS_ONLY | MetricFlags::SUPPORTS_REASONING,
+            []
         ),
         spec!(
             NetworkRtt,
@@ -1038,7 +1161,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Nanosecond,
             Derived,
             None,
-            MetricFlags::INTERNAL,
+            MetricFlags::NO_INDIVIDUAL_RECORDS,
             []
         ),
         spec!(
@@ -1047,7 +1170,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Nanosecond,
             Record,
             None,
-            MetricFlags::EXPERIMENTAL,
+            MetricFlags::STREAMING_ONLY | MetricFlags::EXPERIMENTAL,
             []
         ),
         spec!(
@@ -1056,13 +1179,13 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Nanosecond,
             Record,
             None,
-            MetricFlags::EXPERIMENTAL,
+            MetricFlags::STREAMING_TOKENS_ONLY | MetricFlags::EXPERIMENTAL,
             [TimeToFirstToken, StreamSetupLatency]
         ),
         spec!(
             AccuracyCorrect,
             "Accuracy Correct",
-            Count,
+            Ratio,
             Aggregate,
             Some(AggregationKind::Sum),
             MetricFlags::INTERNAL,
@@ -1071,7 +1194,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         spec!(
             AccuracyUnparsed,
             "Accuracy Unparsed",
-            Count,
+            Ratio,
             Aggregate,
             Some(AggregationKind::Sum),
             MetricFlags::INTERNAL,
@@ -1088,38 +1211,38 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             NumImages,
-            "Images",
+            "Number of Images",
             Image,
             Record,
             None,
-            MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::SUPPORTS_IMAGE_ONLY,
             []
         ),
         spec!(
             ImageThroughput,
             "Image Throughput",
-            RequestsPerSecond,
+            ImagesPerSecond,
             Record,
             None,
-            MetricFlags::LARGER_IS_BETTER,
+            MetricFlags::SUPPORTS_IMAGE_ONLY,
             [NumImages, RequestLatency]
         ),
         spec!(
             ImageLatency,
             "Image Latency",
-            Nanosecond,
+            MillisecondsPerImage,
             Record,
             None,
-            MetricFlags::PERCENTILE_INCLUDES_FAILED_REQUESTS,
-            [RequestLatency]
+            MetricFlags::SUPPORTS_IMAGE_ONLY,
+            [NumImages, RequestLatency]
         ),
         spec!(
             VideoInferenceTime,
             "Video Inference Time",
-            Millisecond,
+            Second,
             Record,
             None,
-            MetricFlags::EXPERIMENTAL,
+            MetricFlags::PRODUCES_VIDEO_ONLY,
             []
         ),
         spec!(
@@ -1128,7 +1251,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             Megabyte,
             Record,
             None,
-            MetricFlags::EXPERIMENTAL,
+            MetricFlags::PRODUCES_VIDEO_ONLY,
             []
         ),
         spec!(
@@ -1142,7 +1265,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             HttpReqDnsLookup,
-            "HTTP DNS",
+            "HTTP DNS Lookup",
             Nanosecond,
             Record,
             None,
@@ -1169,7 +1292,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             HttpReqWaiting,
-            "HTTP Waiting",
+            "HTTP Waiting (TTFB)",
             Nanosecond,
             Record,
             None,
@@ -1187,7 +1310,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             HttpReqDuration,
-            "HTTP Duration",
+            "HTTP Duration (excl. conn)",
             Nanosecond,
             Record,
             None,
@@ -1196,8 +1319,8 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             HttpReqConnectionReused,
-            "HTTP Reused",
-            Count,
+            "HTTP Connection Reused",
+            Ratio,
             Record,
             None,
             MetricFlags::HTTP_TRACE_ONLY,
@@ -1241,7 +1364,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             HttpReqConnectionOverhead,
-            "HTTP Conn Overhead",
+            "HTTP Connection Overhead",
             Nanosecond,
             Record,
             None,
@@ -1250,7 +1373,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             HttpReqTotal,
-            "HTTP Total",
+            "HTTP Total Time",
             Nanosecond,
             Record,
             None,
@@ -1282,8 +1405,569 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             MetricFlags::INTERNAL,
             []
         ),
-    ]
+        spec!(
+            EffectiveConcurrency,
+            "Effective Concurrency",
+            Request,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS,
+            []
+        ),
+        spec!(
+            EffectiveDecodeThroughput,
+            "Effective Decode Throughput",
+            TokensPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            EffectivePrefillThroughput,
+            "Effective Prefill Throughput",
+            TokensPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            EffectiveDecodeConcurrency,
+            "Effective Decode Concurrency",
+            Request,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS,
+            []
+        ),
+        spec!(
+            EffectivePrefillConcurrency,
+            "Effective Prefill Concurrency",
+            Request,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS,
+            []
+        ),
+        spec!(
+            EffectiveTotalThroughput,
+            "Effective Total Throughput",
+            TokensPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            EffectiveDecodeThroughputPerUser,
+            "Effective Decode Throughput Per User",
+            TokensPerSecondPerUser,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            EffectivePrefillThroughputPerUser,
+            "Effective Prefill Throughput Per User",
+            TokensPerSecondPerUser,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            TokensInFlight,
+            "Tokens In Flight",
+            Token,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS,
+            []
+        ),
+        spec!(
+            ActiveDecodeThroughput,
+            "Active Decode Throughput",
+            TokensPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            ActivePrefillThroughput,
+            "Active Prefill Throughput",
+            TokensPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            ActiveDecodeThroughputPerUser,
+            "Active Decode Throughput Per User",
+            TokensPerSecondPerUser,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            ActivePrefillThroughputPerUser,
+            "Active Prefill Throughput Per User",
+            TokensPerSecondPerUser,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+        spec!(
+            ActiveTotalThroughput,
+            "Active Total Throughput",
+            TokensPerSecond,
+            Derived,
+            None,
+            MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::LARGER_IS_BETTER,
+            []
+        ),
+    ];
+    configure_catalog_metadata(&mut catalog);
+    catalog
 });
+
+fn configure_catalog_metadata(catalog: &mut [MetricSpec]) {
+    use MetricConsoleGroup::{Active, Effective, None as Hidden, Usage};
+    use MetricTag::*;
+
+    for spec in catalog {
+        spec.short_header = match spec.tag {
+            AudioDuration => Some("Audio Dur"),
+            BenchmarkDuration => Some("Duration"),
+            CompletedRequestCount => Some("Completed"),
+            CreditDropLatency => Some("Credit Latency"),
+            E2eOutputTokenThroughput => Some("E2E Output TPS/User"),
+            ErrorInputSequenceLength => Some("Error ISL"),
+            ErrorRequestCount => Some("Error Count"),
+            GoodRequestFraction => Some("GoodReqFrac"),
+            Goodput => Some("Goodput"),
+            HttpReqBlocked => Some("Blocked"),
+            HttpReqChunksReceived => Some("Chunks Recv"),
+            HttpReqChunksSent => Some("Chunks Sent"),
+            HttpReqConnecting => Some("Connecting"),
+            HttpReqConnectionOverhead => Some("Conn Overhead"),
+            HttpReqConnectionReused => Some("Conn Reused"),
+            HttpReqDataReceived => Some("Received"),
+            HttpReqDataSent => Some("Sent"),
+            HttpReqDnsLookup => Some("DNS"),
+            HttpReqDuration => Some("Dur (excl)"),
+            HttpReqReceiving => Some("Receiving"),
+            HttpReqSending => Some("Sending"),
+            HttpReqTotal => Some("Total"),
+            HttpReqWaiting => Some("TTFB"),
+            ImageLatency => Some("Image Latency"),
+            ImageThroughput => Some("Image Throughput"),
+            InputSequenceLength => Some("ISL"),
+            InputTokenThroughput => Some("Input TPS"),
+            InterChunkLatency => Some("ICL"),
+            InterTokenLatency => Some("ITL"),
+            MaxResponseTimestamp => Some("Max Resp"),
+            MinRequestTimestamp => Some("Min Req"),
+            NetworkAdjustedRequestLatency => Some("Net-Adj Req Latency"),
+            NetworkAdjustedTimeToFirstOutputToken => Some("Net-Adj TTFO"),
+            NetworkAdjustedTimeToFirstToken => Some("Net-Adj TTFT"),
+            NetworkRtt => Some("Net RTT"),
+            NumImages => Some("Num Images"),
+            OslMismatchCount => Some("OSL Mismatches"),
+            OslMismatchDiffPct => Some("OSL Diff"),
+            OutputSequenceLength => Some("OSL"),
+            OutputTokenCount => Some("Output Tokens"),
+            OutputTokenThroughput => Some("Output TPS"),
+            OutputTokenThroughputPerUser => Some("Output TPS/User"),
+            OverallThinkingEfficiency => Some("Overall Eff."),
+            OverallUsagePromptCacheReadPct => Some("Overall Cache Read %"),
+            PrefillThroughputPerUser => Some("Prefill TPS/User"),
+            ReasoningTokenCount => Some("Reasoning Tokens"),
+            RequestCount => Some("Requests"),
+            RequestErrorRate => Some("Err %"),
+            RequestLatency => Some("Req Latency"),
+            RequestThroughput => Some("Req/sec"),
+            RequestedOutputSequenceLength => Some("Req OSL"),
+            Rtfx => Some("RTFx"),
+            TimeToFirstOutputToken => Some("TTFO"),
+            TimeToFirstToken => Some("TTFT"),
+            TimeToSecondToken => Some("TTST"),
+            TotalErrorInputSequenceLength => Some("Total Error ISL"),
+            TotalInputSequenceLength => Some("Total ISL"),
+            TotalOutputSequenceLength => Some("Total OSL"),
+            TotalOutputTokens => Some("Total Output"),
+            TotalReasoningTokens => Some("Total Reasoning"),
+            TotalTokenThroughput => Some("Total TPS"),
+            TotalUsageAcceptedPredictionTokens => Some("Total Usage Accepted Pred"),
+            TotalUsageCompletionAudioTokens => Some("Total Usage Comp Audio"),
+            TotalUsageCompletionTokens => Some("Total Usage Completion"),
+            TotalUsagePromptAudioSeconds => Some("Total Usage Prompt Audio Sec"),
+            TotalUsagePromptAudioTokens => Some("Total Usage Prompt Audio"),
+            TotalUsagePromptCacheMissTokens => Some("Total Usage Prompt Cache Miss"),
+            TotalUsagePromptCacheReadTokens => Some("Total Usage Prompt Cache Read"),
+            TotalUsagePromptCacheWriteTokens => Some("Total Usage Prompt Cache Write"),
+            TotalUsagePromptTokens => Some("Total Usage Prompt"),
+            TotalUsageReasoningTokens => Some("Total Usage Reasoning"),
+            TotalUsageRejectedPredictionTokens => Some("Total Usage Rejected Pred"),
+            TotalUsageToolUsePromptTokens => Some("Total Usage Tool Prompt"),
+            TotalUsageTotalTokens => Some("Total Usage Total"),
+            UsageAcceptedPredictionTokens => Some("Usage Accepted Pred"),
+            UsageCompletionAudioTokens => Some("Usage Completion Audio"),
+            UsageCompletionTokens => Some("Usage Completion"),
+            UsageCompletionTokensDiffPct => Some("Completion Diff"),
+            UsageDiscrepancyCount => Some("Discrepancies"),
+            UsagePromptAudioSeconds => Some("Usage Prompt Audio Sec"),
+            UsagePromptAudioTokens => Some("Usage Prompt Audio"),
+            UsagePromptCacheMissTokens => Some("Usage Prompt Cache Miss"),
+            UsagePromptCacheReadTokens => Some("Usage Prompt Cache Read"),
+            UsagePromptCacheWriteTokens => Some("Usage Prompt Cache Write"),
+            UsagePromptTokens => Some("Usage Prompt"),
+            UsagePromptTokensDiffPct => Some("Prompt Diff"),
+            UsageReasoningTokens => Some("Usage Reasoning"),
+            UsageReasoningTokensDiffPct => Some("Reasoning Diff"),
+            UsageRejectedPredictionTokens => Some("Usage Rejected Pred"),
+            UsageToolUsePromptTokens => Some("Usage Tool Prompt"),
+            UsageTotalTokens => Some("Usage Total"),
+            VideoInferenceTime => Some("Inference Time"),
+            VideoPeakMemory => Some("Peak Memory"),
+            _ => None,
+        };
+        spec.short_header_hide_unit = matches!(
+            spec.tag,
+            BenchmarkDuration
+                | CompletedRequestCount
+                | E2eOutputTokenThroughput
+                | ErrorRequestCount
+                | GoodRequestCount
+                | GoodRequestFraction
+                | Goodput
+                | InputTokenThroughput
+                | MaxResponseTimestamp
+                | MinRequestTimestamp
+                | OslMismatchCount
+                | OslMismatchDiffPct
+                | OutputTokenCount
+                | OutputTokenThroughput
+                | OutputTokenThroughputPerUser
+                | OverallThinkingEfficiency
+                | OverallUsagePromptCacheReadPct
+                | PrefillThroughputPerUser
+                | ReasoningTokenCount
+                | RequestCount
+                | RequestErrorRate
+                | RequestThroughput
+                | Rtfx
+                | ThinkingEfficiency
+                | TotalErrorInputSequenceLength
+                | TotalInputSequenceLength
+                | TotalOutputSequenceLength
+                | TotalOutputTokens
+                | TotalReasoningTokens
+                | TotalTokenThroughput
+                | TotalUsageAcceptedPredictionTokens
+                | TotalUsageCompletionAudioTokens
+                | TotalUsageCompletionTokens
+                | TotalUsagePromptAudioTokens
+                | TotalUsagePromptCacheMissTokens
+                | TotalUsagePromptCacheReadTokens
+                | TotalUsagePromptCacheWriteTokens
+                | TotalUsagePromptTokens
+                | TotalUsageReasoningTokens
+                | TotalUsageRejectedPredictionTokens
+                | TotalUsageToolUsePromptTokens
+                | TotalUsageTotalTokens
+                | UsageAcceptedPredictionTokens
+                | UsageCompletionAudioTokens
+                | UsageCompletionTokens
+                | UsageCompletionTokensDiffPct
+                | UsageDiscrepancyCount
+                | UsagePromptAudioTokens
+                | UsagePromptCacheMissTokens
+                | UsagePromptCacheReadTokens
+                | UsagePromptCacheWriteTokens
+                | UsagePromptTokens
+                | UsagePromptTokensDiffPct
+                | UsageReasoningTokens
+                | UsageReasoningTokensDiffPct
+                | UsageRejectedPredictionTokens
+                | UsageToolUsePromptTokens
+                | UsageTotalTokens
+        );
+        spec.display_unit = match spec.tag {
+            BenchmarkDuration => Some(Unit::Second),
+            RequestLatency
+            | TimeToFirstToken
+            | TimeToSecondToken
+            | TimeToFirstOutputToken
+            | InterTokenLatency
+            | InterChunkLatency
+            | CreditDropLatency
+            | StreamSetupLatency
+            | StreamPrefillLatency
+            | HttpReqBlocked
+            | HttpReqDnsLookup
+            | HttpReqConnecting
+            | HttpReqSending
+            | HttpReqWaiting
+            | HttpReqReceiving
+            | HttpReqDuration
+            | HttpReqConnectionOverhead
+            | HttpReqTotal
+            | NetworkAdjustedRequestLatency
+            | NetworkAdjustedTimeToFirstToken
+            | NetworkAdjustedTimeToFirstOutputToken
+            | NetworkRtt
+            | VideoInferenceTime => Some(Unit::Millisecond),
+            HttpReqDataSent | HttpReqDataReceived => Some(Unit::Kilobyte),
+            _ => None,
+        };
+        spec.display_order = match spec.tag {
+            AudioDuration => Some(870),
+            CompletedRequestCount => Some(1075),
+            E2eOutputTokenThroughput => Some(510),
+            EnergyPerUser => Some(903),
+            ErrorInputSequenceLength => Some(700),
+            Goodput => Some(1000),
+            HttpReqBlocked => Some(2000),
+            HttpReqChunksReceived => Some(2100),
+            HttpReqChunksSent => Some(2080),
+            HttpReqConnecting => Some(2020),
+            HttpReqConnectionOverhead => Some(2110),
+            HttpReqConnectionReused => Some(2060),
+            HttpReqDataReceived => Some(2090),
+            HttpReqDataSent => Some(2070),
+            HttpReqDnsLookup => Some(2010),
+            HttpReqDuration => Some(2120),
+            HttpReqReceiving => Some(2050),
+            HttpReqSending => Some(2030),
+            HttpReqTotal => Some(2130),
+            HttpReqWaiting => Some(2040),
+            ImageLatency => Some(861),
+            ImageThroughput => Some(860),
+            InputSequenceLength => Some(700),
+            InputTokenThroughput => Some(805),
+            InterTokenLatency => Some(400),
+            NetworkAdjustedRequestLatency => Some(301),
+            NetworkAdjustedTimeToFirstOutputToken => Some(211),
+            NetworkAdjustedTimeToFirstToken => Some(101),
+            NetworkRtt => Some(305),
+            OutputSequenceLength => Some(600),
+            OutputTokenThroughput => Some(800),
+            OutputTokenThroughputPerUser => Some(500),
+            OutputTokensPerJoule => Some(902),
+            OverallUsagePromptCacheReadPct => Some(2012),
+            RequestCount => Some(1100),
+            RequestErrorRate => Some(1080),
+            RequestLatency => Some(300),
+            RequestThroughput => Some(900),
+            Rtfx => Some(850),
+            TimeToFirstOutputToken => Some(210),
+            TimeToFirstToken => Some(100),
+            TimeToSecondToken => Some(200),
+            TotalGpuEnergy => Some(901),
+            TotalGpuPower => Some(900),
+            TotalUsageAcceptedPredictionTokens => Some(2130),
+            TotalUsageCompletionAudioTokens => Some(2120),
+            TotalUsageCompletionTokens => Some(2100),
+            TotalUsagePromptAudioSeconds => Some(2040),
+            TotalUsagePromptAudioTokens => Some(2020),
+            TotalUsagePromptCacheMissTokens => Some(2017),
+            TotalUsagePromptCacheReadTokens => Some(2010),
+            TotalUsagePromptCacheWriteTokens => Some(2015),
+            TotalUsagePromptTokens => Some(2000),
+            TotalUsageReasoningTokens => Some(2110),
+            TotalUsageRejectedPredictionTokens => Some(2140),
+            TotalUsageToolUsePromptTokens => Some(2030),
+            TotalUsageTotalTokens => Some(2200),
+            UsageAcceptedPredictionTokens => Some(1130),
+            UsageCompletionAudioTokens => Some(1120),
+            UsageCompletionTokens => Some(1100),
+            UsagePromptAudioSeconds => Some(1040),
+            UsagePromptAudioTokens => Some(1020),
+            UsagePromptCacheMissTokens => Some(1017),
+            UsagePromptCacheReadTokens => Some(1010),
+            UsagePromptCacheWriteTokens => Some(1015),
+            UsagePromptTokens => Some(1000),
+            UsageReasoningTokens => Some(1110),
+            UsageRejectedPredictionTokens => Some(1140),
+            UsageToolUsePromptTokens => Some(1030),
+            UsageTotalTokens => Some(1200),
+            VideoInferenceTime => Some(310),
+            VideoPeakMemory => Some(311),
+            _ => None,
+        };
+        spec.console_group = match spec.tag {
+            UsagePromptTokens
+            | UsageCompletionTokens
+            | UsageTotalTokens
+            | UsageReasoningTokens
+            | UsagePromptAudioTokens
+            | UsageCompletionAudioTokens
+            | UsageAcceptedPredictionTokens
+            | UsageRejectedPredictionTokens
+            | UsagePromptCacheReadTokens
+            | UsagePromptCacheWriteTokens
+            | UsagePromptCacheMissTokens
+            | UsageToolUsePromptTokens
+            | UsagePromptAudioSeconds
+            | TotalUsagePromptTokens
+            | TotalUsageCompletionTokens
+            | TotalUsageTotalTokens
+            | TotalUsageReasoningTokens
+            | TotalUsagePromptAudioTokens
+            | TotalUsageCompletionAudioTokens
+            | TotalUsageAcceptedPredictionTokens
+            | TotalUsageRejectedPredictionTokens
+            | TotalUsagePromptCacheReadTokens
+            | TotalUsagePromptCacheWriteTokens
+            | TotalUsagePromptCacheMissTokens
+            | TotalUsageToolUsePromptTokens
+            | TotalUsagePromptAudioSeconds
+            | OverallUsagePromptCacheReadPct => Usage,
+            EffectiveLatency
+            | EffectiveConcurrency
+            | EffectiveDecodeThroughput
+            | EffectivePrefillThroughput
+            | EffectiveDecodeConcurrency
+            | EffectivePrefillConcurrency
+            | EffectiveTotalThroughput
+            | EffectiveDecodeThroughputPerUser
+            | EffectivePrefillThroughputPerUser
+            | TokensInFlight => Effective,
+            ActiveDecodeThroughput
+            | ActivePrefillThroughput
+            | ActiveDecodeThroughputPerUser
+            | ActivePrefillThroughputPerUser
+            | ActiveTotalThroughput => Active,
+            GoodRequestCount
+            | GoodRequestFraction
+            | MinRequestTimestamp
+            | MaxResponseTimestamp
+            | BenchmarkDuration
+            | InterChunkLatency
+            | CreditDropLatency
+            | OutputTokenCount
+            | ReasoningTokenCount
+            | ErrorInputSequenceLength
+            | TotalOutputSequenceLength
+            | TotalInputSequenceLength
+            | TotalErrorInputSequenceLength
+            | TotalOutputTokens
+            | TotalReasoningTokens
+            | TotalTokenThroughput
+            | PrefillThroughputPerUser
+            | UsagePromptTokensDiffPct
+            | UsageCompletionTokensDiffPct
+            | UsageReasoningTokensDiffPct
+            | UsageDiscrepancyCount
+            | RequestedOutputSequenceLength
+            | OslMismatchDiffPct
+            | OslMismatchCount
+            | CreditToStartLatency
+            | AccuracyCorrect
+            | AccuracyUnparsed
+            | AudioDuration
+            | NumImages
+            | HttpReqBlocked
+            | HttpReqDnsLookup
+            | HttpReqConnecting
+            | HttpReqSending
+            | HttpReqWaiting
+            | HttpReqReceiving
+            | HttpReqDuration
+            | HttpReqConnectionReused
+            | HttpReqDataSent
+            | HttpReqDataReceived
+            | HttpReqChunksSent
+            | HttpReqChunksReceived
+            | HttpReqConnectionOverhead
+            | HttpReqTotal => Hidden,
+            _ => MetricConsoleGroup::Default,
+        };
+        spec.value_type = match spec.tag {
+            InterChunkLatency => MetricValueType::IntList,
+            BenchmarkDuration
+            | CompletedRequestCount
+            | CreditDropLatency
+            | ErrorInputSequenceLength
+            | ErrorRequestCount
+            | MinRequestTimestamp
+            | MaxResponseTimestamp
+            | RequestCount
+            | RequestLatency
+            | TimeToFirstToken
+            | TimeToSecondToken
+            | TimeToFirstOutputToken
+            | OutputSequenceLength
+            | InputSequenceLength
+            | OutputTokenCount
+            | ReasoningTokenCount
+            | TotalOutputSequenceLength
+            | TotalInputSequenceLength
+            | TotalErrorInputSequenceLength
+            | TotalOutputTokens
+            | TotalReasoningTokens
+            | RequestedOutputSequenceLength
+            | OslMismatchCount
+            | UsageDiscrepancyCount
+            | UsagePromptTokens
+            | UsageCompletionTokens
+            | UsageTotalTokens
+            | UsageReasoningTokens
+            | UsagePromptAudioTokens
+            | UsageCompletionAudioTokens
+            | UsageAcceptedPredictionTokens
+            | UsageRejectedPredictionTokens
+            | UsagePromptCacheReadTokens
+            | UsagePromptCacheWriteTokens
+            | UsagePromptCacheMissTokens
+            | UsageToolUsePromptTokens
+            | TotalUsagePromptTokens
+            | TotalUsageCompletionTokens
+            | TotalUsageTotalTokens
+            | TotalUsageReasoningTokens
+            | TotalUsagePromptAudioTokens
+            | TotalUsageCompletionAudioTokens
+            | TotalUsageAcceptedPredictionTokens
+            | TotalUsageRejectedPredictionTokens
+            | TotalUsagePromptCacheReadTokens
+            | TotalUsagePromptCacheWriteTokens
+            | TotalUsagePromptCacheMissTokens
+            | TotalUsageToolUsePromptTokens
+            | NetworkAdjustedRequestLatency
+            | NetworkAdjustedTimeToFirstToken
+            | NetworkAdjustedTimeToFirstOutputToken
+            | StreamSetupLatency
+            | StreamPrefillLatency
+            | NumImages
+            | HttpReqBlocked
+            | HttpReqDnsLookup
+            | HttpReqConnecting
+            | HttpReqSending
+            | HttpReqWaiting
+            | HttpReqReceiving
+            | HttpReqDuration
+            | HttpReqConnectionReused
+            | HttpReqDataSent
+            | HttpReqDataReceived
+            | HttpReqChunksSent
+            | HttpReqChunksReceived
+            | HttpReqConnectionOverhead
+            | HttpReqTotal => MetricValueType::Int,
+            _ => MetricValueType::Float,
+        };
+        spec.plot_direction = if spec.flags.contains(MetricFlags::LARGER_IS_BETTER) {
+            PlotMetricDirection::LargerIsBetter
+        } else {
+            PlotMetricDirection::SmallerIsBetter
+        };
+    }
+}
 
 /// Looks up a catalog spec.
 pub fn spec_for(tag: MetricTag) -> Option<&'static MetricSpec> {
@@ -1335,11 +2019,54 @@ pub fn validate_catalog() -> Result<Vec<MetricTag>, String> {
 mod tests {
     use super::{CATALOG, MetricFlags, MetricTag, validate_catalog};
 
+    fn catalog_fingerprint() -> u64 {
+        fn feed(hash: &mut u64, bytes: &[u8]) {
+            for byte in bytes.iter().copied().chain([0xff]) {
+                *hash ^= u64::from(byte);
+                *hash = hash.wrapping_mul(0x100000001b3);
+            }
+        }
+
+        let mut specs = CATALOG.iter().collect::<Vec<_>>();
+        specs.sort_by_key(|spec| spec.tag.as_str());
+        let mut hash = 0xcbf29ce484222325;
+        for spec in specs {
+            feed(&mut hash, spec.tag.as_str().as_bytes());
+            feed(&mut hash, spec.header.as_bytes());
+            feed(&mut hash, spec.short_header.unwrap_or("").as_bytes());
+            feed(
+                &mut hash,
+                spec.short_header_hide_unit.to_string().as_bytes(),
+            );
+            feed(&mut hash, format!("{:?}", spec.unit).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.display_unit).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.display_order).as_bytes());
+            feed(&mut hash, spec.flags.bits().to_string().as_bytes());
+            feed(&mut hash, format!("{:?}", spec.console_group).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.plot_direction).as_bytes());
+            for dependency in spec.required {
+                feed(&mut hash, dependency.as_str().as_bytes());
+            }
+            feed(&mut hash, format!("{:?}", spec.value_type).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.kind).as_bytes());
+            feed(&mut hash, format!("{:?}", spec.aggregation).as_bytes());
+        }
+        hash
+    }
+
     #[test]
     fn metric_flags_preserve_reserved_gap_and_missing_semantics() {
-        assert_eq!(MetricFlags::TOKENIZES_INPUT_ONLY.bits(), 1 << 2);
+        assert_eq!(MetricFlags::ERROR_ONLY.bits(), 1 << 1);
+        assert_eq!(MetricFlags::PRODUCES_TOKENS_ONLY.bits(), 1 << 2);
         assert_eq!(MetricFlags::LARGER_IS_BETTER.bits(), 1 << 4);
+        assert_eq!(MetricFlags::TOKENIZES_INPUT_ONLY.bits(), 1 << 12);
+        assert_eq!(
+            MetricFlags::STREAMING_TOKENS_ONLY.bits(),
+            (1 << 0) | (1 << 2)
+        );
         assert!(MetricFlags::NONE.missing(MetricFlags::NONE));
+        assert!(MetricFlags::NONE.missing(MetricFlags::ERROR_ONLY));
+        assert!(!MetricFlags::ERROR_ONLY.missing(MetricFlags::ERROR_ONLY));
         assert!(
             MetricFlags::STREAMING_TOKENS_ONLY
                 .has_any(MetricFlags::STREAMING_TOKENS_ONLY | MetricFlags::GOODPUT)
@@ -1349,11 +2076,19 @@ mod tests {
     #[test]
     fn catalog_has_unique_acyclic_resolved_dependencies() {
         let order = validate_catalog().unwrap();
+        assert_eq!(CATALOG.len(), 119);
         assert!(order.contains(&MetricTag::RequestLatency));
         assert!(
             CATALOG
                 .iter()
                 .any(|spec| spec.tag == MetricTag::GoodRequestFraction)
         );
+    }
+
+    #[test]
+    fn catalog_identity_matches_the_source_grounded_snapshot() {
+        // Covers the 103 Python identities plus the 16 native sweep identities.
+        // Any intentional metadata change must be re-audited before updating this value.
+        assert_eq!(catalog_fingerprint(), 9_668_288_044_080_706_792);
     }
 }

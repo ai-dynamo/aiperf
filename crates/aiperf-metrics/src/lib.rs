@@ -21,11 +21,14 @@ pub mod units;
 pub mod value;
 pub mod window;
 
-pub use accumulator::{AccumulatorSummary, MetricResult, MetricsAccumulator};
+pub use accumulator::{
+    Accumulator, AccumulatorSummary, MetricResult, MetricResultData, MetricTimeslice,
+    MetricsAccumulator, MetricsConfig, MetricsMergeError, SloThreshold,
+};
 pub use accuracy::{
     ACCURACY_RECORD_TYPE, AccumulatorType, AccuracyAccumulator, AccuracyAnalysis, AccuracyAtLoad,
-    AccuracyRecord, AccuracyResultsAnalyzer, AccuracyRollup, AccuracySummary, Analyzer,
-    AnalyzerRunError, AnalyzerRunner, AnalyzerType, ConfidenceInterval, CorrelationId,
+    AccuracyRecord, AccuracyRecordError, AccuracyResultsAnalyzer, AccuracyRollup, AccuracySummary,
+    Analyzer, AnalyzerRunError, AnalyzerRunner, AnalyzerType, ConfidenceInterval, CorrelationId,
     EnergyEfficiencySummary, GradingResult, LIGHTEVAL_CORRECTNESS_THRESHOLD, SummaryContext,
     TaskId,
 };
@@ -36,8 +39,14 @@ pub use catalog::{
 pub use derived::{delta_ms, error_adjusted_result, network_adjusted_ms};
 pub use ingest::{HttpTrace, RecordIngest, TokenCounts, UsageMetrics};
 pub use kernel::{DistributionStats, PERCENTILES, linear_distribution, nearest_distribution};
-pub use report::{MetricReportEntry, NativeReport};
-pub use store::{ColumnStore, NumericColumn};
+pub use report::{
+    MetricEntry, MetricSeries, NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReporter,
+    ReportCounterStats, ReportDistributionStats, ReportError, ReportRunInfo, ReportScalarStats,
+    ReportStats, ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
+};
+pub use store::{
+    CategoryInterner, ColumnStore, ListMetricBackend, NumericColumn, RaggedReplay, RaggedSeries,
+};
 pub use units::{MetricValueType, Unit, UnitConversionError};
 pub use value::MetricValue;
 pub use window::{ExportContext, Phase, Timeslice};

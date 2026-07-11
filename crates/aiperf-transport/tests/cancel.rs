@@ -1,40 +1,68 @@
-// crates/aiperf-transport/tests/cancel.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 mod common;
-use common::{MockServer, run_local};
-use std::collections::BTreeMap;
+
 use std::rc::Rc;
 
 use aiperf_transport::RealClock;
-use aiperf_transport::client::http_client::HttpClient;
 use aiperf_transport::config::ClientConfig;
-use bytes::Bytes;
+use aiperf_transport::models::{ErrorKind, RequestConfig, RequestRecord};
+use aiperf_transport::transport::http_transport::HttpTransport;
+use common::{MockServer, run_local};
+
+async fn cancelled_request(cancel_after_ns: i64) -> Option<RequestRecord> {
+    // Keep the SSE stream open so both the zero- and positive-delay timers win.
+    let mock = MockServer::spawn(&["--ttft", "500", "--itl", "500"]).await?;
+    let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+    let transport = HttpTransport::new(clock, ClientConfig::default());
+    let config = RequestConfig::new(format!("{}/v1/chat/completions", mock.base_url))
+        .cancel_after_ns(cancel_after_ns);
+    let payload = serde_json::json!({
+        "model": "gpt2",
+        "stream": true,
+        "stream_options": {"include_usage": true},
+        "max_tokens": 200,
+        "messages": [{"role": "user", "content": "complete body must arrive"}]
+    });
+    Some(transport.send_request(&config, payload, true, |_| {}).await)
+}
+
+fn assert_post_send_cancelled(record: &RequestRecord, minimum_delay_ns: i64) {
+    assert!(
+        record.was_cancelled(),
+        "record should be cancelled: {record:?}"
+    );
+    let error = record.error.as_ref().expect("cancellation error");
+    assert_eq!(error.kind, ErrorKind::Cancelled);
+    assert_eq!(error.code, Some(499));
+    assert!(error.message.contains("RequestCancellationError"));
+
+    let sent_ns = record
+        .trace
+        .as_ref()
+        .and_then(|trace| trace.request_send_end_ns)
+        .expect("send-complete timestamp must survive cancellation");
+    let cancelled_ns = record.cancellation_ns.unwrap();
+    assert!(cancelled_ns >= sent_ns.saturating_add(minimum_delay_ns));
+}
 
 #[test]
-fn cancel_after_send_marks_record_cancelled() {
+fn positive_delay_is_measured_after_send_completion() {
     run_local(async {
-        // High ITL so the stream stays open long enough to cancel mid-flight.
-        let Some(mock) = MockServer::spawn(&["--ttft", "10", "--itl", "200"]).await else {
+        let Some(record) = cancelled_request(50_000_000).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
-        let client = HttpClient::new(clock, ClientConfig::default());
-        let url = url::Url::parse(&format!("{}/v1/chat/completions", mock.base_url)).unwrap();
-        let mut headers = BTreeMap::new();
-        headers.insert("Content-Type".into(), "application/json".into());
-        headers.insert("Accept".into(), "text/event-stream".into());
-        let body = Bytes::from(
-            serde_json::to_vec(&serde_json::json!({
-                "model": "gpt2", "stream": true, "max_tokens": 200,
-                "messages": [{"role":"user","content":"hi"}]
-            }))
-            .unwrap(),
-        );
+        assert_post_send_cancelled(&record, 50_000_000);
+    });
+}
 
-        // Cancel 50ms after send; with 200ms ITL the stream is still open.
-        let rec = client
-            .request_cancellable(&url, &headers, body, true, 50_000_000, |_| {})
-            .await;
-        assert!(rec.was_cancelled(), "record should be cancelled");
-        assert_eq!(rec.error.as_ref().unwrap().code, Some(499));
+#[test]
+fn zero_delay_still_waits_until_the_complete_request_is_sent() {
+    run_local(async {
+        let Some(record) = cancelled_request(0).await else {
+            return;
+        };
+        assert_post_send_cancelled(&record, 0);
     });
 }

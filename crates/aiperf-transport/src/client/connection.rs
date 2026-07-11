@@ -21,6 +21,7 @@ use hyper::Response;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+use tokio::sync::Notify;
 use url::Url;
 
 use aiperf_clock::Clock;
@@ -46,23 +47,97 @@ where
     }
 }
 
+/// Shared send-completion signal stamped by [`TimedBody`].
+///
+/// Cancellation waits on this signal before arming its deadline. The timestamp
+/// is retained so a woken task schedules against the actual send-complete
+/// instant rather than the later instant at which the executor happened to poll
+/// it, preserving `src/aiperf/timing/request_cancellation.py:53-82`.
+pub struct SendCompletion {
+    sent_ns: Rc<Cell<Option<i64>>>,
+    notify: Notify,
+}
+
+impl SendCompletion {
+    /// Create an untriggered signal.
+    pub fn new() -> Self {
+        Self {
+            sent_ns: Rc::new(Cell::new(None)),
+            notify: Notify::new(),
+        }
+    }
+
+    fn with_cell(sent_ns: Rc<Cell<Option<i64>>>) -> Self {
+        Self {
+            sent_ns,
+            notify: Notify::new(),
+        }
+    }
+
+    fn mark(&self, sent_ns: i64) {
+        if self.sent_ns.get().is_none() {
+            self.sent_ns.set(Some(sent_ns));
+            // One cancellation waiter exists per request. `notify_one` stores a
+            // permit when that waiter has not yet polled, avoiding a lost wakeup.
+            self.notify.notify_one();
+        }
+    }
+
+    /// Return the captured timestamp when send completion has already fired.
+    pub fn sent_ns(&self) -> Option<i64> {
+        self.sent_ns.get()
+    }
+
+    /// Wait until the complete body has been handed to the HTTP transport and
+    /// return that exact clock timestamp.
+    pub async fn wait(&self) -> i64 {
+        loop {
+            // Register before checking the cell so a mark between the check and
+            // await cannot be lost.
+            let notified = self.notify.notified();
+            if let Some(sent_ns) = self.sent_ns.get() {
+                return sent_ns;
+            }
+            notified.await;
+        }
+    }
+}
+
+impl Default for SendCompletion {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Request body that records — via the [`Clock`] — the instant it is fully
-/// written (end-of-stream), into a shared cell. This is the "send complete"
-/// hook: hyper's `send_request().await` resolves at *response headers*, so the
-/// only way to time when the request body finished being handed to the
-/// transport is to observe the body stream reaching its end.
+/// written (end-of-stream). This is the "send complete" hook: hyper's
+/// `send_request().await` resolves at *response headers*, so cancellation must
+/// instead observe the body stream reaching its end.
 pub struct TimedBody {
     inner: Full<Bytes>,
     clock: Rc<dyn Clock>,
-    sent_ns: Rc<Cell<Option<i64>>>,
+    completion: Rc<SendCompletion>,
 }
 
 impl TimedBody {
+    /// Build a timed body that writes its timestamp into `sent_ns`.
+    ///
+    /// This compatibility constructor is useful to timing-only callers. The
+    /// cancellable request path uses the crate-private completion constructor so
+    /// it can also await the event.
     pub fn new(bytes: Bytes, clock: Rc<dyn Clock>, sent_ns: Rc<Cell<Option<i64>>>) -> Self {
+        Self::with_completion(bytes, clock, Rc::new(SendCompletion::with_cell(sent_ns)))
+    }
+
+    pub(crate) fn with_completion(
+        bytes: Bytes,
+        clock: Rc<dyn Clock>,
+        completion: Rc<SendCompletion>,
+    ) -> Self {
         Self {
             inner: Full::new(bytes),
             clock,
-            sent_ns,
+            completion,
         }
     }
 }
@@ -81,14 +156,14 @@ impl Body for TimedBody {
         // encoder: either an explicit end-of-stream, or the last data frame
         // (hyper skips the trailing `None` poll when `is_end_stream` is already
         // true, e.g. for a single-frame `Full` body).
-        if this.sent_ns.get().is_none() {
+        if this.completion.sent_ns().is_none() {
             let done = match &r {
                 Poll::Ready(None) => true,
                 Poll::Ready(Some(Ok(_))) => this.inner.is_end_stream(),
                 _ => false,
             };
             if done {
-                this.sent_ns.set(Some(this.clock.now_ns()));
+                this.completion.mark(this.clock.now_ns());
             }
         }
         r

@@ -7,15 +7,17 @@
 use std::rc::Rc;
 
 use bytes::Bytes;
+use http::Method;
 
 use aiperf_clock::Clock;
 
-use crate::client::cancellation::{CancelOutcome, race_cancel};
+use crate::client::cancellation::{CancelOutcome, race_cancel_after_send};
+use crate::client::connection::SendCompletion;
 use crate::client::http_client::HttpClient;
 use crate::client::pool::ConnectionPool;
 use crate::config::ClientConfig;
 use crate::models::{
-    ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, TraceData,
+    ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, SseMessage, TraceData,
 };
 use crate::transport::headers::build_headers;
 use crate::transport::url::build_url;
@@ -64,6 +66,104 @@ impl HttpTransport {
         streaming: bool,
         mut on_first_token: impl FnMut(i64),
     ) -> RequestRecord {
+        self.send_request_with_first_token_filter(
+            cfg,
+            payload,
+            streaming,
+            move |ttft_ns, _message| {
+                on_first_token(ttft_ns);
+                true
+            },
+        )
+        .await
+    }
+
+    /// Send JSON while inspecting successive SSE messages until the callback
+    /// returns `true` for meaningful first-token content.
+    ///
+    /// This is the live prefill-release contract ported from
+    /// `src/aiperf/transports/aiohttp_client.py:210-224`: role-only, usage-only,
+    /// or otherwise non-token messages return `false`, so the callback is tried
+    /// again on the next SSE message. The ordinary [`send_request`](Self::send_request)
+    /// wrapper preserves its first-message callback behavior.
+    pub async fn send_request_with_first_token_filter(
+        &self,
+        cfg: &RequestConfig,
+        payload: serde_json::Value,
+        streaming: bool,
+        first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
+    ) -> RequestRecord {
+        // Serialize the JSON payload. On failure, return an error record rather
+        // than silently sending an empty body (mirrors the bad-url handling).
+        let body = match serde_json::to_vec(&payload) {
+            Ok(b) => Bytes::from(b),
+            Err(e) => {
+                let start_ns = self.clock.now_ns();
+                let mut r = RequestRecord::started(start_ns);
+                r.error = Some(ErrorDetails::other(format!("serialize payload: {e}")));
+                r.end_ns = Some(self.clock.now_ns());
+                return r;
+            }
+        };
+        self.send_body(cfg, Method::POST, body, streaming, first_token_filter)
+            .await
+    }
+
+    /// Send an already-serialized JSON request body without decoding or
+    /// reserializing it. Dataset raw replay and segment-slice materialization use
+    /// this path to preserve authored bytes and avoid a hot-path JSON tree.
+    pub async fn send_request_bytes(
+        &self,
+        cfg: &RequestConfig,
+        body: Bytes,
+        streaming: bool,
+        mut on_first_token: impl FnMut(i64),
+    ) -> RequestRecord {
+        self.send_request_bytes_with_first_token_filter(
+            cfg,
+            body,
+            streaming,
+            move |ttft_ns, _message| {
+                on_first_token(ttft_ns);
+                true
+            },
+        )
+        .await
+    }
+
+    /// Send an already-serialized JSON request body while inspecting successive
+    /// SSE messages until `first_token_filter` accepts meaningful content.
+    ///
+    /// Dataset-backed dispatch uses this entry point so preformatted request
+    /// bytes are never decoded and serialized again merely to retain the
+    /// first-token admission hook.
+    pub async fn send_request_bytes_with_first_token_filter(
+        &self,
+        cfg: &RequestConfig,
+        body: Bytes,
+        streaming: bool,
+        first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
+    ) -> RequestRecord {
+        self.send_body(cfg, Method::POST, body, streaming, first_token_filter)
+            .await
+    }
+
+    /// Send a non-streaming GET request through the same Clock-injected client
+    /// and connection pool. This is intended for control-plane inputs such as
+    /// public benchmark datasets; inference dispatch remains [`send_request`](Self::send_request).
+    pub async fn get(&self, cfg: &RequestConfig) -> RequestRecord {
+        self.send_body(cfg, Method::GET, Bytes::new(), false, |_, _| true)
+            .await
+    }
+
+    async fn send_body(
+        &self,
+        cfg: &RequestConfig,
+        method: Method,
+        body: Bytes,
+        streaming: bool,
+        mut first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
+    ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
         let full = match build_url(&cfg.url, "", &cfg.params) {
             Ok(f) => f,
@@ -89,23 +189,15 @@ impl HttpTransport {
                 return r;
             }
         };
-        // Serialize the JSON payload. On failure, return an error record rather
-        // than silently sending an empty body (mirrors the bad-url handling).
-        let body = match serde_json::to_vec(&payload) {
-            Ok(b) => Bytes::from(b),
-            Err(e) => {
-                let mut r = RequestRecord::started(start_ns);
-                r.error = Some(ErrorDetails::other(format!("serialize payload: {e}")));
-                r.end_ns = Some(self.clock.now_ns());
-                return r;
-            }
-        };
         let body_len = body.len();
         let reuse = cfg.reuse;
         let corr = cfg.correlation_id.as_deref();
 
         let mut record = RequestRecord::started(start_ns);
         let mut trace = TraceData::default();
+        let send_completion = Rc::new(SendCompletion::new());
+        let completion_for_dispatch = send_completion.clone();
+        let completion_for_record = send_completion.clone();
 
         // Acquire a connection per the reuse strategy, then dispatch on it.
         let dispatch = async {
@@ -122,7 +214,8 @@ impl HttpTransport {
                 .await?;
             let res = self
                 .client
-                .dispatch(
+                .dispatch_with_method_and_completion(
+                    method,
                     &mut sender,
                     &url,
                     &headers,
@@ -130,8 +223,9 @@ impl HttpTransport {
                     streaming,
                     &mut trace,
                     &mut record,
-                    &mut on_first_token,
+                    &mut first_token_filter,
                     body_len,
+                    completion_for_dispatch,
                 )
                 .await;
             // On success, decide whether the connection is returned to the pool.
@@ -156,18 +250,31 @@ impl HttpTransport {
         // Optional post-send cancellation.
         let result = match cfg.cancel_after_ns {
             Some(cancel_after) => {
-                match race_cancel(self.clock.clone(), cancel_after, dispatch).await {
+                match race_cancel_after_send(
+                    self.clock.clone(),
+                    cancel_after,
+                    send_completion,
+                    dispatch,
+                )
+                .await
+                {
                     CancelOutcome::Completed(res) => res,
                     CancelOutcome::Cancelled => {
                         let now = self.clock.now_ns();
                         record.cancellation_ns = Some(now);
+                        if let Some(sent_ns) = completion_for_record.sent_ns() {
+                            trace.request_send_end_ns = Some(sent_ns);
+                            trace.request_headers_sent_ns = Some(sent_ns);
+                            trace.request_bytes_total = body_len as u64;
+                            trace.request_chunks_count = 1;
+                        }
                         if let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) =
                             (reuse, corr)
                         {
                             self.pool.release(c);
                         }
                         Err(ErrorDetails::cancelled(format!(
-                            "Request cancelled {cancel_after}ns after being sent"
+                            "RequestCancellationError: request cancelled {cancel_after}ns after being sent"
                         )))
                     }
                 }

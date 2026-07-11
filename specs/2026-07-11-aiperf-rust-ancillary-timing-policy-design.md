@@ -411,3 +411,57 @@ send-complete), and a **`UrlSelector`** round-robin that ticks once per conversa
 (turn-0) and pins sticky per-session — every actuator already built in
 `aiperf-timing`/`aiperf-transport`, every new piece a small trait, all time through
 `Clock` so they run bit-deterministically under `SimClock`.
+
+## Addendum — 2026-07-11: implemented in the native Rust workspace
+
+This design is now built. This addendum supersedes the original `Status: design
+(not built)`, the designed rows in §4, and the prospective build order in §6.
+
+- `aiperf-timing::{RampStrategy, RampDriver}` is implemented in
+  `crates/aiperf-timing/src/ramping.rs`, with `LinearRamp`,
+  `ExponentialRamp`, and the precomputed, normalized `PoissonRamp`. Both driver
+  modes use injected `Clock` time, natural completion force-applies the exact
+  target, and abort freezes the last applied value. Poisson and cancellation
+  streams use the canonical `aiperf-rng` namespaces.
+- `CancellationPolicy` / `BernoulliFixedDelay` and `UrlSelector` /
+  `RoundRobinUrlSelector` are implemented in `cancellation.rs` and
+  `url_selection.rs`. Warmup returns before the RNG draw. The implementation
+  uses signed nanoseconds (`Option<i64>`) because that is the native `Clock` and
+  transport representation; validation prevents negative configured delays.
+- `aiperf-transport` now shares a `SendCompletion` signal between `TimedBody`
+  and the cancellation race. The deadline is anchored to the captured
+  send-complete timestamp, not to issuance, connection acquisition, or the
+  later wakeup time. A timer win drops the request future and produces HTTP 499
+  `RequestCancellationError`; response is biased at an exact tie, so only one
+  terminal result wins. Real-HTTP tests verify that the server received and
+  parsed the complete JSON body before a zero-delay disconnect.
+- `aiperf::scheduled::ScheduledRuntime` makes the cancellation decision for
+  every issued turn, advances endpoint selection only on turn zero, retains the
+  turn-zero selector result on the issued credit, and stores the effective
+  endpoint in per-session state for continuations. `TransportSink` resolves the
+  pinned index over a prebuilt ordered URL list. Deterministic three-turn tests
+  and real two-endpoint HTTP tests pin both invariants.
+- The ordinary online issuer wires linear session/prefill ramps to the live
+  `SlotPool`s and the proportional-start 100ms continuous rate ramp to the live
+  `IntervalGenerator`. User-centric mode additionally wires its owned session
+  `SlotPool`; its request cadence is schedule-authored and it has no prefill
+  pool, so rate and prefill ramps are rejected rather than accepted inertly.
+  Fixed-schedule replay likewise rejects actuator ramps because its authored
+  timestamps are the complete run plan. Both scheduled strategies still use
+  cancellation and sticky multi-URL selection. The separate warmup/phase
+  orchestrator remains the companion phase-runner spec's unbuilt scope; the
+  shared policy already accepts and tests `Phase::Warmup` for that future caller.
+- The online CLI exposes `--concurrency-ramp-duration`,
+  `--prefill-concurrency-ramp-duration`, `--request-rate-ramp-duration`,
+  `--request-cancellation-rate`, and `--request-cancellation-delay`.
+  Comma-separated positional base URLs select the ordered endpoint list. Graph
+  mode rejects these online issuer flags explicitly; the transport-neutral
+  traits and `SimClock` tests remain reusable by its future arrival/slot policy
+  consumer.
+
+Tests cover configuration bounds, both ramp directions, exact exponential
+inverse math, deterministic normalized Poisson trajectories, force-target and
+freeze-on-stop behavior, live actuator wiring under `SimClock`, warmup RNG
+non-consumption, Bernoulli reproducibility, round-robin wraparound, turn-zero
+session pinning, real endpoint resolution, positive and zero post-send delays,
+complete-body delivery, cancellation classification, and CLI validation.

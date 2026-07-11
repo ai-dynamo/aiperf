@@ -10,6 +10,8 @@ description = "Graph-IR async-dataflow workload driver for AIPerf — online (li
 
 [dependencies]
 aiperf-core = { path = "../aiperf-core" }
+aiperf-dataset.workspace = true
+aiperf-metrics.workspace = true
 aiperf-clock.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
 aiperf-transport = { path = "../aiperf-transport" }
@@ -18,7 +20,6 @@ bytes = "1"
 url = "2"
 anyhow.workspace = true
 async-trait.workspace = true
-blake3.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true

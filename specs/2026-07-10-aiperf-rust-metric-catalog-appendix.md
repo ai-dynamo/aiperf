@@ -231,3 +231,21 @@ is `count/duration`; the only `−1` is ITL's `osl−1`); and there is **no `lon
 - **Testing:** a Python twin emits `{record → per-metric value}` goldens over a fixture corpus
   exercising each edge case (ITL osl<2, TTFO reasoning-skip, zero-error absence, absent-vs-0,
   osl min-cap, adj_* +inf, http-trace zero-cases); Rust asserts equality.
+
+## Addendum — 2026-07-11 (native Rust implementation)
+
+The catalog and its compute layer are now built in `aiperf-metrics`. `CATALOG`
+contains all 103 inherited Python metric rows with source-faithful headers, short
+headers, units/display units, flags, console groups, display order, value types,
+aggregation kinds, and dependency edges, followed by 16 native sweep result rows.
+Startup/test validation rejects duplicate tags, missing dependencies, illegal
+type-tier edges, and cycles; a deterministic metadata fingerprint pins the full
+catalog identity.
+
+The record, aggregate, and derived implementations preserve the scars in section 4,
+including authoritative phase masks, zero-error absence, ITL's `osl - 1`, reasoning
+aware TTFO, volume-weighted ratios, partial HTTP composite sums, finite-value
+sanitization, SLO direction/unit conversion, and error-adjusted `+inf` tails.
+Telemetry-injected rows intentionally remain catalogued but absent unless a producer
+supplies an override; this is the deferred-producer boundary already described in
+section 6, not an unimplemented catalog row.

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Summary window and phase filters shared by accumulators and analyzers.
+//!
+//! Authoritative phase selection ports `src/aiperf/metrics/accumulator.py:180-214`;
+//! half-open timeslice construction ports the same file at lines 520-614.
 
 use serde::Serialize;
 
@@ -37,7 +40,7 @@ impl Timeslice {
 
     /// Returns true when the record interval is contained in this half-open timeslice.
     pub fn contains_interval(self, start_ns: i64, end_ns: i64) -> bool {
-        start_ns >= self.start_ns && end_ns < self.end_ns
+        start_ns >= self.start_ns && end_ns <= self.end_ns
     }
 }
 
@@ -110,7 +113,8 @@ mod tests {
         assert!(window.contains_interval(10, 19));
         assert!(window.contains_interval(11, 19));
         assert!(!window.contains_interval(9, 19));
-        assert!(!window.contains_interval(10, 20));
+        assert!(window.contains_interval(10, 20));
+        assert!(!window.contains_interval(10, 21));
     }
 
     #[test]
@@ -125,11 +129,12 @@ mod tests {
     }
 
     #[test]
-    fn export_context_time_range_filters_start_timestamp() {
+    fn export_context_time_range_is_half_open_on_start_timestamp_only() {
         let ctx = ExportContext::time_range(100, 200);
         assert!(ctx.contains(Phase::Profiling, 100, 150));
-        assert!(ctx.contains(Phase::Warmup, 199, 250));
+        assert!(ctx.contains(Phase::Warmup, 199, 200));
         assert!(!ctx.contains(Phase::Profiling, 99, 150));
-        assert!(!ctx.contains(Phase::Profiling, 200, 250));
+        assert!(ctx.contains(Phase::Profiling, 199, 201));
+        assert!(!ctx.contains(Phase::Profiling, 200, 201));
     }
 }

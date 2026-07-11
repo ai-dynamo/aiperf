@@ -1,0 +1,61 @@
+{
+  "schema_version": "2.0",
+  "aiperf_version": "0.0.0",
+  "run": {},
+  "summary": {
+    "was_cancelled": false
+  },
+  "metrics": {
+    "adj_request_latency": {
+      "type": "distribution",
+      "unit": "ms",
+      "group": "default",
+      "higher_is_better": false,
+      "series": [
+        {
+          "labels": null,
+          "stats": {
+            "count": 2,
+            "avg": null,
+            "min": 10.0,
+            "max": null,
+            "std": null,
+            "percentiles": {
+              "p50": 10.0,
+              "p99": null
+            }
+          }
+        }
+      ]
+    },
+    "request_count": {
+      "type": "counter",
+      "unit": "requests",
+      "group": "default",
+      "higher_is_better": true,
+      "series": [
+        {
+          "labels": null,
+          "stats": {
+            "total": 2.0,
+            "rate": 4.0
+          }
+        }
+      ]
+    },
+    "request_throughput": {
+      "type": "scalar",
+      "unit": "requests/sec",
+      "group": "default",
+      "higher_is_better": true,
+      "series": [
+        {
+          "labels": null,
+          "stats": {
+            "value": 4.0
+          }
+        }
+      ]
+    }
+  }
+}

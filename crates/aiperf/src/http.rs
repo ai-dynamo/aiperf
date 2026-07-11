@@ -8,22 +8,46 @@
 //! is single-threaded (`!Send`, `Rc`-based) and driven on a `LocalSet`;
 //! admit/token times are stamped from the same clock origin the run loop uses for
 //! arrival, so all events share one timeline.
+//!
+//! Per-request cancellation and endpoint resolution consume the scalars ported
+//! from `src/aiperf/credit/issuer.py:197-238` and preserve the full-send timer
+//! invariant from `src/aiperf/timing/request_cancellation.py:53-82`.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use bytes::Bytes;
 use uuid::Uuid;
 
 use aiperf_clock::Clock;
 use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
+use aiperf_metrics::HttpTrace;
 use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{HttpVersion, RequestConfig, Response};
+use aiperf_transport::models::{ErrorKind, HttpVersion, RequestConfig, Response, SseMessage};
 use aiperf_transport::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{Dispatchable, RequestObserver, RequestSink};
+use loadgen_core::sink::{
+    Dispatchable, ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink,
+};
+use serde_json::Value;
+
+use crate::multiturn::TurnToSend;
+use crate::scheduled::{TurnDispatchOutcome, TurnDispatcher};
+
+/// Return true only for an SSE message that the current OpenAI-chat parser
+/// would record as a token. This mirrors the Python worker callback at
+/// `src/aiperf/workers/worker.py:474-487`: role-only, usage-only, finish-only,
+/// malformed, and `[DONE]` messages do not release prefill capacity.
+fn is_meaningful_chat_token(message: &SseMessage) -> bool {
+    let Some(data) = message.data() else {
+        return false;
+    };
+    serde_json::from_str::<ChatChunk>(data).is_ok_and(|chunk| !chunk.delta_text().is_empty())
+}
 
 /// A slim online HTTP request carrying prompt text. This is the load
 /// generator's own request type; implementing [`Dispatchable`] is all the
@@ -38,10 +62,52 @@ pub struct HttpRequest {
     pub max_output_tokens: usize,
     /// Prompt text placed on the wire.
     pub prompt_text: Option<String>,
+    /// Optional prebuilt JSON request body. Accuracy benchmarks use this to
+    /// preserve benchmark-specific messages, sampling settings, and stop strings;
+    /// normal synthetic requests leave it absent and use the shared chat builder.
+    pub request_body: Option<Value>,
+    /// Optional already-serialized request body. Unified dataset materializers
+    /// use this byte-exact fast path; it is mutually exclusive with
+    /// [`request_body`](Self::request_body).
+    pub request_body_bytes: Option<Bytes>,
+    /// Per-request HTTP headers supplied by the dataset/endpoint seam.
+    pub headers: BTreeMap<String, String>,
+    /// Per-request URL query parameters supplied by the dataset/endpoint seam.
+    pub parameters: BTreeMap<String, String>,
+    /// Endpoint path selected by the request formatter. Absolute URLs are also
+    /// accepted for a turn-specific target.
+    pub endpoint_path: Option<String>,
+    /// Whether the response uses server-sent events.
+    pub streaming: bool,
     /// Optional session correlation id forwarded to the transport.
     pub x_correlation_id: Option<String>,
     /// Whether this request is the final turn for its correlated session.
     pub is_final_turn: bool,
+    /// Fixed cancellation delay armed at transport send-complete.
+    pub cancel_after_ns: Option<i64>,
+    /// Effective endpoint index for this request.
+    pub url_index: Option<u32>,
+}
+
+/// Generated response returned by the response-capturing dispatch path.
+#[derive(Debug, Clone)]
+pub struct HttpDispatchResult {
+    /// Clock timestamp when transport dispatch started.
+    pub start_ns: i64,
+    /// Clock timestamp when the request reached terminal.
+    pub end_ns: i64,
+    /// HTTP status code, when response headers were received.
+    pub status: Option<u16>,
+    /// Request terminal classification.
+    pub terminal: ReplayTerminalStatus,
+    /// Generated reasoning/content text in stream order.
+    pub response_text: String,
+    /// Authoritative prompt-token count, when the server emitted usage.
+    pub prompt_tokens: Option<u32>,
+    /// Authoritative completion-token count, when the server emitted usage.
+    pub completion_tokens: Option<u32>,
+    /// Fine-grained request trace converted into native metric facts.
+    pub http: HttpTrace,
 }
 
 impl Dispatchable for HttpRequest {
@@ -62,7 +128,8 @@ impl Dispatchable for HttpRequest {
 pub struct TransportSink {
     transport: HttpTransport,
     clock: Rc<dyn Clock>,
-    url: String,
+    urls: Vec<String>,
+    base_urls: Vec<String>,
     model: String,
     start_ns: i64,
 }
@@ -78,6 +145,26 @@ impl TransportSink {
         model: impl Into<String>,
         http2: bool,
     ) -> Self {
+        Self::new_multi(clock, start_ns, &[base_url.to_string()], model, http2)
+            .expect("a single base URL is a non-empty endpoint list")
+    }
+
+    /// Build a sink targeting an ordered, non-empty endpoint list. Request
+    /// indices are resolved only at dispatch, so the issuer can pin a session's
+    /// turn-0 selection across its continuation turns.
+    pub fn new_multi(
+        clock: Rc<dyn Clock>,
+        start_ns: i64,
+        base_urls: &[String],
+        model: impl Into<String>,
+        http2: bool,
+    ) -> Result<Self> {
+        if base_urls.is_empty() {
+            anyhow::bail!("at least one base URL is required");
+        }
+        if base_urls.len() > u32::MAX as usize {
+            anyhow::bail!("base URL count exceeds the u32 request-index representation");
+        }
         let cfg = ClientConfig {
             http_version: if http2 {
                 HttpVersion::Http2PriorKnowledge
@@ -87,14 +174,22 @@ impl TransportSink {
             ..ClientConfig::default()
         };
         let transport = HttpTransport::new(clock.clone(), cfg);
-        let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
-        Self {
+        let base_urls = base_urls
+            .iter()
+            .map(|base_url| base_url.trim_end_matches('/').to_string())
+            .collect::<Vec<_>>();
+        let urls = base_urls
+            .iter()
+            .map(|base_url| format!("{base_url}/v1/chat/completions"))
+            .collect();
+        Ok(Self {
             transport,
             clock,
-            url,
+            urls,
+            base_urls,
             model: model.into(),
             start_ns,
-        }
+        })
     }
 
     fn ms(&self, ns: i64) -> f64 {
@@ -108,76 +203,316 @@ impl TransportSink {
         &self,
         req: HttpRequest,
         obs: &dyn RequestObserver,
-        mut on_first_token: impl FnMut(i64),
+        on_first_token: impl FnMut(i64),
     ) -> Result<()> {
+        self.dispatch_collect_with_hooks(req, obs, on_first_token)
+            .await
+            .map(|_| ())
+    }
+
+    /// Dispatch and retain generated text plus authoritative usage for consumers
+    /// such as accuracy graders. Measurement events are identical to
+    /// [`dispatch_with_hooks`](Self::dispatch_with_hooks).
+    pub async fn dispatch_collect_with_hooks(
+        &self,
+        req: HttpRequest,
+        obs: &dyn RequestObserver,
+        mut on_first_token: impl FnMut(i64),
+    ) -> Result<HttpDispatchResult> {
         let HttpRequest {
             uuid,
             max_output_tokens,
             prompt_text,
+            request_body,
+            request_body_bytes,
+            headers,
+            parameters,
+            endpoint_path,
+            streaming,
             x_correlation_id,
             is_final_turn,
+            cancel_after_ns,
+            url_index,
             ..
         } = req;
         // No scheduler admission on the HTTP path; admit == dispatch time.
         let admit_ms = self.ms(self.clock.now_ns());
+        obs.on_admit(uuid, admit_ms, 0);
 
-        let prompt = prompt_text.unwrap_or_default();
-        let payload =
-            chat_request_body(&self.model, &[("user", prompt.as_str())], max_output_tokens);
+        anyhow::ensure!(
+            request_body.is_none() || request_body_bytes.is_none(),
+            "an HTTP request cannot supply both JSON and serialized bodies"
+        );
+        let body = match request_body_bytes {
+            Some(body) => body,
+            None => {
+                let payload = request_body.unwrap_or_else(|| {
+                    let prompt = prompt_text.unwrap_or_default();
+                    chat_request_body(&self.model, &[("user", prompt.as_str())], max_output_tokens)
+                });
+                Bytes::from(serde_json::to_vec(&payload)?)
+            }
+        };
 
-        let mut cfg = RequestConfig::new(&self.url);
+        let selected_index = url_index.unwrap_or(0) as usize;
+        let selected_url = self.urls.get(selected_index).ok_or_else(|| {
+            anyhow::anyhow!(
+                "URL index {selected_index} is out of range for {} configured endpoints",
+                self.urls.len()
+            )
+        })?;
+        let selected_url = match endpoint_path.as_deref() {
+            None => selected_url.clone(),
+            Some(path) if path.starts_with('/') => format!(
+                "{}{}",
+                self.base_urls
+                    .get(selected_index)
+                    .expect("base/default URL vectors have equal length"),
+                path
+            ),
+            Some(url) if url::Url::parse(url).is_ok() => url.to_string(),
+            Some(value) => {
+                anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
+            }
+        };
+        let mut cfg = RequestConfig::new(selected_url);
+        cfg.headers = headers;
+        cfg.params = parameters;
         cfg.correlation_id = x_correlation_id;
         cfg.is_final_turn = is_final_turn;
+        cfg.cancel_after_ns = cancel_after_ns;
         let first_token_released = Cell::new(false);
         let rec = self
             .transport
-            .send_request(&cfg, payload, true, |ttft_ns| {
-                if !first_token_released.replace(true) {
-                    on_first_token(ttft_ns);
-                }
-            })
+            .send_request_bytes_with_first_token_filter(
+                &cfg,
+                body,
+                streaming,
+                |ttft_ns, message| {
+                    if !is_meaningful_chat_token(message) {
+                        return false;
+                    }
+                    if !first_token_released.replace(true) {
+                        on_first_token(ttft_ns);
+                    }
+                    true
+                },
+            )
             .await;
-
-        // A transport-level failure is surfaced to the caller (which records the
-        // terminal Failed status); a completed-but-error response is handled below.
-        if let Some(err) = &rec.error {
-            return Err(anyhow::anyhow!("transport dispatch error: {err:?}"));
-        }
-
-        obs.on_admit(uuid, admit_ms, 0);
 
         // Parse the collected SSE messages into per-token arrival times, stamped
         // from the transport clock (real inter-token timing).
         let mut done = false;
+        let mut response_text = String::new();
+        let mut prompt_tokens = None;
+        let mut completion_tokens = None;
         for resp in &rec.responses {
-            let Response::Sse(msg) = resp else { continue };
-            if msg.is_done() {
-                done = true;
-                continue;
-            }
-            let Some(data) = msg.data() else { continue };
-            let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
-                continue;
-            };
-            if !chunk.delta_text().is_empty() {
-                obs.on_token(uuid, self.ms(msg.perf_ns));
+            match resp {
+                Response::Sse(msg) => {
+                    if msg.is_done() {
+                        done = true;
+                        continue;
+                    }
+                    let Some(data) = msg.data() else { continue };
+                    let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
+                        continue;
+                    };
+                    if let Some(usage) = &chunk.usage {
+                        prompt_tokens = Some(usage.prompt_tokens);
+                        completion_tokens = Some(usage.completion_tokens);
+                    }
+                    let delta = chunk.delta_text();
+                    if !delta.is_empty() {
+                        response_text.push_str(&delta);
+                        let kind = if chunk.has_output_delta() {
+                            ObservedTokenKind::Output
+                        } else {
+                            ObservedTokenKind::Reasoning
+                        };
+                        obs.on_classified_token(uuid, self.ms(msg.perf_ns), kind);
+                    }
+                }
+                Response::Text(response) => {
+                    done = true;
+                    if let Some(value) = response.json() {
+                        let parsed = parse_non_streaming_response(&value);
+                        response_text.push_str(&parsed.0);
+                        prompt_tokens = parsed.1;
+                        completion_tokens = parsed.2;
+                        if !response_text.is_empty() {
+                            if !first_token_released.replace(true) {
+                                on_first_token(response.perf_ns.saturating_sub(rec.start_ns));
+                            }
+                            obs.on_classified_token(
+                                uuid,
+                                self.ms(response.perf_ns),
+                                ObservedTokenKind::Output,
+                            );
+                        }
+                    }
+                }
             }
         }
 
-        let terminal = if done && rec.status == Some(200) {
-            ReplayTerminalStatus::Completed
-        } else {
-            ReplayTerminalStatus::Failed
+        let terminal = match rec.error.as_ref().map(|error| error.kind) {
+            Some(ErrorKind::Cancelled) => ReplayTerminalStatus::Canceled,
+            Some(_) => ReplayTerminalStatus::Failed,
+            None if done && rec.status == Some(200) => ReplayTerminalStatus::Completed,
+            None => ReplayTerminalStatus::Failed,
         };
+        obs.on_usage(
+            uuid,
+            ObservedUsage {
+                prompt_tokens: prompt_tokens.map(|value| value as usize),
+                completion_tokens: completion_tokens.map(|value| value as usize),
+            },
+        );
         obs.on_terminal(uuid, terminal);
-        Ok(())
+        Ok(HttpDispatchResult {
+            start_ns: rec.start_ns,
+            end_ns: rec.end_ns.unwrap_or_else(|| self.clock.now_ns()),
+            status: rec.status,
+            terminal,
+            response_text,
+            prompt_tokens,
+            completion_tokens,
+            http: {
+                let mut http =
+                    rec.trace
+                        .as_ref()
+                        .map_or_else(HttpTrace::default, |trace| HttpTrace {
+                            blocked_ns: trace.blocked(),
+                            dns_lookup_ns: trace.dns_lookup(),
+                            connecting_ns: trace.connecting(),
+                            sending_ns: trace.sending(),
+                            waiting_ns: trace.waiting(),
+                            receiving_ns: trace.receiving(),
+                            duration_ns: trace.duration(),
+                            connection_reused: Some(trace.connection_reused_ns.is_some()),
+                            data_sent_bytes: Some(trace.request_bytes_total),
+                            data_received_bytes: Some(trace.response_bytes_total),
+                            chunks_sent: Some(u64::from(trace.request_chunks_count)),
+                            chunks_received: Some(u64::from(trace.response_chunks_count)),
+                            ..HttpTrace::default()
+                        });
+                http.stream_setup_ns = rec
+                    .recv_start_ns
+                    .map(|receive_start| receive_start.saturating_sub(rec.start_ns));
+                http
+            },
+        })
     }
+}
+
+fn parse_non_streaming_response(value: &Value) -> (String, Option<u32>, Option<u32>) {
+    let text = value
+        .pointer("/choices/0/message/reasoning_content")
+        .or_else(|| value.pointer("/choices/0/message/content"))
+        .or_else(|| value.pointer("/choices/0/text"))
+        .or_else(|| value.get("output_text"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            let output = value
+                .get("output")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|item| {
+                    item.get("content")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                })
+                .filter_map(|content| content.get("text").and_then(Value::as_str))
+                .fold(String::new(), |mut output, text| {
+                    output.push_str(text);
+                    output
+                });
+            (!output.is_empty()).then_some(output)
+        })
+        .unwrap_or_default();
+    let usage = value.get("usage");
+    let prompt = usage
+        .and_then(|usage| {
+            usage
+                .get("prompt_tokens")
+                .or_else(|| usage.get("input_tokens"))
+        })
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    let completion = usage
+        .and_then(|usage| {
+            usage
+                .get("completion_tokens")
+                .or_else(|| usage.get("output_tokens"))
+        })
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    (text, prompt, completion)
 }
 
 #[async_trait(?Send)]
 impl RequestSink<HttpRequest> for TransportSink {
     async fn dispatch(&self, req: HttpRequest, obs: &dyn RequestObserver) -> Result<()> {
         self.dispatch_with_hooks(req, obs, |_ttft_ns| {}).await
+    }
+}
+
+#[async_trait(?Send)]
+impl TurnDispatcher for TransportSink {
+    async fn dispatch_turn(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<TurnDispatchOutcome> {
+        let is_final_turn = turn.is_final_turn();
+        let request_body = if turn.request_body.is_none() {
+            let messages = turn
+                .messages
+                .iter()
+                .map(|message| (message.role.as_str(), message.content.as_str()))
+                .collect::<Vec<_>>();
+            Some(chat_request_body(
+                &self.model,
+                &messages,
+                turn.max_output_tokens,
+            ))
+        } else {
+            None
+        };
+        let result = self
+            .dispatch_collect_with_hooks(
+                HttpRequest {
+                    uuid: turn.uuid,
+                    input_length: turn.input_length,
+                    max_output_tokens: turn.max_output_tokens,
+                    prompt_text: None,
+                    request_body,
+                    request_body_bytes: turn.request_body,
+                    headers: turn.request_headers,
+                    parameters: turn.request_parameters,
+                    endpoint_path: turn.endpoint_path,
+                    streaming: turn.streaming,
+                    x_correlation_id: Some(turn.request_correlation_id),
+                    is_final_turn,
+                    cancel_after_ns: turn.cancel_after_ns,
+                    url_index: turn.url_index,
+                },
+                observer,
+                on_first_token,
+            )
+            .await?;
+        Ok(TurnDispatchOutcome {
+            start_ns: result.start_ns,
+            end_ns: result.end_ns,
+            terminal: result.terminal,
+            response_text: result.response_text,
+            prompt_tokens: result.prompt_tokens.map(u64::from),
+            completion_tokens: result.completion_tokens.map(u64::from),
+            http: result.http,
+        })
     }
 }
 
@@ -188,9 +523,13 @@ mod tests {
     use super::*;
     use aiperf_clock::RealClock;
 
-    struct NullObserver;
+    #[derive(Default)]
+    struct RecordingObserver {
+        tokens: std::sync::Mutex<Vec<f64>>,
+        usage: std::sync::Mutex<Vec<ObservedUsage>>,
+    }
 
-    impl RequestObserver for NullObserver {
+    impl RequestObserver for RecordingObserver {
         fn on_arrival(
             &self,
             _uuid: Uuid,
@@ -202,9 +541,64 @@ mod tests {
 
         fn on_admit(&self, _uuid: Uuid, _admit_ms: f64, _reused_input_tokens: usize) {}
 
-        fn on_token(&self, _uuid: Uuid, _at_ms: f64) {}
+        fn on_token(&self, _uuid: Uuid, at_ms: f64) {
+            self.tokens.lock().unwrap().push(at_ms);
+        }
+
+        fn on_usage(&self, _uuid: Uuid, usage: ObservedUsage) {
+            self.usage.lock().unwrap().push(usage);
+        }
 
         fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {}
+    }
+
+    #[test]
+    fn first_token_filter_skips_non_content_sse_messages() {
+        let role = SseMessage::parse(r#"data: {"choices":[{"delta":{"role":"assistant"}}]}"#, 1);
+        let usage = SseMessage::parse(r#"data: {"choices":[],"usage":{"completion_tokens":1}}"#, 2);
+        let content = SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"hello"}}]}"#, 3);
+        let reasoning = SseMessage::parse(
+            r#"data: {"choices":[{"delta":{"reasoning_content":"think"}}]}"#,
+            4,
+        );
+        assert!(!is_meaningful_chat_token(&role));
+        assert!(!is_meaningful_chat_token(&usage));
+        assert!(is_meaningful_chat_token(&content));
+        assert!(is_meaningful_chat_token(&reasoning));
+    }
+
+    #[tokio::test]
+    async fn transport_retries_first_token_filter_past_role_only_chunk() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+                let clock = RealClock::new();
+                let transport = HttpTransport::new(clock, ClientConfig::default());
+                let cfg = RequestConfig::new(format!(
+                    "{}/v1/chat/completions",
+                    base.trim_end_matches('/')
+                ));
+                let attempts = Cell::new(0);
+                let record = transport
+                    .send_request_with_first_token_filter(
+                        &cfg,
+                        chat_request_body("m", &[("user", "hello")], 1),
+                        true,
+                        |_ttft_ns, message| {
+                            attempts.set(attempts.get() + 1);
+                            is_meaningful_chat_token(message)
+                        },
+                    )
+                    .await;
+                assert!(!record.has_error(), "unexpected error: {:?}", record.error);
+                assert_eq!(
+                    attempts.get(),
+                    2,
+                    "role-only chunk must not release prefill"
+                );
+            })
+            .await;
     }
 
     #[tokio::test]
@@ -222,17 +616,46 @@ mod tests {
                     input_length: 4,
                     max_output_tokens: 2,
                     prompt_text: Some("hello world".to_string()),
+                    request_body: None,
+                    request_body_bytes: None,
+                    headers: BTreeMap::new(),
+                    parameters: BTreeMap::new(),
+                    endpoint_path: None,
+                    streaming: true,
                     x_correlation_id: None,
                     is_final_turn: true,
+                    cancel_after_ns: None,
+                    url_index: None,
                 };
 
-                sink.dispatch_with_hooks(req, &NullObserver, |_ttft_ns| {
+                let observer = RecordingObserver::default();
+                let first_token_ns = Rc::new(Cell::new(None));
+                let first_token_ns_for_hook = first_token_ns.clone();
+
+                let result = sink.dispatch_collect_with_hooks(req, &observer, |ttft_ns| {
                     hook_calls_for_hook.set(hook_calls_for_hook.get() + 1);
+                    first_token_ns_for_hook.set(Some(ttft_ns));
                 })
                 .await
                 .unwrap();
 
                 assert_eq!(hook_calls.get(), 1);
+                assert_eq!(
+                    observer.usage.lock().unwrap().as_slice(),
+                    &[ObservedUsage {
+                        prompt_tokens: result.prompt_tokens.map(|value| value as usize),
+                        completion_tokens: result.completion_tokens.map(|value| value as usize),
+                    }]
+                );
+                let first_observed_token_ms = observer.tokens.lock().unwrap()[0];
+                let first_hook_ms = first_token_ns.get().unwrap() as f64 / 1_000_000.0;
+                let dispatch_start_ms = sink.ms(result.start_ns);
+                assert!(
+                    ((first_observed_token_ms - dispatch_start_ms) - first_hook_ms).abs()
+                        < 0.1,
+                    "hook TTFT {first_hook_ms:.6}ms must match first observed token at {:.6}ms from dispatch",
+                    first_observed_token_ms - dispatch_start_ms,
+                );
             })
             .await;
     }

@@ -17,9 +17,36 @@
 
 use std::path::PathBuf;
 
-use aiperf::report::{print_report_table, write_report_json};
-use aiperf::run::run_paced;
+use aiperf::accuracy::{AccuracyWorkload, run_accuracy_online};
+use aiperf::accuracy_dataset::{AccuracyDatasetRegistry, default_accuracy_cache_root};
+use aiperf::adaptive::{
+    AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, parse_sla_filter,
+    positive_seconds_to_ns,
+};
+use aiperf::ancillary::{AncillaryTimingConfig, parse_base_urls};
+use aiperf::fixed_schedule::FixedScheduleConfig;
+use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
+use aiperf::report::{
+    print_accuracy_table, print_report_table, write_accuracy_summary_csv, write_native_report_json,
+    write_scheduled_report_json,
+};
+use aiperf::run::{
+    run_fixed_schedule_online_with_ancillary, run_paced_adaptive_with_metrics_and_ancillary,
+    run_user_centric_adaptive_online_with_ancillary, run_user_centric_online_with_ancillary,
+};
+use aiperf::scheduled::ScheduledRunReport;
+use aiperf::user_centric::UserCentricConfig;
 use aiperf::workload::SkeletonWorkload;
+use aiperf_accuracy::{AccuracyRegistry, BenchmarkConfig, JsonDatasetSource};
+use aiperf_adaptive::CorrelationContext;
+use aiperf_clock::{Clock, RealClock};
+use aiperf_dataset::{
+    ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, LoaderRegistry,
+    SyntheticDatasetConfig, SyntheticPromptConfig, TextTokenizer, TiktokenEncoding,
+    TiktokenTokenizer,
+};
+use aiperf_metrics::{NativeReport, ReportRunInfo, ReportSummary, RunOutcome};
+use aiperf_rng::{RngRoot, SamplingDistribution};
 use aiperf_timing::{ArrivalPattern, StopConfig};
 use clap::Parser;
 
@@ -49,7 +76,7 @@ struct Cli {
     #[arg(long, default_value = "online")]
     mode: String,
 
-    /// Positional `[BASE_URL]` (default differs per mode).
+    /// Positional `[BASE_URL]`; online and graph accept a comma-separated list.
     base_url: Option<String>,
     /// Positional `[MODEL]` (default `model`).
     model: Option<String>,
@@ -90,9 +117,156 @@ struct Cli {
     /// Write the aggregate report as JSON to this path (online mode).
     #[arg(long)]
     json: Option<PathBuf>,
+    /// Write aggregate metrics plus per-turn scheduler timing as JSON.
+    #[arg(long)]
+    timing_json: Option<PathBuf>,
+    /// Select per-user pacing at this aggregate request rate (req/s).
+    #[arg(long)]
+    user_centric_rate: Option<f64>,
+    /// Number of simulated users for `--user-centric-rate`.
+    #[arg(long)]
+    num_users: Option<usize>,
+    /// Stop after starting this many sessions (continuations still drain).
+    #[arg(long)]
+    sessions: Option<usize>,
+    /// JSON/JSONL conversation dataset. Required by `--fixed-schedule`; optional
+    /// for user-centric mode, which otherwise uses a synthetic K-turn template.
+    #[arg(long)]
+    input_file: Option<PathBuf>,
+    /// Explicit registered dataset format. Omit for structural detection.
+    #[arg(long)]
+    input_format: Option<String>,
+    /// Dataset tokenizer: built-in tiktoken name, tokenizer.json, or HF directory.
+    #[arg(long)]
+    tokenizer: Option<String>,
+    /// Format-specific option as KEY=JSON; repeat for multiple options.
+    #[arg(long = "dataset-option")]
+    dataset_options: Vec<String>,
+    /// Replay `--input-file` using its trace timestamps.
+    #[arg(long)]
+    fixed_schedule: bool,
+    /// Normalize fixed trace timestamps so the first event lands at run start.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    fixed_schedule_auto_offset: bool,
+    /// Inclusive fixed-trace start filter and explicit schedule zero, in ms.
+    #[arg(long)]
+    fixed_schedule_start_offset_ms: Option<f64>,
+    /// Inclusive fixed-trace end filter, in ms.
+    #[arg(long)]
+    fixed_schedule_end_offset_ms: Option<f64>,
+    /// Relative delay between synthetic continuation turns, in ms.
+    #[arg(long)]
+    think_time_ms: Option<u64>,
+
+    // --- ancillary timing-policy flags (online path) ---
+    /// Seconds to ramp session concurrency linearly from one to its target.
+    #[arg(long)]
+    concurrency_ramp_duration: Option<f64>,
+    /// Seconds to ramp prefill concurrency linearly from one to its target.
+    #[arg(long)]
+    prefill_concurrency_ramp_duration: Option<f64>,
+    /// Seconds to ramp request rate from its proportional minimum to target.
+    #[arg(long)]
+    request_rate_ramp_duration: Option<f64>,
+    /// Percentage (0-100) of profiling requests disconnected after send.
+    #[arg(long)]
+    request_cancellation_rate: Option<f64>,
+    /// Seconds after full request send before a selected request is disconnected.
+    #[arg(long)]
+    request_cancellation_delay: Option<f64>,
+
+    // --- adaptive-scale flags (online path) ---
+    /// Enable one-run SLA-driven ramp-until-fail load control.
+    #[arg(long)]
+    adaptive_scale: bool,
+    /// Controller strategy type (only ramp_until_fail is implemented).
+    #[arg(long)]
+    adaptive_scale_strategy_type: Option<String>,
+    /// Control variable: concurrency, prefill_concurrency, request_rate, or users.
+    #[arg(long)]
+    adaptive_control_variable: Option<String>,
+    /// Inclusive adaptive control minimum (default 1).
+    #[arg(long)]
+    adaptive_control_min: Option<f64>,
+    /// Inclusive adaptive control maximum (otherwise inferred from the selected mode).
+    #[arg(long)]
+    adaptive_control_max: Option<f64>,
+    /// Assessment-window duration in seconds (default 30, minimum 1).
+    #[arg(long)]
+    adaptive_assessment_period: Option<f64>,
+    /// Required sustain-hold duration in seconds.
+    #[arg(long)]
+    adaptive_sustain_duration: Option<f64>,
+    /// Minimum successful completions required for a conclusive window.
+    #[arg(long)]
+    adaptive_min_completed_requests: Option<usize>,
+    /// SLA filter in metric:stat:op:threshold form; repeat for conjunctive filters.
+    #[arg(long = "adaptive-scale-sla", alias = "adaptive-sla")]
+    adaptive_scale_sla: Vec<String>,
+    /// Step policy: sla_margin (default) or fixed_percent_step.
+    #[arg(long)]
+    adaptive_step_policy: Option<String>,
+    /// Base increment for sla_margin (default 10).
+    #[arg(long)]
+    adaptive_base_step: Option<usize>,
+    /// Maximum sla_margin base-step multiplier (default 4).
+    #[arg(long)]
+    adaptive_max_step_multiplier: Option<usize>,
+    /// Current-control percentage for fixed_percent_step (default 25).
+    #[arg(long)]
+    adaptive_step_percent: Option<f64>,
+    /// Directory for adaptive_scale_events.jsonl and adaptive_scale_summary.json.
+    #[arg(long)]
+    adaptive_artifact_dir: Option<PathBuf>,
+
+    // --- accuracy flags (online HTTP path) ---
+    /// Run a registered native accuracy benchmark instead of a synthetic workload.
+    #[arg(long)]
+    accuracy_benchmark: Option<String>,
+    /// Directory containing the benchmark's split JSON files. When omitted,
+    /// official Parquet artifacts are fetched into the AIPerf cache.
+    #[arg(long)]
+    accuracy_dataset: Option<PathBuf>,
+    /// Benchmark tasks/categories; comma-separated or repeated.
+    #[arg(long, value_delimiter = ',')]
+    accuracy_tasks: Vec<String>,
+    /// Number of few-shot examples; omitted uses the benchmark default.
+    #[arg(long)]
+    accuracy_n_shots: Option<usize>,
+    /// Disable the benchmark's chain-of-thought prompt.
+    #[arg(long)]
+    accuracy_no_cot: bool,
+    /// Enable chain-of-thought even when the benchmark default is off.
+    #[arg(long)]
+    accuracy_enable_cot: bool,
+    /// Override the benchmark's registered grader.
+    #[arg(long)]
+    accuracy_grader: Option<String>,
+    /// Override the benchmark's default system prompt.
+    #[arg(long)]
+    accuracy_system_prompt: Option<String>,
+    /// Log every per-problem grading decision after the run.
+    #[arg(long)]
+    accuracy_verbose: bool,
+    /// Deterministically evaluate only the first N selected problems.
+    #[arg(long)]
+    accuracy_max_problems: Option<usize>,
+    /// Override maximum generated tokens per problem.
+    #[arg(long)]
+    accuracy_max_tokens: Option<usize>,
+    /// Input-accounting tokenizer: `builtin`, a tiktoken encoding name, a
+    /// tokenizer.json file, or a local Hugging Face model directory.
+    #[arg(long)]
+    accuracy_tokenizer: Option<String>,
+    /// Write the per-task and overall accuracy summary as CSV.
+    #[arg(long)]
+    accuracy_csv: Option<PathBuf>,
+    /// Replace cached official dataset splits before the run.
+    #[arg(long)]
+    accuracy_refresh_dataset: bool,
 
     // --- graph-only flags ---
-    /// Conversation turns per instance (graph default 4).
+    /// Conversation turns per instance (graph default 4; online synthetic default 1).
     #[arg(long)]
     turns: Option<usize>,
     /// Conversation instances (graph default 400000).
@@ -107,7 +281,7 @@ struct Cli {
     /// Optional per-request concurrency override (graph).
     #[arg(long)]
     request_concurrency: Option<usize>,
-    /// Optional prefill concurrency override (graph).
+    /// Optional prefill concurrency cap (online) or override (graph).
     #[arg(long)]
     prefill_concurrency: Option<usize>,
     /// Force HTTP/1.1 (graph; accepted for compatibility).
@@ -121,11 +295,305 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     aiperf::logging::init();
     let cli = Cli::parse();
+    ensure_adaptive_flag_envelope(&cli)?;
+    ensure_accuracy_flag_envelope(&cli)?;
 
     match cli.mode.as_str() {
         "graph" => run_graph_mode(&cli),
-        _ => run_online_mode(&cli),
+        "online" if cli.accuracy_benchmark.is_some() => run_accuracy_mode(&cli),
+        "online" => run_online_mode(&cli),
+        other => anyhow::bail!("unknown --mode '{other}' (expected online|graph)"),
     }
+}
+
+fn ensure_accuracy_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !(cli.accuracy_enable_cot && cli.accuracy_no_cot),
+        "--accuracy-enable-cot conflicts with --accuracy-no-cot"
+    );
+    if cli.accuracy_benchmark.is_none() {
+        anyhow::ensure!(
+            cli.accuracy_dataset.is_none()
+                && cli.accuracy_tasks.is_empty()
+                && cli.accuracy_n_shots.is_none()
+                && !cli.accuracy_no_cot
+                && !cli.accuracy_enable_cot
+                && cli.accuracy_grader.is_none()
+                && cli.accuracy_system_prompt.is_none()
+                && !cli.accuracy_verbose
+                && cli.accuracy_max_problems.is_none()
+                && cli.accuracy_max_tokens.is_none()
+                && cli.accuracy_tokenizer.is_none()
+                && cli.accuracy_csv.is_none()
+                && !cli.accuracy_refresh_dataset,
+            "accuracy options require --accuracy-benchmark"
+        );
+    }
+    Ok(())
+}
+
+fn ensure_adaptive_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
+    if !cli.adaptive_scale {
+        anyhow::ensure!(
+            cli.adaptive_control_variable.is_none()
+                && cli.adaptive_scale_strategy_type.is_none()
+                && cli.adaptive_control_min.is_none()
+                && cli.adaptive_control_max.is_none()
+                && cli.adaptive_assessment_period.is_none()
+                && cli.adaptive_sustain_duration.is_none()
+                && cli.adaptive_min_completed_requests.is_none()
+                && cli.adaptive_scale_sla.is_empty()
+                && cli.adaptive_step_policy.is_none()
+                && cli.adaptive_base_step.is_none()
+                && cli.adaptive_max_step_multiplier.is_none()
+                && cli.adaptive_step_percent.is_none()
+                && cli.adaptive_artifact_dir.is_none(),
+            "adaptive control/SLA flags require --adaptive-scale"
+        );
+    }
+    Ok(())
+}
+
+fn run_accuracy_mode(cli: &Cli) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !cli.adaptive_scale,
+        "--adaptive-scale is not supported with --accuracy-benchmark"
+    );
+    anyhow::ensure!(
+        !has_ancillary_timing_flags(cli),
+        "ancillary timing-policy flags are not supported with --accuracy-benchmark"
+    );
+    let base_url = cli
+        .base_url
+        .clone()
+        .unwrap_or_else(|| "http://localhost:8000".to_string());
+    let model = cli.model.clone().unwrap_or_else(|| "model".to_string());
+    let requested_benchmark = cli
+        .accuracy_benchmark
+        .as_deref()
+        .expect("caller checked accuracy benchmark");
+    let registry = AccuracyRegistry::builtin();
+    let registered = registry.benchmark(requested_benchmark)?;
+    let benchmark_name = registered.metadata.name;
+    let n_shots = cli
+        .accuracy_n_shots
+        .unwrap_or(registered.metadata.default_n_shots);
+    let enable_cot = if cli.accuracy_no_cot {
+        false
+    } else if cli.accuracy_enable_cot {
+        true
+    } else {
+        registered.metadata.default_enable_cot
+    };
+    let grader_name = cli
+        .accuracy_grader
+        .as_deref()
+        .unwrap_or(registered.metadata.default_grader);
+    let grader = registry.grader(grader_name)?;
+    anyhow::ensure!(n_shots <= 32, "--accuracy-n-shots must be at most 32");
+    if let Some(limit) = cli.accuracy_max_problems {
+        anyhow::ensure!(
+            limit > 0,
+            "--accuracy-max-problems must be greater than zero"
+        );
+    }
+    if let Some(max_tokens) = cli.accuracy_max_tokens {
+        anyhow::ensure!(
+            max_tokens > 0,
+            "--accuracy-max-tokens must be greater than zero"
+        );
+    }
+    let concurrency = cli.concurrency.unwrap_or(16);
+    anyhow::ensure!(concurrency > 0, "--concurrency must be greater than zero");
+
+    tracing::info!(
+        benchmark = benchmark_name,
+        grader = grader.name(),
+        base = %base_url,
+        model = %model,
+        concurrency,
+        tasks = ?cli.accuracy_tasks,
+        n_shots,
+        enable_cot,
+        max_problems = ?cli.accuracy_max_problems,
+        "starting native accuracy benchmark"
+    );
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let local = tokio::task::LocalSet::new();
+    let report = local.block_on(&rt, async {
+        let source = match &cli.accuracy_dataset {
+            Some(directory) => JsonDatasetSource::from_directory(directory),
+            None => {
+                let clock: std::rc::Rc<dyn Clock> = RealClock::new();
+                AccuracyDatasetRegistry::builtin()
+                    .prepare(
+                        benchmark_name,
+                        clock,
+                        &default_accuracy_cache_root(),
+                        cli.accuracy_refresh_dataset,
+                    )
+                    .await?
+            }
+        };
+        let problems = registered.load_problems(
+            &source,
+            &BenchmarkConfig {
+                tasks: cli.accuracy_tasks.clone(),
+                n_shots,
+                enable_cot,
+                max_problems: cli.accuracy_max_problems,
+                max_tokens: cli.accuracy_max_tokens,
+            },
+            cli.accuracy_system_prompt.as_deref(),
+        )?;
+        let tokenizer = load_tokenizer(cli.accuracy_tokenizer.as_deref())?;
+        let workload = AccuracyWorkload::from_problems(&model, problems, tokenizer.as_ref())?;
+        tracing::info!(
+            problems = workload.len(),
+            tokenizer = tokenizer.name(),
+            segments = workload.dataset().segments().len(),
+            "accuracy dataset materialized"
+        );
+        run_accuracy_online(
+            &base_url,
+            &model,
+            benchmark_name,
+            workload,
+            grader,
+            concurrency,
+            cli.http2,
+        )
+        .await
+    })?;
+    print_report_table(&report.performance);
+    print_accuracy_table(&report.accuracy);
+    if cli.accuracy_verbose {
+        for record in &report.records {
+            tracing::info!(
+                correlation_id = record.correlation_id.as_str(),
+                task = record.task.as_str(),
+                correct = record.result.correct,
+                unparsed = record.result.unparsed,
+                extracted = ?record.result.extracted,
+                ground_truth = record.result.ground_truth,
+                reasoning = ?record.result.reasoning,
+                "accuracy grading result"
+            );
+        }
+    }
+    if let Some(path) = &cli.json {
+        write_native_report_json(&report.native_report, path)?;
+    }
+    if let Some(path) = &cli.accuracy_csv {
+        write_accuracy_summary_csv(&report.accuracy, path)?;
+    }
+    Ok(())
+}
+
+fn load_tokenizer(spec: Option<&str>) -> anyhow::Result<Box<dyn TextTokenizer>> {
+    let spec = spec.unwrap_or("builtin");
+    let path = std::path::Path::new(spec);
+    if path.is_dir() {
+        return Ok(Box::new(HuggingFaceTokenizer::from_directory(path)?));
+    }
+    if path.is_file() {
+        return Ok(Box::new(HuggingFaceTokenizer::from_file(path)?));
+    }
+    let encoding = spec.parse::<TiktokenEncoding>()?;
+    Ok(Box::new(TiktokenTokenizer::new(encoding)))
+}
+
+fn parse_dataset_options(cli: &Cli) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
+    let mut options = serde_json::Map::new();
+    for option in &cli.dataset_options {
+        let (key, authored) = option
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--dataset-option must be KEY=JSON, got {option:?}"))?;
+        anyhow::ensure!(!key.trim().is_empty(), "dataset option key cannot be empty");
+        let value = serde_json::from_str(authored)
+            .unwrap_or_else(|_| serde_json::Value::String(authored.to_string()));
+        options.insert(key.trim().to_string(), value);
+    }
+    Ok(options)
+}
+
+fn load_native_file_dataset(
+    cli: &Cli,
+    runtime: &tokio::runtime::Runtime,
+    local: &tokio::task::LocalSet,
+    model: &str,
+    osl: usize,
+) -> anyhow::Result<Dataset> {
+    let path = cli
+        .input_file
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("a dataset file was not supplied"))?;
+    let tokenizer = load_tokenizer(cli.tokenizer.as_deref())?;
+    let options = parse_dataset_options(cli)?;
+    let mut load = LoadConfig::new(DatasetSource::Path(path.clone()));
+    load.options = options.clone();
+    if cli.fixed_schedule {
+        load.options
+            .insert("fixed_schedule".into(), serde_json::Value::Bool(true));
+    }
+    let mut compose = ComposeConfig::new(model, RngRoot::new(cli.seed));
+    compose.output_length_distribution = Some(SamplingDistribution::fixed(osl as f64)?);
+    compose.format_options = options;
+    compose
+        .format_options
+        .entry("max_conversations")
+        .or_insert_with(|| {
+            serde_json::Value::from(cli.sessions.or(cli.requests).unwrap_or(100).max(1) as u64)
+        });
+    let registry = LoaderRegistry::with_builtin_formats()?;
+    local
+        .block_on(
+            runtime,
+            registry.build_dataset(
+                cli.input_format.as_deref(),
+                &load,
+                &compose,
+                tokenizer.as_ref(),
+            ),
+        )
+        .map_err(Into::into)
+}
+
+fn build_native_synthetic_dataset(
+    cli: &Cli,
+    runtime: &tokio::runtime::Runtime,
+    local: &tokio::task::LocalSet,
+    model: &str,
+    isl: usize,
+    osl: usize,
+    turns: usize,
+) -> anyhow::Result<Dataset> {
+    let tokenizer = load_tokenizer(cli.tokenizer.as_deref())?;
+    let mut compose = ComposeConfig::new(model, RngRoot::new(cli.seed));
+    compose.output_length_distribution = Some(SamplingDistribution::fixed(osl as f64)?);
+    compose.synthetic_config = Some(SyntheticDatasetConfig {
+        entries: cli.sessions.or(cli.requests).unwrap_or(100).max(1),
+        turns: SamplingDistribution::fixed(turns.max(1) as f64)?,
+        turn_delay_ms: SamplingDistribution::fixed(cli.think_time_ms.unwrap_or(0) as f64)?,
+        prompts: Some(SyntheticPromptConfig {
+            input_tokens: SamplingDistribution::fixed(isl as f64)?,
+            batch_size: 1,
+        }),
+        ..SyntheticDatasetConfig::default()
+    });
+    let load = LoadConfig::new(DatasetSource::Inline(
+        serde_json::json!({"__aiperf_synthetic": true}),
+    ));
+    let registry = LoaderRegistry::with_builtin_formats()?;
+    local
+        .block_on(
+            runtime,
+            registry.build_dataset(Some("synthetic"), &load, &compose, tokenizer.as_ref()),
+        )
+        .map_err(Into::into)
 }
 
 fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
@@ -139,6 +607,77 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
     let num_requests = cli.requests.unwrap_or(100usize);
     let isl = cli.isl.unwrap_or(128usize);
     let osl = cli.osl.unwrap_or(128usize);
+    let ancillary = build_ancillary_timing_config(cli)?;
+
+    anyhow::ensure!(isl > 0, "--isl must be greater than zero");
+    anyhow::ensure!(osl > 0, "--osl must be greater than zero");
+    anyhow::ensure!(concurrency > 0, "--concurrency must be greater than zero");
+    if let Some(requests) = cli.requests {
+        anyhow::ensure!(requests > 0, "--requests must be greater than zero");
+    }
+    if let Some(sessions) = cli.sessions {
+        anyhow::ensure!(sessions > 0, "--sessions must be greater than zero");
+    }
+    if let Some(duration) = cli.duration {
+        anyhow::ensure!(
+            duration.is_finite() && duration > 0.0,
+            "--duration must be positive and finite"
+        );
+    }
+    if let Some(rate) = cli.request_rate {
+        anyhow::ensure!(
+            rate.is_finite() && rate > 0.0,
+            "--request-rate must be positive and finite"
+        );
+    }
+    if let Some(prefill) = cli.prefill_concurrency {
+        anyhow::ensure!(
+            prefill > 0,
+            "--prefill-concurrency must be greater than zero"
+        );
+    }
+    anyhow::ensure!(
+        cli.input_format.is_none() || cli.input_file.is_some(),
+        "--input-format requires --input-file"
+    );
+    anyhow::ensure!(
+        cli.dataset_options.is_empty() || cli.input_file.is_some(),
+        "--dataset-option requires --input-file"
+    );
+    anyhow::ensure!(
+        cli.tokenizer.is_none() || cli.input_file.is_some() || cli.user_centric_rate.is_some(),
+        "--tokenizer requires --input-file or --user-centric-rate"
+    );
+    if cli.fixed_schedule {
+        anyhow::ensure!(
+            cli.user_centric_rate.is_none() && cli.request_rate.is_none(),
+            "--fixed-schedule conflicts with --user-centric-rate and --request-rate"
+        );
+        anyhow::ensure!(
+            cli.concurrency.is_none(),
+            "--fixed-schedule is pure open-loop replay and does not accept --concurrency"
+        );
+        anyhow::ensure!(
+            !cli.adaptive_scale,
+            "--fixed-schedule conflicts with --adaptive-scale"
+        );
+        anyhow::ensure!(
+            !ancillary.has_ramps(),
+            "fixed-schedule replay has authored timestamps and does not accept actuator ramps"
+        );
+    } else {
+        anyhow::ensure!(
+            cli.fixed_schedule_start_offset_ms.is_none()
+                && cli.fixed_schedule_end_offset_ms.is_none(),
+            "fixed-schedule offsets require --fixed-schedule"
+        );
+    }
+    if cli.user_centric_rate.is_some() {
+        anyhow::ensure!(
+            cli.request_rate.is_none(),
+            "--user-centric-rate conflicts with --request-rate"
+        );
+    }
 
     tracing::info!(
         base = %base_url,
@@ -150,13 +689,6 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         "starting aiperf online benchmark"
     );
 
-    let workload = SkeletonWorkload {
-        num_requests,
-        input_tokens: isl,
-        output_tokens: osl,
-        turns: 1,
-        think_time_ms: None,
-    };
     // The online sink is `!Send` (hyper transport over `Rc<dyn Clock>`), so drive
     // the run on a current-thread runtime + LocalSet.
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -164,20 +696,175 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         .build()?;
     let local = tokio::task::LocalSet::new();
 
+    if cli.fixed_schedule {
+        let input_file = cli
+            .input_file
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("--fixed-schedule requires --input-file"))?;
+        anyhow::ensure!(
+            !(cli.fixed_schedule_auto_offset && cli.fixed_schedule_start_offset_ms.is_some()),
+            "--fixed-schedule-auto-offset=true conflicts with --fixed-schedule-start-offset-ms"
+        );
+        let _ = input_file;
+        let dataset = load_native_file_dataset(cli, &rt, &local, &model, osl)?
+            .filter_first_turn_window(
+                cli.fixed_schedule_start_offset_ms,
+                cli.fixed_schedule_end_offset_ms,
+            )?;
+        let source: Box<dyn ConversationSource> = Box::new(
+            NativeDatasetConversationSource::sequential(dataset, model.clone(), osl)?,
+        );
+        let report = local.block_on(
+            &rt,
+            run_fixed_schedule_online_with_ancillary(
+                base_url,
+                model,
+                source,
+                FixedScheduleConfig {
+                    auto_offset_timestamps: cli.fixed_schedule_auto_offset,
+                    start_offset_ms: cli.fixed_schedule_start_offset_ms,
+                },
+                cli.http2,
+                ancillary,
+                cli.seed.unwrap_or(0),
+            ),
+        )?;
+        emit_scheduled_report(cli, &report)?;
+        return Ok(());
+    }
+
     // Stop bounds: explicit `--requests` wins the count cap; else if `--duration` is
-    // set, run unbounded by count (time-bounded); else default to 100 requests.
-    let duration_ns = cli.duration.map(|s| (s * 1_000_000_000.0) as i64);
+    // or `--sessions` is set, omit the default count; else default to 100.
+    let duration_ns = cli
+        .duration
+        .map(|seconds| (seconds * 1_000_000_000.0).round_ties_even() as i64);
     let count: Option<u64> = if let Some(r) = cli.requests {
         Some(r as u64)
-    } else if duration_ns.is_some() {
+    } else if duration_ns.is_some() || cli.sessions.is_some() {
         None
     } else {
         Some(100)
     };
     let stop = StopConfig {
         total_expected_requests: count,
-        expected_num_sessions: None,
+        expected_num_sessions: cli.sessions.map(|sessions| sessions as u64),
         expected_duration_ns: duration_ns,
+    };
+
+    if let Some(rate) = cli.user_centric_rate {
+        let num_users = cli
+            .num_users
+            .ok_or_else(|| anyhow::anyhow!("--user-centric-rate requires --num-users"))?;
+        anyhow::ensure!(num_users > 0, "--num-users must be greater than zero");
+        anyhow::ensure!(
+            rate.is_finite() && rate > 0.0,
+            "--user-centric-rate must be positive and finite"
+        );
+        let adaptive =
+            build_adaptive_cli_config(cli, concurrency, ArrivalPattern::ConcurrencyBurst)?;
+        if let Some(config) = &adaptive {
+            anyhow::ensure!(
+                config.control_variable == AdaptiveControlVariable::Users,
+                "--user-centric-rate adaptive scale requires --adaptive-control-variable users"
+            );
+            anyhow::ensure!(
+                config.minimum.fract() == 0.0,
+                "adaptive users minimum must be an integer"
+            );
+        }
+        let initial_users = adaptive
+            .as_ref()
+            .map_or(num_users, |config| config.minimum as usize);
+        if let Some(requests) = cli.requests {
+            anyhow::ensure!(
+                requests >= num_users,
+                "--requests ({requests}) must be >= --num-users ({num_users})"
+            );
+        }
+        if let Some(sessions) = cli.sessions {
+            anyhow::ensure!(
+                sessions >= num_users,
+                "--sessions ({sessions}) must be >= --num-users ({num_users})"
+            );
+        }
+        let turns = cli.turns.unwrap_or(4);
+        anyhow::ensure!(
+            turns >= 2 || cli.input_file.is_some(),
+            "user-centric synthetic mode requires --turns >= 2"
+        );
+        let source: Box<dyn ConversationSource> = if cli.input_file.is_some() {
+            let dataset = load_native_file_dataset(cli, &rt, &local, &model, osl)?;
+            Box::new(NativeDatasetConversationSource::sequential(
+                dataset,
+                model.clone(),
+                osl,
+            )?)
+        } else {
+            let dataset =
+                build_native_synthetic_dataset(cli, &rt, &local, &model, isl, osl, turns)?;
+            Box::new(NativeDatasetConversationSource::sequential(
+                dataset,
+                model.clone(),
+                osl,
+            )?)
+        };
+        let user_config = UserCentricConfig {
+            num_users: initial_users,
+            request_rate: rate,
+            concurrency: cli.concurrency,
+        };
+        let report = match adaptive {
+            Some(adaptive) => local.block_on(
+                &rt,
+                run_user_centric_adaptive_online_with_ancillary(
+                    base_url,
+                    model,
+                    source,
+                    user_config,
+                    stop,
+                    cli.http2,
+                    adaptive,
+                    ancillary,
+                    cli.seed.unwrap_or(0),
+                ),
+            )?,
+            None => local.block_on(
+                &rt,
+                run_user_centric_online_with_ancillary(
+                    base_url,
+                    model,
+                    source,
+                    user_config,
+                    stop,
+                    cli.http2,
+                    ancillary,
+                    cli.seed.unwrap_or(0),
+                ),
+            )?,
+        };
+        emit_scheduled_report(cli, &report)?;
+        return Ok(());
+    }
+
+    anyhow::ensure!(
+        cli.timing_json.is_none(),
+        "--timing-json is only valid with --fixed-schedule or --user-centric-rate"
+    );
+    anyhow::ensure!(
+        cli.num_users.is_none(),
+        "--num-users requires --user-centric-rate"
+    );
+    anyhow::ensure!(
+        cli.input_file.is_none(),
+        "--input-file is currently supported by --fixed-schedule and --user-centric-rate"
+    );
+
+    let workload = SkeletonWorkload {
+        num_requests,
+        input_tokens: isl,
+        output_tokens: osl,
+        turns: 1,
+        think_time_ms: None,
     };
 
     // `--request-rate` selects open-loop rate mode; absent = closed-loop concurrency
@@ -202,9 +889,20 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         Some(concurrency) // closed-loop concurrency
     };
 
+    let adaptive = build_adaptive_cli_config(cli, concurrency, pattern)?;
+    anyhow::ensure!(
+        !matches!(
+            adaptive.as_ref().map(|config| config.control_variable),
+            Some(AdaptiveControlVariable::Users)
+        ),
+        "adaptive users requires --user-centric-rate"
+    );
+
+    let report_endpoints = parse_base_urls(&base_url)?;
+    let report_model = model.clone();
     let report = local.block_on(
         &rt,
-        run_paced(
+        run_paced_adaptive_with_metrics_and_ancillary(
             base_url,
             model,
             workload,
@@ -212,13 +910,312 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
             rate,
             cli.smoothness,
             concurrency_opt,
+            cli.prefill_concurrency,
             stop,
             cli.seed.unwrap_or(0),
+            adaptive,
+            ancillary,
         ),
     )?;
-    print_report_table(&report);
+    print_report_table(&report.performance);
     if let Some(path) = &cli.json {
-        write_report_json(&report, path)?;
+        let successful = if report.performance.request_counts.completed_requests > 0 {
+            report_endpoints.clone()
+        } else {
+            Vec::new()
+        };
+        let native_report = NativeReport::from_outcome(
+            &report.metrics,
+            &RunOutcome {
+                run: ReportRunInfo {
+                    mode: Some("online".to_string()),
+                    model: Some(report_model),
+                },
+                summary: ReportSummary {
+                    endpoints_configured: report_endpoints,
+                    endpoints_successful: successful,
+                    ..ReportSummary::default()
+                },
+                ..RunOutcome::default()
+            },
+        );
+        write_native_report_json(&native_report, path)?;
+    }
+    Ok(())
+}
+
+fn has_ancillary_timing_flags(cli: &Cli) -> bool {
+    cli.concurrency_ramp_duration.is_some()
+        || cli.prefill_concurrency_ramp_duration.is_some()
+        || cli.request_rate_ramp_duration.is_some()
+        || cli.request_cancellation_rate.is_some()
+        || cli.request_cancellation_delay.is_some()
+}
+
+fn build_ancillary_timing_config(cli: &Cli) -> anyhow::Result<AncillaryTimingConfig> {
+    let positive_duration = |value: Option<f64>, flag: &str| -> anyhow::Result<Option<u64>> {
+        value
+            .map(|seconds| {
+                let ns = positive_seconds_to_ns(seconds, flag)?;
+                Ok(u64::try_from(ns).expect("positive nanoseconds fit u64"))
+            })
+            .transpose()
+    };
+    if let Some(rate) = cli.request_cancellation_rate {
+        anyhow::ensure!(
+            rate.is_finite() && (0.0..=100.0).contains(&rate),
+            "--request-cancellation-rate must be a finite percentage in 0..=100"
+        );
+    }
+    anyhow::ensure!(
+        cli.request_cancellation_delay.is_none() || cli.request_cancellation_rate.is_some(),
+        "--request-cancellation-delay requires --request-cancellation-rate"
+    );
+    let cancellation_delay_ns = match cli.request_cancellation_delay {
+        Some(seconds) => {
+            anyhow::ensure!(
+                seconds.is_finite() && seconds >= 0.0,
+                "--request-cancellation-delay must be finite and non-negative"
+            );
+            let ns = seconds * 1_000_000_000.0;
+            anyhow::ensure!(
+                ns <= i64::MAX as f64,
+                "--request-cancellation-delay is outside the i64 nanosecond range"
+            );
+            // Python uses `int(delay * NANOS_PER_SECOND)`, which truncates.
+            ns as i64
+        }
+        None => 0,
+    };
+    let config = AncillaryTimingConfig {
+        concurrency_ramp_duration_ns: positive_duration(
+            cli.concurrency_ramp_duration,
+            "--concurrency-ramp-duration",
+        )?,
+        prefill_concurrency_ramp_duration_ns: positive_duration(
+            cli.prefill_concurrency_ramp_duration,
+            "--prefill-concurrency-ramp-duration",
+        )?,
+        request_rate_ramp_duration_ns: positive_duration(
+            cli.request_rate_ramp_duration,
+            "--request-rate-ramp-duration",
+        )?,
+        cancellation_rate_percent: cli.request_cancellation_rate,
+        cancellation_delay_ns,
+        ..AncillaryTimingConfig::default()
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+fn build_adaptive_cli_config(
+    cli: &Cli,
+    concurrency: usize,
+    pattern: ArrivalPattern,
+) -> anyhow::Result<Option<AdaptiveRunConfig>> {
+    if !cli.adaptive_scale {
+        return Ok(None);
+    }
+
+    anyhow::ensure!(
+        cli.duration.is_some(),
+        "--adaptive-scale requires --duration"
+    );
+    let sustain_duration = cli
+        .adaptive_sustain_duration
+        .ok_or_else(|| anyhow::anyhow!("--adaptive-scale requires --adaptive-sustain-duration"))?;
+    anyhow::ensure!(
+        !cli.adaptive_scale_sla.is_empty(),
+        "--adaptive-scale requires at least one --adaptive-scale-sla"
+    );
+    let strategy_type = cli
+        .adaptive_scale_strategy_type
+        .as_deref()
+        .unwrap_or("ramp_until_fail");
+    anyhow::ensure!(
+        strategy_type == "ramp_until_fail",
+        "unknown --adaptive-scale-strategy-type {strategy_type:?} (expected ramp_until_fail)"
+    );
+    let control_variable = cli
+        .adaptive_control_variable
+        .as_deref()
+        .unwrap_or("concurrency")
+        .parse::<AdaptiveControlVariable>()?;
+    let minimum = cli.adaptive_control_min.unwrap_or(1.0);
+    let maximum = if let Some(maximum) = cli.adaptive_control_max {
+        maximum
+    } else {
+        match control_variable {
+            AdaptiveControlVariable::Concurrency => concurrency as f64,
+            AdaptiveControlVariable::PrefillConcurrency => cli
+                .prefill_concurrency
+                .map(|value| value as f64)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "adaptive prefill_concurrency requires --prefill-concurrency or --adaptive-control-max"
+                    )
+                })?,
+            AdaptiveControlVariable::RequestRate => cli.request_rate.ok_or_else(|| {
+                anyhow::anyhow!("adaptive request_rate requires --request-rate")
+            })?,
+            AdaptiveControlVariable::Users => cli
+                .num_users
+                .map(|value| value as f64)
+                .ok_or_else(|| anyhow::anyhow!("adaptive users requires --num-users"))?,
+        }
+    };
+    if control_variable == AdaptiveControlVariable::RequestRate {
+        anyhow::ensure!(
+            pattern != ArrivalPattern::ConcurrencyBurst && cli.request_rate.is_some(),
+            "adaptive request_rate requires --request-rate"
+        );
+    }
+    anyhow::ensure!(
+        minimum.is_finite() && minimum > 0.0,
+        "--adaptive-control-min must be positive and finite"
+    );
+    anyhow::ensure!(
+        maximum.is_finite() && maximum > minimum,
+        "--adaptive-control-max ({maximum}) must be finite and > minimum ({minimum})"
+    );
+    if matches!(
+        control_variable,
+        AdaptiveControlVariable::Concurrency
+            | AdaptiveControlVariable::PrefillConcurrency
+            | AdaptiveControlVariable::Users
+    ) {
+        anyhow::ensure!(
+            minimum.fract() == 0.0
+                && maximum.fract() == 0.0
+                && minimum <= usize::MAX as f64
+                && maximum <= usize::MAX as f64,
+            "adaptive {control_variable:?} control bounds must be integers in the usize range"
+        );
+    }
+    if control_variable == AdaptiveControlVariable::PrefillConcurrency {
+        let session_limit = if pattern == ArrivalPattern::ConcurrencyBurst {
+            Some(concurrency)
+        } else {
+            cli.concurrency
+        }
+        .ok_or_else(|| {
+            anyhow::anyhow!("adaptive prefill_concurrency requires a session --concurrency cap")
+        })?;
+        anyhow::ensure!(
+            maximum <= session_limit as f64,
+            "adaptive prefill_concurrency maximum must be <= concurrency"
+        );
+    }
+    anyhow::ensure!(
+        cli.adaptive_min_completed_requests.unwrap_or(1) > 0,
+        "--adaptive-min-completed-requests must be >= 1"
+    );
+
+    let step = match cli.adaptive_step_policy.as_deref().unwrap_or("sla_margin") {
+        "sla_margin" => {
+            let base_step = cli.adaptive_base_step.unwrap_or(10);
+            let max_step_multiplier = cli.adaptive_max_step_multiplier.unwrap_or(4);
+            anyhow::ensure!(base_step > 0, "--adaptive-base-step must be >= 1");
+            anyhow::ensure!(
+                max_step_multiplier > 0,
+                "--adaptive-max-step-multiplier must be >= 1"
+            );
+            AdaptiveStepConfig::SlaMargin {
+                base_step,
+                max_step_multiplier,
+            }
+        }
+        "fixed_percent_step" | "fixed-percent-step" => {
+            let percent = cli.adaptive_step_percent.unwrap_or(25.0);
+            anyhow::ensure!(
+                percent.is_finite() && percent > 0.0,
+                "--adaptive-step-percent must be positive and finite"
+            );
+            AdaptiveStepConfig::FixedPercent { percent }
+        }
+        other => anyhow::bail!(
+            "unknown --adaptive-step-policy {other:?} (expected sla_margin|fixed_percent_step)"
+        ),
+    };
+    let artifact_dir = cli.adaptive_artifact_dir.clone().unwrap_or_else(|| {
+        cli.json
+            .as_ref()
+            .and_then(|path| path.parent())
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
+    let assessment_period = cli.adaptive_assessment_period.unwrap_or(30.0);
+    anyhow::ensure!(
+        assessment_period.is_finite() && assessment_period >= 1.0,
+        "--adaptive-assessment-period must be finite and >= 1 second"
+    );
+    Ok(Some(AdaptiveRunConfig {
+        control_variable,
+        minimum,
+        maximum,
+        assessment_period_ns: positive_seconds_to_ns(
+            assessment_period,
+            "--adaptive-assessment-period",
+        )?,
+        sustain_duration_ns: positive_seconds_to_ns(
+            sustain_duration,
+            "--adaptive-sustain-duration",
+        )?,
+        min_completed_requests: cli.adaptive_min_completed_requests.unwrap_or(1),
+        sla_filters: cli
+            .adaptive_scale_sla
+            .iter()
+            .map(|value| parse_sla_filter(value))
+            .collect::<anyhow::Result<Vec<_>>>()?,
+        step,
+        artifact_dir,
+        correlation: CorrelationContext {
+            phase_id: "profiling".to_string(),
+            phase_name: Some("profiling".to_string()),
+            ..Default::default()
+        },
+    }))
+}
+
+fn emit_scheduled_report(cli: &Cli, report: &ScheduledRunReport) -> anyhow::Result<()> {
+    print_report_table(&report.performance);
+    println!(
+        "Schedule timing : {} turns, mean lateness {:.3} ms, max lateness {:.3} ms",
+        report.schedule_timing.issued_turns,
+        report.schedule_timing.mean_issue_lateness_ms,
+        report.schedule_timing.max_issue_lateness_ms,
+    );
+    if let Some(path) = &cli.json {
+        let endpoint = cli
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "http://localhost:8000".to_string());
+        let endpoints = parse_base_urls(&endpoint)?;
+        let successful = if report.performance.request_counts.completed_requests > 0 {
+            endpoints.clone()
+        } else {
+            Vec::new()
+        };
+        let native_report = NativeReport::from_outcome(
+            &report.native_metrics,
+            &RunOutcome {
+                run: ReportRunInfo {
+                    mode: Some(format!("online:{}", report.strategy)),
+                    model: Some(cli.model.clone().unwrap_or_else(|| "model".to_string())),
+                },
+                summary: ReportSummary {
+                    endpoints_configured: endpoints,
+                    endpoints_successful: successful,
+                    ..ReportSummary::default()
+                },
+                ..RunOutcome::default()
+            },
+        );
+        write_native_report_json(&native_report, path)?;
+    }
+    if let Some(path) = &cli.timing_json {
+        write_scheduled_report_json(report, path)?;
     }
     Ok(())
 }
@@ -325,6 +1322,14 @@ fn print_graph_summary(s: &GraphSummary, backend: &str) {
 }
 
 fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !cli.adaptive_scale,
+        "--adaptive-scale is supported by online workloads, not --mode graph"
+    );
+    anyhow::ensure!(
+        !has_ancillary_timing_flags(cli),
+        "ancillary timing-policy flags are supported by online workloads, not --mode graph"
+    );
     use aiperf_graph::transport_bench::run_transport_bench;
 
     let GraphParams {
@@ -335,6 +1340,8 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
     } = parse_graph_config(cli);
 
     let backend = "aiperf-transport";
+    let report_model = cfg.model.clone();
+    let report_endpoints = cfg.base_urls.clone();
 
     tracing::info!(
         backend,
@@ -368,5 +1375,29 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
     };
 
     print_graph_summary(&summary, backend);
+    if let Some(path) = &cli.json {
+        let successful = if r.completed > 0 {
+            report_endpoints.clone()
+        } else {
+            Vec::new()
+        };
+        let native_report = NativeReport::from_outcome(
+            &r.native_metrics,
+            &RunOutcome {
+                run: ReportRunInfo {
+                    mode: Some("graph".to_string()),
+                    model: Some(report_model),
+                },
+                summary: ReportSummary {
+                    duration_s: Some(r.wall_secs),
+                    endpoints_configured: report_endpoints,
+                    endpoints_successful: successful,
+                    ..ReportSummary::default()
+                },
+                ..RunOutcome::default()
+            },
+        );
+        write_native_report_json(&native_report, path)?;
+    }
     Ok(())
 }

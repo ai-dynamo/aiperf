@@ -14,7 +14,7 @@ use aiperf_graph::materialize::SegmentItemsMaterializer;
 use aiperf_graph::model::{GraphRecord, TraceRecord};
 use aiperf_graph::reducers::ChanVal;
 use aiperf_graph::run::{TimeBase, run_trace};
-use aiperf_graph::segment::{SegmentPool, SegmentStore};
+use aiperf_graph::segment::{Handle as SegmentHandle, SegmentPool, intern_message};
 use aiperf_graph::transport_sink::TransportChatSink;
 use aiperf_graph::wire::OpenAiChatMessage as Msg;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -100,7 +100,7 @@ impl RequestObserver for CountObs {
     }
 }
 
-fn two_node_chain(n0_user: &str, n1_user: &str) -> GraphRecord {
+fn two_node_chain(n0_user: SegmentHandle, n1_user: SegmentHandle) -> GraphRecord {
     serde_json::from_value(json!({
         "state": {
             "c0": {"type": "messages", "reducer": "add_messages"},
@@ -128,13 +128,14 @@ fn graph_dispatches_over_transport_to_real_mock() {
         return;
     };
 
-    let mut pool: SegmentPool<Msg> = SegmentPool::new();
-    let n0_user = pool.add(Msg::new("user", "start"), None);
-    let n1_user = pool.add(Msg::new("user", "continue"), None);
-    let store: Rc<dyn SegmentStore<Msg>> = Rc::new(pool);
-    let materializer = Rc::new(SegmentItemsMaterializer::new(store));
+    let tokenizer = aiperf_dataset::TiktokenTokenizer::builtin();
+    let mut pool = SegmentPool::new();
+    let n0_user = intern_message(&mut pool, &Msg::new("user", "start"), None, &tokenizer).unwrap();
+    let n1_user =
+        intern_message(&mut pool, &Msg::new("user", "continue"), None, &tokenizer).unwrap();
+    let materializer = Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
 
-    let obs = Arc::new(CountObs::default());
+    let obs = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
     let sink = Rc::new(TransportChatSink::new(
         clock,
@@ -145,7 +146,7 @@ fn graph_dispatches_over_transport_to_real_mock() {
         false,
     ));
 
-    let graph = two_node_chain(&n0_user, &n1_user);
+    let graph = two_node_chain(n0_user, n1_user);
     let trace: TraceRecord = serde_json::from_value(json!({"id": "t-1"})).unwrap();
 
     let result = run_trace(Rc::new(graph), trace, materializer, sink, TimeBase::Wall).unwrap();
@@ -159,8 +160,8 @@ fn graph_dispatches_over_transport_to_real_mock() {
     );
 
     // n0's real HTTP reply flowed onto its channel as a non-empty assistant msg.
-    match result.channels.get("c0") {
-        Some(ChanVal::Val(Value::Array(a))) => {
+    match result.channels.get("c0").and_then(ChanVal::as_value) {
+        Some(Value::Array(a)) => {
             assert_eq!(a.len(), 1, "c0 holds n0's assistant reply");
             let reply = a[0]["content"].as_str().unwrap_or("");
             assert!(
@@ -171,8 +172,8 @@ fn graph_dispatches_over_transport_to_real_mock() {
         other => panic!("c0 should hold assistant messages, got {other:?}"),
     }
     // n1 ran after n0 (spliced c0) and also produced a real reply on c1.
-    match result.channels.get("c1") {
-        Some(ChanVal::Val(Value::Array(a))) => {
+    match result.channels.get("c1").and_then(ChanVal::as_value) {
+        Some(Value::Array(a)) => {
             assert_eq!(a.len(), 1, "c1 holds n1's assistant reply");
             assert!(!a[0]["content"].as_str().unwrap_or("").is_empty());
         }
@@ -186,13 +187,14 @@ fn graph_dispatches_over_transport_h2c_to_real_mock() {
         return;
     };
 
-    let mut pool: SegmentPool<Msg> = SegmentPool::new();
-    let n0_user = pool.add(Msg::new("user", "start"), None);
-    let n1_user = pool.add(Msg::new("user", "continue"), None);
-    let store: Rc<dyn SegmentStore<Msg>> = Rc::new(pool);
-    let materializer = Rc::new(SegmentItemsMaterializer::new(store));
+    let tokenizer = aiperf_dataset::TiktokenTokenizer::builtin();
+    let mut pool = SegmentPool::new();
+    let n0_user = intern_message(&mut pool, &Msg::new("user", "start"), None, &tokenizer).unwrap();
+    let n1_user =
+        intern_message(&mut pool, &Msg::new("user", "continue"), None, &tokenizer).unwrap();
+    let materializer = Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
 
-    let obs = Arc::new(CountObs::default());
+    let obs = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
     // http2 = true -> h2c prior-knowledge over cleartext against the mock.
     let sink = Rc::new(TransportChatSink::new(
@@ -204,7 +206,7 @@ fn graph_dispatches_over_transport_h2c_to_real_mock() {
         true,
     ));
 
-    let graph = two_node_chain(&n0_user, &n1_user);
+    let graph = two_node_chain(n0_user, n1_user);
     let trace: TraceRecord = serde_json::from_value(json!({"id": "t-2"})).unwrap();
 
     let result = run_trace(Rc::new(graph), trace, materializer, sink, TimeBase::Wall).unwrap();
@@ -219,6 +221,6 @@ fn graph_dispatches_over_transport_h2c_to_real_mock() {
         "real output tokens over h2c"
     );
     assert!(
-        matches!(result.channels.get("c0"), Some(ChanVal::Val(Value::Array(a))) if !a.is_empty())
+        matches!(result.channels.get("c0").and_then(ChanVal::as_value), Some(Value::Array(a)) if !a.is_empty())
     );
 }

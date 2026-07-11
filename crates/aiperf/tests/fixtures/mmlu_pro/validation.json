@@ -1,0 +1,52 @@
+[
+  {
+    "question_id": 1,
+    "question": "Validation example one?",
+    "options": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+    "answer": "A",
+    "answer_index": 0,
+    "cot_content": "A: Let's think step by step. Fixture rationale one. The answer is (A)",
+    "category": "math",
+    "src": "native-fixture"
+  },
+  {
+    "question_id": 2,
+    "question": "Validation example two?",
+    "options": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+    "answer": "B",
+    "answer_index": 1,
+    "cot_content": "A: Let's think step by step. Fixture rationale two. The answer is (B)",
+    "category": "math",
+    "src": "native-fixture"
+  },
+  {
+    "question_id": 3,
+    "question": "Validation example three?",
+    "options": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+    "answer": "C",
+    "answer_index": 2,
+    "cot_content": "A: Let's think step by step. Fixture rationale three. The answer is (C)",
+    "category": "math",
+    "src": "native-fixture"
+  },
+  {
+    "question_id": 4,
+    "question": "Validation example four?",
+    "options": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+    "answer": "D",
+    "answer_index": 3,
+    "cot_content": "A: Let's think step by step. Fixture rationale four. The answer is (D)",
+    "category": "math",
+    "src": "native-fixture"
+  },
+  {
+    "question_id": 5,
+    "question": "Validation example five?",
+    "options": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+    "answer": "E",
+    "answer_index": 4,
+    "cot_content": "A: Let's think step by step. Fixture rationale five. The answer is (E)",
+    "category": "math",
+    "src": "native-fixture"
+  }
+]

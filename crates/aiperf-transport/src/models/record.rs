@@ -3,6 +3,8 @@
 
 //! The output of a request: responses + timing + trace + error.
 
+use std::collections::BTreeMap;
+
 use crate::models::{ErrorDetails, Response, TraceData};
 
 /// A completed (or failed) request with its responses and timing.
@@ -16,6 +18,9 @@ pub struct RequestRecord {
     pub recv_start_ns: Option<i64>,
     /// HTTP status code, if a response header was received.
     pub status: Option<u16>,
+    /// Response headers, normalized to lowercase names. Control-plane clients use
+    /// this for explicit redirect and cache handling.
+    pub response_headers: BTreeMap<String, String>,
     /// Collected responses (SSE messages or a text body).
     pub responses: Vec<Response>,
     /// Failure detail, if any.
@@ -58,6 +63,7 @@ mod tests {
             responses: vec![Response::Text(TextResponse {
                 perf_ns: 20,
                 text: "x".into(),
+                body: bytes::Bytes::from_static(b"x"),
                 content_type: None,
             })],
             ..RequestRecord::started(10)

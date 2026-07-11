@@ -1,0 +1,415 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Absolute-timestamp trace replay workload.
+//!
+//! This ports `src/aiperf/timing/strategies/fixed_schedule.py:68-171` end to
+//! end: validate and stable-sort first-turn timestamps, resolve the schedule
+//! zero, schedule every first turn up front, then select absolute
+//! `timestamp_ms`, relative `delay_ms`, or immediate dispatch (in that
+//! precedence order) for each continuation. The workload intentionally ignores
+//! stop bounds: the trace is the run plan.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use anyhow::{Result, bail};
+use async_trait::async_trait;
+use uuid::Uuid;
+
+use crate::multiturn::{ConversationSource, TurnResponse, TurnToSend};
+use crate::scheduled::{ScheduledRuntime, Workload};
+use crate::scheduler::LocalTaskScheduler;
+
+/// Fixed-schedule anchoring configuration.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FixedScheduleConfig {
+    /// Slide the trace so its earliest first turn lands at run start.
+    pub auto_offset_timestamps: bool,
+    /// Explicit trace timestamp treated as run start when auto-offset is off.
+    pub start_offset_ms: Option<f64>,
+}
+
+/// One first-turn entry in the sorted replay schedule.
+#[derive(Clone, Debug)]
+pub struct FixedScheduleEntry {
+    /// Trace timestamp in milliseconds.
+    pub timestamp_ms: f64,
+    /// First turn with a freshly minted runtime correlation id.
+    pub turn: TurnToSend,
+}
+
+/// Validated fixed replay plan.
+#[derive(Clone, Debug)]
+pub struct FixedSchedule {
+    /// Timestamp subtracted from every absolute trace timestamp.
+    pub schedule_zero_ms: f64,
+    /// Stable timestamp-sorted first turns.
+    pub entries: Vec<FixedScheduleEntry>,
+}
+
+/// Source seam that lowers conversation metadata into a fixed replay plan.
+pub trait FixedScheduleSource {
+    /// Validate and build a fresh plan. Every call mints new correlation ids.
+    fn build_schedule(&self, conversations: &dyn ConversationSource) -> Result<FixedSchedule>;
+
+    /// Convert a trace timestamp to an absolute clock target.
+    fn timestamp_to_ns(
+        &self,
+        started_ns: i64,
+        schedule_zero_ms: f64,
+        timestamp_ms: f64,
+    ) -> Result<i64>;
+}
+
+/// Dataset metadata implementation of [`FixedScheduleSource`].
+pub struct DatasetFixedScheduleSource {
+    config: FixedScheduleConfig,
+}
+
+impl DatasetFixedScheduleSource {
+    /// Create a schedule source with explicit anchoring behavior.
+    pub fn new(config: FixedScheduleConfig) -> Result<Self> {
+        if config
+            .start_offset_ms
+            .is_some_and(|value| !value.is_finite() || value < 0.0)
+        {
+            bail!("fixed-schedule start offset must be finite and non-negative");
+        }
+        Ok(Self { config })
+    }
+}
+
+impl FixedScheduleSource for DatasetFixedScheduleSource {
+    fn build_schedule(&self, conversations: &dyn ConversationSource) -> Result<FixedSchedule> {
+        let mut entries = Vec::new();
+        for conversation in conversations.conversations() {
+            if conversation.turns.is_empty() {
+                continue;
+            }
+            let Some(timestamp_ms) = conversation.turns[0].timestamp_ms else {
+                bail!(
+                    "first turn of {} missing timestamp_ms",
+                    conversation.conversation_id
+                );
+            };
+            if !timestamp_ms.is_finite() {
+                bail!(
+                    "first turn of {} has non-finite timestamp_ms",
+                    conversation.conversation_id
+                );
+            }
+            let session = conversations
+                .session_for(&conversation.conversation_id, Uuid::new_v4().to_string())?;
+            entries.push(FixedScheduleEntry {
+                timestamp_ms,
+                turn: session.build_first_turn(None)?,
+            });
+        }
+        if entries.is_empty() {
+            bail!("no conversations with valid first-turn timestamps found");
+        }
+
+        // `sort_by` is stable: equal-timestamp conversations retain dataset
+        // insertion order, matching the Clock's deterministic registration tie.
+        entries.sort_by(|left, right| left.timestamp_ms.total_cmp(&right.timestamp_ms));
+        let schedule_zero_ms = if self.config.auto_offset_timestamps {
+            entries[0].timestamp_ms
+        } else {
+            self.config.start_offset_ms.unwrap_or(0.0)
+        };
+        Ok(FixedSchedule {
+            schedule_zero_ms,
+            entries,
+        })
+    }
+
+    fn timestamp_to_ns(
+        &self,
+        started_ns: i64,
+        schedule_zero_ms: f64,
+        timestamp_ms: f64,
+    ) -> Result<i64> {
+        let offset_ns = milliseconds_to_ns(timestamp_ms - schedule_zero_ms)?;
+        Ok(started_ns.saturating_add(offset_ns))
+    }
+}
+
+/// Convert a finite millisecond interval to integer nanoseconds with ties-to-even
+/// rounding, preserving deterministic `SimClock` behavior.
+pub fn milliseconds_to_ns(milliseconds: f64) -> Result<i64> {
+    if !milliseconds.is_finite() {
+        bail!("timestamp interval must be finite");
+    }
+    let nanoseconds = milliseconds * 1_000_000.0;
+    if nanoseconds < i64::MIN as f64 || nanoseconds > i64::MAX as f64 {
+        bail!("timestamp interval is outside the i64 nanosecond range");
+    }
+    Ok(nanoseconds.round_ties_even() as i64)
+}
+
+/// Fixed-schedule [`Workload`] over a conversation source and schedule source.
+pub struct FixedScheduleWorkload {
+    conversations: Rc<RefCell<Box<dyn ConversationSource>>>,
+    schedule_source: Rc<dyn FixedScheduleSource>,
+    schedule: FixedSchedule,
+}
+
+impl FixedScheduleWorkload {
+    /// Build and validate the full first-turn schedule before run start.
+    pub fn new(
+        conversations: Box<dyn ConversationSource>,
+        schedule_source: Rc<dyn FixedScheduleSource>,
+    ) -> Result<Self> {
+        let schedule = schedule_source.build_schedule(conversations.as_ref())?;
+        Ok(Self {
+            conversations: Rc::new(RefCell::new(conversations)),
+            schedule_source,
+            schedule,
+        })
+    }
+
+    /// Validated schedule used by this workload.
+    pub fn schedule(&self) -> &FixedSchedule {
+        &self.schedule
+    }
+}
+
+#[async_trait(?Send)]
+impl Workload for FixedScheduleWorkload {
+    fn name(&self) -> &'static str {
+        "fixed_schedule"
+    }
+
+    fn has_credit_timestamps(&self) -> bool {
+        false
+    }
+
+    async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
+        for entry in &self.schedule.entries {
+            let target_ns = self.schedule_source.timestamp_to_ns(
+                runtime.start_ns(),
+                self.schedule.schedule_zero_ms,
+                entry.timestamp_ms,
+            )?;
+            schedule_fixed_turn(
+                runtime.clone(),
+                self.conversations.clone(),
+                self.schedule_source.clone(),
+                self.schedule.schedule_zero_ms,
+                entry.turn.clone(),
+                target_ns,
+            );
+        }
+        Ok(())
+    }
+}
+
+fn schedule_fixed_turn(
+    runtime: Rc<ScheduledRuntime>,
+    conversations: Rc<RefCell<Box<dyn ConversationSource>>>,
+    schedule_source: Rc<dyn FixedScheduleSource>,
+    schedule_zero_ms: f64,
+    turn: TurnToSend,
+    target_ns: i64,
+) {
+    let scheduler = runtime.scheduler();
+    scheduler.schedule_at_ns(
+        target_ns,
+        Box::pin(async move {
+            let runtime_for_completion = runtime.clone();
+            let conversations_for_completion = conversations.clone();
+            let schedule_source_for_completion = schedule_source.clone();
+            runtime.issue_turn(
+                turn,
+                target_ns,
+                None,
+                Box::new(move |credit, outcome| {
+                    Box::pin(async move {
+                        if credit.is_final_turn() {
+                            return;
+                        }
+
+                        let (next_metadata, next_turn) = {
+                            let source = conversations_for_completion.borrow();
+                            let metadata = match source.next_turn_metadata(&credit) {
+                                Ok(metadata) => metadata.clone(),
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = %error,
+                                        conversation_id = %credit.turn.conversation_id,
+                                        "fixed-schedule continuation metadata failed"
+                                    );
+                                    return;
+                                }
+                            };
+                            let next = match source.next_turn(
+                                &credit,
+                                TurnResponse {
+                                    text: outcome.response_text.clone(),
+                                    completion_tokens: outcome.completion_tokens,
+                                    terminal: outcome.terminal,
+                                },
+                            ) {
+                                Ok(Some(turn)) => turn,
+                                Ok(None) => return,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = %error,
+                                        conversation_id = %credit.turn.conversation_id,
+                                        "fixed-schedule continuation materialization failed"
+                                    );
+                                    return;
+                                }
+                            };
+                            (metadata, next)
+                        };
+
+                        let next_target = if let Some(timestamp_ms) = next_metadata.timestamp_ms {
+                            match schedule_source_for_completion.timestamp_to_ns(
+                                runtime_for_completion.start_ns(),
+                                schedule_zero_ms,
+                                timestamp_ms,
+                            ) {
+                                Ok(target) => target,
+                                Err(error) => {
+                                    tracing::warn!(error = %error, "invalid fixed timestamp");
+                                    return;
+                                }
+                            }
+                        } else if let Some(delay_ms) = next_metadata.delay_ms {
+                            match milliseconds_to_ns(delay_ms) {
+                                Ok(delay_ns) => outcome.end_ns.saturating_add(delay_ns),
+                                Err(error) => {
+                                    tracing::warn!(error = %error, "invalid fixed delay");
+                                    return;
+                                }
+                            }
+                        } else {
+                            outcome.end_ns
+                        };
+
+                        schedule_fixed_turn(
+                            runtime_for_completion,
+                            conversations_for_completion,
+                            schedule_source_for_completion,
+                            schedule_zero_ms,
+                            next_turn,
+                            next_target,
+                        );
+                    })
+                }),
+            );
+        }),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::multiturn::{
+        ConversationDataset, DatasetConversationSource, SyntheticConversationSource,
+    };
+    use crate::workload::SkeletonWorkload;
+
+    use super::*;
+
+    fn source(input: &str) -> Box<dyn ConversationSource> {
+        let dataset = ConversationDataset::from_json_or_jsonl(input, 2, 1).unwrap();
+        Box::new(DatasetConversationSource::new(dataset))
+    }
+
+    #[test]
+    fn setup_sorts_stably_and_resolves_all_zero_modes() {
+        let input = concat!(
+            "{\"session_id\":\"late\",\"timestamp\":1200}\n",
+            "{\"session_id\":\"first\",\"timestamp\":1000}\n",
+            "{\"session_id\":\"tie\",\"timestamp\":1000}\n"
+        );
+        let auto = DatasetFixedScheduleSource::new(FixedScheduleConfig {
+            auto_offset_timestamps: true,
+            start_offset_ms: None,
+        })
+        .unwrap();
+        let source = source(input);
+        let schedule = auto.build_schedule(source.as_ref()).unwrap();
+        assert_eq!(schedule.schedule_zero_ms, 1000.0);
+        assert_eq!(
+            schedule
+                .entries
+                .iter()
+                .map(|entry| entry.turn.conversation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "tie", "late"]
+        );
+
+        let manual = DatasetFixedScheduleSource::new(FixedScheduleConfig {
+            auto_offset_timestamps: false,
+            start_offset_ms: Some(500.0),
+        })
+        .unwrap();
+        assert_eq!(
+            manual
+                .build_schedule(source.as_ref())
+                .unwrap()
+                .schedule_zero_ms,
+            500.0
+        );
+        let zero = DatasetFixedScheduleSource::new(FixedScheduleConfig::default()).unwrap();
+        assert_eq!(
+            zero.build_schedule(source.as_ref())
+                .unwrap()
+                .schedule_zero_ms,
+            0.0
+        );
+    }
+
+    #[test]
+    fn setup_rejects_missing_first_timestamp_and_empty_dataset() {
+        let source = SyntheticConversationSource::new(SkeletonWorkload {
+            num_requests: 0,
+            input_tokens: 2,
+            output_tokens: 1,
+            turns: 2,
+            think_time_ms: None,
+        })
+        .unwrap();
+        let fixed = DatasetFixedScheduleSource::new(FixedScheduleConfig::default()).unwrap();
+        assert!(
+            fixed
+                .build_schedule(&source)
+                .unwrap_err()
+                .to_string()
+                .contains("missing timestamp_ms")
+        );
+
+        let empty = DatasetConversationSource::new(ConversationDataset::new(vec![]).unwrap());
+        assert!(
+            fixed
+                .build_schedule(&empty)
+                .unwrap_err()
+                .to_string()
+                .contains("no conversations")
+        );
+    }
+
+    #[test]
+    fn timestamp_conversion_handles_past_and_fractional_values() {
+        let fixed = DatasetFixedScheduleSource::new(FixedScheduleConfig::default()).unwrap();
+        assert_eq!(fixed.timestamp_to_ns(1_000, 10.0, 9.5).unwrap(), -499_000);
+        assert_eq!(milliseconds_to_ns(0.000_001_5).unwrap(), 2);
+        assert_eq!(milliseconds_to_ns(0.000_002_5).unwrap(), 2);
+    }
+
+    #[test]
+    fn manual_offset_rejects_negative_or_non_finite_values() {
+        for value in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                DatasetFixedScheduleSource::new(FixedScheduleConfig {
+                    auto_offset_timestamps: false,
+                    start_offset_ms: Some(value),
+                })
+                .is_err()
+            );
+        }
+    }
+}

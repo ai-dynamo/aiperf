@@ -5,7 +5,9 @@
 //!
 //! The report kernel intentionally uses manual linear interpolation over the fixed
 //! genai-perf percentile band. Error-adjusted distributions use nearest-rank so a
-//! finite-to-`+inf` boundary never computes `inf - inf`.
+//! finite-to-`+inf` boundary never computes `inf - inf`. These rules port
+//! `src/aiperf/metrics/metric_dicts.py:50-103` and
+//! `src/aiperf/metrics/derived_latency.py:188-249`.
 
 use crate::MetricValue;
 use serde::Serialize;
@@ -64,6 +66,11 @@ pub fn linear_distribution(
     }
     values.sort_by(f64::total_cmp);
     let count = values.len();
+    let running_sum = if running_sum.is_finite() {
+        running_sum
+    } else {
+        values.iter().sum()
+    };
     let avg = running_sum / count as f64;
     let mut percentiles = BTreeMap::new();
     for percentile in PERCENTILES {
@@ -127,7 +134,7 @@ pub fn nearest_distribution(
     };
     let mut percentiles = BTreeMap::new();
     for percentile in PERCENTILES {
-        let idx = ((count - 1) as f64 * percentile as f64 / 100.0).round() as usize;
+        let idx = ((count - 1) as f64 * percentile as f64 / 100.0).round_ties_even() as usize;
         percentiles.insert(
             percentile,
             MetricValue::from_f64(values[idx.min(count - 1)], allow_pos_inf),

@@ -5,16 +5,26 @@
 //!
 //! Measurement wire types + the collector observer live in [`aiperf_core`]; the
 //! Graph-IR engine lives in `aiperf_graph`; the clock-native scheduling policy
-//! (arrival intervals, slot pools, stop conditions) lives in the shared
-//! [`aiperf_timing`] leaf. This crate owns the CLI surface: the online HTTP sink
-//! over `aiperf-transport` ([`http`]), workload shaping ([`workload`]), the online
-//! run loop ([`run`]), reporting ([`report`]), and logging setup ([`logging`]).
+//! (arrivals, slots, stop conditions, ramps, cancellation, and URL selection)
+//! lives in shared [`aiperf_timing`]. This crate owns the CLI/runtime composition:
+//! the online HTTP sink over `aiperf-transport` ([`http`]), ancillary policy
+//! wiring ([`ancillary`]), workload shaping ([`workload`]), the online run loop
+//! ([`run`]), reporting ([`report`]), and logging setup ([`logging`]).
 
+pub mod accuracy;
+pub mod accuracy_dataset;
+pub mod adaptive;
+pub mod ancillary;
+pub mod fixed_schedule;
 pub mod http;
 pub mod logging;
+pub mod metrics;
 pub mod multiturn;
 pub mod report;
 pub mod run;
+pub mod scheduled;
+pub mod scheduler;
+pub mod user_centric;
 pub mod workload;
 
 #[cfg(test)]

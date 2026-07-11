@@ -1,0 +1,75 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Unified dataset substrate for every AIPerf execution mode.
+//!
+//! The crate owns the linear `load -> compose -> store -> sample -> materialize`
+//! pipeline. Text, preformatted messages, raw request bodies, tools, headers, and
+//! multimodal content are interned once in a prefix-dependent content-addressed
+//! [`SegmentPool`]. [`Conversation`] and [`Turn`] contain only dense [`Handle`]s,
+//! so sharing a [`Dataset`] across worker threads shares the payload bytes too.
+//!
+//! Python behavior ported by this crate is grounded in
+//! `src/aiperf/common/models/dataset_models.py:69-511`,
+//! `src/aiperf/dataset/dataset_samplers.py:1-86`, and the loader files cited by
+//! their respective modules. The dense-handle fast path follows
+//! `aiperf-graph-ir/src/aiperf/dataset/graph_segment_unified_store.py:130-534`.
+
+pub mod compose;
+pub mod dataset;
+pub mod error;
+pub mod fetch;
+pub mod generator;
+pub mod materialize;
+pub mod model;
+pub mod prompt;
+pub mod request;
+pub mod sampler;
+pub mod segment;
+pub mod tokenizer;
+
+pub use dataset::{Dataset, DatasetMetadata};
+pub use error::{DatasetError, Result};
+pub use fetch::{DatasetFetcher, HttpDatasetFetcher};
+pub use generator::{
+    GeneratedMedia, NativeAudioGenerator, NativeImageGenerator,
+    NativeSyntheticMediaGeneratorFactory, NativeVideoGenerator, SourceImageSampling,
+    SyntheticAudioConfig, SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig,
+    SyntheticImageFormat, SyntheticImageSource, SyntheticMediaGenerator,
+    SyntheticMediaGeneratorFactory, SyntheticPrefixConfig, SyntheticPromptConfig,
+    SyntheticRankingsConfig, SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat,
+    SyntheticVideoPattern, audio_duration_seconds, transcode_audio_to_wav,
+};
+pub use loader::{
+    AccuracyComposer, AccuracyDatasetLoader, DatasetFormatRegistration, DatasetLoader,
+    DatasetProbe, DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin,
+};
+pub use materialize::{
+    AssemblyItem, MessageSpliceResolver, Overrides, SegmentItemsMaterializer,
+    build_message_body_from_wires,
+};
+pub use media::{InlineMediaResolver, MediaResolver};
+pub use model::{
+    AccuracyGroundTruth, BranchId, ContentGroup, Conversation, ConversationBranch,
+    ConversationBranchMode, ConversationContextMode, ConversationMetadata, CorrelationId,
+    DagMetadata, DispatchTiming, MediaKind, ModelId, NodeId, PrerequisiteKind, SessionId, Turn,
+    TurnMetadata, TurnPrerequisite,
+};
+pub use prompt::{
+    CorpusPromptGeneratorFactory, GeneratedPrompt, PromptGenerator, PromptGeneratorFactory,
+};
+pub use request::{
+    BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,
+    MaterializedRequest, RequestMaterializer,
+};
+pub use sampler::{RandomSampler, Sampler, SequentialSampler, ShuffleSampler};
+pub use segment::{
+    Handle, InMemorySegmentStore, Payload, Role, Segment, SegmentId, SegmentPool, SegmentStore,
+};
+pub use tokenizer::{HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, TiktokenTokenizer};
+pub mod loader;
+pub mod media;
+pub use compose::{
+    ComposeConfig, Composer, ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
+    RoundRobinModelSelectorFactory, SessionIdGenerator,
+};

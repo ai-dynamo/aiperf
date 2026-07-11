@@ -6,14 +6,15 @@
 use axum::{Router, http::header, response::IntoResponse, routing::post};
 
 /// Streams a realistic chat-completions response: a role-only opening chunk,
-/// two content chunks (`a`, `b`), a finish-only chunk, then `[DONE]`. Only the
-/// two content chunks should be counted as output tokens.
+/// two content chunks (`a`, `b`), a finish-only chunk, authoritative usage,
+/// then `[DONE]`. Only the two content chunks should be timed as output tokens.
 async fn chat_handler() -> impl IntoResponse {
     let body = concat!(
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n",
         "data: [DONE]\n\n",
     );
     ([(header::CONTENT_TYPE, "text/event-stream")], body)

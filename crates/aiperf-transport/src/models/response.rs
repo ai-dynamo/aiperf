@@ -3,6 +3,8 @@
 
 //! Response variants collected during a request.
 
+use bytes::Bytes;
+
 use crate::models::SseMessage;
 
 /// A raw text (non-SSE) response body.
@@ -12,6 +14,9 @@ pub struct TextResponse {
     pub perf_ns: i64,
     /// The raw text body.
     pub text: String,
+    /// Exact response bytes. Unlike `text`, this preserves binary control-plane
+    /// payloads such as public benchmark Parquet files.
+    pub body: Bytes,
     /// The response `Content-Type`, if known.
     pub content_type: Option<String>,
 }
@@ -53,6 +58,7 @@ mod tests {
         let r = TextResponse {
             perf_ns: 5,
             text: "{\"ok\":true}".into(),
+            body: Bytes::from_static(b"{\"ok\":true}"),
             content_type: Some("application/json".into()),
         };
         assert_eq!(r.json().unwrap()["ok"], serde_json::json!(true));
@@ -63,6 +69,7 @@ mod tests {
         let r = TextResponse {
             perf_ns: 5,
             text: "not json".into(),
+            body: Bytes::from_static(b"not json"),
             content_type: None,
         };
         assert!(r.json().is_none());
@@ -75,6 +82,7 @@ mod tests {
         let text = Response::Text(TextResponse {
             perf_ns: 9,
             text: "y".into(),
+            body: Bytes::from_static(b"y"),
             content_type: None,
         });
         assert_eq!(text.perf_ns(), 9);

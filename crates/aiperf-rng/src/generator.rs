@@ -15,6 +15,8 @@ use rand_pcg::Pcg64;
 use crate::error::{Result, RngError};
 
 const NORMAL_REJECTION_LIMIT: usize = 10_000;
+const U64_CARDINALITY: u128 = (u64::MAX as u128) + 1;
+const I64_UPPER_EXCLUSIVE_AS_F64: f64 = 9_223_372_036_854_775_808.0;
 
 /// One deterministic `Pcg64` PRNG plus AIPerf's sampling convenience methods.
 ///
@@ -74,6 +76,11 @@ impl RandomGenerator {
             });
         }
 
+        // Python integers do not overflow. Widen before subtracting so the full
+        // i64 domain retains Python's range semantics in debug and release builds.
+        let start = i128::from(start);
+        let stop = i128::from(stop);
+        let step = i128::from(step);
         let width = stop - start;
         let n = if step > 0 {
             if width <= 0 {
@@ -90,8 +97,11 @@ impl RandomGenerator {
         if n <= 0 {
             return Err(RngError::EmptyRange { what: "randrange" });
         }
-        let idx = self.rng.random_range(0..n);
-        Ok(start + idx * step)
+        let idx = self.uniform_index(n as u128) as i128;
+        let sampled = start + idx * step;
+        Ok(sampled
+            .try_into()
+            .expect("a member of an i64 range must remain representable"))
     }
 
     /// Uniform integer from `[0, stop)`.
@@ -114,7 +124,11 @@ impl RandomGenerator {
         if a > b {
             return Err(RngError::EmptyRange { what: "randint" });
         }
-        Ok(self.rng.random_range(a..=b))
+        let width = (i128::from(b) - i128::from(a) + 1) as u128;
+        let sampled = i128::from(a) + self.uniform_index(width) as i128;
+        Ok(sampled
+            .try_into()
+            .expect("an inclusive i64 sample must remain representable"))
     }
 
     /// Uniform float in `[a, b)` or `[b, a)` when `b < a`, matching Python's formula.
@@ -194,7 +208,12 @@ impl RandomGenerator {
             });
         }
         if let Some(weights) = weights {
-            validate_weights(values.len(), weights)?;
+            validated_weight_total(values.len(), weights)?;
+            if !replace && weights.iter().filter(|weight| **weight > 0.0).count() < size {
+                return Err(RngError::InvalidWeights {
+                    reason: "fewer positive weights than requested samples",
+                });
+            }
         }
 
         if replace {
@@ -210,7 +229,9 @@ impl RandomGenerator {
         let mut pool_weights = weights.expect("checked above").to_vec();
         let mut out = Vec::with_capacity(size);
         for _ in 0..size {
-            let idx = self.weighted_index(pool.len(), &pool_weights)?;
+            let idx = self
+                .weighted_index(pool.len(), &pool_weights)
+                .expect("validated positive weights remain sampleable");
             out.push(pool.remove(idx));
             pool_weights.remove(idx);
         }
@@ -273,6 +294,18 @@ impl RandomGenerator {
 
     /// Sample a bounded normal using Python AIPerf's rejection cap and clamp fallback.
     pub fn sample_normal(&mut self, mean: f64, stddev: f64, lower: f64, upper: f64) -> Result<f64> {
+        if lower.is_nan() {
+            return Err(RngError::InvalidParameter {
+                what: "lower",
+                value: lower,
+            });
+        }
+        if upper.is_nan() {
+            return Err(RngError::InvalidParameter {
+                what: "upper",
+                value: upper,
+            });
+        }
         if lower > upper {
             return Err(RngError::InvalidBounds { lower, upper });
         }
@@ -288,16 +321,25 @@ impl RandomGenerator {
                 value: mean,
             });
         }
-        if stddev == 0.0 {
-            return Ok(mean.clamp(lower, upper));
-        }
         for _ in 0..NORMAL_REJECTION_LIMIT {
-            let n = self.normal(mean, stddev)?;
+            let n = self
+                .normal(mean, stddev)
+                .expect("bounded-normal parameters were validated");
             if lower <= n && n <= upper {
                 return Ok(n);
             }
         }
-        Ok(mean.clamp(lower, upper))
+        let fallback = mean.clamp(lower, upper);
+        tracing::warn!(
+            mean,
+            stddev,
+            lower,
+            upper,
+            attempts = NORMAL_REJECTION_LIMIT,
+            fallback,
+            "bounded normal rejection limit exhausted; using clamped mean"
+        );
+        Ok(fallback)
     }
 
     /// Sample a normal value truncated at zero.
@@ -313,13 +355,25 @@ impl RandomGenerator {
 
     /// Sample a positive integer from a positive normal distribution.
     pub fn sample_positive_normal_integer(&mut self, mean: f64, stddev: f64) -> Result<i64> {
-        if stddev <= 0.0 {
-            return Ok(i64::max(1, mean.round_ties_even() as i64));
+        if !mean.is_finite() {
+            return Err(RngError::InvalidParameter {
+                what: "mean",
+                value: mean,
+            });
         }
-        Ok(i64::max(
-            1,
-            self.sample_positive_normal(mean, stddev)?.ceil() as i64,
-        ))
+        if !stddev.is_finite() {
+            return Err(RngError::InvalidParameter {
+                what: "stddev",
+                value: stddev,
+            });
+        }
+        if stddev <= 0.0 {
+            return positive_integer_from_f64(mean.round_ties_even(), "rounded mean");
+        }
+        positive_integer_from_f64(
+            self.sample_positive_normal(mean, stddev)?.ceil(),
+            "normal integer sample",
+        )
     }
 
     /// Generate `size` integers using NumPy's `[low, high)` calling convention.
@@ -331,7 +385,7 @@ impl RandomGenerator {
         if lo >= hi {
             return Err(RngError::EmptyRange { what: "integers" });
         }
-        Ok((0..size).map(|_| self.rng.random_range(lo..hi)).collect())
+        (0..size).map(|_| self.randrange(lo, hi, 1)).collect()
     }
 
     /// Generate `size` normal samples.
@@ -361,21 +415,40 @@ impl RandomGenerator {
     }
 
     fn weighted_index(&mut self, value_len: usize, weights: &[f64]) -> Result<usize> {
-        validate_weights(value_len, weights)?;
-        let total: f64 = weights.iter().sum();
+        let total = validated_weight_total(value_len, weights)?;
         let r = self.random() * total;
-        let mut cumulative = 0.0;
-        for (idx, weight) in weights.iter().enumerate() {
-            cumulative += *weight;
-            if r < cumulative {
-                return Ok(idx);
-            }
+        Ok(cumulative_weight_index(weights, r))
+    }
+
+    fn uniform_index(&mut self, len: u128) -> u128 {
+        debug_assert!((1..=U64_CARDINALITY).contains(&len));
+        if len == U64_CARDINALITY {
+            u128::from(self.random_u64())
+        } else {
+            u128::from(self.rng.random_range(0..len as u64))
         }
-        Ok(weights.len() - 1)
     }
 }
 
-fn validate_weights(value_len: usize, weights: &[f64]) -> Result<()> {
+fn cumulative_weight_index(weights: &[f64], r: f64) -> usize {
+    let mut cumulative = 0.0;
+    for (idx, weight) in weights.iter().enumerate() {
+        cumulative += *weight;
+        if r < cumulative {
+            return idx;
+        }
+    }
+    weights.len() - 1
+}
+
+pub(crate) fn positive_integer_from_f64(value: f64, what: &'static str) -> Result<i64> {
+    if !value.is_finite() || value >= I64_UPPER_EXCLUSIVE_AS_F64 {
+        return Err(RngError::InvalidParameter { what, value });
+    }
+    Ok(i64::max(1, value as i64))
+}
+
+fn validated_weight_total(value_len: usize, weights: &[f64]) -> Result<f64> {
     if weights.len() != value_len {
         return Err(RngError::InvalidWeights {
             reason: "weights length must match values length",
@@ -392,12 +465,17 @@ fn validate_weights(value_len: usize, weights: &[f64]) -> Result<()> {
         });
     }
     let total: f64 = weights.iter().sum();
+    if !total.is_finite() {
+        return Err(RngError::InvalidWeights {
+            reason: "weights must have a finite sum",
+        });
+    }
     if total <= 0.0 {
         return Err(RngError::InvalidWeights {
             reason: "weights must sum to a positive value",
         });
     }
-    Ok(())
+    Ok(total)
 }
 
 #[cfg(test)]
@@ -406,6 +484,15 @@ mod tests {
 
     fn mean(values: &[f64]) -> f64 {
         values.iter().sum::<f64>() / values.len() as f64
+    }
+
+    fn variance(values: &[f64]) -> f64 {
+        let mean = mean(values);
+        values
+            .iter()
+            .map(|value| (value - mean).powi(2))
+            .sum::<f64>()
+            / values.len() as f64
     }
 
     #[test]
@@ -427,6 +514,33 @@ mod tests {
     }
 
     #[test]
+    fn clone_fill_bytes_entropy_and_reseed_obey_state_contracts() {
+        let mut original = RandomGenerator::from_seed(Some(123));
+        let _ = original.random_u64();
+        let mut cloned = original.clone();
+        let mut original_bytes = [0_u8; 37];
+        let mut cloned_bytes = [0_u8; 37];
+        original.fill_bytes(&mut original_bytes);
+        cloned.fill_bytes(&mut cloned_bytes);
+        assert_eq!(original_bytes, cloned_bytes);
+        assert!(original_bytes.iter().any(|byte| *byte != 0));
+
+        original.reseed(9);
+        let mut fresh = RandomGenerator::from_seed(Some(9));
+        assert_eq!(original.seed(), Some(9));
+        assert_eq!(original.random_u64(), fresh.random_u64());
+
+        let mut entropy_a = RandomGenerator::from_seed(None);
+        let mut entropy_b = RandomGenerator::from_seed(None);
+        assert_eq!(entropy_a.seed(), None);
+        assert_eq!(entropy_b.seed(), None);
+        assert_ne!(
+            [entropy_a.random_u64(), entropy_a.random_u64()],
+            [entropy_b.random_u64(), entropy_b.random_u64()]
+        );
+    }
+
+    #[test]
     fn integer_ranges_match_python_bound_conventions() {
         let mut rng = RandomGenerator::from_seed(Some(7));
         for _ in 0..1000 {
@@ -440,6 +554,70 @@ mod tests {
         assert!(rng.randrange(1, 1, 1).is_err());
         assert!(rng.randrange(1, 3, 0).is_err());
         assert!(rng.randint(3, 1).is_err());
+    }
+
+    #[test]
+    fn integer_ranges_cover_extreme_i64_and_u64_bounds_without_overflow() {
+        let mut rng = RandomGenerator::from_seed(Some(70));
+        for _ in 0..1_000 {
+            let full_half_open = rng.randrange(i64::MIN, i64::MAX, 1).unwrap();
+            assert!(full_half_open < i64::MAX);
+            let full_inclusive = rng.randint(i64::MIN, i64::MAX).unwrap();
+            assert!((i64::MIN..=i64::MAX).contains(&full_inclusive));
+            assert!(
+                [i64::MIN, -1, i64::MAX - 1]
+                    .contains(&rng.randrange(i64::MIN, i64::MAX, i64::MAX).unwrap())
+            );
+            assert!([i64::MAX, -1].contains(&rng.randrange(i64::MAX, i64::MIN, i64::MIN).unwrap()));
+        }
+        assert_eq!(rng.randbelow(1).unwrap(), 0);
+        assert!(rng.randbelow(0).is_err());
+        assert_eq!(
+            rng.randrange_u64(u64::MAX - 1, u64::MAX).unwrap(),
+            u64::MAX - 1
+        );
+        assert!(rng.randrange_u64(1, 1).is_err());
+        assert!(rng.randrange_u64(2, 1).is_err());
+        assert!(rng.randrange(0, 10, -1).is_err());
+        assert!(rng.randrange(10, 0, 1).is_err());
+    }
+
+    #[test]
+    fn uniform_choice_sample_and_shuffle_cover_boundary_shapes() {
+        let mut rng = RandomGenerator::from_seed(Some(71));
+        assert_eq!(rng.uniform(4.0, 4.0), 4.0);
+        for _ in 0..100 {
+            assert!((0.0..1.0).contains(&rng.random()));
+            assert!((-3.0..=2.0).contains(&rng.uniform(2.0, -3.0)));
+            assert!([10, 20, 30].contains(rng.choice(&[10, 20, 30]).unwrap()));
+        }
+
+        assert_eq!(rng.choices(&[1, 2], 0).unwrap(), Vec::<i32>::new());
+        assert!(
+            rng.choices(&[1, 2], 20)
+                .unwrap()
+                .iter()
+                .all(|x| [1, 2].contains(x))
+        );
+        assert_eq!(rng.sample(&[1, 2], 0).unwrap(), Vec::<i32>::new());
+        let mut all = rng.sample(&[1, 2, 3], 3).unwrap();
+        all.sort_unstable();
+        assert_eq!(all, vec![1, 2, 3]);
+
+        let mut empty: [i32; 0] = [];
+        let mut singleton = [1];
+        rng.shuffle(&mut empty);
+        rng.shuffle(&mut singleton);
+        assert_eq!(singleton, [1]);
+
+        let mut first = [1, 2, 3, 4, 5, 6];
+        let mut second = first;
+        let mut a = RandomGenerator::from_seed(Some(72));
+        let mut b = RandomGenerator::from_seed(Some(72));
+        a.shuffle(&mut first);
+        b.shuffle(&mut second);
+        assert_eq!(first, second);
+        assert_ne!(first, [1, 2, 3, 4, 5, 6]);
     }
 
     #[test]
@@ -469,17 +647,54 @@ mod tests {
         for _ in 0..100 {
             assert_eq!(rng.weighted_choice(&[1, 2], Some(&[0.0, 5.0])).unwrap(), 2);
         }
+        assert!(rng.weighted_choice::<i32>(&[], None).is_err());
+        assert!(rng.weighted_choice::<i32>(&[], Some(&[])).is_err());
+        assert!(rng.weighted_choice(&[1, 2], Some(&[-1.0, 2.0])).is_err());
+        assert!(
+            rng.weighted_choice(&[1, 2], Some(&[1.0, f64::INFINITY]))
+                .is_err()
+        );
+        assert!(
+            rng.weighted_choice(&[1, 2], Some(&[f64::MAX, f64::MAX]))
+                .is_err()
+        );
+
+        let draws: Vec<_> = (0..40_000)
+            .map(|_| rng.weighted_choice(&[0, 1], Some(&[1.0, 3.0])).unwrap())
+            .collect();
+        let fraction_one =
+            draws.iter().filter(|value| **value == 1).count() as f64 / draws.len() as f64;
+        assert!((fraction_one - 0.75).abs() < 0.02, "{fraction_one}");
+        assert_eq!(cumulative_weight_index(&[1.0, 3.0], 0.0), 0);
+        assert_eq!(cumulative_weight_index(&[1.0, 3.0], 1.0), 1);
+        assert_eq!(cumulative_weight_index(&[1.0, 3.0], 4.0), 1);
     }
 
     #[test]
     fn numpy_choice_without_replacement_handles_weights() {
         let mut rng = RandomGenerator::from_seed(Some(4));
         let picked = rng
-            .numpy_choice(&['a', 'b', 'c'], 2, Some(&[0.0, 1.0, 1.0]), false)
+            .numpy_choice(&[10, 20, 30], 2, Some(&[0.0, 1.0, 1.0]), false)
             .unwrap();
         assert_eq!(picked.len(), 2);
-        assert!(!picked.contains(&'a'));
+        assert!(!picked.contains(&10));
         assert_ne!(picked[0], picked[1]);
+
+        assert!(rng.numpy_choice::<i32>(&[], 1, None, true).is_err());
+        assert!(rng.numpy_choice(&[1, 2], 3, None, false).is_err());
+        assert!(rng.numpy_choice(&[1, 2], 1, Some(&[1.0]), true).is_err());
+        assert!(
+            rng.numpy_choice(&[1, 2], 2, Some(&[1.0, 0.0]), false)
+                .is_err()
+        );
+        assert_eq!(
+            rng.numpy_choice::<i32>(&[], 0, None, true).unwrap(),
+            Vec::<i32>::new()
+        );
+        assert_eq!(rng.numpy_choice(&[9], 5, None, true).unwrap(), vec![9; 5]);
+        let unweighted = rng.numpy_choice(&[1, 2, 3], 2, None, false).unwrap();
+        assert_eq!(unweighted.len(), 2);
+        assert_ne!(unweighted[0], unweighted[1]);
     }
 
     #[test]
@@ -492,6 +707,41 @@ mod tests {
     }
 
     #[test]
+    fn bounded_normal_rejects_non_finite_parameters_and_pins_rejection_limit() {
+        let mut rng = RandomGenerator::from_seed(Some(51));
+        assert!(rng.sample_normal(0.0, 1.0, f64::NAN, 1.0).is_err());
+        assert!(rng.sample_normal(0.0, 1.0, 0.0, f64::NAN).is_err());
+        assert!(rng.sample_normal(0.0, -1.0, -1.0, 1.0).is_err());
+        assert!(rng.sample_normal(0.0, f64::NAN, -1.0, 1.0).is_err());
+        assert!(rng.sample_normal(f64::NAN, 1.0, -1.0, 1.0).is_err());
+        assert!(rng.sample_normal(f64::INFINITY, 1.0, -1.0, 1.0).is_err());
+
+        let mut actual = RandomGenerator::from_seed(Some(52));
+        assert_eq!(
+            actual.sample_normal(0.0, 1.0, 1_000.0, 1_001.0).unwrap(),
+            1_000.0
+        );
+        let actual_next = actual.random_u64();
+
+        let mut expected = RandomGenerator::from_seed(Some(52));
+        for _ in 0..NORMAL_REJECTION_LIMIT {
+            let rejected = expected.normal(0.0, 1.0).unwrap();
+            assert!(rejected < 1_000.0);
+        }
+        assert_eq!(actual_next, expected.random_u64());
+
+        let mut zero_scale = RandomGenerator::from_seed(Some(53));
+        let mut untouched = zero_scale.clone();
+        assert_eq!(
+            zero_scale
+                .sample_normal(5.0, 0.0, f64::NEG_INFINITY, f64::INFINITY)
+                .unwrap(),
+            5.0
+        );
+        assert_eq!(zero_scale.random_u64(), untouched.random_u64());
+    }
+
+    #[test]
     fn positive_normal_integer_preserves_shortcut_semantics() {
         let mut rng = RandomGenerator::from_seed(Some(6));
         assert_eq!(rng.sample_positive_normal_integer(0.1, 0.0).unwrap(), 1);
@@ -500,6 +750,15 @@ mod tests {
         for _ in 0..100 {
             assert!(rng.sample_positive_normal_integer(10.0, 2.0).unwrap() >= 1);
         }
+        assert_eq!(rng.sample_positive_normal_integer(-10.0, -1.0).unwrap(), 1);
+        assert!(rng.sample_positive_normal(-1.0, 1.0).is_err());
+        assert!(rng.sample_positive_normal_integer(-1.0, 1.0).is_err());
+        assert!(rng.sample_positive_normal_integer(f64::NAN, 0.0).is_err());
+        assert!(rng.sample_positive_normal_integer(1.0, f64::NAN).is_err());
+        assert!(
+            rng.sample_positive_normal_integer(I64_UPPER_EXCLUSIVE_AS_F64, 0.0)
+                .is_err()
+        );
     }
 
     #[test]
@@ -510,12 +769,59 @@ mod tests {
             .collect();
         let exp_mean = mean(&exp);
         assert!((exp_mean - 0.25).abs() / 0.25 < 0.02, "{exp_mean}");
+        let exp_variance = variance(&exp);
+        assert!(
+            (exp_variance - 0.0625).abs() / 0.0625 < 0.04,
+            "{exp_variance}"
+        );
 
         let gamma: Vec<_> = (0..200_000)
             .map(|_| rng.gammavariate(2.0, 3.0).unwrap())
             .collect();
         let gamma_mean = mean(&gamma);
         assert!((gamma_mean - 6.0).abs() / 6.0 < 0.02, "{gamma_mean}");
+        let gamma_variance = variance(&gamma);
+        assert!(
+            (gamma_variance - 18.0).abs() / 18.0 < 0.04,
+            "{gamma_variance}"
+        );
+
+        let rate = 20.0;
+        let smoothness = 3.0;
+        let intervals: Vec<_> = (0..200_000)
+            .map(|_| {
+                rng.gammavariate(smoothness, 1.0 / (rate * smoothness))
+                    .unwrap()
+            })
+            .collect();
+        assert!((mean(&intervals) - 1.0 / rate).abs() / (1.0 / rate) < 0.02);
+    }
+
+    #[test]
+    fn continuous_distributions_validate_parameters_and_normal_moments() {
+        let mut rng = RandomGenerator::from_seed(Some(81));
+        for lambda in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(rng.expovariate(lambda).is_err());
+        }
+        for alpha in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(rng.gammavariate(alpha, 1.0).is_err());
+        }
+        for beta in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(rng.gammavariate(1.0, beta).is_err());
+        }
+        for scale in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(rng.normal(0.0, scale).is_err());
+        }
+        for loc in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(rng.normal(loc, 1.0).is_err());
+        }
+        assert_eq!(rng.normal(3.0, 0.0).unwrap(), 3.0);
+
+        let normal: Vec<_> = (0..200_000)
+            .map(|_| rng.normal(4.0, 2.0).unwrap())
+            .collect();
+        assert!((mean(&normal) - 4.0).abs() < 0.02);
+        assert!((variance(&normal) - 4.0).abs() / 4.0 < 0.03);
     }
 
     #[test]
@@ -527,6 +833,24 @@ mod tests {
         assert!(from_zero.iter().all(|x| (0..4).contains(x)));
         assert!(rng.integers(4, Some(4), 1).is_err());
         assert_eq!(rng.normal_batch(3.0, 0.0, 5).unwrap(), vec![3.0; 5]);
-        assert_eq!(rng.random_batch(7).len(), 7);
+        let uniforms = rng.random_batch(7);
+        assert_eq!(uniforms.len(), 7);
+        assert!(uniforms.iter().all(|value| (0.0..1.0).contains(value)));
+        assert!(rng.random_batch(0).is_empty());
+        assert!(rng.integers(4, None, 0).unwrap().is_empty());
+        assert!(rng.integers(5, Some(4), 0).is_err());
+
+        for scale in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(rng.normal_batch(0.0, scale, 1).is_err());
+        }
+        assert!(rng.normal_batch(f64::NAN, 1.0, 1).is_err());
+        assert!(rng.normal_batch(f64::INFINITY, 1.0, 1).is_err());
+        assert!(rng.normal_batch(0.0, 1.0, 0).unwrap().is_empty());
+        let normals = rng.normal_batch(7.0, 1.5, 100_000).unwrap();
+        assert!((mean(&normals) - 7.0).abs() < 0.03);
+        assert!((variance(&normals) - 2.25).abs() / 2.25 < 0.04);
+
+        let extremes = rng.integers(i64::MIN, Some(i64::MAX), 1_000).unwrap();
+        assert!(extremes.iter().all(|value| *value < i64::MAX));
     }
 }

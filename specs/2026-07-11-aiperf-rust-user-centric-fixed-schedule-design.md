@@ -493,3 +493,64 @@ first turns up front, then absolute/`delay_ms`/immediate subsequent turns); both
 mock, and (deterministically) offline, with only the seeding math built today and the
 run loops, `UserPool`, `FixedScheduleSource`, and `ConversationSource` seams still to
 build.
+
+---
+
+## Addendum — 2026-07-11: implemented end to end
+
+This addendum supersedes the original designed/partly-built status, the build-order
+future tense, and the implementation questions in §8. The scheduled workload plane
+is now built in `crates/aiperf` over the existing `{Clock, RequestSink}` seams:
+
+- `multiturn.rs` provides the object-safe `ConversationSource` seam, synthetic and
+  JSON/JSONL dataset sources, prefix-dependent segment-backed prompt materialization,
+  response splicing, correlation identity, and per-turn timing metadata.
+- `scheduler.rs` provides the object-safe `LocalTaskScheduler` and the
+  Clock-injected `ClockTaskScheduler`. Absolute, relative, and immediate work shares
+  one `LocalSet`; pending timers can be cancelled without cancelling dispatched work.
+- `scheduled.rs` provides the shared `ScheduledRuntime`, `Workload`, and
+  `TurnDispatcher` seams. It owns issuance/dispatch observation, native metrics,
+  per-turn scheduled/issued/dispatch/first-token/TTFT/terminal timestamps, aggregate
+  early-issue and lateness analysis, stop notification, cancellation, and final drain.
+- `fixed_schedule.rs` provides `FixedScheduleSource` and `FixedScheduleWorkload`.
+  It validates finite non-negative offsets, filters and stable-sorts traces, supports
+  auto or explicit schedule zero, schedules all first turns up front, and applies the
+  required continuation precedence: absolute `timestamp_ms`, then `delay_ms` relative
+  to the preceding terminal return, then immediate dispatch. Targets at or before
+  `now` fire immediately. Pure replay intentionally ignores request/session/duration
+  stop bounds, matching the cited Python behavior.
+- `user_centric.rs` provides `UserPool`, `UserCentricWorkload`, and the live
+  `UserTargetController`. Initial users bind the exact `plan_user_centric` virtual
+  history to sampled sessions; a deterministic `(at_ns, seq_no)` spawn heap drives
+  open-loop replacement churn; continuation targets use
+  `max(now, previous_issue + turn_gap)`; optional concurrency gates whole sessions;
+  request/session/duration stops prevent new sessions while already-started sessions
+  drain. Adaptive target changes interrupt a pending spawn sleep and apply the new
+  turn gap only to subsequent calculations.
+- `http.rs`, `run.rs`, `main.rs`, and `report.rs` wire both workloads through the
+  Clock-injected hyper transport. CLI entry points are `--user-centric-rate` with
+  `--num-users` (synthetic or `--input-file`) and `--fixed-schedule --input-file`;
+  `--timing-json` serializes the schedule evidence alongside the unified native-v2
+  `--json` report.
+
+The §8 choices are therefore resolved as follows: fresh users derive `max_turns`
+from the concrete sampled session; all planned lengths are clamped to the available
+turns; fixed replay keeps Python's all-up-front scheduling and no-stop semantics;
+past targets are immediate; adaptive gap changes are step changes; and the session
+cap remains opt-in. A session-count stop blocks replacement sessions but never drops
+continuations from sessions already admitted.
+
+Validation covers both time domains available today. `tests/scheduled_sim.rs` uses
+`SimClock` with a Clock-injected fake dispatcher to assert exact nanosecond schedules,
+stable ordering, timestamp/delay/immediate continuation behavior, response splicing,
+steady-state seeding, churn, concurrency caps, stop-and-drain, duration cancellation,
+and adaptive wake-up. `tests/scheduled_real_mock.rs` launches the real Rust
+`aiperf-mock-rs` process and exercises both the library APIs and the compiled CLI,
+asserting zero early issues, bounded wall-clock lateness, configured TTFT, per-user
+non-overlap and gaps, terminal-relative delays, counts, and detailed JSON. CLI conflict
+and required-input validation lives in `tests/scheduled_cli_validation.rs`.
+
+The strategy code is Clock- and dispatcher-neutral and is exercised deterministically
+under `SimClock`. Full OFFLINE-mock inference remains unavailable only because the
+separate repository-wide in-process engine sink is still intentionally unwired; this
+addendum does not claim that missing backend integration.

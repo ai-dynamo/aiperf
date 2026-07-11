@@ -15,28 +15,41 @@ license = "Apache-2.0"
 loadgen-core = { path = "crates/loadgen-core" }
 aiperf = { path = "crates/aiperf" }
 aiperf-clock = { path = "crates/aiperf-clock" }
+aiperf-dataset = { path = "crates/aiperf-dataset" }
+aiperf-endpoints = { path = "crates/aiperf-endpoints" }
 aiperf-metrics = { path = "crates/aiperf-metrics" }
 aiperf-rng = { path = "crates/aiperf-rng" }
+aiperf-transport = { path = "crates/aiperf-transport" }
 
 # external (shared versions)
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
+base64 = "0.22"
 bitflags = "2"
 blake3 = "1"
+bytes = "1"
 chrono = "0.4"
+csv = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 itoa = "1"
 libc = "0.2"
 petgraph = "0.6"
+parquet = { version = "58.3", default-features = false, features = ["json", "snap", "zstd"] }
 rand = "0.9"
 rand_distr = "0.5"
 rand_pcg = "0.9"
+regex = "1"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+smallvec = { version = "1", features = ["serde"] }
+tiktoken-rs = "0.9"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4"] }
+url = "2"

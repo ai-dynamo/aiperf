@@ -10,13 +10,14 @@ use std::rc::Rc;
 
 use bytes::Bytes;
 use futures::StreamExt;
+use http::Method;
 use http_body_util::BodyExt;
 use url::Url;
 
 use aiperf_clock::Clock;
 
-use crate::client::cancellation::{CancelOutcome, race_cancel};
-use crate::client::connection::{Sender, TimedBody, establish, with_timeout};
+use crate::client::cancellation::{CancelOutcome, race_cancel_after_send};
+use crate::client::connection::{SendCompletion, Sender, TimedBody, establish, with_timeout};
 use crate::config::ClientConfig;
 use crate::models::{
     ErrorDetails, ErrorKind, RequestRecord, Response, SseMessage, TextResponse, TraceData,
@@ -53,17 +54,60 @@ impl HttpClient {
         headers: &BTreeMap<String, String>,
         body: Bytes,
         streaming: bool,
+        on_first_token: impl FnMut(i64),
+    ) -> RequestRecord {
+        self.request_with_method(Method::POST, url, headers, body, streaming, on_first_token)
+            .await
+    }
+
+    /// Send a request with an explicit HTTP method and record response timing.
+    pub async fn request_with_method(
+        &self,
+        method: Method,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        on_first_token: impl FnMut(i64),
+    ) -> RequestRecord {
+        let completion = Rc::new(SendCompletion::new());
+        self.request_with_method_and_completion(
+            method,
+            url,
+            headers,
+            body,
+            streaming,
+            on_first_token,
+            completion,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn request_with_method_and_completion(
+        &self,
+        method: Method,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
         mut on_first_token: impl FnMut(i64),
+        completion: Rc<SendCompletion>,
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
         let mut record = RequestRecord::started(start_ns);
         let mut trace = TraceData::default();
+        let mut first_token_filter = |ttft_ns: i64, _message: &SseMessage| {
+            on_first_token(ttft_ns);
+            true
+        };
 
         let body_len = body.len();
         let result = async {
             let (mut sender, _sock) =
                 establish(url, &self.cfg, self.clock.clone(), &mut trace).await?;
-            self.dispatch(
+            self.dispatch_with_method_and_completion(
+                method,
                 &mut sender,
                 url,
                 headers,
@@ -71,8 +115,9 @@ impl HttpClient {
                 streaming,
                 &mut trace,
                 &mut record,
-                &mut on_first_token,
+                &mut first_token_filter,
                 body_len,
+                completion,
             )
             .await
         }
@@ -95,36 +140,93 @@ impl HttpClient {
         body: Bytes,
         streaming: bool,
         cancel_after_ns: i64,
-        on_first_token: impl FnMut(i64),
+        mut on_first_token: impl FnMut(i64),
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
-        let fut = self.request(url, headers, body, streaming, on_first_token);
-        match race_cancel(self.clock.clone(), cancel_after_ns, fut).await {
-            CancelOutcome::Completed(rec) => rec,
+        let body_len = body.len();
+        let mut record = RequestRecord::started(start_ns);
+        let mut trace = TraceData::default();
+        let completion = Rc::new(SendCompletion::new());
+        let completion_for_dispatch = completion.clone();
+        let completion_for_record = completion.clone();
+        let mut first_token_filter = |ttft_ns: i64, _message: &SseMessage| {
+            on_first_token(ttft_ns);
+            true
+        };
+        let request = async {
+            let (mut sender, _socket) =
+                establish(url, &self.cfg, self.clock.clone(), &mut trace).await?;
+            self.dispatch_with_method_and_completion(
+                Method::POST,
+                &mut sender,
+                url,
+                headers,
+                body,
+                streaming,
+                &mut trace,
+                &mut record,
+                &mut first_token_filter,
+                body_len,
+                completion_for_dispatch,
+            )
+            .await
+        };
+        let result = match race_cancel_after_send(
+            self.clock.clone(),
+            cancel_after_ns,
+            completion,
+            request,
+        )
+        .await
+        {
+            CancelOutcome::Completed(result) => result,
             CancelOutcome::Cancelled => {
                 let now = self.clock.now_ns();
-                let mut rec = RequestRecord::started(start_ns);
-                rec.cancellation_ns = Some(now);
-                rec.end_ns = Some(now);
-                rec.error = Some(ErrorDetails::cancelled(format!(
-                    "Request cancelled {cancel_after_ns}ns after being sent"
-                )));
-                rec
+                record.cancellation_ns = Some(now);
+                if let Some(sent_ns) = completion_for_record.sent_ns() {
+                    trace.request_send_end_ns = Some(sent_ns);
+                    trace.request_headers_sent_ns = Some(sent_ns);
+                    trace.request_bytes_total = body_len as u64;
+                    trace.request_chunks_count = 1;
+                }
+                Err(ErrorDetails::cancelled(format!(
+                    "RequestCancellationError: request cancelled {cancel_after_ns}ns after being sent"
+                )))
             }
+        };
+        if let Err(error) = result {
+            trace.error_timestamp_ns = Some(self.clock.now_ns());
+            record.error = Some(error);
         }
+        record.end_ns = Some(self.clock.now_ns());
+        record.trace = Some(trace);
+        record
     }
 
     /// Build the POST request shared by [`dispatch`](Self::dispatch) and
     /// [`dispatch_streaming`](Self::dispatch_streaming). Uses origin-form URI +
     /// explicit Host header so both HTTP/1.1 (Host required) and HTTP/2
-    /// (`:authority` derived) work. `sent_ns` is the shared cell that
+    /// (`:authority` derived) work. `completion` is the shared signal that
     /// [`TimedBody`] stamps at end-of-stream (the real "send complete").
     fn build_request(
         &self,
         url: &Url,
         headers: &BTreeMap<String, String>,
         body: Bytes,
-        sent_ns: Rc<std::cell::Cell<Option<i64>>>,
+        completion: Rc<SendCompletion>,
+    ) -> Result<hyper::Request<TimedBody>, ErrorDetails> {
+        self.build_request_with_method(Method::POST, url, headers, body, completion)
+    }
+
+    /// Build a request with an explicit method. Dataset/control-plane GETs use
+    /// this path while benchmark inference keeps the POST-specialized wrappers.
+    fn build_request_with_method(
+        &self,
+        method: Method,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        completion: Rc<SendCompletion>,
     ) -> Result<hyper::Request<TimedBody>, ErrorDetails> {
         let authority = url.authority();
         let path_and_query = match url.query() {
@@ -132,14 +234,18 @@ impl HttpClient {
             None => url.path().to_string(),
         };
         let mut builder = hyper::Request::builder()
-            .method("POST")
+            .method(method)
             .uri(path_and_query.as_str());
         builder = builder.header(hyper::header::HOST, authority);
         for (k, v) in headers {
             builder = builder.header(k.as_str(), v.as_str());
         }
         builder
-            .body(TimedBody::new(body, self.clock.clone(), sent_ns))
+            .body(TimedBody::with_completion(
+                body,
+                self.clock.clone(),
+                completion,
+            ))
             .map_err(|e| ErrorDetails::other(format!("build request: {e}")))
     }
 
@@ -164,6 +270,73 @@ impl HttpClient {
         on_first_token: &mut impl FnMut(i64),
         body_len: usize,
     ) -> Result<(), ErrorDetails> {
+        self.dispatch_with_method(
+            Method::POST,
+            sender,
+            url,
+            headers,
+            body,
+            streaming,
+            trace,
+            record,
+            on_first_token,
+            body_len,
+        )
+        .await
+    }
+
+    /// Dispatch with an explicit HTTP method over an established connection.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dispatch_with_method(
+        &self,
+        method: Method,
+        sender: &mut Sender,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        trace: &mut TraceData,
+        record: &mut RequestRecord,
+        on_first_token: &mut impl FnMut(i64),
+        body_len: usize,
+    ) -> Result<(), ErrorDetails> {
+        let mut first_token_filter = |ttft_ns: i64, _message: &SseMessage| {
+            on_first_token(ttft_ns);
+            true
+        };
+        self.dispatch_with_method_and_completion(
+            method,
+            sender,
+            url,
+            headers,
+            body,
+            streaming,
+            trace,
+            record,
+            &mut first_token_filter,
+            body_len,
+            Rc::new(SendCompletion::new()),
+        )
+        .await
+    }
+
+    /// Dispatch with a caller-owned send-completion signal. The transport
+    /// facade uses this to arm cancellation only after the complete body is sent.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn dispatch_with_method_and_completion(
+        &self,
+        method: Method,
+        sender: &mut Sender,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        trace: &mut TraceData,
+        record: &mut RequestRecord,
+        first_token_filter: &mut impl FnMut(i64, &SseMessage) -> bool,
+        body_len: usize,
+        completion: Rc<SendCompletion>,
+    ) -> Result<(), ErrorDetails> {
         // A zero/None request timeout means "no deadline" — `with_timeout` takes
         // the un-raced path so the high-throughput dispatch stays overhead-free.
         let timeout_ns = self.cfg.request_timeout_ns;
@@ -171,6 +344,7 @@ impl HttpClient {
             self.clock.clone(),
             timeout_ns,
             self.dispatch_inner(
+                method,
                 sender,
                 url,
                 headers,
@@ -178,8 +352,9 @@ impl HttpClient {
                 streaming,
                 trace,
                 record,
-                on_first_token,
+                first_token_filter,
                 body_len,
+                completion,
             ),
             || ErrorDetails {
                 kind: ErrorKind::Timeout,
@@ -194,6 +369,7 @@ impl HttpClient {
     #[allow(clippy::too_many_arguments)]
     async fn dispatch_inner(
         &self,
+        method: Method,
         sender: &mut Sender,
         url: &Url,
         headers: &BTreeMap<String, String>,
@@ -201,19 +377,19 @@ impl HttpClient {
         streaming: bool,
         trace: &mut TraceData,
         record: &mut RequestRecord,
-        on_first_token: &mut impl FnMut(i64),
+        first_token_filter: &mut impl FnMut(i64, &SseMessage) -> bool,
         body_len: usize,
+        completion: Rc<SendCompletion>,
     ) -> Result<(), ErrorDetails> {
         // Time when the request body is fully written (end-of-stream), captured
         // by TimedBody — the real "send complete", distinct from response-headers.
-        let sent_ns = std::rc::Rc::new(std::cell::Cell::new(None));
-        let req = self.build_request(url, headers, body, sent_ns.clone())?;
+        let req = self.build_request_with_method(method, url, headers, body, completion.clone())?;
 
         trace.request_send_start_ns = Some(self.clock.now_ns());
         let resp = sender.send(req).await?;
         // Response headers received; the body finished writing at `send_end`.
         let hdr_ns = self.clock.now_ns();
-        let send_end = sent_ns.get().unwrap_or(hdr_ns);
+        let send_end = completion.sent_ns().unwrap_or(hdr_ns);
         trace.request_send_end_ns = Some(send_end);
         trace.request_headers_sent_ns = Some(send_end);
         trace.request_bytes_total = body_len as u64;
@@ -222,6 +398,16 @@ impl HttpClient {
 
         let status = resp.status();
         record.status = Some(status.as_u16());
+        record.response_headers = resp
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_string(), value.to_string()))
+            })
+            .collect();
         trace.response_status_code = Some(status.as_u16());
         trace.response_reason = status.canonical_reason().map(str::to_string);
 
@@ -275,9 +461,8 @@ impl HttpClient {
             let mut first_seen = false;
             let responses = &mut record.responses;
             let sse_result = read_sse(timed, self.clock.clone(), |m: SseMessage| {
-                if !first_seen {
+                if !first_seen && first_token_filter(m.perf_ns - start_ns, &m) {
                     first_seen = true;
-                    on_first_token(m.perf_ns - start_ns);
                 }
                 responses.push(Response::Sse(m));
             })
@@ -300,10 +485,12 @@ impl HttpClient {
                 .map_err(body_err)?;
             let ts = self.clock.now_ns();
             let total: usize = collected.iter().map(|b| b.len()).sum();
-            let mut text = String::new();
+            let mut raw = Vec::with_capacity(total);
             for b in &collected {
-                text.push_str(&String::from_utf8_lossy(b));
+                raw.extend_from_slice(b);
             }
+            let body = Bytes::from(raw);
+            let text = String::from_utf8_lossy(&body).into_owned();
             trace.response_receive_start_ns = Some(record.recv_start_ns.unwrap_or(ts));
             trace.response_receive_end_ns = Some(ts);
             trace.response_chunks_count = collected.len() as u32;
@@ -311,6 +498,7 @@ impl HttpClient {
             record.responses.push(Response::Text(TextResponse {
                 perf_ns: ts,
                 text,
+                body,
                 content_type,
             }));
         }
@@ -336,14 +524,9 @@ impl HttpClient {
     ) -> Result<u16, ErrorDetails> {
         let start_ns = self.clock.now_ns();
 
-        // This lean path discards the send-complete timing, so the TimedBody
-        // cell is write-only (never read back) — a throwaway.
-        let req = self.build_request(
-            url,
-            headers,
-            body,
-            std::rc::Rc::new(std::cell::Cell::new(None)),
-        )?;
+        // This lean path discards the send-complete timing, so the signal is a
+        // throwaway retained only by the body.
+        let req = self.build_request(url, headers, body, Rc::new(SendCompletion::new()))?;
 
         let resp = sender.send(req).await?;
         let code = resp.status().as_u16();

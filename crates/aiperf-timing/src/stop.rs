@@ -135,8 +135,7 @@ impl StopCondition for SessionCount {
     }
 
     fn can_send_any(&self, state: &RunState, _now_ns: i64) -> bool {
-        state.sent_sessions < self.expected
-            || state.root_requests_sent < state.total_session_turns
+        state.sent_sessions < self.expected || state.root_requests_sent < state.total_session_turns
     }
 
     fn can_start_new_session(&self, state: &RunState, _now_ns: i64) -> bool {

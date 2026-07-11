@@ -25,10 +25,34 @@ pub struct ChatChunk {
 }
 
 impl ChatChunk {
+    /// Returns true when any choice carries non-empty user-visible content.
+    pub fn has_output_delta(&self) -> bool {
+        self.choices.iter().any(|choice| {
+            choice
+                .delta
+                .content
+                .as_deref()
+                .is_some_and(|content| !content.is_empty())
+        })
+    }
+
+    /// Returns true when any choice carries non-empty reasoning-only content.
+    pub fn has_reasoning_delta(&self) -> bool {
+        self.choices.iter().any(|choice| {
+            choice
+                .delta
+                .reasoning_content
+                .as_deref()
+                .is_some_and(|content| !content.is_empty())
+        })
+    }
+
     /// Concatenated text of this chunk's content (and reasoning) deltas across
     /// all choices. Empty for role-only or finish-only chunks, which are not
-    /// counted as output tokens. Reasoning-model output (`reasoning_content`,
-    /// e.g. Qwen3/DeepSeek-R1) counts as output the same as regular content.
+    /// counted as token-like deltas. Reasoning-model output
+    /// (`reasoning_content`, e.g. Qwen3/DeepSeek-R1) is retained in the reply;
+    /// callers use [`Self::has_output_delta`] and [`Self::has_reasoning_delta`]
+    /// when metrics need the two classes separately.
     pub fn delta_text(&self) -> String {
         let mut out = String::new();
         for choice in &self.choices {
@@ -91,6 +115,8 @@ mod tests {
             r#"{"choices":[{"index":0,"delta":{"content":"hi","reasoning_content":" think"}}]}"#,
         );
         assert_eq!(chunk.delta_text(), "hi think");
+        assert!(chunk.has_output_delta());
+        assert!(chunk.has_reasoning_delta());
     }
 
     #[test]

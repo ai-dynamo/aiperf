@@ -7,6 +7,7 @@
 //! fields). Every non-required field is `#[serde(default)]`, so an input that
 //! omits defaulted fields still decodes.
 
+use aiperf_dataset::Handle;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -128,8 +129,8 @@ pub struct LlmNode {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum PromptItem {
-    /// A static, content-addressed segment id (walked through the SegmentStore).
-    Seg { seg: String },
+    /// A static, dense segment handle (resolved through the shared SegmentStore).
+    Seg { seg: Handle },
     /// Splice the dynamic reply captured on `splice` (a predecessor's output
     /// channel) at this position.
     Splice { splice: String },

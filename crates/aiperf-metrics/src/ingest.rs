@@ -15,19 +15,20 @@ use crate::window::Phase;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TokenCounts {
     /// Input tokens sent to the model.
-    pub input: u64,
+    pub input: Option<u64>,
     /// Output tokens produced by the model, excluding reasoning tokens.
-    pub output: u64,
+    pub output: Option<u64>,
     /// Reasoning tokens reported by the model.
-    pub reasoning: u64,
+    pub reasoning: Option<u64>,
     /// Requested output sequence length, when known from request parameters.
     pub requested_output: Option<u64>,
 }
 
 impl TokenCounts {
-    /// Returns the OSL value used by the catalog, including reasoning tokens.
-    pub fn output_sequence_length(self) -> u64 {
-        self.output + self.reasoning
+    /// Returns OSL including reasoning, preserving absent-vs-zero semantics.
+    pub fn output_sequence_length(self) -> Option<u64> {
+        (self.output.is_some() || self.reasoning.is_some())
+            .then_some(self.output.unwrap_or(0) + self.reasoning.unwrap_or(0))
     }
 }
 
@@ -65,6 +66,8 @@ pub struct UsageMetrics {
 /// HTTP timing trace attached to a request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HttpTrace {
+    /// Time from dispatch start until the streaming response is established.
+    pub stream_setup_ns: Option<i64>,
     /// Queue or connector blocked duration in nanoseconds.
     pub blocked_ns: Option<i64>,
     /// DNS lookup duration in nanoseconds.
@@ -96,6 +99,14 @@ pub struct HttpTrace {
 pub struct RecordIngest {
     /// Request correlation id.
     pub correlation_id: String,
+    /// Session sequence number within the run.
+    pub session_num: u64,
+    /// Zero-based turn index within the session.
+    pub turn_index: u32,
+    /// Optional worker identity for per-worker analysis.
+    pub worker_id: Option<String>,
+    /// Optional conversation identity for multi-turn analysis.
+    pub conversation_id: Option<String>,
     /// Record phase.
     pub phase: Phase,
     /// Request start timestamp in nanoseconds.
@@ -126,8 +137,8 @@ pub struct RecordIngest {
     pub audio_duration_s: Option<f64>,
     /// Number of images in the request.
     pub num_images: Option<u64>,
-    /// Video inference time in milliseconds.
-    pub video_inference_ms: Option<f64>,
+    /// Video inference time in seconds as reported by the endpoint.
+    pub video_inference_seconds: Option<f64>,
     /// Video peak memory in megabytes.
     pub video_peak_memory_mb: Option<f64>,
     /// Explicit metric values injected by endpoint, telemetry, or tests.
@@ -139,6 +150,10 @@ impl RecordIngest {
     pub fn minimal(start_ns: i64, end_ns: i64, phase: Phase) -> Self {
         Self {
             correlation_id: format!("record-{start_ns}-{end_ns}"),
+            session_num: 0,
+            turn_index: 0,
+            worker_id: None,
+            conversation_id: None,
             phase,
             start_ns,
             end_ns,
@@ -154,7 +169,7 @@ impl RecordIngest {
             http: HttpTrace::default(),
             audio_duration_s: None,
             num_images: None,
-            video_inference_ms: None,
+            video_inference_seconds: None,
             video_peak_memory_mb: None,
             metric_overrides: Vec::new(),
         }

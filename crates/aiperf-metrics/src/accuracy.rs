@@ -16,6 +16,7 @@ use rustc_hash::FxHashMap;
 use serde::Serialize;
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::fmt::{self, Display};
 
 /// Record type routed to [`AccuracyAccumulator`].
 pub const ACCURACY_RECORD_TYPE: &str = "accuracy_records";
@@ -193,16 +194,121 @@ impl AccuracySummary {
     }
 }
 
-#[derive(Debug, Clone)]
-struct AccuracyRow {
-    record: AccuracyRecord,
+/// Rejected accuracy-record reasons.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccuracyRecordError {
+    /// Correlation ids are required for typed request/ground-truth association.
+    EmptyCorrelationId,
+    /// Task ids are required for per-task rollups.
+    EmptyTaskId,
+    /// The record's terminal timestamp precedes its start timestamp.
+    InvalidInterval {
+        /// Request start timestamp.
+        start_ns: i64,
+        /// Request terminal timestamp.
+        end_ns: i64,
+    },
+    /// A correlation id may identify exactly one graded response.
+    DuplicateCorrelationId(CorrelationId),
+    /// Confidence values must be finite probabilities.
+    InvalidConfidence(f64),
+}
+
+impl Display for AccuracyRecordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyCorrelationId => write!(f, "accuracy correlation id must not be empty"),
+            Self::EmptyTaskId => write!(f, "accuracy task id must not be empty"),
+            Self::InvalidInterval { start_ns, end_ns } => write!(
+                f,
+                "accuracy record end_ns ({end_ns}) precedes start_ns ({start_ns})"
+            ),
+            Self::DuplicateCorrelationId(id) => {
+                write!(f, "duplicate accuracy correlation id {:?}", id.as_str())
+            }
+            Self::InvalidConfidence(value) => write!(
+                f,
+                "accuracy confidence must be finite and within 0..=1, received {value}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AccuracyRecordError {}
+
+#[derive(Debug, Default)]
+struct AccuracyColumns {
+    correlation_ids: Vec<CorrelationId>,
+    phases: Vec<Phase>,
+    start_ns: Vec<i64>,
+    end_ns: Vec<i64>,
+    correct: Vec<bool>,
+    unparsed: Vec<bool>,
+    confidence: Vec<Option<f64>>,
+    extracted: Vec<Option<String>>,
+    ground_truth: Vec<String>,
+    reasoning: Vec<Option<String>>,
+}
+
+impl AccuracyColumns {
+    fn len(&self) -> usize {
+        self.correlation_ids.len()
+    }
+
+    fn push(&mut self, record: AccuracyRecord) -> usize {
+        let index = self.len();
+        self.correlation_ids.push(record.correlation_id);
+        self.phases.push(record.phase);
+        self.start_ns.push(record.start_ns);
+        self.end_ns.push(record.end_ns);
+        self.correct.push(record.result.correct);
+        self.unparsed.push(record.result.unparsed);
+        self.confidence.push(record.result.confidence);
+        self.extracted.push(record.result.extracted);
+        self.ground_truth.push(record.result.ground_truth);
+        self.reasoning.push(record.result.reasoning);
+        debug_assert!(self.columns_have_equal_length());
+        index
+    }
+
+    fn columns_have_equal_length(&self) -> bool {
+        let len = self.len();
+        self.phases.len() == len
+            && self.start_ns.len() == len
+            && self.end_ns.len() == len
+            && self.correct.len() == len
+            && self.unparsed.len() == len
+            && self.confidence.len() == len
+            && self.extracted.len() == len
+            && self.ground_truth.len() == len
+            && self.reasoning.len() == len
+    }
+
+    fn record(&self, task: &TaskId, index: usize) -> AccuracyRecord {
+        AccuracyRecord {
+            correlation_id: self.correlation_ids[index].clone(),
+            task: task.clone(),
+            phase: self.phases[index],
+            start_ns: self.start_ns[index],
+            end_ns: self.end_ns[index],
+            result: GradingResult {
+                correct: self.correct[index],
+                unparsed: self.unparsed[index],
+                confidence: self.confidence[index],
+                extracted: self.extracted[index].clone(),
+                ground_truth: self.ground_truth[index].clone(),
+                reasoning: self.reasoning[index].clone(),
+            },
+        }
+    }
 }
 
 /// Columnar accuracy accumulator.
 #[derive(Debug, Default)]
 pub struct AccuracyAccumulator {
-    rows: Vec<AccuracyRow>,
-    by_corr: FxHashMap<CorrelationId, usize>,
+    tasks: BTreeMap<TaskId, AccuracyColumns>,
+    insertion_order: Vec<(TaskId, usize)>,
+    by_corr: FxHashMap<CorrelationId, (TaskId, usize)>,
 }
 
 impl AccuracyAccumulator {
@@ -214,49 +320,108 @@ impl AccuracyAccumulator {
         Self::default()
     }
 
-    /// Adds one graded response.
-    pub fn process_record(&mut self, record: AccuracyRecord) {
-        let idx = self.rows.len();
-        self.by_corr.insert(record.correlation_id.clone(), idx);
-        self.rows.push(AccuracyRow { record });
+    /// Number of accumulated responses.
+    pub fn len(&self) -> usize {
+        self.insertion_order.len()
     }
 
-    /// Returns a record by correlation id.
-    pub fn record_for(&self, correlation_id: &CorrelationId) -> Option<&AccuracyRecord> {
-        self.by_corr
-            .get(correlation_id)
-            .and_then(|idx| self.rows.get(*idx))
-            .map(|row| &row.record)
+    /// Returns true when no responses have been accumulated.
+    pub fn is_empty(&self) -> bool {
+        self.insertion_order.is_empty()
     }
 
-    /// Builds the row mask for a half-open time range.
-    pub fn query_time_range(&self, start_ns: i64, end_ns: i64) -> Vec<bool> {
-        self.rows
+    /// Adds one validated graded response.
+    pub fn process_record(&mut self, record: AccuracyRecord) -> Result<(), AccuracyRecordError> {
+        validate_record(&record)?;
+        if self.by_corr.contains_key(&record.correlation_id) {
+            return Err(AccuracyRecordError::DuplicateCorrelationId(
+                record.correlation_id,
+            ));
+        }
+        let correlation_id = record.correlation_id.clone();
+        let task = record.task.clone();
+        let index = self.tasks.entry(task.clone()).or_default().push(record);
+        self.by_corr.insert(correlation_id, (task.clone(), index));
+        self.insertion_order.push((task, index));
+        Ok(())
+    }
+
+    /// Returns a cloned record by correlation id.
+    pub fn record_for(&self, correlation_id: &CorrelationId) -> Option<AccuracyRecord> {
+        self.by_corr.get(correlation_id).and_then(|(task, index)| {
+            self.tasks
+                .get(task)
+                .map(|columns| columns.record(task, *index))
+        })
+    }
+
+    /// Returns all records in insertion order for typed per-record export.
+    pub fn records(&self) -> Vec<AccuracyRecord> {
+        self.insertion_order
             .iter()
-            .map(|row| row.record.start_ns >= start_ns && row.record.end_ns < end_ns)
+            .map(|(task, index)| self.tasks[task].record(task, *index))
+            .collect()
+    }
+
+    /// Merges another per-worker accumulator without partially mutating on a
+    /// duplicate correlation id.
+    pub fn try_merge(&mut self, other: Self) -> Result<(), AccuracyRecordError> {
+        if let Some(duplicate) = other
+            .by_corr
+            .keys()
+            .find(|correlation_id| self.by_corr.contains_key(*correlation_id))
+        {
+            return Err(AccuracyRecordError::DuplicateCorrelationId(
+                duplicate.clone(),
+            ));
+        }
+        for record in other.records() {
+            self.process_record(record)?;
+        }
+        Ok(())
+    }
+
+    /// Builds the insertion-order mask for records fully contained in a half-open
+    /// time range. A record ending exactly at `end_ns` is contained because its
+    /// own interval is also half-open.
+    pub fn query_time_range(&self, start_ns: i64, end_ns: i64) -> Vec<bool> {
+        self.insertion_order
+            .iter()
+            .map(|(task, index)| {
+                let columns = &self.tasks[task];
+                columns.start_ns[*index] >= start_ns && columns.end_ns[*index] <= end_ns
+            })
             .collect()
     }
 
     /// Exports a summary for a phase/time context.
     pub fn export_results(&self, ctx: ExportContext) -> AccuracySummary {
-        self.compute_results_for_mask(|record| {
-            ctx.contains(record.phase, record.start_ns, record.end_ns)
-        })
+        self.compute_results_for_context(ctx)
     }
 
-    fn compute_results_for_mask(&self, keep: impl Fn(&AccuracyRecord) -> bool) -> AccuracySummary {
+    fn compute_results_for_context(&self, ctx: ExportContext) -> AccuracySummary {
         let mut overall = RollupBuilder::default();
         let mut per_task = BTreeMap::<TaskId, RollupBuilder>::new();
-        for row in &self.rows {
-            let record = &row.record;
-            if !keep(record) {
-                continue;
+        for (task, columns) in &self.tasks {
+            for index in 0..columns.len() {
+                if !ctx.contains(
+                    columns.phases[index],
+                    columns.start_ns[index],
+                    columns.end_ns[index],
+                ) {
+                    continue;
+                }
+                overall.push_values(
+                    columns.correct[index],
+                    columns.unparsed[index],
+                    columns.confidence[index],
+                );
+                per_task.entry(task.clone()).or_default().push_values(
+                    columns.correct[index],
+                    columns.unparsed[index],
+                    columns.confidence[index],
+                );
             }
-            overall.push(&record.result);
-            per_task
-                .entry(record.task.clone())
-                .or_default()
-                .push(&record.result);
         }
         AccuracySummary {
             overall: overall.finish(),
@@ -266,6 +431,27 @@ impl AccuracyAccumulator {
                 .collect(),
         }
     }
+}
+
+fn validate_record(record: &AccuracyRecord) -> Result<(), AccuracyRecordError> {
+    if record.correlation_id.as_str().trim().is_empty() {
+        return Err(AccuracyRecordError::EmptyCorrelationId);
+    }
+    if record.task.as_str().trim().is_empty() {
+        return Err(AccuracyRecordError::EmptyTaskId);
+    }
+    if record.end_ns < record.start_ns {
+        return Err(AccuracyRecordError::InvalidInterval {
+            start_ns: record.start_ns,
+            end_ns: record.end_ns,
+        });
+    }
+    if let Some(confidence) = record.result.confidence
+        && (!confidence.is_finite() || !(0.0..=1.0).contains(&confidence))
+    {
+        return Err(AccuracyRecordError::InvalidConfidence(confidence));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -278,11 +464,11 @@ struct RollupBuilder {
 }
 
 impl RollupBuilder {
-    fn push(&mut self, result: &GradingResult) {
+    fn push_values(&mut self, correct: bool, unparsed: bool, confidence: Option<f64>) {
         self.n += 1;
-        self.correct_count += usize::from(result.correct);
-        self.unparsed_count += usize::from(result.unparsed);
-        if let Some(confidence) = result.confidence.filter(|value| value.is_finite()) {
+        self.correct_count += usize::from(correct);
+        self.unparsed_count += usize::from(unparsed);
+        if let Some(confidence) = confidence {
             self.confidence_sum += confidence;
             self.confidence_count += 1;
         }
@@ -384,6 +570,10 @@ impl SummaryContext {
     fn has_accumulator(&self, kind: AccumulatorType) -> bool {
         self.accumulator_outputs.contains_key(&kind)
     }
+
+    fn has_analyzer(&self, kind: AnalyzerType) -> bool {
+        self.analyzer_outputs.contains_key(&kind)
+    }
 }
 
 /// Analyzer trait with real dependency declarations.
@@ -457,12 +647,14 @@ impl AnalyzerRunner {
 
     /// Runs analyzers and returns the outputs in the context.
     pub fn run(&self, ctx: &mut SummaryContext) -> Result<Vec<AnalyzerType>, AnalyzerRunError> {
-        let by_type: FxHashMap<AnalyzerType, usize> = self
-            .analyzers
-            .iter()
-            .enumerate()
-            .map(|(idx, analyzer)| (analyzer.ty(), idx))
-            .collect();
+        let mut by_type = FxHashMap::<AnalyzerType, usize>::default();
+        for (index, analyzer) in self.analyzers.iter().enumerate() {
+            if by_type.insert(analyzer.ty(), index).is_some() {
+                return Err(AnalyzerRunError::DuplicateAnalyzer {
+                    analyzer: analyzer.ty(),
+                });
+            }
+        }
         let mut graph = DiGraphMap::<AnalyzerType, ()>::new();
         for analyzer in &self.analyzers {
             graph.add_node(analyzer.ty());
@@ -486,6 +678,10 @@ impl AnalyzerRunner {
                 .required_accumulators()
                 .iter()
                 .all(|required| ctx.has_accumulator(*required))
+                && analyzer
+                    .required_analyzers()
+                    .iter()
+                    .all(|required| ctx.has_analyzer(*required))
                 && analyzer.summarize_into(ctx)
             {
                 ran.push(analyzer_type);
@@ -504,6 +700,11 @@ impl Default for AnalyzerRunner {
 /// Analyzer dependency execution errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalyzerRunError {
+    /// An analyzer identity was registered more than once.
+    DuplicateAnalyzer {
+        /// Duplicate analyzer identity.
+        analyzer: AnalyzerType,
+    },
     /// A required analyzer dependency is not registered.
     MissingAnalyzerDependency {
         /// Analyzer that declared the dependency.
@@ -517,6 +718,28 @@ pub enum AnalyzerRunError {
         analyzer: AnalyzerType,
     },
 }
+
+impl Display for AnalyzerRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateAnalyzer { analyzer } => {
+                write!(f, "analyzer {analyzer:?} was registered more than once")
+            }
+            Self::MissingAnalyzerDependency {
+                analyzer,
+                dependency,
+            } => write!(
+                f,
+                "analyzer {analyzer:?} requires unregistered analyzer {dependency:?}"
+            ),
+            Self::Cycle { analyzer } => {
+                write!(f, "analyzer dependency cycle contains {analyzer:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AnalyzerRunError {}
 
 /// Optional energy telemetry summary used for accuracy-per-energy joins.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -603,9 +826,10 @@ fn safe_div(numerator: f64, denominator: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AccumulatorType, AccuracyAccumulator, AccuracyRecord, AccuracyResultsAnalyzer,
-        AnalyzerRunner, AnalyzerType, CorrelationId, EnergyEfficiencySummary, GradingResult,
-        LIGHTEVAL_CORRECTNESS_THRESHOLD, SummaryContext, TaskId,
+        AccumulatorType, AccuracyAccumulator, AccuracyRecord, AccuracyRecordError,
+        AccuracyResultsAnalyzer, AnalyzerRunError, AnalyzerRunner, AnalyzerType, CorrelationId,
+        EnergyEfficiencySummary, GradingResult, LIGHTEVAL_CORRECTNESS_THRESHOLD, SummaryContext,
+        TaskId,
     };
     use crate::{AccumulatorSummary, ExportContext, MetricTag, Phase};
 
@@ -646,9 +870,12 @@ mod tests {
     #[test]
     fn accumulator_summarizes_overall_per_task_phase_and_time() {
         let mut acc = AccuracyAccumulator::new();
-        acc.process_record(record("r1", "math", Phase::Warmup, 0, 10, true, false));
-        acc.process_record(record("r2", "math", Phase::Profiling, 10, 20, false, true));
-        acc.process_record(record("r3", "chem", Phase::Profiling, 20, 30, true, false));
+        acc.process_record(record("r1", "math", Phase::Warmup, 0, 10, true, false))
+            .unwrap();
+        acc.process_record(record("r2", "math", Phase::Profiling, 10, 20, false, true))
+            .unwrap();
+        acc.process_record(record("r3", "chem", Phase::Profiling, 20, 30, true, false))
+            .unwrap();
 
         assert_eq!(
             acc.record_for(&CorrelationId::from("r2"))
@@ -658,7 +885,7 @@ mod tests {
             "math"
         );
         assert_eq!(acc.query_time_range(10, 31), vec![false, true, true]);
-        assert_eq!(acc.query_time_range(10, 30), vec![false, true, false]);
+        assert_eq!(acc.query_time_range(10, 30), vec![false, true, true]);
 
         let profiling = acc.export_results(ExportContext::phase(Phase::Profiling));
         assert_eq!(profiling.overall.n, 2);
@@ -676,17 +903,54 @@ mod tests {
     #[test]
     fn time_window_summaries_filter_by_start_timestamp() {
         let mut acc = AccuracyAccumulator::new();
-        acc.process_record(record("r1", "math", Phase::Profiling, 9, 19, true, false));
-        acc.process_record(record("r2", "math", Phase::Profiling, 10, 19, true, false));
-        acc.process_record(record("r3", "math", Phase::Profiling, 10, 20, true, false));
+        acc.process_record(record("r1", "math", Phase::Profiling, 9, 19, true, false))
+            .unwrap();
+        acc.process_record(record("r2", "math", Phase::Profiling, 10, 19, true, false))
+            .unwrap();
+        acc.process_record(record("r3", "math", Phase::Profiling, 10, 20, true, false))
+            .unwrap();
         let summary = acc.export_results(ExportContext::time_range(10, 20));
         assert_eq!(summary.overall.n, 2);
     }
 
     #[test]
+    fn accumulator_rejects_invalid_or_duplicate_records_and_merges_workers() {
+        let mut first = AccuracyAccumulator::new();
+        first
+            .process_record(record("r1", "math", Phase::Profiling, 0, 10, true, false))
+            .unwrap();
+        assert!(matches!(
+            first.process_record(record("r1", "math", Phase::Profiling, 10, 20, false, false,)),
+            Err(AccuracyRecordError::DuplicateCorrelationId(_))
+        ));
+
+        let mut invalid = record("r-invalid", "math", Phase::Profiling, 20, 10, true, false);
+        assert!(matches!(
+            first.process_record(invalid.clone()),
+            Err(AccuracyRecordError::InvalidInterval { .. })
+        ));
+        invalid.start_ns = 0;
+        invalid.end_ns = 1;
+        invalid.result.confidence = Some(f64::NAN);
+        assert!(matches!(
+            first.process_record(invalid),
+            Err(AccuracyRecordError::InvalidConfidence(value)) if value.is_nan()
+        ));
+
+        let mut second = AccuracyAccumulator::new();
+        second
+            .process_record(record("r2", "chem", Phase::Profiling, 10, 20, false, true))
+            .unwrap();
+        first.try_merge(second).unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first.records()[1].correlation_id.as_str(), "r2");
+    }
+
+    #[test]
     fn analyzer_gracefully_runs_with_only_accuracy() {
         let mut acc = AccuracyAccumulator::new();
-        acc.process_record(record("r1", "math", Phase::Profiling, 0, 10, true, false));
+        acc.process_record(record("r1", "math", Phase::Profiling, 0, 10, true, false))
+            .unwrap();
         let summary = acc.export_results(ExportContext::all());
         let mut ctx = SummaryContext::new();
         ctx.insert_accumulator(AccumulatorType::Accuracy, summary);
@@ -715,10 +979,26 @@ mod tests {
     }
 
     #[test]
+    fn analyzer_runner_rejects_duplicate_identities() {
+        let mut ctx = SummaryContext::new();
+        let mut runner = AnalyzerRunner::new();
+        runner.push(AccuracyResultsAnalyzer);
+        runner.push(AccuracyResultsAnalyzer);
+        assert_eq!(
+            runner.run(&mut ctx),
+            Err(AnalyzerRunError::DuplicateAnalyzer {
+                analyzer: AnalyzerType::AccuracyResults,
+            })
+        );
+    }
+
+    #[test]
     fn analyzer_adds_optional_metric_and_energy_joins() {
         let mut acc = AccuracyAccumulator::new();
-        acc.process_record(record("r1", "math", Phase::Profiling, 0, 10, true, false));
-        acc.process_record(record("r2", "math", Phase::Profiling, 10, 20, false, false));
+        acc.process_record(record("r1", "math", Phase::Profiling, 0, 10, true, false))
+            .unwrap();
+        acc.process_record(record("r2", "math", Phase::Profiling, 10, 20, false, false))
+            .unwrap();
         let summary = acc.export_results(ExportContext::all());
         let mut metrics = AccumulatorSummary::new();
         metrics.insert_finite(MetricTag::Goodput, 100.0);

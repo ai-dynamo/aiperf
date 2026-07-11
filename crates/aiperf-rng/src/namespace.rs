@@ -1,0 +1,135 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Canonical names for order-independent AIPerf random streams.
+//!
+//! These strings are part of the reproducibility contract: changing a value
+//! reseeds that component for every deterministic run. New consumers should add
+//! a distinct dotted name here and derive once during construction.
+
+/// Conversation turn-count sampling.
+pub const COMPOSER_CONVERSATION_TURN_COUNT: &str = "composer.conversation.turn_count";
+/// Conversation inter-turn delay sampling.
+pub const COMPOSER_CONVERSATION_TURN_DELAY: &str = "composer.conversation.turn_delay";
+/// Per-turn maximum-token sampling.
+pub const COMPOSER_TURN_MAX_TOKENS: &str = "composer.turn.max_tokens";
+/// Per-turn model selection.
+pub const COMPOSER_TURN_MODEL_SELECTION: &str = "composer.turn.model_selection";
+/// Synthetic audio sample data.
+pub const DATASET_AUDIO_DATA: &str = "dataset.audio.data";
+/// Synthetic audio duration.
+pub const DATASET_AUDIO_DURATION: &str = "dataset.audio.duration";
+/// Synthetic audio format selection.
+pub const DATASET_AUDIO_FORMAT: &str = "dataset.audio.format";
+/// Coding-content corpus selection.
+pub const DATASET_CODING_CONTENT_CORPUS: &str = "dataset.coding_content.corpus";
+/// Coding-content length sampling.
+pub const DATASET_CODING_CONTENT_LENGTH: &str = "dataset.coding_content.length";
+/// Coding-content template selection.
+pub const DATASET_CODING_CONTENT_TEMPLATE: &str = "dataset.coding_content.template";
+/// Synthetic image dimension selection.
+pub const DATASET_IMAGE_DIMENSIONS: &str = "dataset.image.dimensions";
+/// Synthetic image format selection.
+pub const DATASET_IMAGE_FORMAT: &str = "dataset.image.format";
+/// Synthetic image noise.
+pub const DATASET_IMAGE_NOISE: &str = "dataset.image.noise";
+/// Synthetic image source selection.
+pub const DATASET_IMAGE_SOURCE: &str = "dataset.image.source";
+/// Dataset-loader derivation regression namespace.
+pub const DATASET_LOADER: &str = "dataset.loader";
+/// Random-pool dataset loading.
+pub const DATASET_LOADER_RANDOM_POOL: &str = "dataset.loader.random_pool";
+/// Random-pool loader entry sampling.
+pub const DATASET_LOADER_RANDOM_POOL_SAMPLING: &str = "dataset.loader.random_pool.sampling";
+/// ShareGPT dataset loading.
+pub const DATASET_LOADER_SHAREGPT: &str = "dataset.loader.sharegpt";
+/// Prompt corpus selection.
+pub const DATASET_PROMPT_CORPUS: &str = "dataset.prompt.corpus";
+/// Prompt length sampling.
+pub const DATASET_PROMPT_LENGTH: &str = "dataset.prompt.length";
+/// Prompt prefix selection.
+pub const DATASET_PROMPT_PREFIX: &str = "dataset.prompt.prefix";
+/// Synthetic ranking passage selection.
+pub const DATASET_RANKINGS_PASSAGES: &str = "dataset.rankings.passages";
+/// Synthetic ranking passage-token sampling.
+pub const DATASET_RANKINGS_PASSAGES_TOKENS: &str = "dataset.rankings.passages.tokens";
+/// Synthetic ranking query-token sampling.
+pub const DATASET_RANKINGS_QUERY_TOKENS: &str = "dataset.rankings.query.tokens";
+/// Random dataset-entry selection.
+pub const DATASET_SAMPLER_RANDOM: &str = "dataset.sampler.random";
+/// Dataset-entry shuffle ordering.
+pub const DATASET_SAMPLER_SHUFFLE: &str = "dataset.sampler.shuffle";
+/// Empirical synthesis sampling.
+pub const DATASET_SYNTHESIS_EMPIRICAL_SAMPLER: &str = "dataset.synthesis.empirical_sampler";
+/// General dataset synthesis sampling.
+pub const DATASET_SYNTHESIS_SYNTHESIZER: &str = "dataset.synthesis.synthesizer";
+/// Synthetic video audio selection.
+pub const DATASET_VIDEO_AUDIO: &str = "dataset.video.audio";
+/// Synthetic video noise.
+pub const DATASET_VIDEO_NOISE: &str = "dataset.video.noise";
+/// Sequence-length pair sampling.
+pub const MODELS_SEQUENCE_DISTRIBUTION: &str = "models.sequence.distribution";
+/// Poisson ramp sampling.
+pub const TIMING_RAMP_POISSON: &str = "timing.ramp.poisson";
+/// Request-cancellation sampling.
+pub const TIMING_REQUEST_CANCELLATION: &str = "timing.request.cancellation";
+/// Gamma request-interval sampling.
+pub const TIMING_REQUEST_GAMMA_INTERVAL: &str = "timing.request.gamma_interval";
+/// Poisson request-interval sampling.
+pub const TIMING_REQUEST_POISSON_INTERVAL: &str = "timing.request.poisson_interval";
+/// Request-rate scheduler sampling.
+pub const TIMING_REQUEST_RATE: &str = "timing.request_rate";
+
+/// Every canonical stream name, in lexical order.
+pub const ALL: &[&str] = &[
+    COMPOSER_CONVERSATION_TURN_COUNT,
+    COMPOSER_CONVERSATION_TURN_DELAY,
+    COMPOSER_TURN_MAX_TOKENS,
+    COMPOSER_TURN_MODEL_SELECTION,
+    DATASET_AUDIO_DATA,
+    DATASET_AUDIO_DURATION,
+    DATASET_AUDIO_FORMAT,
+    DATASET_CODING_CONTENT_CORPUS,
+    DATASET_CODING_CONTENT_LENGTH,
+    DATASET_CODING_CONTENT_TEMPLATE,
+    DATASET_IMAGE_DIMENSIONS,
+    DATASET_IMAGE_FORMAT,
+    DATASET_IMAGE_NOISE,
+    DATASET_IMAGE_SOURCE,
+    DATASET_LOADER,
+    DATASET_LOADER_RANDOM_POOL,
+    DATASET_LOADER_RANDOM_POOL_SAMPLING,
+    DATASET_LOADER_SHAREGPT,
+    DATASET_PROMPT_CORPUS,
+    DATASET_PROMPT_LENGTH,
+    DATASET_PROMPT_PREFIX,
+    DATASET_RANKINGS_PASSAGES,
+    DATASET_RANKINGS_PASSAGES_TOKENS,
+    DATASET_RANKINGS_QUERY_TOKENS,
+    DATASET_SAMPLER_RANDOM,
+    DATASET_SAMPLER_SHUFFLE,
+    DATASET_SYNTHESIS_EMPIRICAL_SAMPLER,
+    DATASET_SYNTHESIS_SYNTHESIZER,
+    DATASET_VIDEO_AUDIO,
+    DATASET_VIDEO_NOISE,
+    MODELS_SEQUENCE_DISTRIBUTION,
+    TIMING_RAMP_POISSON,
+    TIMING_REQUEST_CANCELLATION,
+    TIMING_REQUEST_GAMMA_INTERVAL,
+    TIMING_REQUEST_POISSON_INTERVAL,
+    TIMING_REQUEST_RATE,
+];
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn canonical_names_are_sorted_unique_and_dotted() {
+        assert!(ALL.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(ALL.iter().copied().collect::<HashSet<_>>().len(), ALL.len());
+        assert!(ALL.iter().all(|name| name.contains('.')));
+    }
+}

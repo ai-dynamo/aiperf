@@ -316,3 +316,20 @@ table can show the `type`/`higher_is_better` metadata inline.
    until a breakdown is wired.
 4. **`aiperf-report` crate vs binary module** (as before) — lean small crate, testable on a
    synthetic `Report`.
+
+## Addendum — 2026-07-11 (native-v2 core implemented)
+
+The IO-free native-v2 core is now built in `aiperf-metrics::report`, with
+`NativeReporter` behind the `Reporter` trait and typed run/summary/error, metric,
+series, timeslice, distribution/scalar/counter, warmup, and accuracy fields.
+Structurally absent values are omitted while present non-finite adjusted tails encode
+as JSON `null`. A deterministic exact-JSON golden pins the shape. The `aiperf`
+application writes this unified report for `--json` in online, scheduled, accuracy,
+and graph execution; no plugin registry or shard-glob path is involved.
+
+This is a partial implementation of this broader exporter overhaul, not completion of
+the whole sink layer. The native CSV serializer, opt-in genai-perf-v1 JSON/CSV and
+`outputs.json` compatibility sink, warning/insight and error-table renderers, console
+record/replay, and `TimedUploader` seam remain unbuilt. The built code stays in the
+IO-free metrics leaf plus the binary writer for now; the proposed `aiperf-report`
+crate can still be extracted when a second IO sink is implemented.

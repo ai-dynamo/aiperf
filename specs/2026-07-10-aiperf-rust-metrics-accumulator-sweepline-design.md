@@ -554,3 +554,33 @@ and the RNG seed-derivation design, not to metric category codes.
 that accumulator/reporting seam and may contribute side-channel accumulators or
 summaries, but the core metrics crate must not depend on telemetry-specific crates or
 create a dependency cycle.
+
+## Addendum — 2026-07-11 (native Rust implementation)
+
+The performance-metrics engine described by this spec is now built in
+`crates/aiperf-metrics`. Code truth is split across `store.rs` (NaN-sparse numeric
+columns, dense categorical interning, exact CSR ragged replay, worker-store merge),
+`accumulator.rs` (record/aggregate/derived dispatch, SLO goodput, phase/window masks,
+timeslices, and per-worker merge), `kernel.rs` (the fixed percentile band and
+error-adjusted nearest-rank tails), and `sweepline/` (all effective/active curves,
+ICL-aware decode throughput and tokens-in-flight, clipping, and duration-weighted
+statistics). The catalog contains the 103 source-grounded Python metric identities
+plus 16 native sweep identities; telemetry-owned rows remain explicit injected
+`NoValue` seams until their producer specs are implemented.
+
+Runtime translation lives above the leaf crate, as this spec recommended:
+`aiperf::metrics::NativeMetricsObserver` joins Clock-stamped observer events,
+terminal state, token classification, endpoint usage, fine-grained HTTP trace facts,
+and workload dimensions into `RecordIngest`. Fixed schedules explicitly omit the
+credit-relative latency family because they have no credit-issuance phase. Online,
+fixed-schedule, user-centric, adaptive, accuracy, and graph execution feed the same
+accumulator. Graph workers accumulate without a per-token cross-thread lock, return
+their local stores through scoped thread joins, and merge in deterministic worker
+order.
+
+`aiperf-metrics::NativeReporter` also implements the IO-free, metrics-first native-v2
+report model; the application layer writes it for `--json` in every CLI mode. The
+frozen genai-perf-v1 compatibility export discussed in section 14 is not part of the
+accumulator/sweep-line implementation: it remains an unbuilt compatibility sink in
+the separate exporter-overhaul spec. Likewise, telemetry collection and its
+histogram series remain future producers over the built injection/report seams.

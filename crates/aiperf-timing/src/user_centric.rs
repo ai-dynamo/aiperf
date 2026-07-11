@@ -104,7 +104,10 @@ pub fn plan_user_centric(
     avg_session_turns: usize,
     request_rate: f64,
 ) -> UserCentricPlan {
-    assert!(num_users > 0, "num_users must be > 0 for user-centric rate mode");
+    assert!(
+        num_users > 0,
+        "num_users must be > 0 for user-centric rate mode"
+    );
     assert!(
         request_rate.is_finite() && request_rate > 0.0,
         "request_rate must be positive and finite for user-centric rate mode, got {request_rate}"

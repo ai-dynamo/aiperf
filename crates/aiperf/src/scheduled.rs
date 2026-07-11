@@ -1,0 +1,717 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Shared runtime for user-centric and fixed-schedule workloads.
+//!
+//! The runtime is the small policy-neutral bridge from a [`Workload`] schedule
+//! generator to a pluggable [`TurnDispatcher`]. It owns the clock-backed task
+//! scheduler, stop/counter state, measurement observer, and detailed schedule
+//! trace. Strategy modules decide only when to call
+//! [`issue_turn`](ScheduledRuntime::issue_turn) and what continuation to
+//! schedule when the dispatch completes. Its synchronous counter mutation and
+//! asynchronous return callback mirror `src/aiperf/credit/issuer.py:89-242` and
+//! `src/aiperf/credit/callback_handler.py:196-244` without their IPC routing.
+//! Ancillary cancellation and URL issuance preserve `issuer.py:197-238`; the
+//! per-session endpoint pin replaces the Python worker/session split at
+//! `src/aiperf/workers/worker.py:490-501,744-748`.
+
+use std::cell::{Cell, RefCell};
+use std::future::Future;
+use std::pin::Pin;
+use std::rc::Rc;
+
+use aiperf_clock::Clock;
+use aiperf_core::observer::CollectorObserver;
+use aiperf_metrics::{AccumulatorSummary, HttpTrace, MetricsConfig};
+use aiperf_timing::{CancellationPolicy, Phase, StopChecker, StopConfig, UrlSelector};
+use anyhow::Result;
+use async_trait::async_trait;
+use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
+use loadgen_core::sink::RequestObserver;
+use rustc_hash::FxHashMap;
+use serde::Serialize;
+use tokio::sync::Notify;
+use uuid::Uuid;
+
+use crate::metrics::{
+    NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
+};
+use crate::multiturn::{CreditCounter, IssuedCredit, TurnToSend};
+use crate::scheduler::{ClockTaskScheduler, LocalTaskScheduler};
+
+/// Boxed `!Send` completion future returned by a workload callback.
+pub type CompletionTask = Pin<Box<dyn Future<Output = ()> + 'static>>;
+
+/// Completion callback installed for one issued turn.
+pub type CompletionHandler =
+    Box<dyn FnOnce(IssuedCredit, TurnDispatchOutcome) -> CompletionTask + 'static>;
+
+/// Optional external admission gate layered above ordinary stop conditions.
+/// Adaptive-scale implements this seam so a terminal controller immediately
+/// blocks root and continuation issuance while in-flight dispatches drain.
+pub trait IssuanceGate {
+    /// Whether another turn may be issued.
+    fn can_issue(&self) -> bool;
+}
+
+/// Terminal result returned by a [`TurnDispatcher`].
+#[derive(Clone, Debug)]
+pub struct TurnDispatchOutcome {
+    /// Clock timestamp at which transport/backend dispatch began.
+    pub start_ns: i64,
+    /// Clock timestamp at which dispatch reached terminal.
+    pub end_ns: i64,
+    /// Terminal classification emitted to the measurement observer.
+    pub terminal: ReplayTerminalStatus,
+    /// Assistant text captured for the next turn's dynamic prompt splice.
+    pub response_text: String,
+    /// Authoritative server prompt-token usage, when available.
+    pub prompt_tokens: Option<u64>,
+    /// Authoritative server completion-token usage, when available.
+    pub completion_tokens: Option<u64>,
+    /// Fine-grained transport metrics, when the backend supplies them.
+    pub http: HttpTrace,
+}
+
+/// Transport/backend seam consumed by scheduled multi-turn workloads.
+///
+/// The current online implementation adapts `TransportSink`, which remains a
+/// normal `RequestSink<HttpRequest>`. An offline engine or another endpoint
+/// dialect implements this trait once; user-centric and fixed-schedule policy
+/// stays unchanged.
+#[async_trait(?Send)]
+pub trait TurnDispatcher {
+    /// Dispatch one fully materialized turn. `on_first_token` receives the
+    /// backend's TTFT delta in nanoseconds exactly once when a token arrives.
+    async fn dispatch_turn(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<TurnDispatchOutcome>;
+}
+
+/// One turn's expected and observed timing, all offsets relative to run start.
+#[derive(Clone, Debug, Serialize)]
+pub struct TurnTimingRecord {
+    /// Request UUID shared with the aggregate collector.
+    pub uuid: Uuid,
+    /// Template id.
+    pub conversation_id: String,
+    /// Runtime session id.
+    pub x_correlation_id: String,
+    /// Simulated user id for user-centric runs; absent for fixed schedule.
+    pub user_id: Option<u64>,
+    /// Zero-based turn index.
+    pub turn_index: usize,
+    /// Number of turns planned for this runtime session.
+    pub num_turns: usize,
+    /// Ideal scheduler target relative to run start; may be negative for trace
+    /// timestamps before a manually selected zero.
+    pub scheduled_offset_ns: i64,
+    /// Actual issuer time relative to run start.
+    pub issued_offset_ns: i64,
+    /// Backend dispatch start relative to run start.
+    pub dispatch_start_offset_ns: Option<i64>,
+    /// First output token time relative to run start.
+    pub first_token_offset_ns: Option<i64>,
+    /// Backend-reported TTFT delta.
+    pub ttft_ns: Option<i64>,
+    /// Terminal time relative to run start.
+    pub terminal_offset_ns: Option<i64>,
+    /// Terminal status, once known.
+    pub terminal_status: Option<ReplayTerminalStatus>,
+}
+
+/// Aggregate schedule fidelity derived from [`TurnTimingRecord`] entries.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ScheduleTimingAnalysis {
+    /// Number of issued turns.
+    pub issued_turns: usize,
+    /// Number of turns observed before their scheduler target. This should be 0.
+    pub early_turns: usize,
+    /// Mean non-negative issue lateness in milliseconds.
+    pub mean_issue_lateness_ms: f64,
+    /// Maximum issue lateness in milliseconds.
+    pub max_issue_lateness_ms: f64,
+    /// Mean backend TTFT in milliseconds over turns with a first token.
+    pub mean_ttft_ms: Option<f64>,
+    /// Maximum backend TTFT in milliseconds over turns with a first token.
+    pub max_ttft_ms: Option<f64>,
+}
+
+impl ScheduleTimingAnalysis {
+    fn from_records(records: &[TurnTimingRecord]) -> Self {
+        if records.is_empty() {
+            return Self::default();
+        }
+        let mut lateness_sum_ns = 0_i128;
+        let mut max_lateness_ns = 0_i64;
+        let mut early_turns = 0;
+        let mut ttft_sum_ns = 0_i128;
+        let mut max_ttft_ns = 0_i64;
+        let mut ttft_count = 0_usize;
+
+        for record in records {
+            let raw_lateness = record.issued_offset_ns - record.scheduled_offset_ns;
+            if raw_lateness < 0 {
+                early_turns += 1;
+            }
+            let lateness = raw_lateness.max(0);
+            lateness_sum_ns += i128::from(lateness);
+            max_lateness_ns = max_lateness_ns.max(lateness);
+            if let Some(ttft) = record.ttft_ns {
+                ttft_sum_ns += i128::from(ttft.max(0));
+                max_ttft_ns = max_ttft_ns.max(ttft.max(0));
+                ttft_count += 1;
+            }
+        }
+
+        Self {
+            issued_turns: records.len(),
+            early_turns,
+            mean_issue_lateness_ms: lateness_sum_ns as f64 / records.len() as f64 / 1_000_000.0,
+            max_issue_lateness_ms: max_lateness_ns as f64 / 1_000_000.0,
+            mean_ttft_ms: (ttft_count > 0)
+                .then_some(ttft_sum_ns as f64 / ttft_count as f64 / 1_000_000.0),
+            max_ttft_ms: (ttft_count > 0).then_some(max_ttft_ns as f64 / 1_000_000.0),
+        }
+    }
+}
+
+/// Adaptive user-pool snapshot included in user-centric reports.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct UserControlSnapshot {
+    /// Current requested user target.
+    pub target_value: usize,
+    /// Users currently present in the pool.
+    pub actual_value: usize,
+    /// Alias of `actual_value`, matching the adaptive-control vocabulary.
+    pub active_users: usize,
+    /// Excess users draining after a scale-down.
+    pub retiring_users: usize,
+    /// Retired users force-cancelled by control policy.
+    pub cancelled: usize,
+}
+
+/// Complete result of a scheduled workload: aggregate inference metrics plus
+/// schedule-level evidence used to verify timing policy.
+#[derive(Debug, Serialize)]
+pub struct ScheduledRunReport {
+    /// Workload strategy name.
+    pub strategy: String,
+    /// Standard AIPerf request/throughput/latency report.
+    pub performance: TraceSimulationReport,
+    /// Native typed distributions, sweeps, and derived metrics.
+    pub native_metrics: AccumulatorSummary,
+    /// Derived schedule fidelity statistics.
+    pub schedule_timing: ScheduleTimingAnalysis,
+    /// Per-turn expected and observed timing.
+    pub turns: Vec<TurnTimingRecord>,
+    /// User-pool control state for user-centric runs.
+    pub user_control: Option<UserControlSnapshot>,
+}
+
+#[derive(Default)]
+struct TimingRecorder {
+    records: Vec<TurnTimingRecord>,
+}
+
+impl TimingRecorder {
+    fn begin(
+        &mut self,
+        turn: &TurnToSend,
+        user_id: Option<u64>,
+        start_ns: i64,
+        scheduled_ns: i64,
+        issued_ns: i64,
+    ) -> usize {
+        let index = self.records.len();
+        self.records.push(TurnTimingRecord {
+            uuid: turn.uuid,
+            conversation_id: turn.conversation_id.clone(),
+            x_correlation_id: turn.x_correlation_id.clone(),
+            user_id,
+            turn_index: turn.turn_index,
+            num_turns: turn.num_turns,
+            scheduled_offset_ns: scheduled_ns.saturating_sub(start_ns),
+            issued_offset_ns: issued_ns.saturating_sub(start_ns),
+            dispatch_start_offset_ns: None,
+            first_token_offset_ns: None,
+            ttft_ns: None,
+            terminal_offset_ns: None,
+            terminal_status: None,
+        });
+        index
+    }
+
+    fn first_token(&mut self, index: usize, at_ns: i64, start_ns: i64, ttft_ns: i64) {
+        if let Some(record) = self.records.get_mut(index)
+            && record.first_token_offset_ns.is_none()
+        {
+            record.first_token_offset_ns = Some(at_ns.saturating_sub(start_ns));
+            record.ttft_ns = Some(ttft_ns);
+        }
+    }
+
+    fn terminal(&mut self, index: usize, outcome: &TurnDispatchOutcome, start_ns: i64) {
+        if let Some(record) = self.records.get_mut(index) {
+            record.dispatch_start_offset_ns = Some(outcome.start_ns.saturating_sub(start_ns));
+            record.terminal_offset_ns = Some(outcome.end_ns.saturating_sub(start_ns));
+            record.terminal_status = Some(outcome.terminal);
+        }
+    }
+}
+
+/// Shared facilities injected into a [`Workload`].
+pub struct ScheduledRuntime {
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    scheduler: Rc<ClockTaskScheduler>,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    collector: Rc<CollectorObserver>,
+    native_metrics: Rc<NativeMetricsObserver>,
+    observer: Rc<dyn RequestObserver>,
+    recorder: Rc<RefCell<TimingRecorder>>,
+    stop: StopConfig,
+    stop_checker: StopChecker,
+    counter: RefCell<CreditCounter>,
+    session_numbers: RefCell<FxHashMap<String, u64>>,
+    stop_reached: Notify,
+    enforce_stop: bool,
+    issuance_gate: Option<Rc<dyn IssuanceGate>>,
+    credit_latency_enabled: Cell<bool>,
+    cancellation_policy: RefCell<Option<Box<dyn CancellationPolicy>>>,
+    policy_phase: Cell<Phase>,
+    url_selector: RefCell<Option<Box<dyn UrlSelector>>>,
+    session_url_indices: RefCell<FxHashMap<String, u32>>,
+}
+
+impl ScheduledRuntime {
+    /// Build a runtime. `start_ns` is captured after workload setup so `t=0`
+    /// excludes dataset parsing and virtual-history seeding.
+    pub fn new(
+        clock: Rc<dyn Clock>,
+        start_ns: i64,
+        dispatcher: Rc<dyn TurnDispatcher>,
+        stop: StopConfig,
+        enforce_stop: bool,
+    ) -> Rc<Self> {
+        let collector = Rc::new(CollectorObserver::new(true));
+        let native_metrics = Rc::new(NativeMetricsObserver::new(
+            clock.clone(),
+            start_ns,
+            MetricsConfig::default(),
+        ));
+        let delegates: Vec<Rc<dyn RequestObserver>> =
+            vec![collector.clone(), native_metrics.clone()];
+        let observer: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
+        Self::new_with_observer(
+            clock,
+            start_ns,
+            dispatcher,
+            stop,
+            enforce_stop,
+            collector.clone(),
+            native_metrics,
+            observer,
+            None,
+        )
+    }
+
+    /// Build a runtime with an injected observer tee and optional external
+    /// issuance gate. The collector remains separately owned so final report
+    /// construction never depends on observer downcasting.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_observer(
+        clock: Rc<dyn Clock>,
+        start_ns: i64,
+        dispatcher: Rc<dyn TurnDispatcher>,
+        stop: StopConfig,
+        enforce_stop: bool,
+        collector: Rc<CollectorObserver>,
+        native_metrics: Rc<NativeMetricsObserver>,
+        observer: Rc<dyn RequestObserver>,
+        issuance_gate: Option<Rc<dyn IssuanceGate>>,
+    ) -> Rc<Self> {
+        Rc::new(Self {
+            scheduler: Rc::new(ClockTaskScheduler::new(clock.clone())),
+            clock,
+            start_ns,
+            dispatcher,
+            collector,
+            native_metrics,
+            observer,
+            recorder: Rc::new(RefCell::new(TimingRecorder::default())),
+            stop_checker: StopChecker::new(&stop),
+            stop,
+            counter: RefCell::new(CreditCounter::default()),
+            session_numbers: RefCell::new(FxHashMap::default()),
+            stop_reached: Notify::new(),
+            enforce_stop,
+            issuance_gate,
+            credit_latency_enabled: Cell::new(true),
+            cancellation_policy: RefCell::new(None),
+            policy_phase: Cell::new(Phase::Profiling),
+            url_selector: RefCell::new(None),
+            session_url_indices: RefCell::new(FxHashMap::default()),
+        })
+    }
+
+    /// Install ancillary issuance policies before a workload begins.
+    ///
+    /// URL selection advances only for turn zero. Its result is stored in the
+    /// runtime's session map and copied to every continuation's effective
+    /// transport index, while the issued credit retains `url_index=None` for
+    /// those continuations.
+    pub fn configure_ancillary(
+        &self,
+        cancellation_policy: Option<Box<dyn CancellationPolicy>>,
+        url_selector: Option<Box<dyn UrlSelector>>,
+        phase: Phase,
+    ) {
+        *self.cancellation_policy.borrow_mut() = cancellation_policy;
+        *self.url_selector.borrow_mut() = url_selector;
+        self.policy_phase.set(phase);
+        self.session_url_indices.borrow_mut().clear();
+    }
+
+    /// Injected clock.
+    pub fn clock(&self) -> Rc<dyn Clock> {
+        self.clock.clone()
+    }
+
+    /// Run start on the injected clock timeline.
+    pub fn start_ns(&self) -> i64 {
+        self.start_ns
+    }
+
+    /// Current clock time.
+    pub fn now_ns(&self) -> i64 {
+        self.clock.now_ns()
+    }
+
+    /// Shared local-task scheduler.
+    pub fn scheduler(&self) -> Rc<ClockTaskScheduler> {
+        self.scheduler.clone()
+    }
+
+    /// True if policy permits another continuation or first turn.
+    pub fn can_issue(&self, new_session: bool) -> bool {
+        if self
+            .issuance_gate
+            .as_ref()
+            .is_some_and(|gate| !gate.can_issue())
+        {
+            return false;
+        }
+        if !self.enforce_stop {
+            return true;
+        }
+        let state = self.counter.borrow().run_state(self.start_ns, false);
+        if new_session {
+            self.stop_checker
+                .can_start_new_session(&state, self.clock.now_ns())
+        } else {
+            self.stop_checker.can_send_any(&state, self.clock.now_ns())
+        }
+    }
+
+    /// Issue `turn` without awaiting backend completion.
+    ///
+    /// Counter mutation and arrival stamping happen synchronously before the
+    /// dispatch task is spawned, preserving the single-loop atomicity contract.
+    /// Returns `false` when a stop condition rejects the turn; otherwise the
+    /// callback runs exactly once after terminal dispatch, including failures.
+    pub fn issue_turn(
+        self: &Rc<Self>,
+        mut turn: TurnToSend,
+        scheduled_ns: i64,
+        user_id: Option<u64>,
+        on_complete: CompletionHandler,
+    ) -> bool {
+        let new_session = turn.turn_index == 0;
+        if !self.can_issue(new_session) {
+            self.stop_reached.notify_waiters();
+            return false;
+        }
+
+        turn.cancel_after_ns = self
+            .cancellation_policy
+            .borrow_mut()
+            .as_mut()
+            .and_then(|policy| policy.next_cancel_delay_ns(self.policy_phase.get()));
+
+        let issued_url_index = if new_session {
+            self.url_selector.borrow_mut().as_mut().map(|selector| {
+                u32::try_from(selector.next_index())
+                    .expect("validated endpoint selector index must fit u32")
+            })
+        } else {
+            None
+        };
+        if let Some(index) = issued_url_index {
+            self.session_url_indices
+                .borrow_mut()
+                .insert(turn.x_correlation_id.clone(), index);
+        }
+        turn.url_index = issued_url_index.or_else(|| {
+            self.session_url_indices
+                .borrow()
+                .get(&turn.x_correlation_id)
+                .copied()
+        });
+
+        let (credit_id, final_credit) = self.counter.borrow_mut().increment_sent(&turn, &self.stop);
+        let issued_ns = self.clock.now_ns();
+        let session_num = {
+            let mut sessions = self.session_numbers.borrow_mut();
+            if let Some(session_num) = sessions.get(&turn.x_correlation_id) {
+                *session_num
+            } else {
+                let session_num = sessions.len() as u64;
+                sessions.insert(turn.x_correlation_id.clone(), session_num);
+                session_num
+            }
+        };
+        self.native_metrics.register_metadata(
+            turn.uuid,
+            RequestMetricMetadata {
+                session_num: Some(session_num),
+                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
+                conversation_id: Some(turn.conversation_id.clone()),
+                correlation_id: Some(turn.request_correlation_id.clone()),
+                audio_duration_s: turn.audio_duration_seconds,
+                has_credit_timestamp: self.credit_latency_enabled.get(),
+                ..RequestMetricMetadata::default()
+            },
+        );
+        let record_index = self.recorder.borrow_mut().begin(
+            &turn,
+            user_id,
+            self.start_ns,
+            scheduled_ns,
+            issued_ns,
+        );
+        self.observer.on_arrival(
+            turn.uuid,
+            (issued_ns - self.start_ns) as f64 / 1_000_000.0,
+            turn.input_length,
+            turn.max_output_tokens,
+        );
+        let credit = IssuedCredit::from_issued_turn(credit_id, &turn, issued_url_index);
+
+        let runtime = self.clone();
+        self.scheduler.execute_async(Box::pin(async move {
+            let recorder = runtime.recorder.clone();
+            let clock = runtime.clock.clone();
+            let start_ns = runtime.start_ns;
+            let first_token = move |ttft_ns: i64| {
+                recorder
+                    .borrow_mut()
+                    .first_token(record_index, clock.now_ns(), start_ns, ttft_ns);
+            };
+
+            let outcome = match runtime
+                .dispatcher
+                .dispatch_turn(turn.clone(), runtime.observer.as_ref(), &first_token)
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    tracing::warn!(
+                        uuid = %turn.uuid,
+                        error = %error,
+                        "scheduled turn dispatch failed"
+                    );
+                    runtime
+                        .observer
+                        .on_terminal(turn.uuid, ReplayTerminalStatus::Failed);
+                    let now = runtime.clock.now_ns();
+                    TurnDispatchOutcome {
+                        start_ns: issued_ns,
+                        end_ns: now,
+                        terminal: ReplayTerminalStatus::Failed,
+                        response_text: String::new(),
+                        prompt_tokens: None,
+                        completion_tokens: None,
+                        http: HttpTrace::default(),
+                    }
+                }
+            };
+            runtime
+                .recorder
+                .borrow_mut()
+                .terminal(record_index, &outcome, runtime.start_ns);
+            runtime.native_metrics.record_response(
+                turn.uuid,
+                NativeResponseMetadata {
+                    start_ns: Some(outcome.start_ns),
+                    end_ns: Some(outcome.end_ns),
+                    prompt_tokens: outcome.prompt_tokens,
+                    completion_tokens: outcome.completion_tokens,
+                    http: outcome.http,
+                },
+            );
+            if credit.is_final_turn() {
+                runtime
+                    .session_url_indices
+                    .borrow_mut()
+                    .remove(&credit.turn.x_correlation_id);
+            }
+            on_complete(credit, outcome).await;
+        }));
+
+        if final_credit {
+            self.stop_reached.notify_waiters();
+        }
+        true
+    }
+
+    /// Wait until `target_ns`, returning `false` if a stop condition becomes
+    /// active first. The duration bound itself is included even when no other
+    /// issuance occurs to send a notification.
+    pub async fn wait_until_or_stop(&self, target_ns: i64) -> bool {
+        loop {
+            let stop_event = self.stop_reached.notified();
+            if !self.can_issue(false) {
+                return false;
+            }
+            let mut effective_target = target_ns;
+            if self.enforce_stop
+                && let Some(duration_ns) = self.stop.expected_duration_ns
+            {
+                effective_target = effective_target.min(self.start_ns.saturating_add(duration_ns));
+            }
+            let wait_ns = effective_target.saturating_sub(self.clock.now_ns());
+            if wait_ns <= 0 {
+                return self.can_issue(false) && self.clock.now_ns() >= target_ns;
+            }
+            let sleep = self.clock.clone().sleep(wait_ns);
+            tokio::pin!(sleep);
+            tokio::pin!(stop_event);
+            tokio::select! {
+                _ = &mut sleep => {
+                    if self.clock.now_ns() < target_ns && !self.can_issue(false) {
+                        return false;
+                    }
+                    return self.clock.now_ns() >= target_ns;
+                }
+                _ = &mut stop_event => {
+                    if !self.can_issue(false) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Freeze the collector and detailed timing trace into a report.
+    pub fn finish(
+        &self,
+        strategy: impl Into<String>,
+        user_control: Option<UserControlSnapshot>,
+    ) -> ScheduledRunReport {
+        let wall_ms = (self.clock.now_ns() - self.start_ns) as f64 / 1_000_000.0;
+        let turns = self.recorder.borrow().records.clone();
+        ScheduledRunReport {
+            strategy: strategy.into(),
+            performance: self.collector.finish(wall_ms),
+            native_metrics: self.native_metrics.finish(),
+            schedule_timing: ScheduleTimingAnalysis::from_records(&turns),
+            turns,
+            user_control,
+        }
+    }
+}
+
+/// Schedule-generating workload seam shared across online and offline backends.
+#[async_trait(?Send)]
+pub trait Workload {
+    /// Stable strategy label used in reports.
+    fn name(&self) -> &'static str;
+
+    /// Generate and drain all scheduled work through `runtime`.
+    async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()>;
+
+    /// Optional final user-control snapshot.
+    fn user_control_snapshot(&self) -> Option<UserControlSnapshot> {
+        None
+    }
+
+    /// Whether issuance has a credit timestamp distinct from a fixed authored
+    /// schedule. Disabling this omits credit-to-start/effective latency metrics.
+    fn has_credit_timestamps(&self) -> bool {
+        true
+    }
+}
+
+/// Ancillary policies injected into the scheduled issuer.
+pub struct ScheduledAncillaryPolicies {
+    /// Per-turn post-send cancellation decisions.
+    pub cancellation_policy: Option<Box<dyn CancellationPolicy>>,
+    /// Turn-0 endpoint selector; continuation pinning is owned by the runtime.
+    pub url_selector: Option<Box<dyn UrlSelector>>,
+    /// Phase passed to cancellation policy (warmup disables cancellation).
+    pub phase: Phase,
+}
+
+impl Default for ScheduledAncillaryPolicies {
+    fn default() -> Self {
+        Self {
+            cancellation_policy: None,
+            url_selector: None,
+            phase: Phase::Profiling,
+        }
+    }
+}
+
+/// Drive an already-prepared workload from `start_ns` to quiescence.
+pub async fn run_scheduled_workload(
+    workload: Rc<dyn Workload>,
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    stop: StopConfig,
+    enforce_stop: bool,
+) -> Result<ScheduledRunReport> {
+    run_scheduled_workload_with_ancillary(
+        workload,
+        clock,
+        start_ns,
+        dispatcher,
+        stop,
+        enforce_stop,
+        ScheduledAncillaryPolicies::default(),
+    )
+    .await
+}
+
+/// Drive a prepared workload with cancellation and endpoint-selection policy.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_scheduled_workload_with_ancillary(
+    workload: Rc<dyn Workload>,
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    stop: StopConfig,
+    enforce_stop: bool,
+    policies: ScheduledAncillaryPolicies,
+) -> Result<ScheduledRunReport> {
+    let runtime = ScheduledRuntime::new(clock, start_ns, dispatcher, stop, enforce_stop);
+    runtime.configure_ancillary(
+        policies.cancellation_policy,
+        policies.url_selector,
+        policies.phase,
+    );
+    runtime
+        .credit_latency_enabled
+        .set(workload.has_credit_timestamps());
+    if let Err(error) = workload.execute(runtime.clone()).await {
+        runtime.scheduler.cancel_pending();
+        runtime.scheduler.wait_idle().await;
+        return Err(error);
+    }
+    runtime.scheduler.wait_idle().await;
+    Ok(runtime.finish(workload.name(), workload.user_control_snapshot()))
+}

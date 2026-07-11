@@ -6,9 +6,11 @@ name = "aiperf-timing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Clock-native load-generation timing plane: inter-arrival interval generators, concurrency slot pools, stop conditions, and user-centric schedule math. Time is injected (ns), never read from a wall clock, so the same policy drives online and offline runs."
+description = "Clock-native load-generation timing plane: arrivals, concurrency, stop conditions, user-centric scheduling, ramps, cancellation policy, and URL selection."
 
 [dependencies]
+aiperf-clock.workspace = true
+aiperf-rng.workspace = true
 tokio.workspace = true
 rand = "0.9"
 rand_distr = "0.5"

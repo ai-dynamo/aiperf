@@ -47,7 +47,7 @@ impl From<ReducerError> for StoreError {
 struct LogEntry {
     write_seq: i64,
     writer_node_id: String,
-    value: Value,
+    value: ChanVal,
 }
 
 /// Canonical reducer-consumption order for two log entries: by `write_seq`, then
@@ -114,10 +114,11 @@ impl VersionedChannelStore {
             if !specs.contains_key(ch) {
                 return Err(StoreError::UnknownChannel(ch.clone()));
             }
+            let value = channel_value(&specs[ch], value);
             logs.get_mut(ch).unwrap().push(LogEntry {
                 write_seq: 0,
                 writer_node_id: "__init__".to_string(),
-                value: value.clone(),
+                value,
             });
         }
 
@@ -155,11 +156,41 @@ impl VersionedChannelStore {
             }
         }
         for ch in channel_names {
+            let value = {
+                let inner = self.inner.borrow();
+                channel_value(&inner.specs[ch], value)
+            };
             {
                 let mut inner = self.inner.borrow_mut();
-                commit_write_channel(&mut inner, ch, value, writer_node_id);
+                commit_write_channel(&mut inner, ch, &value, writer_node_id);
             }
             self.notify_channel(ch);
+        }
+        Ok(())
+    }
+
+    /// Commit a value that already retains encoded message wires.
+    pub fn write_channel_value(
+        &self,
+        channel_names: &[String],
+        value: &ChanVal,
+        writer_node_id: &str,
+    ) -> Result<(), StoreError> {
+        if channel_names.is_empty() {
+            return Ok(());
+        }
+        {
+            let inner = self.inner.borrow();
+            for channel in channel_names {
+                validate_write_channel(&inner, channel, writer_node_id)?;
+            }
+        }
+        for channel in channel_names {
+            {
+                let mut inner = self.inner.borrow_mut();
+                commit_write_channel(&mut inner, channel, value, writer_node_id);
+            }
+            self.notify_channel(channel);
         }
         Ok(())
     }
@@ -390,7 +421,7 @@ fn validate_write_channel(
 fn commit_write_channel(
     inner: &mut StoreInner,
     channel: &str,
-    value: &Value,
+    value: &ChanVal,
     writer_node_id: &str,
 ) {
     inner.last_seq += 1;
@@ -418,7 +449,7 @@ fn reduce_value_channel(
     let entries = &inner.logs[channel];
     let init = entries.iter().find(|e| e.write_seq == 0);
     let current = match init {
-        Some(e) => ChanVal::Val(e.value.clone()),
+        Some(e) => e.value.clone(),
         None => ChanVal::Unset,
     };
     if captured_seqs.is_empty() {
@@ -430,7 +461,7 @@ fn reduce_value_channel(
         .filter(|e| seq_set.contains(&e.write_seq))
         .collect();
     chosen.sort_by(|a, b| entry_order(a, b));
-    let tuples: Vec<(String, Value)> = chosen
+    let tuples: Vec<(String, ChanVal)> = chosen
         .iter()
         .map(|e| (e.writer_node_id.clone(), e.value.clone()))
         .collect();
@@ -446,10 +477,10 @@ fn reduce_all(
     sorted.sort_by(|a, b| entry_order(a, b));
     let init = sorted.iter().find(|e| e.write_seq == 0);
     let current = match init {
-        Some(e) => ChanVal::Val(e.value.clone()),
+        Some(e) => e.value.clone(),
         None => ChanVal::Unset,
     };
-    let tuples: Vec<(String, Value)> = sorted
+    let tuples: Vec<(String, ChanVal)> = sorted
         .iter()
         .filter(|e| e.write_seq != 0)
         .map(|e| (e.writer_node_id.clone(), e.value.clone()))
@@ -460,4 +491,22 @@ fn reduce_all(
     } else {
         Ok(apply_reducer(spec.reducer, &current, &tuples)?)
     }
+}
+
+fn channel_value(spec: &ChannelSpec, value: &Value) -> ChanVal {
+    if spec.channel_type == crate::model::ChannelType::Messages
+        && let Value::Array(messages) = value
+    {
+        return ChanVal::encoded_messages(
+            messages
+                .iter()
+                .map(|message| {
+                    let wire = serde_json::to_vec(message)
+                        .expect("serde_json::Value serialization is infallible");
+                    (message.clone(), bytes::Bytes::from(wire))
+                })
+                .collect(),
+        );
+    }
+    ChanVal::Val(value.clone())
 }

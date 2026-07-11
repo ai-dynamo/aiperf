@@ -9,6 +9,7 @@ use crate::http::HttpRequest;
 
 /// A synthetic workload: `num_requests` chat requests of approximately
 /// `input_tokens` prompt length, each asking for `output_tokens` output.
+#[derive(Clone, Debug)]
 pub struct SkeletonWorkload {
     /// Number of requests to generate.
     pub num_requests: usize,
@@ -35,8 +36,16 @@ impl SkeletonWorkload {
             input_length: self.input_tokens,
             max_output_tokens: self.output_tokens,
             prompt_text: Some(vec!["lorem"; self.input_tokens].join(" ")),
+            request_body: None,
+            request_body_bytes: None,
+            headers: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::new(),
+            endpoint_path: None,
+            streaming: true,
             x_correlation_id: None,
             is_final_turn: true,
+            cancel_after_ns: None,
+            url_index: None,
         }
     }
 

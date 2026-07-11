@@ -411,3 +411,58 @@ emitting per-window decision events + a boundary summary; the ramp actuators are
 built in `aiperf-timing`, the controller/evaluator/step-policy/window-sampler are new
 pure-logic seams, and the whole loop runs deterministically offline under `SimClock`
 **iff** completions flow during the run.
+
+---
+
+## Addendum — 2026-07-11: implemented in `aiperf-adaptive`
+
+This design is now implemented. The authoritative code is the new
+`crates/aiperf-adaptive` leaf crate plus the online integration in
+`crates/aiperf/src/{adaptive,run,main}.rs`:
+
+- The object-safe `ControlActuator`, `SlaEvaluator`, `StepPolicy`,
+  `WindowSampler`, and `Controller` traits are built, with the four live
+  actuators (`SessionConcurrencyActuator`, `PrefillConcurrencyActuator`,
+  `RequestRateActuator`, and `UsersActuator`). Actuators live together in
+  `aiperf-adaptive`, superseding the proposed split across target crates.
+- `TumblingWindowSampler`, `DefaultSlaEvaluator`, `SlaMarginStep`,
+  `FixedPercentStep`, and `RampUntilFailController` implement the Python
+  window triage, metric aliases/statistics, all-filter SLA evaluation,
+  discover/sustain/single-recovery state machine, and boundary semantics.
+  Successful request latency runs from admission/dispatch to the last
+  meaningful token; a terminal response with no meaningful token is an error,
+  matching the Python credit-return record semantics. `ObservedUsage` carries
+  authoritative `completion_tokens` into output sequence length and the
+  `(last−first)/(osl−1)` ITL denominator; missing usage leaves both values
+  absent. Percentiles reuse `aiperf-metrics::linear_distribution`.
+- `AdaptiveScale` paces assessments exclusively through `Clock`; its
+  `SimClock` tests drive the same controller deterministically. This does not
+  claim that the repository's OFFLINE-mock mode is complete: the in-process
+  steppable-engine sink remains unwired, so offline end-to-end completions
+  cannot yet feed the sampler. A local waker-backed stop future interrupts a
+  long issuer arrival sleep as soon as the controller becomes terminal.
+- `AdaptiveObserver` tees returned-request events into the sampler and the
+  ordinary collector on the one-thread `LocalSet`. To make that hot path
+  lock-free, `RequestObserver` is now a local-loop trait without `Send`/`Sync`
+  supertraits; its optional `on_usage(ObservedUsage)` callback carries endpoint
+  counts, and `CollectorObserver` stores its collector in `RefCell`.
+- The online issuer mutates the same live session/prefill `SlotPool` and
+  `IntervalGenerator` instances used for dispatch. Prefill slots release at
+  the first meaningful parsed SSE token—not a role/usage frame—with terminal
+  fallback; `HttpTransport::send_request_with_first_token_filter` retries the
+  callback until the chat parser accepts a delta. User-centric adaptive runs
+  mutate a live `UserTarget` gate and start from the configured adaptive minimum.
+- The CLI exposes `--adaptive-scale`, all four control variables, tumbling and
+  sustain durations, the explicit `ramp_until_fail` strategy selector,
+  repeatable SLA filters, both step policies, control
+  bounds, minimum completions, and an artifact directory. It writes the typed
+  schema-v2 `adaptive_scale_events.jsonl` and
+  `adaptive_scale_summary.json` through `AdaptiveArtifactSink` /
+  `FileArtifactSink`, with recursively sorted JSON keys.
+
+Unit and integration coverage exercises SLA math and aliases, error/cancel and
+sparse windows, both step policies, every controller terminal path, recovery
+reset, all four live actuators, `SimClock` pacing, schema-v2 artifacts, early
+online stop, and CLI acceptance. The original "designed" status and the
+increment plan above are historical; this addendum is authoritative where they
+conflict.

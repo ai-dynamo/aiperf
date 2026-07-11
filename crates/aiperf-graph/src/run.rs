@@ -32,7 +32,7 @@ pub enum TimeBase {
 pub fn run_trace<M: WireMessage>(
     graph: Rc<GraphRecord>,
     trace: TraceRecord,
-    materializer: Rc<dyn PromptMaterializer<M>>,
+    materializer: Rc<dyn PromptMaterializer>,
     sink: Rc<dyn GraphSink<M>>,
     time_base: TimeBase,
 ) -> Result<TraceResult, TraceError> {
@@ -99,21 +99,23 @@ pub fn run_trace<M: WireMessage>(
 mod tests {
     use super::*;
     use crate::materialize::SegmentItemsMaterializer;
-    use crate::reducers::ChanVal;
-    use crate::segment::{SegmentPool, SegmentStore};
+    use crate::segment::{SegmentPool, intern_message};
     use crate::sink::EchoSink;
     use crate::wire::OpenAiChatMessage as Msg;
     use serde_json::{Value, json};
+    use std::sync::Arc;
 
     /// Two-node chain: n1 splices n0's reply. Proves dependency ordering + real
     /// content flow through channels via the segment store, no server.
     #[test]
     fn chain_flows_reply_into_successor_prompt() {
-        let mut pool: SegmentPool<Msg> = SegmentPool::new();
-        let n0_user = pool.add(Msg::new("user", "start"), None);
-        let n1_user = pool.add(Msg::new("user", "continue"), None);
-        let store: Rc<dyn SegmentStore<Msg>> = Rc::new(pool);
-        let materializer = Rc::new(SegmentItemsMaterializer::new(store));
+        let tokenizer = aiperf_dataset::TiktokenTokenizer::builtin();
+        let mut pool = SegmentPool::new();
+        let n0_user =
+            intern_message(&mut pool, &Msg::new("user", "start"), None, &tokenizer).unwrap();
+        let n1_user =
+            intern_message(&mut pool, &Msg::new("user", "continue"), None, &tokenizer).unwrap();
+        let materializer = Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
         let sink = Rc::new(EchoSink);
 
         let graph: GraphRecord = serde_json::from_value(json!({
@@ -137,11 +139,12 @@ mod tests {
         .unwrap();
 
         let trace: TraceRecord = serde_json::from_value(json!({"id": "t-1"})).unwrap();
-        let result = run_trace(Rc::new(graph), trace, materializer, sink, TimeBase::Sim).unwrap();
+        let result =
+            run_trace::<Msg>(Rc::new(graph), trace, materializer, sink, TimeBase::Sim).unwrap();
 
         // n0's echoed reply landed on c0.
         let c0 = result.channels.get("c0").unwrap();
-        let ChanVal::Val(Value::Array(c0_msgs)) = c0 else {
+        let Some(Value::Array(c0_msgs)) = c0.as_value() else {
             panic!("c0 should hold assistant messages, got {c0:?}");
         };
         assert_eq!(c0_msgs.len(), 1);
@@ -153,7 +156,7 @@ mod tests {
 
         // n1's reply must reflect that it SAW n0's reply spliced before its turn.
         let c1 = result.channels.get("c1").unwrap();
-        let ChanVal::Val(Value::Array(c1_msgs)) = c1 else {
+        let Some(Value::Array(c1_msgs)) = c1.as_value() else {
             panic!("c1 should hold assistant messages");
         };
         let n1_reply = c1_msgs[0]["content"].as_str().unwrap();

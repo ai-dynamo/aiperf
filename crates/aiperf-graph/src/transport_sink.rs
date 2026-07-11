@@ -10,15 +10,15 @@
 //! [`RequestObserver`] the measurement events.
 
 use std::rc::Rc;
-use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use bytes::Bytes;
 use uuid::Uuid;
 
 use aiperf_clock::Clock;
-use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
+use aiperf_dataset::{Overrides, build_message_body_from_wires};
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{HttpVersion, RequestConfig, Response};
 use aiperf_transport::transport::http_transport::HttpTransport;
@@ -36,7 +36,7 @@ pub struct TransportChatSink {
     url: String,
     model: String,
     start_ns: i64,
-    observer: Arc<dyn RequestObserver>,
+    observer: Rc<dyn RequestObserver>,
     default_max_tokens: usize,
 }
 
@@ -49,7 +49,7 @@ impl TransportChatSink {
         clock: Rc<dyn Clock>,
         base_url: &str,
         model: impl Into<String>,
-        observer: Arc<dyn RequestObserver>,
+        observer: Rc<dyn RequestObserver>,
         default_max_tokens: usize,
         http2: bool,
     ) -> Self {
@@ -85,7 +85,7 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
     async fn dispatch(
         &self,
         _node_id: &str,
-        messages: Vec<OpenAiChatMessage>,
+        messages: Vec<Bytes>,
         max_tokens: Option<usize>,
         on_first_token: &dyn Fn(),
     ) -> Result<GraphReply<OpenAiChatMessage>> {
@@ -93,15 +93,15 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
         // No scheduler admission on the HTTP path; admit == dispatch time.
         let admit_ms = self.ms(self.clock.now_ns());
 
-        let msgs: Vec<(&str, &str)> = messages
-            .iter()
-            .map(|m| (m.role.as_str(), m.content.as_str()))
-            .collect();
-        let payload = chat_request_body(
-            &self.model,
-            &msgs,
-            max_tokens.unwrap_or(self.default_max_tokens),
+        let mut overrides = Overrides::new();
+        overrides.set_model(&self.model);
+        overrides.set_stream(true);
+        overrides.set_include_usage(true);
+        overrides.set_max_tokens(
+            "max_tokens",
+            u32::try_from(max_tokens.unwrap_or(self.default_max_tokens)).unwrap_or(u32::MAX),
         );
+        let payload = build_message_body_from_wires(&messages, &overrides)?;
 
         let cfg = RequestConfig::new(&self.url);
         // The transport fires this at the first SSE message (first observed
@@ -109,7 +109,7 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
         // before the reply completes.
         let rec = self
             .transport
-            .send_request(&cfg, payload, true, |_ttft_ns| on_first_token())
+            .send_request_bytes(&cfg, payload, true, |_ttft_ns| on_first_token())
             .await;
 
         self.observer.on_admit(uuid, admit_ms, 0);

@@ -20,12 +20,34 @@ use uuid::Uuid;
 
 use crate::collector::ReplayTerminalStatus;
 
+/// Semantic class of one streamed token-like content delta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservedTokenKind {
+    /// User-visible output content (including tool-call content).
+    Output,
+    /// Reasoning-only content emitted before user-visible output.
+    Reasoning,
+}
+
+/// Authoritative server-reported token usage for one request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ObservedUsage {
+    /// Prompt-token count, when the endpoint returned it.
+    pub prompt_tokens: Option<usize>,
+    /// Completion-token count, when the endpoint returned it.
+    pub completion_tokens: Option<usize>,
+}
+
 /// Measurement hook fed by any sink. Timestamps are milliseconds relative to
-/// run start.
+/// run start. The observer is intentionally local-loop friendly: it has no
+/// `Send`/`Sync` supertraits, so thread-per-core workers can accumulate through
+/// `Rc<RefCell<_>>` without a per-token mutex. A consumer that genuinely crosses
+/// threads can still provide a thread-safe implementation.
 ///
-/// TTFT is derived by the collector as the first [`on_token`](RequestObserver::on_token)
-/// for a request, so sinks do not emit a separate first-token event.
-pub trait RequestObserver: Send + Sync {
+/// TTFT is derived by the collector as the first
+/// [`on_token`](RequestObserver::on_token) or classified-token callback for a
+/// request, so sinks do not emit a separate first-token event.
+pub trait RequestObserver {
     /// Record request arrival with its input length and requested output length.
     fn on_arrival(
         &self,
@@ -38,6 +60,19 @@ pub trait RequestObserver: Send + Sync {
     fn on_admit(&self, uuid: Uuid, admit_ms: f64, reused_input_tokens: usize);
     /// Record one output token observed at `at_ms`.
     fn on_token(&self, uuid: Uuid, at_ms: f64);
+    /// Record one classified token delta.
+    ///
+    /// The default preserves compatibility for transports that cannot distinguish
+    /// reasoning from user-visible output. Reasoning-aware transports override the
+    /// call site, while observer tees forward the classification unchanged.
+    fn on_classified_token(&self, uuid: Uuid, at_ms: f64, _kind: ObservedTokenKind) {
+        self.on_token(uuid, at_ms);
+    }
+    /// Record the terminal server-usage observation.
+    ///
+    /// Individual fields remain absent when the endpoint reports no usage. The
+    /// default is a no-op; observers that reconcile counts override it.
+    fn on_usage(&self, _uuid: Uuid, _usage: ObservedUsage) {}
     /// Record terminal status for the request.
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus);
 }

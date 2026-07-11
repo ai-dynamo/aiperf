@@ -181,3 +181,13 @@ association.
 ## Addendum — 2026-07-11 (native Rust implementation)
 
 The native Rust workspace now implements the core first-class accuracy accumulator/analyzer in `crates/aiperf-metrics/src/accuracy.rs`. The built surface includes typed `AccuracyRecord` / `GradingResult`, real `CorrelationId` and `TaskId` association, phase/time-window summaries via `ExportContext`, Wilson confidence intervals, per-task rollups, `Analyzer` / `SummaryContext` dependency enforcement, `AccuracyResultsAnalyzer`, and optional joins to metric goodput/request-throughput and energy telemetry summaries. The grader plugin zoo and runtime record-routing/exporter wiring remain future consumers of this built leaf crate.
+
+## Addendum — 2026-07-11 (runtime and report wiring)
+
+The runtime-wiring caveat in the preceding addendum is now partly superseded.
+`aiperf-accuracy` provides the native MMLU-Pro benchmark/source/grader surface, and
+`aiperf::accuracy` dispatches its records through the shared transport observer,
+feeds both the performance and accuracy accumulators, runs the dependency-enforced
+analyzer join, and emits the joined result in the unified native-v2 report. Additional
+benchmark/grader implementations remain future extensions behind the built traits;
+energy joins remain absent until telemetry producers exist.

@@ -11,8 +11,9 @@
 use std::collections::HashMap;
 
 use crate::model::GraphRecord;
-use crate::segment::SegmentPool;
+use crate::segment::{InMemorySegmentStore, SegmentPool, intern_message};
 use crate::wire::OpenAiChatMessage as Msg;
+use aiperf_dataset::TiktokenTokenizer;
 
 /// Benchmark configuration.
 pub struct BenchConfig {
@@ -57,20 +58,28 @@ fn est_tokens(s: &str) -> usize {
 /// and shared across every trace instance.
 pub(crate) fn build_workload(
     turns: usize,
-) -> (SegmentPool<Msg>, GraphRecord, HashMap<String, usize>) {
-    let mut pool: SegmentPool<Msg> = SegmentPool::new();
+) -> (InMemorySegmentStore, GraphRecord, HashMap<String, usize>) {
+    let tokenizer = TiktokenTokenizer::builtin();
+    let mut pool = SegmentPool::new();
     let sys_text = "You are a helpful, concise assistant answering benchmark turns.";
-    let sys = pool.add(Msg::new("system", sys_text), None);
+    let sys = intern_message(&mut pool, &Msg::new("system", sys_text), None, &tokenizer)
+        .expect("benchmark system message must intern");
 
     // Prefix-chained user-turn segments.
-    let mut parent = sys.clone();
+    let mut parent = sys;
     let mut user_segs = Vec::with_capacity(turns);
     let mut user_tokens = Vec::with_capacity(turns);
     for k in 0..turns {
         let text = format!("Turn {k}: please continue the conversation about topic {k}.");
         let tok = est_tokens(&text);
-        let seg = pool.add(Msg::new("user", &text), Some(&parent));
-        parent = seg.clone();
+        let seg = intern_message(
+            &mut pool,
+            &Msg::new("user", &text),
+            Some(parent),
+            &tokenizer,
+        )
+        .expect("benchmark user message must intern");
+        parent = seg;
         user_segs.push(seg);
         user_tokens.push(tok);
     }
@@ -117,7 +126,7 @@ pub(crate) fn build_workload(
         "state": state, "nodes": nodes, "edges": edges
     }))
     .expect("valid bench graph");
-    (pool, graph, isl_by_node)
+    (pool.freeze(), graph, isl_by_node)
 }
 
 /// Default server base URL when none is configured (co-located mock/frontend).

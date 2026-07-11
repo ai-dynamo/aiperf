@@ -266,7 +266,10 @@ mod tests {
         let pool = SlotPool::new(2);
         let _g1 = pool.try_acquire().expect("first slot free");
         let _g2 = pool.try_acquire().expect("second slot free");
-        assert!(pool.try_acquire().is_none(), "capacity of 2 must be exhausted");
+        assert!(
+            pool.try_acquire().is_none(),
+            "capacity of 2 must be exhausted"
+        );
         assert!(pool.locked());
         assert_eq!(pool.effective_slots(), 0);
     }

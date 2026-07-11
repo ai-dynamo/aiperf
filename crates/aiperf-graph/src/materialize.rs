@@ -1,98 +1,126 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Prompt materialization — an **extensible trait** (generic over dialect message
-//! `M`) turning a node into the `messages` list dispatched on the wire.
+
+//! Graph prompt materialization over pre-serialized message slices.
 //!
-//! The default impl ([`SegmentItemsMaterializer`]) walks a node's assembly
-//! program: static, prefix-cached segments come from a [`SegmentStore`], and
-//! dynamic slots splice a predecessor's captured reply, read from that
-//! predecessor's output channel. Swapping the trait plugs in a different grammar.
+//! Static items resolve dense handles through `aiperf-dataset`; dynamic items
+//! clone the encoded replies retained by message channels. Neither path parses or
+//! reserializes a message while building a successor prompt.
 
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
-use serde_json::Value;
+use aiperf_dataset::{
+    AssemblyItem, DatasetError, MessageSpliceResolver,
+    SegmentItemsMaterializer as SharedMaterializer, SegmentStore,
+};
+use bytes::Bytes;
 
 use crate::model::{LlmNode, PromptItem};
 use crate::reducers::ChanVal;
-use crate::segment::SegmentStore;
-use crate::wire::WireMessage;
 
-/// Build a node's wire messages from its program + the channel state at fire time.
-pub trait PromptMaterializer<M: WireMessage> {
-    fn build(&self, node: &LlmNode, inputs: &BTreeMap<String, ChanVal>) -> Vec<M>;
+/// Build a node's ordered wire-message slices from its program and channel state.
+pub trait PromptMaterializer {
+    /// Materialize without decoding or reserializing static messages.
+    fn build(
+        &self,
+        node: &LlmNode,
+        inputs: &BTreeMap<String, ChanVal>,
+    ) -> Result<Vec<Bytes>, DatasetError>;
 }
 
-/// Segment-store + dynamic-splice materializer.
-pub struct SegmentItemsMaterializer<M: WireMessage> {
-    store: Rc<dyn SegmentStore<M>>,
+/// Shared-store plus dynamic-splice materializer.
+pub struct SegmentItemsMaterializer {
+    inner: SharedMaterializer,
 }
 
-impl<M: WireMessage> SegmentItemsMaterializer<M> {
-    pub fn new(store: Rc<dyn SegmentStore<M>>) -> Self {
-        SegmentItemsMaterializer { store }
+impl SegmentItemsMaterializer {
+    /// Bind the graph materializer to the universal segment store.
+    pub fn new(store: Arc<dyn SegmentStore>) -> Self {
+        Self {
+            inner: SharedMaterializer::new(store),
+        }
     }
 }
 
-impl<M: WireMessage> PromptMaterializer<M> for SegmentItemsMaterializer<M> {
-    fn build(&self, node: &LlmNode, inputs: &BTreeMap<String, ChanVal>) -> Vec<M> {
-        let mut out: Vec<M> = Vec::new();
-        for item in &node.items {
-            match item {
-                PromptItem::Seg { seg } => {
-                    out.extend(self.store.materialize(std::slice::from_ref(seg)));
-                }
-                PromptItem::Splice { splice } => {
-                    if let Some(ChanVal::Val(Value::Array(msgs))) = inputs.get(splice) {
-                        for m in msgs {
-                            if let Ok(msg) = serde_json::from_value::<M>(m.clone()) {
-                                out.push(msg);
-                            }
-                        }
-                    }
-                }
-            }
+struct InputSplices<'a>(&'a BTreeMap<String, ChanVal>);
+
+impl MessageSpliceResolver for InputSplices<'_> {
+    fn resolve(&self, key: &str) -> Result<Vec<Bytes>, DatasetError> {
+        match self.0.get(key) {
+            Some(ChanVal::EncodedMessages { wires, .. }) => Ok(wires.clone()),
+            Some(ChanVal::Val(serde_json::Value::Array(messages))) => messages
+                .iter()
+                .map(|message| {
+                    serde_json::to_vec(message)
+                        .map(Bytes::from)
+                        .map_err(Into::into)
+                })
+                .collect(),
+            Some(ChanVal::Unset) | None => Ok(Vec::new()),
+            Some(ChanVal::Val(_)) => Ok(Vec::new()),
         }
-        out
+    }
+}
+
+impl PromptMaterializer for SegmentItemsMaterializer {
+    fn build(
+        &self,
+        node: &LlmNode,
+        inputs: &BTreeMap<String, ChanVal>,
+    ) -> Result<Vec<Bytes>, DatasetError> {
+        let items: Vec<_> = node
+            .items
+            .iter()
+            .map(|item| match item {
+                PromptItem::Seg { seg } => AssemblyItem::Segment(*seg),
+                PromptItem::Splice { splice } => AssemblyItem::Splice(splice.clone()),
+            })
+            .collect();
+        self.inner
+            .materialize_messages(&items, &InputSplices(inputs))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::segment::SegmentPool;
+    use crate::segment::{SegmentPool, intern_message};
     use crate::wire::OpenAiChatMessage as Msg;
+    use aiperf_dataset::TiktokenTokenizer;
     use serde_json::json;
 
     #[test]
-    fn interleaves_static_segments_and_dynamic_splices() {
-        let mut pool: SegmentPool<Msg> = SegmentPool::new();
-        let sys = pool.add(Msg::new("system", "S"), None);
-        let u1 = pool.add(Msg::new("user", "hi"), Some(&sys));
-        let u2 = pool.add(Msg::new("user", "again"), Some(&u1));
-        let store: Rc<dyn SegmentStore<Msg>> = Rc::new(pool);
-        let mat = SegmentItemsMaterializer::new(store);
-
+    fn interleaves_static_segments_and_retained_dynamic_wire() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let mut pool = SegmentPool::new();
+        let system = intern_message(&mut pool, &Msg::new("system", "S"), None, &tokenizer).unwrap();
+        let user = intern_message(
+            &mut pool,
+            &Msg::new("user", "again"),
+            Some(system),
+            &tokenizer,
+        )
+        .unwrap();
+        let materializer = SegmentItemsMaterializer::new(Arc::new(pool.freeze()));
         let node: LlmNode = serde_json::from_value(json!({
             "node_type": "llm", "prompt": [], "output": "o",
-            "items": [{"seg": sys}, {"seg": u1}, {"splice": "pred"}, {"seg": u2}]
+            "items": [{"seg": system}, {"splice": "pred"}, {"seg": user}]
         }))
         .unwrap();
-
+        let reply = json!({"role":"assistant","content":"prior reply"});
+        let reply_wire = Bytes::from_static(br#"{"role":"assistant","content":"prior reply"}"#);
         let mut inputs = BTreeMap::new();
         inputs.insert(
             "pred".to_string(),
-            ChanVal::Val(json!([{"role": "assistant", "content": "prior reply"}])),
+            ChanVal::EncodedMessages {
+                value: serde_json::Value::Array(vec![reply]),
+                wires: vec![reply_wire.clone()],
+            },
         );
 
-        assert_eq!(
-            mat.build(&node, &inputs),
-            vec![
-                Msg::new("system", "S"),
-                Msg::new("user", "hi"),
-                Msg::new("assistant", "prior reply"),
-                Msg::new("user", "again"),
-            ]
-        );
+        let messages = materializer.build(&node, &inputs).unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1], reply_wire);
     }
 }

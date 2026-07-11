@@ -33,6 +33,10 @@ pub enum Unit {
     Kilobyte,
     /// Mebibyte count.
     Megabyte,
+    /// Gibibyte count.
+    Gigabyte,
+    /// Tebibyte count.
+    Terabyte,
     /// Nanoseconds.
     Nanosecond,
     /// Microseconds.
@@ -51,8 +55,24 @@ pub enum Unit {
     TokensPerSecond,
     /// Tokens per second per user.
     TokensPerSecondPerUser,
+    /// Images per second.
+    ImagesPerSecond,
+    /// Milliseconds per image.
+    MillisecondsPerImage,
+    /// Videos per second.
+    VideosPerSecond,
+    /// Milliseconds per video.
+    MillisecondsPerVideo,
+    /// Tokens per joule.
+    TokensPerJoule,
+    /// Joules per user.
+    JoulesPerUser,
     /// Bytes per second.
     BytesPerSecond,
+    /// Mebibytes per second.
+    MegabytesPerSecond,
+    /// Gibibytes per second.
+    GigabytesPerSecond,
     /// Watts.
     Watt,
     /// Milliwatts.
@@ -79,6 +99,8 @@ pub enum Unit {
     Image,
     /// Frames.
     Frame,
+    /// Videos.
+    Video,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +131,11 @@ impl Unit {
             });
         }
         match source_family {
-            Family::Count | Family::Ratio | Family::Composite => Ok(value),
+            Family::Count | Family::Ratio => Err(UnitConversionError {
+                source: self,
+                target,
+            }),
+            Family::Composite => self.convert_composite(value, target),
             Family::Size | Family::Time | Family::Power | Family::Energy | Family::Frequency => {
                 Ok(value * self.scale_to_base() / target.scale_to_base())
             }
@@ -122,17 +148,29 @@ impl Unit {
 
     fn family(self) -> Family {
         match self {
-            Self::Byte | Self::Kilobyte | Self::Megabyte => Family::Size,
+            Self::Byte | Self::Kilobyte | Self::Megabyte | Self::Gigabyte | Self::Terabyte => {
+                Family::Size
+            }
             Self::Nanosecond | Self::Microsecond | Self::Millisecond | Self::Second => Family::Time,
             Self::RequestsPerSecond
             | Self::TokensPerSecond
             | Self::TokensPerSecondPerUser
-            | Self::BytesPerSecond => Family::Composite,
+            | Self::ImagesPerSecond
+            | Self::MillisecondsPerImage
+            | Self::VideosPerSecond
+            | Self::MillisecondsPerVideo
+            | Self::TokensPerJoule
+            | Self::JoulesPerUser
+            | Self::BytesPerSecond
+            | Self::MegabytesPerSecond
+            | Self::GigabytesPerSecond => Family::Composite,
             Self::Watt | Self::Milliwatt => Family::Power,
             Self::Joule | Self::Millijoule | Self::Megajoule => Family::Energy,
             Self::Hertz | Self::Megahertz | Self::Gigahertz => Family::Frequency,
             Self::Celsius | Self::Kelvin | Self::Fahrenheit => Family::Temperature,
-            Self::Count | Self::Request | Self::Token | Self::Image | Self::Frame => Family::Count,
+            Self::Count | Self::Request | Self::Token | Self::Image | Self::Frame | Self::Video => {
+                Family::Count
+            }
             Self::Percent | Self::Ratio => Family::Ratio,
         }
     }
@@ -142,6 +180,8 @@ impl Unit {
             Self::Byte => 1.0,
             Self::Kilobyte => 1024.0,
             Self::Megabyte => 1024.0 * 1024.0,
+            Self::Gigabyte => 1024.0 * 1024.0 * 1024.0,
+            Self::Terabyte => 1024.0 * 1024.0 * 1024.0 * 1024.0,
             Self::Nanosecond => 1.0,
             Self::Microsecond => 1_000.0,
             Self::Millisecond => 1_000_000.0,
@@ -155,6 +195,22 @@ impl Unit {
             Self::Megahertz => 1_000_000.0,
             Self::Gigahertz => 1_000_000_000.0,
             _ => 1.0,
+        }
+    }
+
+    fn convert_composite(self, value: f64, target: Unit) -> Result<f64, UnitConversionError> {
+        let size_per_second_scale = |unit| match unit {
+            Self::BytesPerSecond => Some(1.0),
+            Self::MegabytesPerSecond => Some(1024.0 * 1024.0),
+            Self::GigabytesPerSecond => Some(1024.0 * 1024.0 * 1024.0),
+            _ => None,
+        };
+        match (size_per_second_scale(self), size_per_second_scale(target)) {
+            (Some(source), Some(destination)) => Ok(value * source / destination),
+            _ => Err(UnitConversionError {
+                source: self,
+                target,
+            }),
         }
     }
 
@@ -185,6 +241,8 @@ impl Unit {
             Self::Byte => "bytes",
             Self::Kilobyte => "KB",
             Self::Megabyte => "MB",
+            Self::Gigabyte => "GB",
+            Self::Terabyte => "TB",
             Self::Nanosecond => "ns",
             Self::Microsecond => "us",
             Self::Millisecond => "ms",
@@ -194,7 +252,15 @@ impl Unit {
             Self::RequestsPerSecond => "requests/sec",
             Self::TokensPerSecond => "tokens/sec",
             Self::TokensPerSecondPerUser => "tokens/sec/user",
+            Self::ImagesPerSecond => "images/sec",
+            Self::MillisecondsPerImage => "ms/image",
+            Self::VideosPerSecond => "videos/sec",
+            Self::MillisecondsPerVideo => "ms/video",
+            Self::TokensPerJoule => "tokens/J",
+            Self::JoulesPerUser => "joules/user",
             Self::BytesPerSecond => "bytes/sec",
+            Self::MegabytesPerSecond => "MB/sec",
+            Self::GigabytesPerSecond => "GB/sec",
             Self::Watt => "W",
             Self::Milliwatt => "mW",
             Self::Joule => "J",
@@ -203,11 +269,12 @@ impl Unit {
             Self::Hertz => "Hz",
             Self::Megahertz => "MHz",
             Self::Gigahertz => "GHz",
-            Self::Celsius => "C",
+            Self::Celsius => "°C",
             Self::Kelvin => "K",
-            Self::Fahrenheit => "F",
+            Self::Fahrenheit => "°F",
             Self::Image => "images",
             Self::Frame => "frames",
+            Self::Video => "videos",
         }
     }
 }
@@ -255,6 +322,18 @@ mod tests {
             Unit::Celsius.convert_value(0.0, Unit::Kelvin).unwrap(),
             273.15
         );
+        assert_eq!(
+            Unit::MegabytesPerSecond
+                .convert_value(1024.0, Unit::GigabytesPerSecond)
+                .unwrap(),
+            1.0
+        );
         assert!(Unit::Token.convert_value(1.0, Unit::Second).is_err());
+        assert!(Unit::Token.convert_value(1.0, Unit::Request).is_err());
+        assert!(
+            Unit::TokensPerSecond
+                .convert_value(1.0, Unit::RequestsPerSecond)
+                .is_err()
+        );
     }
 }

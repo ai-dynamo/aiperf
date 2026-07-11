@@ -14,7 +14,8 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use serde_json::{Value, json};
+use bytes::Bytes;
+use serde_json::Value;
 
 use crate::channel_store::{StoreError, VersionedChannelStore};
 use crate::channels::producers_per_channel;
@@ -54,7 +55,7 @@ pub struct TraceExecutor<M: WireMessage> {
     graph: Rc<GraphRecord>,
     scheduler: Rc<Scheduler>,
     producers: BTreeMap<String, i64>,
-    materializer: Rc<dyn PromptMaterializer<M>>,
+    materializer: Rc<dyn PromptMaterializer>,
     sink: Rc<dyn GraphSink<M>>,
     handle: Handle,
     compress_edge_delays: bool,
@@ -66,7 +67,7 @@ pub struct TraceExecutor<M: WireMessage> {
 impl<M: WireMessage> TraceExecutor<M> {
     pub fn new(
         graph: Rc<GraphRecord>,
-        materializer: Rc<dyn PromptMaterializer<M>>,
+        materializer: Rc<dyn PromptMaterializer>,
         sink: Rc<dyn GraphSink<M>>,
         handle: Handle,
         flags: ExecutorFlags,
@@ -187,7 +188,10 @@ impl<M: WireMessage> TraceExecutor<M> {
         }
 
         let inputs = ctx.store.snapshot_at_seq(gate_seq)?;
-        let messages: Vec<M> = self.materializer.build(node, &inputs);
+        let messages: Vec<Bytes> = self
+            .materializer
+            .build(node, &inputs)
+            .map_err(|error| TraceError::Other(error.to_string()))?;
 
         // Signal the node's first token the moment it streams in, so
         // first-token-anchored successors gate on it (not on completion).
@@ -210,22 +214,32 @@ impl<M: WireMessage> TraceExecutor<M> {
     /// The value written to a node's output channel for a reply. A messages-typed
     /// channel gets a one-element `[message]` list (empty on no content); a
     /// value-typed channel gets the serialized message (or `null`).
-    fn reply_value(&self, node: &LlmNode, reply: GraphReply<M>) -> Value {
+    fn reply_value(&self, node: &LlmNode, reply: GraphReply<M>) -> ChanVal {
         let messages = self.channel_is_messages(&node.output);
         match reply.message {
             Some(m) => {
                 let mv = serde_json::to_value(m).unwrap_or(Value::Null);
-                if messages { Value::Array(vec![mv]) } else { mv }
+                if messages {
+                    let wire = reply.wire.unwrap_or_else(|| {
+                        Bytes::from(
+                            serde_json::to_vec(&mv)
+                                .expect("serde_json::Value serialization is infallible"),
+                        )
+                    });
+                    ChanVal::encoded_messages(vec![(mv, wire)])
+                } else {
+                    ChanVal::Val(mv)
+                }
             }
             None => self.empty_value(node),
         }
     }
 
-    fn empty_value(&self, node: &LlmNode) -> Value {
+    fn empty_value(&self, node: &LlmNode) -> ChanVal {
         if self.channel_is_messages(&node.output) {
-            json!([])
+            ChanVal::encoded_messages(Vec::new())
         } else {
-            Value::Null
+            ChanVal::Val(Value::Null)
         }
     }
 
@@ -241,11 +255,14 @@ impl<M: WireMessage> TraceExecutor<M> {
         &self,
         node_id: &str,
         channel: &str,
-        value: Value,
+        value: ChanVal,
         ctx: &Rc<TraceContext>,
     ) -> Result<(), TraceError> {
-        ctx.store
-            .write(std::slice::from_ref(&channel.to_string()), &value, node_id)?;
+        ctx.store.write_channel_value(
+            std::slice::from_ref(&channel.to_string()),
+            &value,
+            node_id,
+        )?;
         Ok(())
     }
 

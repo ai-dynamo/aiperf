@@ -17,22 +17,34 @@ name = "aiperf"
 path = "src/main.rs"
 
 [dependencies]
+aiperf-accuracy = { path = "../aiperf-accuracy" }
+aiperf-adaptive = { path = "../aiperf-adaptive" }
 aiperf-core = { path = "../aiperf-core" }
+aiperf-dataset.workspace = true
+aiperf-endpoints.workspace = true
 aiperf-graph = { path = "../aiperf-graph" }
+aiperf-metrics.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
 aiperf-transport = { path = "../aiperf-transport" }
 aiperf-clock.workspace = true
+aiperf-rng.workspace = true
 loadgen-core.workspace = true
 mimalloc = "0.1"
+parquet.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+bytes.workspace = true
 clap.workspace = true
 chrono.workspace = true
+csv.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+rustc-hash.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

@@ -96,7 +96,10 @@ impl GammaProcess {
     /// Requires `rate > 0` and `smoothness > 0`. `smoothness = 1` == Poisson.
     pub fn new(rate: f64, smoothness: f64, seed: u64) -> Self {
         assert!(rate > 0.0, "Gamma rate must be > 0, got {rate}");
-        assert!(smoothness > 0.0, "Gamma smoothness must be > 0, got {smoothness}");
+        assert!(
+            smoothness > 0.0,
+            "Gamma smoothness must be > 0, got {smoothness}"
+        );
         Self {
             rate,
             smoothness,
@@ -177,9 +180,9 @@ pub fn make_interval_generator(
 ) -> Box<dyn IntervalGenerator> {
     match pattern {
         ArrivalPattern::ConcurrencyBurst => Box::new(ConcurrencyBurst),
-        ArrivalPattern::Constant => {
-            Box::new(Constant::new(rate.expect("constant arrival requires a rate")))
-        }
+        ArrivalPattern::Constant => Box::new(Constant::new(
+            rate.expect("constant arrival requires a rate"),
+        )),
         ArrivalPattern::Poisson => Box::new(Poisson::new(
             rate.expect("poisson arrival requires a rate"),
             seed,
@@ -250,7 +253,10 @@ mod tests {
         let mut b = Poisson::new(100.0, 123);
         let seq_a: Vec<i64> = (0..1000).map(|_| a.next_interval_ns()).collect();
         let seq_b: Vec<i64> = (0..1000).map(|_| b.next_interval_ns()).collect();
-        assert_eq!(seq_a, seq_b, "same seed must reproduce the interval sequence");
+        assert_eq!(
+            seq_a, seq_b,
+            "same seed must reproduce the interval sequence"
+        );
     }
 
     #[test]

@@ -111,10 +111,13 @@ mod tests {
 
     #[test]
     fn from_base_seeded_does_not_consume_base_state() {
-        let mut base = RandomGenerator::from_seed(Some(0));
-        let mut fresh = RandomGenerator::from_seed(Some(0));
-        let _derived = HashIdRandomGenerator::from_base(&mut base);
-        assert_eq!(base.random_u64(), fresh.random_u64());
+        for seed in [0, 1, u64::MAX] {
+            let mut base = RandomGenerator::from_seed(Some(seed));
+            let mut fresh = RandomGenerator::from_seed(Some(seed));
+            let derived = HashIdRandomGenerator::from_base(&mut base);
+            assert_eq!(derived.base_seed(), seed);
+            assert_eq!(base.random_u64(), fresh.random_u64());
+        }
     }
 
     #[test]
@@ -157,8 +160,11 @@ mod tests {
     #[test]
     fn seedless_base_draws_fallback_seed() {
         let mut base = RandomGenerator::from_seed(None);
+        let mut expected = base.clone();
         let derived = HashIdRandomGenerator::from_base(&mut base);
         assert_eq!(derived.generator().seed(), Some(derived.base_seed()));
+        assert_eq!(derived.base_seed(), expected.random_u64());
+        assert_eq!(base.random_u64(), expected.random_u64());
     }
 
     #[test]
@@ -170,5 +176,52 @@ mod tests {
             hash_rng.generator().seed(),
             Some(derive_seed_u64("123:scope:-9"))
         );
+    }
+
+    #[test]
+    fn default_scope_and_extreme_hash_ids_match_colon_joined_vectors() {
+        let mut base = RandomGenerator::from_seed(Some(u64::MAX));
+        let mut hash_rng = HashIdRandomGenerator::from_base(&mut base);
+        assert_eq!(hash_rng.trace_id(), "");
+
+        for hash_id in [i64::MIN, 0, i64::MAX] {
+            hash_rng.reseed_for_hash_id(hash_id, None);
+            let expected = derive_seed_u64(&format!("{}::{hash_id}", u64::MAX));
+            assert_eq!(hash_rng.generator().seed(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn mutable_generator_access_deref_and_clone_preserve_state() {
+        let mut base = RandomGenerator::from_seed(Some(8));
+        let mut hash_rng = HashIdRandomGenerator::from_base(&mut base);
+        hash_rng.set_trace_id(String::from("owned-scope"));
+        hash_rng.reseed_for_hash_id(1, None);
+
+        let mut cloned = hash_rng.clone();
+        let inner_via_deref: &RandomGenerator = &hash_rng;
+        assert_eq!(inner_via_deref.seed(), hash_rng.generator().seed());
+        assert_eq!(hash_rng.random_u64(), cloned.random_u64());
+        hash_rng.generator_mut().reseed(55);
+        let via_deref = hash_rng.random_u64();
+        cloned.reseed(55);
+        assert_eq!(via_deref, cloned.random_u64());
+        assert_eq!(hash_rng.trace_id(), "owned-scope");
+    }
+
+    #[test]
+    fn reseeding_is_order_independent_across_interleaved_scopes() {
+        let mut base = RandomGenerator::from_seed(Some(42));
+        let mut rng = HashIdRandomGenerator::from_base(&mut base);
+        let scopes = [("trace-a", 7), ("trace-b", -3), ("trace-a", 99)];
+        let mut first = Vec::new();
+        for (scope, hash_id) in scopes {
+            rng.reseed_for_hash_id(hash_id, Some(scope));
+            first.push([rng.random_u64(), rng.random_u64()]);
+        }
+        for (idx, (scope, hash_id)) in scopes.into_iter().enumerate().rev() {
+            rng.reseed_for_hash_id(hash_id, Some(scope));
+            assert_eq!([rng.random_u64(), rng.random_u64()], first[idx]);
+        }
     }
 }
