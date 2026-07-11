@@ -11,17 +11,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
-use aiperf::multiturn::{ConversationSource, SyntheticConversationSource, TurnToSend};
-use aiperf::phase_runtime::{ScheduledPhasePlan, run_scheduled_phases};
+use aiperf::multiturn::{
+    ConversationSource, IssuedCredit, SyntheticConversationSource, TurnToSend,
+};
+use aiperf::phase_runtime::{
+    ScheduledPhasePlan, ScheduledPhaseResources, SlotPoolPhaseResources, run_scheduled_phases,
+};
 use aiperf::scheduled::{
-    ScheduledAncillaryPolicies, SingleTurnDatasetWorkload, TurnDispatchOutcome, TurnDispatcher,
-    Workload,
+    ScheduledAncillaryPolicies, ScheduledRuntime, SingleTurnDatasetWorkload, TurnDispatchOutcome,
+    TurnDispatcher, TurnRecordProcessor, Workload,
 };
 use aiperf::workload::SkeletonWorkload;
 use aiperf_clock::{Clock, sim_clock::SimClock};
 use aiperf_metrics::HttpTrace;
 use aiperf_timing::{
-    GracePeriod, PhaseBranchStats, PhaseConfig, PhaseKind, PhaseObserver, PhaseStats, StopConfig,
+    GracePeriod, PhaseBranchStats, PhaseConfig, PhaseKind, PhaseObserver, PhaseStats, SlotPool,
+    StopConfig,
 };
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -152,6 +157,99 @@ fn scheduled_runtime_uses_real_phase_handoff_and_finalizes_reports_after_returns
     assert!(events.contains(&PhaseEvent::Complete("warmup".into(), 20)));
 }
 
+#[test]
+fn production_adapter_debt_drains_shared_capacity_during_seamless_handoff() {
+    let clock = Rc::new(SimClock::new());
+    let starts = Rc::new(RefCell::new(Vec::new()));
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(DebtDispatcher {
+        clock: clock.clone(),
+        starts: starts.clone(),
+        dispatched: Cell::new(0),
+    });
+    let observer = Rc::new(TimelineObserver {
+        clock: clock.clone(),
+        events: RefCell::new(Vec::new()),
+    });
+    let pool = Rc::new(SlotPool::new(0));
+    let resources: Rc<dyn ScheduledPhaseResources> =
+        Rc::new(SlotPoolPhaseResources::new(Some(pool.clone()), None));
+    let plans = vec![
+        ScheduledPhasePlan::new(
+            phase_config_with_count("warmup", PhaseKind::Warmup, true, 4)
+                .with_concurrency(Some(4), None),
+            shared_slot_workload(4, pool.clone()),
+            ScheduledAncillaryPolicies::default(),
+        )
+        .with_resources(resources.clone()),
+        ScheduledPhasePlan::new(
+            phase_config("profiling", PhaseKind::Profiling, false).with_concurrency(Some(3), None),
+            shared_slot_workload(1, pool.clone()),
+            ScheduledAncillaryPolicies::default(),
+        )
+        .with_resources(resources),
+    ];
+    let clock_dyn: Rc<dyn Clock> = clock.clone();
+    let phase_observer: Rc<dyn PhaseObserver> = observer.clone();
+
+    let report = drive_sim(clock.clone(), async move {
+        run_scheduled_phases(plans, clock_dyn, dispatcher, phase_observer).await
+    })
+    .unwrap();
+
+    assert_eq!(report.phases[0].final_requests_completed, Some(4));
+    assert_eq!(report.phases[1].final_requests_completed, Some(1));
+    assert_eq!(starts.borrow().as_slice(), &[0, 0, 0, 0, 5]);
+    assert_eq!(pool.current_limit(), 3);
+    assert_eq!(pool.debt(), 0);
+    assert_eq!(clock.now_ns(), 20);
+    let events = observer.events.borrow();
+    assert!(events.contains(&PhaseEvent::Start("profiling".into(), 0)));
+    assert!(events.contains(&PhaseEvent::Complete("warmup".into(), 20)));
+}
+
+#[test]
+fn phased_api_joins_terminal_processors_after_the_phase_window_closes() {
+    let clock = Rc::new(SimClock::new());
+    let observer = Rc::new(TimelineObserver {
+        clock: clock.clone(),
+        events: RefCell::new(Vec::new()),
+    });
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(DelayedDispatcher {
+        clock: clock.clone(),
+        dispatched: Cell::new(1),
+    });
+    let processor = Rc::new(DelayedProcessor {
+        clock: clock.clone(),
+        completed_at: Cell::new(None),
+    });
+    let processors: Vec<Rc<dyn TurnRecordProcessor>> = vec![processor.clone()];
+    let plans = vec![
+        ScheduledPhasePlan::new(
+            phase_config("profiling", PhaseKind::Profiling, false),
+            one_request_workload(),
+            ScheduledAncillaryPolicies::default(),
+        )
+        .with_record_processors(processors),
+    ];
+    let clock_dyn: Rc<dyn Clock> = clock.clone();
+    let phase_observer: Rc<dyn PhaseObserver> = observer.clone();
+
+    let report = drive_sim(clock.clone(), async move {
+        run_scheduled_phases(plans, clock_dyn, dispatcher, phase_observer).await
+    })
+    .unwrap();
+
+    assert_eq!(report.phases[0].requests_end_ns, Some(5));
+    assert_eq!(processor.completed_at.get(), Some(12));
+    assert_eq!(clock.now_ns(), 12);
+    assert!(
+        observer
+            .events
+            .borrow()
+            .contains(&PhaseEvent::Complete("profiling".into(), 5))
+    );
+}
+
 fn one_request_workload() -> Rc<dyn Workload> {
     let source: Box<dyn ConversationSource> = Box::new(
         SyntheticConversationSource::new(SkeletonWorkload {
@@ -166,12 +264,121 @@ fn one_request_workload() -> Rc<dyn Workload> {
     Rc::new(SingleTurnDatasetWorkload::new(source, 1).unwrap())
 }
 
+struct SharedSlotWorkload {
+    conversations: RefCell<Box<dyn ConversationSource>>,
+    count: usize,
+    slots: Rc<SlotPool>,
+}
+
+#[async_trait(?Send)]
+impl Workload for SharedSlotWorkload {
+    fn name(&self) -> &'static str {
+        "shared_slot_test"
+    }
+
+    async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> anyhow::Result<()> {
+        for _ in 0..self.count {
+            let guard = self.slots.acquire().await;
+            let turn = self
+                .conversations
+                .borrow_mut()
+                .next(None)?
+                .build_first_turn(Some(1))?;
+            if !runtime.issue_turn(
+                turn,
+                runtime.now_ns(),
+                None,
+                Box::new(move |_credit, _outcome| Box::pin(async move { drop(guard) })),
+            ) {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn shared_slot_workload(count: usize, slots: Rc<SlotPool>) -> Rc<dyn Workload> {
+    let source: Box<dyn ConversationSource> = Box::new(
+        SyntheticConversationSource::new(SkeletonWorkload {
+            num_requests: count,
+            input_tokens: 4,
+            output_tokens: 1,
+            turns: 1,
+            think_time_ms: None,
+        })
+        .unwrap(),
+    );
+    Rc::new(SharedSlotWorkload {
+        conversations: RefCell::new(source),
+        count,
+        slots,
+    })
+}
+
+struct DebtDispatcher {
+    clock: Rc<SimClock>,
+    starts: Rc<RefCell<Vec<i64>>>,
+    dispatched: Cell<usize>,
+}
+
+#[async_trait(?Send)]
+impl TurnDispatcher for DebtDispatcher {
+    async fn dispatch_turn(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> anyhow::Result<TurnDispatchOutcome> {
+        let index = self.dispatched.get();
+        self.dispatched.set(index + 1);
+        let start_ns = self.clock.now_ns();
+        self.starts.borrow_mut().push(start_ns);
+        let delay_ns = if index == 0 { 20 } else { 5 };
+        observer.on_admit(turn.uuid, start_ns as f64 / 1_000_000.0, 0);
+        self.clock.clone().sleep(delay_ns).await;
+        on_first_token(delay_ns);
+        observer.on_token(turn.uuid, self.clock.now_ns() as f64 / 1_000_000.0);
+        observer.on_terminal(turn.uuid, ReplayTerminalStatus::Completed);
+        Ok(TurnDispatchOutcome {
+            start_ns,
+            end_ns: self.clock.now_ns(),
+            terminal: ReplayTerminalStatus::Completed,
+            response_text: "ok".into(),
+            prompt_tokens: Some(turn.input_length as u64),
+            completion_tokens: Some(1),
+            http: HttpTrace::default(),
+        })
+    }
+}
+
+struct DelayedProcessor {
+    clock: Rc<SimClock>,
+    completed_at: Cell<Option<i64>>,
+}
+
+#[async_trait(?Send)]
+impl TurnRecordProcessor for DelayedProcessor {
+    async fn process(
+        &self,
+        _credit: &IssuedCredit,
+        _outcome: &TurnDispatchOutcome,
+    ) -> anyhow::Result<()> {
+        self.clock.clone().sleep(7).await;
+        self.completed_at.set(Some(self.clock.now_ns()));
+        Ok(())
+    }
+}
+
 fn phase_config(id: &str, kind: PhaseKind, seamless: bool) -> PhaseConfig {
+    phase_config_with_count(id, kind, seamless, 1)
+}
+
+fn phase_config_with_count(id: &str, kind: PhaseKind, seamless: bool, count: u64) -> PhaseConfig {
     PhaseConfig::new(
         id,
         kind,
         StopConfig {
-            total_expected_requests: Some(1),
+            total_expected_requests: Some(count),
             ..StopConfig::default()
         },
     )

@@ -19,7 +19,7 @@ use std::rc::Rc;
 use aiperf_timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseConfig, PhaseContext,
     PhaseExecution, PhaseExecutionError, PhaseExecutionFactory, PhaseKind, PhaseObserver,
-    PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, ReleasedStuckSlots,
+    PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, ReleasedStuckSlots, SlotPool,
 };
 use anyhow::{Result, anyhow};
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -56,19 +56,74 @@ impl ScheduledPhaseController for NoopScheduledPhaseController {
     }
 }
 
-/// Workload-specific force-cleanup seam for admission guards stored outside
-/// scheduler tasks.
-pub trait ScheduledPhaseCleanup {
+/// Shared admission resources configured and cleaned up at phase boundaries.
+///
+/// Implementations keep long-lived slot pools outside individual workloads so
+/// a lower cap can debt-drain returns from a seamless predecessor. A workload
+/// that stores guards outside scheduler tasks also releases them here after the
+/// cancellation-drain backstop fires.
+pub trait ScheduledPhaseResources {
+    /// Apply this phase's targets before setup or issuance begins.
+    fn configure(&self, _config: &PhaseConfig) -> Result<()> {
+        Ok(())
+    }
+
     /// Release phase-owned admission state after cancellation drain fails.
     fn release_stuck(&self) -> ReleasedStuckSlots;
 }
 
-/// Cleanup used by workloads whose guards live entirely in scheduler tasks.
+/// Resources used by workloads with no shared admission state.
 #[derive(Default)]
-pub struct NoopScheduledPhaseCleanup;
+pub struct NoopScheduledPhaseResources;
 
-impl ScheduledPhaseCleanup for NoopScheduledPhaseCleanup {
+impl ScheduledPhaseResources for NoopScheduledPhaseResources {
     fn release_stuck(&self) -> ReleasedStuckSlots {
+        ReleasedStuckSlots::default()
+    }
+}
+
+/// Shared session/prefill pools whose debt survives phase boundaries.
+pub struct SlotPoolPhaseResources {
+    session: Option<Rc<SlotPool>>,
+    prefill: Option<Rc<SlotPool>>,
+}
+
+impl SlotPoolPhaseResources {
+    /// Bind optional long-lived pools used by every phase workload.
+    pub fn new(session: Option<Rc<SlotPool>>, prefill: Option<Rc<SlotPool>>) -> Self {
+        Self { session, prefill }
+    }
+}
+
+impl ScheduledPhaseResources for SlotPoolPhaseResources {
+    fn configure(&self, config: &PhaseConfig) -> Result<()> {
+        match (config.concurrency, &self.session) {
+            (Some(limit), Some(pool)) => pool.set_limit(limit),
+            (Some(_), None) => {
+                return Err(anyhow!(
+                    "phase {:?} configures session concurrency without a shared session pool",
+                    config.id
+                ));
+            }
+            (None, _) => {}
+        }
+        match (config.prefill_concurrency, &self.prefill) {
+            (Some(limit), Some(pool)) => pool.set_limit(limit),
+            (Some(_), None) => {
+                return Err(anyhow!(
+                    "phase {:?} configures prefill concurrency without a shared prefill pool",
+                    config.id
+                ));
+            }
+            (None, _) => {}
+        }
+        Ok(())
+    }
+
+    fn release_stuck(&self) -> ReleasedStuckSlots {
+        // Slot guards remain the authoritative ownership record. Cancelling
+        // their local tasks drops them; fabricating releases here would make a
+        // later guard drop over-credit the pool.
         ReleasedStuckSlots::default()
     }
 }
@@ -83,10 +138,12 @@ pub struct ScheduledPhasePlan {
     pub ancillary: ScheduledAncillaryPolicies,
     /// Terminal record processors attached to this phase.
     pub record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
+    /// Whether the scheduled runtime enforces this phase's stop bounds.
+    pub enforce_stop: bool,
     /// Phase-owned actuator/ramp lifecycle.
     pub controller: Rc<dyn ScheduledPhaseController>,
-    /// Workload-specific force cleanup.
-    pub cleanup: Rc<dyn ScheduledPhaseCleanup>,
+    /// Long-lived admission state and force cleanup.
+    pub resources: Rc<dyn ScheduledPhaseResources>,
 }
 
 impl ScheduledPhasePlan {
@@ -101,9 +158,37 @@ impl ScheduledPhasePlan {
             workload,
             ancillary,
             record_processors: Vec::new(),
+            enforce_stop: true,
             controller: Rc::new(NoopScheduledPhaseController),
-            cleanup: Rc::new(NoopScheduledPhaseCleanup),
+            resources: Rc::new(NoopScheduledPhaseResources),
         }
+    }
+
+    /// Preserve natural-exhaustion workloads that own their authored bounds.
+    pub fn with_enforce_stop(mut self, enforce_stop: bool) -> Self {
+        self.enforce_stop = enforce_stop;
+        self
+    }
+
+    /// Attach terminal consumers that run after credit return.
+    pub fn with_record_processors(
+        mut self,
+        record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
+    ) -> Self {
+        self.record_processors = record_processors;
+        self
+    }
+
+    /// Attach the phase-owned actuator lifecycle.
+    pub fn with_controller(mut self, controller: Rc<dyn ScheduledPhaseController>) -> Self {
+        self.controller = controller;
+        self
+    }
+
+    /// Attach shared admission resources used across phase workloads.
+    pub fn with_resources(mut self, resources: Rc<dyn ScheduledPhaseResources>) -> Self {
+        self.resources = resources;
+        self
     }
 }
 
@@ -144,29 +229,38 @@ pub async fn run_scheduled_phases(
         .map(|(index, config)| (config.id.clone(), (index, config.kind)))
         .collect::<BTreeMap<_, _>>();
     let reports = Rc::new(RefCell::new(Vec::new()));
-    let execution_factory: Rc<dyn PhaseExecutionFactory> =
-        Rc::new(ScheduledPhaseExecutionFactory {
-            clock: clock.clone(),
-            dispatcher,
-            plans: RefCell::new(
-                plans
-                    .into_iter()
-                    .map(|plan| (plan.config.id.clone(), plan))
-                    .collect(),
-            ),
-            reports: reports.clone(),
-        });
+    let execution_factory = Rc::new(ScheduledPhaseExecutionFactory {
+        clock: clock.clone(),
+        dispatcher,
+        plans: RefCell::new(
+            plans
+                .into_iter()
+                .map(|plan| (plan.config.id.clone(), plan))
+                .collect(),
+        ),
+        reports: reports.clone(),
+        runtimes: RefCell::new(Vec::new()),
+    });
+    let phase_execution_factory: Rc<dyn PhaseExecutionFactory> = execution_factory.clone();
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
         clock,
         observer.clone(),
-        execution_factory,
+        phase_execution_factory,
     ));
     let orchestrator = ClockPhaseOrchestrator::new(configs, runner_factory, observer)
         .map_err(|error| anyhow!(error))?;
-    let phases = orchestrator
-        .run_all()
-        .await
-        .map_err(|error| anyhow!(error))?;
+    let phase_result = orchestrator.run_all().await.map_err(|error| anyhow!(error));
+    let processor_result = execution_factory.wait_record_processors().await;
+    let phases = match (phase_result, processor_result) {
+        (Ok(phases), Ok(())) => phases,
+        (Err(phase_error), Ok(())) => return Err(phase_error),
+        (Ok(_), Err(processor_error)) => return Err(processor_error),
+        (Err(phase_error), Err(processor_error)) => {
+            return Err(phase_error.context(format!(
+                "terminal record processing also failed: {processor_error:#}"
+            )));
+        }
+    };
 
     let mut reports = reports.borrow_mut().drain(..).collect::<Vec<_>>();
     reports.sort_by_key(|(phase_id, _)| {
@@ -194,6 +288,17 @@ struct ScheduledPhaseExecutionFactory {
     dispatcher: Rc<dyn TurnDispatcher>,
     plans: RefCell<BTreeMap<String, ScheduledPhasePlan>>,
     reports: Rc<RefCell<Vec<(String, ScheduledRunReport)>>>,
+    runtimes: RefCell<Vec<Rc<ScheduledRuntime>>>,
+}
+
+impl ScheduledPhaseExecutionFactory {
+    async fn wait_record_processors(&self) -> Result<()> {
+        let runtimes = self.runtimes.borrow().clone();
+        for runtime in runtimes {
+            runtime.wait_record_processors().await?;
+        }
+        Ok(())
+    }
 }
 
 impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
@@ -214,8 +319,9 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             start_ns,
             self.dispatcher.clone(),
             config.stop,
-            true,
+            plan.enforce_stop,
         );
+        runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
         runtime.set_turn_lifecycle_observer(tracker.clone());
         for processor in plan.record_processors {
             runtime.add_record_processor(processor);
@@ -225,13 +331,14 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             plan.ancillary.url_selector,
             plan.ancillary.phase,
         );
+        self.runtimes.borrow_mut().push(runtime.clone());
         Rc::new(ScheduledPhaseExecution {
             phase_id: config.id.clone(),
             workload: plan.workload,
             runtime,
             tracker,
             controller: plan.controller,
-            cleanup: plan.cleanup,
+            resources: plan.resources,
             reports: self.reports.clone(),
             finalized: Cell::new(false),
         })
@@ -261,12 +368,18 @@ struct ScheduledPhaseExecution {
     runtime: Rc<ScheduledRuntime>,
     tracker: Rc<PhaseDispatchTracker>,
     controller: Rc<dyn ScheduledPhaseController>,
-    cleanup: Rc<dyn ScheduledPhaseCleanup>,
+    resources: Rc<dyn ScheduledPhaseResources>,
     reports: Rc<RefCell<Vec<(String, ScheduledRunReport)>>>,
     finalized: Cell<bool>,
 }
 
 impl PhaseExecution for ScheduledPhaseExecution {
+    fn configure(&self, config: &PhaseConfig) -> Result<(), PhaseExecutionError> {
+        self.resources.configure(config).map_err(|error| {
+            PhaseExecutionError::new(format!("configuring shared phase resources: {error:#}"))
+        })
+    }
+
     fn start_ramps(&self) -> Result<(), PhaseExecutionError> {
         self.controller
             .start()
@@ -305,7 +418,7 @@ impl PhaseExecution for ScheduledPhaseExecution {
 
     fn release_stuck_slots(&self) -> ReleasedStuckSlots {
         let active = self.tracker.cancel_active();
-        let cleanup = self.cleanup.release_stuck();
+        let cleanup = self.resources.release_stuck();
         ReleasedStuckSlots {
             session: cleanup.session,
             prefill: cleanup.prefill.saturating_add(active),

@@ -429,7 +429,7 @@ impl ScheduledRuntime {
         self.record_processor_tasks.borrow_mut().push(task);
     }
 
-    async fn wait_record_processors(&self) -> Result<()> {
+    pub(crate) async fn wait_record_processors(&self) -> Result<()> {
         let tasks = self
             .record_processor_tasks
             .borrow_mut()
@@ -495,6 +495,11 @@ impl ScheduledRuntime {
     /// Shared local-task scheduler.
     pub fn scheduler(&self) -> Rc<ClockTaskScheduler> {
         self.scheduler.clone()
+    }
+
+    /// Select whether credit-relative metrics are present for this workload.
+    pub(crate) fn set_credit_latency_enabled(&self, enabled: bool) {
+        self.credit_latency_enabled.set(enabled);
     }
 
     /// True if policy permits another continuation or first turn.
