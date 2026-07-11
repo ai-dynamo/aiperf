@@ -69,7 +69,9 @@ impl RandomGenerator {
     /// Uniform integer from `range(start, stop, step)` semantics.
     pub fn randrange(&mut self, start: i64, stop: i64, step: i64) -> Result<i64> {
         if step == 0 {
-            return Err(RngError::EmptyRange { what: "randrange step=0" });
+            return Err(RngError::EmptyRange {
+                what: "randrange step=0",
+            });
         }
 
         let width = stop - start;
@@ -100,7 +102,9 @@ impl RandomGenerator {
     /// Uniform integer from `[lo, hi)`.
     pub fn randrange_u64(&mut self, lo: u64, hi: u64) -> Result<u64> {
         if lo >= hi {
-            return Err(RngError::EmptyRange { what: "randrange_u64" });
+            return Err(RngError::EmptyRange {
+                what: "randrange_u64",
+            });
         }
         Ok(self.rng.random_range(lo..hi))
     }
@@ -158,7 +162,11 @@ impl RandomGenerator {
     }
 
     /// Select one element, uniformly when `weights` is `None` or by cumulative weights.
-    pub fn weighted_choice<T: Clone>(&mut self, values: &[T], weights: Option<&[f64]>) -> Result<T> {
+    pub fn weighted_choice<T: Clone>(
+        &mut self,
+        values: &[T],
+        weights: Option<&[f64]>,
+    ) -> Result<T> {
         let Some(weights) = weights else {
             return self.choice(values).cloned();
         };
@@ -175,7 +183,9 @@ impl RandomGenerator {
         replace: bool,
     ) -> Result<Vec<T>> {
         if values.is_empty() && size > 0 {
-            return Err(RngError::EmptySequence { what: "numpy_choice" });
+            return Err(RngError::EmptySequence {
+                what: "numpy_choice",
+            });
         }
         if !replace && size > values.len() {
             return Err(RngError::SampleTooLarge {
@@ -262,13 +272,7 @@ impl RandomGenerator {
     }
 
     /// Sample a bounded normal using Python AIPerf's rejection cap and clamp fallback.
-    pub fn sample_normal(
-        &mut self,
-        mean: f64,
-        stddev: f64,
-        lower: f64,
-        upper: f64,
-    ) -> Result<f64> {
+    pub fn sample_normal(&mut self, mean: f64, stddev: f64, lower: f64, upper: f64) -> Result<f64> {
         if lower > upper {
             return Err(RngError::InvalidBounds { lower, upper });
         }
@@ -458,7 +462,9 @@ mod tests {
         let mut rng = RandomGenerator::from_seed(Some(3));
         assert!(rng.weighted_choice(&[1, 2], Some(&[1.0])).is_err());
         assert!(rng.weighted_choice(&[1, 2], Some(&[0.0, 0.0])).is_err());
-        assert!(rng.weighted_choice(&[1, 2], Some(&[1.0, f64::NAN])).is_err());
+        assert!(rng
+            .weighted_choice(&[1, 2], Some(&[1.0, f64::NAN]))
+            .is_err());
         for _ in 0..100 {
             assert_eq!(rng.weighted_choice(&[1, 2], Some(&[0.0, 5.0])).unwrap(), 2);
         }
@@ -498,7 +504,9 @@ mod tests {
     #[test]
     fn exponential_and_gamma_sample_means_match_parameterization() {
         let mut rng = RandomGenerator::from_seed(Some(8));
-        let exp: Vec<_> = (0..200_000).map(|_| rng.expovariate(4.0).unwrap()).collect();
+        let exp: Vec<_> = (0..200_000)
+            .map(|_| rng.expovariate(4.0).unwrap())
+            .collect();
         let exp_mean = mean(&exp);
         assert!((exp_mean - 0.25).abs() / 0.25 < 0.02, "{exp_mean}");
 

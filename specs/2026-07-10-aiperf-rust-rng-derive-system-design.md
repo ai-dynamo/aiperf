@@ -542,3 +542,16 @@ not Python bytes.
    read by `derive`). The thread-local recovers Python's "call `derive` from
    anywhere" ergonomics without a mutable global. Lean thread-local, set once, never
    reset mid-run.
+
+## Addendum — 2026-07-11
+
+The RNG substrate is now built as the leaf crate `crates/aiperf-rng`.
+
+Built surfaces:
+
+- `derive.rs`: `RngRoot`, `derive_seed_u64`, and alloc-free `derive_seed_parts`, with the BLAKE3 first-eight-bytes big-endian vectors from §6 pinned in unit tests.
+- `generator.rs`: one `rand_pcg::Pcg64`-backed `RandomGenerator` implementing the scalar and batch wrapper semantics from §3/§4 over `rand` + `rand_distr`, including bounded normal rejection/clamp behavior and Gamma scale parameterization.
+- `hash_id.rs`: seed-0-preserving, non-consuming `HashIdRandomGenerator::from_base`, instance/per-call trace scopes, and alloc-free per-`(trace_id, hash_id)` reseeding via `itoa` buffers and `derive_seed_parts`.
+- `dist.rs`: the five-way `SamplingDistribution` model plus `SequenceLengthDistribution`, preserving the Python distribution control flow (post-draw clamping, cumulative weighted walk, right-side cumulative search, probability-sum validation).
+
+This implementation does not add a Python-style global `init`/`derive` singleton and does not wire the crate into dataset, scheduler, or graph consumers yet. Those consumers should take `RngRoot` or owned `RandomGenerator` instances explicitly when they are ported.

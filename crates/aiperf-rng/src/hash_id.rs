@@ -127,8 +127,12 @@ mod tests {
         a.reseed_for_hash_id(7, Some("trace"));
         b.reseed_for_hash_id(7, Some("trace"));
 
-        let seq_a: Vec<_> = (0..20).map(|_| a.randrange(0, 1_000_000, 1).unwrap()).collect();
-        let seq_b: Vec<_> = (0..20).map(|_| b.randrange(0, 1_000_000, 1).unwrap()).collect();
+        let seq_a: Vec<_> = (0..20)
+            .map(|_| a.randrange(0, 1_000_000, 1).unwrap())
+            .collect();
+        let seq_b: Vec<_> = (0..20)
+            .map(|_| b.randrange(0, 1_000_000, 1).unwrap())
+            .collect();
         assert_eq!(seq_a, seq_b);
     }
 

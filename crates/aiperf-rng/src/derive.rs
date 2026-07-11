@@ -36,8 +36,9 @@ impl RngRoot {
     /// `"{root}:{identifier}"` and read the first eight digest bytes as a
     /// big-endian `u64`.
     pub fn derive_seed(self, identifier: &str) -> Option<u64> {
-        self.0
-            .map(|root| derive_seed_parts(&[root.to_string().as_bytes(), b":", identifier.as_bytes()]))
+        self.0.map(|root| {
+            derive_seed_parts(&[root.to_string().as_bytes(), b":", identifier.as_bytes()])
+        })
     }
 
     /// Derive an adaptive-sweep variation seed for `label`.
@@ -124,7 +125,11 @@ mod tests {
     #[test]
     fn derivation_is_order_independent() {
         let root = RngRoot(Some(99));
-        let ids = ["dataset.audio.duration", "timing.request.poisson_interval", "dataset.sampler.shuffle"];
+        let ids = [
+            "dataset.audio.duration",
+            "timing.request.poisson_interval",
+            "dataset.sampler.shuffle",
+        ];
         let forward: Vec<_> = ids.iter().map(|id| root.derive_seed(id)).collect();
         let mut reverse_ids = ids;
         reverse_ids.reverse();
