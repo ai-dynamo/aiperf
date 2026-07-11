@@ -8,10 +8,11 @@
 //! order and implements constant arithmetic/LaTeX equivalence without a Python
 //! sympy process.
 
-use aiperf_metrics::GradingResult;
-use async_trait::async_trait;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
+use aiperf_metrics::GradingResult;
+use async_trait::async_trait;
 use regex::Regex;
 
 use super::Grader;
@@ -19,6 +20,7 @@ use crate::AccuracyError;
 
 const BOXED: &str = "\\boxed{";
 const ABS_TOLERANCE: f64 = 1e-4;
+const SYMBOLIC_TOLERANCE: f64 = 1e-7;
 
 // Keep this list in the source order used by the inherited recipe. Some entries
 // deliberately contain regex metacharacters because the Python implementation
@@ -181,7 +183,8 @@ static NUMERIC_ZERO_AT_END: LazyLock<Regex> =
 static UNIT_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     UNIT_TEXTS_BASE
         .iter()
-        .flat_map(|unit| [unit.to_string(), format!("{unit}s")])
+        .map(|unit| (*unit).to_string())
+        .chain(UNIT_TEXTS_BASE.iter().map(|unit| format!("{unit}s")))
         .map(|unit| {
             Regex::new(&format!(r"(^|\W){unit}($|\W)"))
                 .unwrap_or_else(|error| panic!("invalid inherited unit regex {unit:?}: {error}"))
@@ -611,41 +614,159 @@ fn close(left: f64, right: f64) -> bool {
 }
 
 fn expression_equivalent(left: &str, right: &str) -> bool {
-    match (evaluate_expression(left), evaluate_expression(right)) {
-        (Some(left), Some(right)) => close(left, right),
-        _ => canonical_expression(left) == canonical_expression(right),
+    let left_expression = latex_to_expression(left);
+    let right_expression = latex_to_expression(right);
+    let variables = expression_variables(&left_expression)
+        .union(&expression_variables(&right_expression))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if variables.is_empty() {
+        if let (Some(left), Some(right)) = (
+            evaluate_expression(&left_expression, &BTreeMap::new()),
+            evaluate_expression(&right_expression, &BTreeMap::new()),
+        ) {
+            return symbolic_close(left, right);
+        }
+    } else {
+        // A native deterministic identity check replaces the Python/SymPy
+        // subprocess. Multiple independent points make algebraic identities
+        // such as `(x+1)^2 == x^2+2x+1` work while avoiding a single-point
+        // false positive. Undefined points are skipped symmetrically.
+        const SAMPLES: &[f64] = &[
+            0.37, 1.13, -0.71, 2.07, -1.89, 3.31, 0.83, -2.47, 4.19, -3.73, 1.61, 5.03,
+        ];
+        let mut compared = 0usize;
+        for (sample_index, base) in SAMPLES.iter().copied().enumerate() {
+            let environment = variables
+                .iter()
+                .enumerate()
+                .map(|(variable_index, variable)| {
+                    let hash_offset = stable_name_offset(variable);
+                    let value = base
+                        + (variable_index as f64 + 1.0) * 0.173
+                        + hash_offset
+                        + sample_index as f64 * 0.011;
+                    (variable.clone(), value)
+                })
+                .collect::<BTreeMap<_, _>>();
+            match (
+                evaluate_expression(&left_expression, &environment),
+                evaluate_expression(&right_expression, &environment),
+            ) {
+                (Some(left), Some(right)) if symbolic_close(left, right) => compared += 1,
+                (Some(_), Some(_)) => return false,
+                _ => {}
+            }
+        }
+        if compared >= 6 {
+            return true;
+        }
     }
+
+    canonical_expression(&left_expression) == canonical_expression(&right_expression)
 }
 
 fn canonical_expression(input: &str) -> String {
-    latex_to_expression(input)
+    input
         .chars()
         .filter(|character| !character.is_whitespace())
         .flat_map(char::to_lowercase)
         .collect()
 }
 
-fn evaluate_expression(input: &str) -> Option<f64> {
-    let expression = latex_to_expression(input);
-    let mut parser = ExpressionParser::new(&expression);
+fn symbolic_close(left: f64, right: f64) -> bool {
+    left.is_finite()
+        && right.is_finite()
+        && (left - right).abs() <= SYMBOLIC_TOLERANCE * left.abs().max(right.abs()).max(1.0)
+}
+
+fn stable_name_offset(name: &str) -> f64 {
+    let hash = name.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    (hash % 997) as f64 / 9_970.0
+}
+
+fn expression_variables(input: &str) -> BTreeSet<String> {
+    let mut variables = BTreeSet::new();
+    let bytes = input.as_bytes();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        if bytes[cursor].is_ascii_alphabetic() || bytes[cursor] == b'_' {
+            let start = cursor;
+            cursor += 1;
+            while cursor < bytes.len()
+                && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_')
+            {
+                cursor += 1;
+            }
+            let identifier = &input[start..cursor];
+            if !is_function(identifier) && !matches!(identifier, "pi" | "e") {
+                variables.insert(identifier.to_string());
+            }
+        } else {
+            cursor += 1;
+        }
+    }
+    variables
+}
+
+fn evaluate_expression(input: &str, variables: &BTreeMap<String, f64>) -> Option<f64> {
+    let mut parser = ExpressionParser::new(input, variables);
     let value = parser.expression()?;
     parser.skip_whitespace();
     (parser.cursor == parser.input.len() && value.is_finite()).then_some(value)
 }
 
 fn latex_to_expression(input: &str) -> String {
-    let mut value = expand_command(input, "\\frac", |parts| {
-        format!("(({})/({}))", parts[0], parts[1])
-    });
-    value = expand_command(&value, "\\sqrt", |parts| format!("sqrt({})", parts[0]));
+    let mut value = input.to_string();
+    for _ in 0..16 {
+        let expanded_fraction = expand_command(&value, "\\frac", |parts| {
+            format!("(({})/({}))", parts[0], parts[1])
+        });
+        let expanded_sqrt = expand_command(&expanded_fraction, "\\sqrt", |parts| {
+            format!("sqrt({})", parts[0])
+        });
+        if expanded_sqrt == value {
+            break;
+        }
+        value = expanded_sqrt;
+    }
+    for command in ["\\operatorname", "\\mathrm", "\\mathit", "\\text"] {
+        value = expand_command(&value, command, |parts| parts[0].clone());
+    }
     value = value
         .replace("\\cdot", "*")
         .replace("\\times", "*")
         .replace("\\pi", "pi")
+        .replace("\\sin", "sin")
+        .replace("\\cos", "cos")
+        .replace("\\tan", "tan")
+        .replace("\\arcsin", "asin")
+        .replace("\\arccos", "acos")
+        .replace("\\arctan", "atan")
+        .replace("\\ln", "ln")
+        .replace("\\log", "log")
+        .replace("\\exp", "exp")
         .replace("^{", "^(")
         .replace('{', "(")
         .replace('}', ")");
-    value
+    // Remaining alphabetic LaTeX commands are symbols (`\theta` ->
+    // `theta`) for the deterministic native evaluator.
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\\'
+            && characters
+                .peek()
+                .is_some_and(|next| next.is_ascii_alphabetic())
+        {
+            continue;
+        }
+        output.push(character);
+    }
+    output
 }
 
 fn expand_command(input: &str, command: &str, render: impl Fn(&[String]) -> String) -> String {
@@ -699,13 +820,15 @@ fn matching_brace_end(input: &str, content_start: usize) -> Option<usize> {
 struct ExpressionParser<'a> {
     input: &'a [u8],
     cursor: usize,
+    variables: &'a BTreeMap<String, f64>,
 }
 
 impl<'a> ExpressionParser<'a> {
-    fn new(input: &'a str) -> Self {
+    fn new(input: &'a str, variables: &'a BTreeMap<String, f64>) -> Self {
         Self {
             input: input.as_bytes(),
             cursor: 0,
+            variables,
         }
     }
 
@@ -728,33 +851,39 @@ impl<'a> ExpressionParser<'a> {
     }
 
     fn term(&mut self) -> Option<f64> {
-        let mut value = self.power()?;
+        let mut value = self.unary()?;
         loop {
             self.skip_whitespace();
             match self.peek() {
                 Some(b'*') => {
                     self.cursor += 1;
-                    value *= self.power()?;
+                    value *= self.unary()?;
                 }
                 Some(b'/') => {
                     self.cursor += 1;
-                    let denominator = self.power()?;
+                    let denominator = self.unary()?;
                     if denominator == 0.0 {
                         return None;
                     }
                     value /= denominator;
                 }
+                Some(byte) if starts_implicit_factor(byte) => value *= self.unary()?,
                 _ => return Some(value),
             }
         }
     }
 
     fn power(&mut self) -> Option<f64> {
-        let value = self.unary()?;
+        let mut value = self.atom()?;
+        while self.peek() == Some(b'!') {
+            self.cursor += 1;
+            value = factorial(value)?;
+            self.skip_whitespace();
+        }
         self.skip_whitespace();
         if self.peek() == Some(b'^') {
             self.cursor += 1;
-            Some(value.powf(self.power()?))
+            Some(value.powf(self.unary()?))
         } else {
             Some(value)
         }
@@ -771,7 +900,7 @@ impl<'a> ExpressionParser<'a> {
                 self.cursor += 1;
                 self.unary().map(|value| -value)
             }
-            _ => self.atom(),
+            _ => self.power(),
         }
     }
 
@@ -784,39 +913,67 @@ impl<'a> ExpressionParser<'a> {
             (self.peek() == Some(b')')).then(|| self.cursor += 1)?;
             return Some(value);
         }
-        if self.remaining().starts_with(b"sqrt") {
-            self.cursor += 4;
-            self.skip_whitespace();
-            if self.peek() != Some(b'(') {
-                return None;
-            }
-            self.cursor += 1;
-            let value = self.expression()?;
-            self.skip_whitespace();
-            if self.peek() != Some(b')') || value < 0.0 {
-                return None;
-            }
-            self.cursor += 1;
-            return Some(value.sqrt());
-        }
-        if self.remaining().starts_with(b"pi") {
-            self.cursor += 2;
-            return Some(std::f64::consts::PI);
-        }
         let start = self.cursor;
-        while self
+        if self
             .peek()
             .is_some_and(|byte| byte.is_ascii_digit() || byte == b'.')
         {
-            self.cursor += 1;
+            while self.peek().is_some_and(|byte| {
+                byte.is_ascii_digit() || matches!(byte, b'.' | b'e' | b'E' | b'+' | b'-')
+            }) {
+                if matches!(self.peek(), Some(b'+' | b'-'))
+                    && !matches!(
+                        self.input.get(self.cursor.wrapping_sub(1)),
+                        Some(b'e' | b'E')
+                    )
+                {
+                    break;
+                }
+                self.cursor += 1;
+            }
+            return std::str::from_utf8(&self.input[start..self.cursor])
+                .ok()?
+                .parse()
+                .ok();
         }
-        if self.cursor == start {
+
+        if !self
+            .peek()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        {
             return None;
         }
-        std::str::from_utf8(&self.input[start..self.cursor])
-            .ok()?
-            .parse()
-            .ok()
+        self.cursor += 1;
+        while self
+            .peek()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            self.cursor += 1;
+        }
+        let identifier = std::str::from_utf8(&self.input[start..self.cursor]).ok()?;
+        if identifier == "pi" {
+            return Some(std::f64::consts::PI);
+        }
+        if identifier == "e" {
+            return Some(std::f64::consts::E);
+        }
+        if is_function(identifier) {
+            self.skip_whitespace();
+            let argument = if self.peek() == Some(b'(') {
+                self.cursor += 1;
+                let value = self.expression()?;
+                self.skip_whitespace();
+                if self.peek() != Some(b')') {
+                    return None;
+                }
+                self.cursor += 1;
+                value
+            } else {
+                self.unary()?
+            };
+            return apply_function(identifier, argument);
+        }
+        self.variables.get(identifier).copied()
     }
 
     fn skip_whitespace(&mut self) {
@@ -828,10 +985,57 @@ impl<'a> ExpressionParser<'a> {
     fn peek(&self) -> Option<u8> {
         self.input.get(self.cursor).copied()
     }
+}
 
-    fn remaining(&self) -> &[u8] {
-        &self.input[self.cursor..]
+fn starts_implicit_factor(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte.is_ascii_digit() || matches!(byte, b'_' | b'.' | b'(')
+}
+
+fn is_function(identifier: &str) -> bool {
+    matches!(
+        identifier,
+        "sqrt"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "ln"
+            | "log"
+            | "exp"
+            | "abs"
+            | "floor"
+            | "ceil"
+    )
+}
+
+fn apply_function(identifier: &str, argument: f64) -> Option<f64> {
+    let value = match identifier {
+        "sqrt" if argument >= 0.0 => argument.sqrt(),
+        "sin" => argument.sin(),
+        "cos" => argument.cos(),
+        "tan" => argument.tan(),
+        "asin" => argument.asin(),
+        "acos" => argument.acos(),
+        "atan" => argument.atan(),
+        "ln" => argument.ln(),
+        "log" => argument.log10(),
+        "exp" => argument.exp(),
+        "abs" => argument.abs(),
+        "floor" => argument.floor(),
+        "ceil" => argument.ceil(),
+        _ => return None,
+    };
+    value.is_finite().then_some(value)
+}
+
+fn factorial(value: f64) -> Option<f64> {
+    let rounded = value.round();
+    if value < 0.0 || value > 170.0 || (value - rounded).abs() > f64::EPSILON {
+        return None;
     }
+    Some((1..=rounded as u64).fold(1.0, |product, factor| product * factor as f64))
 }
 
 #[cfg(test)]
@@ -847,7 +1051,36 @@ mod tests {
         let grader = MathGrader::new();
         assert!(grader.equivalent("\\frac{1}{2}", "0.5"));
         assert!(grader.equivalent("\\sqrt{2}", "2^{1/2}"));
+        assert!(grader.equivalent("(x+1)^2", "x^2+2x+1"));
+        assert!(grader.equivalent("x+x", "2x"));
+        assert!(grader.equivalent("2(x+1)", "2x+2"));
+        assert!(!grader.equivalent("x^2", "x^3"));
         assert!(!grader.equivalent("24", "25"));
+    }
+
+    #[test]
+    fn strip_string_matches_inherited_recipe_edge_cases() {
+        // Expected strings were generated by `_math_strip.py:234-385`.
+        for (input, expected) in [
+            ("5 mph", "5"),
+            (
+                "\\begin{array}{cc}1&2\\\\3&4\\end{array}",
+                "\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}",
+            ),
+            ("42\\text{ meters}", "42"),
+            ("January 5", "5"),
+            ("\\mbox{units}42", "42"),
+            ("\\sqrt12", "\\sqrt{12}"),
+            ("\\frac1{2}", "\\frac{1}{2}"),
+            ("3.000x", "3x"),
+            ("{.5}", "{0.5}"),
+            ("x=42", "42"),
+            ("7 and 8", "78"),
+            ("\\mathbf{x}", "{x}"),
+            ("5 inches", "5"),
+        ] {
+            assert_eq!(strip_math_string(input), expected, "input {input:?}");
+        }
     }
 
     #[tokio::test]
