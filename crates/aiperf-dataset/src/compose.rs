@@ -426,4 +426,47 @@ mod tests {
             (0..50).map(|_| second.next()).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn common_contexts_rebase_existing_segment_chains_under_the_new_prefix() {
+        let tokenizer = crate::tokenizer::TiktokenTokenizer::builtin();
+        let mut segments = SegmentPool::new();
+        let prompt = segments
+            .intern_text(
+                None,
+                "user",
+                Bytes::from_static(b"prompt"),
+                tokenizer.encode("prompt").unwrap().into_boxed_slice(),
+            )
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.turns.push(Turn {
+            content: smallvec::smallvec![crate::model::ContentGroup {
+                kind: crate::model::MediaKind::Text,
+                name: String::new(),
+                handles: smallvec::smallvec![prompt],
+            }],
+            ..Turn::default()
+        });
+        let mut config = ComposeConfig::new("model", RngRoot::new(Some(1)));
+        config.shared_system_prompt = Some("system".into());
+        config.user_context_prompts = vec!["context".into()];
+        apply_common_contexts(
+            std::slice::from_mut(&mut conversation),
+            &config,
+            &tokenizer,
+            &mut segments,
+        )
+        .unwrap();
+
+        let system = conversation.system.unwrap();
+        let context = conversation.user_context.unwrap();
+        let rebased_prompt = conversation.turns[0].content[0].handles[0];
+        assert_eq!(segments.segment(context).unwrap().parent, Some(system));
+        assert_eq!(
+            segments.segment(rebased_prompt).unwrap().parent,
+            Some(context)
+        );
+        assert_ne!(prompt, rebased_prompt);
+    }
 }
