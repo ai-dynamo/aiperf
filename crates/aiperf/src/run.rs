@@ -1,25 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The online run loop: a Clock-driven arrival pacer that dispatches a synthetic
-//! workload through [`TransportSink`] (the `aiperf-transport` hyper client) and
-//! measures it with the shared `TraceCollector`.
+//! The online run loop: a Clock-driven arrival pacer, gated by `StopChecker`
+//! (request-count / duration) and `SlotPool` (concurrency), dispatching a synthetic
+//! workload through [`TransportSink`] and measuring it with the shared
+//! `TraceCollector`.
 //!
-//! One loop serves both modes via the [`IntervalGenerator`](crate::timing::IntervalGenerator)
-//! seam: **request-rate** (Poisson/Gamma/Constant inter-arrivals) and
-//! **concurrency** (the degenerate `ConcurrencyBurst` = zero interval, bounded by a
-//! session semaphore). Arrival timing uses only `clock.now_ns()` +
+//! One loop serves both modes via the timing-plane seam:
+//! - **request-rate** — Poisson/Gamma/Constant inter-arrivals ([`IntervalGenerator`](crate::timing::IntervalGenerator)),
+//! - **concurrency** — the degenerate `ConcurrencyBurst` (zero interval) bounded by a
+//!   session [`SlotPool`](crate::timing::SlotPool).
+//!
+//! Stopping is condition-driven ([`StopChecker`](crate::timing::StopChecker)): the
+//! loop pulls requests on demand until the request-count and/or duration bound fires,
+//! not until a fixed list is exhausted. Arrival timing uses only `clock.now_ns()` +
 //! `clock.sleep()`, so the identical loop runs on `RealClock` (online) or `SimClock`
-//! (offline) — the pacer is backend-agnostic by construction.
+//! (offline) — backend-agnostic by construction.
 //!
 //! The transport is `!Send` (`Rc<dyn Clock>`), so the loop runs on a single
-//! `LocalSet` with `spawn_local`; a shared clock is the one time authority, so
-//! arrival, admit, and token timestamps all sit on the same timeline.
+//! `LocalSet` with `spawn_local`; a shared clock is the one time authority.
 
 use std::rc::Rc;
 use std::sync::Arc;
-
-use tokio::sync::Semaphore;
 
 use aiperf_clock::{Clock, RealClock};
 use aiperf_core::observer::CollectorObserver;
@@ -27,21 +29,25 @@ use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use loadgen_core::sink::{RequestObserver, RequestSink};
 
 use crate::http::TransportSink;
-use crate::timing::{ArrivalPattern, make_interval_generator};
+use crate::timing::{
+    ArrivalPattern, RunState, SlotPool, StopChecker, StopConfig, make_interval_generator,
+};
 use crate::workload::SkeletonWorkload;
 
-/// Run a closed-loop concurrency-`concurrency` load test of `workload` against
-/// `base_url` for `model`, returning the aggregated report. Thin wrapper over
-/// [`run_paced`] with the `ConcurrencyBurst` arrival pattern (zero inter-arrival
-/// delay; throughput bounded by the semaphore).
-///
-/// Must be driven inside a `LocalSet` (the transport sink is `!Send`).
+/// Run a closed-loop concurrency-`concurrency` benchmark of `workload` against
+/// `base_url` for `model`, bounded by `workload.num_requests`. Thin wrapper over
+/// [`run_paced`] with `ConcurrencyBurst` arrival (zero delay; throughput bounded by
+/// the session slot pool). Must be driven inside a `LocalSet`.
 pub async fn run(
     base_url: String,
     model: String,
     workload: SkeletonWorkload,
     concurrency: usize,
 ) -> anyhow::Result<TraceSimulationReport> {
+    let stop = StopConfig {
+        total_expected_requests: Some(workload.num_requests as u64),
+        ..Default::default()
+    };
     run_paced(
         base_url,
         model,
@@ -50,23 +56,24 @@ pub async fn run(
         None,
         None,
         Some(concurrency),
+        stop,
         0,
     )
     .await
 }
 
-/// Run `workload` against `base_url` with an explicit arrival `pattern`.
+/// Run `workload` against `base_url` with an explicit arrival `pattern`, `stop`
+/// bounds, and optional concurrency cap.
 ///
 /// - `rate` (req/s) is required for every pattern except `ConcurrencyBurst`.
 /// - `smoothness` tunes `Gamma` burstiness (`None` -> Poisson-equivalent).
-/// - `concurrency` caps requests in flight; `None` = open-loop (rate mode's
-///   natural shape). `ConcurrencyBurst` + `Some(n)` = the closed-loop path.
+/// - `concurrency` caps in-flight requests via a `SlotPool`; `None` = open-loop.
+/// - `stop` bounds the run (request-count and/or duration; first-hit wins). At least
+///   one bound must be set or the loop never terminates.
 /// - `seed` seeds the arrival RNG for bit-reproducible spacing.
 ///
-/// Pacing is **absolute-schedule**: cumulative target times, re-anchored to `now`
-/// when the loop falls behind (so dispatch latency never compounds into drift or a
-/// catch-up burst). The next interval is drawn *before* dispatch so issue latency
-/// doesn't skew it. Must be driven inside a `LocalSet`.
+/// Pacing is **absolute-schedule** with catch-up re-anchoring; the next interval is
+/// drawn before dispatch. Must be driven inside a `LocalSet`.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_paced(
     base_url: String,
@@ -76,6 +83,7 @@ pub async fn run_paced(
     rate: Option<f64>,
     smoothness: Option<f64>,
     concurrency: Option<usize>,
+    stop: StopConfig,
     seed: u64,
 ) -> anyhow::Result<TraceSimulationReport> {
     let clock: Rc<dyn Clock> = RealClock::new();
@@ -90,16 +98,22 @@ pub async fn run_paced(
         model,
         false,
     ));
-    let sem = concurrency.map(|c| Arc::new(Semaphore::new(c.max(1))));
+    let slots = concurrency.map(SlotPool::new);
     let mut intervals = make_interval_generator(pattern, rate, smoothness, seed);
+
+    let checker = StopChecker::new(&stop);
+    let mut state = RunState {
+        started_at_ns: start_ns,
+        ..Default::default()
+    };
 
     // Absolute schedule: the next arrival's target time on the clock's timeline.
     let mut next_target_ns = start_ns + intervals.next_interval_ns();
 
     let mut handles = Vec::new();
-    for req in workload.generate() {
-        // Pace to the next arrival target. Falling behind re-anchors to `now`
-        // (drop the burst, keep throughput) rather than firing a catch-up salvo.
+    while checker.can_send_any(&state, clock.now_ns()) {
+        // Pace to the next arrival target. Falling behind re-anchors to `now` rather
+        // than firing a catch-up salvo.
         let now = clock.now_ns();
         if next_target_ns < now {
             next_target_ns = now;
@@ -111,23 +125,34 @@ pub async fn run_paced(
         // Draw the next interval BEFORE dispatch so issue latency doesn't skew it.
         next_target_ns += intervals.next_interval_ns();
 
-        // Concurrency cap (if configured): acquire a slot before dispatch. Open-loop
-        // rate mode passes `None` and never blocks here.
-        let permit = match &sem {
-            Some(s) => Some(s.clone().acquire_owned().await?),
+        // Duration may have elapsed during the sleep — re-check before dispatching.
+        if !checker.can_send_any(&state, clock.now_ns()) {
+            break;
+        }
+
+        // Session slot (if capped): acquire before dispatch; the guard releases the
+        // slot when the dispatch task completes. Open-loop rate passes `None`.
+        let guard = match &slots {
+            Some(pool) => Some(pool.acquire().await),
             None => None,
         };
 
+        let req = workload.make_request();
         obs.on_arrival(
             req.uuid,
             ms(clock.now_ns()),
             req.input_length,
             req.max_output_tokens,
         );
+        // Single-turn synthetic: each request is its own session (turn 0 = final).
+        state.requests_sent += 1;
+        state.root_requests_sent += 1;
+        state.sent_sessions += 1;
+
         let obs2 = obs.clone();
         let sink2 = sink.clone();
         handles.push(tokio::task::spawn_local(async move {
-            let _permit = permit;
+            let _guard = guard; // releases the session slot on completion
             let uuid = req.uuid;
             if let Err(e) = sink2.dispatch(req, obs2.as_ref()).await {
                 obs2.on_terminal(uuid, ReplayTerminalStatus::Failed);
@@ -174,9 +199,9 @@ mod tests {
 
     #[tokio::test]
     async fn request_rate_paces_arrivals_by_the_clock() {
-        // Constant 1000 req/s over a fast mock: the pacer must sleep ~1ms between
-        // the N arrivals, so wall time >= (N-1)ms even though the mock replies
-        // near-instantly. Open-loop (no concurrency cap).
+        // Constant 1000 req/s over a fast mock: the pacer sleeps ~1ms between the N
+        // arrivals, so wall time >= (N-1)ms even though the mock replies instantly.
+        // Open-loop (no concurrency cap); bounded by request count.
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
@@ -188,6 +213,10 @@ mod tests {
                     input_tokens: 8,
                     output_tokens: 1,
                 };
+                let stop = StopConfig {
+                    total_expected_requests: Some(n as u64),
+                    ..Default::default()
+                };
                 let report = run_paced(
                     base,
                     "m".into(),
@@ -196,12 +225,12 @@ mod tests {
                     Some(rate),
                     None,
                     None,
+                    stop,
                     0,
                 )
                 .await
                 .unwrap();
                 assert_eq!(report.request_counts.num_requests, n);
-                // (n-1) inter-arrival gaps of 1ms = 19ms floor; allow scheduler slack.
                 let floor_ms = (n as f64 - 1.0) / rate * 1000.0 * 0.75;
                 assert!(
                     report.throughput.wall_time_ms >= floor_ms,
@@ -210,6 +239,47 @@ mod tests {
                     floor_ms
                 );
                 assert!(report.latency.ttft.mean_ms.is_finite());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn duration_bound_stops_the_run() {
+        // No request-count cap: the run is bounded purely by duration. Burst arrivals
+        // + concurrency 4 against a fast mock; a 60ms duration must stop it (and admit
+        // more than the handful a count-bound test would).
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+                let wl = SkeletonWorkload {
+                    num_requests: 0, // unused: count bound is None below
+                    input_tokens: 4,
+                    output_tokens: 1,
+                };
+                let stop = StopConfig {
+                    total_expected_requests: None,
+                    expected_num_sessions: None,
+                    expected_duration_ns: Some(60_000_000), // 60ms
+                };
+                let report = run_paced(
+                    base,
+                    "m".into(),
+                    wl,
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    Some(4),
+                    stop,
+                    0,
+                )
+                .await
+                .unwrap();
+                assert!(
+                    report.request_counts.num_requests > 0,
+                    "duration run should admit at least one request"
+                );
+                assert!(report.throughput.output_throughput_tok_s.is_finite());
             })
             .await;
     }

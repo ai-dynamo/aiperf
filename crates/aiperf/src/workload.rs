@@ -19,19 +19,24 @@ pub struct SkeletonWorkload {
 }
 
 impl SkeletonWorkload {
-    /// Materialize the workload as [`HttpRequest`]s carrying prompt text.
+    /// Mint one fresh [`HttpRequest`] with a new correlation id. Stateless, so the
+    /// run loop can pull requests on demand and let the stop conditions (not a fixed
+    /// list length) decide when to stop.
     ///
     /// The prompt is `input_tokens` whitespace-separated words; tokenizer-exact
     /// input/output lengths are deferred to a later increment.
+    pub fn make_request(&self) -> HttpRequest {
+        HttpRequest {
+            uuid: Uuid::new_v4(),
+            input_length: self.input_tokens,
+            max_output_tokens: self.output_tokens,
+            prompt_text: Some(vec!["lorem"; self.input_tokens].join(" ")),
+        }
+    }
+
+    /// Materialize `num_requests` requests at once (used by tests).
     pub fn generate(&self) -> Vec<HttpRequest> {
-        (0..self.num_requests)
-            .map(|_| HttpRequest {
-                uuid: Uuid::new_v4(),
-                input_length: self.input_tokens,
-                max_output_tokens: self.output_tokens,
-                prompt_text: Some(vec!["lorem"; self.input_tokens].join(" ")),
-            })
-            .collect()
+        (0..self.num_requests).map(|_| self.make_request()).collect()
     }
 }
 

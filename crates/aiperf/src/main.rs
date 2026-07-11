@@ -18,8 +18,8 @@
 use std::path::PathBuf;
 
 use aiperf::report::{print_report_table, write_report_json};
-use aiperf::run::{run, run_paced};
-use aiperf::timing::ArrivalPattern;
+use aiperf::run::run_paced;
+use aiperf::timing::{ArrivalPattern, StopConfig};
 use aiperf::workload::SkeletonWorkload;
 use clap::Parser;
 
@@ -83,6 +83,10 @@ struct Cli {
     /// RNG seed for arrival spacing (default 0) — deterministic runs.
     #[arg(long)]
     seed: Option<u64>,
+    /// Benchmark duration in seconds. When set (without `--requests`), the run is
+    /// bounded by time instead of request count; both set = first-hit wins.
+    #[arg(long)]
+    duration: Option<f64>,
     /// Write the aggregate report as JSON to this path (online mode).
     #[arg(long)]
     json: Option<PathBuf>,
@@ -157,32 +161,59 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let local = tokio::task::LocalSet::new();
-    let report = if let Some(rate) = cli.request_rate {
-        let pattern = match cli.arrival.as_deref() {
-            Some("constant") => ArrivalPattern::Constant,
-            Some("gamma") => ArrivalPattern::Gamma,
-            Some("poisson") | None => ArrivalPattern::Poisson,
-            Some(other) => {
-                anyhow::bail!("unknown --arrival '{other}' (expected constant|poisson|gamma)")
-            }
-        };
-        // Open-loop by default (no cap); `--concurrency` caps in-flight under the rate.
-        local.block_on(
-            &rt,
-            run_paced(
-                base_url,
-                model,
-                workload,
-                pattern,
-                Some(rate),
-                cli.smoothness,
-                cli.concurrency,
-                cli.seed.unwrap_or(0),
-            ),
-        )?
+
+    // Stop bounds: explicit `--requests` wins the count cap; else if `--duration` is
+    // set, run unbounded by count (time-bounded); else default to 100 requests.
+    let duration_ns = cli.duration.map(|s| (s * 1_000_000_000.0) as i64);
+    let count: Option<u64> = if let Some(r) = cli.requests {
+        Some(r as u64)
+    } else if duration_ns.is_some() {
+        None
     } else {
-        local.block_on(&rt, run(base_url, model, workload, concurrency))?
+        Some(100)
     };
+    let stop = StopConfig {
+        total_expected_requests: count,
+        expected_num_sessions: None,
+        expected_duration_ns: duration_ns,
+    };
+
+    // `--request-rate` selects open-loop rate mode; absent = closed-loop concurrency
+    // (ConcurrencyBurst) which defaults to concurrency 16.
+    let (pattern, rate) = match cli.request_rate {
+        Some(r) => {
+            let p = match cli.arrival.as_deref() {
+                Some("constant") => ArrivalPattern::Constant,
+                Some("gamma") => ArrivalPattern::Gamma,
+                Some("poisson") | None => ArrivalPattern::Poisson,
+                Some(other) => {
+                    anyhow::bail!("unknown --arrival '{other}' (expected constant|poisson|gamma)")
+                }
+            };
+            (p, Some(r))
+        }
+        None => (ArrivalPattern::ConcurrencyBurst, None),
+    };
+    let concurrency_opt = if cli.request_rate.is_some() {
+        cli.concurrency // open-loop unless capped
+    } else {
+        Some(concurrency) // closed-loop concurrency
+    };
+
+    let report = local.block_on(
+        &rt,
+        run_paced(
+            base_url,
+            model,
+            workload,
+            pattern,
+            rate,
+            cli.smoothness,
+            concurrency_opt,
+            stop,
+            cli.seed.unwrap_or(0),
+        ),
+    )?;
     print_report_table(&report);
     if let Some(path) = &cli.json {
         write_report_json(&report, path)?;
