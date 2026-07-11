@@ -8,6 +8,28 @@ use std::process::{Command, Stdio};
 
 use axum::{Router, http::header, response::IntoResponse, routing::post};
 
+#[test]
+fn capabilities_are_a_single_versioned_json_line() {
+    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+        .arg("--capabilities")
+        .output()
+        .expect("spawn native runner capability query");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.stdout.iter().filter(|byte| **byte == b'\n').count(),
+        1
+    );
+    let capabilities: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(capabilities["event"], "runner_capabilities");
+    assert_eq!(capabilities["protocol_versions"], serde_json::json!([1]));
+    assert_eq!(capabilities["report_schema_version"], "2.0");
+    assert!(capabilities["phase_types"].as_array().unwrap().len() >= 6);
+}
+
 async fn chat_handler() -> impl IntoResponse {
     let body = concat!(
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",

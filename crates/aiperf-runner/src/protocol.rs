@@ -12,6 +12,44 @@ use serde_json::{Map, Value};
 /// Current Python-orchestrator/Rust-runner protocol version.
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 
+/// Machine-readable runner capabilities returned by `--capabilities`.
+#[derive(Debug, Serialize)]
+pub struct RunnerCapabilities {
+    /// Stable response discriminator.
+    pub event: &'static str,
+    /// Protocol versions accepted on stdin.
+    pub protocol_versions: &'static [u32],
+    /// Native report schema written after a successful run.
+    pub report_schema_version: &'static str,
+    /// Dataset variants accepted by the current protocol.
+    pub dataset_types: &'static [&'static str],
+    /// Phase variants accepted by the current protocol.
+    pub phase_types: &'static [&'static str],
+    /// Rust runner package version.
+    pub runner_version: &'static str,
+}
+
+impl RunnerCapabilities {
+    /// Describe the exact process contract implemented by this binary.
+    pub const fn current() -> Self {
+        Self {
+            event: "runner_capabilities",
+            protocol_versions: &[RUNNER_PROTOCOL_VERSION],
+            report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
+            dataset_types: &["synthetic"],
+            phase_types: &[
+                "concurrency",
+                "poisson",
+                "gamma",
+                "constant",
+                "user_centric",
+                "fixed_schedule",
+            ],
+            runner_version: env!("CARGO_PKG_VERSION"),
+        }
+    }
+}
+
 /// One complete single-run request read from stdin.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["RustSubprocessExecutor"]
 
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
+_NATIVE_REPORT_SCHEMA_VERSION = "2.0"
 
 
 class RustSubprocessExecutor(RunExecutor):
@@ -41,6 +42,7 @@ class RustSubprocessExecutor(RunExecutor):
     def __init__(self, base_dir: Path, *, binary: Path | None = None) -> None:
         self.base_dir = Path(base_dir)
         self.binary = _resolve_runner_binary(binary)
+        self.capabilities = _load_capabilities(self.binary)
 
     def derive_id(self, plan: BenchmarkPlan, var_idx: int, trial: int) -> str:
         return uuid4().hex
@@ -103,6 +105,49 @@ def _resolve_runner_binary(explicit: Path | None) -> Path:
         "aiperf-runner executable was not found; install it beside aiperf or "
         f"set {_RUNNER_ENV} to its absolute path"
     )
+
+
+def _load_capabilities(binary: Path) -> dict[str, Any]:
+    completed = subprocess.run(
+        [str(binary), "--capabilities"],
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode(errors="replace").strip()
+        raise RuntimeError(
+            f"aiperf-runner capability negotiation failed (exit "
+            f"{completed.returncode}): {stderr or 'no diagnostic'}"
+        )
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError(
+            "aiperf-runner --capabilities must write exactly one JSON line; "
+            f"received {len(lines)}"
+        )
+    try:
+        capabilities = orjson.loads(lines[0])
+    except orjson.JSONDecodeError as error:
+        raise ValueError(
+            f"aiperf-runner returned invalid capability JSON: {error}"
+        ) from error
+    if not isinstance(capabilities, dict):
+        raise ValueError("aiperf-runner capabilities must be an object")
+    if capabilities.get("event") != "runner_capabilities":
+        raise ValueError("aiperf-runner returned an unknown capability response")
+    versions = capabilities.get("protocol_versions")
+    if not isinstance(versions, list) or RUNNER_PROTOCOL_VERSION not in versions:
+        raise RuntimeError(
+            f"aiperf-runner does not support protocol {RUNNER_PROTOCOL_VERSION}: "
+            f"advertised {versions!r}"
+        )
+    schema = capabilities.get("report_schema_version")
+    if schema != _NATIVE_REPORT_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"aiperf-runner report schema {schema!r} is incompatible; "
+            f"expected {_NATIVE_REPORT_SCHEMA_VERSION!r}"
+        )
+    return capabilities
 
 
 def _parse_terminal(stdout: bytes, run: BenchmarkRun) -> dict[str, Any]:

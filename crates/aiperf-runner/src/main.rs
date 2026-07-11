@@ -5,12 +5,22 @@
 
 use std::io::{self, BufReader, Write};
 
-use aiperf_runner::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, execute_run};
+use aiperf_runner::{
+    RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities, execute_run,
+};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.len() == 1 && arguments[0] == "--capabilities" {
+        write_json_line(&RunnerCapabilities::current(), 0);
+    }
+    if !arguments.is_empty() {
+        eprintln!("usage: aiperf-runner [--capabilities]");
+        std::process::exit(2);
+    }
     let terminal = match serde_json::from_reader::<_, RunRequest>(BufReader::new(io::stdin())) {
         Ok(request) if request.protocol_version == RUNNER_PROTOCOL_VERSION => {
             let run_id = request.run.benchmark_id.clone();
@@ -31,9 +41,12 @@ fn main() {
             RunTerminal::failed(None, "protocol", format!("invalid run request: {error}"))
         }
     };
-    let exit_code = if terminal.success { 0 } else { 1 };
+    write_json_line(&terminal, if terminal.success { 0 } else { 1 });
+}
+
+fn write_json_line(value: &impl serde::Serialize, exit_code: i32) -> ! {
     let mut stdout = io::stdout().lock();
-    if serde_json::to_writer(&mut stdout, &terminal).is_err()
+    if serde_json::to_writer(&mut stdout, value).is_err()
         || stdout.write_all(b"\n").is_err()
         || stdout.flush().is_err()
     {

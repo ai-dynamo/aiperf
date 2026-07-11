@@ -12,4 +12,4 @@ pub mod execute;
 pub mod protocol;
 
 pub use execute::execute_run;
-pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal};
+pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};
