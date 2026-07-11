@@ -489,3 +489,27 @@ the server routing/fallback/auto-disable *logic*, the vLLM/SGLang atlas, unit in
 histogram estimator math are unchanged — those are what the hardware/server emit, not artifacts
 of the scrape transport. The async append-only-store + read-time window reconstruction + the two
 baseline pickers are deleted.
+
+## Addendum — 2026-07-10 (server metrics, correction): delete the flush wait
+
+**Supersedes the "settle-then-snapshot" paragraph of the server-metrics addendum above.**
+There is **no flush/settle wait**. Force one final scrape at the phase boundary, snapshot,
+done — do not wait `COLLECTION_FLUSH_PERIOD` for the server to catch up. `COLLECTION_FLUSH_PERIOD`
+is **deleted entirely** (it only ever existed to widen/settle a reconstruction window).
+
+Why the settle wait was wrong:
+- **AIPerf's own metrics are authoritative.** AIPerf owns every request's dispatch and
+  completion, so per-phase tokens/requests/latencies come from the metrics engine. The server
+  `/metrics` counters are a **secondary cross-check** (server-side throughput, KV-cache,
+  preemptions) — their phase-exactness is not worth buying.
+- **The residual boundary smear is bounded and lands next door.** A few requests whose
+  server-side counter increment arrives just after the boundary snapshot fall into the
+  neighboring phase's delta — a one-server-lag smear, not a systematic error, negligible against
+  a phase total.
+- **The wait's cost is real and one-directional:** a fixed dead-time on every phase transition,
+  *and* it pollutes the boundary — during the idle settle window the server cools, so any gauge
+  sampled then is garbage. Deleting it is strictly cleaner.
+
+So GPU and server counters are identical again: **snapshot at the boundary → delta → reset-clamp**
+— no grace, no settle. (Sequential scrape, the two-picker unification, the gauge/histogram split,
+and the routing/fallback/auto-disable logic from the prior addendum all stand unchanged.)
