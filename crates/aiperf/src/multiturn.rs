@@ -23,14 +23,15 @@ use std::sync::Arc;
 use aiperf_dataset::{
     BuiltinEndpointResolver, ConversationSession as NativeConversationSession,
     Dataset as NativeDataset, EndpointRequestMaterializer, EndpointResolver, Handle, Overrides,
-    Payload, RequestMaterializer, Sampler, SegmentPool, SegmentStore, SequentialSampler,
-    TextTokenizer, TiktokenTokenizer,
+    Payload, RequestMaterializer, Sampler, SamplerRegistry, SegmentPool, SegmentStore,
+    SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
 use aiperf_endpoints::{
     CreditPhase, EndpointConfig, Media as EndpointMedia, ModelEndpoint, Turn as EndpointTurn,
 };
 use aiperf_graph::segment::intern_message;
 use aiperf_graph::wire::OpenAiChatMessage;
+use aiperf_rng::RngRoot;
 use aiperf_timing::{RunState, StopConfig};
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
@@ -954,6 +955,56 @@ pub struct NativeDatasetConversationSource {
 }
 
 impl NativeDatasetConversationSource {
+    /// Construct a source that honors the loader's preferred sampler strategy.
+    pub fn preferred(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+    ) -> Result<Self> {
+        let endpoint = EndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            ..EndpointConfig::default()
+        };
+        Self::preferred_with_endpoint_config(
+            dataset,
+            model,
+            default_output_tokens,
+            rng_root,
+            endpoint,
+        )
+    }
+
+    /// Honor loader sampling policy with caller-selected endpoint configuration.
+    pub fn preferred_with_endpoint_config(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        endpoint: EndpointConfig,
+    ) -> Result<Self> {
+        let dataset = Arc::new(dataset);
+        let sampler = SamplerRegistry::with_builtin_strategies()?.create(
+            &dataset.metadata().sampling_strategy,
+            &dataset.metadata().conversations,
+            rng_root,
+        )?;
+        let endpoint = endpoint.validate()?;
+        Self::new(
+            dataset,
+            sampler,
+            ModelEndpoint {
+                primary_model_name: model.into(),
+                endpoint,
+            },
+            Arc::new(BuiltinEndpointResolver::default()),
+            Arc::new(EndpointRequestMaterializer),
+            Arc::new(TiktokenTokenizer::builtin()),
+            default_output_tokens,
+        )
+    }
+
     /// Construct the normal sequential source with all built endpoint adapters.
     pub fn sequential(
         dataset: NativeDataset,
@@ -1449,5 +1500,31 @@ mod tests {
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
         assert_eq!(turn.request_body.unwrap(), authored);
         assert!(turn.streaming);
+    }
+
+    #[tokio::test]
+    async fn native_source_resolves_the_loader_sampling_strategy() {
+        let built = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("single_turn"),
+                &LoadConfig::new(DatasetSource::Inline(json!([{"text":"hello"}]))),
+                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let dataset = NativeDataset::new(
+            built.conversations().to_vec(),
+            built.segments().clone(),
+            "not_registered",
+            built.metadata().default_context_mode,
+        )
+        .unwrap();
+        let error =
+            NativeDatasetConversationSource::preferred(dataset, "model", 4, RngRoot::new(Some(1)))
+                .err()
+                .unwrap();
+        assert!(error.to_string().contains("unknown sampler strategy"));
     }
 }

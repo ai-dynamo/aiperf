@@ -730,9 +730,13 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
                 cli.fixed_schedule_start_offset_ms,
                 cli.fixed_schedule_end_offset_ms,
             )?;
-        let source: Box<dyn ConversationSource> = Box::new(
-            NativeDatasetConversationSource::sequential(dataset, model.clone(), osl)?,
-        );
+        let source: Box<dyn ConversationSource> =
+            Box::new(NativeDatasetConversationSource::preferred(
+                dataset,
+                model.clone(),
+                osl,
+                RngRoot::new(cli.seed),
+            )?);
         let report = local.block_on(
             &rt,
             run_fixed_schedule_online_with_ancillary(
@@ -813,18 +817,20 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         );
         let source: Box<dyn ConversationSource> = if cli.input_file.is_some() {
             let dataset = load_native_file_dataset(cli, &rt, &local, &model, osl)?;
-            Box::new(NativeDatasetConversationSource::sequential(
+            Box::new(NativeDatasetConversationSource::preferred(
                 dataset,
                 model.clone(),
                 osl,
+                RngRoot::new(cli.seed),
             )?)
         } else {
             let dataset =
                 build_native_synthetic_dataset(cli, &rt, &local, &model, isl, osl, turns)?;
-            Box::new(NativeDatasetConversationSource::sequential(
+            Box::new(NativeDatasetConversationSource::preferred(
                 dataset,
                 model.clone(),
                 osl,
+                RngRoot::new(cli.seed),
             )?)
         };
         let user_config = UserCentricConfig {
