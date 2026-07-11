@@ -1032,7 +1032,7 @@ fn apply_function(identifier: &str, argument: f64) -> Option<f64> {
 
 fn factorial(value: f64) -> Option<f64> {
     let rounded = value.round();
-    if value < 0.0 || value > 170.0 || (value - rounded).abs() > f64::EPSILON {
+    if !(0.0..=170.0).contains(&value) || (value - rounded).abs() > f64::EPSILON {
         return None;
     }
     Some((1..=rounded as u64).fold(1.0, |product, factor| product * factor as f64))
