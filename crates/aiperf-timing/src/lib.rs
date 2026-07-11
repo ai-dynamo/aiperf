@@ -9,7 +9,7 @@
 //! here reads a wall clock directly, so the identical policy drives a `RealClock`
 //! (online) or a `SimClock` (offline) run.
 //!
-//! The seam is seven trait families, each with at least one concrete impl:
+//! The seam is eight trait families, each with at least one concrete impl:
 //! - [`intervals`] — inter-arrival distribution ([`IntervalGenerator`]),
 //! - [`slots`] — concurrency admission ([`SlotPool`], debt-drain-capable),
 //! - [`stop`] — run-termination bounds ([`StopCondition`] / [`StopChecker`]),
