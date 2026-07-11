@@ -7320,6 +7320,7 @@
         "cohere_rankings",
         "completions",
         "responses",
+        "messages",
         "chat_embeddings",
         "embeddings",
         "hf_tei_rankings",
